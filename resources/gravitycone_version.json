@@ -1,0 +1,12 @@
+{
+  "__comment__": "GravityCone 版本配置 - 基岩版联机核心（开源项目 Tianpao/GravityCone）。version_latest 需与项目 GitHub Releases 标签 v{version} 对应；发布新版本时更新此文件。产物命名参考 release.yml：gravitycone-cli-{os}-{arch}.zip",
+  "version_latest": "1.0.0",
+  "downloads": [
+    "https://github.com/Tianpao/GravityCone/releases/download/v${version}/gravitycone-cli-${classifier}.zip"
+  ],
+  "downloads_CN": [
+    "https://ghproxy.net/https://github.com/Tianpao/GravityCone/releases/download/v${version}/gravitycone-cli-${classifier}.zip",
+    "https://gh-proxy.com/https://github.com/Tianpao/GravityCone/releases/download/v${version}/gravitycone-cli-${classifier}.zip",
+    "https://github.moeyy.xyz/https://github.com/Tianpao/GravityCone/releases/download/v${version}/gravitycone-cli-${classifier}.zip"
+  ]
+}

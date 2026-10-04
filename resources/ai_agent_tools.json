@@ -1,0 +1,439 @@
+{
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "搜索互联网以获取最新信息（实时数据、新闻、价格、版本号、技术文档等）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "list_instances",
+      "description": "列出本机所有实例目录及其下的子实例（名称、路径、游戏版本、加载器）。无参数。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "check_loader_compatibility",
+      "description": "检查指定加载器与已安装加载器的兼容性，返回能否安装/是否有冲突/是否需依赖",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "loader": {
+            "type": "string",
+            "description": "待检查的加载器名（Forge/Fabric/NeoForge/OptiFine/Quilt/Cleanroom/LabyMod/LegacyFabric）"
+          },
+          "installed_loaders": {
+            "type": "array",
+            "description": "已安装的加载器名列表",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["loader", "installed_loaders"]
+      }
+    },
+    {
+      "name": "get_game_versions",
+      "description": "获取 Mojang 官方版本清单（含 release 与 snapshot 列表）。无参数。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "analyze_crash_log",
+      "description": "分析崩溃日志文本，定位错误类型与修复建议",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "log_text": {
+            "type": "string",
+            "description": "崩溃日志文本（crash report 或 latest.log 片段）"
+          }
+        },
+        "required": ["log_text"]
+      }
+    },
+    {
+      "name": "list_mods",
+      "description": "扫描指定实例路径的 mods/ 目录，返回模组清单（名称/版本/启用状态/加载器类型）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录）"
+          }
+        },
+        "required": ["instance_path"]
+      }
+    },
+    {
+      "name": "detect_java",
+      "description": "检测本机已安装的 Java 环境（路径/版本）。无参数。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "get_settings",
+      "description": "查询启动器当前配置（内存分配/下载源/账户/版本隔离/GitHub 加速等）。无参数。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "read_litematic",
+      "description": "读取 Litematica 投影文件（.litematic），返回名称/作者/描述/包围盒长宽高/总体积/总方块数/区域清单/材料清单（方块ID与数量，按数量降序）。常用于建筑搬运前的材料准备。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": ".litematic 投影文件的绝对路径"
+          },
+          "include_material_list": {
+            "type": "boolean",
+            "description": "是否包含完整材料清单（默认 true，材料较多时可传 false 仅获取摘要）",
+            "default": true
+          }
+        },
+        "required": ["file_path"]
+      }
+    },
+    {
+      "name": "search_resources",
+      "description": "搜索 CurseForge/Modrinth 上的 Minecraft 资源（模组/资源包/光影包/数据包/整合包），返回前 20 条匹配结果，含项目名/作者/简介/下载量/加载器/链接",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词"
+          },
+          "content_type": {
+            "type": "string",
+            "description": "资源类型",
+            "enum": ["mod", "resourcepack", "shaderpack", "datapack", "modpack"]
+          },
+          "game_version": {
+            "type": "string",
+            "description": "游戏版本过滤，如 1.20.1（可选）"
+          },
+          "loader": {
+            "type": "string",
+            "description": "加载器过滤，如 fabric/forge/neoforge（可选）"
+          },
+          "page": {
+            "type": "integer",
+            "description": "分页索引，从 0 开始（默认 0）",
+            "default": 0
+          },
+          "source": {
+            "type": "string",
+            "description": "数据源：curseforge/modrinth/auto，默认 auto（同时查询并合并）",
+            "enum": ["curseforge", "modrinth", "auto"],
+            "default": "auto"
+          }
+        },
+        "required": ["query", "content_type"]
+      }
+    },
+    {
+      "name": "get_resource_detail",
+      "description": "获取资源的完整详情：描述、作者、截图、依赖、最近 10 条版本文件摘要",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "资源项目 ID（CurseForge 的 modId 或 Modrinth 的 project_id）"
+          },
+          "source": {
+            "type": "string",
+            "description": "数据源",
+            "enum": ["curseforge", "modrinth"]
+          },
+          "content_type": {
+            "type": "string",
+            "description": "内容类型（仅用于显示提示，可选）"
+          }
+        },
+        "required": ["project_id", "source"]
+      }
+    },
+    {
+      "name": "list_resource_files",
+      "description": "列出资源所有版本文件，可按游戏版本/加载器/发布类型过滤，每条含文件名/大小/类型/发布时间/支持版本/加载器/URL",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "资源项目 ID"
+          },
+          "source": {
+            "type": "string",
+            "description": "数据源",
+            "enum": ["curseforge", "modrinth"]
+          },
+          "game_version": {
+            "type": "string",
+            "description": "按游戏版本过滤（可选）"
+          },
+          "loader": {
+            "type": "string",
+            "description": "按加载器过滤（可选）"
+          },
+          "release_type": {
+            "type": "string",
+            "description": "按发布类型过滤（可选）",
+            "enum": ["release", "beta", "alpha"]
+          }
+        },
+        "required": ["project_id", "source"]
+      }
+    },
+    {
+      "name": "download_resource",
+      "description": "将指定资源文件下载到目标实例对应子目录，立即返回触发结果（不阻塞）。若未传 file_id，则按 game_version+loader 自动选最新 release 文件",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "资源项目 ID"
+          },
+          "source": {
+            "type": "string",
+            "description": "数据源",
+            "enum": ["curseforge", "modrinth"]
+          },
+          "instance_path": {
+            "type": "string",
+            "description": "目标实例路径（.minecraft 根目录或版本隔离目录）"
+          },
+          "file_id": {
+            "type": "string",
+            "description": "指定文件 ID 或文件名片段（可选，未传则按 game_version+loader 自动选最新 release）"
+          },
+          "content_type": {
+            "type": "string",
+            "description": "内容类型，决定落地子目录（默认 mod）"
+          },
+          "game_version": {
+            "type": "string",
+            "description": "游戏版本（可选，未传 file_id 时用于自动选文件）"
+          },
+          "loader": {
+            "type": "string",
+            "description": "加载器（可选，未传 file_id 时用于自动选文件）"
+          }
+        },
+        "required": ["project_id", "source", "instance_path"]
+      }
+    },
+    {
+      "name": "update_task_list",
+      "description": "更新 AI 助手当前的任务清单（覆盖式）。用于复杂多步任务的进度跟踪与展示，开始一个需要多步骤的任务时先创建清单，每完成一步更新对应任务状态。传入的 tasks 数组将整体替换现有清单。UI 会据此渲染任务卡片。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "description": "完整任务列表（覆盖式更新，每次传入将整体替换当前清单）。同一时刻仅保留一个 in_progress 任务；完成一项或新增需求时重新提交完整列表。",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "任务唯一标识（如 '1'、'2'），跨调用保持稳定以便引用"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "任务内容描述（简洁明了的一行话）"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "任务状态",
+                  "enum": ["pending", "in_progress", "completed"]
+                },
+                "priority": {
+                  "type": "string",
+                  "description": "优先级",
+                  "enum": ["high", "medium", "low"]
+                }
+              },
+              "required": ["id", "content", "status", "priority"]
+            }
+          }
+        },
+        "required": ["tasks"]
+      }
+    },
+    {
+      "name": "launch_game",
+      "description": "启动指定实例的 Minecraft 游戏并收集启动阶段的日志。启动后等待若干秒收集启动日志（包括崩溃信息），返回启动状态与日志摘要。若启动失败或崩溃，日志中会包含错误信息，可据此分析原因。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          },
+          "java_path": {
+            "type": "string",
+            "description": "Java 路径（可选，传 'auto' 或留空自动匹配最佳 Java）"
+          },
+          "max_memory": {
+            "type": "integer",
+            "description": "最大内存 MB（可选，默认 4096）"
+          },
+          "wait_seconds": {
+            "type": "integer",
+            "description": "收集日志的等待秒数（可选，默认 15，范围 5-30）"
+          }
+        },
+        "required": ["instance_path"]
+      }
+    },
+    {
+      "name": "download_instance",
+      "description": "下载新的 Minecraft 实例（原版客户端 + 可选加载器）到指定路径。触发后立即返回，实际下载进度在下载任务页查看。下载前建议先调 list_instances 确认实例路径有效。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "version_id": {
+            "type": "string",
+            "description": "Minecraft 版本号，如 1.20.4、1.21.1"
+          },
+          "instance_path": {
+            "type": "string",
+            "description": "实例根目录（绝对路径，下载产物落在此路径的 versions/ 下）"
+          },
+          "instance_name": {
+            "type": "string",
+            "description": "实例显示名（可选，仅用于 UI 展示）"
+          },
+          "loader": {
+            "type": "string",
+            "description": "加载器类型（可选）：forge/fabric/neoforge/quilt/optifine/none，默认 none",
+            "enum": ["forge", "fabric", "neoforge", "quilt", "optifine", "none"]
+          },
+          "loader_version": {
+            "type": "string",
+            "description": "加载器版本（可选，如 47.2.0；留空则取最新推荐）"
+          },
+          "source": {
+            "type": "string",
+            "description": "下载源（可选）：official/bmcl，默认 bmcl（国内更快）",
+            "enum": ["official", "bmcl"]
+          }
+        },
+        "required": ["version_id", "instance_path"]
+      }
+    },
+    {
+      "name": "modify_instance",
+      "description": "修改实例的游戏版本或加载器。本质是向同一实例路径下载新版本（不删除旧版本目录，新旧版本共存），触发后立即返回，进度在下载任务页查看。至少需要指定 new_version 或 loader 之一。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例根目录（绝对路径）"
+          },
+          "new_version": {
+            "type": "string",
+            "description": "新游戏版本（可选，如 1.21.1；留空表示仅更换加载器不改版本）"
+          },
+          "loader": {
+            "type": "string",
+            "description": "加载器类型（可选）：forge/fabric/neoforge/quilt/optifine/none，默认 none",
+            "enum": ["forge", "fabric", "neoforge", "quilt", "optifine", "none"]
+          },
+          "loader_version": {
+            "type": "string",
+            "description": "加载器版本（可选，如 47.2.0；留空则取最新推荐）"
+          },
+          "source": {
+            "type": "string",
+            "description": "下载源（可选）：official/bmcl，默认 bmcl",
+            "enum": ["official", "bmcl"]
+          }
+        },
+        "required": ["instance_path"]
+      }
+    },
+    {
+      "name": "ask_user",
+      "description": "向用户提问并阻塞等待回答。当任务需要用户决策、澄清或确认时调用此工具，例如：选择模组版本、确认实例路径、选择加载器类型等。提供 options 时用户从选项中单选；不提供时用户自由输入。工具会阻塞直到用户回答或取消。返回用户的回答文本（取消时返回空字符串）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "要向用户提出的问题文本（必填，应清晰具体）"
+          },
+          "options": {
+            "type": "array",
+            "description": "预设选项列表（可选）。提供时用户从选项中单选；不提供则用户自由输入文本。每项为字符串。",
+            "items": { "type": "string" }
+          },
+          "default_value": {
+            "type": "string",
+            "description": "默认值或预填文本（可选）"
+          },
+          "allow_other": {
+            "type": "boolean",
+            "description": "是否允许用户在预设选项之外自由输入其他答案（可选，默认 false）。仅当 options 非空时生效。"
+          },
+          "title": {
+            "type": "string",
+            "description": "对话框标题（可选，默认 \"AI 提问\"）"
+          }
+        },
+        "required": ["question"]
+      }
+    },
+    {
+      "name": "fetch_webpage",
+      "description": "访问指定URL并返回网页内容。支持提取纯文本或HTML片段，适用于阅读文档、获取API响应、查看网页详情等场景。返回内容会经过截断处理以适应AI上下文窗口。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "要访问的网页URL（必须是有效的HTTP/HTTPS地址）"
+          },
+          "extract_text": {
+            "type": "boolean",
+            "description": "是否提取纯文本（去除HTML标签，默认true）",
+            "default": true
+          },
+          "max_length": {
+            "type": "integer",
+            "description": "返回内容的最大字符数（默认10000，最大50000）",
+            "default": 10000
+          }
+        },
+        "required": ["url"]
+      }
+    }
+  ]
+}

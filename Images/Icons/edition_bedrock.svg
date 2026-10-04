@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
+  <!-- 基岩版：石块（灰调斜二测方块 + 裂纹，原型风格） -->
+  <path d="M4 9.2L12 4.4l8 4.8-8 4.8-8-4.8z" fill="#94A3B8"/>
+  <path d="M4 9.2l8 4.8v5.6L4 14.8V9.2z" fill="#64748B"/>
+  <path d="M20 9.2l-8 4.8v5.6l8-4.8V9.2z" fill="#475569"/>
+  <path d="M4 9.2l8 4.8 8-4.8" stroke="#334155" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/>
+  <path d="M8.2 14.6l2.3-1.4 1.7 1.7" stroke="#334155" stroke-width="0.9" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>
+</svg>

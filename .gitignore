@@ -1,0 +1,38 @@
+# Qt / qmake 构建产物
+build*/
+build/
+debug/
+release/
+Makefile
+Makefile.*
+*.o
+*.obj
+*.moc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+.qmake.stash
+*.pro.user
+*.autosave
+
+# qmake 生成的 Windows 资源文件（含本机绝对路径）
+*_resource.rc
+
+# 测试/探针构建输出
+tests/debug/
+tests/release/
+*.log
+
+# 备份文件
+*.bak
+
+# IDE / 编辑器
+.qtcreator/
+.vscode/
+.idea/
+
+# 运行时与临时文件
+nul
+_hits.txt
+*.tmp
+.DS_Store
