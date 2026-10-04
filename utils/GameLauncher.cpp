@@ -20,6 +20,7 @@
 #include "utils/ErrorAnalyzer.h"
 #include "utils/SettingsManager.h"
 #include "utils/MemoryAllocator.h"
+#include "utils/fabric/FabricInstaller.h"
 
 GameLauncher* GameLauncher::m_instance = nullptr;
 QMutex GameLauncher::m_instanceMutex;
@@ -107,12 +108,22 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     emit launchProgressChanged(0, "准备启动游戏...");
     emit launchDetailAdded("开始启动游戏流程");
 
-    // ── 缓存: 预计算路径和 JSON，避免启动流程中重复 I/O ──
+    // ── 缓存: 预计算路径，避免启动流程中重复 I/O ──
     // 参考 HMCL/ProjBobcat: 一次读取 version JSON，后续步骤复用
     {
         const QString& ip = config.instancePath;
         m_cachedGameDir = QDir(QFileInfo(ip).dir().absolutePath() + "/..").absolutePath();
         m_cachedBasePath = QFileInfo(ip).dir().absolutePath() + "/..";
+    }
+
+    // ── Fabric 版本 JSON 自愈 ──
+    // 修复旧版安装器生成的缺少必需库（intermediary/ASM/mixin）的 Fabric 版本，
+    // 需在下方合并缓存前执行（可能重写版本 JSON 并补齐库文件）
+    FabricInstaller::repairIncompleteVersionJson(config.instancePath,
+                                                 [this](const QString &msg) { emit launchDetailAdded(msg); });
+
+    {
+        const QString& ip = config.instancePath;
         QJsonObject rawJson = readVersionJson(ip);
         m_cachedMergedJson = mergeInheritsFromJson(ip, rawJson);
     }

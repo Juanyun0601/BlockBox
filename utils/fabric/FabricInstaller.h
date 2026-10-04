@@ -16,6 +16,8 @@
 #include <QProcess>
 #include <QString>
 
+#include <functional>
+
 #include "utils/SettingsManager.h"
 
 /**
@@ -27,6 +29,8 @@ struct FabricVersionInfo {
     QString hash;
     QString launcherMetaVersion;
     QString build;
+    QString intermediaryMaven;      // net.fabricmc:intermediary:<mc>（版本条目自带）
+    QJsonObject launcherMeta;       // Meta 返回的 launcherMeta（libraries/mainClass）
 };
 
 /**
@@ -56,9 +60,15 @@ public:
     FabricDownloadSource downloadSource() const;
 
     /**
-     * @brief 获取基础URL
+     * @brief 获取Fabric Meta基础URL（版本列表/profile json）
+     *        注意: BMCLAPI 的 Fabric Meta 镜像位于 /fabric-meta 前缀下
      */
     QString getBaseUrl() const;
+
+    /**
+     * @brief 获取 Maven 仓库基础URL（Fabric 运行库下载地址前缀）
+     */
+    QString getMavenBaseUrl() const;
 
     /**
      * @brief 获取Fabric版本列表
@@ -68,20 +78,20 @@ public:
     QList<FabricVersionInfo> getFabricVersions(const QString &mcVersion);
 
     /**
-     * @brief 下载Fabric安装包
+     * @brief 下载并安装Fabric（获取版本信息 → 生成版本JSON → 下载运行库）
      * @param mcVersion Minecraft版本号
      * @param fabricVersion Fabric版本号
-     * @param instancePath 实例路径
+     * @param instancePath 实例路径（.minecraft 根目录）
      */
     void downloadFabricInstaller(const QString &mcVersion, const QString &fabricVersion,
                                  const QString &instancePath);
 
     /**
      * @brief 安装Fabric
-     * @param installerPath 安装包路径
+     * @param version 目标Fabric版本信息（需含 launcherMeta）
      * @param instancePath 实例路径
      */
-    void installFabric(const QString &installerPath, const QString &instancePath);
+    void installFabric(const FabricVersionInfo &version, const QString &instancePath);
 
     /**
      * @brief 取消安装
@@ -94,16 +104,6 @@ public:
     bool isInstalling() const;
 
     /**
-     * @brief 构建Fabric下载URL
-     * @param mcVersion Minecraft版本号
-     * @param fabricVersion Fabric版本号
-     * @param hash 文件哈希值
-     * @return 下载URL
-     */
-    QString getFabricDownloadUrl(const QString &mcVersion, const QString &fabricVersion,
-                                const QString &hash);
-
-    /**
      * @brief 设置当前任务ID
      */
     void setCurrentTaskId(const QString &taskId);
@@ -112,6 +112,21 @@ public:
      * @brief 获取当前任务ID
      */
     QString currentTaskId() const;
+
+    /**
+     * @brief 检测并修复旧版安装器生成的残缺 Fabric 版本 JSON
+     *
+     * 旧版安装器生成的版本 JSON 缺少 Fabric 运行必需的库（intermediary 映射、
+     * sponge-mixin、ASM），启动 Knot 时必然崩溃。本方法检测该情况后从 Fabric
+     * Meta 拉取官方 profile 数据重写库列表，并同步下载缺失的库文件。
+     * 对完整/非 Fabric 版本不做任何改动；失败也不阻塞启动流程。
+     *
+     * @param instancePath 版本目录路径（versions/<id>/）
+     * @param log 日志回调（可为空）
+     * @return 版本 JSON 是否完整（原样完整或已修复）
+     */
+    static bool repairIncompleteVersionJson(const QString &instancePath,
+                                            const std::function<void(const QString &)> &log = nullptr);
 
 signals:
     /**
@@ -171,15 +186,15 @@ private:
     FabricInstaller& operator=(const FabricInstaller&) = delete;
 
     /**
-     * @brief 生成Fabric版本JSON
-     * @param installerPath 安装包路径
-     * @param mcVersion Minecraft版本号
-     * @param fabricVersion Fabric版本号
+     * @brief 依据 Meta 版本条目的 launcherMeta 生成 Fabric 版本 JSON
+     *
+     * 结构与官方 /profile/json 一致: id/inheritsFrom/mainClass/libraries，
+     * 不写 arguments —— 启动时由 mergeInheritsFromJson 继承原版完整的 jvm/game 参数。
+     *
+     * @param version Meta 版本条目（需含 launcherMeta）
      * @return 版本JSON对象
      */
-    QJsonObject generateVersionJson(const QString &installerPath,
-                                   const QString &mcVersion,
-                                   const QString &fabricVersion);
+    QJsonObject generateVersionJson(const FabricVersionInfo &version);
 
     /**
      * @brief 创建版本目录结构
@@ -193,15 +208,15 @@ private:
                                   const QString &fabricVersion);
 
     /**
-     * @brief 复制安装jar到版本目录
-     * @param installerPath 安装包路径
-     * @param versionPath 版本目录路径
-     * @param fabricVersion Fabric版本号
-     * @return 是否成功
+     * @brief 下载版本 JSON 中的全部 Fabric 运行库到 libraries 目录
+     *        （首次启动会跳过通用文件补全，库文件必须在安装时就绪）
+     * @param versionJson 版本JSON对象
+     * @param librariesPath 库目录路径
+     * @param failed 输出下载失败的库名列表
+     * @return 是否全部成功
      */
-    bool copyInstallerJar(const QString &installerPath,
-                         const QString &versionPath,
-                         const QString &fabricVersion);
+    bool downloadLibraries(const QJsonObject &versionJson, const QString &librariesPath,
+                           QStringList *failed);
 
     /**
      * @brief 下载文件
@@ -213,6 +228,11 @@ private:
      */
     bool downloadFile(const QString &url, const QString &filePath,
                      const QString &expectedSha1 = QString(), int redirectDepth = 0);
+
+    /**
+     * @brief 抓取 URL 内容到内存（用于 Meta 接口）
+     */
+    QByteArray fetchUrl(const QString &url, bool *ok);
 
     /**
      * @brief 计算文件的SHA1值
@@ -240,11 +260,6 @@ private:
     void updateTaskStatus(const QString &status);
 
     /**
-     * @brief 清理临时文件
-     */
-    void cleanupTempFiles();
-
-    /**
      * @brief 获取Java可执行文件路径
      */
     QString getJavaPath() const;
@@ -261,6 +276,18 @@ private:
      */
     QList<FabricVersionInfo> parseVersionList(const QString &jsonResponse);
 
+    /**
+     * @brief Maven 坐标 → 仓库相对路径
+     *        "net.fabricmc:fabric-loader:0.15.11" → "net/fabricmc/fabric-loader/0.15.11/fabric-loader-0.15.11.jar"
+     */
+    static QString mavenArtifactPath(const QString &mavenName);
+
+    /**
+     * @brief 将 Meta 格式的库条目（name/url/校验和）转换为 Mojang 标准
+     *        downloads.artifact 格式，便于启动器的文件补全与 classpath 构建识别
+     */
+    static QJsonObject libraryToMojangFormat(const QJsonObject &fabricLib, const QString &mavenBaseUrl);
+
     // 成员变量
     QNetworkAccessManager *m_networkManager;
     FabricDownloadSource m_downloadSource;
@@ -272,7 +299,6 @@ private:
     QString m_currentFabricVersion;
     QString m_currentInstancePath;
     QString m_currentTaskId;
-    QString m_tempDir;
 
     qint64 m_totalBytes;
     qint64 m_downloadedBytes;

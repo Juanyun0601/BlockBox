@@ -1,113 +1,96 @@
-# 电脑方块盒子 - 多平台支持
+# 电脑方块盒子 BlockBox
 
-## 项目简介
-电脑方块盒子是一个基于Qt框架开发的跨平台应用，支持鸿蒙、Windows、macOS和Linux系统。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+跨平台 Minecraft 启动器（Java 版 / 基岩版），基于 Qt 与 C++ 开发，AI 全程加持。一个盒子装下整个方块世界。
+
+## 功能特性
+
+- **实例管理**：Java 版 / 基岩版实例的创建、导入、多版本切换与启动，支持从其他启动器迁移
+- **内容下载**：模组、整合包、资源包、光影，聚合 CurseForge 与 Modrinth 源
+- **AI 助手**：AI 对话、崩溃日志智能诊断、指令助手（自然语言转游戏指令）
+- **插件系统**：内置插件 SDK 与插件管理，支持本地扩展（见 `sdk/`）
+- **皮肤编辑**：内置皮肤编辑器与 3D 预览
+- **联机与网络**：局域网联机传输、隧道组网
+- **存档管理**：世界存档备份与恢复
+- **多语言**：简体中文、繁体中文、英语、西班牙语
+
+## 支持平台
+
+- Windows
+- macOS
+- Linux
+- HarmonyOS
+- Android
 
 ## 技术栈
+
 - **框架**: Qt 5.15+ / Qt 6.x
 - **语言**: C++
-- **UI**: Qt Widgets
-- **构建工具**: qmake
-
-## 支持的平台
-- ✅ Windows
-- ✅ macOS
-- ✅ Linux
-- ✅ HarmonyOS
+- **UI**: Qt Widgets + QSS 主题
+- **构建**: qmake
 
 ## 项目结构
+
 ```
-[c]blockbox/
-├── components/       # UI组件
-│   ├── sidebar.cpp
-│   ├── sidebar.h
-│   ├── topbar.cpp
-│   └── topbar.h
-├── pages/           # 页面
-│   ├── browsepage.cpp
-│   ├── browsepage.h
-│   ├── homepage.cpp
-│   ├── homepage.h
-│   ├── resourcespage.cpp
-│   ├── resourcespage.h
-│   ├── settingspage.cpp
-│   └── settingspage.h
-├── styles/          # 样式表
-│   └── style.qss
-├── build/           # 构建目录
-├── BlockBox.pro     # 项目配置文件
-├── main.cpp         # 程序入口
-├── mainwindow.cpp   # 主窗口
-├── mainwindow.h
-├── mainwindow.ui    # UI设计文件
-├── platform.cpp     # 平台适配
-├── platform.h       # 平台检测宏
-└── resources.qrc    # 资源文件
+├── main.cpp            # 程序入口
+├── MainWindow.cpp      # 主窗口
+├── MainWindowPages.cpp # 页面装配
+├── platform.cpp/.h     # 平台适配
+├── BlockBox.pro        # qmake 工程文件
+├── resources.qrc       # Qt 资源清单
+├── components/         # UI 组件（对话框、侧边栏、卡片等）
+├── pages/              # 各功能页面（含 pages/settings/ 设置页）
+├── utils/              # 业务逻辑（启动、下载、认证、模组、插件、网络等）
+├── layouts/            # 自定义布局
+├── styles/             # QSS 样式主题
+├── resources/          # 内置 JSON 数据
+├── Images/             # 图标与图片资源
+├── translations/       # 多语言翻译（.ts / .qm）
+├── sdk/                # 插件 SDK 头文件
+├── tests/              # 探针与测试工程
+├── android/            # Android 工程资源
+└── harmony/            # HarmonyOS 工程说明
 ```
 
 ## 构建说明
 
 ### Windows
-1. 安装Qt Creator和MinGW编译器
-2. 打开Qt Creator，导入BlockBox.pro项目
-3. 选择适当的构建套件（MinGW 64-bit）
-4. 构建项目
-5. 运行生成的可执行文件
+1. 安装 Qt Creator 和 MinGW（或 MSVC）编译器
+2. 打开 Qt Creator，导入 `BlockBox.pro`
+3. 选择 64-bit 构建套件，构建并运行
 
 ### macOS
-1. 安装Qt Creator和Xcode
-2. 打开Qt Creator，导入BlockBox.pro项目
-3. 选择适当的构建套件（Clang 64-bit）
-4. 构建项目
-5. 运行生成的应用程序
+1. 安装 Qt Creator 和 Xcode
+2. 导入 `BlockBox.pro`，选择 Clang 64-bit 套件
+3. 构建并运行
 
 ### Linux
-1. 安装Qt开发包和编译工具
-   ```bash
-   sudo apt-get install qt5-default build-essential
-   ```
-2. 构建项目
-   ```bash
-   qmake BlockBox.pro
-   make
-   ```
-3. 运行生成的可执行文件
-   ```bash
-   ./BlockBoxLinux
-   ```
+```bash
+sudo apt-get install qtbase5-dev qt5-qmake build-essential
+qmake BlockBox.pro
+make
+./BlockBox
+```
 
 ### HarmonyOS
-1. 安装鸿蒙开发环境和Qt for HarmonyOS插件
-2. 打开Qt Creator，导入BlockBox.pro项目
-3. 选择HarmonyOS构建套件
-4. 构建项目
-5. 部署到鸿蒙设备或模拟器
+安装鸿蒙开发环境与 Qt for HarmonyOS 插件后，在 Qt Creator 中选择 HarmonyOS 构建套件构建部署。
 
-## 平台特定配置
+## API 密钥配置
 
-项目使用条件编译和平台宏来处理不同平台的差异：
+本仓库**不包含任何第三方 API 密钥**，凭据均在本地配置，不会随代码上传：
 
-- **Windows**: `WINDOWS_OS` 宏
-- **macOS**: `MAC_OS` 宏
-- **Linux**: `LINUX_OS` 宏
-- **HarmonyOS**: `HARMONY_OS` 宏
+- **CurseForge API Key**：请在应用的「设置」中自行填写，保存在本机配置文件中
+- **微软账户登录**：`utils/AuthManager.cpp` 中的 `client_id` 为占位符，请在本地填入你自己的值。**请勿将真实密钥提交到仓库**（仓库配置了 pre-push 检查用于拦截）
 
-平台适配功能在 `platform.cpp` 和 `platform.h` 文件中实现，包括：
-- 应用数据目录管理
-- 配置文件路径处理
-- 平台检测函数
+## 平台适配
 
-## 样式设计
-项目使用QSS样式表进行UI美化，样式文件位于 `styles/style.qss`。样式设计考虑了跨平台兼容性，确保在不同平台上都能提供良好的视觉体验。
-
-## 开发注意事项
-1. 避免使用平台特定的API，优先使用Qt提供的跨平台API
-2. 使用平台宏进行条件编译时，确保代码的可读性和可维护性
-3. 测试时应在所有支持的平台上进行验证
-4. 资源文件使用Qt资源系统管理，确保在不同平台上都能正确加载
+跨平台差异通过条件编译处理：`WINDOWS_OS` / `MAC_OS` / `LINUX_OS` / `HARMONY_OS` 宏，具体实现在 `platform.cpp` 与 `platform.h`，包括应用数据目录、配置路径与平台检测。
 
 ## 许可证
-本项目采用MIT许可证。
+
+本项目采用 [MIT 许可证](LICENSE) © Juanyun0601
 
 ## 贡献
-欢迎提交Issue和Pull Request，共同完善项目的多平台支持。
+
+欢迎提交 Issue 和 Pull Request。
