@@ -46,7 +46,7 @@ void BackgroundWidget::setImage(const QString &path)
     if (m_imagePath != path) {
         m_imagePath = path;
         updatePixmap();
-        if (m_mode == Image || m_mode == Rotating)
+        if (m_mode == Image || m_mode == Rotating || m_mode == Bing)
             update();
     }
 }
@@ -59,7 +59,7 @@ void BackgroundWidget::setBlurRadius(int radius)
         if (!m_originalPixmap.isNull()) {
             QImage img = m_originalPixmap.toImage();
             m_pixmap = QPixmap::fromImage(blurImage(img, radius));
-            if (m_mode == Image || m_mode == Rotating)
+            if (m_mode == Image || m_mode == Rotating || m_mode == Bing)
                 update();
         }
     }
@@ -191,6 +191,7 @@ void BackgroundWidget::paintEvent(QPaintEvent *event)
         break;
 
     case Image:
+    case Bing:
         if (!m_pixmap.isNull()) {
             QPixmap scaled = m_pixmap.scaled(size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
             int x = (width() - scaled.width()) / 2;

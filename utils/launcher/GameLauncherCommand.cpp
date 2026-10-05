@@ -475,6 +475,23 @@ QStringList GameLauncher::buildClasspath(const QString& instancePath, const QJso
             }
         }
     }
+    else
+    {
+        // PCL/HMCL 风格的独立版本（id 带加载器后缀、无 inheritsFrom，如
+        // "长梦镇"/"1.16.1-Fabric 0.16.14"）: resolveJarName 会从加载器库推出
+        // 原版版本号，而客户端 JAR 实际以版本 id / 目录名命名，需回退查找，
+        // 否则 classpath 缺失客户端 JAR，Knot/Forge 无法定位游戏本体直接崩溃
+        const QString id = versionJson.value("id").toString();
+        const QString dirName = QFileInfo(instancePath).fileName();
+        QString candidate = instancePath + "/" + id + ".jar";
+        if (id.isEmpty() || !QFile::exists(candidate))
+            candidate = instancePath + "/" + dirName + ".jar";
+        if (!candidate.isEmpty() && QFile::exists(candidate))
+        {
+            classpath << candidate;
+            qDebug() << "[GameLauncher] 使用版本 id 命名的客户端 JAR:" << candidate;
+        }
+    }
 
     // ── 合并 inheritsFrom ──
     QJsonObject mergedJson = mergeInheritsFromJson(instancePath, versionJson);

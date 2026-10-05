@@ -75,8 +75,10 @@ components/CustomCheckBox.cpp \
      components/NotificationManager.cpp \
      components/NotificationHistoryDialog.cpp \
      components/InstanceAssistantWindow.cpp \
+     components/GameFloatingIcon.cpp \
      components/BedrockInstanceAssistantWindow.cpp \
      components/BackgroundWidget.cpp \
+     components/FlowLayout.cpp \
      components/NewsCard.cpp \
      components/PerfMonitorCard.cpp \
      components/PerformanceDetailDialog.cpp \
@@ -156,6 +158,7 @@ components/ProjectionBlockEditorDialog.cpp \
     utils/AuthManager.cpp \
     utils/auth/AuthManagerMicrosoft.cpp \
     utils/BackgroundManager.cpp \
+    utils/BingWallpaperManager.cpp \
     utils/ThemeManager.cpp \
     utils/GameLauncher.cpp \
     utils/BedrockLauncher.cpp \
@@ -307,7 +310,9 @@ components/CustomCheckBox.h \
      components/NotificationManager.h \
      components/NotificationHistoryDialog.h \
        components/BackgroundWidget.h \
+       components/FlowLayout.h \
        components/InstanceAssistantWindow.h \
+       components/GameFloatingIcon.h \
        components/BedrockInstanceAssistantWindow.h \
        components/NewsCard.h \
       components/PerfMonitorCard.h \
@@ -363,6 +368,7 @@ components/ProjectionBlockEditorDialog.h \
     utils/AndroidBridge.h \
     utils/AuthManager.h \
     utils/BackgroundManager.h \
+    utils/BingWallpaperManager.h \
     utils/ThemeManager.h \
     utils/GameLauncher.h \
     utils/BedrockLauncher.h \

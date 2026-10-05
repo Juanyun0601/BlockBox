@@ -13,7 +13,7 @@ class BackgroundWidget : public QWidget
     Q_OBJECT
 
 public:
-    enum Mode { Classic, SolidColor, Image, FlowLight, Rotating };
+    enum Mode { Classic, SolidColor, Image, FlowLight, Rotating, Bing };
 
     explicit BackgroundWidget(QWidget *parent = nullptr);
 

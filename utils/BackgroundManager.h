@@ -14,7 +14,8 @@ public:
         SolidColor,
         Image,
         FlowLight,
-        Rotating
+        Rotating,
+        Bing
     };
 
     static BackgroundManager* instance();
@@ -27,6 +28,9 @@ public:
 
     QString imagePath() const;
     void setImagePath(const QString &path);
+
+    QString bingImagePath() const;
+    void setBingImagePath(const QString &path);
 
     int blurRadius() const;
     void setBlurRadius(int radius);
@@ -48,6 +52,7 @@ private:
     BackgroundMode m_mode;
     QString m_solidColor;
     QString m_imagePath;
+    QString m_bingImagePath;
     int m_blurRadius;
 };
 

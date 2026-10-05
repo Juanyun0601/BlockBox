@@ -79,6 +79,22 @@ void BackgroundManager::setImagePath(const QString &path)
     }
 }
 
+QString BackgroundManager::bingImagePath() const
+{
+    return m_bingImagePath;
+}
+
+void BackgroundManager::setBingImagePath(const QString &path)
+{
+    if (m_bingImagePath != path) {
+        m_bingImagePath = path;
+        saveToSettings();
+        if (m_mode == Bing) {
+            emit backgroundChanged();
+        }
+    }
+}
+
 int BackgroundManager::blurRadius() const
 {
     return m_blurRadius;
@@ -90,7 +106,7 @@ void BackgroundManager::setBlurRadius(int radius)
     if (m_blurRadius != radius) {
         m_blurRadius = radius;
         saveToSettings();
-        if (m_mode == Image) {
+        if (m_mode == Image || m_mode == Bing) {
             emit backgroundChanged();
         }
     }
@@ -154,6 +170,15 @@ QString BackgroundManager::backgroundStyleSheet() const
             "%1"
         ).arg(pageTransparency);
 
+    case Bing:
+        // 必应壁纸模式：由 BackgroundWidget 绘制下载的壁纸，页面保持透明透出背景。
+        // 深色底可避免壁纸下载完成前的白屏闪烁
+        return QString(
+            "QMainWindow { background: #0F172A; }\n"
+            "QWidget#contentWrapper { background: transparent; }\n"
+            "%1"
+        ).arg(pageTransparency);
+
     case Classic:
     default:
         return QString();
@@ -166,6 +191,7 @@ void BackgroundManager::loadFromSettings()
     m_mode = static_cast<BackgroundMode>(settings.value("background/mode", static_cast<int>(Classic)).toInt());
     m_solidColor = settings.value("background/solidColor", "#f5f5f5").toString();
     m_imagePath = settings.value("background/imagePath", "").toString();
+    m_bingImagePath = settings.value("background/bingPath", "").toString();
     m_blurRadius = settings.value("background/blurRadius", 0).toInt();
 }
 
@@ -175,5 +201,6 @@ void BackgroundManager::saveToSettings()
     settings.setValue("background/mode", static_cast<int>(m_mode));
     settings.setValue("background/solidColor", m_solidColor);
     settings.setValue("background/imagePath", m_imagePath);
+    settings.setValue("background/bingPath", m_bingImagePath);
     settings.setValue("background/blurRadius", m_blurRadius);
 }

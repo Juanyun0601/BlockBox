@@ -47,8 +47,10 @@
 #include "components/SubNavPanel.h"
 #include "components/TaskBar.h"
 #include "components/InstanceAssistantWindow.h"
+#include "components/GameFloatingIcon.h"
 #include "components/TopBar.h"
 #include "utils/BackgroundManager.h"
+#include "utils/BingWallpaperManager.h"
 #include "utils/ThemeManager.h"
 #include "pages/AccountManagePage.h"
 #include "pages/ForgeVersionListPage.h"
@@ -342,6 +344,18 @@ void MainWindow::initUI()
     // Create task bar at the bottom of the window (hidden by default)
     m_taskBar = new TaskBar(this);
     mainLayout->addWidget(m_taskBar);
+
+#ifdef Q_OS_ANDROID
+    // 安卓版：游戏内悬浮的方块盒子图标，点击弹出/收起实例助手侧栏
+    m_gameFloatingIcon = new GameFloatingIcon(this);
+    const bool floatingIconDark = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
+    m_gameFloatingIcon->setIconPixmap(QPixmap(floatingIconDark
+        ? QStringLiteral(":/Images/blockbox_icon_dark.png")
+        : QStringLiteral(":/Images/logo.png")));
+    m_gameFloatingIcon->hide();
+    connect(m_gameFloatingIcon, &GameFloatingIcon::assistantToggleRequested,
+            this, &MainWindow::toggleGameAssistantOverlay);
+#endif
 
     // Set central widget
     setCentralWidget(centralWidget);
@@ -1159,6 +1173,10 @@ void MainWindow::updateBackgroundWidget()
         m_backgroundWidget->setSolidColor(QColor(bg->solidColor()));
     } else if (bg->currentMode() == BackgroundManager::Image) {
         m_backgroundWidget->setImage(bg->imagePath());
+    } else if (bg->currentMode() == BackgroundManager::Bing) {
+        // 先显示上次缓存的壁纸（可能为空），再由必应壁纸管理器异步补齐最新图片
+        m_backgroundWidget->setImage(bg->bingImagePath());
+        BingWallpaperManager::instance()->ensureLoaded();
     }
 }
 
@@ -1442,9 +1460,44 @@ void MainWindow::onErrorReportGenerated(const QString& report)
     AppMessageBox::information(this, tr("错误分析"), report);
 }
 
+#ifdef Q_OS_ANDROID
+void MainWindow::toggleGameAssistantOverlay()
+{
+    if (!m_instanceAssistantWindow) {
+        m_instanceAssistantWindow = new InstanceAssistantWindow(this);
+        // 安卓游戏内使用侧栏形态：贴屏幕右侧四分之一、半透明
+        m_instanceAssistantWindow->setOverlayMode(true);
+        // 转发资源管理页的存档快捷启动信号到主窗口处理
+        connect(m_instanceAssistantWindow, &InstanceAssistantWindow::quickLaunchSaveRequested,
+                this, &MainWindow::onQuickLaunchSaveClicked);
+    }
+
+    // 再次点击悬浮图标收起侧栏
+    if (m_instanceAssistantWindow->isVisible()) {
+        m_instanceAssistantWindow->hide();
+        return;
+    }
+
+    // 注入当前实例上下文（路径、版本、loader）
+    m_instanceAssistantWindow->setInstanceContext(
+        m_currentInstancePath,
+        m_currentInstanceVersion,
+        m_currentInstanceLoader);
+    m_instanceAssistantWindow->show();
+    m_instanceAssistantWindow->raise();
+    m_instanceAssistantWindow->activateWindow();
+}
+#endif
+
 void MainWindow::onGameStarted()
 {
     qDebug() << "[MainWindow]" << "Game started successfully";
+#ifdef Q_OS_ANDROID
+    // 游戏启动成功：显示游戏内悬浮图标（实例助手入口）
+    if (m_gameFloatingIcon) {
+        m_gameFloatingIcon->show();
+    }
+#endif
     // 游戏窗口已出现，启动任务卡片切换为"运行中"状态
     if (m_taskBar) {
         m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Running);
@@ -1464,6 +1517,16 @@ void MainWindow::onGameStarted()
 void MainWindow::onGameStopped(int exitCode)
 {
     qDebug() << "[MainWindow]" << "Game stopped with exit code:" << exitCode;
+
+#ifdef Q_OS_ANDROID
+    // 游戏退出：隐藏游戏内悬浮图标与实例助手侧栏
+    if (m_gameFloatingIcon) {
+        m_gameFloatingIcon->hide();
+    }
+    if (m_instanceAssistantWindow && m_instanceAssistantWindow->isVisible()) {
+        m_instanceAssistantWindow->hide();
+    }
+#endif
 
     // 用户手动取消启动: 不显示错误信息，直接清除启动任务卡片
     if (m_gameLauncher->wasUserCancelled()) {
@@ -1514,6 +1577,16 @@ void MainWindow::onGameStopped(int exitCode)
 void MainWindow::onGameCrashed(const QString &error)
 {
     qDebug() << "[MainWindow]" << "Game crashed:" << error;
+
+#ifdef Q_OS_ANDROID
+    // 游戏崩溃：隐藏游戏内悬浮图标与实例助手侧栏
+    if (m_gameFloatingIcon) {
+        m_gameFloatingIcon->hide();
+    }
+    if (m_instanceAssistantWindow && m_instanceAssistantWindow->isVisible()) {
+        m_instanceAssistantWindow->hide();
+    }
+#endif
 
     // 重试已调度但尚未执行时，忽略重复的 gameCrashed 信号
     // （QProcess 崩溃时 onProcessError 和 onProcessFinished 都会触发 gameCrashed）

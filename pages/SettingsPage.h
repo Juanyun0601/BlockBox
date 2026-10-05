@@ -143,6 +143,7 @@ private:
     QComboBox *m_backgroundModeCombo;
     QWidget *m_solidColorSection;
     QWidget *m_imageSection;
+    QWidget *m_bingSection;
     QPushButton *m_solidColorBtn;
     QLineEdit *m_imagePathEdit;
     QPushButton *m_browseImageBtn;

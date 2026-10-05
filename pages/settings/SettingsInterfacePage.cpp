@@ -8,7 +8,10 @@
 
 #include <QColor>
 #include <QComboBox>
+#include <QDate>
 #include <QDebug>
+#include <QFile>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include "components/AppFileDialog.h"
 #include <functional>
@@ -19,8 +22,10 @@
 
 #include "../ColorPickerPage.h"
 #include "components/CustomCheckBox.h"
+#include "components/FlowLayout.h"
 #include "components/OutlinedLabel.h"
 #include "utils/BackgroundManager.h"
+#include "utils/BingWallpaperManager.h"
 #include "utils/LanguageManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
@@ -80,10 +85,16 @@ void SettingsPage::initInterfaceSettings()
         row->addWidget(outColorBtn);
         row->addWidget(paletteBtn);
 
-        // 预设颜色网格
-        QHBoxLayout *flow = new QHBoxLayout();
-        flow->setContentsMargins(0, 0, 0, 0);
-        flow->setSpacing(6);
+        // 预设颜色网格：流式布局，容器宽度不足时自动折行，
+        // 避免单行固定排布把设置页最小宽度撑到 650px 导致横向滚动
+        QWidget *presetWrap = new QWidget();
+        presetWrap->setObjectName("settingRow");
+        presetWrap->setAttribute(Qt::WA_StyledBackground, true);
+        if (isLast) {
+            presetWrap->setProperty("lastRow", true);
+        }
+        FlowLayout *flow = new FlowLayout(presetWrap, 6, 6);
+        flow->setContentsMargins(24, 0, 24, 16);
 
         QList<ThemeManager::PresetColor> presets = ThemeManager::instance()->presetColors();
         for (int i = 0; i < presets.size(); i++)
@@ -101,16 +112,6 @@ void SettingsPage::initInterfaceSettings()
             flow->addWidget(btn);
         }
 
-        QWidget *presetWrap = new QWidget();
-        presetWrap->setObjectName("settingRow");
-        presetWrap->setAttribute(Qt::WA_StyledBackground, true);
-        if (isLast) {
-            presetWrap->setProperty("lastRow", true);
-        }
-        QHBoxLayout *presetLayout = new QHBoxLayout(presetWrap);
-        presetLayout->setContentsMargins(24, 0, 24, 16);
-        presetLayout->addLayout(flow);
-        presetLayout->addStretch();
         themeColorCard->addWidget(presetWrap);
 
         return paletteBtn;
@@ -240,7 +241,7 @@ void SettingsPage::initInterfaceSettings()
     QVBoxLayout *backgroundCard = createSettingsCard(layout, tr("背景设置"));
 
     m_backgroundModeCombo = new QComboBox();
-    m_backgroundModeCombo->addItems({tr("经典"), tr("纯色"), tr("图片"), tr("流光"), tr("旋转")});
+    m_backgroundModeCombo->addItems({tr("经典"), tr("纯色"), tr("图片"), tr("流光"), tr("旋转"), tr("必应壁纸")});
     disableWheelEffect(m_backgroundModeCombo);
     {
         const QSignalBlocker blocker(m_backgroundModeCombo);
@@ -250,7 +251,7 @@ void SettingsPage::initInterfaceSettings()
             this, &SettingsPage::onBackgroundModeChanged);
 
     QHBoxLayout *bgModeRow = appendSettingRow(backgroundCard,
-        tr("背景模式"), tr("选择启动器背景的显示方式，旋转背景如《我的世界》启动界面般缓慢转动。"), QString());
+        tr("背景模式"), tr("选择启动器背景的显示方式，旋转背景如《我的世界》启动界面般缓慢转动，必应壁纸使用必应官方每日壁纸。"), QString());
     bgModeRow->addWidget(m_backgroundModeCombo);
 
     // --- Solid color section ---
@@ -342,11 +343,182 @@ void SettingsPage::initInterfaceSettings()
 
     backgroundCard->addWidget(m_imageSection);
 
+    // --- Bing wallpaper section ---
+    m_bingSection = new QWidget();
+    QVBoxLayout *bingLayout = new QVBoxLayout(m_bingSection);
+    bingLayout->setContentsMargins(0, 0, 0, 0);
+    bingLayout->setSpacing(0);
+
+    // 信息行：标题 + 动态状态（版权信息 / 下载进度 / 错误提示）+ 刷新按钮
+    QFrame *bingInfoRow = new QFrame();
+    bingInfoRow->setObjectName("settingRow");
+    bingInfoRow->setAttribute(Qt::WA_StyledBackground, true);
+    QHBoxLayout *bingInfoLayout = new QHBoxLayout(bingInfoRow);
+    bingInfoLayout->setContentsMargins(24, 16, 24, 16);
+    bingInfoLayout->setSpacing(20);
+
+    QVBoxLayout *bingInfoCol = new QVBoxLayout();
+    bingInfoCol->setContentsMargins(0, 0, 0, 0);
+    bingInfoCol->setSpacing(4);
+    QLabel *bingTitleLabel = new QLabel(tr("必应每日壁纸"), bingInfoRow);
+    bingTitleLabel->setObjectName("settingTitle");
+    QLabel *bingStatusLabel = new QLabel(bingInfoRow);
+    bingStatusLabel->setObjectName("settingDesc");
+    bingStatusLabel->setWordWrap(true);
+    bingInfoCol->addWidget(bingTitleLabel);
+    bingInfoCol->addWidget(bingStatusLabel);
+    bingInfoLayout->addLayout(bingInfoCol, 1);
+
+    QPushButton *bingRefreshBtn = new QPushButton(tr("刷新"), bingInfoRow);
+    bingRefreshBtn->setObjectName("browseBtn");
+    bingRefreshBtn->setCursor(Qt::PointingHandCursor);
+    bingInfoLayout->addWidget(bingRefreshBtn);
+    bingLayout->addWidget(bingInfoRow);
+
+    connect(bingRefreshBtn, &QPushButton::clicked, this, [this, bingStatusLabel]() {
+        bingStatusLabel->setText(tr("正在获取必应壁纸列表…"));
+        BingWallpaperManager::instance()->refresh();
+    });
+
+    // 缩略图行：横向滚动的最近 8 天壁纸缩略图，点击即选用
+    QScrollArea *bingStripScroll = new QScrollArea(m_bingSection);
+    bingStripScroll->setWidgetResizable(true);
+    bingStripScroll->setFixedHeight(76);
+    bingStripScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    bingStripScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    bingStripScroll->setFrameShape(QFrame::NoFrame);
+
+    QWidget *bingStripContainer = new QWidget(bingStripScroll);
+    QHBoxLayout *bingStripLayout = new QHBoxLayout(bingStripContainer);
+    bingStripLayout->setContentsMargins(0, 2, 0, 2);
+    bingStripLayout->setSpacing(8);
+    bingStripLayout->addStretch();
+    bingStripScroll->setWidget(bingStripContainer);
+
+    QFrame *bingStripRow = new QFrame();
+    bingStripRow->setObjectName("settingRow");
+    bingStripRow->setAttribute(Qt::WA_StyledBackground, true);
+    bingStripRow->setProperty("lastRow", true);
+    QHBoxLayout *bingStripRowLayout = new QHBoxLayout(bingStripRow);
+    bingStripRowLayout->setContentsMargins(24, 12, 24, 12);
+    bingStripRowLayout->setSpacing(20);
+    bingStripRowLayout->addWidget(bingStripScroll, 1);
+    bingLayout->addWidget(bingStripRow);
+
+    // 更新缩略图栏的选中高亮
+    auto updateBingStripChecked = [this, bingStripContainer]() {
+        int cur = BingWallpaperManager::instance()->currentIndex();
+        const QString accent = ThemeManager::instance()->currentThemeColor();
+        const QList<QPushButton*> buttons = bingStripContainer->findChildren<QPushButton*>();
+        for (QPushButton *btn : buttons) {
+            if (!btn->property("bingIndex").isValid())
+                continue;
+            bool selected = btn->property("bingIndex").toInt() == cur;
+            btn->setProperty("bingSelected", selected);
+            btn->setStyleSheet(selected
+                ? QString("QPushButton { border: 2px solid %1; }").arg(accent)
+                : QString());
+        }
+    };
+
+    // 根据当前选中壁纸刷新信息行文本
+    auto updateBingStatus = [bingStatusLabel]() {
+        BingWallpaperManager *mgr = BingWallpaperManager::instance();
+        if (mgr->wallpapers().isEmpty()) {
+            bingStatusLabel->setText(tr("正在获取必应壁纸列表…"));
+            return;
+        }
+        if (mgr->currentIndex() < 0 || mgr->currentIndex() >= mgr->wallpapers().size())
+            return;
+        const BingWallpaperManager::WallpaperInfo info = mgr->wallpapers().at(mgr->currentIndex());
+        QDate date = QDate::fromString(info.date, "yyyyMMdd");
+        QString dateText = date.isValid() ? date.toString("yyyy-MM-dd") : info.date;
+        QString line = QString("%1 · %2").arg(dateText, info.title);
+        if (info.copyright.isEmpty()) {
+            bingStatusLabel->setText(line);
+        } else {
+            bingStatusLabel->setText(line + "\n" + info.copyright);
+        }
+    };
+
+    // 重建缩略图栏（列表加载或刷新后调用）
+    auto rebuildBingStrip = [this, bingStripContainer, bingStripLayout, updateBingStripChecked]() {
+        // 清空旧按钮（保留末尾的 stretch）
+        while (bingStripLayout->count() > 1) {
+            QLayoutItem *item = bingStripLayout->takeAt(0);
+            if (item->widget())
+                item->widget()->deleteLater();
+            delete item;
+        }
+
+        BingWallpaperManager *mgr = BingWallpaperManager::instance();
+        const QList<BingWallpaperManager::WallpaperInfo> list = mgr->wallpapers();
+        for (int i = list.size() - 1; i >= 0; --i) {
+            QPushButton *thumbBtn = new QPushButton(bingStripContainer);
+            thumbBtn->setFixedSize(108, 60);
+            thumbBtn->setIconSize(QSize(104, 56));
+            thumbBtn->setCursor(Qt::PointingHandCursor);
+            thumbBtn->setProperty("bingIndex", i);
+            thumbBtn->setToolTip(list.at(i).title.isEmpty() ? list.at(i).copyright : list.at(i).title);
+
+            const QString thumbPath = mgr->thumbPath(i);
+            if (QFile::exists(thumbPath)) {
+                thumbBtn->setIcon(QIcon(thumbPath));
+            }
+
+            connect(thumbBtn, &QPushButton::clicked, this,
+                    [this, i, bingStatusLabel, updateBingStripChecked, updateBingStatus]() {
+                BingWallpaperManager::instance()->selectWallpaper(i);
+                updateBingStripChecked();
+                // 未命中缓存时先给出下载中提示，完成后由 wallpaperImageReady 刷新文本
+                if (BingWallpaperManager::instance()->currentImagePath().isEmpty()) {
+                    bingStatusLabel->setText(tr("正在下载壁纸…"));
+                } else {
+                    updateBingStatus();
+                }
+            });
+
+            bingStripLayout->insertWidget(0, thumbBtn);
+        }
+
+        updateBingStripChecked();
+        updateBingStatus();
+    };
+
+    BingWallpaperManager *bingMgr = BingWallpaperManager::instance();
+    connect(bingMgr, &BingWallpaperManager::wallpaperListUpdated, this,
+            [rebuildBingStrip]() { rebuildBingStrip(); });
+    connect(bingMgr, &BingWallpaperManager::wallpaperThumbReady, this,
+            [this, bingStripContainer](int index, const QString &path) {
+                const QList<QPushButton*> buttons = bingStripContainer->findChildren<QPushButton*>();
+                for (QPushButton *btn : buttons) {
+                    if (btn->property("bingIndex").toInt() == index) {
+                        btn->setIcon(QIcon(path));
+                    }
+                }
+            });
+    connect(bingMgr, &BingWallpaperManager::wallpaperImageReady, this,
+            [updateBingStatus](const QString &) { updateBingStatus(); });
+    connect(bingMgr, &BingWallpaperManager::fetchFailed, this,
+            [bingStatusLabel](const QString &reason) {
+                bingStatusLabel->setText(tr("获取失败：%1").arg(reason));
+            });
+
+    // 进入设置页时若壁纸列表已就绪，直接按缓存内容重建缩略图栏
+    if (!bingMgr->wallpapers().isEmpty()) {
+        rebuildBingStrip();
+    } else {
+        bingStatusLabel->setText(tr("正在获取必应壁纸列表…"));
+    }
+
+    backgroundCard->addWidget(m_bingSection);
+
     // Initial visibility based on current mode
     int modeIdx = m_backgroundModeCombo->currentIndex();
     m_solidColorSection->setVisible(modeIdx == BackgroundManager::SolidColor);
     m_imageSection->setVisible(modeIdx == BackgroundManager::Image
                             || modeIdx == BackgroundManager::Rotating);
+    m_bingSection->setVisible(modeIdx == BackgroundManager::Bing);
 
     // Toggle visibility on mode change
     connect(m_backgroundModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -354,6 +526,7 @@ void SettingsPage::initInterfaceSettings()
         m_solidColorSection->setVisible(idx == BackgroundManager::SolidColor);
         m_imageSection->setVisible(idx == BackgroundManager::Image
                                 || idx == BackgroundManager::Rotating);
+        m_bingSection->setVisible(idx == BackgroundManager::Bing);
     });
 
     connect(m_browseImageBtn, &QPushButton::clicked, [this]() {

@@ -24,7 +24,6 @@
 #include <QParallelAnimationGroup>
 #include <QScreen>
 #include <QScrollBar>
-#include <QWindow>
 #include <QSequentialAnimationGroup>
 #include <QShowEvent>
 #include <QTimer>

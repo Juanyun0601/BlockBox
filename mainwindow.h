@@ -21,6 +21,7 @@ class TopBar;
 class TaskBar;
 class SideBar;
 class InstanceAssistantWindow;
+class GameFloatingIcon;
 class InstanceSelectPage;
 class AccountManagePage;
 class LaunchDetailsPage;
@@ -207,6 +208,8 @@ private:
     ClipboardMonitor *m_clipboardMonitor = nullptr;
     bool m_clipboardDialogOpen = false; ///< 剪贴板确认框是否已弹出（防剪贴板变化重入叠加弹窗）
 
+    GameFloatingIcon *m_gameFloatingIcon = nullptr; ///< 游戏内悬浮图标（仅安卓：实例助手入口）
+
     QList<QShortcut *> m_shortcuts;
 
     BackgroundWidget *m_backgroundWidget;
@@ -235,6 +238,11 @@ private:
     void initGameLauncher();
     void updateBackgroundWidget();
     void setSideBarVisible(bool visible);
+
+#ifdef Q_OS_ANDROID
+    /** 安卓游戏内：弹出/收起右侧实例助手侧栏（由 GameFloatingIcon 点击触发） */
+    void toggleGameAssistantOverlay();
+#endif
 
     void initEssentialPages();
     void ensurePageInitialized(PageIndex pageIndex);

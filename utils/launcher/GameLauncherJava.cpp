@@ -24,7 +24,9 @@ GameLauncher::JavaInfo GameLauncher::detectJava()
     process.setProcessChannelMode(QProcess::MergedChannels);
     process.start("java", {"-version"});
 
-    if (process.waitForFinished(2000))
+    // PATH 上的 java 可能是失效的 Oracle javapath 存根（快速退出），
+    // 也可能因杀软扫描/系统负载而启动缓慢，超时需留足余量
+    if (process.waitForFinished(5000))
     {
         QByteArray output = process.readAll();
         QString outputStr = QString::fromLocal8Bit(output);
@@ -52,14 +54,23 @@ GameLauncher::JavaInfo GameLauncher::detectJava()
     commonPaths << "C:/Program Files/Java";
     commonPaths << "C:/Program Files (x86)/Java";
 
-    QSettings settings("HKEY_LOCAL_MACHINE\\SOFTWARE\\JavaSoft\\Java Runtime Environment", QSettings::NativeFormat);
-    QString currentVersion = settings.value("CurrentVersion").toString();
-    if (!currentVersion.isEmpty())
+    // 注册表检测: 现代 JDK（9+，如 Microsoft JDK/Oracle JDK）注册在 JavaSoft\JDK 下，
+    // 旧 JRE 注册在 JavaSoft\Java Runtime Environment，两处都需要查询
+    static const char* javaSoftKeys[] = {
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\JavaSoft\\Java Runtime Environment",
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\JavaSoft\\JDK",
+    };
+    for (const char* javaSoftKey : javaSoftKeys)
     {
-        QString javaHome = settings.value(currentVersion + "/JavaHome").toString();
-        if (!javaHome.isEmpty())
+        QSettings settings(javaSoftKey, QSettings::NativeFormat);
+        QString currentVersion = settings.value("CurrentVersion").toString();
+        if (!currentVersion.isEmpty())
         {
-            commonPaths << javaHome + "/bin";
+            QString javaHome = settings.value(currentVersion + "/JavaHome").toString();
+            if (!javaHome.isEmpty())
+            {
+                commonPaths << javaHome + "/bin";
+            }
         }
     }
 #endif
@@ -111,6 +122,32 @@ GameLauncher::JavaInfo GameLauncher::detectJava()
 QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations()
 {
     QList<JavaInfo> javaList;
+    QSet<QString> seenPaths;
+
+    // ── 0) 已缓存的 Java 优先（设置页下拉框的主要数据源）──
+    // PATH 上的 java 可能是失效的 Oracle javapath 存根、常见目录也可能没有 Java，
+    // 此时目录扫描与 detectJava 都会扑空，但 config.ini 缓存里的 Java 仍然有效。
+    // 与 findBestJavaVersion 保持一致：缓存条目验证存在性 + 可执行性后纳入。
+    const QList<QPair<QString, QString>> cachedInstallations =
+        SettingsManager::instance()->getJavaInstallations();
+    for (const QPair<QString, QString>& inst : cachedInstallations)
+    {
+        if (!QFile::exists(inst.first))
+        {
+            continue;
+        }
+        QString absPath = QDir::toNativeSeparators(inst.first);
+        if (seenPaths.contains(absPath))
+        {
+            continue;
+        }
+        JavaInfo info;
+        if (validateJavaPath(inst.first, info))
+        {
+            seenPaths.insert(absPath);
+            javaList.append(info);
+        }
+    }
 
     QList<QString> commonPaths;
 #ifdef Q_OS_ANDROID
@@ -139,9 +176,15 @@ QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations()
 #endif
                 if (QFileInfo::exists(javaExePath))
                 {
+                    QString absPath = QDir::toNativeSeparators(javaExePath);
+                    if (seenPaths.contains(absPath))
+                    {
+                        continue;
+                    }
                     JavaInfo info;
                     if (validateJavaPath(javaExePath, info))
                     {
+                        seenPaths.insert(absPath);
                         javaList.append(info);
                     }
                 }
@@ -152,17 +195,10 @@ QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations()
     JavaInfo pathJava = detectJava();
     if (pathJava.valid)
     {
-        bool alreadyExists = false;
-        for (const JavaInfo& info : javaList)
+        QString absPath = QDir::toNativeSeparators(pathJava.path);
+        if (!seenPaths.contains(absPath))
         {
-            if (info.path == pathJava.path)
-            {
-                alreadyExists = true;
-                break;
-            }
-        }
-        if (!alreadyExists)
-        {
+            seenPaths.insert(absPath);
             javaList.append(pathJava);
         }
     }
@@ -312,7 +348,9 @@ bool GameLauncher::validateJavaPath(const QString& path, JavaInfo& info)
     process.setProcessChannelMode(QProcess::MergedChannels);
     process.start(path, {"-version"});
 
-    if (process.waitForFinished(2000))
+    // 正常情况 java -version 在百毫秒级完成，但杀软实时扫描/系统负载下
+    // JVM 启动可能超过 2 秒（实测 2.1s+），超时过短会把有效的 Java 误判为无效
+    if (process.waitForFinished(5000))
     {
         QByteArray output = process.readAll();
         QString outputStr = QString::fromLocal8Bit(output);

@@ -475,6 +475,18 @@ void GameLauncher::downloadMissingFiles(const QString& instancePath)
             QDir().mkpath(parentDir);
         } else {
             jarPath = instancePath + "/" + jarName + ".jar";
+            // PCL/HMCL 风格的独立版本（无 inheritsFrom，id 带加载器后缀）:
+            // 客户端 JAR 以版本 id / 目录名命名（如 长梦镇.jar），与 buildClasspath
+            // 的回退逻辑保持一致，避免误将原版客户端重复下载为 <原版版本号>.jar
+            const QString id = versionJson.value("id").toString();
+            const QString dirName = QFileInfo(instancePath).fileName();
+            if (!QFile::exists(jarPath)) {
+                QString candidate = instancePath + "/" + id + ".jar";
+                if (id.isEmpty() || !QFile::exists(candidate))
+                    candidate = instancePath + "/" + dirName + ".jar";
+                if (!candidate.isEmpty() && QFile::exists(candidate))
+                    jarPath = candidate;
+            }
         }
 
         QString downloadUrl, downloadSha1;
