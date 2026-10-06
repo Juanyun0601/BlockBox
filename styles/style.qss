@@ -3339,10 +3339,13 @@ QWidget#aiChatBubbleRefChips {
     margin-top: 6px;
 }
 
+/* 圆角取高度一半以内：Qt 对超出控件尺寸的 border-radius（999px）不钳制，
+ * 会直接渲染成直角（见 contentViewSwitch 处说明，ref_chip_round_probe 实测）。
+ * 标签高约 19-22px，取 8px 保证带/不带关闭按钮两种高度都出圆角 */
 QFrame#aiChatRefChip {
     background: @PRIMARY_BG@;
     border: 1px solid @PRIMARY_LIGHT@;
-    border-radius: 999px;
+    border-radius: 8px;
 }
 
 QLabel#aiChatRefChipLabel {

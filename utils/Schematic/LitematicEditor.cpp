@@ -15,7 +15,11 @@
 #include <QFileInfo>
 #include <QMap>
 #include <QSet>
+#ifdef Q_OS_WIN
 #include <QtZlib/zlib.h>
+#else
+#include <zlib.h>
+#endif
 
 #include <algorithm>
 #include <cmath>

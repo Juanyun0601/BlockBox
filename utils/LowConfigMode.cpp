@@ -11,6 +11,11 @@
 #include <QDebug>
 #include <QtGlobal>
 #include <QThread>
+#include <QFile>
+#include <QIODevice>
+#include <QTextStream>
+#include <QRegularExpression>
+#include <QStringList>
 
 // 静态成员初始化
 LowConfigMode* LowConfigMode::m_instance = nullptr;

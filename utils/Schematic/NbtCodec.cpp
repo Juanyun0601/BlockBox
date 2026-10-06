@@ -10,7 +10,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#ifdef Q_OS_WIN
 #include <QtZlib/zlib.h>
+#else
+#include <zlib.h>
+#endif
 
 #include <cstring>
 

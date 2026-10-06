@@ -90,7 +90,7 @@ private:
     };
 
     // 分页相关
-    static const int PAGE_SIZE = 30;
+    static const int kDownloadPageSize = 30;
     int m_downloadCurrentPage;
     QWidget *m_downloadPaginationBar;
     QPushButton *m_downloadPrevBtn;

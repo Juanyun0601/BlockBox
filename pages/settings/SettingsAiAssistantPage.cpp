@@ -213,7 +213,7 @@ void SettingsPage::initAiAssistantSettings()
             dlgLayout->addLayout(btnLayout);
 
             // 添加
-            connect(addBtn, &QPushButton::clicked, &dlg, [&, &modelList, &loadModels]() {
+            connect(addBtn, &QPushButton::clicked, &dlg, [&, modelList, loadModels]() {
                 QDialog addDlg(&dlg);
                 addDlg.setWindowTitle(tr("添加自定义模型"));
                 addDlg.setMinimumWidth(380);
@@ -279,7 +279,7 @@ void SettingsPage::initAiAssistantSettings()
             });
 
             // 编辑
-            connect(editBtn, &QPushButton::clicked, &dlg, [&, &modelList, &loadModels]() {
+            connect(editBtn, &QPushButton::clicked, &dlg, [&, modelList, loadModels]() {
                 QListWidgetItem *sel = modelList->currentItem();
                 if (!sel) return;
                 QJsonObject obj = sel->data(Qt::UserRole).toJsonObject();
@@ -343,7 +343,7 @@ void SettingsPage::initAiAssistantSettings()
             });
 
             // 删除
-            connect(delBtn, &QPushButton::clicked, &dlg, [&, &modelList, &loadModels, item]() {
+            connect(delBtn, &QPushButton::clicked, &dlg, [&, modelList, loadModels, item]() {
                 QListWidgetItem *sel = modelList->currentItem();
                 if (!sel) return;
                 QJsonObject obj = sel->data(Qt::UserRole).toJsonObject();
@@ -374,7 +374,7 @@ void SettingsPage::initAiAssistantSettings()
             });
 
             // 导入
-            connect(importBtn, &QPushButton::clicked, &dlg, [&, &modelList, &loadModels, item]() {
+            connect(importBtn, &QPushButton::clicked, &dlg, [&, modelList, loadModels, item]() {
                 QString filePath = QFileDialog::getOpenFileName(&dlg, tr("导入模型配置"), QString(),
                     tr("JSON 文件 (*.json);;所有文件 (*)"));
                 if (filePath.isEmpty()) return;

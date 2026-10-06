@@ -196,6 +196,7 @@ private:
     QTextEdit* createStreamEdit(const QString &objectName, QWidget *parent);
     void appendStreamText(QTextEdit *edit, const QString &full, int &flushedLen);
     void finalizeStreamWidgets(); ///< 收尾：正文切回 QLabel 的 Markdown 渲染，思考编辑器保留
+    void invalidateStreamingWidgets(); ///< 消息控件整体销毁前作废流式指针与挂起的刷新
 
     // AI 气泡底部操作栏
     void createBubbleActions(QWidget *container, const QString &content);

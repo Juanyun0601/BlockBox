@@ -77,6 +77,8 @@ struct ChatMessage
     QString stats;      // 统计信息（仅 AI 回复，如 token 用量/耗时/费用）
     QList<AgentToolCall> toolCalls; // 本条 AI 消息触发的工具调用步骤（用于 UI 展示与持久化）
     QList<ResourceReference> references; // 本条用户消息携带的引用列表（用于 UI 展示样式化卡片；AI 侧通过 content 中附加的引用文本感知）
+    bool roundTriggeredTools = false; // 本轮流式响应是否触发了工具调用（工具循环中间轮；重放历史时跳过其内容，因其从未进入模型请求）
+    QJsonArray toolPhase; // 本轮工具循环的真实请求消息序列（assistant tool_calls + tool 结果），随下一轮请求原样回放以保住服务商前缀缓存
 };
 
 /**
@@ -87,6 +89,7 @@ struct TokenUsage
     int promptTokens = 0;     // 输入 token 数
     int completionTokens = 0; // 输出 token 数
     int totalTokens = 0;      // 总 token 数
+    int cachedTokens = 0;     // 命中前缀缓存的输入 token 数（0 = 服务商未返回或未命中）
     bool valid = false;       // 是否有有效数据
 };
 
@@ -290,6 +293,25 @@ public:
      * 更新本地 Conversation::messages 并持久化。
      */
     QList<ChatMessage> pendingHistory() const { return m_pendingHistory; }
+
+    /**
+     * @brief 本轮流式响应是否触发了工具调用
+     * @return true 表示本次响应包含 tool_calls（该轮为工具循环中间轮）
+     *
+     * 在 streamFinished 回调中读取（[DONE] 解析时工具调用已累积完毕，取值可靠）。
+     * UI 据此为待持久化的 assistant 消息标记 roundTriggeredTools。
+     */
+    bool roundHadToolCalls() const { return m_hasToolCalls; }
+
+    /**
+     * @brief 获取本轮对话（自 sendMessage 起）已累积的工具循环请求消息
+     * @return assistant tool_calls 消息与 tool 结果消息的 JSON 序列
+     *
+     * UI 在 streamFinished 时附加到最终 assistant 消息的 toolPhase，
+     * 下一轮 sendMessage 重建 messages 时原样回放，使请求前缀与上一轮
+     * 的实际请求保持逐 token 一致，最大化服务商隐式前缀缓存命中率。
+     */
+    QJsonArray turnToolPhase() const { return m_turnToolPhase; }
 
     /**
      * @brief 主线程回填用户对 ask_user 工具的回答
@@ -561,6 +583,15 @@ private:
     void dispatchToolCall(const QJsonObject &toolCall);
 
     // --- Agent 本地工具执行函数（耗时工具使用 QtConcurrent 子线程化） ---
+    /**
+     * @brief 获取当前正在执行的 tool_call 对象
+     * @return 当前 tool_call 的 JSON（id/function.name/function.arguments）；无活跃调用时为空对象
+     *
+     * 一次响应包含多个 tool_calls 时按队列逐个执行，异步工具的回调
+     * （onSearchReplyFinished/onWebpageReplyFinished）据此定位当前调用的 id 与参数，
+     * 而不是固定取累积器首项。
+     */
+    QJsonObject currentDispatchedToolCall() const;
     /// 列出本机所有实例目录及子实例
     QString executeListInstances();
     /// 检查加载器兼容性（参数：loader, installed_loaders 数组）
@@ -774,6 +805,9 @@ private:
     WebSearchMode m_pendingMode;              // 暂存联网模式
     AssistantMode m_pendingAssistantMode;     // 暂存 AI 助手工作模式（决定是否启用 Agent 工具）
     QJsonArray m_pendingMessages;             // 当前请求的 messages 数组（含 tool_calls 消息）
+    QJsonArray m_turnToolPhase;               // 本轮对话累积的工具循环请求消息（跨轮缓存回放用）
+    QJsonArray m_pendingToolQueue;            // 当前响应待执行的 tool_calls 队列（一次响应多个 tool_calls 时逐个执行）
+    int m_toolQueuePos = 0;                   // 队列中下一个待执行的 tool_call 索引
     QJsonArray m_toolCallsAccumulator;        // 累积的 tool_calls（流式增量合并）
     int m_currentToolCallIndex;               // 当前正在累积的 tool_call 索引
     bool m_hasToolCalls;                      // 本次响应是否包含 tool_calls

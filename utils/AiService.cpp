@@ -136,6 +136,9 @@ void AiService::sendMessage(const QList<ChatMessage>& history, const AiModel& mo
     m_toolRound = 0;
     m_pendingToolCalls.clear();
     m_allSearchResults.clear(); // 重置累积搜索结果
+    m_turnToolPhase = QJsonArray(); // 新一轮对话：清空上一轮的工具循环请求消息
+    m_pendingToolQueue = QJsonArray();
+    m_toolQueuePos = 0;
 
     // 上下文压缩：仅工作模式 + 非压缩中 + 估算 token 超阈值时自动触发
     // 压缩是一次完整的模型请求，移到工作线程执行，完成后回到主线程继续发送，
@@ -243,8 +246,21 @@ void AiService::finishSendMessageAfterCompression(int generation,
     }
 
     // 3. 追加对话历史（压缩成功时为压缩后的历史，早期消息已替换为摘要）
+    // 缓存友好重放规则（最大化服务商隐式前缀缓存命中率）：
+    // - roundTriggeredTools 的 assistant 消息是工具循环中间轮，其内容从未进入过
+    //   模型请求（请求中的 assistant 消息 content 为空、只带 tool_calls），跳过；
+    // - 携带 toolPhase 的消息先把上一轮工具循环的真实请求消息（assistant tool_calls
+    //   + tool 结果）原样回放，再输出本条消息，使前缀与上一轮的请求逐 token 一致。
     for (const auto& msg : m_pendingHistory)
     {
+        if (msg.role == QStringLiteral("assistant") && msg.roundTriggeredTools)
+        {
+            continue;
+        }
+        for (const QJsonValue &phaseVal : msg.toolPhase)
+        {
+            messagesArray.append(phaseVal);
+        }
         QJsonObject msgObj;
         msgObj["role"] = msg.role;
         msgObj["content"] = msg.content;
@@ -638,6 +654,9 @@ void AiService::stopStreaming()
     m_toolRound = 0;
     m_pendingToolCalls.clear();
     m_allSearchResults.clear();
+    m_turnToolPhase = QJsonArray(); // 中止后丢弃未完成回合的工具循环消息
+    m_pendingToolQueue = QJsonArray();
+    m_toolQueuePos = 0;
 }
 
 void AiService::onReadyRead()
@@ -716,17 +735,24 @@ void AiService::onReplyFinished()
             return;
         }
 
-        // 将 assistant 的 tool_calls 消息加入 messages 历史
+        // 将 assistant 的 tool_calls 消息加入 messages 历史与缓存回放序列
         QJsonObject assistantMsg;
         assistantMsg["role"] = "assistant";
         assistantMsg["content"] = QStringLiteral(""); // 工具调用时 content 通常为空
         assistantMsg["tool_calls"] = m_toolCallsAccumulator;
         m_pendingMessages.append(assistantMsg);
+        m_turnToolPhase.append(assistantMsg);
 
-        // 取第一个 tool_call 分发执行
-        // （OpenAI 协议允许一次返回多个 tool_calls 并行执行，本实现为简化按顺序逐个处理）
-        QJsonObject firstToolCall = m_toolCallsAccumulator[0].toObject();
-        dispatchToolCall(firstToolCall);
+        // 队列化本响应的全部 tool_calls：逐个执行并回填结果，全部完成后
+        // 才重新请求模型。保证每个 tool_call 都有对应 tool 结果消息（协议完整），
+        // 且请求前缀只增不变（单次重放内缓存仍然连续）。
+        m_pendingToolQueue = m_toolCallsAccumulator;
+        m_toolQueuePos = 0;
+
+        // 执行第一个 tool_call
+        // （OpenAI 协议允许一次返回多个 tool_calls，此前仅执行首个导致
+        //   其余 tool_call 无结果消息、模型被迫重复调用；现改为队列逐个执行）
+        dispatchToolCall(m_pendingToolQueue[m_toolQueuePos].toObject());
         return;
     }
 
@@ -771,6 +797,16 @@ void AiService::parseSseData(const QString& data)
         m_lastUsage.completionTokens = usage["completion_tokens"].toInt();
         m_lastUsage.totalTokens = usage["total_tokens"].toInt();
         m_lastUsage.valid = (m_lastUsage.totalTokens > 0);
+
+        // 前缀缓存命中统计（命中部分通常按更低价格计费且显著降低首 token 延迟）：
+        // OpenAI/GLM/Kimi 等返回 prompt_tokens_details.cached_tokens，
+        // DeepSeek 返回 prompt_cache_hit_tokens；prompt_tokens 均已包含命中部分
+        int cachedTokens = usage["prompt_tokens_details"].toObject()["cached_tokens"].toInt(0);
+        if (cachedTokens <= 0)
+        {
+            cachedTokens = usage["prompt_cache_hit_tokens"].toInt(0);
+        }
+        m_lastUsage.cachedTokens = qMax(0, cachedTokens);
     }
 
     QJsonArray choices = root["choices"].toArray();
@@ -928,19 +964,21 @@ void AiService::onSearchReplyFinished()
     int resultCount = 0;
     bool hadError = (reply->error() != QNetworkReply::NoError);
 
-    // 提取查询词与 tool_call id（从累积的 tool_calls 中）
+    // 提取查询词与 tool_call id（取当前正在执行的 tool_call，多工具队列时可能非首项）
     QString toolCallId;
-    if (!m_toolCallsAccumulator.isEmpty())
     {
-        QJsonObject firstToolCall = m_toolCallsAccumulator[0].toObject();
-        toolCallId = firstToolCall["id"].toString();
-        QJsonObject functionObj = firstToolCall["function"].toObject();
-        QString argumentsStr = functionObj["arguments"].toString();
-        QJsonParseError parseErr;
-        QJsonDocument argDoc = QJsonDocument::fromJson(argumentsStr.toUtf8(), &parseErr);
-        if (parseErr.error == QJsonParseError::NoError && argDoc.isObject())
+        QJsonObject currentToolCall = currentDispatchedToolCall();
+        if (!currentToolCall.isEmpty())
         {
-            query = argDoc.object()["query"].toString();
+            toolCallId = currentToolCall["id"].toString();
+            QJsonObject functionObj = currentToolCall["function"].toObject();
+            QString argumentsStr = functionObj["arguments"].toString();
+            QJsonParseError parseErr;
+            QJsonDocument argDoc = QJsonDocument::fromJson(argumentsStr.toUtf8(), &parseErr);
+            if (parseErr.error == QJsonParseError::NoError && argDoc.isObject())
+            {
+                query = argDoc.object()["query"].toString();
+            }
         }
     }
 
@@ -1114,12 +1152,14 @@ void AiService::onWebpageReplyFinished()
     m_webpageReply->deleteLater();
     m_webpageReply = nullptr;
 
-    // 提取 tool_call id
+    // 提取 tool_call id（取当前正在执行的 tool_call，多工具队列时可能非首项）
     QString toolCallId;
-    if (!m_toolCallsAccumulator.isEmpty())
     {
-        QJsonObject firstToolCall = m_toolCallsAccumulator[0].toObject();
-        toolCallId = firstToolCall["id"].toString();
+        QJsonObject currentToolCall = currentDispatchedToolCall();
+        if (!currentToolCall.isEmpty())
+        {
+            toolCallId = currentToolCall["id"].toString();
+        }
     }
 
     bool fetchOk = true;
@@ -1565,9 +1605,21 @@ void AiService::continueWithToolResult(const QString &toolCallId, const QString 
     toolMsg["name"] = toolName;
     toolMsg["content"] = truncateToolResult(result);
     m_pendingMessages.append(toolMsg);
+    m_turnToolPhase.append(toolMsg);
 
     // 增加工具调用轮次
     m_toolRound++;
+
+    // 队列中还有未执行的 tool_call：继续执行（不重新请求模型），
+    // 待全部 tool_call 都有结果后再统一重发
+    ++m_toolQueuePos;
+    if (m_toolQueuePos < m_pendingToolQueue.size())
+    {
+        dispatchToolCall(m_pendingToolQueue[m_toolQueuePos].toObject());
+        return;
+    }
+    m_pendingToolQueue = QJsonArray();
+    m_toolQueuePos = 0;
 
     // 重置 tool_calls 累积器，准备接收下一轮流式响应
     m_toolCallsAccumulator = QJsonArray();
@@ -1639,6 +1691,11 @@ int AiService::estimateTokenCount(const QList<ChatMessage> &messages) const
         {
             tokens += msg.reasoning.size() / 3;
         }
+        // 工具循环消息（assistant tool_calls + tool 结果）实际会随请求发送，计入估算
+        if (!msg.toolPhase.isEmpty())
+        {
+            tokens += estimateTokenCount(msg.toolPhase);
+        }
     }
     return tokens;
 }
@@ -1683,9 +1740,22 @@ QList<ChatMessage> AiService::compressContext(const QList<ChatMessage> &history,
         sysEnd++;
     }
 
-    // 2. 保留最近 CONTEXT_KEEP_RECENT_COUNT 条消息
-    int recentStart = history.size() - CONTEXT_KEEP_RECENT_COUNT;
-    if (recentStart <= sysEnd)
+    // 2. 保留最近 CONTEXT_KEEP_RECENT_COUNT 条"实际会发送"的消息
+    // 工具循环中间轮的 assistant 消息（roundTriggeredTools）重放历史时会被跳过，
+    // 不占窗口名额，避免有效上下文被其挤占
+    int kept = 0;
+    int recentStart = history.size();
+    while (recentStart > sysEnd && kept < CONTEXT_KEEP_RECENT_COUNT)
+    {
+        --recentStart;
+        const ChatMessage &winMsg = history[recentStart];
+        if (winMsg.role == QStringLiteral("assistant") && winMsg.roundTriggeredTools)
+        {
+            continue;
+        }
+        kept++;
+    }
+    if (kept == 0 || recentStart <= sysEnd)
     {
         return {}; // 早期消息不足以压缩
     }
@@ -1699,6 +1769,22 @@ QList<ChatMessage> AiService::compressContext(const QList<ChatMessage> &history,
                              : (msg.role == QStringLiteral("assistant")) ? QStringLiteral("助手")
                                                                          : QStringLiteral("系统");
         earlyTexts.append(QStringLiteral("[%1] %2").arg(roleLabel, msg.content));
+        // 摘要指令要求保留工具关键返回结果，但工具结果只存在于 toolPhase 中，
+        // 截断后附入摘要输入（完整结果过长，会挤占摘要请求上下文）
+        for (const QJsonValue &phaseVal : msg.toolPhase)
+        {
+            const QJsonObject phaseMsg = phaseVal.toObject();
+            if (phaseMsg.value("role").toString() != QStringLiteral("tool"))
+            {
+                continue;
+            }
+            QString resultText = phaseMsg.value("content").toString();
+            if (resultText.size() > 600)
+            {
+                resultText = resultText.left(600) + QStringLiteral("…");
+            }
+            earlyTexts.append(QStringLiteral("[工具结果] %1").arg(resultText));
+        }
     }
     QString earlyText = earlyTexts.join(QStringLiteral("\n\n"));
 
@@ -1870,13 +1956,26 @@ void AiService::applyAgentTools(QJsonObject &body)
     body["tool_choice"] = QStringLiteral("auto");
 }
 
+QJsonObject AiService::currentDispatchedToolCall() const
+{
+    // 一次响应包含多个 tool_calls 时按队列逐个执行，异步回调据此定位当前调用
+    if (!m_pendingToolQueue.isEmpty() && m_toolQueuePos < m_pendingToolQueue.size())
+    {
+        return m_pendingToolQueue[m_toolQueuePos].toObject();
+    }
+    if (!m_toolCallsAccumulator.isEmpty())
+    {
+        return m_toolCallsAccumulator[0].toObject();
+    }
+    return QJsonObject();
+}
+
 void AiService::dispatchToolCall(const QJsonObject &toolCall)
 {
     QJsonObject functionObj = toolCall["function"].toObject();
     QString name = functionObj["name"].toString();
     QString argumentsStr = functionObj["arguments"].toString();
     QString toolCallId = toolCall["id"].toString();
-
     // 发出工具调用开始信号
     emit agentToolCallStarted(name, argumentsStr);
 

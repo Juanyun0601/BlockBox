@@ -387,11 +387,10 @@ AiChatPage::AiChatPage(QWidget *parent)
     m_streamThrottle = new QTimer(this);
     m_streamThrottle->setSingleShot(true);
     connect(m_streamThrottle, &QTimer::timeout, this, [this]() {
-        // 回合已被中止/结束时气泡可能已销毁，跳过本轮刷新
-        if (!m_isStreaming)
-        {
-            return;
-        }
+        // 注意：这里不能以 m_isStreaming 作守卫——AiService 在每轮 data:[DONE]
+        // 都会 emit streamFinished（工具调用轮次也会），期间流式仍在继续，
+        // 用它拦截会导致后续轮次的增量全部堆积到最后一次性显示；
+        // 控件销毁的场景由 clearMessageArea/showWelcome 的 invalidateStreamingWidgets 兜底
         bool contentChanged = m_streamDirty;
         bool thinkingChanged = m_streamThinkingDirty;
         if (!contentChanged && !thinkingChanged) return;
@@ -1597,8 +1596,32 @@ void AiChatPage::switchToConversation(int index)
     m_inputEdit->setFocus();
 }
 
+// 消息控件整体销毁（切对话/新建/删除/清空）前作废流式状态：
+// 节流回调持有当前气泡指针，不停表清零就会在 50ms 后访问已删除控件
+void AiChatPage::invalidateStreamingWidgets()
+{
+    if (m_streamThrottle)
+    {
+        m_streamThrottle->stop();
+    }
+    m_streamDirty = false;
+    m_streamThinkingDirty = false;
+    m_currentAiBubble = nullptr;
+    m_currentThinkingBubble = nullptr;
+    m_currentThinkingContent = nullptr;
+    m_currentContentLabel = nullptr;
+    m_currentThinkingLabel = nullptr;
+    m_currentContentEdit = nullptr;
+    m_currentThinkingEdit = nullptr;
+    m_streamFlushedLen = 0;
+    m_streamThinkingFlushedLen = 0;
+    m_typingIndicator = nullptr;
+}
+
 void AiChatPage::clearMessageArea()
 {
+    invalidateStreamingWidgets();
+
     // 移除所有项（消息气泡、stretch），保留 m_welcomeWidget 不删除
     QLayoutItem *item;
     while ((item = m_messageLayout->takeAt(0)) != nullptr)
@@ -1620,6 +1643,8 @@ void AiChatPage::showWelcome(bool visible)
     // 欢迎区（标题/简介/工作模式快捷按钮）已按需求整体移除：
     // 空状态只保留背景与底部输入区，welcome 控件保留但永不显示。
     Q_UNUSED(visible)
+
+    invalidateStreamingWidgets();
 
     // 先清空布局中的所有 stretch 和 m_welcomeWidget（不删除 widget）
     QLayoutItem *item;
@@ -2882,10 +2907,18 @@ void AiChatPage::onStreamFinished(const TokenUsage &usage)
     {
         if (usage.valid)
         {
+            // 缓存命中率：命中部分按更低价格计费，用于观察前缀缓存效果
+            QString cacheText;
+            if (usage.cachedTokens > 0 && usage.promptTokens > 0)
+            {
+                const int hitPct = qRound(usage.cachedTokens * 100.0 / usage.promptTokens);
+                cacheText = tr("（缓存命中 %1%）").arg(hitPct);
+            }
             // 费用估算（通用均价：$0.5/1M 输入, $1.5/1M 输出）
             double cost = (usage.promptTokens * 0.5 + usage.completionTokens * 1.5) / 1000000.0;
-            statsText = tr("✓ 已完成 · 输入 %1 · 输出 %2 · 共 %3 tokens · 耗时 %4s · ≈ $%5")
+            statsText = tr("✓ 已完成 · 输入 %1%2 · 输出 %3 · 共 %4 tokens · 耗时 %5s · ≈ $%6")
                             .arg(usage.promptTokens)
+                            .arg(cacheText)
                             .arg(usage.completionTokens)
                             .arg(usage.totalTokens)
                             .arg(QString::number(elapsedSec, 'f', 1))
@@ -2908,6 +2941,11 @@ void AiChatPage::onStreamFinished(const TokenUsage &usage)
         aiMsg.reasoning = m_currentReasoning;
         aiMsg.stats = statsText;
         aiMsg.toolCalls = m_currentAgentToolCalls;
+        // 本轮是否触发工具调用（工具循环中间轮，重放历史时跳过其内容）
+        aiMsg.roundTriggeredTools = m_aiService->roundHadToolCalls();
+        // 本轮已累积的工具循环请求消息；最终轮时为完整序列，
+        // 下一轮 sendMessage 重建 messages 时原样回放以保住前缀缓存
+        aiMsg.toolPhase = m_aiService->turnToolPhase();
         m_conversations[m_currentConvIndex].messages.append(aiMsg);
     }
 
@@ -3589,8 +3627,14 @@ void AiChatPage::regenerateLastAnswer()
         return;
     }
 
-    // 删除该 assistant 消息（以及其后所有消息）
+    // 删除该 assistant 消息（以及其后所有消息），并继续移除其前方连续的
+    // assistant 中间轮消息（工具调用轮），使重试从触发该轮的用户消息开始，
+    // 避免残留孤立的中间轮消息破坏下一轮请求的上下文与缓存前缀
     while (msgs.size() > lastAssistant)
+    {
+        msgs.removeLast();
+    }
+    while (!msgs.isEmpty() && msgs.last().role == "assistant")
     {
         msgs.removeLast();
     }
@@ -3743,6 +3787,15 @@ void AiChatPage::doSaveConversations()
                 }
                 msgObj["toolCalls"] = tcArray;
             }
+            // 序列化工具循环中间轮标记与工具循环请求消息（供下一轮请求保真回放前缀缓存）
+            if (msg.roundTriggeredTools)
+            {
+                msgObj["roundTriggeredTools"] = true;
+            }
+            if (!msg.toolPhase.isEmpty())
+            {
+                msgObj["toolPhase"] = msg.toolPhase;
+            }
             // 序列化用户消息携带的引用列表（用于历史消息样式化展示）
             if (!msg.references.isEmpty())
             {
@@ -3839,6 +3892,9 @@ void AiChatPage::loadConversations()
                 tc.errorMessage = tcObj["errorMessage"].toString();
                 msg.toolCalls.append(tc);
             }
+            // 反序列化工具循环中间轮标记与工具循环请求消息（向后兼容：旧数据无此字段时跳过）
+            msg.roundTriggeredTools = msgObj["roundTriggeredTools"].toBool(false);
+            msg.toolPhase = msgObj["toolPhase"].toArray();
             // 反序列化用户消息携带的引用列表（向后兼容：旧数据无此字段时为空列表）
             QJsonArray refArray = msgObj["references"].toArray();
             for (const QJsonValue &refVal : refArray)
@@ -4561,6 +4617,12 @@ void AiChatPage::onAgentToolCallStarted(const QString &name, const QString &argu
     m_currentToolStepCards.append(card);
     m_currentPendingStepCard = card;
 
+    // 记录到本回合工具调用列表（供随 streamFinished 持久化到对话历史）
+    AgentToolCall rec;
+    rec.name = name;
+    rec.arguments = arguments;
+    m_currentAgentToolCalls.append(rec);
+
     // 滚动到底部
     QScrollBar *sb = m_messageArea->verticalScrollBar();
     sb->setValue(sb->maximum());
@@ -4569,6 +4631,14 @@ void AiChatPage::onAgentToolCallStarted(const QString &name, const QString &argu
 void AiChatPage::onAgentToolCallFinished(const QString &name, const QString &resultSummary,
                                          qint64 durationMs, bool success)
 {
+    // 回填最后一个同名工具调用记录的执行信息（started/finished 顺序成对出现）
+    if (!m_currentAgentToolCalls.isEmpty() && m_currentAgentToolCalls.last().name == name)
+    {
+        m_currentAgentToolCalls.last().resultSummary = resultSummary;
+        m_currentAgentToolCalls.last().durationMs = durationMs;
+        m_currentAgentToolCalls.last().success = success;
+    }
+
     // 工具调用结束，恢复思考状态（仍处于流式）
     if (m_isStreaming)
     {

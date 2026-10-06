@@ -767,15 +767,15 @@ void ContentDetailPage::applyDownloadFilter()
     }
 
     // 分页：计算总页数并限制当前页
-    int totalPages = (matchedIndices.size() + PAGE_SIZE - 1) / PAGE_SIZE;
+    int totalPages = (matchedIndices.size() + kDownloadPageSize - 1) / kDownloadPageSize;
     if (totalPages <= 0) totalPages = 1;
     if (m_downloadCurrentPage >= totalPages)
         m_downloadCurrentPage = totalPages - 1;
     if (m_downloadCurrentPage < 0)
         m_downloadCurrentPage = 0;
 
-    int startIdx = m_downloadCurrentPage * PAGE_SIZE;
-    int endIdx = qMin(startIdx + PAGE_SIZE, matchedIndices.size());
+    int startIdx = m_downloadCurrentPage * kDownloadPageSize;
+    int endIdx = qMin(startIdx + kDownloadPageSize, matchedIndices.size());
 
     // 构建当前页应显示的索引集合
     QSet<int> visibleSet;
@@ -824,7 +824,7 @@ void ContentDetailPage::updateDownloadPagination()
         if (vm && lm && tm) totalMatched++;
     }
 
-    int totalPages = (totalMatched + PAGE_SIZE - 1) / PAGE_SIZE;
+    int totalPages = (totalMatched + kDownloadPageSize - 1) / kDownloadPageSize;
     if (totalPages <= 0) totalPages = 1;
 
     bool needPagination = totalPages > 1;

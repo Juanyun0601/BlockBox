@@ -19,8 +19,12 @@
 #include <QList>
 #include <QProcess>
 
+// 进程枚举依赖 Win32 API（CreateToolhelp32Snapshot），非 Windows 平台
+// 上的实现为“未检测到游戏”的空实现。
+#ifdef Q_OS_WIN
 #include <windows.h>
 #include <tlhelp32.h>
+#endif
 
 namespace {
 
@@ -129,6 +133,7 @@ QString extractDPropertyValue(const QString &cmdLine, const QString &key)
 
 bool GameDetector::isJavaGameRunning()
 {
+#ifdef Q_OS_WIN
   HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if (snapshot == INVALID_HANDLE_VALUE)
   {
@@ -153,10 +158,14 @@ bool GameDetector::isJavaGameRunning()
 
   CloseHandle(snapshot);
   return found;
+#else
+  return false;
+#endif
 }
 
 std::optional<GameProcessInfo> GameDetector::detectRunningGame()
 {
+#ifdef Q_OS_WIN
   HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if (snapshot == INVALID_HANDLE_VALUE)
   {
@@ -239,6 +248,9 @@ std::optional<GameProcessInfo> GameDetector::detectRunningGame()
   }
 
   return std::nullopt;
+#else
+  return std::nullopt;
+#endif
 }
 
 // ============================================================================

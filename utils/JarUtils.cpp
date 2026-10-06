@@ -16,7 +16,11 @@
 #include <QUuid>
 #include <QMutex>
 #include <QMutexLocker>
+#ifdef Q_OS_WIN
 #include <QtZlib/zlib.h>
+#else
+#include <zlib.h>
+#endif
 
 // zlib 已通过 .pro 的 -lz 静态链接，直接调用即可，无需运行时动态加载
 

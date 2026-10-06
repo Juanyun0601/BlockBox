@@ -1,7 +1,7 @@
 QT       += core gui network concurrent svg
 
-# Android uses OpenGL ES, not OpenGL desktop
-android: QT += opengl
+# Android/OHOS use OpenGL ES; QOpenGLWidget (QtOpenGLWidgets) also works over ES
+android: QT += opengl openglwidgets
 !android: QT += opengl openglwidgets
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
@@ -542,8 +542,9 @@ lrelease.CONFIG += no_link target_predeps
 QMAKE_EXTRA_COMPILERS += lrelease
 
 # Multi-platform support configurations
-# HarmonyOS support
-contains(QT_ARCH, arm64-v8a): {
+# HarmonyOS support（qt-ohos 的 QT_ARCH 是 arm64，不能按 arm64-v8a 判断；
+# 且 ohos spec 引入 linux.conf 会让下面的 linux 块也命中，故 linux 块需排除 ohos）
+contains(QMAKE_PLATFORM, ohos): {
     TARGET = BlockBoxHarmony
     DEFINES += HARMONY_OS
     # 更新检查鸿蒙桥接:QtCore 私有 JS 线程接口 + NAPI
@@ -555,7 +556,7 @@ contains(QT_ARCH, arm64-v8a): {
     # 缺省按与本工程同级的 qt-ohos 源码树定位;其他布局用 qmake 传入:
     #   qmake ... "INCLUDEPATH+=<qt-ohos>/script/work/qt6/qtbase/src/3rdparty/node-addon-api"
     NODE_ADDON_API_DIR = $$clean_path($$_PRO_FILE_PWD_/../qt-ohos/script/work/qt6/qtbase/src/3rdparty/node-addon-api)
-    EXISTS($$NODE_ADDON_API_DIR) {
+    exists($$NODE_ADDON_API_DIR) {
         INCLUDEPATH += $$NODE_ADDON_API_DIR
     } else {
         warning("node-addon-api headers not found; set INCLUDEPATH to qt-ohos node-addon-api for harmony build")
@@ -579,8 +580,8 @@ macx: {
     QMAKE_INFO_PLIST = Info.plist
 }
 
-# Linux specific configurations
-linux: {
+# Linux specific configurations（ohos spec 含 linux.conf，会命中 linux scope，需排除）
+linux:!ohos: {
     TARGET = BlockBoxLinux
     DEFINES += LINUX_OS
     # Add Linux specific resources if needed
@@ -598,8 +599,10 @@ android: {
     ANDROID_MIN_SDK_VERSION = 24
     ANDROID_TARGET_SDK_VERSION = 34
 
-    # Android ABIs
-    ANDROID_ABIS = armeabi-v7a arm64-v8a x86 x86_64
+    # Android ABIs（打包脚本按 ABI 单独构建时经命令行传入，此处仅给缺省值）
+    isEmpty(ANDROID_ABIS) {
+        ANDROID_ABIS = armeabi-v7a arm64-v8a x86 x86_64
+    }
 
     # Android permissions (added via AndroidManifest.xml)
     # INTERNET, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE, etc.
@@ -608,7 +611,6 @@ android: {
     DEFINES -= WINDOWS_OS
 
     # Use OpenGL ES instead of desktop OpenGL
-    QT -= openglwidgets
     DEFINES += QT_OPENGL_ES_2
 
     # Android-specific libraries

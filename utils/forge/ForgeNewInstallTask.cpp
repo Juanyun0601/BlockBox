@@ -28,7 +28,11 @@
 #include <QUuid>
 #include <QLibrary>
 
+#ifdef Q_OS_WIN
 #include <QtZlib/zlib.h>
+#else
+#include <zlib.h>
+#endif
 
 #ifndef Z_OK
 #define Z_OK 0

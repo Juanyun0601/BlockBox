@@ -13,6 +13,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
+#include <QStandardPaths>
 
 #include "utils/SettingsManager.h"
 

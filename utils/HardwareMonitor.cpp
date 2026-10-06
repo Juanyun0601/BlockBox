@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QStringList>
+#include <QRegularExpression>
 #include <QFile>
 #include <QTextStream>
 

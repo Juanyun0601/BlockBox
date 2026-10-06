@@ -5,12 +5,15 @@
  * 流程：
  *   1. 启动真实 MainWindow，切到 AI 助手页；
  *   2. 【新方案】直接驱动 AiChatPage 的流式槽（思考段 + 正文段），全程 50ms 心跳
- *      统计事件循环停顿（心跳只覆盖流式阶段，截图窗口剔除）；
- *   3. 流式中/结束后各抓一张截图，并断言流式用 QTextEdit 增量渲染、
+ *      统计事件循环停顿（心跳只覆盖流式阶段，截图与中途收尾窗口剔除）；
+ *   3. 【工作模式时序】在流式中途触发一次 onStreamFinished（等价于第一轮 data:[DONE]，
+ *      此后 m_isStreaming 变 false），断言后续轮次仍继续增量显示——不能退化成
+ *      "全部输出完才一次性显示"；
+ *   4. 流式中/结束后各抓一张截图，并断言流式用 QTextEdit 增量渲染、
  *      收尾后切回 QLabel 的 Markdown；
- *   4. 【旧方案基线】在同一窗口用 QLabel 全量 setText 复现改动前的刷新方式，
+ *   5. 【旧方案基线】在同一窗口用 QLabel 全量 setText 复现改动前的刷新方式，
  *      测出每次刷新耗时，作为卡顿根因的对照数据；
- *   5. exec 结束后还原对话存档（探针不改动用户数据）。
+ *   6. exec 结束后还原对话存档（探针不改动用户数据）。
  *
  * 注：探针在包含 AiChatPage.h 前把 private 置为 public，仅为直接设置
  *     m_isStreaming 等内部状态；生产代码不受影响。
@@ -170,6 +173,11 @@ int main(int argc, char *argv[])
     int tick = 0;
     const int reasoningTicks = 60;
     const int contentTicks = 400;
+    // 工作模式时序：每轮 data:[DONE] 都会 emit streamFinished，第一轮结束在第 80 拍
+    const int midFinishTick = reasoningTicks + 20;
+    double midFinishMs = 0;
+    double lenAfterMid = 0;
+    double midFinBegin = -1, midFinEnd = -1;
     double finalizeMs = 0;
 
     QObject::connect(&feeder, &QTimer::timeout, [&]() {
@@ -184,22 +192,58 @@ int main(int argc, char *argv[])
         {
             content += contentBase;
             page->onStreamContent(contentBase);
+
+            // 复现工作模式：第一轮 [DONE] 触发 onStreamFinished（m_isStreaming 变 false），
+            // 此后仍要继续流式显示后续轮次的内容
+            if (tick == midFinishTick)
+            {
+                TokenUsage u;
+                u.valid = false;
+                midFinBegin = double(beat.elapsed());
+                QElapsedTimer t;
+                t.start();
+                page->onStreamFinished(u);
+                midFinishMs = double(t.nsecsElapsed() / 1e6);
+                midFinEnd = double(beat.elapsed());
+                settle(80);
+                fprintf(stderr, "  info: round-1 [DONE] -> onStreamFinished (%.0f ms), m_isStreaming=%d\n",
+                        midFinishMs, int(page->m_isStreaming));
+                expect("mid-round: m_isStreaming is false after [DONE]", !page->m_isStreaming,
+                       QString());
+            }
+
             if (tick == reasoningTicks + 150)
             {
                 shotBegin = double(beat.elapsed());
                 w.grab().save(outFile(QStringLiteral("ai_stream_mid.png")));
                 shotEnd = double(beat.elapsed());
-                auto *edit = page->findChild<QTextEdit *>(QStringLiteral("streamMsgContent"));
-                auto *lbl = page->findChild<QLabel *>(QStringLiteral("msgContent"));
-                expect("mid: stream edit exists", edit != nullptr, QString());
-                expect("mid: label hidden", lbl != nullptr && !lbl->isVisible(), QString());
+
+                const auto edits = page->findChildren<QTextEdit *>(QStringLiteral("streamMsgContent"));
+                QTextEdit *edit = edits.isEmpty() ? nullptr : edits.last();
+                QLabel *curLbl = (edit && edit->parentWidget())
+                                     ? edit->parentWidget()->findChild<QLabel *>(QStringLiteral("msgContent"))
+                                     : nullptr;
+                expect("mid: round-2 streaming edit exists", edit != nullptr, QString());
+                expect("mid: current bubble label hidden", curLbl != nullptr && !curLbl->isVisible(),
+                       QString());
                 if (edit)
                 {
-                    fprintf(stderr, "  info: mid edit %dx%d docH=%d textLen=%d\n",
+                    lenAfterMid = double(edit->document()->characterCount());
+                    fprintf(stderr, "  info: mid edit %dx%d docH=%d textLen=%.0f\n",
                             edit->width(), edit->height(),
-                            int(edit->document()->size().height()),
-                            int(edit->document()->characterCount()));
+                            int(edit->document()->size().height()), lenAfterMid);
                 }
+                expect("mid: round-2 content rendered incrementally", lenAfterMid > 100,
+                       QStringLiteral("textLen=%1").arg(lenAfterMid, 0, 'f', 0));
+            }
+            else if (tick == reasoningTicks + 300)
+            {
+                // 中途 [DONE] 之后内容仍在增量增长（否则就是"全部输出完才显示"）
+                const auto edits = page->findChildren<QTextEdit *>(QStringLiteral("streamMsgContent"));
+                const double now = edits.isEmpty() ? 0
+                                                   : double(edits.last()->document()->characterCount());
+                expect("keeps streaming after round [DONE]", now > lenAfterMid,
+                       QStringLiteral("mid=%1 later=%2").arg(lenAfterMid).arg(now));
             }
             return;
         }
@@ -223,15 +267,18 @@ int main(int argc, char *argv[])
         settle(200);
         w.grab().save(outFile(QStringLiteral("ai_stream_after.png")));
 
-        auto *lbl = page->findChild<QLabel *>(QStringLiteral("msgContent"));
+        // 中途 [DONE] 会产生两个气泡，取最后一个（当前回合）做断言
+        const auto labels = page->findChildren<QLabel *>(QStringLiteral("msgContent"));
+        QLabel *lbl = labels.isEmpty() ? nullptr : labels.last();
         auto *edit = page->findChild<QTextEdit *>(QStringLiteral("streamMsgContent"));
         expect("after: edit destroyed", edit == nullptr, QString());
         expect("after: label visible", lbl != nullptr && lbl->isVisible(), QString());
         expect("after: label holds full content",
                lbl != nullptr && lbl->text().size() >= content.size(),
-               QStringLiteral("labelLen=%1 contentLen=%2")
+               QStringLiteral("labelLen=%1 contentLen=%2 bubbles=%3")
                    .arg(lbl ? lbl->text().size() : 0)
-                   .arg(content.size()));
+                   .arg(content.size())
+                   .arg(labels.size()));
         fprintf(stderr, "  info: finalize (markdown render) = %.0f ms for %d chars\n",
                 finalizeMs, int(content.size()));
 
@@ -259,11 +306,13 @@ int main(int argc, char *argv[])
             expect("thinking: header found", false, QString());
         }
 
-        // 流式阶段心跳统计（剔除截图窗口）
+        // 流式阶段心跳统计（剔除截图与中途 [DONE] 收尾渲染窗口）
         std::vector<double> gaps;
         for (const auto &s : samples)
         {
             if (shotBegin >= 0 && s.first >= shotBegin - 100 && s.first <= shotEnd + 100)
+                continue;
+            if (midFinBegin >= 0 && s.first >= midFinBegin - 100 && s.first <= midFinEnd + 100)
                 continue;
             gaps.push_back(s.second);
         }
