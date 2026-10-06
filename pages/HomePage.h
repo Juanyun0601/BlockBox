@@ -22,8 +22,11 @@ class RingGauge;
 class AnalogClock;
 class QVBoxLayout;
 class FlowLayout;
-class QParallelAnimationGroup;
 class QLabel;
+class QShowEvent;
+class Skin3DWidget;
+class CarouselView;
+class HomeSkinPanel;
 
 struct RecentPlayEntry
 {
@@ -59,6 +62,7 @@ public:
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override;
   void resizeEvent(QResizeEvent *event) override;
+  void showEvent(QShowEvent *event) override;
 
 signals:
   // Quick link signals (Section 2)
@@ -113,22 +117,24 @@ private:
   void rebuildContent();
   QWidget* sectionWidget(const QString &type);
 
-  // Section 1: Carousel
+  // Section 1: Carousel（轮播 + 右侧当前皮肤预览面板）
   QWidget* createCarouselSection();
-  QWidget *m_carouselStack;         // 承载两张叠加图片的容器
-  QLabel *m_carouselImage;          // 当前显示图片
-  QLabel *m_carouselOverlay;        // 待滑入图片（重叠在上层）
-  QParallelAnimationGroup *m_carouselAnimGroup;
+  QWidget* createSkinPanel();
+  /** 依据账户列表切换皮肤模型 / 「添加首个账户」空态，并同步加载当前皮肤 */
+  void refreshSkinPanel();
+  CarouselView *m_carouselView;     // 自绘轮播视图（圆角+描边，双层滑动切换）
   QLabel *m_carouselPlaceholder;
   QVector<QPushButton*> m_carouselDots;
   QTimer *m_carouselTimer;
   QStringList m_carouselPaths;
   int m_currentCarouselIndex;
-  bool m_carouselAnimating;
   void updateCarousel();
   void setCarouselIndex(int index);
   void updateCarouselHeight();
-  void updateCarouselLayerGeometry();
+  // 轮播右侧皮肤面板
+  HomeSkinPanel *m_skinPanel = nullptr;
+  Skin3DWidget *m_skin3D = nullptr;
+  QPushButton *m_skinAddBtn = nullptr;
 
   // Section 2: Quick Links
   QWidget* createQuickLinksSection();
@@ -141,12 +147,19 @@ private:
   // Section 3: Recent Plays
   QWidget* createRecentPlaysSection();
   void rebuildRecentPlaysContent();
+  void scheduleRecentPlaysRebuild();   // 延迟合并的重建（避免在布局激活过程中改布局）
+  void reloadRecentPlaysIfChanged();   // 重新扫描数据，仅在内容变化时强制重建
   QWidget* buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *parent, int cardWidth);
   int calculateRecentPlayCardWidth() const;
   QVector<RecentPlayEntry> m_recentPlays;
   QWidget *m_recentPlaysContainer;  // 最近游玩区域的容器，用于刷新时替换内容
   FlowLayout *m_recentPlaysLayout;  // 最近游玩区域的布局（横排卡片，一行四个）
   bool m_recentPlaysResizing = false;  // 防止 resize 时递归重建
+  bool m_recentPlaysRebuildPending = false;  // 已有延迟重建排队（合并连续 resize）
+  bool m_recentPlaysRefreshPending = false;  // 已有延迟数据刷新排队
+  bool m_recentPlaysForceRebuild = false;    // 数据有变化，下次重建不可跳过
+  int m_recentPlaysBuiltWidth = -1;          // 上次重建使用的卡片宽度
+  int m_recentPlaysBuiltCount = -1;          // 上次重建的卡片数量
 
   // Section 4: Websites
   QWidget* createWebsitesSection();

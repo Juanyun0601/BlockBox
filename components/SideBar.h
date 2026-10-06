@@ -65,6 +65,9 @@ public:
     /** 子导航面板收起后，在侧边栏底部显示/隐藏"展开"按钮 */
     void setExpandButtonVisible(bool visible);
 
+    /** 在侧边栏底部（"展开"按钮上方）挂载应用内更新的圆形进度按钮 */
+    void setUpdateButton(QWidget *button);
+
 protected:
     void showEvent(QShowEvent *event) override;
 

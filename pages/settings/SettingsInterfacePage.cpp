@@ -22,8 +22,8 @@
 
 #include "../ColorPickerPage.h"
 #include "components/CustomCheckBox.h"
-#include "components/FlowLayout.h"
 #include "components/OutlinedLabel.h"
+#include "../../layouts/FlowLayout.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
 #include "utils/LanguageManager.h"
@@ -36,9 +36,8 @@ void SettingsPage::initInterfaceSettings()
     layout->setContentsMargins(24, 8, 24, 24);
     layout->setSpacing(16);
 
-    OutlinedLabel *titleLabel = new OutlinedLabel(tr("界面设置"), m_interfaceSettings);
-    titleLabel->setObjectName("sectionTitle");
-    layout->addWidget(titleLabel);
+    // ── 标题栏（标题 + 恢复默认值按钮）──
+    createSettingsHeader(layout, tr("界面设置"));
 
     // ── 启动器主题 ──
     QVBoxLayout *themeCard = createSettingsCard(layout, tr("启动器主题"));
@@ -93,8 +92,10 @@ void SettingsPage::initInterfaceSettings()
         if (isLast) {
             presetWrap->setProperty("lastRow", true);
         }
-        FlowLayout *flow = new FlowLayout(presetWrap, 6, 6);
-        flow->setContentsMargins(24, 0, 24, 16);
+        QHBoxLayout *presetLayout = new QHBoxLayout(presetWrap);
+        presetLayout->setContentsMargins(24, 0, 24, 16);
+        FlowLayout *flow = new FlowLayout(nullptr, 0, 6, 6);
+        presetLayout->addLayout(flow, 1);
 
         QList<ThemeManager::PresetColor> presets = ThemeManager::instance()->presetColors();
         for (int i = 0; i < presets.size(); i++)
@@ -442,7 +443,8 @@ void SettingsPage::initInterfaceSettings()
     };
 
     // 重建缩略图栏（列表加载或刷新后调用）
-    auto rebuildBingStrip = [this, bingStripContainer, bingStripLayout, updateBingStripChecked]() {
+    auto rebuildBingStrip = [this, bingStripContainer, bingStripLayout, bingStatusLabel,
+                             updateBingStripChecked, updateBingStatus]() {
         // 清空旧按钮（保留末尾的 stretch）
         while (bingStripLayout->count() > 1) {
             QLayoutItem *item = bingStripLayout->takeAt(0);
@@ -643,11 +645,6 @@ void SettingsPage::initInterfaceSettings()
         tr("隐藏设置按钮"), tr("在左侧导航栏中隐藏设置入口。"), QString(), true);
     hideSettingsRow->addWidget(hideSettingsCheck);
 
-    // ── 底部操作 ──
-    QPushButton *restoreDefaultsBtn = new QPushButton(tr("恢复默认值"), m_interfaceSettings);
-    restoreDefaultsBtn->setObjectName("restoreDefaultsBtn");
-    connect(restoreDefaultsBtn, &QPushButton::clicked, this, &SettingsPage::onRestoreDefaults);
-
+    // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
-    layout->addWidget(restoreDefaultsBtn, 0, Qt::AlignRight);
 }

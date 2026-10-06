@@ -51,6 +51,7 @@ SOURCES += \
     layouts/FlowLayout.cpp \
     layouts/MasonryLayout.cpp \
     components/TopBar.cpp \
+    components/UpdateProgressButton.cpp \
     components/TaskBar.cpp \
     components/SideBar.cpp \
     components/LaunchTaskCard.cpp \
@@ -78,7 +79,6 @@ components/CustomCheckBox.cpp \
      components/GameFloatingIcon.cpp \
      components/BedrockInstanceAssistantWindow.cpp \
      components/BackgroundWidget.cpp \
-     components/FlowLayout.cpp \
      components/NewsCard.cpp \
      components/PerfMonitorCard.cpp \
      components/PerformanceDetailDialog.cpp \
@@ -148,6 +148,8 @@ components/ProjectionBlockEditorDialog.cpp \
     utils/SkinDownloader.cpp \
     utils/SpeedCalculator.cpp \
     utils/SystemInfo.cpp \
+    utils/UpdateChecker.cpp \
+    utils/HarmonyBridge.cpp \
     utils/LanguageManager.cpp \
     utils/LanTransfer.cpp \
     utils/tunnel/TunnelManager.cpp \
@@ -286,6 +288,7 @@ HEADERS += \
     layouts/FlowLayout.h \
     layouts/MasonryLayout.h \
     components/TopBar.h \
+    components/UpdateProgressButton.h \
     components/TaskBar.h \
     components/SideBar.h \
     components/LaunchTaskCard.h \
@@ -310,7 +313,6 @@ components/CustomCheckBox.h \
      components/NotificationManager.h \
      components/NotificationHistoryDialog.h \
        components/BackgroundWidget.h \
-       components/FlowLayout.h \
        components/InstanceAssistantWindow.h \
        components/GameFloatingIcon.h \
        components/BedrockInstanceAssistantWindow.h \
@@ -358,6 +360,8 @@ components/ProjectionBlockEditorDialog.h \
     utils/SkinDownloader.h \
     utils/SpeedCalculator.h \
     utils/SystemInfo.h \
+    utils/UpdateChecker.h \
+    utils/HarmonyBridge.h \
     utils/LanguageManager.h \
     utils/LanTransfer.h \
     utils/tunnel/TunnelManager.h \
@@ -541,6 +545,20 @@ QMAKE_EXTRA_COMPILERS += lrelease
 contains(QT_ARCH, arm64-v8a): {
     TARGET = BlockBoxHarmony
     DEFINES += HARMONY_OS
+    # 更新检查鸿蒙桥接:QtCore 私有 JS 线程接口 + NAPI
+    QT += core-private
+    LIBS += -lace_napi.z
+    # node-addon-api 需显式开启 C++ 异常模式(qnapi_p.h 依赖 Error::what)
+    DEFINES += NODE_ADDON_API_CPP_EXCEPTIONS
+    # qcore_ohos_p.h -> qnapi_p.h 依赖 <napi.h>(qt-ohos 源码树内的 node-addon-api 头),
+    # 缺省按与本工程同级的 qt-ohos 源码树定位;其他布局用 qmake 传入:
+    #   qmake ... "INCLUDEPATH+=<qt-ohos>/script/work/qt6/qtbase/src/3rdparty/node-addon-api"
+    NODE_ADDON_API_DIR = $$clean_path($$_PRO_FILE_PWD_/../qt-ohos/script/work/qt6/qtbase/src/3rdparty/node-addon-api)
+    EXISTS($$NODE_ADDON_API_DIR) {
+        INCLUDEPATH += $$NODE_ADDON_API_DIR
+    } else {
+        warning("node-addon-api headers not found; set INCLUDEPATH to qt-ohos node-addon-api for harmony build")
+    }
 }
 
 # Windows specific configurations

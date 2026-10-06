@@ -18,6 +18,7 @@
 #include "utils/ThemeManager.h"
 #include "utils/MemoryAllocator.h"
 #include "components/CollapsibleSectionCard.h"
+#include "components/OutlinedLabel.h"
 #include "settings/SettingsKeyBindPage.h"
 #include "settings/SettingsBedrockGamePage.h"
 
@@ -300,6 +301,30 @@ QVBoxLayout *SettingsPage::createSettingsCard(QBoxLayout *parentLayout,
     auto *card = new CollapsibleSectionCard(title, startCollapsed);
     parentLayout->addWidget(card);
     return card->contentLayout();
+}
+
+QFrame *SettingsPage::createSettingsHeader(QBoxLayout *parentLayout, const QString &title)
+{
+    auto *card = new QFrame();
+    card->setObjectName(QStringLiteral("settingsHeaderCard"));
+    card->setAttribute(Qt::WA_StyledBackground, true);
+
+    QHBoxLayout *hLayout = new QHBoxLayout(card);
+    hLayout->setContentsMargins(24, 12, 24, 12);
+    hLayout->setSpacing(12);
+
+    auto *titleLabel = new OutlinedLabel(title, card);
+    titleLabel->setObjectName(QStringLiteral("sectionTitle"));
+    hLayout->addWidget(titleLabel);
+    hLayout->addStretch();
+
+    auto *restoreBtn = new QPushButton(tr("恢复默认值"), card);
+    restoreBtn->setObjectName(QStringLiteral("restoreDefaultsBtn"));
+    connect(restoreBtn, &QPushButton::clicked, this, &SettingsPage::onRestoreDefaults);
+    hLayout->addWidget(restoreBtn);
+
+    parentLayout->addWidget(card);
+    return card;
 }
 
 QHBoxLayout *SettingsPage::appendSettingRow(QVBoxLayout *cardLayout,

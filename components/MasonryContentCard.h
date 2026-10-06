@@ -8,6 +8,7 @@
 #include <functional>
 
 struct ModInfo;
+class QLabel;
 
 /* ============================================================
  * MasonryContentCard — 瀑布流内容卡片构建器（无状态，纯静态）
@@ -29,6 +30,9 @@ public:
     /* 构建瀑布流卡片；actions 为空则不渲染按钮区 */
     static QWidget *build(const ModInfo &info, QWidget *parent,
                           const QList<ActionSpec> &actions = {});
+
+    /* 异步加载封面并按 banner 尺寸圆角裁剪（封面 URL 后到时回填用） */
+    static void loadCoverInto(QLabel *banner, const QString &url, int width, int height);
 
     /* 绘制辅助（供页面自绘复用） */
     static QPixmap makeBannerPixmap(const QColor &c1, const QColor &c2, int width, int height);

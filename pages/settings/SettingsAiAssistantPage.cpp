@@ -33,9 +33,8 @@ void SettingsPage::initAiAssistantSettings()
     layout->setContentsMargins(24, 8, 24, 24);
     layout->setSpacing(16);
 
-    OutlinedLabel *titleLabel = new OutlinedLabel(tr("AI 助手"), m_aiAssistantSettings);
-    titleLabel->setObjectName("sectionTitle");
-    layout->addWidget(titleLabel);
+    // ── 标题栏（标题 + 恢复默认值按钮）──
+    createSettingsHeader(layout, tr("AI 助手"));
 
     QLabel *hintLabel = new QLabel(tr("配置 AI 助手的模型、联网搜索和工作模式等参数"), m_aiAssistantSettings);
     hintLabel->setObjectName("advancedHintLabel");
@@ -1095,11 +1094,6 @@ void SettingsPage::initAiAssistantSettings()
         loadPromptLibrary();
     });
 
-    // ── 底部操作 ──
-    QPushButton *restoreDefaultsBtn = new QPushButton(tr("恢复默认值"), m_aiAssistantSettings);
-    restoreDefaultsBtn->setObjectName("restoreDefaultsBtn");
-    connect(restoreDefaultsBtn, &QPushButton::clicked, this, &SettingsPage::onRestoreDefaults);
-
+    // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
-    layout->addWidget(restoreDefaultsBtn, 0, Qt::AlignRight);
 }

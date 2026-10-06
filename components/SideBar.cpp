@@ -668,6 +668,22 @@ void SideBar::setExpandButtonVisible(bool visible)
         m_expandBtn->setVisible(visible);
 }
 
+void SideBar::setUpdateButton(QWidget *button)
+{
+    if (!button)
+        return;
+    button->setParent(this);
+    button->hide();
+    // 插到"展开"按钮上方，带少量上下边距，避免与导航项贴死
+    QWidget *container = new QWidget(this);
+    QVBoxLayout *containerLayout = new QVBoxLayout(container);
+    containerLayout->setContentsMargins(0, 6, 0, 10);
+    containerLayout->addWidget(button, 0, Qt::AlignHCenter);
+    const int index = m_expandBtn ? m_mainLayout->indexOf(m_expandBtn)
+                                  : m_mainLayout->count();
+    m_mainLayout->insertWidget(index, container, 0, Qt::AlignHCenter);
+}
+
 void SideBar::setBedrockMode(bool bedrock)
 {
     if (m_bedrockMode == bedrock)

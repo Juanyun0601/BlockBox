@@ -76,9 +76,8 @@ void SettingsPage::initInstanceSettings()
     layout->setContentsMargins(24, 8, 24, 24);
     layout->setSpacing(16);
 
-    OutlinedLabel *titleLabel = new OutlinedLabel(tr("实例设置"), m_instanceSettings);
-    titleLabel->setObjectName("sectionTitle");
-    layout->addWidget(titleLabel);
+    // ── 标题栏（标题 + 恢复默认值按钮）──
+    createSettingsHeader(layout, tr("实例设置"));
 
     // ── 选择实例 ──
     QVBoxLayout *instanceSelectCard = createSettingsCard(layout, tr("选择实例"));
@@ -133,11 +132,6 @@ void SettingsPage::initInstanceSettings()
         tr("自动更新此实例"), tr("有更新可用时自动下载并安装。"), QString(), true);
     instanceSettingsRow->addWidget(instanceAutoUpdateCheck);
 
-    // ── 底部操作 ──
-    QPushButton *restoreDefaultsBtn = new QPushButton(tr("恢复默认值"), m_instanceSettings);
-    restoreDefaultsBtn->setObjectName("restoreDefaultsBtn");
-    connect(restoreDefaultsBtn, &QPushButton::clicked, this, &SettingsPage::onRestoreDefaults);
-
+    // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
-    layout->addWidget(restoreDefaultsBtn, 0, Qt::AlignRight);
 }

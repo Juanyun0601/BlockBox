@@ -16,6 +16,7 @@
 #include "components/NotificationHistoryDialog.h"
 #include "components/OutlinedLabel.h"
 #include "utils/SettingsManager.h"
+#include "utils/UpdateChecker.h"
 
 void SettingsPage::initGeneralSettings()
 {
@@ -23,9 +24,8 @@ void SettingsPage::initGeneralSettings()
     layout->setContentsMargins(24, 8, 24, 24);
     layout->setSpacing(16);
 
-    OutlinedLabel *titleLabel = new OutlinedLabel(tr("常规设置"), m_generalSettings);
-    titleLabel->setObjectName("sectionTitle");
-    layout->addWidget(titleLabel);
+    // ── 标题栏（标题 + 恢复默认值按钮）──
+    createSettingsHeader(layout, tr("常规设置"));
 
     SettingsManager *settings = SettingsManager::instance();
 
@@ -177,15 +177,59 @@ void SettingsPage::initGeneralSettings()
     // ── 启动器更新 ──
     QVBoxLayout *updaterCard = createSettingsCard(layout, tr("启动器更新"));
 
+    QLabel *versionValue = new QLabel(AppVersion::current());
+    versionValue->setObjectName("settingValueLabel");
+
+    QHBoxLayout *versionRow = appendSettingRow(updaterCard,
+        tr("当前版本"), tr("启动器当前安装的版本号。"));
+    versionRow->addWidget(versionValue);
+
     CustomCheckBox *autoUpdateCheck = new CustomCheckBox();
-    autoUpdateCheck->setChecked(true);
+    autoUpdateCheck->setChecked(settings->getProperty("auto_check_update", true).toBool());
+    connect(autoUpdateCheck, &CustomCheckBox::toggled, [](bool checked) {
+        SettingsManager::instance()->setProperty("auto_check_update", checked);
+    });
 
     QHBoxLayout *autoUpdateRow = appendSettingRow(updaterCard,
         tr("自动检查更新"), tr("启动启动器时自动检查是否有新版本可用。"));
     autoUpdateRow->addWidget(autoUpdateCheck);
 
+    // ── 升级通道：抢先升级看测试版+正式版，保守升级仅看正式版 ──
+    QComboBox *channelCombo = new QComboBox();
+    channelCombo->addItem(tr("抢先升级（测试版与正式版）"), QStringLiteral("beta"));
+    channelCombo->addItem(tr("保守升级（仅正式版）"), QStringLiteral("stable"));
+    disableWheelEffect(channelCombo);
+
+    const QString channel = settings->getProperty("update_channel", QStringLiteral("beta")).toString();
+    const int channelIndex = channelCombo->findData(channel);
+    if (channelIndex >= 0)
+        channelCombo->setCurrentIndex(channelIndex);
+    connect(channelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [channelCombo](int index) {
+        SettingsManager::instance()->setProperty("update_channel",
+                                                 channelCombo->itemData(index).toString());
+    });
+
+    QHBoxLayout *channelRow = appendSettingRow(updaterCard,
+        tr("升级通道"), tr("抢先升级可第一时间体验测试版，保守升级仅在正式版发布时提示更新。"),
+        tr("测试版版本号形如 1.0.0-beta1，正式版形如 1.0.0。测试版包含新功能但可能不稳定，追求稳定请选择保守升级。"), true);
+    channelRow->addWidget(channelCombo);
+
     QPushButton *checkUpdateBtn = new QPushButton(tr("手动检查更新"));
     checkUpdateBtn->setObjectName("checkUpdateBtn");
+    connect(checkUpdateBtn, &QPushButton::clicked, this, [this, checkUpdateBtn]() {
+        UpdateChecker *checker = UpdateChecker::instance();
+        if (checker->isChecking())
+            return;
+        checkUpdateBtn->setEnabled(false);
+        checkUpdateBtn->setText(tr("检查中…"));
+        checker->checkForUpdates(this, false);
+    });
+    connect(UpdateChecker::instance(), &UpdateChecker::checkFinished, this,
+            [checkUpdateBtn](bool, const QString &) {
+        checkUpdateBtn->setEnabled(true);
+        checkUpdateBtn->setText(tr("手动检查更新"));
+    });
 
     QHBoxLayout *checkUpdateRow = appendSettingRow(updaterCard,
         tr("手动检查更新"), tr("立即检查一次启动器更新。"), QString(), true);
@@ -205,11 +249,6 @@ void SettingsPage::initGeneralSettings()
         tr("提示信息历史"), tr("查看启动器此前发出的所有通知与提示。"), QString(), true);
     historyRow->addWidget(historyBtn);
 
-    // ── 底部操作 ──
-    QPushButton *restoreDefaultsBtn = new QPushButton(tr("恢复默认值"), m_generalSettings);
-    restoreDefaultsBtn->setObjectName("restoreDefaultsBtn");
-    connect(restoreDefaultsBtn, &QPushButton::clicked, this, &SettingsPage::onRestoreDefaults);
-
+    // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
-    layout->addWidget(restoreDefaultsBtn, 0, Qt::AlignRight);
 }

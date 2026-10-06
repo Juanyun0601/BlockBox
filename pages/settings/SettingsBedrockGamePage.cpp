@@ -55,9 +55,24 @@ void SettingsBedrockGamePage::initUI()
     layout->setContentsMargins(24, 8, 24, 24);
     layout->setSpacing(16);
 
-    OutlinedLabel *titleLabel = new OutlinedLabel(tr("全局游戏设置"), this);
+    // ── 标题栏（标题 + 恢复默认值按钮）──
+    QFrame *headerCard = new QFrame(this);
+    headerCard->setObjectName("settingsHeaderCard");
+    headerCard->setAttribute(Qt::WA_StyledBackground, true);
+    QHBoxLayout *headerLayout = new QHBoxLayout(headerCard);
+    headerLayout->setContentsMargins(24, 12, 24, 12);
+    headerLayout->setSpacing(12);
+
+    OutlinedLabel *titleLabel = new OutlinedLabel(tr("全局游戏设置"), headerCard);
     titleLabel->setObjectName("sectionTitle");
-    layout->addWidget(titleLabel);
+    headerLayout->addWidget(titleLabel);
+    headerLayout->addStretch();
+
+    QPushButton *restoreBtn = new QPushButton(tr("恢复默认值"), headerCard);
+    restoreBtn->setObjectName("restoreDefaultsBtn");
+    headerLayout->addWidget(restoreBtn);
+
+    layout->addWidget(headerCard);
 
     auto createCard = [layout](const QString &title, QVBoxLayout **cardLayout)
     {
@@ -196,12 +211,8 @@ void SettingsBedrockGamePage::initUI()
     instActionRow->addStretch();
     instActionRow->addWidget(manageBtn);
 
-    // ── 底部操作 ──
-    QPushButton *restoreBtn = new QPushButton(tr("恢复默认值"), this);
-    restoreBtn->setObjectName("restoreDefaultsBtn");
-
+    // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
-    layout->addWidget(restoreBtn, 0, Qt::AlignRight);
 
     // ── 信号连接 ──
     connect(m_closeLauncherCheck, &CustomCheckBox::toggled, this, &SettingsBedrockGamePage::saveLaunchSettings);

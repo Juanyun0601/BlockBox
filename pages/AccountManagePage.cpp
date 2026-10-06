@@ -19,6 +19,7 @@
 #include <QGraphicsOpacityEffect>
 #include <QShowEvent>
 #include <QHideEvent>
+#include <QTabBar>
 #include <QImage>
 #include "components/AppMessageBox.h"
 #include <QPixmap>
@@ -313,12 +314,24 @@ void AccountManagePage::initCenterSkinDisplay()
     m_addFirstAccountBtn = new QPushButton(tr("添加首个账户"));
     m_addFirstAccountBtn->setObjectName("addFirstAccountBtn");
     m_addFirstAccountBtn->setFixedHeight(40);
+    // 宽度随文字长度自适应（不拉伸铺满）
+    m_addFirstAccountBtn->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 
-    // Add to layout（skin3DWidget 占主区域，提示和按钮叠加在上方）
+    // 空态容器：提示与按钮在皮肤预览区中间垂直/水平居中
+    m_emptyStateWidget = new QWidget();
+    m_emptyStateWidget->setObjectName("accountEmptyState");
+    QVBoxLayout *emptyStateLayout = new QVBoxLayout(m_emptyStateWidget);
+    emptyStateLayout->setContentsMargins(0, 0, 0, 0);
+    emptyStateLayout->setSpacing(4);
+    emptyStateLayout->addStretch(1);
+    emptyStateLayout->addWidget(m_noAccountHint, 0, Qt::AlignHCenter);
+    emptyStateLayout->addWidget(m_addFirstAccountBtn, 0, Qt::AlignHCenter);
+    emptyStateLayout->addStretch(1);
+
+    // Add to layout（skin3DWidget 占主区域；无账户时空态容器占同一区域）
     m_centerLayout->addWidget(m_skin3DWidget, 1);
-
-    m_centerLayout->addWidget(m_noAccountHint, 0);
-    m_centerLayout->addWidget(m_addFirstAccountBtn, 0);
+    m_centerLayout->addWidget(m_emptyStateWidget, 1);
+    m_emptyStateWidget->hide();
 
     // Connect signals and slots
     connect(m_addFirstAccountBtn, &QPushButton::clicked, this, &AccountManagePage::onAddAccountClicked);
@@ -518,52 +531,162 @@ void AccountManagePage::initRightAccountPanel()
     connect(m_executeActionBtn, &QPushButton::clicked, this, &AccountManagePage::onExecuteActionClicked);
 }
 
+namespace {
+
+/** 表单字段：标签在上、控件在下（对照 HTML 原型 .form-field） */
+QWidget *buildLoginField(const QString &labelText, QWidget *editor, QWidget *parent)
+{
+    auto *field = new QWidget(parent);
+    auto *fieldLayout = new QVBoxLayout(field);
+    fieldLayout->setContentsMargins(0, 0, 0, 0);
+    fieldLayout->setSpacing(6);
+
+    auto *label = new QLabel(labelText, field);
+    label->setObjectName(QStringLiteral("loginFieldLabel"));
+    fieldLayout->addWidget(label);
+    fieldLayout->addWidget(editor);
+    return field;
+}
+
+/** 表单提示条：说明该登录方式的能力与限制（对照 HTML 原型 .form-hint） */
+QLabel *buildLoginHint(const QString &text, QWidget *parent)
+{
+    auto *hint = new QLabel(text, parent);
+    hint->setObjectName(QStringLiteral("loginHint"));
+    hint->setWordWrap(true);
+    hint->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    return hint;
+}
+
+} // namespace
+
 void AccountManagePage::initLoginPage()
 {
     QVBoxLayout *loginLayout = new QVBoxLayout(m_loginWidget);
-    loginLayout->setContentsMargins(20, 10, 20, 10);
-    loginLayout->setSpacing(10);
+    loginLayout->setContentsMargins(24, 24, 24, 24);
+    loginLayout->setSpacing(12);
 
-    // Back button
-    QPushButton *backBtn = new QPushButton(tr("← 返回账户列表"));
-    backBtn->setObjectName("loginBackButton");
-    backBtn->setFixedHeight(32);
-    loginLayout->addWidget(backBtn, 0, Qt::AlignLeft);
+    // 居中单列卡片：标题 + 分段登录方式 + 表单（对照 HTML 原型 .account-add）
+    QWidget *column = new QWidget(m_loginWidget);
+    column->setObjectName("loginColumn");
+    column->setFixedWidth(560);
+    QVBoxLayout *columnLayout = new QVBoxLayout(column);
+    columnLayout->setContentsMargins(24, 22, 24, 24);
+    columnLayout->setSpacing(0);
 
-    connect(backBtn, &QPushButton::clicked, this, &AccountManagePage::onBackToAccountList);
+    QLabel *titleLabel = new QLabel(tr("添加账户"), column);
+    titleLabel->setObjectName("loginTitle");
+    titleLabel->setAlignment(Qt::AlignCenter);
+    columnLayout->addWidget(titleLabel);
 
-    m_loginTabWidget = new QTabWidget();
+    QLabel *subtitleLabel = new QLabel(tr("选择一种登录方式，把新账户加入方块盒子"), column);
+    subtitleLabel->setObjectName("loginSubtitle");
+    subtitleLabel->setAlignment(Qt::AlignCenter);
+    subtitleLabel->setWordWrap(true);
+    columnLayout->addWidget(subtitleLabel);
+    columnLayout->addSpacing(16);
+
+    // 分段控件：三个登录方式等宽铺满（QTabWidget 自带 TabBar 高度不随容器拉伸，隐藏后自绘）
+    QWidget *segBar = new QWidget(column);
+    segBar->setObjectName("loginSegBar");
+    QHBoxLayout *segLayout = new QHBoxLayout(segBar);
+    segLayout->setContentsMargins(4, 4, 4, 4);
+    segLayout->setSpacing(4);
+
+    const QStringList segLabels = {tr("离线"), tr("微软正版"), tr("第三方")};
+    QList<QPushButton *> segButtons;
+    for (int i = 0; i < segLabels.size(); ++i)
+    {
+        QPushButton *segBtn = new QPushButton(segLabels.at(i), segBar);
+        segBtn->setObjectName("loginSegBtn");
+        segBtn->setCheckable(true);
+        segBtn->setAutoExclusive(true);
+        segBtn->setCursor(Qt::PointingHandCursor);
+        segBtn->setChecked(i == 0);
+        segLayout->addWidget(segBtn, 1);
+        segButtons.append(segBtn);
+    }
+    columnLayout->addWidget(segBar);
+    columnLayout->addSpacing(12);
+
+    m_loginTabWidget = new QTabWidget(column);
     m_loginTabWidget->setObjectName("loginMethodTabs");
+    m_loginTabWidget->tabBar()->hide();   // 用上面的分段控件切换登录方式
+    columnLayout->addWidget(m_loginTabWidget);
 
-    // Microsoft login tab
+    loginLayout->addStretch();
+    loginLayout->addWidget(column, 0, Qt::AlignHCenter);
+    loginLayout->addStretch();
+
+    // Microsoft login tab（品牌化 hero：图标 + 标题 + 说明 + 能力标签）
     m_microsoftLoginTab = new QWidget();
     QVBoxLayout *microsoftLayout = new QVBoxLayout(m_microsoftLoginTab);
-    microsoftLayout->setAlignment(Qt::AlignCenter);
-    microsoftLayout->addWidget(new QLabel(tr("微软正版登录")));
-    microsoftLayout->addWidget(new QLabel(tr("优点：支持所有正版功能，自动同步皮肤和成就\n缺点：需要网络连接，可能需要科学上网")));
-    
+    microsoftLayout->setContentsMargins(0, 0, 0, 0);
+    microsoftLayout->setSpacing(12);
+
+    QLabel *heroTile = new QLabel(m_microsoftLoginTab);
+    heroTile->setObjectName("loginHeroTile");
+    heroTile->setFixedSize(64, 64);
+    heroTile->setAlignment(Qt::AlignCenter);
+    heroTile->setPixmap(
+        IconHelper::loadColoredIcon(":/Images/Icons/grid.svg", QColor("#00A4EF"), 28).pixmap(28, 28));
+    QHBoxLayout *heroIconRow = new QHBoxLayout();
+    heroIconRow->addStretch();
+    heroIconRow->addWidget(heroTile);
+    heroIconRow->addStretch();
+    microsoftLayout->addLayout(heroIconRow);
+
+    QLabel *heroTitle = new QLabel(tr("微软正版登录"), m_microsoftLoginTab);
+    heroTitle->setObjectName("loginHeroTitle");
+    heroTitle->setAlignment(Qt::AlignCenter);
+    microsoftLayout->addWidget(heroTitle);
+
+    QLabel *heroDesc = new QLabel(tr("跳转浏览器完成授权，登录后自动同步正版皮肤、成就与联机身份。"),
+                                  m_microsoftLoginTab);
+    heroDesc->setObjectName("loginHeroDesc");
+    heroDesc->setAlignment(Qt::AlignCenter);
+    heroDesc->setWordWrap(true);
+    microsoftLayout->addWidget(heroDesc);
+
+    QHBoxLayout *chipRow = new QHBoxLayout();
+    chipRow->setSpacing(8);
+    chipRow->addStretch();
+    const QStringList featureChips = {tr("正版联机"), tr("皮肤同步"), tr("成就同步")};
+    for (const QString &chipText : featureChips)
+    {
+        QLabel *chip = new QLabel(chipText, m_microsoftLoginTab);
+        chip->setObjectName("loginChip");
+        chip->setAlignment(Qt::AlignCenter);
+        chipRow->addWidget(chip);
+    }
+    chipRow->addStretch();
+    microsoftLayout->addLayout(chipRow);
+    microsoftLayout->addSpacing(4);
+
     // Login progress
     QProgressBar *microsoftProgressBar = new QProgressBar();
     microsoftProgressBar->setObjectName("microsoftProgressBar");
-    microsoftProgressBar->setFixedWidth(300);
     microsoftProgressBar->setMinimum(0);
     microsoftProgressBar->setMaximum(100);
     microsoftProgressBar->setValue(0);
     microsoftProgressBar->setVisible(false);
     microsoftLayout->addWidget(microsoftProgressBar);
-    
+
     // Status label
     QLabel *microsoftStatusLabel = new QLabel(tr(""));
     microsoftStatusLabel->setObjectName("microsoftStatusLabel");
     microsoftStatusLabel->setAlignment(Qt::AlignCenter);
+    microsoftStatusLabel->setWordWrap(true);
     microsoftLayout->addWidget(microsoftStatusLabel);
-    
+
     microsoftLayout->addStretch();
-    QPushButton *microsoftLoginBtn = new QPushButton(tr("微软登录"));
-    microsoftLoginBtn->setObjectName("microsoftLoginBtn");
-    microsoftLoginBtn->setFixedHeight(40);
+    const QString microsoftBtnLabel = tr("使用 Microsoft 账户登录");
+    QPushButton *microsoftLoginBtn = new QPushButton(microsoftBtnLabel);
+    microsoftLoginBtn->setObjectName("loginPrimaryBtn");
+    microsoftLoginBtn->setMinimumHeight(44);
+    microsoftLoginBtn->setCursor(Qt::PointingHandCursor);
     microsoftLayout->addWidget(microsoftLoginBtn);
-    
+
     // Connect Microsoft login button
     connect(microsoftLoginBtn, &QPushButton::clicked, [=]() {
         // Disable button and show loading state
@@ -580,7 +703,7 @@ void AccountManagePage::initLoginPage()
         connect(loginDialog, &MicrosoftLoginDialog::loginSucceeded, [=](const QString &username, const QString &accessToken, const QString &refreshToken) {
             // Enable button and reset state
             microsoftLoginBtn->setEnabled(true);
-            microsoftLoginBtn->setText(tr("微软登录"));
+            microsoftLoginBtn->setText(microsoftBtnLabel);
             microsoftProgressBar->setVisible(false);
             microsoftStatusLabel->setText(tr("登录成功！"));
             
@@ -603,7 +726,7 @@ void AccountManagePage::initLoginPage()
         connect(loginDialog, &MicrosoftLoginDialog::loginFailed, [=]() {
             // Enable button and reset state
             microsoftLoginBtn->setEnabled(true);
-            microsoftLoginBtn->setText(tr("微软登录"));
+            microsoftLoginBtn->setText(microsoftBtnLabel);
             microsoftProgressBar->setVisible(false);
             microsoftStatusLabel->setText(tr("登录失败"));
             
@@ -614,7 +737,7 @@ void AccountManagePage::initLoginPage()
         connect(loginDialog, &MicrosoftLoginDialog::loginCanceled, [=]() {
             // Enable button and reset state
             microsoftLoginBtn->setEnabled(true);
-            microsoftLoginBtn->setText(tr("微软登录"));
+            microsoftLoginBtn->setText(microsoftBtnLabel);
             microsoftProgressBar->setVisible(false);
             microsoftStatusLabel->setText(tr("登录已取消"));
             
@@ -630,23 +753,26 @@ void AccountManagePage::initLoginPage()
     // Offline login tab
     m_offlineLoginTab = new QWidget();
     QVBoxLayout *offlineLayout = new QVBoxLayout(m_offlineLoginTab);
-    offlineLayout->setAlignment(Qt::AlignCenter);
-    offlineLayout->addWidget(new QLabel(tr("离线登录")));
-    offlineLayout->addWidget(new QLabel(tr("优点：无需网络连接，可自定义用户名\n缺点：无法使用正版功能，无法同步皮肤")));
-    
+    offlineLayout->setContentsMargins(0, 0, 0, 0);
+    offlineLayout->setSpacing(14);
+
     // Username input
-    QLabel *usernameLabel = new QLabel(tr("用户名："));
-    offlineLayout->addWidget(usernameLabel);
-    QLineEdit *usernameInput = new QLineEdit();
-    usernameInput->setObjectName("usernameInput");
-    usernameInput->setFixedWidth(200);
-    usernameInput->setFixedHeight(30);
-    offlineLayout->addWidget(usernameInput);
-    
+    QLineEdit *usernameInput = new QLineEdit(m_offlineLoginTab);
+    usernameInput->setObjectName("loginInput");
+    usernameInput->setPlaceholderText(tr("输入游戏内显示的名称，例如 Steve"));
+    usernameInput->setClearButtonEnabled(true);
+    usernameInput->setMaxLength(16);
+    offlineLayout->addWidget(buildLoginField(tr("玩家名"), usernameInput, m_offlineLoginTab));
+
+    offlineLayout->addWidget(buildLoginHint(
+        tr("离线账户无需联网验证，适合单机与局域网游戏；无法使用正版服务器、皮肤同步与成就。"),
+        m_offlineLoginTab));
+
     offlineLayout->addStretch();
     QPushButton *offlineLoginBtn = new QPushButton(tr("创建离线账户"));
-    offlineLoginBtn->setObjectName("offlineLoginBtn");
-    offlineLoginBtn->setFixedHeight(40);
+    offlineLoginBtn->setObjectName("loginPrimaryBtn");
+    offlineLoginBtn->setMinimumHeight(44);
+    offlineLoginBtn->setCursor(Qt::PointingHandCursor);
     offlineLayout->addWidget(offlineLoginBtn);
     
     // Connect offline login button
@@ -679,29 +805,14 @@ void AccountManagePage::initLoginPage()
     // Third party login tab
     m_thirdPartyLoginTab = new QWidget();
     QVBoxLayout *thirdPartyLayout = new QVBoxLayout(m_thirdPartyLoginTab);
-    thirdPartyLayout->setContentsMargins(20, 20, 20, 20);
-    thirdPartyLayout->setSpacing(15);
-    
-    // Title and description
-    QLabel *thirdPartyTitle = new QLabel(tr("第三方登录"));
-    thirdPartyTitle->setObjectName("thirdPartyTitle");
-    thirdPartyLayout->addWidget(thirdPartyTitle, 0, Qt::AlignCenter);
+    thirdPartyLayout->setContentsMargins(0, 0, 0, 0);
+    thirdPartyLayout->setSpacing(14);
 
-    QLabel *thirdPartyDesc = new QLabel(tr("优点：支持多种登录方式\n缺点：安全性可能不如官方登录"));
-    thirdPartyDesc->setObjectName("thirdPartyDesc");
-    thirdPartyDesc->setAlignment(Qt::AlignCenter);
-    thirdPartyLayout->addWidget(thirdPartyDesc);
-    
-    // Server selection
-    QHBoxLayout *serverLayout = new QHBoxLayout();
-    QLabel *serverLabel = new QLabel(tr("服务器："));
-    serverLabel->setFixedWidth(80);
-    serverLayout->addWidget(serverLabel);
-    QComboBox *serverComboBox = new QComboBox();
-    serverComboBox->setObjectName("serverComboBox");
-    serverComboBox->setFixedWidth(300);
-    serverComboBox->setFixedHeight(30);
-    
+    // Server selection（服务器 + 连通状态徽标）
+    QComboBox *serverComboBox = new QComboBox(m_thirdPartyLoginTab);
+    serverComboBox->setObjectName("loginCombo");
+    serverComboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+
     // Load auth servers from settings
     QList<AuthServerInfo> servers;
     if (SettingsManager::instance())
@@ -711,54 +822,48 @@ void AccountManagePage::initLoginPage()
     for (const AuthServerInfo &server : servers) {
         serverComboBox->addItem(server.name, server.url);
     }
-    
+
     // Add option to add custom server
     serverComboBox->addItem(tr("添加自定义服务器"), "custom");
-    serverLayout->addWidget(serverComboBox);
-    thirdPartyLayout->addLayout(serverLayout);
-    
-    // Server status label
-    QHBoxLayout *statusLayout = new QHBoxLayout();
-    QLabel *statusLabel = new QLabel(tr("服务器状态："));
-    statusLabel->setFixedWidth(80);
-    statusLayout->addWidget(statusLabel);
+
     QLabel *serverStatusLabel = new QLabel(tr("未检测"));
-    serverStatusLabel->setObjectName("serverStatusLabel");
-    statusLayout->addWidget(serverStatusLabel);
-    thirdPartyLayout->addLayout(statusLayout);
-    
+    serverStatusLabel->setObjectName("loginStatusPill");
+    serverStatusLabel->setAlignment(Qt::AlignCenter);
+
+    QWidget *serverFieldEditor = new QWidget(m_thirdPartyLoginTab);
+    QHBoxLayout *serverFieldRow = new QHBoxLayout(serverFieldEditor);
+    serverFieldRow->setContentsMargins(0, 0, 0, 0);
+    serverFieldRow->setSpacing(8);
+    serverFieldRow->addWidget(serverComboBox, 1);
+    serverFieldRow->addWidget(serverStatusLabel, 0, Qt::AlignVCenter);
+    thirdPartyLayout->addWidget(buildLoginField(tr("认证服务器"), serverFieldEditor, m_thirdPartyLoginTab));
+
     // Username input
-    QHBoxLayout *usernameLayout = new QHBoxLayout();
-    QLabel *thirdPartyUsernameLabel = new QLabel(tr("用户名："));
-    thirdPartyUsernameLabel->setFixedWidth(80);
-    usernameLayout->addWidget(thirdPartyUsernameLabel);
-    QLineEdit *thirdPartyUsernameInput = new QLineEdit();
-    thirdPartyUsernameInput->setObjectName("thirdPartyUsernameInput");
-    thirdPartyUsernameInput->setFixedWidth(300);
-    thirdPartyUsernameInput->setFixedHeight(30);
-    usernameLayout->addWidget(thirdPartyUsernameInput);
-    thirdPartyLayout->addLayout(usernameLayout);
-    
+    QLineEdit *thirdPartyUsernameInput = new QLineEdit(m_thirdPartyLoginTab);
+    thirdPartyUsernameInput->setObjectName("loginInput");
+    thirdPartyUsernameInput->setPlaceholderText(tr("认证服务器上的账户名或邮箱"));
+    thirdPartyUsernameInput->setClearButtonEnabled(true);
+    thirdPartyLayout->addWidget(
+        buildLoginField(tr("用户名"), thirdPartyUsernameInput, m_thirdPartyLoginTab));
+
     // Password input
-    QHBoxLayout *passwordLayout = new QHBoxLayout();
-    QLabel *thirdPartyPasswordLabel = new QLabel(tr("密码："));
-    thirdPartyPasswordLabel->setFixedWidth(80);
-    passwordLayout->addWidget(thirdPartyPasswordLabel);
-    QLineEdit *thirdPartyPasswordInput = new QLineEdit();
-    thirdPartyPasswordInput->setObjectName("thirdPartyPasswordInput");
+    QLineEdit *thirdPartyPasswordInput = new QLineEdit(m_thirdPartyLoginTab);
+    thirdPartyPasswordInput->setObjectName("loginInput");
     thirdPartyPasswordInput->setEchoMode(QLineEdit::Password);
-    thirdPartyPasswordInput->setFixedWidth(300);
-    thirdPartyPasswordInput->setFixedHeight(30);
-    passwordLayout->addWidget(thirdPartyPasswordInput);
-    thirdPartyLayout->addLayout(passwordLayout);
-    
-    // Login button
+    thirdPartyPasswordInput->setPlaceholderText(tr("输入密码"));
+    thirdPartyLayout->addWidget(
+        buildLoginField(tr("密码"), thirdPartyPasswordInput, m_thirdPartyLoginTab));
+
+    thirdPartyLayout->addWidget(buildLoginHint(
+        tr("支持 LittleSkin 等 Yggdrasil 兼容认证服务器；账号密码仅发送至所选服务器。"),
+        m_thirdPartyLoginTab));
+
     thirdPartyLayout->addStretch();
     QPushButton *thirdPartyLoginBtn = new QPushButton(tr("登录"));
-    thirdPartyLoginBtn->setObjectName("loginButton");
-    thirdPartyLoginBtn->setFixedWidth(200);
-    thirdPartyLoginBtn->setFixedHeight(40);
-    thirdPartyLayout->addWidget(thirdPartyLoginBtn, 0, Qt::AlignCenter);
+    thirdPartyLoginBtn->setObjectName("loginPrimaryBtn");
+    thirdPartyLoginBtn->setMinimumHeight(44);
+    thirdPartyLoginBtn->setCursor(Qt::PointingHandCursor);
+    thirdPartyLayout->addWidget(thirdPartyLoginBtn);
     
     // Connect server selection change
     connect(serverComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int) {
@@ -913,14 +1018,95 @@ void AccountManagePage::initLoginPage()
         }
     });
 
-    // Add tabs to tab widget
-    m_loginTabWidget->addTab(m_microsoftLoginTab, tr("微软正版"));
+    // Add tabs to tab widget（顺序与 HTML 原型一致：离线 / 微软正版 / 第三方）
     m_loginTabWidget->addTab(m_offlineLoginTab, tr("离线"));
+    m_loginTabWidget->addTab(m_microsoftLoginTab, tr("微软正版"));
     m_loginTabWidget->addTab(m_thirdPartyLoginTab, tr("第三方"));
-    loginLayout->addWidget(m_loginTabWidget);
 
     // Connect signals and slots
     connect(m_loginTabWidget, &QTabWidget::currentChanged, this, &AccountManagePage::onLoginMethodChanged);
+
+    // 分段控件 <-> 登录方式页 双向同步
+    for (int i = 0; i < segButtons.size(); ++i)
+    {
+        QPushButton *segBtn = segButtons.at(i);
+        connect(segBtn, &QPushButton::clicked, this, [this, i]() {
+            m_loginTabWidget->setCurrentIndex(i);
+        });
+    }
+    connect(m_loginTabWidget, &QTabWidget::currentChanged, this,
+            [segButtons](int index) {
+                for (int i = 0; i < segButtons.size(); ++i)
+                {
+                    segButtons.at(i)->setChecked(i == index);
+                }
+            });
+
+    updateLoginColumnHeight();
+}
+
+/**
+ * 卡片高度 = 标题区 + 当前登录方式表单的实测高度 + 内边距。
+ *
+ * 直接依赖 QWidget::sizeHint() 不行：它会被缓存成构建期的旧值（按所有页的最大高度算），
+ * 而表单实际是按 512px 固定宽度换行的，两者差出一大截，离线页因此空出两百多像素。
+ */
+void AccountManagePage::updateLoginColumnHeight()
+{
+    if (!m_loginWidget || !m_loginTabWidget)
+    {
+        return;
+    }
+    QWidget *column = m_loginWidget->findChild<QWidget *>(QStringLiteral("loginColumn"));
+    if (!column)
+    {
+        return;
+    }
+    QLayout *columnLayout = column->layout();
+    if (!columnLayout)
+    {
+        return;
+    }
+
+    // 卡片宽度固定 560，表单区宽度 = 卡片宽 - 左右内边距
+    const QMargins cm = columnLayout->contentsMargins();
+    int paneWidth = column->width() - cm.left() - cm.right();
+    if (paneWidth <= 0)
+    {
+        paneWidth = column->minimumWidth() - cm.left() - cm.right();
+    }
+    if (paneWidth <= 0)
+    {
+        paneWidth = 560 - cm.left() - cm.right();
+    }
+
+    QWidget *page = m_loginTabWidget->currentWidget();
+    int pageHeight = (page && page->layout()) ? page->layout()->heightForWidth(paneWidth) : 0;
+    if (pageHeight <= 0 && page)
+    {
+        pageHeight = page->sizeHint().height();
+    }
+    if (pageHeight <= 0)
+    {
+        pageHeight = 200;
+    }
+    m_loginTabWidget->setFixedHeight(pageHeight);
+
+    // 逐项累加：除表单区外各项高度稳定，避开 QWidget 的 sizeHint 缓存
+    int totalHeight = cm.top() + cm.bottom();
+    for (int i = 0; i < columnLayout->count(); ++i)
+    {
+        QLayoutItem *item = columnLayout->itemAt(i);
+        if (!item)
+        {
+            continue;
+        }
+        const bool isPane = item->widget() && item->widget() == m_loginTabWidget;
+        totalHeight += isPane ? pageHeight : item->sizeHint().height();
+    }
+    totalHeight += (columnLayout->count() - 1) * qMax(0, columnLayout->spacing());
+
+    column->setFixedHeight(totalHeight);
 }
 
 void AccountManagePage::loadAccounts()
@@ -958,16 +1144,14 @@ void AccountManagePage::loadAccounts()
         if (m_skinActionWidget) m_skinActionWidget->hide();
         if (m_modelActionWidget) m_modelActionWidget->hide();
         if (m_bgWidget) m_bgWidget->hide();
-        m_noAccountHint->show();
-        m_addFirstAccountBtn->show();
+        if (m_emptyStateWidget) m_emptyStateWidget->show();
         m_accountHighlight->setVisible(false);
     } else {
         m_skin3DWidget->show();
         if (m_skinActionWidget) m_skinActionWidget->show();
         if (m_modelActionWidget) m_modelActionWidget->show();
         if (m_bgWidget) m_bgWidget->show();
-        m_noAccountHint->hide();
-        m_addFirstAccountBtn->hide();
+        if (m_emptyStateWidget) m_emptyStateWidget->hide();
 
         // 入场动画：与 InstanceSelectPage / SubNavPanel 一致的交错淡入
         animateAccountEntrance();
@@ -1131,7 +1315,8 @@ void AccountManagePage::onAddAccountClicked()
 {
     // Switch to login page
     m_stackedWidget->setCurrentWidget(m_loginWidget);
-    
+    updateLoginColumnHeight();
+
     // Emit signal to notify that add account page is opened
     emit addAccountPageOpened();
 }
@@ -1345,7 +1530,8 @@ void AccountManagePage::onExecuteModelActionClicked()
 
 void AccountManagePage::onLoginMethodChanged(int index)
 {
-    // TODO: Handle login method change
+    // 切换登录方式后收缩/撑开卡片，避免短表单留下空白
+    updateLoginColumnHeight();
     qDebug() << "[AccountManagePage]" << "Login method changed to:" << index;
 }
 

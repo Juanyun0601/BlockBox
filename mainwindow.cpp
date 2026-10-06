@@ -49,6 +49,7 @@
 #include "components/InstanceAssistantWindow.h"
 #include "components/GameFloatingIcon.h"
 #include "components/TopBar.h"
+#include "components/UpdateProgressButton.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
 #include "utils/ThemeManager.h"
@@ -276,6 +277,10 @@ void MainWindow::initUI()
     m_sideBar->setFixedWidth(76);
     contentLayout->addWidget(m_sideBar);
 
+    // 应用内更新：下载开始后侧边栏底部出现圆形进度按钮（完成变绿，点击重启安装）
+    UpdateProgressButton *updateProgressButton = new UpdateProgressButton(m_sideBar);
+    m_sideBar->setUpdateButton(updateProgressButton);
+
     // 子导航面板：悬浮气泡，不占用布局空间，贴靠侧边栏绘制
     m_subNavPanel = new SubNavPanel(contentArea);
     m_subNavPanel->setSideBar(m_sideBar);
@@ -298,8 +303,10 @@ void MainWindow::initUI()
     wrapperLayout->setContentsMargins(0, 0, 0, 0);
     m_wrapperLayout = wrapperLayout;
 
-    // Background widget behind the pages (not in layout, positioned manually)
-    m_backgroundWidget = new BackgroundWidget(contentWrapper);
+    // 背景层铺满整个内容区（含左侧导航栏，不止 contentWrapper）：
+    // 必应壁纸/旋转/流光等模式由 BackgroundWidget 绘制背景，若只覆盖主栏，
+    // 透明侧边栏会透出 QMainWindow 的深色底色（#0F172A），导致左侧导航变黑。
+    m_backgroundWidget = new BackgroundWidget(contentArea);
     m_backgroundWidget->lower();
 
     // Create stacked widget for pages
@@ -1198,12 +1205,22 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 
 void MainWindow::onAddAccountPageOpened()
 {
-    // 澶勭悊娣诲姞璐︽埛椤甸潰鎵撳紑鐨勯€昏緫
+    // 面包屑跟随页面：方块盒子 > 账户管理 > 添加账户
+    if (m_topBar)
+    {
+        m_topBar->setAddAccountTitle();
+    }
+    // 页面内没有返回按钮，顶栏返回键负责回到账户列表（同一 PageIndex 的内层切换）
+    m_previousPage = PageIndex::AccountManagePage;
+    m_hasPreviousPage = true;
 }
 
 void MainWindow::onAccountManagePageOpened()
 {
-    // 澶勭悊璐︽埛绠＄悊椤甸潰鎵撳紑鐨勯€昏緫
+    if (m_topBar)
+    {
+        m_topBar->setAccountManageTitle();
+    }
 }
 
 void MainWindow::onTopBarBackClicked()
@@ -1211,6 +1228,11 @@ void MainWindow::onTopBarBackClicked()
     if (m_hasPreviousPage) {
         PageIndex target = m_previousPage;
         m_hasPreviousPage = false;
+        // 添加账户是账户管理页的内层页面：只切回账户列表，侧栏保持隐藏、标题与账户按钮状态不变
+        if (target == PageIndex::AccountManagePage && m_accountManagePage) {
+            m_accountManagePage->onBackToAccountList();
+            return;
+        }
         setSideBarVisible(true);
         m_topBar->setMainTitle();
         m_subNavPanel->hidePanel();

@@ -57,16 +57,15 @@ void SettingsPage::initJavaManagerSettings()
     layout->setContentsMargins(24, 8, 24, 24);
     layout->setSpacing(16);
 
-    // ── 标题 + 副标题 ──
-    OutlinedLabel *titleLabel = new OutlinedLabel(tr("Java管理"), m_javaManagerSettings);
-    titleLabel->setObjectName("sectionTitle");
+    // ── 标题栏（标题 + 恢复默认值按钮）──
+    createSettingsHeader(layout, tr("Java管理"));
 
+    // ── 副标题 ──
     QLabel *subtitleLabel = new QLabel(
         tr("管理本机已安装的 Java 运行时，扫描结果会自动缓存供启动游戏时使用。"),
         m_javaManagerSettings);
     subtitleLabel->setObjectName("sectionSubtitle");
     subtitleLabel->setWordWrap(true);
-    layout->addWidget(titleLabel);
     layout->addWidget(subtitleLabel);
 
     // ── 工具栏 ──
@@ -179,17 +178,11 @@ void SettingsPage::initJavaManagerSettings()
         tr("按游戏版本自动选择 Java"), tr("根据游戏版本自动匹配合适的 Java 运行时。"), QString(), true);
     autoSelectRow->addWidget(m_autoSelectJavaCheck);
 
-    // ── 恢复默认值 ──
-    QPushButton *restoreDefaultsBtn = new QPushButton(tr("恢复默认值"), m_javaManagerSettings);
-    restoreDefaultsBtn->setObjectName("restoreDefaultsBtn");
-    connect(restoreDefaultsBtn, &QPushButton::clicked, this, &SettingsPage::onRestoreDefaults);
-
     // ── 组装 ──
     layout->addWidget(toolbar);
     layout->addWidget(listTitleLabel);
     layout->addWidget(m_javaListWidget, 1);
     layout->addStretch();
-    layout->addWidget(restoreDefaultsBtn, 0, Qt::AlignRight);
 
     // 初始填充
     refreshJavaList();

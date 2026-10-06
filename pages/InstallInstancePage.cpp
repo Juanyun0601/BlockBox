@@ -10,19 +10,90 @@
 
 #include <QAbstractItemView>
 #include <QDateTime>
+#include <QDir>
 #include <QEventLoop>
+#include <QFile>
+#include <QFileInfo>
+#include <QMouseEvent>
 #include <QPainter>
 
 #include <QRegularExpression>
+#include <QSaveFile>
+#include <QStackedWidget>
+#include <QStandardPaths>
+#include <QUrlQuery>
 
 #include "components/BlurLoadingOverlay.h"
+#include "components/ContentViewSwitch.h"
+#include "components/MasonryContentCard.h"
 #include "components/NotificationManager.h"
+#include "layouts/MasonryLayout.h"
 #include <QResizeEvent>
 #include <QTimer>
 #include <QUrl>
 
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
+#include "utils/mod/ModData.h"
+
+namespace {
+// 瀑布流卡片固定宽度（与 MasonryContentCard 内部 kCardWidth 一致），封面回填时的兜底尺寸
+constexpr int kMasonryCardW = 260;
+constexpr int kMasonryBannerH = 120;
+constexpr int kCoverChunkSize = 12;   // MediaWiki titles 上限 50，需预留 4 个 banner 候选/版本
+/* 封面 URL 磁盘缓存：命中后不再请求 wiki 接口 */
+QString coverCacheFile()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+           + QStringLiteral("/version_covers/covers.json");
+}
+
+// 愚人节版本判定（筛选分支与类型图标共用，避免两处逻辑漂移）
+bool isAprilFoolsId(const QString &id)
+{
+    if (id.contains("craftmine") ||
+        id.contains("potato") ||
+        id.contains("oneblockatatime") ||
+        id.contains("infinite") ||
+        id.contains("Shareware") ||
+        id.contains("RV-Pre") ||
+        id.contains("blue") || id.contains("red") || id.contains("purple") ||
+        id.contains("_or_") ||
+        id.contains("April", Qt::CaseInsensitive) ||
+        id.contains("Fools", Qt::CaseInsensitive)) {
+        return true;
+    }
+    const QStringList aprilFools = {
+        "25w14craftmine", "24w14potato", "23w13a or b", "22w13oneblockatatime",
+        "20w14infinite", "3D Shareware v1.34", "1.RV-Pre1", "15w14a",
+        "2.0 blue", "2.0 red", "2.0 purple"
+    };
+    if (aprilFools.contains(id))
+        return true;
+    if (id.length() >= 6 && id[2] == 'w') {
+        const int week = id.mid(3, 2).toInt();
+        if ((week == 13 || week == 14) && id.length() > 5) {
+            const QString afterWeek = id.mid(5);
+            if (afterWeek.length() > 1 || !afterWeek.at(0).isLetter())
+                return true;
+        }
+    }
+    return false;
+}
+
+// 版本类型 → 卡片图标（qrc 内的方块图）
+QString iconPathForVersion(const QString &id, const QString &type)
+{
+    if (isAprilFoolsId(id))                       // 愚人节版（清单 type 多为 snapshot，需先行判定）
+        return QStringLiteral(":/Images/Block/Egg_enchanted.png");
+    if (type == QLatin1String("release"))
+        return QStringLiteral(":/Images/Block/Grass_Block.png");
+    if (type == QLatin1String("snapshot"))
+        return QStringLiteral(":/Images/Block/Command_Block.png");
+    return QStringLiteral(":/Images/Block/Stone.png");   // old_beta / old_alpha 及其余
+}
+
+} // namespace
 
 InstallInstancePage::InstallInstancePage(QWidget *parent)
     : QWidget(parent)
@@ -32,6 +103,11 @@ InstallInstancePage::InstallInstancePage(QWidget *parent)
     , m_modifyInstanceBtn(nullptr)
     , m_exitModifyBtn(nullptr)
     , m_modifyMode(false)
+    , m_viewSwitch(nullptr)
+    , m_viewStack(nullptr)
+    , m_masonryScroll(nullptr)
+    , m_masonryContainer(nullptr)
+    , m_masonryLayout(nullptr)
     , m_loadingOverlay(nullptr)
     , m_networkManager(nullptr)
     , m_currentSource("official")
@@ -97,6 +173,13 @@ void InstallInstancePage::initUI()
 
     m_filterBarLayout->addStretch();
 
+    // 视图切换（列表式 / 瀑布流）
+    m_viewSwitch = new ContentViewSwitch(m_filterBar);
+    m_viewSwitch->setViewMode(ContentViewSwitch::loadPersisted("install_instance",
+                                                               ContentViewSwitch::Masonry));
+    m_viewMode = m_viewSwitch->viewMode();
+    m_filterBarLayout->addWidget(m_viewSwitch);
+
     m_modifyInstanceBtn = new QPushButton(tr("修改现有实例"), m_filterBar);
     m_modifyInstanceBtn->setObjectName("instanceActionBtn");
     m_modifyInstanceBtn->setCursor(Qt::PointingHandCursor);
@@ -140,23 +223,35 @@ void InstallInstancePage::initUI()
     m_versionList->setMovement(QListView::Static);
     m_versionList->setSpacing(8);
     m_versionList->setMinimumHeight(400);
-    m_mainLayout->addWidget(m_versionList);
+
+    // 瀑布流页：滚动区 + 最短列优先布局容器
+    m_masonryScroll = new QScrollArea(this);
+    m_masonryScroll->setObjectName("modScrollArea");
+    m_masonryScroll->setWidgetResizable(true);
+    m_masonryScroll->setFrameShape(QFrame::NoFrame);
+    m_masonryContainer = new QWidget();
+    m_masonryContainer->setObjectName("modCardContainer");
+    m_masonryLayout = new MasonryLayout(m_masonryContainer, 0, 12, 12);
+    m_masonryLayout->setContentsMargins(0, 0, 0, 0);
+    m_masonryScroll->setWidget(m_masonryContainer);
+
+    m_viewStack = new QStackedWidget(this);
+    m_viewStack->addWidget(m_versionList);
+    m_viewStack->addWidget(m_masonryScroll);
+    m_viewStack->setCurrentIndex(m_viewMode == ContentViewSwitch::Masonry ? 1 : 0);
+    m_mainLayout->addWidget(m_viewStack);
 
     // Connect signals
     connect(m_sourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &InstallInstancePage::onSourceChanged);
     connect(m_filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &InstallInstancePage::onVersionTypeFilterChanged);
+    connect(m_viewSwitch, &ContentViewSwitch::viewModeChanged,
+            this, &InstallInstancePage::onViewModeChanged);
     connect(m_versionList, &QListWidget::itemClicked, this, [=](QListWidgetItem *item) {
-        QString versionId = item->data(Qt::UserRole).toString();
-        if (!versionId.isEmpty()) {
-            if (m_modifyMode) {
-                emit modifyVersionSelected(versionId, m_versionTypeMap.value(versionId),
-                                           m_modifyInstancePath, m_modifyInstanceName);
-            } else {
-                emit versionSelected(versionId, m_versionTypeMap.value(versionId));
-            }
-        }
+        const QString versionId = item->data(Qt::UserRole).toString();
+        if (!versionId.isEmpty())
+            selectVersion(versionId);
     });
 }
 
@@ -272,7 +367,20 @@ void InstallInstancePage::populateVersionList()
 {
     m_versionList->clear();
     m_versionTypeMap.clear();
+    m_versionRawType.clear();
+    if (!m_coverCacheLoaded)
+        loadCoverCache();
 
+    // 清空瀑布流卡片（takeAt 拿到的 QWidgetItem 不持有 widget，需手动删除）
+    m_masonryCards.clear();
+    if (m_masonryLayout) {
+        while (QLayoutItem *item = m_masonryLayout->takeAt(0)) {
+            delete item->widget();
+            delete item;
+        }
+    }
+
+    QStringList coverIds;
     for (const QJsonValue &value : std::as_const(m_allVersions)) {
         QJsonObject versionObj = value.toObject();
         QString id = versionObj["id"].toString();
@@ -311,39 +419,7 @@ void InstallInstancePage::populateVersionList()
                 continue;
             }
         } else if (m_currentFilter == "prerelease") {
-            bool isAprilFoolsVersion = false;
-            if (id.contains("craftmine") ||
-                id.contains("potato") ||
-                id.contains("oneblockatatime") ||
-                id.contains("infinite") ||
-                id.contains("Shareware") ||
-                id.contains("RV-Pre") ||
-                id.contains("blue") || id.contains("red") || id.contains("purple") ||
-                id.contains("_or_") ||
-                id.contains("April", Qt::CaseInsensitive) ||
-                id.contains("Fools", Qt::CaseInsensitive)) {
-                isAprilFoolsVersion = true;
-            }
-            QStringList aprilFools = {
-                "25w14craftmine", "24w14potato", "23w13a or b", "22w13oneblockatatime",
-                "20w14infinite", "3D Shareware v1.34", "1.RV-Pre1", "15w14a",
-                "2.0 blue", "2.0 red", "2.0 purple"
-            };
-            if (aprilFools.contains(id)) {
-                isAprilFoolsVersion = true;
-            }
-            if (id.length() >= 6 && id[2] == 'w') {
-                int week = id.mid(3, 2).toInt();
-                if (week == 13 || week == 14) {
-                    if (id.length() > 5) {
-                        QString afterWeek = id.mid(5);
-                        if (afterWeek.length() > 1 || !afterWeek.at(0).isLetter()) {
-                            isAprilFoolsVersion = true;
-                        }
-                    }
-                }
-            }
-            if (!isAprilFoolsVersion) {
+            if (!isAprilFoolsId(id)) {
                 continue;
             }
         } else if (m_currentFilter == "old") {
@@ -407,9 +483,17 @@ void InstallInstancePage::populateVersionList()
         else typeDisplay = tr("其他");
 
         m_versionTypeMap[id] = typeDisplay;
+        m_versionRawType[id] = type;
 
         createVersionListCard(id, type, dateString, typeDisplay);
+        if (m_viewMode == ContentViewSwitch::Masonry) {
+            addMasonryVersionCard(id, dateString, typeDisplay);
+            coverIds << id;
+        }
     }
+
+    if (!coverIds.isEmpty())
+        requestVersionCovers(coverIds);
 
     if (m_versionList->count() > 0) {
         m_versionList->setCurrentRow(0);
@@ -443,23 +527,31 @@ void InstallInstancePage::createVersionListCard(const QString &id, const QString
     iconLabel->setProperty("cardRole", "icon");
     iconLabel->setFixedSize(48, 48);
     iconLabel->setAlignment(Qt::AlignCenter);
-    QPixmap placeholderIcon(48, 48);
-    QColor iconColor = (type == "release") ? QColor("#4CAF50") :
-                       (type == "snapshot") ? QColor("#FF9800") : QColor("#9E9E9E");
-    placeholderIcon.fill(iconColor.lighter(180));
-    {
-        QPainter painter(&placeholderIcon);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(Qt::white);
-        QFont font;
-        font.setBold(true);
-        font.setPixelSize(24);
-        painter.setFont(font);
-        QString letter = type.isEmpty() ? "?" : type.left(1).toUpper();
-        painter.drawText(placeholderIcon.rect(), Qt::AlignCenter, letter);
-        painter.end();
+    // 去掉全局的灰底/渐变底，方块图直接透明展示（仅作用于本卡片图标）
+    iconLabel->setStyleSheet(QStringLiteral("background: transparent; border: none;"));
+    // 版本类型方块图（透明底），资源缺失时回退字母占位
+    const QPixmap typeIcon(iconPathForVersion(id, type));
+    if (!typeIcon.isNull()) {
+        iconLabel->setPixmap(typeIcon.scaled(40, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    } else {
+        QPixmap placeholderIcon(48, 48);
+        QColor iconColor = (type == "release") ? QColor("#4CAF50") :
+                           (type == "snapshot") ? QColor("#FF9800") : QColor("#9E9E9E");
+        placeholderIcon.fill(iconColor.lighter(180));
+        {
+            QPainter painter(&placeholderIcon);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(Qt::white);
+            QFont font;
+            font.setBold(true);
+            font.setPixelSize(24);
+            painter.setFont(font);
+            QString letter = type.isEmpty() ? "?" : type.left(1).toUpper();
+            painter.drawText(placeholderIcon.rect(), Qt::AlignCenter, letter);
+            painter.end();
+        }
+        iconLabel->setPixmap(placeholderIcon);
     }
-    iconLabel->setPixmap(placeholderIcon);
     mainLayout->addWidget(iconLabel);
 
     QVBoxLayout *infoLayout = new QVBoxLayout();
@@ -520,14 +612,7 @@ void InstallInstancePage::createVersionListCard(const QString &id, const QString
     btnLayout->addWidget(serverBtn);
 
     QPushButton *installBtn = createBtn(":/Images/Icons/install.svg", tr("安装此版本"));
-    connect(installBtn, &QPushButton::clicked, [this, id]() {
-        if (m_modifyMode) {
-            emit modifyVersionSelected(id, m_versionTypeMap.value(id),
-                                       m_modifyInstancePath, m_modifyInstanceName);
-        } else {
-            emit versionSelected(id, m_versionTypeMap.value(id));
-        }
-    });
+    connect(installBtn, &QPushButton::clicked, this, [this, id]() { selectVersion(id); });
     btnLayout->addWidget(installBtn);
 
     mainLayout->addLayout(btnLayout);
@@ -535,6 +620,292 @@ void InstallInstancePage::createVersionListCard(const QString &id, const QString
     item->setData(Qt::UserRole, id);
     m_versionList->setItemWidget(item, cardWidget);
     item->setSizeHint(QSize(0, 76));
+}
+
+void InstallInstancePage::onViewModeChanged(ContentViewSwitch::ViewMode mode)
+{
+    m_viewMode = mode;
+    ContentViewSwitch::savePersisted("install_instance", mode);
+    if (m_viewStack)
+        m_viewStack->setCurrentIndex(mode == ContentViewSwitch::List ? 0 : 1);
+    // 列表模式下不预建瀑布流卡片，切到瀑布流时按当前筛选重建
+    if (mode == ContentViewSwitch::Masonry && !m_allVersions.isEmpty())
+        populateVersionList();
+}
+
+void InstallInstancePage::selectVersion(const QString &versionId)
+{
+    if (versionId.isEmpty())
+        return;
+    if (m_modifyMode) {
+        emit modifyVersionSelected(versionId, m_versionTypeMap.value(versionId),
+                                   m_modifyInstancePath, m_modifyInstanceName);
+    } else {
+        emit versionSelected(versionId, m_versionTypeMap.value(versionId));
+    }
+}
+
+/* 瀑布流版本卡片：渐变 banner + wiki 封面 + 名称/描述/chips + 安装按钮 */
+void InstallInstancePage::addMasonryVersionCard(const QString &id, const QString &dateString,
+                                                const QString &typeDisplay)
+{
+    ModInfo info;
+    info.id = id;
+    info.name = id;
+    info.chineseName = id;
+    info.source = m_currentSource;
+    info.iconUrl = iconPathForVersion(id, m_versionRawType.value(id));
+    info.description = dateString.isEmpty()
+                           ? tr("Minecraft %1 版本").arg(typeDisplay)
+                           : tr("Minecraft %1 版本，发布于 %2").arg(typeDisplay, dateString);
+    // chips 复用展示字段承载「日期 / 类型」，与列表卡片信息保持一致
+    if (!dateString.isEmpty())
+        info.gameVersions = QStringList{dateString};
+    info.categories = QStringList{typeDisplay};
+    info.coverUrl = m_coverUrls.value(id);
+
+    QList<MasonryContentCard::ActionSpec> actions;
+    actions.append({QStringLiteral(":/Images/Icons/server.svg"), tr("下载服务端"), QColor(),
+                    [this]() {
+                        NotificationManager::showInfo(this, tr("下载服务端功能将在后续版本中实现！"));
+                    }});
+    actions.append({QStringLiteral(":/Images/Icons/install.svg"), tr("安装此版本"), QColor(),
+                    [this, id]() { selectVersion(id); }});
+
+    QWidget *card = MasonryContentCard::build(info, m_masonryContainer, actions);
+    card->setProperty("versionId", id);
+    card->installEventFilter(this);
+    m_masonryCards.insert(id, card);
+    m_masonryLayout->addWidget(card);
+}
+
+/* wiki 标题映射：官方清单 id → minecraft.wiki 页面标题 */
+QString InstallInstancePage::wikiTitleFor(const QString &id, const QString &type)
+{
+    if (type == QLatin1String("old_beta") && id.startsWith(QLatin1Char('b')))
+        return QStringLiteral("Java Edition Beta ") + id.mid(1);
+    if (type == QLatin1String("old_alpha") && id.startsWith(QLatin1Char('a')))
+        return QStringLiteral("Java Edition Alpha v") + id.mid(1);
+    if (type == QLatin1String("old_alpha") && id.startsWith(QLatin1String("inf-")))
+        return QStringLiteral("Java Edition Infdev ") + id.mid(4);
+    return QStringLiteral("Java Edition ") + id;
+}
+
+/* 批量拉取版本封面：优先取 wiki 上的「<版本号> banner」官方主题图，缺失再回退页面首图 */
+void InstallInstancePage::requestVersionCovers(const QStringList &versionIds)
+{
+    QStringList need;
+    need.reserve(versionIds.size());
+    for (const QString &id : versionIds) {
+        if (!m_coverUrls.contains(id) && !m_coverMissing.contains(id))
+            need << id;
+    }
+    if (need.isEmpty())
+        return;
+
+    // 分块串行请求：本块回包后再请求下一块，让列表头部的卡片先拿到封面
+    requestCoverChunk(need, 0);
+}
+
+void InstallInstancePage::requestCoverChunk(const QStringList &need, int begin)
+{
+    if (begin < 0 || begin >= need.size())
+        return;
+
+    const QStringList chunk = need.mid(begin, kCoverChunkSize);
+
+    // 阶段 1：官方主题图。wiki 各版本页普遍带 "<版本号> banner"（1170×500 宣传图），
+    // 命名有 jpg/png 与大小写差异，一次把候选都问上
+    static const char *const kBannerNames[] = {
+        "banner.jpg", "banner.png", "Banner.png", "Banner.jpg",
+    };
+    QHash<QString, QString> fileToId;
+    QStringList fileTitles;
+    fileTitles.reserve(chunk.size() * 4);
+    for (const QString &id : chunk) {
+        for (const char *name : kBannerNames) {
+            const QString title = QStringLiteral("File:%1 %2").arg(id, QLatin1String(name));
+            fileToId.insert(title, id);
+            fileTitles << title;
+        }
+    }
+
+    QUrl url(QStringLiteral("https://minecraft.wiki/api.php"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("action"), QStringLiteral("query"));
+    query.addQueryItem(QStringLiteral("prop"), QStringLiteral("imageinfo"));
+    query.addQueryItem(QStringLiteral("iiprop"), QStringLiteral("url"));
+    query.addQueryItem(QStringLiteral("iiurlwidth"), QStringLiteral("800"));
+    query.addQueryItem(QStringLiteral("format"), QStringLiteral("json"));
+    query.addQueryItem(QStringLiteral("formatversion"), QStringLiteral("2"));
+    query.addQueryItem(QStringLiteral("titles"), fileTitles.join(QLatin1Char('|')));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setRawHeader("User-Agent", "BlockBox/1.0 (Minecraft version covers)");
+    QNetworkReply *reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, fileToId, chunk, need, begin]() {
+                reply->deleteLater();
+                if (reply->error() == QNetworkReply::NoError) {
+                    const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+                    const QJsonArray pages =
+                        root.value(QStringLiteral("query")).toObject()
+                            .value(QStringLiteral("pages")).toArray();
+                    for (const QJsonValue &value : pages) {
+                        const QJsonObject page = value.toObject();
+                        const QString id = fileToId.value(page.value(QStringLiteral("title")).toString());
+                        if (id.isEmpty())
+                            continue;
+                        const QJsonArray infos = page.value(QStringLiteral("imageinfo")).toArray();
+                        if (infos.isEmpty())
+                            continue;
+                        const QJsonObject info = infos.first().toObject();
+                        const QString coverUrl =
+                            info.value(QStringLiteral("thumburl")).toString().isEmpty()
+                                ? info.value(QStringLiteral("url")).toString()
+                                : info.value(QStringLiteral("thumburl")).toString();
+                        if (coverUrl.isEmpty())
+                            continue;
+                        m_coverUrls.insert(id, coverUrl);
+                        applyCoverToCard(id, coverUrl);
+                    }
+                }
+                // 阶段 2：没有主题图的版本回退页面首图；单块失败不阻塞后续封面
+                QStringList rest;
+                for (const QString &id : chunk) {
+                    if (!m_coverUrls.contains(id))
+                        rest << id;
+                }
+                if (rest.isEmpty()) {
+                    saveCoverCache();
+                    requestCoverChunk(need, begin + chunk.size());
+                } else {
+                    requestFallbackCovers(rest, need, begin, chunk.size());
+                }
+            });
+}
+
+void InstallInstancePage::requestFallbackCovers(const QStringList &ids, const QStringList &need,
+                                                int begin, int taken)
+{
+    QHash<QString, QString> titleToId;
+    QStringList titles;
+    titles.reserve(ids.size());
+    for (const QString &id : ids) {
+        const QString title = wikiTitleFor(id, m_versionRawType.value(id));
+        titleToId.insert(title, id);
+        titles << title;
+    }
+
+    QUrl url(QStringLiteral("https://minecraft.wiki/api.php"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("action"), QStringLiteral("query"));
+    query.addQueryItem(QStringLiteral("prop"), QStringLiteral("pageimages"));
+    query.addQueryItem(QStringLiteral("piprop"), QStringLiteral("thumbnail"));
+    query.addQueryItem(QStringLiteral("pithumbsize"), QStringLiteral("800"));
+    query.addQueryItem(QStringLiteral("format"), QStringLiteral("json"));
+    query.addQueryItem(QStringLiteral("formatversion"), QStringLiteral("2"));
+    query.addQueryItem(QStringLiteral("titles"), titles.join(QLatin1Char('|')));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setRawHeader("User-Agent", "BlockBox/1.0 (Minecraft version covers)");
+    QNetworkReply *reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, titleToId, need, begin, taken]() {
+        reply->deleteLater();
+        if (reply->error() == QNetworkReply::NoError) {
+            const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+            const QJsonArray pages =
+                root.value(QStringLiteral("query")).toObject().value(QStringLiteral("pages")).toArray();
+            for (const QJsonValue &value : pages) {
+                const QJsonObject page = value.toObject();
+                const QString id = titleToId.value(page.value(QStringLiteral("title")).toString());
+                if (id.isEmpty())
+                    continue;
+                const QString coverUrl = page.value(QStringLiteral("thumbnail")).toObject()
+                                             .value(QStringLiteral("source")).toString();
+                if (coverUrl.isEmpty()) {
+                    // 页面不存在或页面无配图，记为已知缺失，避免每次重建重复请求
+                    m_coverMissing.insert(id);
+                    continue;
+                }
+                m_coverUrls.insert(id, coverUrl);
+                applyCoverToCard(id, coverUrl);
+            }
+        }
+        saveCoverCache();
+        requestCoverChunk(need, begin + taken);
+    });
+}
+
+void InstallInstancePage::loadCoverCache()
+{
+    m_coverCacheLoaded = true;
+    QFile f(coverCacheFile());
+    if (!f.open(QIODevice::ReadOnly))
+        return;
+    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    const QJsonObject urls = root.value(QStringLiteral("urls")).toObject();
+    for (auto it = urls.begin(); it != urls.end(); ++it) {
+        const QString coverUrl = it.value().toString();
+        if (!coverUrl.isEmpty())
+            m_coverUrls.insert(it.key(), coverUrl);
+    }
+    for (const QJsonValue &value : root.value(QStringLiteral("missing")).toArray()) {
+        const QString id = value.toString();
+        if (!id.isEmpty())
+            m_coverMissing.insert(id);
+    }
+}
+
+void InstallInstancePage::saveCoverCache() const
+{
+    QJsonObject urls;
+    for (auto it = m_coverUrls.constBegin(); it != m_coverUrls.constEnd(); ++it)
+        urls.insert(it.key(), it.value());
+    QJsonArray missing;
+    for (const QString &id : m_coverMissing)
+        missing.append(id);
+    QJsonObject root;
+    root.insert(QStringLiteral("urls"), urls);
+    root.insert(QStringLiteral("missing"), missing);
+
+    const QString path = coverCacheFile();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly))
+        return;
+    f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    f.commit();
+}
+
+void InstallInstancePage::applyCoverToCard(const QString &versionId, const QString &url)
+{
+    QWidget *card = m_masonryCards.value(versionId);
+    if (!card)
+        return;
+    QLabel *banner = card->findChild<QLabel *>(QStringLiteral("contentCardBanner"));
+    if (!banner)
+        return;
+    const QPixmap current = banner->pixmap();
+    const int w = current.width() > 0 ? current.width() : kMasonryCardW - 2;
+    const int h = current.height() > 0 ? current.height() : kMasonryBannerH;
+    MasonryContentCard::loadCoverInto(banner, url, w, h);
+}
+
+/* 点击瀑布流卡片（或其空白处）→ 与安装按钮一致的版本选择行为 */
+bool InstallInstancePage::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::MouseButtonRelease) {
+        const auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        const QVariant versionId = watched->property("versionId");
+        if (versionId.isValid() && mouseEvent->button() == Qt::LeftButton) {
+            selectVersion(versionId.toString());
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void InstallInstancePage::onModifyExistingInstanceClicked()

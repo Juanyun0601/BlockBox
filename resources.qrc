@@ -126,6 +126,11 @@
         <file>Images/icon.ico</file>
         <file>Images/logo.png</file>
         <file>Images/blockbox_icon_dark.png</file>
+        <!-- 版本类型图标（安装新实例卡片） -->
+        <file>Images/Block/Grass_Block.png</file>
+        <file>Images/Block/Command_Block.png</file>
+        <file>Images/Block/Egg_enchanted.png</file>
+        <file>Images/Block/Stone.png</file>
         <file>utils/mod/mcmod_names.json</file>
         <file>resources/command_database.json</file>
         <file>resources/bedrock_command_database.json</file>
@@ -135,8 +140,14 @@
         <file>resources/ai_models.json</file>
         <file>resources/ai_agent_tools.json</file>
         <!-- Pictures for homepage carousel -->
-        <file>Images/Pictures/7649e2dbc7044ee71743022dd2d51701.jpg</file>
-        <file>Images/Pictures/a84df7fe2accbbda2fbcf4348522008c.jpg</file>
+        <file>Images/Pictures/pic1.jpg</file>
+        <file>Images/Pictures/pic2.jpg</file>
+        <file>Images/Pictures/pic3.jpg</file>
+        <file>Images/Pictures/pic4.jpg</file>
+        <file>Images/Pictures/pic5.jpg</file>
+        <file>Images/Pictures/pic6.jpg</file>
+        <file>Images/Pictures/pic7.jpg</file>
+        <file>Images/Pictures/pic8.jpg</file>
     </qresource>
 </RCC>
 

@@ -127,7 +127,6 @@ QString BackgroundManager::backgroundStyleSheet() const
         "QWidget#settingsGameContent, QWidget#settingsInstanceContent,\n"
         "QWidget#settingsJavaContent, QWidget#settingsAdvancedContent,\n"
         "QWidget#settingsKeyBindContent { background: transparent; }\n"
-        "SideBar { background: transparent; }\n"
         // 主堆栈及各页面内的嵌套堆栈：所有直接子页一律透明（含未来新增页面）
         "QWidget#contentWrapper QStackedWidget > QWidget { background: transparent; }\n"
         // 页面内滚动区域与视口透明

@@ -82,7 +82,13 @@ void loadImageInto(QLabel *label, const QString &url, int w, int h,
 
     QPointer<QLabel> guard(label);
     QString acceleratedUrl = McimHelper::rewriteImageUrl(url);
-    QNetworkReply *reply = cardImageNAM()->get(QNetworkRequest(QUrl(acceleratedUrl)));
+    QNetworkRequest request{QUrl(acceleratedUrl)};
+    // wiki 等图源走 HTTP/2 时并发流会被流控卡死（实测 40 并发 0 完成），
+    // 强制 HTTP/1.1 走 Qt 每主机 6 连接，封面才能陆续回来
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    // wiki 图床对无 User-Agent / 伪装浏览器 UA 返回 403，需带明确客户端标识
+    request.setRawHeader("User-Agent", "BlockBox/1.0 (Minecraft version covers)");
+    QNetworkReply *reply = cardImageNAM()->get(request);
     QObject::connect(reply, &QNetworkReply::finished, reply, [reply, guard, cacheKey, transform]() {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError || !guard)
@@ -199,6 +205,12 @@ int MasonryContentCard::bannerHeightFor(const ModInfo &info)
     return kBannerH;
 }
 
+void MasonryContentCard::loadCoverInto(QLabel *banner, const QString &url, int width, int height)
+{
+    loadImageInto(banner, url, width, height,
+                  [width, height](const QPixmap &pm) { return makeCoverPixmap(pm, width, height); });
+}
+
 QWidget *MasonryContentCard::build(const ModInfo &info, QWidget *parent,
                                    const QList<ActionSpec> &actions)
 {
@@ -242,8 +254,25 @@ QWidget *MasonryContentCard::build(const ModInfo &info, QWidget *parent,
     logo->setPixmap(makeLogoPixmap(c1, c2, letter));
     logo->move(bannerW - kLogoSize - 12, bannerH - (kLogoSize - kLogoOverlap));
     if (!info.iconUrl.isEmpty() && info.source != QStringLiteral("curseforge")) {
-        loadImageInto(logo, info.iconUrl, kLogoSize, kLogoSize,
-                      [](const QPixmap &pm) { return MasonryContentCard::makeRoundIcon(pm, kLogoSize); });
+        if (info.iconUrl.startsWith(QLatin1String(":/"))) {
+            // 本地图标（透明底方块图）：直接铺到 logo 区，不画渐变底板
+            const QPixmap block(info.iconUrl);
+            if (!block.isNull()) {
+                QPixmap badge(kLogoSize, kLogoSize);
+                badge.fill(Qt::transparent);
+                const QPixmap glyph = block.scaled(44, 44, Qt::KeepAspectRatio,
+                                                   Qt::SmoothTransformation);
+                QPainter painter(&badge);
+                painter.setRenderHint(QPainter::Antialiasing);
+                painter.drawPixmap((kLogoSize - glyph.width()) / 2,
+                                   (kLogoSize - glyph.height()) / 2, glyph);
+                painter.end();
+                logo->setPixmap(badge);
+            }
+        } else {
+            loadImageInto(logo, info.iconUrl, kLogoSize, kLogoSize,
+                          [](const QPixmap &pm) { return MasonryContentCard::makeRoundIcon(pm, kLogoSize); });
+        }
     }
     // 给 logo 加深色投影，确保图标/字母在半压区域上清晰可见
     auto *logoShadow = new QGraphicsDropShadowEffect(logo);

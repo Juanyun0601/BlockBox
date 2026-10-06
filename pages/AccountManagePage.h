@@ -141,6 +141,8 @@ private:
     /** 初始化皮肤/模型动作与模型背景控件（统一放入右侧账户面板区域） */
     void initSkinModelActions();
     void initLoginPage();
+    /** 按当前登录方式的实际高度收缩添加账户卡片（QStackedWidget 默认取所有页的最大值，会让最短表单留下大片空白） */
+    void updateLoginColumnHeight();
     void addAccountItem(const QString &accountName, const QString &accountType, const QString &serverUrl = "", bool isDefault = false, const QString &skinUrl = "", const QString &uuid = "");
     void updateCurrentAccountInfo(const QString &accountName, const QString &accountType, bool isDefault = false);
     void clearAccountButtons();
@@ -191,6 +193,7 @@ private:
     // Center skin display
     QVBoxLayout *m_centerLayout;
     Skin3DWidget *m_skin3DWidget;
+    QWidget *m_emptyStateWidget;        // 空态容器（提示 + 按钮，居中于预览区）
     QLabel *m_noAccountHint;
     QPushButton *m_addFirstAccountBtn;
 

@@ -184,9 +184,29 @@ void SettingsKeyBindPage::initUI()
   m_mainLayout->setContentsMargins(20, 0, 20, 20);
   m_mainLayout->setSpacing(0);
 
-  OutlinedLabel *titleLabel = new OutlinedLabel(tr("按键绑定"), this);
+  // ── 标题栏（标题 + 恢复默认值按钮）──
+  QFrame *headerCard = new QFrame(this);
+  headerCard->setObjectName("settingsHeaderCard");
+  headerCard->setAttribute(Qt::WA_StyledBackground, true);
+  QHBoxLayout *headerLayout = new QHBoxLayout(headerCard);
+  headerLayout->setContentsMargins(24, 12, 24, 12);
+  headerLayout->setSpacing(12);
+
+  OutlinedLabel *titleLabel = new OutlinedLabel(tr("按键绑定"), headerCard);
   titleLabel->setObjectName("sectionTitle");
-  m_mainLayout->addWidget(titleLabel);
+  headerLayout->addWidget(titleLabel);
+  headerLayout->addStretch();
+
+  QPushButton *resetAllBtn = new QPushButton(tr("恢复默认值"), headerCard);
+  resetAllBtn->setObjectName("restoreDefaultsBtn");
+  connect(resetAllBtn, &QPushButton::clicked, this, [this]() {
+    resetAllToDefault();
+    saveBindings();
+    emit bindingsChanged();
+  });
+  headerLayout->addWidget(resetAllBtn);
+
+  m_mainLayout->addWidget(headerCard);
 
   QLabel *descLabel = new QLabel(tr("点击「绑定」按钮后按下新按键即可重新绑定快捷键"), this);
   descLabel->setObjectName("keyBindDesc");
@@ -233,16 +253,6 @@ void SettingsKeyBindPage::initUI()
   scrollArea->setWidget(scrollContent);
 
   m_mainLayout->addWidget(scrollArea, 1);
-
-  // Reset all button
-  QPushButton *resetAllBtn = new QPushButton(tr("恢复默认值"), this);
-  resetAllBtn->setObjectName("restoreDefaultsBtn");
-  connect(resetAllBtn, &QPushButton::clicked, this, [this]() {
-    resetAllToDefault();
-    saveBindings();
-    emit bindingsChanged();
-  });
-  m_mainLayout->addWidget(resetAllBtn, 0, Qt::AlignRight);
 }
 
 void SettingsKeyBindPage::loadBindings()

@@ -101,6 +101,9 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    /// 刷新首页「最近游玩」区域（实例文件夹在启动后被添加时调用）
+    void refreshHomeRecentPlays();
+
 private slots:
     void onSideBarItemClicked(int parentIndex);
     void onParentNavClicked(int parentIndex);

@@ -10,8 +10,10 @@
 #include "components/OutlinedLabel.h"
 #include "components/HomeDataVisuals.h"
 #include "components/NewsCard.h"
+#include "components/Skin3DWidget.h"
 #include "utils/DownloadTaskManager.h"
 #include "utils/DownloadUtils.h"
+#include "utils/SkinDownloader.h"
 #include "utils/SystemInfo.h"
 #include "utils/mod/ModData.h"
 
@@ -36,16 +38,16 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QParallelAnimationGroup>
 #include <QPixmap>
 #include <QProgressBar>
-#include <QPropertyAnimation>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QSet>
+#include <QShowEvent>
 #include <QStorageInfo>
 #include <QStyle>
 #include <QUrl>
+#include <QVariantAnimation>
 #include <QVBoxLayout>
 
 #include "components/PerfMonitorCard.h"
@@ -75,20 +77,302 @@ inline const QString Downloads   = QStringLiteral("downloads");   // 下载任�
 inline const QString System      = QStringLiteral("system");      // 系统信息
 }
 
+// 比较两条最近游玩记录的展示相关字段（用于判断扫描结果是否变化）
+static bool sameRecentPlayEntry(const RecentPlayEntry &a, const RecentPlayEntry &b)
+{
+  return a.name == b.name
+      && a.instanceName == b.instanceName
+      && a.type == b.type
+      && a.lastPlayed == b.lastPlayed
+      && a.version == b.version
+      && a.loader == b.loader
+      && a.savePath == b.savePath
+      && a.instancePath == b.instancePath
+      && a.iconPath == b.iconPath
+      && a.serverAddress == b.serverAddress
+      && a.serverPort == b.serverPort;
+}
+
+static bool sameRecentPlayList(const QVector<RecentPlayEntry> &a, const QVector<RecentPlayEntry> &b)
+{
+  if (a.size() != b.size())
+    return false;
+  for (int i = 0; i < a.size(); ++i)
+  {
+    if (!sameRecentPlayEntry(a[i], b[i]))
+      return false;
+  }
+  return true;
+}
+
+// ============================================================================
+// 轮播/皮肤面板自绘辅助（圆角包裹 + 描边）
+// ============================================================================
+
+// 轮播与皮肤面板统一使用的圆角半径（与最近游玩卡片 16px 对齐）
+static constexpr qreal kHeroRadius = 16.0;
+// 轮播右侧皮肤预览面板固定宽度 / 与轮播的间距
+static constexpr int kSkinPanelWidth = 220;
+static constexpr int kHeroSpacing = 16;
+
+// 主题卡片底色（与 style.qss 中 @BG_CARD@ 的取值保持一致）
+static QColor homeCardBackgroundColor()
+{
+  switch (ThemeManager::instance()->currentTheme())
+  {
+  case ThemeManager::LightTheme: return QColor("#ffffff");
+  case ThemeManager::DarkTheme:  return QColor("#2d2d2d");
+  default:                       return QColor("#333333");
+  }
+}
+
+// 主题卡片描边色（与 style.qss 中 @BORDER@ 的取值保持一致，
+// 而非 currentBorderColor()——后者是可自定义的边框色，与 QSS 卡片描边不同源）
+static QColor homeCardBorderColor()
+{
+  switch (ThemeManager::instance()->currentTheme())
+  {
+  case ThemeManager::LightTheme: return QColor("#e8eaed");
+  case ThemeManager::DarkTheme:  return QColor("#3a3a3a");
+  default:                       return QColor("#404040");
+  }
+}
+
+/**
+ * @brief 自绘轮播视图：圆角裁剪 + 1px 描边，双层图片向左滑动切换
+ *
+ * 替代旧的 QLabel 叠加方案：QLabel 使用 QSS 圆角无法裁剪位图内容，
+ * 滑动过程中圆角/描边也无法随内容保持。改为整体自绘后，
+ * 圆角、描边、封面裁剪（等比放大居中裁满，不再拉伸变形）一次完成。
+ */
+class CarouselView : public QWidget
+{
+public:
+  explicit CarouselView(QWidget *parent = nullptr)
+    : QWidget(parent)
+  {
+    setObjectName("carouselStack");
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_anim = new QVariantAnimation(this);
+    m_anim->setDuration(700);
+    m_anim->setEasingCurve(QEasingCurve::InOutCubic);
+    QObject::connect(m_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v)
+    {
+      m_progress = v.toReal();
+      update();
+    });
+    QObject::connect(m_anim, &QVariantAnimation::finished, this, [this]()
+    {
+      commitNext();
+      update();
+    });
+  }
+
+  /** 是否已显示图片（首张用非动画直显判断） */
+  bool hasPixmap() const { return !m_currentSrc.isNull(); }
+
+  /** 直接显示图片（无动画），用于首张 */
+  void setPixmapInstant(const QPixmap &pm)
+  {
+    stopAnimation();
+    m_currentSrc = pm;
+    m_current = scaleCover(pm);
+    update();
+  }
+
+  /** 滑动切换到新图；动画进行中会先瞬间落到终点再重新开始 */
+  void slideTo(const QPixmap &pm)
+  {
+    if (pm.isNull())
+      return;
+    if (stopAnimation())
+      update();
+    m_nextSrc = pm;
+    m_next = scaleCover(pm);
+    m_progress = 0.0;
+    m_anim->setStartValue(0.0);
+    m_anim->setEndValue(1.0);
+    m_anim->start();
+    update();
+  }
+
+protected:
+  void resizeEvent(QResizeEvent *event) override
+  {
+    QWidget::resizeEvent(event);
+    // 尺寸变化后按新尺寸重新 cover 缩放，避免缓存图与视口比例不符
+    m_current = scaleCover(m_currentSrc);
+    m_next = scaleCover(m_nextSrc);
+    update();
+  }
+
+  void paintEvent(QPaintEvent *) override
+  {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+
+    QRectF r = rect();
+    QPainterPath clip;
+    clip.addRoundedRect(r, kHeroRadius, kHeroRadius);
+    p.setClipPath(clip);
+
+    // 底色兜底（图片未铺满或尚未加载时）
+    p.fillPath(clip, homeCardBackgroundColor());
+
+    if (!m_next.isNull() && m_anim->state() == QAbstractAnimation::Running)
+    {
+      // 旧图向左滑出，新图自右滑入
+      drawLayer(p, m_current, -m_progress * width(), width(), height());
+      drawLayer(p, m_next, (1.0 - m_progress) * width(), width(), height());
+    }
+    else if (!m_current.isNull())
+    {
+      drawLayer(p, m_current, 0, width(), height());
+    }
+
+    p.setClipping(false);
+    p.setPen(QPen(homeCardBorderColor(), 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), kHeroRadius, kHeroRadius);
+  }
+
+private:
+  /** 提交滑动中的新图为当前图 */
+  void commitNext()
+  {
+    if (!m_nextSrc.isNull())
+    {
+      m_current = m_next;
+      m_currentSrc = m_nextSrc;
+      m_next = QPixmap();
+      m_nextSrc = QPixmap();
+    }
+    m_progress = 0.0;
+  }
+
+  /** 停止进行中的动画并提交终点；返回 true 表示确实有动画被停止 */
+  bool stopAnimation()
+  {
+    if (m_anim->state() != QAbstractAnimation::Running)
+      return false;
+    m_anim->stop();   // 提前 stop 不会触发 finished，需手动提交
+    commitNext();
+    return true;
+  }
+
+  /** 等比放大居中裁满视口（cover），缓存为与视口同尺寸的位图 */
+  QPixmap scaleCover(const QPixmap &src) const
+  {
+    if (src.isNull() || width() <= 0 || height() <= 0)
+      return QPixmap();
+    const qreal dpr = devicePixelRatioF();
+    QPixmap out = src.scaled(int(width() * dpr), int(height() * dpr),
+                             Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    out.setDevicePixelRatio(dpr);
+    return out;
+  }
+
+  static void drawLayer(QPainter &p, const QPixmap &pm, qreal dx, qreal w, qreal h)
+  {
+    if (pm.isNull())
+      return;
+    const qreal dpr = pm.devicePixelRatio() > 0 ? pm.devicePixelRatio() : 1.0;
+    const qreal lw = pm.width() / dpr;
+    const qreal lh = pm.height() / dpr;
+    // 居中绘制（cover 缩放后至少一边与视口同宽）
+    p.drawPixmap(QPointF(dx - (lw - w) / 2.0, -(lh - h) / 2.0), pm);
+  }
+
+  QVariantAnimation *m_anim = nullptr;
+  QPixmap m_currentSrc;   // 当前图原图（resize 时重缩放用）
+  QPixmap m_current;      // 当前图 cover 缩放缓存
+  QPixmap m_nextSrc;      // 滑入图原图
+  QPixmap m_next;         // 滑入图 cover 缩放缓存
+  qreal m_progress = 0.0; // 滑动进度 0~1
+};
+
+/** 皮肤面板描边叠层：绘制在 GL 控件之上，保证 1px 描边不被子控件覆盖 */
+class HomeSkinBorderOverlay : public QWidget
+{
+public:
+  explicit HomeSkinBorderOverlay(QWidget *parent) : QWidget(parent)
+  {
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setAttribute(Qt::WA_NoSystemBackground);
+    setAttribute(Qt::WA_TranslucentBackground);
+  }
+
+protected:
+  void paintEvent(QPaintEvent *) override
+  {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(homeCardBorderColor(), 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(rect().adjusted(0, 0, -1, -1), kHeroRadius, kHeroRadius);
+  }
+};
+
+/**
+ * @brief 轮播右侧皮肤面板：卡片底色自绘 + 顶部描边叠层
+ *
+ * 内容子控件（3D 皮肤预览 / 添加账户空态）由外部放入 contentLayout，
+ * 面板负责圆角底色与描边的视觉包裹。
+ */
+class HomeSkinPanel : public QWidget
+{
+public:
+  QVBoxLayout *contentLayout = nullptr;
+
+  explicit HomeSkinPanel(QWidget *parent = nullptr) : QWidget(parent)
+  {
+    setObjectName("homeSkinPanel");
+    contentLayout = new QVBoxLayout(this);
+    contentLayout->setContentsMargins(1, 1, 1, 1);   // 内缩 1px，露出描边
+    contentLayout->setSpacing(0);
+    m_overlay = new HomeSkinBorderOverlay(this);
+  }
+
+  /** 内容子控件加入后调用，确保描边叠层位于最上层 */
+  void finalizeOverlay()
+  {
+    m_overlay->raise();
+    m_overlay->setGeometry(rect());
+  }
+
+protected:
+  void paintEvent(QPaintEvent *) override
+  {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPainterPath path;
+    path.addRoundedRect(rect(), kHeroRadius, kHeroRadius);
+    p.fillPath(path, homeCardBackgroundColor());
+  }
+
+  void resizeEvent(QResizeEvent *event) override
+  {
+    QWidget::resizeEvent(event);
+    m_overlay->setGeometry(rect());
+    m_overlay->raise();
+    m_overlay->update();
+  }
+
+private:
+  HomeSkinBorderOverlay *m_overlay = nullptr;
+};
+
 // ============================================================================
 // 构造 / 析构
 // ============================================================================
 
 HomePage::HomePage(QWidget *parent)
     : QWidget(parent)
-    , m_carouselStack(nullptr)
-    , m_carouselImage(nullptr)
-    , m_carouselOverlay(nullptr)
-    , m_carouselAnimGroup(nullptr)
+    , m_carouselView(nullptr)
     , m_carouselPlaceholder(nullptr)
     , m_carouselTimer(nullptr)
     , m_currentCarouselIndex(0)
-    , m_carouselAnimating(false)
     , m_recentPlaysContainer(nullptr)
     , m_recentPlaysLayout(nullptr)
     , m_hardwareMonitor(nullptr)
@@ -100,6 +384,27 @@ HomePage::HomePage(QWidget *parent)
   loadRecentPlays();
   loadInstances();
   initUI();
+
+  // 账户列表变化（添加/删除/切换默认）时刷新皮肤面板
+  connect(SettingsManager::instance(), &SettingsManager::accountsChanged,
+          this, &HomePage::refreshSkinPanel);
+  // 正版/第三方账户皮肤异步下载完成后同步预览
+  connect(SkinDownloader::instance(), &SkinDownloader::skinLoaded, this,
+          [this](const QImage &texture)
+  {
+    if (m_skin3D && m_skin3D->isVisible() && !texture.isNull())
+      m_skin3D->setSkin(texture);
+  });
+  // 主题切换：同步 3D 预览底色，轮播/面板描边取主题色重绘即可
+  connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]()
+  {
+    if (m_skin3D)
+      m_skin3D->setBackgroundColor(homeCardBackgroundColor());
+    if (m_skinPanel)
+      m_skinPanel->update();
+    if (m_carouselView)
+      m_carouselView->update();
+  });
 }
 
 void HomePage::resizeEvent(QResizeEvent *event)
@@ -110,46 +415,31 @@ void HomePage::resizeEvent(QResizeEvent *event)
 
 void HomePage::updateCarouselHeight()
 {
-  // 轮播图可能位于默认模式（全宽）或自定义网格中，以其实际宽度计算高度
-  QWidget *cw = m_sectionWidgets.value(HomeCardType::Carousel);
-  int carouselWidth = (cw && cw->width() > 0) ? cw->width() : width();
+  // 轮播位于「轮播 + 皮肤面板」横排左侧，以其实际宽度按 16:9 计算高度；
+  // 尺寸未定（布局未激活）时按槽宽度减去面板宽度估算
+  int carouselWidth = (m_carouselView && m_carouselView->width() > 0)
+                          ? m_carouselView->width() : 0;
+  if (carouselWidth <= 0)
+  {
+    QWidget *cw = m_sectionWidgets.value(HomeCardType::Carousel);
+    int rowWidth = (cw && cw->width() > 0) ? cw->width() : width();
+    carouselWidth = qMax(100, rowWidth - kSkinPanelWidth - kHeroSpacing);
+  }
   int carouselHeight = carouselWidth * 9 / 16;
   if (carouselHeight < 160)
   {
     carouselHeight = 160;
   }
 
-  if (m_carouselStack)
+  if (m_carouselView)
   {
-    m_carouselStack->setFixedHeight(carouselHeight);
-    updateCarouselLayerGeometry();
+    m_carouselView->setFixedHeight(carouselHeight);
   }
   if (m_carouselPlaceholder)
   {
     m_carouselPlaceholder->setFixedHeight(carouselHeight);
   }
-}
-
-void HomePage::updateCarouselLayerGeometry()
-{
-  if (!m_carouselStack)
-  {
-    return;
-  }
-  // 防止动画正在播放时被 resize 打断
-  if (m_carouselAnimating)
-  {
-    return;
-  }
-  QRect r = m_carouselStack->rect();
-  if (m_carouselImage)
-  {
-    m_carouselImage->setGeometry(r);
-  }
-  if (m_carouselOverlay)
-  {
-    m_carouselOverlay->setGeometry(r);
-  }
+  // 皮肤面板与轮播同排（垂直 Expanding），高度随行高自动对齐
 }
 
 HomePage::~HomePage()
@@ -170,16 +460,28 @@ HomePage::~HomePage()
 
 bool HomePage::eventFilter(QObject *watched, QEvent *event)
 {
-  if (event->type() == QEvent::Resize && watched == m_carouselStack)
+  if (event->type() == QEvent::Resize && watched == m_carouselView)
   {
-    // 轮播图层容器尺寸变化时同步图片/遮罩层几何，
-    // 确保标签铺满整个 stack（修复首页打开时图片停留在旧宽度、右侧空白的问题）。
-    updateCarouselLayerGeometry();
+    // 轮播视图宽度随布局确定后，立即按 16:9 重算高度（布局激活不触发本页 resizeEvent）
+    updateCarouselHeight();
+  }
+  if (event->type() == QEvent::Resize && watched == m_skin3D)
+  {
+    // 皮肤预览 GL 控件按面板圆角裁剪（GL 只能方形渲染，遮罩锯齿与同色底面相互融合，视觉无感）
+    if (m_skin3D)
+    {
+      QPainterPath path;
+      path.addRoundedRect(QRectF(m_skin3D->rect()), kHeroRadius, kHeroRadius);
+      m_skin3D->setMask(QRegion(path.toFillPolygon().toPolygon(), Qt::WindingFill));
+    }
   }
   if (event->type() == QEvent::Resize && watched == m_recentPlaysContainer)
   {
-    // 最近游玩卡片宽度自适应容器宽度
-    rebuildRecentPlaysContent();
+    // 最近游玩卡片宽度自适应容器宽度。
+    // 容器的 Resize 事件是在祖先布局激活过程中同步派发的，
+    // 若此处直接重建，等于在布局激活途中增删子项，可能导致布局丢更新、
+    // 卡片拿不到几何尺寸而整块空白（概率性不加载），因此延迟到事件循环里合并执行。
+    scheduleRecentPlaysRebuild();
   }
   if (event->type() == QEvent::MouseButtonPress)
   {
@@ -433,10 +735,10 @@ void HomePage::initUI()
   m_mainLayout->setContentsMargins(0, 0, 0, 0);
   m_mainLayout->setSpacing(0);
 
-  // 默认模式轮播槽：全宽、无外边距
+  // 默认模式轮播槽：圆角描边后不再全出血贴边，侧边距与下方内容区对齐
   m_carouselSlot = new QWidget();
   m_carouselSlotLayout = new QVBoxLayout(m_carouselSlot);
-  m_carouselSlotLayout->setContentsMargins(0, 0, 0, 0);
+  m_carouselSlotLayout->setContentsMargins(24, 16, 24, 0);
   m_carouselSlotLayout->setSpacing(0);
   m_mainLayout->addWidget(m_carouselSlot);
 
@@ -538,15 +840,20 @@ QWidget* HomePage::sectionWidget(const QString &type)
 }
 
 // ============================================================================
-// Section 1: 轮播图
+// Section 1: 轮播图 + 当前皮肤预览
 // ============================================================================
 
 QWidget* HomePage::createCarouselSection()
 {
   auto *container = new QWidget();
-  auto *layout = new QVBoxLayout(container);
-  layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(8);
+  auto *vlay = new QVBoxLayout(container);
+  vlay->setContentsMargins(0, 0, 0, 0);
+  vlay->setSpacing(8);
+
+  // ── 横排：左侧轮播（自适应缩小），右侧当前皮肤预览面板 ──
+  auto *heroRow = new QHBoxLayout();
+  heroRow->setContentsMargins(0, 0, 0, 0);
+  heroRow->setSpacing(kHeroSpacing);
 
   if (m_carouselPaths.isEmpty())
   {
@@ -554,58 +861,133 @@ QWidget* HomePage::createCarouselSection()
     placeholder->setObjectName("carouselPlaceholder");
     placeholder->setAlignment(Qt::AlignCenter);
     m_carouselPlaceholder = placeholder;
-    layout->addWidget(placeholder);
-    return container;
+    heroRow->addWidget(placeholder, 1);
+  }
+  else
+  {
+    m_carouselView = new CarouselView();
+    m_carouselView->installEventFilter(this);
+    heroRow->addWidget(m_carouselView, 1);
   }
 
-  // 图片显示（使用双层叠加实现向左滚动切换）
-  m_carouselStack = new QWidget();
-  m_carouselStack->setObjectName("carouselStack");
-  m_carouselStack->installEventFilter(this);
+  heroRow->addWidget(createSkinPanel());
+  vlay->addLayout(heroRow);
 
-  m_carouselImage = new QLabel(m_carouselStack);
-  m_carouselImage->setObjectName("carouselImage");
-  m_carouselImage->setScaledContents(true);
-
-  m_carouselOverlay = new QLabel(m_carouselStack);
-  m_carouselOverlay->setObjectName("carouselOverlay");
-  m_carouselOverlay->setScaledContents(true);
-
-  layout->addWidget(m_carouselStack);
-
-  // 指示点
-  auto *dotsLayout = new QHBoxLayout();
-  dotsLayout->setAlignment(Qt::AlignCenter);
-  dotsLayout->setSpacing(6);
-  for (int i = 0; i < m_carouselPaths.size(); ++i)
+  if (!m_carouselPaths.isEmpty())
   {
-    auto *dot = new QPushButton();
-    dot->setObjectName("carouselDot");
-    dot->setFixedSize(4, 4);
-    dot->setCursor(Qt::PointingHandCursor);
-    int index = i;
-    QObject::connect(dot, &QPushButton::clicked, [this, index]()
+    // 指示点（相对轮播区居中：右侧让出皮肤面板 + 间距的宽度）
+    auto *dotsLayout = new QHBoxLayout();
+    dotsLayout->setAlignment(Qt::AlignCenter);
+    dotsLayout->setSpacing(6);
+    dotsLayout->setContentsMargins(0, 0, kSkinPanelWidth + kHeroSpacing, 0);
+    for (int i = 0; i < m_carouselPaths.size(); ++i)
     {
-      setCarouselIndex(index);
+      auto *dot = new QPushButton();
+      dot->setObjectName("carouselDot");
+      dot->setFixedSize(4, 4);
+      dot->setCursor(Qt::PointingHandCursor);
+      int index = i;
+      QObject::connect(dot, &QPushButton::clicked, [this, index]()
+      {
+        setCarouselIndex(index);
+      });
+      dotsLayout->addWidget(dot);
+      m_carouselDots.append(dot);
+    }
+    vlay->addLayout(dotsLayout);
+
+    // 初始显示第一张
+    setCarouselIndex(0);
+
+    // 自动轮播定时器
+    m_carouselTimer = new QTimer(this);
+    m_carouselTimer->setInterval(5000);
+    QObject::connect(m_carouselTimer, &QTimer::timeout, [this]()
+    {
+      updateCarousel();
     });
-    dotsLayout->addWidget(dot);
-    m_carouselDots.append(dot);
+    m_carouselTimer->start();
   }
-  layout->addLayout(dotsLayout);
-
-  // 初始显示第一张
-  setCarouselIndex(0);
-
-  // 自动轮播定时器
-  m_carouselTimer = new QTimer(this);
-  m_carouselTimer->setInterval(5000);
-  QObject::connect(m_carouselTimer, &QTimer::timeout, [this]()
-  {
-    updateCarousel();
-  });
-  m_carouselTimer->start();
 
   return container;
+}
+
+QWidget* HomePage::createSkinPanel()
+{
+  m_skinPanel = new HomeSkinPanel();
+  m_skinPanel->setFixedWidth(kSkinPanelWidth);
+  m_skinPanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+
+  // 有账户：当前皮肤的 3D 预览模型（自动旋转，可拖拽/滚轮调整视角）
+  m_skin3D = new Skin3DWidget();
+  m_skin3D->setObjectName("homeSkin3D");
+  m_skin3D->setModelType(SkinModelType::Auto);
+  m_skin3D->setAutoRotate(true);
+  m_skin3D->setBackgroundColor(homeCardBackgroundColor());
+  m_skin3D->installEventFilter(this);
+  m_skinPanel->contentLayout->addWidget(m_skin3D, 1);
+
+  // 无账户：「添加首个账户」空态
+  m_skinAddBtn = new QPushButton();
+  m_skinAddBtn->setObjectName("homeSkinAddBtn");
+  m_skinAddBtn->setCursor(Qt::PointingHandCursor);
+  m_skinAddBtn->setFlat(true);
+  // QPushButton 垂直默认 Fixed（高度锁死在 sizeHint），必须放开才能撑满面板
+  m_skinAddBtn->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+  auto *bl = new QVBoxLayout(m_skinAddBtn);
+  bl->setContentsMargins(12, 16, 12, 16);
+  bl->setSpacing(8);
+  bl->setAlignment(Qt::AlignCenter);
+
+  auto *icon = new QLabel(m_skinAddBtn);
+  icon->setObjectName("homeIconChip");
+  icon->setFixedSize(44, 44);
+  icon->setAttribute(Qt::WA_StyledBackground, true);
+  icon->setAlignment(Qt::AlignCenter);
+  icon->setPixmap(IconHelper::loadColoredIcon(":/Images/Icons/nav_folder_plus.svg",
+                    QColor(ThemeManager::instance()->currentThemeColor()), 24).pixmap(24, 24));
+  bl->addWidget(icon, 0, Qt::AlignHCenter);
+
+  auto *t = new QLabel(tr("添加首个账户"), m_skinAddBtn);
+  t->setObjectName("homeAccountName");
+  t->setAlignment(Qt::AlignCenter);
+  t->setWordWrap(true);
+  bl->addWidget(t);
+
+  auto *d = new QLabel(tr("添加账户后在这里展示皮肤模型"), m_skinAddBtn);
+  d->setObjectName("homeAccountType");
+  d->setAlignment(Qt::AlignCenter);
+  d->setWordWrap(true);
+  bl->addWidget(d);
+
+  connect(m_skinAddBtn, &QPushButton::clicked, this, &HomePage::accountManageRequested);
+  m_skinPanel->contentLayout->addWidget(m_skinAddBtn, 1);
+
+  m_skinPanel->finalizeOverlay();
+  refreshSkinPanel();
+  return m_skinPanel;
+}
+
+void HomePage::refreshSkinPanel()
+{
+  if (!m_skin3D || !m_skinAddBtn)
+    return;
+
+  const bool hasAccount = !SettingsManager::instance()->getAccounts().isEmpty();
+  m_skin3D->setVisible(hasAccount);
+  m_skinAddBtn->setVisible(!hasAccount);
+  if (!hasAccount)
+    return;
+
+  // 同步加载当前账户皮肤（离线目录 > 缓存 > 官方默认皮肤）
+  const AccountInfo acc = SettingsManager::instance()->getDefaultAccount();
+  m_skin3D->setSkin(SkinDownloader::loadSkinForAccount(acc.username, acc.uuid));
+
+  // 正版/第三方账户皮肤可能尚未缓存，异步下载补齐（命中缓存则直接加载并发出 skinLoaded）
+  if (!acc.uuid.isEmpty())
+    SkinDownloader::instance()->downloadSkinByUuid(acc.uuid);
+  else if (!acc.skinUrl.isEmpty())
+    SkinDownloader::instance()->downloadSkin(acc.username, acc.skinUrl);
 }
 
 void HomePage::updateCarousel()
@@ -627,7 +1009,7 @@ void HomePage::setCarouselIndex(int index)
   m_currentCarouselIndex = index;
 
   QPixmap pixmap(m_carouselPaths[index]);
-  if (pixmap.isNull() || !m_carouselStack)
+  if (pixmap.isNull() || !m_carouselView)
   {
     return;
   }
@@ -643,78 +1025,12 @@ void HomePage::setCarouselIndex(int index)
   }
 
   // 首次显示没有上一张，直接显示，不做切换动画
-  const bool isFirst = m_carouselImage->pixmap().isNull();
-  if (isFirst || !m_carouselOverlay)
+  if (!m_carouselView->hasPixmap())
   {
-    m_carouselImage->setPixmap(pixmap);
+    m_carouselView->setPixmapInstant(pixmap);
     return;
   }
-
-  // 终止上一次进行中的动画
-  if (m_carouselAnimGroup)
-  {
-    m_carouselAnimGroup->stop();
-    m_carouselAnimGroup->deleteLater();
-    m_carouselAnimGroup = nullptr;
-  }
-  m_carouselAnimating = true;
-
-  QRect base = m_carouselStack->rect();
-  if (base.isEmpty())
-  {
-    base = QRect(0, 0, m_carouselStack->width(), m_carouselStack->height());
-  }
-
-  int step = base.width();
-
-  // 当前图停留在底层，新图放在右侧屏幕外，共同向左滑动
-  m_carouselImage->setGeometry(base);
-  m_carouselImage->raise();
-  m_carouselOverlay->setPixmap(pixmap);
-  m_carouselOverlay->setGeometry(base.translated(step, 0));
-  m_carouselOverlay->raise();
-  m_carouselOverlay->show();
-
-  auto *group = new QParallelAnimationGroup(this);
-
-  // 底层旧图向左滑出
-  auto *oldAnim = new QPropertyAnimation(m_carouselImage, "geometry");
-  oldAnim->setDuration(700);
-  oldAnim->setStartValue(base);
-  oldAnim->setEndValue(base.translated(-step, 0));
-  oldAnim->setEasingCurve(QEasingCurve::InOutCubic);
-
-  // 上层新图从右侧滑入
-  auto *newAnim = new QPropertyAnimation(m_carouselOverlay, "geometry");
-  newAnim->setDuration(700);
-  newAnim->setStartValue(base.translated(step, 0));
-  newAnim->setEndValue(base);
-  newAnim->setEasingCurve(QEasingCurve::InOutCubic);
-
-  group->addAnimation(oldAnim);
-  group->addAnimation(newAnim);
-
-  QObject::connect(group, &QParallelAnimationGroup::finished, this,
-    [this, pixmap, base]()
-    {
-      // 动画结束，把 overlay 内容同步到底层并复位
-      if (m_carouselOverlay)
-      {
-        m_carouselOverlay->setGeometry(base);
-        m_carouselOverlay->lower();
-      }
-      m_carouselImage->setPixmap(pixmap);
-      m_carouselImage->setGeometry(base);
-      m_carouselAnimating = false;
-      if (m_carouselAnimGroup)
-      {
-        m_carouselAnimGroup->deleteLater();
-        m_carouselAnimGroup = nullptr;
-      }
-    });
-
-  m_carouselAnimGroup = group;
-  group->start();
+  m_carouselView->slideTo(pixmap);
 }
 
 // ============================================================================
@@ -900,6 +1216,18 @@ void HomePage::rebuildRecentPlaysContent()
 
   if (m_recentPlaysResizing)
     return;
+
+  const int count = m_recentPlays.isEmpty() ? 0 : qMin(m_recentPlays.size(), 4);
+  const int cardW = calculateRecentPlayCardWidth();
+
+  // 数据与卡片宽度都没变化时跳过重建，避免 resize/页面显示触发的无谓刷新
+  if (!m_recentPlaysForceRebuild
+      && cardW == m_recentPlaysBuiltWidth
+      && count == m_recentPlaysBuiltCount)
+  {
+    return;
+  }
+
   m_recentPlaysResizing = true;
 
   // 清除现有内容
@@ -919,12 +1247,14 @@ void HomePage::rebuildRecentPlaysContent()
     placeholder->setObjectName("homeEmptyLabel");
     placeholder->setAlignment(Qt::AlignCenter);
     m_recentPlaysLayout->addWidget(placeholder);
+    m_recentPlaysForceRebuild = false;
+    m_recentPlaysBuiltWidth = cardW;
+    m_recentPlaysBuiltCount = 0;
     m_recentPlaysResizing = false;
+    if (m_recentPlaysContainer)
+      m_recentPlaysContainer->updateGeometry();
     return;
   }
-
-  const int count = qMin(m_recentPlays.size(), 4);
-  const int cardW = calculateRecentPlayCardWidth();
 
   // ── 横排卡片：一行四个（banner 渐变 + logo + 名称 + 最近游玩时间） ──
   for (int i = 0; i < count; ++i)
@@ -935,7 +1265,51 @@ void HomePage::rebuildRecentPlaysContent()
     m_recentPlaysLayout->addWidget(card);
   }
 
+  m_recentPlaysForceRebuild = false;
+  m_recentPlaysBuiltWidth = cardW;
+  m_recentPlaysBuiltCount = count;
   m_recentPlaysResizing = false;
+  // 让父布局重新查询本区域的 sizeHint（换行导致高度变化时高度才能正确传导）
+  if (m_recentPlaysContainer)
+    m_recentPlaysContainer->updateGeometry();
+}
+
+// 延迟一拍执行重建：合并连续 resize，并保证不在布局激活过程中改动布局
+void HomePage::scheduleRecentPlaysRebuild()
+{
+  if (m_recentPlaysRebuildPending)
+    return;
+  m_recentPlaysRebuildPending = true;
+  QTimer::singleShot(0, this, [this]() {
+    m_recentPlaysRebuildPending = false;
+    rebuildRecentPlaysContent();
+  });
+}
+
+// 重新扫描最近游玩数据；仅当内容确实变化时强制重建卡片
+void HomePage::reloadRecentPlaysIfChanged()
+{
+  const QVector<RecentPlayEntry> previous = m_recentPlays;
+  loadRecentPlays();
+  if (!sameRecentPlayList(previous, m_recentPlays))
+    m_recentPlaysForceRebuild = true;
+  rebuildRecentPlaysContent();
+}
+
+void HomePage::showEvent(QShowEvent *event)
+{
+  QWidget::showEvent(event);
+  // 首页显示时重新扫描：实例文件夹可能在构造之后才被添加
+  // （新手引导、实例选择页手动添加），否则卡片会停留在“暂无游玩记录”。
+  if (m_recentPlaysRefreshPending)
+    return;
+  m_recentPlaysRefreshPending = true;
+  QTimer::singleShot(0, this, [this]() {
+    m_recentPlaysRefreshPending = false;
+    reloadRecentPlaysIfChanged();
+  });
+  // 皮肤可能在皮肤编辑器/账户页中被更改，回首页时同步一次预览
+  refreshSkinPanel();
 }
 
 /* 最近游玩卡片构建（一行四个横排；parent 为挂载图层） */
@@ -1084,8 +1458,7 @@ QWidget* HomePage::buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *pa
 
 void HomePage::refreshRecentPlays()
 {
-  loadRecentPlays();
-  rebuildRecentPlaysContent();
+  reloadRecentPlaysIfChanged();
   loadInstances();
   rebuildInstancesContent();
 }

@@ -97,6 +97,10 @@ private:
                                     const QString &title = QString(),
                                     bool startCollapsed = false);
 
+    // Creates a settings header card (title on the left + restore defaults
+    // button on the right) and appends it to parentLayout.
+    QFrame *createSettingsHeader(QBoxLayout *parentLayout, const QString &title);
+
     // Appends a setting row (title + optional description + optional help button
     // on the left, control area on the right) to cardLayout.
     // Returns the control area layout for the caller to add widgets to.

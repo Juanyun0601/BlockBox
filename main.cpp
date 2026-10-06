@@ -31,8 +31,10 @@
 #include "utils/LowConfigMode.h"
 #include "utils/PerformanceMonitor.h"
 #include "utils/ResourceManager.h"
+#include "utils/SettingsManager.h"
 #include "utils/StartupProgressWidget.h"
 #include "utils/ThemeManager.h"
+#include "utils/UpdateChecker.h"
 
 int main(int argc, char *argv[])
 {
@@ -129,6 +131,8 @@ int main(int argc, char *argv[])
                 QTimer::singleShot(400, [&w]() {
                     OnboardingWizard wizard(&w);
                     wizard.exec();
+                    // 新手引导中可能新添加了实例文件夹，刷新首页最近游玩卡片
+                    w.refreshHomeRecentPlays();
                     // 语言切换会请求重启：启动新进程并退出当前进程，
                     // 新进程启动时 loadLanguageSync() 干净加载所选语言，且因 onboarding 未完成会再次弹出引导。
                     if (wizard.restartRequested()) {
@@ -136,6 +140,13 @@ int main(int argc, char *argv[])
                         QProcess::startDetached(QCoreApplication::applicationFilePath(), QStringList());
                         QCoreApplication::quit();
                     }
+                });
+            } else if (SettingsManager::instance()
+                           ->getProperty("auto_check_update", true).toBool()) {
+                // 每次启动都检查更新：延迟数秒避开启动高峰；
+                // 静默模式下仅发现新版本时弹窗，失败不打扰用户。
+                QTimer::singleShot(3000, [&w]() {
+                    UpdateChecker::instance()->checkForUpdates(&w, true);
                 });
             }
         });

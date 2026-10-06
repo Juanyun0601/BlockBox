@@ -2317,12 +2317,14 @@ QPushButton#recentPlayActionBtn:pressed {
     background-color: @BG_PRESSED@;
 }
 
-/* 卡片启动按钮（主色填充圆角，图标 + 文字） */
+/* 卡片启动按钮（主色填充圆角，图标 + 文字）
+ * 注意：Qt 对超过控件高度一半的圆角不做过 clamp，而是直接跳过圆角渲染
+ * （同 overviewLaunchBtn 的注释）。按钮 min-height 22px，故半角为 11px。 */
 QPushButton#recentPlayLaunchBtn {
     background-color: @PRIMARY@;
     color: @TEXT_ON_PRIMARY@;
     border: none;
-    border-radius: 999px;
+    border-radius: 11px;
     min-height: 22px;
     padding: 3px 14px;
     font-size: 12px;
@@ -2733,23 +2735,22 @@ QWidget#carouselWidget {
     overflow: hidden;
 }
 
-QLabel#carouselImage {
-    background: @BORDER_STRONG@;
-    border-radius: 22px;
-    border: none;
-}
-
-QLabel#carouselOverlay {
-    background: transparent;
-    border-radius: 22px;
-}
-
 QLabel#carouselPlaceholder {
     font-size: 16px;
     color: @TEXT_TERTIARY@;
     background: @BG_BASE@;
-    border-radius: 22px;
+    border-radius: 16px;
     border: 2px dashed @BORDER_STRONG@;
+}
+
+/* 首页轮播右侧皮肤面板：无账户时的「添加首个账户」空态按钮 */
+QPushButton#homeSkinAddBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 16px;
+}
+QPushButton#homeSkinAddBtn:hover {
+    background-color: @BG_HOVER@;
 }
 
 QLabel#carouselTag {
@@ -6056,65 +6057,192 @@ QComboBox#skinActionCombo QAbstractItemView::item:selected {
     color: @TEXT_PRIMARY@;
 }
 
-/* 登录返回按钮 */
-QPushButton#loginBackButton {
+/* ============================================================
+ * Section 24.1 添加账户页（AccountManagePage 登录页）
+ * 对照 HTML 原型 .account-add / .account-add-tabs / .account-add-form
+ * ============================================================ */
+
+/* 页面容器：透明，卡片由分段控件与表单面板绘制 */
+QWidget#accountLoginPage {
     background-color: transparent;
     border: none;
-    border-radius: 8px;
-    padding: 6px;
-    color: @TEXT_TERTIARY@;
 }
 
-QPushButton#loginBackButton:hover {
-    background-color: @BG_HOVER@;
-    color: @TEXT_PRIMARY@;
-}
-
-/* 登录页容�?�?玻璃卡片 */
-QWidget#accountLoginPage {
+/* 居中单列：表单卡片（自定义壁纸上保证对比度） */
+QWidget#loginColumn {
     background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
-    border-radius: 16px;
+    border-radius: 20px;
 }
 
-/* 登录方式切换 �?分段控件（segmented control，对�?HTML 原型�?*/
+/* 页面标题 / 副标题 */
+QLabel#loginTitle {
+    background-color: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QLabel#loginSubtitle {
+    background-color: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 13px;
+}
+
+/* 登录方式分段控件（segmented control：自绘按钮 + 隐藏 TabBar 的 QTabWidget） */
+QTabWidget#loginMethodTabs {
+    background-color: transparent;
+    border: none;
+}
+
 QTabWidget#loginMethodTabs::pane {
     background-color: transparent;
     border: none;
-    border-radius: 0;
-    padding: 8px 4px 4px 4px;
+    padding: 0px;
 }
 
-QTabWidget#loginMethodTabs QTabBar {
-    background-color: @BG_MUTED@;
+QWidget#loginSegBar {
+    background-color: @BG_BASE@;
     border: 1px solid @BORDER@;
     border-radius: 12px;
-    padding: 4px;
 }
 
-QTabWidget#loginMethodTabs QTabBar::tab {
+QPushButton#loginSegBtn {
     background-color: transparent;
-    color: @TEXT_TERTIARY@;
     border: none;
     border-radius: 8px;
-    padding: 8px 24px;
-    margin: 0;
+    padding: 8px 10px;
+    color: @TEXT_TERTIARY@;
     font-size: 13px;
     font-weight: 500;
 }
 
-QTabWidget#loginMethodTabs QTabBar::tab:hover {
+QPushButton#loginSegBtn:hover {
     background-color: @BG_HOVER@;
     color: @TEXT_PRIMARY@;
 }
 
-QTabWidget#loginMethodTabs QTabBar::tab:selected {
+QPushButton#loginSegBtn:checked {
     background-color: @BG_CARD@;
     color: @PRIMARY@;
     font-weight: 600;
 }
 
-/* 微软登录进度�?*/
+QPushButton#loginSegBtn:checked:hover {
+    background-color: @BG_CARD@;
+    color: @PRIMARY@;
+}
+
+/* 表单字段标签 */
+QLabel#loginFieldLabel {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+/* 输入框 */
+QLineEdit#loginInput {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 9px 14px;
+    font-size: 14px;
+    color: @TEXT_PRIMARY@;
+    selection-background-color: @PRIMARY@;
+    selection-color: @TEXT_ON_PRIMARY@;
+}
+
+QLineEdit#loginInput:hover {
+    border: 1px solid @BORDER_HOVER@;
+}
+
+QLineEdit#loginInput:focus {
+    border: 1px solid @PRIMARY@;
+    background-color: @BG_CARD@;
+}
+
+QLineEdit#loginInput:disabled {
+    background-color: @BG_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+
+/* 服务器下拉框（与输入框同形） */
+QComboBox#loginCombo {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 9px 34px 9px 14px;
+    font-size: 14px;
+    min-height: 20px;
+    color: @TEXT_PRIMARY@;
+}
+
+QComboBox#loginCombo:hover {
+    border: 1px solid @BORDER_HOVER@;
+}
+
+QComboBox#loginCombo:focus {
+    border: 1px solid @PRIMARY@;
+    background-color: @BG_CARD@;
+}
+
+QComboBox#loginCombo:disabled {
+    background-color: @BG_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+
+/* 服务器连通状态徽标 */
+QLabel#loginStatusPill {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 5px 10px;
+    font-size: 12px;
+    color: @TEXT_TERTIARY@;
+}
+
+/* 表单提示条（能力 / 限制说明） */
+QLabel#loginHint {
+    background-color: @WARNING_BG@;
+    border-left: 3px solid @WARNING@;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: @WARNING_TEXT_DARK@;
+    font-size: 12px;
+}
+
+/* 微软登录 hero：品牌图标 */
+QLabel#loginHeroTile {
+    background-color: rgba(0, 164, 239, 0.12);
+    border: 1px solid rgba(0, 164, 239, 0.28);
+    border-radius: 18px;
+}
+
+QLabel#loginHeroTitle {
+    background-color: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+QLabel#loginHeroDesc {
+    background-color: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 13px;
+}
+
+/* 能力标签 */
+QLabel#loginChip {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 5px 11px;
+    font-size: 12px;
+    color: @TEXT_SECONDARY@;
+}
+
+/* 微软登录进度条 */
 QProgressBar#microsoftProgressBar {
     background-color: @BG_TRACK@;
     border: none;
@@ -6128,7 +6256,7 @@ QProgressBar#microsoftProgressBar::chunk {
     border-radius: 4px;
 }
 
-/* 微软登录状�?*/
+/* 微软登录状态 */
 QLabel#microsoftStatusLabel {
     background-color: transparent;
     color: @TEXT_TERTIARY@;
@@ -6136,148 +6264,33 @@ QLabel#microsoftStatusLabel {
     border: none;
 }
 
-/* 微软登录按钮 �?主色渐变 */
-QPushButton#microsoftLoginBtn {
+/* 主按钮（主色渐变） */
+QPushButton#loginPrimaryBtn {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 @PRIMARY@,
         stop:1 @PRIMARY_DARK@);
     border: none;
     border-radius: 12px;
-    padding: 10px 24px;
+    padding: 12px 24px;
+    min-height: 20px;
     color: @TEXT_ON_PRIMARY@;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-QPushButton#microsoftLoginBtn:hover {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 @PRIMARY_HOVER@,
-        stop:1 @PRIMARY@);
-}
-
-QPushButton#microsoftLoginBtn:pressed {
-    background-color: @PRIMARY_PRESSED@;
-}
-
-/* 用户名输入框 */
-QLineEdit#usernameInput {
-    background-color: @BG_MUTED@;
-    border: 2px solid @BORDER_STRONG@;
-    border-radius: 10px;
-    padding: 9px 14px;
     font-size: 14px;
-    color: @TEXT_PRIMARY@;
-}
-
-QLineEdit#usernameInput:focus {
-    border: 2px solid @PRIMARY@;
-    background-color: @BG_CARD@;
-}
-
-/* 离线登录按钮 �?主色渐变 */
-QPushButton#offlineLoginBtn {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 @PRIMARY@,
-        stop:1 @PRIMARY_DARK@);
-    border: none;
-    border-radius: 12px;
-    padding: 10px 24px;
-    color: @TEXT_ON_PRIMARY@;
-    font-size: 13px;
     font-weight: 600;
 }
 
-QPushButton#offlineLoginBtn:hover {
+QPushButton#loginPrimaryBtn:hover {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 @PRIMARY_HOVER@,
         stop:1 @PRIMARY@);
 }
 
-QPushButton#offlineLoginBtn:pressed {
+QPushButton#loginPrimaryBtn:pressed {
     background-color: @PRIMARY_PRESSED@;
 }
 
-/* 第三方标�?*/
-QLabel#thirdPartyTitle {
-    background-color: transparent;
-    color: @TEXT_PRIMARY@;
-    font-size: 16px;
-    font-weight: 600;
-    border: none;
-}
-
-/* 第三方描�?*/
-QLabel#thirdPartyDesc {
-    background-color: transparent;
-    color: @TEXT_TERTIARY@;
-    font-size: 12px;
-    border: none;
-}
-
-/* 服务器下拉框 */
-QComboBox#serverComboBox {
-    background-color: @BG_MUTED@;
-    border: 2px solid @BORDER_STRONG@;
-    border-radius: 10px;
-    padding: 7px 14px;
-    font-size: 13px;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#serverComboBox:hover {
-    border: 2px solid @BORDER_HOVER@;
-}
-
-QComboBox#serverComboBox:focus {
-    border: 2px solid @PRIMARY@;
-}
-
-/* 服务器状态标�?*/
-QLabel#serverStatusLabel {
-    background-color: transparent;
-    color: @TEXT_TERTIARY@;
-    font-size: 12px;
-    border: none;
-}
-
-/* 第三方用户名/密码输入�?*/
-QLineEdit#thirdPartyUsernameInput,
-QLineEdit#thirdPartyPasswordInput {
-    background-color: @BG_MUTED@;
-    border: 2px solid @BORDER_STRONG@;
-    border-radius: 10px;
-    padding: 9px 14px;
-    font-size: 14px;
-    color: @TEXT_PRIMARY@;
-}
-
-QLineEdit#thirdPartyUsernameInput:focus,
-QLineEdit#thirdPartyPasswordInput:focus {
-    border: 2px solid @PRIMARY@;
-    background-color: @BG_CARD@;
-}
-
-/* 登录按钮 �?主色渐变 */
-QPushButton#loginButton {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 @PRIMARY@,
-        stop:1 @PRIMARY_DARK@);
-    border: none;
-    border-radius: 12px;
-    padding: 10px 24px;
-    color: @TEXT_ON_PRIMARY@;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-QPushButton#loginButton:hover {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 @PRIMARY_HOVER@,
-        stop:1 @PRIMARY@);
-}
-
-QPushButton#loginButton:pressed {
-    background-color: @PRIMARY_PRESSED@;
+QPushButton#loginPrimaryBtn:disabled {
+    background-color: @BG_DISABLED@;
+    color: @TEXT_DISABLED@;
 }
 
 /* 确认按钮 �?主色 */
@@ -8066,6 +8079,22 @@ QFrame#settingsCard {
     border: 1px solid @BORDER@;
     border-radius: 16px;
     margin-bottom: 12px;
+}
+
+/* 设置页标题栏卡片 �?标题 + 恢复默认值按钮 */
+QFrame#settingsHeaderCard {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+    margin-bottom: 12px;
+}
+
+/* 卡片内标题重置外边距（去掉全局 sectionTitle 的底部留白） */
+QFrame#settingsHeaderCard QLabel#sectionTitle {
+    margin: 0px;
+    padding: 0px;
+    border: none;
+    background-color: transparent;
 }
 
 /* 设置分区标题�?�?可点击的折叠/展开按钮（CollapsibleSectionCard�?*/

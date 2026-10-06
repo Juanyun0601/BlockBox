@@ -9,6 +9,7 @@
 
 #include <QComboBox>
 #include <QGridLayout>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -20,10 +21,15 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSet>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "../components/ContentViewSwitch.h"
+
 class BlurLoadingOverlay;
+class MasonryLayout;
+class QStackedWidget;
 
 class InstallInstancePage : public QWidget
 {
@@ -61,6 +67,7 @@ public:
 
 protected:
     void showEvent(QShowEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 
 private:
@@ -73,6 +80,22 @@ private:
     void rebuildVersionCards();
     void createVersionListCard(const QString &id, const QString &type,
                                 const QString &dateString, const QString &typeDisplay);
+
+    // 双视图（列表 / 瀑布流）
+    void onViewModeChanged(ContentViewSwitch::ViewMode mode);
+    void selectVersion(const QString &versionId);
+    void addMasonryVersionCard(const QString &id, const QString &dateString,
+                               const QString &typeDisplay);
+
+    // 版本封面（minecraft.wiki pageimages 接口）
+    void requestVersionCovers(const QStringList &versionIds);
+    void requestCoverChunk(const QStringList &need, int begin);
+    void requestFallbackCovers(const QStringList &ids, const QStringList &need,
+                               int begin, int taken);
+    void loadCoverCache();
+    void saveCoverCache() const;
+    void applyCoverToCard(const QString &versionId, const QString &url);
+    static QString wikiTitleFor(const QString &id, const QString &type);
 
     // UI components
     QVBoxLayout *m_mainLayout;
@@ -97,7 +120,22 @@ private:
     
     // Version list
     QListWidget *m_versionList;
-    
+
+    // 双视图：页 0 = 列表，页 1 = 瀑布流
+    ContentViewSwitch *m_viewSwitch;
+    QStackedWidget *m_viewStack;
+    QScrollArea *m_masonryScroll;
+    QWidget *m_masonryContainer;
+    MasonryLayout *m_masonryLayout;
+    ContentViewSwitch::ViewMode m_viewMode = ContentViewSwitch::Masonry;
+
+    // 版本封面（会话内缓存，磁盘层由卡片图片缓存承担）
+    QHash<QString, QWidget *> m_masonryCards;   // versionId → 瀑布流卡片
+    QHash<QString, QString> m_coverUrls;        // versionId → 封面 URL
+    QSet<QString> m_coverMissing;               // 已确认无封面的版本，避免重复请求
+    QHash<QString, QString> m_versionRawType;   // versionId → 原始 type（wiki 标题映射用）
+    bool m_coverCacheLoaded = false;            // 封面 URL 磁盘缓存是否已加载
+
     BlurLoadingOverlay *m_loadingOverlay;
     
     // Network

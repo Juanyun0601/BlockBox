@@ -57,6 +57,13 @@ void MainWindow::initPages()
     PerformanceMonitor::instance()->endMeasurement("Pages Initialization");
 }
 
+void MainWindow::refreshHomeRecentPlays()
+{
+    if (m_homePage) {
+        m_homePage->refreshRecentPlays();
+    }
+}
+
 void MainWindow::initEssentialPages()
 {
     PerformanceMonitor::instance()->startMeasurement("Home Page Initialization");
@@ -138,6 +145,8 @@ void MainWindow::initEssentialPages()
             QDesktopServices::openUrl(QUrl::fromLocalFile(savePath));
         }
     });
+    // 首页账号卡片 / 轮播右侧皮肤区「添加首个账户」→ 账户管理页
+    connect(homePage, &HomePage::accountManageRequested, this, &MainWindow::showAccountManagePage);
     connect(homePage, &HomePage::recentPlayCopyNameClicked, this, [this](const QString &name) {
         // 复制存档名到剪贴板
         if (!name.isEmpty()) {
@@ -457,6 +466,11 @@ void MainWindow::initAccountManagePage()
     });
     // 账户管理页左侧"皮肤制作"按钮 → 进入皮肤编辑页
     connect(m_accountManagePage, &AccountManagePage::skinEditorRequested, this, &MainWindow::onSkinEditorClicked);
+    // 面包屑跟随页面：账户管理 / 添加账户
+    connect(m_accountManagePage, &AccountManagePage::accountManagePageOpened,
+            this, &MainWindow::onAccountManagePageOpened);
+    connect(m_accountManagePage, &AccountManagePage::addAccountPageOpened,
+            this, &MainWindow::onAddAccountPageOpened);
     // 若皮肤编辑页已先于账户页初始化，补建皮肤应用 → 账户刷新的信号连接
     if (m_skinEditorPage)
     {

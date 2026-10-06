@@ -29,9 +29,8 @@ void SettingsPage::initGlobalGameSettings()
     layout->setContentsMargins(24, 8, 24, 24);
     layout->setSpacing(16);
 
-    OutlinedLabel *titleLabel = new OutlinedLabel(tr("全局游戏设置"), m_globalGameSettings);
-    titleLabel->setObjectName("sectionTitle");
-    layout->addWidget(titleLabel);
+    // ── 标题栏（标题 + 恢复默认值按钮）──
+    createSettingsHeader(layout, tr("全局游戏设置"));
 
     SettingsManager *m_settings = SettingsManager::instance();
 
@@ -300,11 +299,6 @@ void SettingsPage::initGlobalGameSettings()
         tr("版本隔离"), tr("每个实例使用独立的游戏文件，避免版本冲突。"), QString(), true);
     isolationRow->addWidget(isolationCheck);
 
-    // ── 底部操作 ──
-    QPushButton *restoreDefaultsBtn = new QPushButton(tr("恢复默认值"), m_globalGameSettings);
-    restoreDefaultsBtn->setObjectName("restoreDefaultsBtn");
-    connect(restoreDefaultsBtn, &QPushButton::clicked, this, &SettingsPage::onRestoreDefaults);
-
+    // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
-    layout->addWidget(restoreDefaultsBtn, 0, Qt::AlignRight);
 }

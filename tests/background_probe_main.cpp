@@ -339,11 +339,12 @@ int main(int argc, char *argv[])
         expect("home solid shows through", n > 1000,
                QString("solid-pixels=%1").arg(n));
     }
-    // 左侧主导航栏自带玻璃态底色，不参与透明化
+    // 左侧主导航栏保留自身半透明玻璃底色（浅色主题白 / 深色主题黑），
+    // 不透出纯背景色；壁纸在其后透出（BackgroundWidget 铺满整个内容区）
     {
         const QRectF sb = widgetRegion(w, w.findChild<SideBar *>());
         const long long n = countNear(homeSolid, sb, kProbeSolid);
-        expect("left sidebar does NOT show custom background",
+        expect("left sidebar keeps its own glass color",
                !sb.isEmpty() && n < 500,
                QString("solid-pixels=%1 region-empty=%2").arg(n).arg(sb.isEmpty()));
     }
