@@ -111,6 +111,16 @@ public:
    */
   void setBackgroundImage(const QImage& image);
 
+  /**
+   * @brief 设置背景圆角半径（像素，0=方形，默认）
+   *
+   * 启用后纯色背景以带 alpha 的圆角矩形绘制、清屏为全透明：
+   * 配合 WA_AlwaysStackOnTop 使用时，圆角外区域完全透明、
+   * 圆角内按背景色 alpha 与窗口背景合成（如首页 50% 透明皮肤预览）。
+   * 仅对纯色背景生效，渐变/图片背景忽略此设置。
+   */
+  void setBackgroundCornerRadius(qreal radius);
+
   // 新增接口 --------------------------------------------------
   void setModelType(SkinModelType type);
   void setAutoRotate(bool enabled);
@@ -300,6 +310,7 @@ private:
   bool m_bgImageDirty = true;               ///< 图片背景纹理是否需要上传
   QOpenGLTexture* m_bgImageTexture = nullptr; ///< 图片背景纹理
   QOpenGLTexture* m_bgWhiteTexture = nullptr; ///< 1x1 白色纹理（非图片背景时绑定）
+  qreal m_bgCornerRadius = 0.0;             ///< 纯色背景圆角半径（0=方形；>0 时清屏透明、绘制圆角背景）
   QImage m_pendingSkin;
   bool m_skinDirty = false;
   bool m_innerVisible = true;

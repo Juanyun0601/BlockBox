@@ -308,6 +308,14 @@ private:
     void showContentDetailPage(const ModInfo &info, ContentType type);
     void showContentListPage(ContentType type);
     void updateCurrentInstance(const QString &instancePath);
+    /**
+     * @brief 同步实例上下文（路径/版本/加载器/顶栏/资源页/AI 页）但不切换页面
+     * @param instancePath 目标实例路径
+     *
+     * 用于下载页内"下载实例"下拉这类就地切换场景：下载目标随之改变，
+     * 但不应把用户踢回主页（updateCurrentInstance 会跳转 HomePage）。
+     */
+    void applyInstanceContext(const QString &instancePath);
     void saveCurrentInstancePath();
     void loadCurrentInstancePath();
     void restoreDefaultAccount();

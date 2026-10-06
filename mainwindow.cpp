@@ -303,10 +303,11 @@ void MainWindow::initUI()
     wrapperLayout->setContentsMargins(0, 0, 0, 0);
     m_wrapperLayout = wrapperLayout;
 
-    // 背景层铺满整个内容区（含左侧导航栏，不止 contentWrapper）：
-    // 必应壁纸/旋转/流光等模式由 BackgroundWidget 绘制背景，若只覆盖主栏，
-    // 透明侧边栏会透出 QMainWindow 的深色底色（#0F172A），导致左侧导航变黑。
-    m_backgroundWidget = new BackgroundWidget(contentArea);
+    // 背景层铺满整个主窗口（含顶栏与左侧导航栏，不止 contentWrapper）：
+    // 必应壁纸/旋转/流光等模式由 BackgroundWidget 绘制背景，若只覆盖内容区，
+    // 透明顶栏/侧边栏会透出 QMainWindow 的深色底色（#0F172A），导致对应区域变黑。
+    centralWidget->installEventFilter(this);
+    m_backgroundWidget = new BackgroundWidget(centralWidget);
     m_backgroundWidget->lower();
 
     // Create stacked widget for pages
@@ -647,6 +648,9 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
         case 4: m_topBar->setTitle(tr("设置>Java管理")); break;
         case 5: m_topBar->setTitle(tr("设置>高级设置")); break;
         case 6: m_topBar->setTitle(tr("设置>按键绑定")); break;
+        case 7: m_topBar->setTitle(tr("设置>系统信息")); break;
+        case 8: m_topBar->setTitle(tr("设置>AI 助手")); break;
+        case 9: m_topBar->setTitle(tr("设置>关于")); break;
         default: m_topBar->setSettingsTitle(); break;
         }
     } else if (parentIndex == 4) { // Instance Manage child
@@ -1010,6 +1014,17 @@ void MainWindow::onInstanceInstalled(const QString &instancePath)
 
 void MainWindow::updateCurrentInstance(const QString &instancePath)
 {
+    applyInstanceContext(instancePath);
+
+    setSideBarVisible(true);
+
+    animatedSwitchToPage(PageIndex::HomePage);
+
+    m_topBar->setMainTitle();
+}
+
+void MainWindow::applyInstanceContext(const QString &instancePath)
+{
     m_currentInstancePath = instancePath;
     QString instanceName = instancePath.split("/").last();
 
@@ -1080,12 +1095,6 @@ void MainWindow::updateCurrentInstance(const QString &instancePath)
                                          m_currentInstanceVersion,
                                          m_currentInstanceLoader);
     }
-
-    setSideBarVisible(true);
-
-    animatedSwitchToPage(PageIndex::HomePage);
-
-    m_topBar->setMainTitle();
 }
 
 QString MainWindow::findFirstVersionInGameRoot(const QString &gameRootPath) const
@@ -2180,6 +2189,11 @@ void MainWindow::showContentDownloadPage(ContentType type)
         showContentDetailPage(info, type);
     });
 
+    // 页面内"下载实例"下拉：切换后资源（含前置）应下载到该实例，
+    // 同步顶栏与各页上下文，避免下载落到别的实例
+    connect(m_contentDownloadPage, &ContentDownloadPage::instanceSelectionChanged,
+            this, &MainWindow::applyInstanceContext);
+
     connect(m_contentDownloadPage, &ContentDownloadPage::cardDownloadRequested, this, [this, type](const ModInfo &info)
     {
         onCardDownloadRequested(info, type, 0);
@@ -2469,7 +2483,8 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
     QString instancePath = m_currentInstancePath;
     if (instancePath.isEmpty())
     {
-        NotificationManager::showError(this, tr("请先选择一个实例"));
+        NotificationManager::showError(this,
+            tr("请先选择下载实例：用顶部实例按钮或资源页的「下载实例」下拉选择"));
         return;
     }
 
@@ -2593,7 +2608,8 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
 
     if (m_currentInstancePath.isEmpty())
     {
-        NotificationManager::showError(this, tr("请先选择一个实例"));
+        NotificationManager::showError(this,
+            tr("请先选择下载实例：用顶部实例按钮或资源页的「下载实例」下拉选择"));
         return;
     }
 

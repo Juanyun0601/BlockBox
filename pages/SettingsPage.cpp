@@ -23,7 +23,7 @@
 #include "settings/SettingsBedrockGamePage.h"
 
 SettingsPage::SettingsPage(QWidget *parent)
-    : QWidget(parent), m_currentIndex(0), m_forgeDownloadSourceCombo(nullptr), m_fabricDownloadSourceCombo(nullptr), m_optiFineDownloadSourceCombo(nullptr), m_neoForgeDownloadSourceCombo(nullptr), m_backgroundModeCombo(nullptr), m_solidColorSection(nullptr), m_imageSection(nullptr), m_solidColorBtn(nullptr), m_imagePathEdit(nullptr), m_browseImageBtn(nullptr), m_javaListWidget(nullptr), m_javaEmptyLabel(nullptr), m_globalJavaCombo(nullptr), m_autoSelectJavaCheck(nullptr), m_systemInfoSettings(nullptr)
+    : QWidget(parent), m_currentIndex(0), m_forgeDownloadSourceCombo(nullptr), m_fabricDownloadSourceCombo(nullptr), m_optiFineDownloadSourceCombo(nullptr), m_neoForgeDownloadSourceCombo(nullptr), m_backgroundModeCombo(nullptr), m_solidColorSection(nullptr), m_imageSection(nullptr), m_solidColorBtn(nullptr), m_imagePathEdit(nullptr), m_browseImageBtn(nullptr), m_javaListWidget(nullptr), m_javaEmptyLabel(nullptr), m_globalJavaCombo(nullptr), m_autoSelectJavaCheck(nullptr), m_systemInfoSettings(nullptr), m_aboutSettings(nullptr)
 {
     initUI();
 }
@@ -70,6 +70,8 @@ void SettingsPage::initRightContent()
     m_systemInfoSettings->setObjectName("settingsSystemInfoContent");
     m_aiAssistantSettings = new QWidget(m_contentStack);
     m_aiAssistantSettings->setObjectName("settingsAiAssistantContent");
+    m_aboutSettings = new QWidget(m_contentStack);
+    m_aboutSettings->setObjectName("settingsAboutContent");
     initGeneralSettings();
     initInterfaceSettings();
     initGlobalGameSettings();
@@ -80,6 +82,7 @@ void SettingsPage::initRightContent()
     initKeyBindSettings();
     initSystemInfoSettings();
     initAiAssistantSettings();
+    initAboutSettings();
     m_contentStack->addWidget(m_generalSettings);
     m_contentStack->addWidget(m_interfaceSettings);
     m_contentStack->addWidget(m_globalGameSettings);
@@ -90,6 +93,7 @@ void SettingsPage::initRightContent()
     m_contentStack->addWidget(m_keyBindSettings);
     m_contentStack->addWidget(m_systemInfoSettings);
     m_contentStack->addWidget(m_aiAssistantSettings);
+    m_contentStack->addWidget(m_aboutSettings);
     // 按当前版本模式重建顺序，保证页签索引与侧边栏一致
     rebuildEditionStack();
     m_rightLayout->addWidget(m_contentStack);
@@ -212,6 +216,7 @@ void SettingsPage::rebuildEditionStack()
     m_contentStack->removeWidget(m_keyBindSettings);
     m_contentStack->removeWidget(m_systemInfoSettings);
     m_contentStack->removeWidget(m_aiAssistantSettings);
+    m_contentStack->removeWidget(m_aboutSettings);
 
     m_contentStack->addWidget(m_generalSettings);
     m_contentStack->addWidget(m_interfaceSettings);
@@ -228,6 +233,7 @@ void SettingsPage::rebuildEditionStack()
     m_contentStack->addWidget(m_keyBindSettings);
     m_contentStack->addWidget(m_systemInfoSettings);
     m_contentStack->addWidget(m_aiAssistantSettings);
+    m_contentStack->addWidget(m_aboutSettings);
 
     // 重建后 Java/基岩版子项顺序不同，旧 m_currentIndex 不再对应正确页签。
     // 复位到"常规设置"（0），并交由外层（onChildNavClicked）重新导航到目标子项。

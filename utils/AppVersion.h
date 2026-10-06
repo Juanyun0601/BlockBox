@@ -7,7 +7,7 @@
  * 版本号规则：
  *   正式版：X.Y.Z           （如 1.0.0、2.15.3）
  *   测试版：X.Y.Z-betaN     （如 1.0.0-beta1、1.11.16-beta15）
- *   当前处于初始公测阶段，版本号为 beta1（历史遗留格式，比较时视为 0.0.0-beta1）。
+ *   当前处于初始公测阶段，版本号为 beta2（历史遗留格式，比较时视为 0.0.0-beta2）。
  *
  * 每次发布新版本时，只需修改 current() 返回的字符串；
  * 更新检查（UpdateChecker）会拿它与 GitHub Releases 的最新版本做比较，
@@ -23,7 +23,7 @@ namespace AppVersion {
 /** 启动器当前版本号（发布新版本时改这里） */
 inline QString current()
 {
-    return QStringLiteral("beta1");
+    return QStringLiteral("beta2");
 }
 
 /** GitHub 仓库所有者 */

@@ -185,12 +185,17 @@ private:
 
     // 消息显示
     void clearMessageArea();
-    void showWelcome(bool visible);     ///< 显示/隐藏欢迎界面（自动重建居中布局）
+    void showWelcome(bool visible);     ///< 欢迎区已移除：仅清空消息布局并隐藏欢迎控件
     void addMessageBubble(const ChatMessage &msg);
     QWidget* createMessageWidget(const QString &text, bool isUser,
                                  const QList<ResourceReference> &refs = {});
     QWidget* createThinkingWidget(const QString &text, bool running = false);
     QWidget* createTypingIndicator();
+
+    // 流式渲染（正文/思考增量追加，避免 QLabel 全量重排）
+    QTextEdit* createStreamEdit(const QString &objectName, QWidget *parent);
+    void appendStreamText(QTextEdit *edit, const QString &full, int &flushedLen);
+    void finalizeStreamWidgets(); ///< 收尾：正文切回 QLabel 的 Markdown 渲染，思考编辑器保留
 
     // AI 气泡底部操作栏
     void createBubbleActions(QWidget *container, const QString &content);
@@ -365,6 +370,13 @@ private:
     QTimer *m_streamThrottle;       ///< 节流定时器，50ms 触发一次 UI 更新
     bool m_streamDirty;             ///< 节流期间有新内容待刷新
     bool m_streamThinkingDirty;     ///< 节流期间有新思考内容待刷新
+
+    // 流式正文/思考改用 QTextEdit 增量追加：QLabel 每次 setText 都会重新排版并重绘全文，
+    // 正文上千字后单次刷新耗时即超过 50ms 节流周期，导致回答过程中界面卡顿
+    QTextEdit *m_currentContentEdit;   ///< 流式期间的正文编辑器（收尾时切回 QLabel 渲染 Markdown）
+    QTextEdit *m_currentThinkingEdit;  ///< 流式期间的思考编辑器（纯文本，收尾后保留）
+    int m_streamFlushedLen;            ///< 已追加进正文编辑器的字符数
+    int m_streamThinkingFlushedLen;    ///< 已追加进思考编辑器的字符数
 
     // 对话持久化防抖（合并频繁的 saveConversations 调用为单次落盘）
     QTimer *m_saveDebounceTimer;    ///< 落盘防抖定时器（约 500ms）

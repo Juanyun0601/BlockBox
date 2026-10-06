@@ -82,6 +82,7 @@ private:
     void initKeyBindSettings();
     void initSystemInfoSettings();
     void initAiAssistantSettings();
+    void initAboutSettings();
 
     // Help tooltip — inserts a help button after the label, click to show description
     void addHelpTooltip(QBoxLayout *layout, QLabel *label, const QString &text);
@@ -131,6 +132,7 @@ private:
     QWidget *m_keyBindSettings;
     QWidget *m_systemInfoSettings;
     QWidget *m_aiAssistantSettings;
+    QWidget *m_aboutSettings;
     
     int m_currentIndex;
     

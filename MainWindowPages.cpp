@@ -410,9 +410,8 @@ void MainWindow::initModDownloadPage()
             m_currentInstanceLoader = loader;
         showModDetailPage(info);
     });
-    connect(m_modDownloadPage, &ModDownloadPage::instanceSelectionChanged, this, [this](const QString &instancePath) {
-        m_currentInstancePath = instancePath;
-    });
+    connect(m_modDownloadPage, &ModDownloadPage::instanceSelectionChanged,
+            this, &MainWindow::applyInstanceContext);
     m_pageInitialized[PageIndex::ModDownloadPage] = true;
     PerformanceMonitor::instance()->endMeasurement("Mod Download Page Initialization");
 }

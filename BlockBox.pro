@@ -116,6 +116,7 @@ components/ProjectionBlockEditorDialog.cpp \
      pages/settings/SettingsBedrockGamePage.cpp \
      pages/settings/BedrockInstanceSettingsPage.cpp \
      pages/settings/SettingsAiAssistantPage.cpp \
+     pages/settings/SettingsAboutPage.cpp \
      pages/InstanceSelectPage.cpp \
     pages/LanTransferPage.cpp \
     pages/AccountManagePage.cpp \

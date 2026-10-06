@@ -138,6 +138,14 @@ static QColor homeCardBorderColor()
   }
 }
 
+// 皮肤预览背景：卡片底色 50% 透明，透出页面背景
+static QColor homeCardPreviewColor()
+{
+  QColor c = homeCardBackgroundColor();
+  c.setAlpha(128);
+  return c;
+}
+
 /**
  * @brief 自绘轮播视图：圆角裁剪 + 1px 描边，双层图片向左滑动切换
  *
@@ -319,6 +327,8 @@ protected:
  *
  * 内容子控件（3D 皮肤预览 / 添加账户空态）由外部放入 contentLayout，
  * 面板负责圆角底色与描边的视觉包裹。
+ * 展示 3D 预览时可关闭底色填充（setFillEnabled），
+ * 让 50% 透明的 GL 背景直接透出页面背景。
  */
 class HomeSkinPanel : public QWidget
 {
@@ -341,9 +351,20 @@ public:
     m_overlay->setGeometry(rect());
   }
 
+  /** 是否绘制卡片底色（空态开启；展示 50% 透明预览时关闭，避免叠加后不透） */
+  void setFillEnabled(bool enabled)
+  {
+    if (m_fill == enabled)
+      return;
+    m_fill = enabled;
+    update();
+  }
+
 protected:
   void paintEvent(QPaintEvent *) override
   {
+    if (!m_fill)
+      return;
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     QPainterPath path;
@@ -361,6 +382,7 @@ protected:
 
 private:
   HomeSkinBorderOverlay *m_overlay = nullptr;
+  bool m_fill = true;
 };
 
 // ============================================================================
@@ -399,7 +421,7 @@ HomePage::HomePage(QWidget *parent)
   connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]()
   {
     if (m_skin3D)
-      m_skin3D->setBackgroundColor(homeCardBackgroundColor());
+      m_skin3D->setBackgroundColor(homeCardPreviewColor());
     if (m_skinPanel)
       m_skinPanel->update();
     if (m_carouselView)
@@ -467,12 +489,16 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
   }
   if (event->type() == QEvent::Resize && watched == m_skin3D)
   {
-    // 皮肤预览 GL 控件按面板圆角裁剪（GL 只能方形渲染，遮罩锯齿与同色底面相互融合，视觉无感）
-    if (m_skin3D)
+    // 窄高面板：按视口纵横比反推相机距离，保证整只模型完整可见
+    // （Skin3DWidget 投影为 fovY 40°，模型尺寸：高 2.0、臂展 1.0，1 像素 = 1/16 单位）
+    if (m_skin3D && m_skin3D->height() > 0)
     {
-      QPainterPath path;
-      path.addRoundedRect(QRectF(m_skin3D->rect()), kHeroRadius, kHeroRadius);
-      m_skin3D->setMask(QRegion(path.toFillPolygon().toPolygon(), Qt::WindingFill));
+      const qreal aspect = qreal(m_skin3D->width()) / qreal(m_skin3D->height());
+      constexpr float kFovTan = 0.36397f;   // tan(20°)
+      constexpr float kMargin = 1.2f;       // 模型外扩余量
+      const float fitHeight = (2.0f * kMargin) / (2.0f * kFovTan);
+      const float fitWidth = (1.0f * kMargin / float(aspect)) / (2.0f * kFovTan);
+      m_skin3D->resetView(qMax(fitHeight, fitWidth));
     }
   }
   if (event->type() == QEvent::Resize && watched == m_recentPlaysContainer)
@@ -919,11 +945,18 @@ QWidget* HomePage::createSkinPanel()
   m_skinPanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
   // 有账户：当前皮肤的 3D 预览模型（自动旋转，可拖拽/滚轮调整视角）
+  // 背景 = 卡片色 50% 透明：GL 走 AlwaysStackOnTop 合成路径，
+  // 帧缓冲内自绘圆角背景（清屏全透明 + SDF 圆角矩形），圆角外透出页面背景
   m_skin3D = new Skin3DWidget();
   m_skin3D->setObjectName("homeSkin3D");
   m_skin3D->setModelType(SkinModelType::Auto);
   m_skin3D->setAutoRotate(true);
-  m_skin3D->setBackgroundColor(homeCardBackgroundColor());
+  m_skin3D->setBackgroundColor(homeCardPreviewColor());
+  m_skin3D->setBackgroundCornerRadius(kHeroRadius);
+  QSurfaceFormat glFormat = m_skin3D->format();
+  glFormat.setAlphaBufferSize(8);
+  m_skin3D->setFormat(glFormat);
+  m_skin3D->setAttribute(Qt::WA_AlwaysStackOnTop);
   m_skin3D->installEventFilter(this);
   m_skinPanel->contentLayout->addWidget(m_skin3D, 1);
 
@@ -976,6 +1009,9 @@ void HomePage::refreshSkinPanel()
   const bool hasAccount = !SettingsManager::instance()->getAccounts().isEmpty();
   m_skin3D->setVisible(hasAccount);
   m_skinAddBtn->setVisible(!hasAccount);
+  // 空态保留卡片底色；展示预览时关闭填充，让 50% 透明的 GL 背景透出页面背景
+  if (m_skinPanel)
+    m_skinPanel->setFillEnabled(!hasAccount);
   if (!hasAccount)
     return;
 

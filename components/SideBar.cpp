@@ -324,6 +324,11 @@ void SideBar::buildNavStructure()
         aiAssistant.iconPath = ":/Images/Icons/nav_ai.svg";
         settings.children.append(aiAssistant);
 
+        NavItem about;
+        about.text = tr("关于");
+        about.iconPath = ":/Images/Icons/nav_about.svg";
+        settings.children.append(about);
+
         m_parentItems.append(settings);
     }
 

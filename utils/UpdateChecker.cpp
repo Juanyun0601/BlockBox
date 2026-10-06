@@ -63,7 +63,7 @@ QUrl requestUrlFor(int attempt, const QString &url)
 // 支持的格式：
 //   正式版     X.Y.Z       -> {X, Y, Z}，非测试版
 //   测试版     X.Y.Z-betaN -> {X, Y, Z}，beta 第 N 期
-//   公测遗留   betaN       -> {0, 0, 0}，beta 第 N 期（当前发布的 beta1 即此格式）
+//   公测遗留   betaN       -> {0, 0, 0}，beta 第 N 期（当前发布的 beta2 即此格式）
 // 宽容处理：可带 v/V 前缀；beta 与数字间允许其他字符（如 beta.15）。
 
 struct SemanticVersion

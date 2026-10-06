@@ -162,8 +162,8 @@ QLabel#javaVersionLabel {
 /* 顶栏容器 �?毛玻璃渐变近�?*/
 TopBar {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(255, 255, 255, 0.92),
-        stop:1 rgba(255, 255, 255, 0.75));
+        stop:0 rgba(255, 255, 255, 0.62),
+        stop:1 rgba(255, 255, 255, 0.68));
     border-bottom: 1px solid @BORDER_LIGHT@;
 }
 
@@ -176,7 +176,7 @@ QFrame#topBarSeparator {
 
 /* 顶栏标题卡片容器 �?玻璃态近�?*/
 QWidget#titleCardContainer {
-    background-color: @BG_CARD@;
+    background-color: @BG_GLASS@;
     border: 1px solid @BORDER_LIGHT@;
     border-radius: 12px;
 }
@@ -188,7 +188,7 @@ QWidget#titleCardContainer:hover {
 
 /* 顶栏功能卡片 �?玻璃态近�?*/
 QWidget#funcCard {
-    background-color: @BG_CARD@;
+    background-color: @BG_GLASS@;
     border: 1px solid @BORDER_LIGHT@;
     border-radius: 12px;
 }
@@ -200,7 +200,7 @@ QWidget#funcCard:hover {
 
 /* 顶栏账户卡片 �?玻璃态近�?*/
 QWidget#accountCard {
-    background-color: @BG_CARD@;
+    background-color: @BG_GLASS@;
     border: 1px solid @BORDER_LIGHT@;
     border-radius: 12px;
 }
@@ -212,7 +212,7 @@ QWidget#accountCard:hover {
 
 /* 顶栏版本切换卡片 �?玻璃�?+ 版本色边框（Java 翠绿 / 基岩青） */
 QWidget#editionCard {
-    background-color: @BG_CARD@;
+    background-color: @BG_GLASS@;
     border: 1px solid rgba(16, 185, 129, 0.35);
     border-radius: 12px;
 }
@@ -283,7 +283,7 @@ QLabel#editionDot[javaEdition="false"] {
 
 /* 顶栏游戏卡片 �?玻璃态近�?*/
 QWidget#gameCard {
-    background-color: @BG_CARD@;
+    background-color: @BG_GLASS@;
     border: 1px solid @BORDER_LIGHT@;
     border-radius: 12px;
 }
@@ -467,8 +467,8 @@ QPushButton#closeBtn:pressed {
 /* 侧边栏容�?�?渐变背景近似毛玻�?*/
 SideBar {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(255, 255, 255, 0.85),
-        stop:1 rgba(248, 250, 252, 0.9));
+        stop:0 rgba(255, 255, 255, 0.62),
+        stop:1 rgba(248, 250, 252, 0.68));
     border-right: 1px solid @BORDER_LIGHT@;
 }
 
@@ -3035,13 +3035,11 @@ QLabel#aiChatWelcomeTitleLabel {
     font-size: 26px;
     font-weight: 700;
     color: @TEXT_PRIMARY@;
-    letter-spacing: 0.5px;
 }
 
 QLabel#aiChatWelcomeDescLabel {
     font-size: 14px;
     color: @TEXT_TERTIARY@;
-    letter-spacing: 0.3px;
     padding: 0 24px;
 }
 
@@ -3059,6 +3057,9 @@ QPushButton#aiChatQuickBtn {
     font-weight: 500;
     min-width: 120px;
     max-width: 220px;
+    /* 布局压缩时按钮可能只剩 ~21px 高，扣掉上下 padding 文字区为 0，
+     * 表现为按钮上完全不绘制文字，故锁定最小高度 */
+    min-height: 40px;
 }
 
 QPushButton#aiChatQuickBtn:hover {
@@ -3081,8 +3082,8 @@ QWidget#bubbleActionsWidget {
 
 QFrame#aiChatUserBubble {
     background: transparent;
-    border: none;
-    border-radius: 0;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
 }
 
 QFrame#aiChatUserBubble QLabel#msgContent {
@@ -3093,8 +3094,8 @@ QFrame#aiChatUserBubble QLabel#msgContent {
 
 QFrame#aiChatAiBubble {
     background: transparent;
-    border: none;
-    border-radius: 0;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
 }
 
 QFrame#aiChatAiBubble QLabel#msgContent {
@@ -3122,6 +3123,21 @@ QFrame#aiChatAiBubble QLabel#msgContent pre {
     border-radius: 8px;
     padding: 8px 10px;
     margin: 4px 0;
+}
+
+/* 流式期间的正文编辑器：只读增量追加，透明无边框，高度随内容增长 */
+QTextEdit#streamMsgContent,
+QTextEdit#streamMsgContent:hover,
+QTextEdit#streamMsgContent:focus,
+QTextEdit#streamMsgContent:disabled {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    font-size: 14px;
+    color: @TEXT_PRIMARY@;
+    selection-background-color: @PRIMARY_RGBA_38@;
+    selection-color: @TEXT_PRIMARY@;
 }
 
 QLabel#aiChatStatsLabel {
@@ -3186,13 +3202,28 @@ QLabel#thinkingContent {
     background: transparent;
 }
 
+/* 流式期间的思考编辑器（收起态隐藏，展开后同样透明无边框） */
+QTextEdit#thinkingStreamContent,
+QTextEdit#thinkingStreamContent:hover,
+QTextEdit#thinkingStreamContent:focus,
+QTextEdit#thinkingStreamContent:disabled {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    font-size: 13px;
+    color: @WARNING_TEXT_DARK@;
+    selection-background-color: @PRIMARY_RGBA_38@;
+    selection-color: @TEXT_PRIMARY@;
+}
+
 QWidget#aiChatInputPanel {
-    background: @BG_CARD@;
-    border-top: 1px solid @BORDER@;
+    background: transparent;
+    border: none;
 }
 
 QFrame#aiChatInputBox {
-    background: @BG_MUTED@;
+    background: @BG_GLASS@;
     border: 1.5px solid @BORDER@;
     border-radius: 16px;
 }
@@ -3617,24 +3648,40 @@ QLabel#contentCardDesc {
 }
 
 /* ── 视图切换分段控件（列表 / 瀑布流） ── */
+/* 轨道底色与卡片区分，hover/pressed 令牌在三套主题下均与轨道有对比 */
+/* 圆角取高度一半：Qt 对超出控件尺寸的 border-radius（如 999px）不做钳制，
+ * 会直接渲染成直角（探针 view_switch_probe 实测），16/13 才是胶囊 */
 QWidget#contentViewSwitch {
-    background-color: @BG_CARD@;
+    background-color: @BG_MUTED@;
     border: 1px solid @BORDER@;
-    border-radius: 999px;
+    border-radius: 16px;
 }
 
 QPushButton#contentViewSwitchBtn {
     background-color: transparent;
     border: none;
-    border-radius: 999px;
+    border-radius: 13px;
 }
 
 QPushButton#contentViewSwitchBtn:hover {
     background-color: @BG_HOVER@;
 }
 
+QPushButton#contentViewSwitchBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+/* 选中段：主色实心药丸（图标反白，见 ContentViewSwitch::updateButtons） */
 QPushButton#contentViewSwitchBtn[active="true"] {
-    background-color: @BG_HOVER@;
+    background-color: @PRIMARY@;
+}
+
+QPushButton#contentViewSwitchBtn[active="true"]:hover {
+    background-color: @PRIMARY_HOVER@;
+}
+
+QPushButton#contentViewSwitchBtn[active="true"]:pressed {
+    background-color: @PRIMARY_PRESSED@;
 }
 
 /* Mod 卡片操作按钮 */
@@ -11513,7 +11560,7 @@ AiChatPage[compactMode="true"] QLabel#aiChatWelcomeTitleLabel {
 
 AiChatPage[compactMode="true"] QLabel#aiChatWelcomeDescLabel {
     font-size: 13px;
-    padding: 0 8px;
+    padding: 8px 8px;
 }
 
 AiChatPage[compactMode="true"] QPushButton#aiChatQuickBtn {

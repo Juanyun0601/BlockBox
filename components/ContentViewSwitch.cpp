@@ -9,13 +9,16 @@
 
 namespace {
 
-// 列表图标：三横线（左对齐点 + 三线段）
-QIcon makeListIcon(const QColor &c)
+// 列表图标：三横线（左对齐点 + 三线段），按设备像素比绘制以保证高分屏清晰
+QIcon makeListIcon(const QColor &c, qreal dpr)
 {
-    QPixmap pm(18, 18);
+    const int px = qMax(1, qRound(18 * dpr));
+    QPixmap pm(px, px);
+    pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
+    p.scale(dpr, dpr);
     QPen pen(c, 1.8);
     pen.setCapStyle(Qt::RoundCap);
     p.setPen(pen);
@@ -27,12 +30,15 @@ QIcon makeListIcon(const QColor &c)
 }
 
 // 瀑布流图标：四宫格（右下格更高，体现不等高瀑布流）
-QIcon makeMasonryIcon(const QColor &c)
+QIcon makeMasonryIcon(const QColor &c, qreal dpr)
 {
-    QPixmap pm(18, 18);
+    const int px = qMax(1, qRound(18 * dpr));
+    QPixmap pm(px, px);
+    pm.setDevicePixelRatio(dpr);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
+    p.scale(dpr, dpr);
     p.setBrush(QBrush(c));
     p.setPen(Qt::NoPen);
     p.drawRoundedRect(QRectF(2.0, 2.0, 6.0, 6.0), 1.5, 1.5);
@@ -48,6 +54,8 @@ ContentViewSwitch::ContentViewSwitch(QWidget *parent)
     : QWidget(parent)
 {
     setObjectName("contentViewSwitch");
+    // Qt 只为裸 QWidget 自动设置该属性；子类不设置则样式表的背景/边框不绘制
+    setAttribute(Qt::WA_StyledBackground);
     setFixedHeight(32);
 
     QHBoxLayout *lay = new QHBoxLayout(this);
@@ -81,6 +89,10 @@ ContentViewSwitch::ContentViewSwitch(QWidget *parent)
         setViewMode(Masonry);
     });
 
+    // 图标配色依赖深浅主题，切换主题后重绘
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged, this,
+            [this](ThemeManager::ThemeType) { updateButtons(); });
+
     updateButtons();
 }
 
@@ -95,18 +107,21 @@ void ContentViewSwitch::setViewMode(ViewMode mode)
 
 void ContentViewSwitch::updateButtons()
 {
-    const QString themeColor = ThemeManager::instance()->currentThemeColor();
-    const QColor activeColor(themeColor);
-    const QColor idleColor("#64748B"); // 浅色主题 tertiary
+    // 选中段是主色实心药丸 → 图标反白；未选中段用灰，深色主题提亮保证对比
+    const QColor activeColor(Qt::white);
+    const QColor idleColor(ThemeManager::instance()->currentTheme() == ThemeManager::LightTheme
+                               ? QColor("#64748B")
+                               : QColor("#9CA3AF"));
+    const qreal dpr = devicePixelRatioF();
 
     const bool listActive = (m_mode == List);
     const bool masonryActive = (m_mode == Masonry);
 
-    m_listBtn->setIcon(makeListIcon(listActive ? activeColor : idleColor));
+    m_listBtn->setIcon(makeListIcon(listActive ? activeColor : idleColor, dpr));
     m_listBtn->setProperty("active", listActive);
     m_listBtn->setChecked(listActive);
 
-    m_masonryBtn->setIcon(makeMasonryIcon(masonryActive ? activeColor : idleColor));
+    m_masonryBtn->setIcon(makeMasonryIcon(masonryActive ? activeColor : idleColor, dpr));
     m_masonryBtn->setProperty("active", masonryActive);
     m_masonryBtn->setChecked(masonryActive);
 

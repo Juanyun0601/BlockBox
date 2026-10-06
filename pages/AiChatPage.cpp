@@ -317,6 +317,10 @@ AiChatPage::AiChatPage(QWidget *parent)
     , m_streamThrottle(nullptr)
     , m_streamDirty(false)
     , m_streamThinkingDirty(false)
+    , m_currentContentEdit(nullptr)
+    , m_currentThinkingEdit(nullptr)
+    , m_streamFlushedLen(0)
+    , m_streamThinkingFlushedLen(0)
     , m_saveDebounceTimer(nullptr)
     , m_aiService(nullptr)
     , m_currentConvIndex(-1)
@@ -383,6 +387,11 @@ AiChatPage::AiChatPage(QWidget *parent)
     m_streamThrottle = new QTimer(this);
     m_streamThrottle->setSingleShot(true);
     connect(m_streamThrottle, &QTimer::timeout, this, [this]() {
+        // 回合已被中止/结束时气泡可能已销毁，跳过本轮刷新
+        if (!m_isStreaming)
+        {
+            return;
+        }
         bool contentChanged = m_streamDirty;
         bool thinkingChanged = m_streamThinkingDirty;
         if (!contentChanged && !thinkingChanged) return;
@@ -390,7 +399,11 @@ AiChatPage::AiChatPage(QWidget *parent)
         if (contentChanged)
         {
             m_streamDirty = false;
-            if (m_currentContentLabel)
+            if (m_currentContentEdit)
+            {
+                appendStreamText(m_currentContentEdit, m_currentContent, m_streamFlushedLen);
+            }
+            else if (m_currentContentLabel)
             {
                 m_currentContentLabel->setText(m_currentContent);
             }
@@ -398,7 +411,11 @@ AiChatPage::AiChatPage(QWidget *parent)
         if (thinkingChanged)
         {
             m_streamThinkingDirty = false;
-            if (m_currentThinkingLabel)
+            if (m_currentThinkingEdit)
+            {
+                appendStreamText(m_currentThinkingEdit, m_currentReasoning, m_streamThinkingFlushedLen);
+            }
+            else if (m_currentThinkingLabel)
             {
                 m_currentThinkingLabel->setText(m_currentReasoning);
             }
@@ -673,12 +690,16 @@ void AiChatPage::initUI()
     m_welcomeTitleLabel->setObjectName("aiChatWelcomeTitleLabel");
     m_welcomeTitleLabel->setAlignment(Qt::AlignCenter);
     m_welcomeTitleLabel->setWordWrap(true);
+    // 水平收缩到文字宽度，让边框紧贴文字（居中显示）
+    m_welcomeTitleLabel->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
     welcomeLayout->addWidget(m_welcomeTitleLabel);
 
     m_welcomeDescLabel = new QLabel();
     m_welcomeDescLabel->setObjectName("aiChatWelcomeDescLabel");
     m_welcomeDescLabel->setAlignment(Qt::AlignCenter);
     m_welcomeDescLabel->setWordWrap(true);
+    // 水平收缩到文字宽度，让边框紧贴文字（居中显示）
+    m_welcomeDescLabel->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
     welcomeLayout->addWidget(m_welcomeDescLabel);
 
     // 工作模式快捷按钮网格（搭配整合包、翻译模组等，点击注入提示词）
@@ -1596,6 +1617,10 @@ void AiChatPage::clearMessageArea()
 
 void AiChatPage::showWelcome(bool visible)
 {
+    // 欢迎区（标题/简介/工作模式快捷按钮）已按需求整体移除：
+    // 空状态只保留背景与底部输入区，welcome 控件保留但永不显示。
+    Q_UNUSED(visible)
+
     // 先清空布局中的所有 stretch 和 m_welcomeWidget（不删除 widget）
     QLayoutItem *item;
     while ((item = m_messageLayout->takeAt(0)) != nullptr)
@@ -1608,20 +1633,8 @@ void AiChatPage::showWelcome(bool visible)
         delete item;
     }
 
-    if (visible)
-    {
-        // 欢迎模式：上 stretch + welcomeWidget + 下 stretch（垂直居中）
-        m_messageLayout->addStretch();
-        m_messageLayout->addWidget(m_welcomeWidget);
-        m_messageLayout->addStretch();
-        m_welcomeWidget->setVisible(true);
-    }
-    else
-    {
-        // 消息模式：仅底部 stretch（消息从顶部排列）
-        m_welcomeWidget->setVisible(false);
-        m_messageLayout->addStretch();
-    }
+    m_welcomeWidget->setVisible(false);
+    m_messageLayout->addStretch();
 }
 
 void AiChatPage::updateConversationTitle(int index, const QString &title)
@@ -2380,15 +2393,7 @@ void AiChatPage::onStopStreaming()
     }
 
     // 切换 Markdown 渲染并保留已生成内容
-    if (m_currentContentLabel)
-    {
-        m_currentContentLabel->setTextFormat(Qt::MarkdownText);
-        m_currentContentLabel->setText(m_currentContent);
-    }
-    if (m_currentThinkingLabel)
-    {
-        m_currentThinkingLabel->setText(m_currentReasoning);
-    }
+    finalizeStreamWidgets();
 
     // 隐藏打字指示器
     if (m_typingIndicator)
@@ -2424,6 +2429,8 @@ void AiChatPage::onStopStreaming()
     m_currentThinkingBubble = nullptr;
     m_currentContentLabel = nullptr;
     m_currentThinkingLabel = nullptr;
+    m_currentContentEdit = nullptr;
+    m_currentThinkingEdit = nullptr;
     m_currentSearchResults.clear();
     m_currentSearchStepCard = nullptr;
     m_currentAgentStepsWidget = nullptr;
@@ -2576,6 +2583,10 @@ void AiChatPage::onSendMessage()
     m_currentThinkingContent = nullptr;
     m_currentContentLabel = nullptr;
     m_currentThinkingLabel = nullptr;
+    m_currentContentEdit = nullptr;
+    m_currentThinkingEdit = nullptr;
+    m_streamFlushedLen = 0;
+    m_streamThinkingFlushedLen = 0;
     m_typingIndicator = nullptr;
     m_currentSearchStepCard = nullptr;
     m_currentSearchResults.clear();
@@ -2638,6 +2649,84 @@ void AiChatPage::onSendMessage()
 // 流式接收
 // ============================================================================
 
+/// 同步流式编辑器高度：让气泡随文档增长（编辑器内部不出现滚动条）。
+/// 收起态下文档尚未按实际宽度换行，此时算出的高度不可信，待展开时再补一次。
+static void syncStreamEditHeight(QTextEdit *edit)
+{
+    if (!edit || !edit->isVisible())
+    {
+        return;
+    }
+    const int h = qMax(int(edit->document()->size().height()) + 2, edit->fontMetrics().height() + 4);
+    if (edit->height() != h)
+    {
+        edit->setFixedHeight(h);
+    }
+}
+
+QTextEdit* AiChatPage::createStreamEdit(const QString &objectName, QWidget *parent)
+{
+    auto *edit = new QTextEdit(parent);
+    edit->setObjectName(objectName);
+    edit->setReadOnly(true);
+    edit->setUndoRedoEnabled(false);
+    edit->setAcceptRichText(false);
+    edit->setFrameStyle(QFrame::NoFrame);
+    edit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    edit->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    edit->setLineWrapMode(QTextEdit::WidgetWidth);
+    edit->setCursor(Qt::IBeamCursor);
+    edit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    edit->document()->setDocumentMargin(0);
+    edit->viewport()->setAutoFillBackground(false);
+    return edit;
+}
+
+void AiChatPage::appendStreamText(QTextEdit *edit, const QString &full, int &flushedLen)
+{
+    if (!edit)
+    {
+        return;
+    }
+
+    if (full.size() > flushedLen)
+    {
+        edit->moveCursor(QTextCursor::End);
+        edit->insertPlainText(full.mid(flushedLen));
+        flushedLen = full.size();
+    }
+
+    syncStreamEditHeight(edit);
+}
+
+void AiChatPage::finalizeStreamWidgets()
+{
+    // 补齐节流期间尚未刷入的尾部
+    appendStreamText(m_currentContentEdit, m_currentContent, m_streamFlushedLen);
+    appendStreamText(m_currentThinkingEdit, m_currentReasoning, m_streamThinkingFlushedLen);
+
+    // 正文：隐藏流式编辑器，切回 QLabel 一次性渲染 Markdown（保持既有样式）
+    if (m_currentContentEdit)
+    {
+        m_currentContentEdit->hide();
+        m_currentContentEdit->deleteLater();
+        m_currentContentEdit = nullptr;
+        m_streamFlushedLen = 0;
+    }
+    if (m_currentContentLabel)
+    {
+        m_currentContentLabel->setTextFormat(Qt::MarkdownText);
+        m_currentContentLabel->setText(m_currentContent);
+        m_currentContentLabel->show();
+    }
+
+    // 思考：纯文本编辑器直接保留，无需再渲染
+    if (m_currentThinkingLabel)
+    {
+        m_currentThinkingLabel->setText(m_currentReasoning);
+    }
+}
+
 void AiChatPage::onStreamContent(const QString &delta)
 {
     m_currentContent += delta;
@@ -2655,13 +2744,27 @@ void AiChatPage::onStreamContent(const QString &delta)
         m_currentAiBubble = createMessageWidget("", false);
         m_messageLayout->insertWidget(m_messageLayout->count() - 1, m_currentAiBubble);
 
-        // 找到气泡中的内容标签
+        // 找到气泡中的内容标签；流式期间改用 QTextEdit 增量追加，
+        // 避免 QLabel 全量 setText 每次重新排版整篇正文造成卡顿
         m_currentContentLabel = m_currentAiBubble->findChild<QLabel*>("msgContent");
-        // 流式期间用纯文本（避免 Markdown 频繁重解析导致卡顿）
         if (m_currentContentLabel)
         {
+            // 流式期间正文为纯文本，收尾时再切回 Markdown
             m_currentContentLabel->setTextFormat(Qt::PlainText);
         }
+        if (auto *bubbleFrame = m_currentAiBubble->findChild<QFrame*>(QStringLiteral("aiChatAiBubble")))
+        {
+            m_currentContentEdit = createStreamEdit(QStringLiteral("streamMsgContent"), bubbleFrame);
+            if (auto *bubbleLayout = bubbleFrame->layout())
+            {
+                bubbleLayout->addWidget(m_currentContentEdit);
+            }
+        }
+        if (m_currentContentEdit && m_currentContentLabel)
+        {
+            m_currentContentLabel->hide();
+        }
+        m_streamFlushedLen = 0;
     }
 
     // 收到首个正文内容：思考阶段结束，思考行状态置为「已完成」
@@ -2700,7 +2803,10 @@ void AiChatPage::onStreamReasoning(const QString &delta)
         }
         m_messageLayout->insertWidget(insertPos, m_currentThinkingBubble);
         m_currentThinkingLabel = m_currentThinkingBubble->findChild<QLabel*>("thinkingContent");
+        m_currentThinkingEdit = m_currentThinkingBubble->findChild<QTextEdit*>("thinkingStreamContent");
         m_currentThinkingContent = m_currentThinkingBubble->findChild<QWidget*>("thinkingContentWidget");
+        // 编辑器已带入当前已累积的思考文本，避免后续追加时重复
+        m_streamThinkingFlushedLen = m_currentThinkingEdit ? m_currentReasoning.size() : 0;
     }
 
     // 节流刷新：标记有新思考内容待刷新，由 m_streamThrottle 统一批量更新 UI
@@ -2742,18 +2848,10 @@ void AiChatPage::onStreamFinished(const TokenUsage &usage)
     m_streamDirty = false;
     m_streamThinkingDirty = false;
 
-    // 切换回 Markdown 渲染并设置最终内容（一次性解析，比流式期间多次重解析快得多）
-    if (m_currentContentLabel)
-    {
-        m_currentContentLabel->setTextFormat(Qt::MarkdownText);
-        m_currentContentLabel->setText(m_currentContent);
-    }
+    // 切回 QLabel 渲染最终内容（全文只解析一次）
+    finalizeStreamWidgets();
 
-    // 思考过程最终刷新（确保节流期间未刷新的尾部内容落盘显示）
-    if (m_currentThinkingLabel)
-    {
-        m_currentThinkingLabel->setText(m_currentReasoning);
-    }
+    // 思考状态与行尾预览收尾
     if (m_currentThinkingBubble)
     {
         if (auto *st = m_currentThinkingBubble->findChild<QLabel*>(QStringLiteral("thinkingStatusText")))
@@ -2817,6 +2915,8 @@ void AiChatPage::onStreamFinished(const TokenUsage &usage)
     m_currentThinkingBubble = nullptr;
     m_currentContentLabel = nullptr;
     m_currentThinkingLabel = nullptr;
+    m_currentContentEdit = nullptr;
+    m_currentThinkingEdit = nullptr;
     m_currentSearchResults.clear();
     m_currentSearchStepCard = nullptr;
     m_currentAgentStepsWidget = nullptr;
@@ -2892,17 +2992,7 @@ void AiChatPage::onStreamError(const QString &error)
     m_streamThrottle->stop();
     m_streamDirty = false;
     m_streamThinkingDirty = false;
-    if (m_currentContentLabel)
-    {
-        m_currentContentLabel->setTextFormat(Qt::MarkdownText);
-        m_currentContentLabel->setText(m_currentContent);
-    }
-
-    // 思考过程最终刷新
-    if (m_currentThinkingLabel)
-    {
-        m_currentThinkingLabel->setText(m_currentReasoning);
-    }
+    finalizeStreamWidgets();
 
     // 隐藏打字指示器
     if (m_typingIndicator)
@@ -2926,6 +3016,8 @@ void AiChatPage::onStreamError(const QString &error)
     m_currentThinkingBubble = nullptr;
     m_currentContentLabel = nullptr;
     m_currentThinkingLabel = nullptr;
+    m_currentContentEdit = nullptr;
+    m_currentThinkingEdit = nullptr;
     m_currentSearchResults.clear();
     m_currentSearchStepCard = nullptr;
 
@@ -3273,28 +3365,43 @@ QWidget* AiChatPage::createThinkingWidget(const QString &text, bool running)
     headerLayout->addWidget(previewLabel, 1);
     setThinkingPreview(previewLabel, text);
 
-    // 展开内容：完整思考全文（多行纯文本），默认收起
+    // 展开内容：默认收起；流式期间用 QTextEdit 增量追加（QLabel 全量重排会卡顿），历史消息用 QLabel
     auto *contentWidget = new QWidget();
     contentWidget->setObjectName("thinkingContentWidget");
     contentWidget->setVisible(false);
     auto *contentLayout = new QVBoxLayout(contentWidget);
     contentLayout->setContentsMargins(0, 4, 0, 0);
 
-    auto *contentLabel = new QLabel(text);
-    contentLabel->setObjectName("thinkingContent");
-    contentLabel->setWordWrap(true);
-    contentLabel->setTextFormat(Qt::PlainText);
-    setupTextContextMenu(contentLabel, false);
-    contentLayout->addWidget(contentLabel);
+    QTextEdit *streamEdit = nullptr;
+    if (running)
+    {
+        streamEdit = createStreamEdit(QStringLiteral("thinkingStreamContent"), contentWidget);
+        streamEdit->setPlainText(text);
+        contentLayout->addWidget(streamEdit);
+    }
+    else
+    {
+        auto *contentLabel = new QLabel(text);
+        contentLabel->setObjectName("thinkingContent");
+        contentLabel->setWordWrap(true);
+        contentLabel->setTextFormat(Qt::PlainText);
+        setupTextContextMenu(contentLabel, false);
+        contentLayout->addWidget(contentLabel);
+    }
 
     layout->addWidget(headerBtn);
     layout->addWidget(contentWidget);
 
     // 点击标题行切换展开/收起，箭头在 ▶ / ∨ 间切换
-    connect(headerBtn, &QPushButton::clicked, container, [contentWidget, chevronLabel]() {
+    connect(headerBtn, &QPushButton::clicked, container, [contentWidget, chevronLabel, streamEdit]() {
         const bool visible = !contentWidget->isVisible();
         contentWidget->setVisible(visible);
         setChevronPixmap(chevronLabel, visible);
+        if (visible && streamEdit)
+        {
+            // 展开后文档才按实际宽度换行，补一次高度同步
+            QTimer::singleShot(0, streamEdit, [streamEdit]() { syncStreamEditHeight(streamEdit); });
+        }
     });
 
     return container;
@@ -3504,6 +3611,10 @@ void AiChatPage::regenerateLastAnswer()
     m_currentThinkingContent = nullptr;
     m_currentContentLabel = nullptr;
     m_currentThinkingLabel = nullptr;
+    m_currentContentEdit = nullptr;
+    m_currentThinkingEdit = nullptr;
+    m_streamFlushedLen = 0;
+    m_streamThinkingFlushedLen = 0;
     m_typingIndicator = nullptr;
     m_currentSearchStepCard = nullptr;
     m_currentSearchResults.clear();

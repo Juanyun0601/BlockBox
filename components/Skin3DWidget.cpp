@@ -103,10 +103,21 @@ uniform sampler2D uImage;
 uniform float uUseImage;
 uniform vec2 uUvScale;
 uniform vec2 uUvOffset;
+uniform vec2 uViewport;       // 视口像素尺寸（圆角 SDF 用）
+uniform float uCornerRadius;  // 背景圆角半径（像素，0=方形）
 out vec4 fragColor;
 void main() {
   vec4 img = texture(uImage, vUv * uUvScale + uUvOffset);
-  fragColor = mix(vColor, img, uUseImage);
+  vec4 color = mix(vColor, img, uUseImage);
+  if (uCornerRadius > 0.0) {
+    // 圆角矩形 SDF（原点在视口中心），1px smoothstep 抗锯齿边缘
+    vec2 pos = (vUv - 0.5) * uViewport;
+    vec2 halfSize = uViewport * 0.5 - 0.5;
+    vec2 q = abs(pos) - (halfSize - vec2(uCornerRadius));
+    float dist = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - uCornerRadius;
+    color.a *= 1.0 - smoothstep(-1.0, 1.0, dist);
+  }
+  fragColor = color;
 }
 )";
 
@@ -204,6 +215,12 @@ void Skin3DWidget::setBackgroundColor(const QColor& color)
   m_bgGradient = false;
   m_bgImageEnabled = false;
   m_background = color;
+  update();
+}
+
+void Skin3DWidget::setBackgroundCornerRadius(qreal radius)
+{
+  m_bgCornerRadius = radius;
   update();
 }
 
@@ -595,11 +612,14 @@ void Skin3DWidget::drawBackground()
   // 颜色变化时重建顶点数据（全屏四边形：顶部两个顶点用顶部色，底部用底部色）
   if (m_bgDirty)
   {
+    // 渐变模式取渐变色；圆角纯色模式取背景色（含 alpha，供 50% 透明背景用）
+    const QColor &topSrc = m_bgGradient ? m_gradientTop : m_background;
+    const QColor &bottomSrc = m_bgGradient ? m_gradientBottom : m_background;
     const float top[4] = {
-      m_gradientTop.redF(), m_gradientTop.greenF(), m_gradientTop.blueF(), 1.0f
+      topSrc.redF(), topSrc.greenF(), topSrc.blueF(), topSrc.alphaF()
     };
     const float bottom[4] = {
-      m_gradientBottom.redF(), m_gradientBottom.greenF(), m_gradientBottom.blueF(), 1.0f
+      bottomSrc.redF(), bottomSrc.greenF(), bottomSrc.blueF(), bottomSrc.alphaF()
     };
     const float quad[48] = {
       -1.0f,  1.0f,  top[0],    top[1],    top[2],    top[3],    0.0f, 1.0f,
@@ -663,6 +683,12 @@ void Skin3DWidget::drawBackground()
       m_bgProgram.setUniformValue("uImage", 0);
     }
   }
+
+  // 圆角 SDF 用视口像素尺寸（与 glViewport 同单位）
+  GLint vp[4];
+  glGetIntegerv(GL_VIEWPORT, vp);
+  m_bgProgram.setUniformValue("uViewport", GLfloat(vp[2]), GLfloat(vp[3]));
+  m_bgProgram.setUniformValue("uCornerRadius", float(m_bgCornerRadius));
 
   m_bgVao.bind();
   glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -814,14 +840,21 @@ void Skin3DWidget::paintGL()
     m_skinDirty = false;
   }
 
-  // 清屏
-  glClearColor(m_background.redF(), m_background.greenF(), m_background.blueF(), 1.0f);
+  // 圆角背景模式：清屏为全透明，背景（含 alpha）由 drawBackground 的圆角矩形绘制，
+  // 圆角外区域在合成时完全透出窗口背景（配合 WA_AlwaysStackOnTop）
+  const bool roundedBg = m_bgCornerRadius > 0.0 && !m_bgGradient && !m_bgImageEnabled;
+  // 清屏（alpha 取自背景色：首页皮肤预览用 50% 透明背景；不透明调用方不受影响）
+  glClearColor(m_background.redF(), m_background.greenF(), m_background.blueF(),
+               roundedBg ? 0.0f : m_background.alphaF());
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-  // 渐变背景（绘制在全屏四边形上，替代纯色背景）
-  if (m_bgGradient)
+  // 渐变/圆角背景（绘制在全屏四边形上；圆角矩形带 alpha，需开启混合）
+  if (m_bgGradient || roundedBg)
   {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     drawBackground();
+    glDisable(GL_BLEND);
   }
 
   // ---- 相机平滑插值（当前值 → 目标值）----

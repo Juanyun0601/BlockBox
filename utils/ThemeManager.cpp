@@ -500,9 +500,9 @@ QMap<QString, QString> ThemeManager::buildTokenTable() const
     T["@BORDER_DEFAULT@"] = T.value("@BORDER@");
 
     // 玻璃态微透明卡片底色（页面顶部过滤条/底部翻页栏等，透出页面/自定义背景）
-    T["@BG_GLASS@"] = isLight ? "rgba(255, 255, 255, 0.78)"
-                    : (isDark ? "rgba(45, 45, 45, 0.75)"
-                              : "rgba(42, 42, 42, 0.75)");
+    T["@BG_GLASS@"] = isLight ? "rgba(255, 255, 255, 0.65)"
+                    : (isDark ? "rgba(45, 45, 45, 0.65)"
+                              : "rgba(42, 42, 42, 0.65)");
 
     // ──────────────────────────── 动态文字 / 次要主题色 ────────────────────────────
     T["@TEXT_PRIMARY@"] = m_currentTextColor;
@@ -765,7 +765,15 @@ void ThemeManager::onSidebarBgColorChanged(const QString& color)
 void ThemeManager::applySidebarBgOverride(QString& style) const
 {
     if (!m_sidebarBgColor.isEmpty()) {
-        style += QString("\nSideBar {\n    background-color: %1;\n}\n").arg(m_sidebarBgColor);
+        // 自定义侧边栏色以半透明玻璃方式呈现，让自定义背景（纯色/图片/必应壁纸）
+        // 能透出侧边栏，避免不透明色块把壁纸完全挡住、看不出透明效果。
+        const QColor c(m_sidebarBgColor);
+        if (c.isValid()) {
+            style += QString("\nSideBar {\n    background-color: rgba(%1, %2, %3, 0.65);\n}\n")
+                         .arg(c.red()).arg(c.green()).arg(c.blue());
+        } else {
+            style += QString("\nSideBar {\n    background-color: %1;\n}\n").arg(m_sidebarBgColor);
+        }
     }
 }
 
@@ -784,14 +792,14 @@ void ThemeManager::applyDarkBarOverride(QString& style) const
 /* === dark bar override (auto) === */
 TopBar {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(48, 48, 48, 0.92),
-        stop:1 rgba(40, 40, 40, 0.75));
+        stop:0 rgba(48, 48, 48, 0.62),
+        stop:1 rgba(40, 40, 40, 0.68));
     border-bottom: 1px solid #444444;
 }
 SideBar {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(42, 42, 42, 0.85),
-        stop:1 rgba(36, 36, 36, 0.9));
+        stop:0 rgba(42, 42, 42, 0.62),
+        stop:1 rgba(36, 36, 36, 0.68));
     border-right: 1px solid #444444;
 }
 SubNavPanel {
