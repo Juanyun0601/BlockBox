@@ -776,6 +776,10 @@ void AiChatPage::initUI()
     m_modelBtn->setFixedSize(150, 28);
     m_modelBtn->setToolTip(tr("选择本次对话使用的模型"));
     m_modelBtn->setText(tr("选择模型"));
+    m_modelBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/arrow_down_triangle.svg", QColor("#8b8b8b"), 12));
+    m_modelBtn->setIconSize(QSize(10, 10));
+    m_modelBtn->setLayoutDirection(Qt::RightToLeft);
 
     // --- 左侧：工作区选择框（可不选 / 已绑定文件夹 / 绑定新文件夹） ---
     m_workspaceBtn = new QPushButton(m_toolsArea);
@@ -786,6 +790,10 @@ void AiChatPage::initUI()
     m_workspaceBtn->setToolTip(tr("限制 AI 可访问的目录范围："
                                   "可不选，也可选择已绑定的文件夹，或绑定新文件夹。"));
     m_workspaceBtn->setText(tr("工作区: 不选"));
+    m_workspaceBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/arrow_down_triangle.svg", QColor("#8b8b8b"), 12));
+    m_workspaceBtn->setIconSize(QSize(10, 10));
+    m_workspaceBtn->setLayoutDirection(Qt::RightToLeft);
 
     // --- 左侧：思考强度选择框（关闭/低/中/高，对支持思考的模型生效） ---
     m_thinkingEffortCombo = new QComboBox(m_toolsArea);
@@ -4363,10 +4371,10 @@ void AiChatPage::updateWorkspaceBtnText()
                              ? tr("不选")
                              : QDir(m_workspaceSelectedPath).dirName();
     QFontMetrics fm(m_workspaceBtn->font());
-    // 预留左右内边距与"▾"箭头宽度
-    const int avail = m_workspaceBtn->width() - 20 - fm.horizontalAdvance(QStringLiteral(" ▾"));
+    // 预留左右内边距与右侧三角图标宽度
+    const int avail = m_workspaceBtn->width() - 20 - 12;
     QString elided = fm.elidedText(text, Qt::ElideMiddle, qMax(20, avail));
-    m_workspaceBtn->setText(prefix + elided + QStringLiteral(" ▾"));
+    m_workspaceBtn->setText(prefix + elided);
     m_workspaceBtn->setToolTip(m_workspaceSelectedPath.isEmpty()
                                    ? tr("限制 AI 可访问的目录范围：可不选，"
                                         "也可选择已绑定的文件夹，或绑定新文件夹。")
@@ -4391,10 +4399,10 @@ void AiChatPage::updateModelBtnText()
                              ? tr("选择模型")
                              : m_currentModel.displayName;
     QFontMetrics fm(m_modelBtn->font());
-    // 预留左右内边距与"▾"箭头宽度
-    const int avail = m_modelBtn->width() - 30 - fm.horizontalAdvance(QStringLiteral(" ▾"));
+    // 预留左右内边距与右侧三角图标宽度
+    const int avail = m_modelBtn->width() - 30 - 12;
     QString elided = fm.elidedText(name, Qt::ElideRight, qMax(20, avail));
-    m_modelBtn->setText(elided + QStringLiteral(" ▾"));
+    m_modelBtn->setText(elided);
     m_modelBtn->setToolTip(name);
 }
 

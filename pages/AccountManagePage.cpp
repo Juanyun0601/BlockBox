@@ -33,6 +33,7 @@
 #include "components/NotificationManager.h"
 #include "components/Skin3DWidget.h"
 #include "utils/AuthManager.h"
+#include "utils/BackgroundManager.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/SkinDownloader.h"
@@ -97,9 +98,20 @@ AccountManagePage::AccountManagePage(QWidget *parent) : QWidget(parent)
         connect(ThemeManager::instance(), &ThemeManager::themeColorChanged, this, &AccountManagePage::onThemeColorChanged);
         connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ThemeManager::ThemeType type)
         {
-            // 仅在"跟随主题"背景下跟随主题色，否则保持用户选择的背景
-            if (m_skin3DWidget && m_skinBackgroundKey == "theme")
-                m_skin3DWidget->setThemeBackground(type == ThemeManager::DarkTheme);
+            Q_UNUSED(type);
+            // 仅在"跟随主题"背景下跟随主题色/应用背景，否则保持用户选择的背景
+            if (m_skinBackgroundKey == "theme")
+                applyThemePresetBackground();
+        });
+    }
+
+    // 连接应用背景变化信号（设置页自定义背景切换/修改时刷新"跟随主题"预览背景）
+    if (BackgroundManager::instance())
+    {
+        connect(BackgroundManager::instance(), &BackgroundManager::backgroundChanged, this, [this]()
+        {
+            if (m_skinBackgroundKey == "theme")
+                applyThemePresetBackground();
         });
     }
 }
@@ -294,16 +306,14 @@ void AccountManagePage::initCenterSkinDisplay()
     m_skin3DWidget->setObjectName("skin3DWidget");
     m_skin3DWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_skin3DWidget->setMinimumSize(300, 400);
-    // 背景色根据当前主题自适应
-    if (ThemeManager::instance())
-    {
-        const bool dark = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
-        m_skin3DWidget->setThemeBackground(dark);
-    }
-    else
-    {
-        m_skin3DWidget->setBackgroundColor(QColor(40, 40, 40));
-    }
+    // 与首页皮肤预览一致：alpha 缓冲 + AlwaysStackOnTop 合成路径，
+    // 设置页启用自定义背景时预览清屏全透明，主窗口自定义背景可完整透出
+    QSurfaceFormat glFormat = m_skin3DWidget->format();
+    glFormat.setAlphaBufferSize(8);
+    m_skin3DWidget->setFormat(glFormat);
+    m_skin3DWidget->setAttribute(Qt::WA_AlwaysStackOnTop);
+    // 背景随主题/自定义应用背景自适应
+    applyThemePresetBackground();
 
     // No account hint
     m_noAccountHint = new QLabel();
@@ -1553,8 +1563,7 @@ void AccountManagePage::onThemeColorChanged(const QString &color)
     // 3D 皮肤预览背景色随主题切换（仅在"跟随主题"背景下生效）
     if (m_skin3DWidget && ThemeManager::instance() && m_skinBackgroundKey == "theme")
     {
-        const bool dark = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
-        m_skin3DWidget->setThemeBackground(dark);
+        applyThemePresetBackground();
     }
 }
 
@@ -1597,6 +1606,34 @@ void AccountManagePage::initBackgroundPresetCombo()
     }
 }
 
+void AccountManagePage::applyThemePresetBackground()
+{
+    if (!m_skin3DWidget)
+    {
+        return;
+    }
+
+    // 设置页启用了自定义应用背景（非 Classic）：清屏全透明，
+    // 让主窗口的自定义背景（纯色/图片/必应壁纸/流光/旋转）从预览区完整透出
+    if (BackgroundManager::instance()
+        && BackgroundManager::instance()->currentMode() != BackgroundManager::Classic)
+    {
+        m_skin3DWidget->setBackgroundColor(QColor(0, 0, 0, 0));
+        return;
+    }
+
+    // 未启用自定义背景：保持原有主题色背景
+    if (ThemeManager::instance())
+    {
+        const bool dark = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
+        m_skin3DWidget->setThemeBackground(dark);
+    }
+    else
+    {
+        m_skin3DWidget->setBackgroundColor(QColor(40, 40, 40));
+    }
+}
+
 void AccountManagePage::applySkinBackgroundPreset(const QString &presetKey)
 {
     if (!m_skin3DWidget)
@@ -1632,9 +1669,7 @@ void AccountManagePage::applySkinBackgroundPreset(const QString &presetKey)
         }
         // 图片缺失或无法加载：回退到跟随主题
         m_bgImagePath.clear();
-        const bool dark = ThemeManager::instance()
-                          && ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme;
-        m_skin3DWidget->setThemeBackground(dark);
+        applyThemePresetBackground();
         return;
     }
 
@@ -1644,9 +1679,7 @@ void AccountManagePage::applySkinBackgroundPreset(const QString &presetKey)
         {
             if (presetKey == "theme")
             {
-                const bool dark = ThemeManager::instance()
-                                  && ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme;
-                m_skin3DWidget->setThemeBackground(dark);
+                applyThemePresetBackground();
             }
             else if (preset.gradient)
             {

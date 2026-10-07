@@ -90,7 +90,8 @@ static bool sameRecentPlayEntry(const RecentPlayEntry &a, const RecentPlayEntry 
       && a.instancePath == b.instancePath
       && a.iconPath == b.iconPath
       && a.serverAddress == b.serverAddress
-      && a.serverPort == b.serverPort;
+      && a.serverPort == b.serverPort
+      && a.pinned == b.pinned;
 }
 
 static bool sameRecentPlayList(const QVector<RecentPlayEntry> &a, const QVector<RecentPlayEntry> &b)
@@ -565,6 +566,9 @@ void HomePage::loadRecentPlays()
 {
   m_recentPlays.clear();
 
+  // 读取已固定的记录标识（持久化于设置中）
+  m_pinnedRecentKeys = SettingsManager::instance()->getProperty("home/recentPinnedKeys", QStringList()).toStringList();
+
   // 遍历所有实例文件夹（游戏根目录 .minecraft）
   QList<InstanceFolderInfo> folders = SettingsManager::instance()->getInstanceFolders();
   for (const auto &folder : folders)
@@ -692,6 +696,7 @@ void HomePage::loadRecentPlays()
           entry.lastPlayed = tr("从未游玩");
         }
 
+        entry.pinned = m_pinnedRecentKeys.contains(recentPlayKey(entry));
         m_recentPlays.append(entry);
       }
 
@@ -726,6 +731,7 @@ void HomePage::loadRecentPlays()
             // 服务器无游玩记录时间，使用 servers.json 的最后修改时间作为近似值
             srvEntry.lastPlayedTime = serversFileTime;
             srvEntry.lastPlayed = serversFileTime.toString("yyyy-MM-dd HH:mm");
+            srvEntry.pinned = m_pinnedRecentKeys.contains(recentPlayKey(srvEntry));
             m_recentPlays.append(srvEntry);
           }
         }
@@ -733,12 +739,49 @@ void HomePage::loadRecentPlays()
     }
   }
 
-  // 按最后游玩时间降序排序
+  // 固定项置顶，其余按最后游玩时间降序排序
+  sortRecentPlays();
+}
+
+// 最近游玩记录的稳定标识（存档用存档路径、服务器用地址，跨语言稳定）
+QString HomePage::recentPlayKey(const RecentPlayEntry &entry) const
+{
+  if (!entry.serverAddress.isEmpty())
+    return QStringLiteral("server|%1|%2").arg(entry.instancePath, entry.serverAddress);
+  return QStringLiteral("save|%1|%2").arg(entry.instancePath, entry.savePath);
+}
+
+// 固定项置顶，其余按最后游玩时间降序
+void HomePage::sortRecentPlays()
+{
   std::sort(m_recentPlays.begin(), m_recentPlays.end(),
             [](const RecentPlayEntry &a, const RecentPlayEntry &b)
             {
+              if (a.pinned != b.pinned)
+                return a.pinned;
               return a.lastPlayedTime > b.lastPlayedTime;
             });
+}
+
+// 固定/取消固定最近游玩记录，并重排、重建卡片
+void HomePage::toggleRecentPlayPin(const QString &key)
+{
+  if (key.isEmpty())
+    return;
+
+  if (m_pinnedRecentKeys.contains(key))
+    m_pinnedRecentKeys.removeAll(key);
+  else
+    m_pinnedRecentKeys.prepend(key);
+
+  SettingsManager::instance()->setProperty("home/recentPinnedKeys", m_pinnedRecentKeys);
+
+  for (auto &entry : m_recentPlays)
+    entry.pinned = m_pinnedRecentKeys.contains(recentPlayKey(entry));
+
+  sortRecentPlays();
+  m_recentPlaysForceRebuild = true;
+  rebuildRecentPlaysContent();
 }
 
 QString HomePage::formatRelativeTime(const QDateTime &time) const
@@ -910,7 +953,7 @@ QWidget* HomePage::createCarouselSection()
     {
       auto *dot = new QPushButton();
       dot->setObjectName("carouselDot");
-      dot->setFixedSize(4, 4);
+      dot->setFixedSize(2, 2);
       dot->setCursor(Qt::PointingHandCursor);
       int index = i;
       QObject::connect(dot, &QPushButton::clicked, [this, index]()
@@ -1055,7 +1098,7 @@ void HomePage::setCarouselIndex(int index)
   {
     bool active = (i == index);
     m_carouselDots[i]->setProperty("active", active ? "true" : "false");
-    m_carouselDots[i]->setFixedSize(4, 4);
+    m_carouselDots[i]->setFixedSize(2, 2);
     m_carouselDots[i]->style()->unpolish(m_carouselDots[i]);
     m_carouselDots[i]->style()->polish(m_carouselDots[i]);
   }
@@ -1444,6 +1487,16 @@ QWidget* HomePage::buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *pa
         emit recentPlayQuickLaunchClicked(entry.name, entry.instancePath);
     });
 
+    // 固定按钮（固定后置顶显示，再次点击取消固定）
+    const bool pinned = m_pinnedRecentKeys.contains(recentPlayKey(entry));
+    auto *pinBtn = createActionBtn(pinned ? ":/Images/Icons/pin_filled.svg" : ":/Images/Icons/pin.svg",
+                                   pinned ? tr("取消固定") : tr("固定到最近游玩"));
+    if (pinned)
+      pinBtn->setObjectName("recentPlayActionBtnPinned");
+    QObject::connect(pinBtn, &QPushButton::clicked, [this, entry]() {
+      toggleRecentPlayPin(recentPlayKey(entry));
+    });
+
     auto *moreBtn = createActionBtn(":/Images/Icons/list.svg", tr("更多操作"));
     QObject::connect(moreBtn, &QPushButton::clicked, [this, entry, moreBtn]() {
       QMenu menu(moreBtn);
@@ -1484,6 +1537,7 @@ QWidget* HomePage::buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *pa
       }
     });
     btnLayout->addStretch();
+    btnLayout->addWidget(pinBtn);
     btnLayout->addWidget(moreBtn);
     btnLayout->addWidget(playBtn);
     bv->addLayout(btnLayout);

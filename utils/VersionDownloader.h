@@ -59,6 +59,7 @@ public:
         QString filePath;
         qint64 fileSize;
         QString expectedHash;   // 预期 SHA1 哈希，用于下载后完整性验证
+        QString fallbackUrl;    // 镜像源失败后的官方源兜底地址（仅 BMCL 源时填）
         int retryCount = 0;
     };
 
@@ -135,12 +136,23 @@ private:
     void completeDownload();
     void downloadSingleFile(const QString &url, const QString &filePath,
                             qint64 fileSize, const QString &expectedHash = QString(),
-                            int retryCount = 0);
+                            int retryCount = 0, const QString &fallbackUrl = QString(),
+                            bool isClientJar = false);
+    void scheduleFileRetry(const QString &url, const QString &filePath,
+                           qint64 fileSize, const QString &expectedHash,
+                           int nextRetryCount, bool rateLimited = false,
+                           const QString &fallbackUrl = QString(),
+                           bool isClientJar = false);
     void downloadFileSegments(const QString &url, const QString &filePath, qint64 fileSize);
+    void issueSegmentRequest(const QString &url, const QString &tempPath,
+                             int segIndex, int totalSegs, const QString &finalPath,
+                             qint64 finalSize, qint64 start, qint64 end,
+                             int retryCount);
     void onSegmentReplyFinished();
 
     QString getManifestUrl(const QString &versionId);
     QString getClientDownloadUrl(const QJsonObject &versionManifest);
+    int effectiveConcurrentLimit() const;
     void calculateTotalSize(const QJsonObject &versionManifest);
     void addAssetTotalSize(const QJsonObject &versionManifest);
     QString getActualVersionPath() const;
@@ -174,6 +186,11 @@ private:
     int m_activeDownloadCount;
 
     QString m_tempSegmentDir;
+    // 分段下载已降级单连接标志：防止并发分段同时触发降级互相踩踏
+    bool m_segmentFallbackStarted = false;
+    // BMCL 源客户端 JAR 的官方源兜底地址与校验哈希（分段降级路径使用）
+    QString m_clientJarFallbackUrl;
+    QString m_clientJarSha1;
 
     QElapsedTimer m_speedTimer;
     qint64 m_lastSpeedBytes;

@@ -115,7 +115,6 @@ protected:
     QString launcherDisplayName(const QString &key) const;
     void importJavaPath(const QString &javaExe);
     QList<QPair<QString, QString>> lightJavaDetect() const;
-    QString javaVersionFromPath(const QString &javaExe) const;
 
     // 状态
     int m_method = MethodManual;      ///< 当前选择的引导方式

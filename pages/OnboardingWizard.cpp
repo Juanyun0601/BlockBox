@@ -51,6 +51,7 @@
 
 #include "components/CustomCheckBox.h"
 #include "utils/BackgroundManager.h"
+#include "utils/JavaScanWorker.h"
 #include "utils/LauncherImporter.h"
 #include "utils/LanguageManager.h"
 #include "utils/SettingsManager.h"
@@ -2400,60 +2401,10 @@ void OnboardingWizard::refreshJavaList()
 
 QList<QPair<QString, QString>> OnboardingWizard::lightJavaDetect() const
 {
-    QList<QPair<QString, QString>> results;
-    const QStringList roots = {
-        QStringLiteral("C:/Program Files/Java"),
-        QStringLiteral("C:/Program Files/Eclipse Adoptium"),
-        QStringLiteral("C:/Program Files/Microsoft"),
-        QStringLiteral("C:/Program Files/Zulu"),
-        QStringLiteral("D:/Java"),
-    };
-    QStringList subDirs;
-    for (const QString &root : roots) {
-        const QDir d(root);
-        if (d.exists())
-            subDirs << d.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-    }
-    for (const QString &sub : subDirs) {
-        const QStringList cands = {
-            QStringLiteral("C:/Program Files/Java/%1/bin/java.exe").arg(sub),
-            QStringLiteral("C:/Program Files/Eclipse Adoptium/%1/bin/java.exe").arg(sub),
-            QStringLiteral("C:/Program Files/Microsoft/%1/bin/java.exe").arg(sub),
-            QStringLiteral("C:/Program Files/Zulu/%1/bin/java.exe").arg(sub),
-            QStringLiteral("D:/Java/%1/bin/java.exe").arg(sub),
-        };
-        for (const QString &cand : cands) {
-            if (QFileInfo::exists(cand)) {
-                results.append(qMakePair(QDir::toNativeSeparators(cand),
-                                         javaVersionFromPath(cand)));
-                break;
-            }
-        }
-    }
-    return results;
-}
-
-QString OnboardingWizard::javaVersionFromPath(const QString &javaExe) const
-{
-    QProcess proc;
-    proc.start(javaExe, QStringList() << QStringLiteral("-version"));
-    if (!proc.waitForStarted(1500))
-        return tr("Java \u672A\u77E5");
-    if (!proc.waitForFinished(3000)) {
-        proc.kill();
-        return tr("Java \u672A\u77E5");
-    }
-    const QString out = QString::fromUtf8(proc.readAllStandardError());
-    QRegularExpression re(QStringLiteral("(\\d+)(?:\\.(\\d+))?"));
-    QRegularExpressionMatch m = re.match(out);
-    if (!m.hasMatch())
-        return tr("Java \u672A\u77E5");
-    const int major = m.captured(1).toInt();
-    if (major == 1) {
-        const int minor = m.captured(2).toInt(); // 1.8.0_xxx → Java 8
-        return QStringLiteral("Java %1 (64-bit)").arg(minor);
-    }
-    return QStringLiteral("Java %1 (64-bit)").arg(major);
+    // 与设置页「Java检测」共用同一套开源启动器通行检测
+    // （环境变量 → 注册表 → 厂商目录 → 启动器运行时），避免两套逻辑结果不一致
+    JavaScanWorker worker;
+    return worker.runQuickScan();
 }
 
 void OnboardingWizard::onScanJava()

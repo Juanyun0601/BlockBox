@@ -6,10 +6,12 @@
  *
  * 用于 InstanceAssistantWindow 的「Java管理」标签页。窗口宽度较窄（450px），
  * 因此采用紧凑的单列垂直布局，参考 HMCL/PCL-CE 的工具栏 + 列表风格：
- *  - 工具栏：全盘扫描 / 手动添加 / 快速检测 / 下载Java
+ *  - 工具栏：Java检测 / 手动添加 / 下载Java
  *  - 列表：已发现的 Java 安装项卡片（标题/路径/版本/打开文件夹/移除）
  *  - 全局设置：默认 Java 选择 + 按游戏版本自动选择开关
  *
+ * 「Java检测」合并了原「快速检测」「全盘扫描」：先走开源启动器通行的
+ * 环境变量/注册表/厂商目录快速检测，未找到时 JavaScanWorker 自动转全盘深度搜索。
  * 复用 JavaScanWorker、GameLauncher::JavaInfo、SettingsManager
  * 的全部现有逻辑，与主程序 SettingsPage::initJavaManagerSettings 共享同一份
  * Java 缓存（getJavaInstallations / setJavaInstallations）。
@@ -50,9 +52,8 @@ signals:
     void javaSettingsChanged();
 
 private slots:
-    void onScanClicked();
-    void onAddClicked();
     void onDetectClicked();
+    void onAddClicked();
     void onDownloadClicked();
     void onRemoveJava(const QString &javaPath);
     void onOpenJavaFolder(const QString &javaPath);
@@ -66,7 +67,6 @@ private:
     // ---- UI 控件 ----
     OutlinedLabel *m_titleLabel;
     QLabel *m_subtitleLabel;
-    QPushButton *m_scanBtn;
     QPushButton *m_addBtn;
     QPushButton *m_detectBtn;
     QPushButton *m_downloadBtn;
@@ -75,6 +75,7 @@ private:
     QLabel *m_emptyLabel;
     QComboBox *m_globalJavaCombo;
     CustomCheckBox *m_autoSelectCheck;
+    bool m_detecting;
 };
 
 #endif // INSTANCEJAVAPAGE_H

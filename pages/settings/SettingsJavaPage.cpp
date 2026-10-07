@@ -75,11 +75,14 @@ void SettingsPage::initJavaManagerSettings()
     toolbarLayout->setContentsMargins(0, 0, 0, 0);
     toolbarLayout->setSpacing(8);
 
-    QPushButton *scanBtn = new QPushButton(tr("全盘扫描"), toolbar);
-    scanBtn->setObjectName("javaScanBtn");
-    scanBtn->setCursor(Qt::PointingHandCursor);
-    scanBtn->setToolTip(tr("扫描所有磁盘以查找已安装的 Java"));
-    connect(scanBtn, &QPushButton::clicked, this, &SettingsPage::onScanJavaClicked);
+    // 「Java检测」= 原「快速检测」+「全盘扫描」合并：
+    // 先按开源启动器通行做法快速检测（环境变量/注册表/厂商目录/启动器运行时），
+    // 未找到时 JavaScanWorker 自动转入全盘深度搜索兜底
+    m_javaDetectBtn = new QPushButton(tr("Java检测"), toolbar);
+    m_javaDetectBtn->setObjectName("javaDetectBtn");
+    m_javaDetectBtn->setCursor(Qt::PointingHandCursor);
+    m_javaDetectBtn->setToolTip(tr("从环境变量、注册表与常见安装目录检测本机 Java；未找到时自动全盘深度搜索"));
+    connect(m_javaDetectBtn, &QPushButton::clicked, this, &SettingsPage::onDetectJavaClicked);
 
     QPushButton *addBtn = new QPushButton(tr("手动添加"), toolbar);
     addBtn->setObjectName("javaAddBtn");
@@ -87,44 +90,13 @@ void SettingsPage::initJavaManagerSettings()
     addBtn->setToolTip(tr("通过浏览选择 java.exe 手动添加"));
     connect(addBtn, &QPushButton::clicked, this, &SettingsPage::onAddJavaClicked);
 
-    QPushButton *detectBtn = new QPushButton(tr("快速检测"), toolbar);
-    detectBtn->setObjectName("javaDetectBtn");
-    detectBtn->setCursor(Qt::PointingHandCursor);
-    detectBtn->setToolTip(tr("从 PATH 与常见目录快速检测 Java"));
-    connect(detectBtn, &QPushButton::clicked, this, [this]() {
-        GameLauncher::JavaInfo javaInfo = GameLauncher::instance()->detectJava();
-        if (javaInfo.valid) {
-            // 把检测到的 Java 加入缓存列表（去重）
-            QList<QPair<QString, QString>> installations =
-                SettingsManager::instance()->getJavaInstallations();
-            bool exists = false;
-            for (const auto& inst : installations) {
-                if (inst.first == javaInfo.path) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (!exists) {
-                installations.append(qMakePair(javaInfo.path, javaInfo.version));
-                SettingsManager::instance()->setJavaInstallations(installations);
-            }
-            refreshJavaList();
-            refreshGlobalJavaCombo();
-            AppMessageBox::information(this, tr("检测成功"),
-                tr("已检测到 Java %1\n路径: %2").arg(javaInfo.version).arg(javaInfo.path));
-        } else {
-            AppMessageBox::warning(this, tr("警告"), tr("未检测到 Java，请尝试全盘扫描或手动添加。"));
-        }
-    });
-
     QPushButton *downloadBtn = new QPushButton(tr("下载Java"), toolbar);
     downloadBtn->setObjectName("downloadJavaBtn");
     downloadBtn->setCursor(Qt::PointingHandCursor);
     connect(downloadBtn, &QPushButton::clicked, this, &SettingsPage::downloadJavaRequested);
 
-    toolbarLayout->addWidget(scanBtn);
+    toolbarLayout->addWidget(m_javaDetectBtn);
     toolbarLayout->addWidget(addBtn);
-    toolbarLayout->addWidget(detectBtn);
     toolbarLayout->addStretch();
     toolbarLayout->addWidget(downloadBtn);
 
@@ -143,7 +115,7 @@ void SettingsPage::initJavaManagerSettings()
 
     // 空状态提示
     m_javaEmptyLabel = new QLabel(
-        tr("尚未发现任何 Java 安装。\n点击上方「全盘扫描」或「手动添加」以检测 Java。"),
+        tr("尚未发现任何 Java 安装。\n点击上方「Java检测」或「手动添加」以检测 Java。"),
         m_javaListWidget);
     m_javaEmptyLabel->setObjectName("javaEmptyLabel");
     m_javaEmptyLabel->setAlignment(Qt::AlignCenter);
@@ -346,11 +318,16 @@ void SettingsPage::refreshGlobalJavaCombo()
 }
 
 // ────────────────────────────────────────────────────────────
-// 全盘扫描 Java（静默扫描，无弹窗，由新手引导/后台线程承担）
+// 统一 Java 检测（快速检测 → 未找到时全盘深度兜底）
 // ────────────────────────────────────────────────────────────
 
-void SettingsPage::onScanJavaClicked()
+void SettingsPage::onDetectJavaClicked()
 {
+    if (m_javaDetecting) return;
+    m_javaDetecting = true;
+    m_javaDetectBtn->setEnabled(false);
+    m_javaDetectBtn->setText(tr("检测中…"));
+
     JavaScanWorker *worker = new JavaScanWorker();
     QThread *scanThread = new QThread();
     worker->moveToThread(scanThread);
@@ -367,6 +344,12 @@ void SettingsPage::onScanJavaClicked()
             [&](const QList<QPair<QString, QString>>& results) {
                 installations = results;
                 loop.quit();
+            });
+    // 进度回显到按钮：快速检测阶段只有 0%，全盘兜底阶段带百分比
+    connect(worker, &JavaScanWorker::scanProgress, this,
+            [this](const QString&, int percent, int, int, int, int) {
+                m_javaDetectBtn->setText(percent >= 0 ? tr("检测中…%1%").arg(percent)
+                                                      : tr("检测中…"));
             });
 
     scanThread->start();
@@ -393,14 +376,18 @@ void SettingsPage::onScanJavaClicked()
     refreshJavaList();
     refreshGlobalJavaCombo();
 
+    m_javaDetectBtn->setText(tr("Java检测"));
+    m_javaDetectBtn->setEnabled(true);
+    m_javaDetecting = false;
+
     if (newCount > 0) {
-        AppMessageBox::information(this, tr("扫描完成"),
+        AppMessageBox::information(this, tr("检测完成"),
             tr("共发现 %1 个 Java，新增 %2 个已加入列表。").arg(installations.size()).arg(newCount));
     } else if (!installations.isEmpty()) {
-        AppMessageBox::information(this, tr("扫描完成"),
+        AppMessageBox::information(this, tr("检测完成"),
             tr("共发现 %1 个 Java（均已在列表中）。").arg(installations.size()));
     } else {
-        AppMessageBox::information(this, tr("扫描完成"),
+        AppMessageBox::information(this, tr("检测完成"),
             tr("未发现任何 Java 安装，请点击「下载Java」获取。"));
     }
 }

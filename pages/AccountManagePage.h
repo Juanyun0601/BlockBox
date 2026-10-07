@@ -154,6 +154,8 @@ private:
     void initBackgroundPresetCombo();
     /** 应用指定背景预设键到 3D 皮肤控件（不持久化，供切换/加载共用） */
     void applySkinBackgroundPreset(const QString &presetKey);
+    /** 应用"跟随主题"背景：设置页启用了自定义应用背景时清屏全透明透出，否则用主题色 */
+    void applyThemePresetBackground();
     /** 根据预设键回选下拉框对应项 */
     void selectBackgroundPreset(const QString &presetKey);
     /** 持久化当前背景预设键 */

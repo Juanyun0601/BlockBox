@@ -46,7 +46,7 @@ private slots:
     void onThemeChanged(int index);
     void onBackgroundModeChanged(int index);
     // Java 管理页相关槽
-    void onScanJavaClicked();
+    void onDetectJavaClicked();
     void onAddJavaClicked();
     void onRemoveJavaClicked(const QString& javaPath);
     void onOpenJavaFolderClicked(const QString& javaPath);
@@ -159,6 +159,8 @@ private:
     QLabel *m_javaEmptyLabel;
     QComboBox *m_globalJavaCombo;
     CustomCheckBox *m_autoSelectJavaCheck;
+    QPushButton *m_javaDetectBtn = nullptr;
+    bool m_javaDetecting = false;
 
     // 全局游戏设置中的 Java 相关卡片（基岩版模式隐藏）
     QWidget *m_gameInstallPathCard = nullptr;

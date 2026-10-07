@@ -13,6 +13,7 @@
 #include "utils/ThemeManager.h"
 #include "utils/FavoritesManager.h"
 #include "utils/content/ContentData.h"
+#include "utils/content/ContentListCache.h"
 #include "utils/mod/MCModAPI.h"
 
 #include <QApplication>
@@ -689,6 +690,28 @@ void ModDownloadPage::loadInitialMods()
     clearCards();
     m_isLoading = false;
 
+    // 优先从磁盘缓存加载第一页列表（资源>模组）
+    m_currentSource = m_sourceCombo->currentData().toInt();
+    const QString cacheKey = ContentListCache::makeKey(
+        ContentType::Mod, m_currentSource,
+        selectedGameVersion(), selectedLoader(),
+        m_sortCombo->currentData().toString(), QString(), 0);
+    ModSearchResult cached;
+    if (ContentListCache::instance()->load(cacheKey, cached) && !cached.mods.isEmpty()) {
+        m_hasMore = cached.hasMore;
+        m_totalHits = cached.totalHits;
+        m_pageCache[0] = cached.mods;
+        m_allMods = cached.mods;
+        for (const ModInfo &info : cached.mods)
+            addCard(info);
+        m_isLoading = false;
+        showLoading(false);
+        placeCards();
+        updatePaginationControls();
+        m_loadingOverlay->clearError();
+        return;
+    }
+
     if (m_currentSource == AllSources) {
         performSearch(false);
     } else {
@@ -777,6 +800,20 @@ void ModDownloadPage::onSearchCompleted(const ModSearchResult &result)
 
     updatePaginationControls();
     m_loadingOverlay->clearError();
+
+    // 缓存第一页列表（仅当查询为空时，即「资源>模组」默认列表）
+    if (m_currentPage == 0 && m_currentQuery.isEmpty()) {
+        ModSearchResult firstPage;
+        firstPage.mods = m_allMods;
+        firstPage.totalHits = m_totalHits;
+        firstPage.hasMore = m_hasMore;
+        ContentListCache::instance()->save(
+            ContentListCache::makeKey(
+                ContentType::Mod, m_currentSource,
+                selectedGameVersion(), selectedLoader(),
+                m_sortCombo->currentData().toString(), QString(), 0),
+            firstPage);
+    }
 }
 
 void ModDownloadPage::onSearchFailed(const QString &error)

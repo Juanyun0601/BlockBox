@@ -499,16 +499,15 @@ void InstanceModsPage::addListCard(const ModInfo &info)
     infoLayout->setSpacing(6);
     infoLayout->setContentsMargins(0, 0, 0, 0);
 
-    // ---- 名称区域：中文名（标题）+ 英文名（副标题） ----
-    // 标题：优先中文名，其次英文名，最后原始名
+    // ---- 名称区域：有中文翻译时合并为「中文翻译（英文）」单行 ----
+    // 不再单独显示灰色英文副标题：副标题会撑高固定高度卡片，挤压下方 chip 使其圆角失效
     QString titleText;
-    QString subtitleText; // 英文副标题（有中文名时才显示）
 
     if (!info.chineseName.isEmpty())
     {
         titleText = info.chineseName;
         if (!info.englishName.isEmpty() && info.englishName != info.chineseName)
-            subtitleText = info.englishName;
+            titleText += QStringLiteral("（") + info.englishName + QStringLiteral("）");
     }
     else if (!info.englishName.isEmpty())
     {
@@ -523,16 +522,6 @@ void InstanceModsPage::addListCard(const ModInfo &info)
     nameLabel->setObjectName("modCardName");
     nameLabel->setProperty("cardRole", "name");
     infoLayout->addWidget(nameLabel);
-
-    // 英文副标题（若存在）
-    QLabel *englishLabel = new QLabel();
-    englishLabel->setObjectName("modCardEnglishName");
-    englishLabel->setProperty("cardRole", "nameEnglish");
-    if (!subtitleText.isEmpty())
-        englishLabel->setText(subtitleText);
-    else
-        englishLabel->hide();
-    infoLayout->addWidget(englishLabel);
 
     // 标签行
     QWidget *chipsWidget = new QWidget();
@@ -1535,17 +1524,14 @@ void InstanceModsPage::updateCardNames(int index, const ModInfo &info)
     if (!nameLabel)
         return;
 
-    QLabel *englishLabel = card->findChild<QLabel *>("modCardEnglishName");
-
-    // 标题：优先中文名，其次英文名，最后原始名
+    // 标题：有中文名时按「中文（英文）」合并，否则英文名/原始名
     QString titleText;
-    QString subtitleText;
 
     if (!info.chineseName.isEmpty())
     {
         titleText = info.chineseName;
         if (!info.englishName.isEmpty() && info.englishName != info.chineseName)
-            subtitleText = info.englishName;
+            titleText += QStringLiteral("（") + info.englishName + QStringLiteral("）");
     }
     else if (!info.englishName.isEmpty())
     {
@@ -1557,19 +1543,6 @@ void InstanceModsPage::updateCardNames(int index, const ModInfo &info)
     }
 
     nameLabel->setText(titleText);
-
-    if (englishLabel)
-    {
-        if (!subtitleText.isEmpty())
-        {
-            englishLabel->setText(subtitleText);
-            englishLabel->show();
-        }
-        else
-        {
-            englishLabel->hide();
-        }
-    }
 }
 
 void InstanceModsPage::refreshCardNameLabels()

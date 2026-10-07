@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QMap>
 #include <QPushButton>
+#include <QStringList>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
@@ -40,6 +41,7 @@ struct RecentPlayEntry
   QString instancePath;   // 所属实例（版本）路径
   QString iconPath;       // 存档图标路径（icon.png）
   QDateTime lastPlayedTime;  // 最后游玩时间（用于排序）
+  bool pinned = false;    // 是否固定在最近游玩区域
   // 服务器专属字段
   QString serverAddress;  // 服务器地址
   quint16 serverPort = 25565;  // 服务器端口
@@ -160,6 +162,11 @@ private:
   bool m_recentPlaysForceRebuild = false;    // 数据有变化，下次重建不可跳过
   int m_recentPlaysBuiltWidth = -1;          // 上次重建使用的卡片宽度
   int m_recentPlaysBuiltCount = -1;          // 上次重建的卡片数量
+  // 最近游玩固定（置顶）功能
+  QString recentPlayKey(const RecentPlayEntry &entry) const; // 稳定的记录标识
+  void toggleRecentPlayPin(const QString &key);              // 固定/取消固定
+  void sortRecentPlays();                                    // 固定置顶后按时间降序
+  QStringList m_pinnedRecentKeys;                            // 已固定的记录标识（持久化）
 
   // Section 4: Websites
   QWidget* createWebsitesSection();

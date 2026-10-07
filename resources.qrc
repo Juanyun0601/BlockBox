@@ -55,6 +55,8 @@
         <file>Images/Icons/toggle_on.svg</file>
         <file>Images/Icons/toggle_off.svg</file>
         <file>Images/Icons/list.svg</file>
+        <file>Images/Icons/pin.svg</file>
+        <file>Images/Icons/pin_filled.svg</file>
         <file>Images/Icons/copy.svg</file>
         <file>Images/Icons/copy_md.svg</file>
         <file>Images/Icons/thumbs_up.svg</file>
@@ -75,6 +77,7 @@
         <file>Images/Icons/chevron_left.svg</file>
         <file>Images/Icons/chevron_right.svg</file>
         <file>Images/Icons/chevron_down.svg</file>
+        <file>Images/Icons/arrow_down_triangle.svg</file>
         <file>Images/Icons/expand.svg</file>
         <file>Images/Icons/close.svg</file>
         <file>Images/Icons/check.svg</file>

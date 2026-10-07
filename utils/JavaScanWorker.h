@@ -38,6 +38,14 @@ public:
     void cancel();
     bool isCancelled() const;
 
+    /**
+     * @brief 统一快速检测（开源启动器通行做法：环境变量 → 注册表 → 厂商目录 → 启动器运行时）
+     *
+     * 不进入全盘深度搜索，通常数秒内返回，可同步调用（如 GameLauncher::detectJava）。
+     * doScan 只有在本方法未找到任何 Java 时才自动转入全盘 BFS 兜底。
+     */
+    QList<QPair<QString, QString>> runQuickScan();
+
 public slots:
     void doScan();
 

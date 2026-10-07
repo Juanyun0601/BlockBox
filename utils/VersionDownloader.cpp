@@ -18,6 +18,7 @@
 
 #include <QCryptographicHash>
 #include <QThreadPool>
+#include <QTimer>
 
 #include "FileReuse.h"
 #include "DownloadTaskManager.h"
@@ -493,6 +494,24 @@ void VersionDownloader::downloadClientJarFromNetwork()
         return;
     }
 
+    // BMCL 源保留官方地址作为兜底：镜像 302 的后端可能故障，官方地址仍在清单里
+    m_clientJarFallbackUrl.clear();
+    if (m_downloadSource == BMCL && clientUrl.contains("bmclapi2.bangbang93.com"))
+    {
+        m_clientJarFallbackUrl = clientUrl;
+        m_clientJarFallbackUrl.replace("https://bmclapi2.bangbang93.com/v1/objects",
+                                       "https://piston-data.mojang.com/v1/objects");
+        m_clientJarFallbackUrl.replace("https://bmclapi2.bangbang93.com/objects",
+                                       "https://piston-data.mojang.com/v1/objects");
+    }
+    m_clientJarSha1.clear();
+    if (m_currentVersionManifest.contains("downloads"))
+    {
+        QJsonObject downloads = m_currentVersionManifest["downloads"].toObject();
+        if (downloads.contains("client"))
+            m_clientJarSha1 = downloads["client"].toObject()["sha1"].toString();
+    }
+
     QString clientJarPath = m_currentInstancePath + "/" + m_currentVersionId + ".jar";
 
     emit statusChanged(tr("正在下载客户端 JAR 文件..."));
@@ -507,11 +526,15 @@ void VersionDownloader::downloadClientJarFromNetwork()
     QNetworkRequest jarRequest;
     jarRequest.setUrl(QUrl(clientUrl));
     jarRequest.setTransferTimeout(300000);
+    jarRequest.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
     QNetworkReply *jarReply = m_networkManager->get(jarRequest);
     m_activeReplies.append(jarReply);
+    jarReply->setProperty("url", clientUrl);
     jarReply->setProperty("filePath", clientJarPath);
     jarReply->setProperty("fileSize", m_clientJarSize);
     jarReply->setProperty("isClientJar", true);
+    jarReply->setProperty("expectedHash", m_clientJarSha1);
+    jarReply->setProperty("fallbackUrl", m_clientJarFallbackUrl);
     connect(jarReply, &QNetworkReply::finished, this, &VersionDownloader::onLibraryFileFinished);
     connect(jarReply, &QNetworkReply::downloadProgress, this, &VersionDownloader::onClientJarProgress);
 }
@@ -587,8 +610,9 @@ void VersionDownloader::onClientJarProgress(qint64 bytesReceived, qint64 bytesTo
 }
 
 void VersionDownloader::downloadSingleFile(const QString &url, const QString &filePath,
-                                            qint64 fileSize, const QString &expectedHash,
-                                            int retryCount)
+                                           qint64 fileSize, const QString &expectedHash,
+                                           int retryCount, const QString &fallbackUrl,
+                                           bool isClientJar)
 {
     if (m_isPaused || !m_isDownloading) return;
 
@@ -597,6 +621,9 @@ void VersionDownloader::downloadSingleFile(const QString &url, const QString &fi
     QNetworkRequest request;
     request.setUrl(QUrl(url));
     request.setTransferTimeout(timeoutMs);
+    // 参考 HMCL：强制 HTTP/1.1。BMCLAPI 会 302 到兼容性较差的对象存储后端，
+    // HTTP/2 下会出现 "HTTP/2 protocol error" 瞬时失败
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
     QNetworkReply *reply = m_networkManager->get(request);
     m_activeReplies.append(reply);
 
@@ -605,6 +632,8 @@ void VersionDownloader::downloadSingleFile(const QString &url, const QString &fi
     reply->setProperty("fileSize", fileSize);
     reply->setProperty("retryCount", retryCount);
     reply->setProperty("expectedHash", expectedHash);
+    reply->setProperty("fallbackUrl", fallbackUrl);
+    reply->setProperty("isClientJar", isClientJar);
 
     connect(reply, &QNetworkReply::finished, this, &VersionDownloader::onLibraryFileFinished);
     connect(reply, &QNetworkReply::downloadProgress, this, [this, reply](qint64 bytesReceived, qint64 bytesTotal) {
@@ -616,6 +645,52 @@ void VersionDownloader::downloadSingleFile(const QString &url, const QString &fi
             totalInFlight += it.value();
         }
         updateTaskProgress(m_downloadedBytes + totalInFlight, m_totalBytes);
+    });
+}
+
+/* 带退避的延迟重试：BMCLAPI 等镜像对突发并发会瞬时返回 429/503，
+ * 立即重试会在毫秒内烧完全部重试机会导致整个安装失败。
+ * 调用方已为本次重试持有并发槽位（m_activeDownloadCount++），退避期间不释放，
+ * 防止队列在「pending 空且无在途下载」时误判当前阶段完成而提前进入下一阶段 */
+void VersionDownloader::scheduleFileRetry(const QString &url, const QString &filePath,
+                                          qint64 fileSize, const QString &expectedHash,
+                                          int nextRetryCount, bool rateLimited,
+                                          const QString &fallbackUrl, bool isClientJar)
+{
+    // 限流响应（429/503）用更长退避，普通错误用短退避
+    const int backoffMs = (rateLimited ? 2000 : 800) * nextRetryCount;
+    // 任务代数：新任务/取消/失败会使旧定时器作废，避免过期重试污染新任务
+    const int epoch = m_reuseScanId;
+    QTimer::singleShot(backoffMs, this, [this, epoch, url, filePath, fileSize, expectedHash,
+                                         nextRetryCount, fallbackUrl, isClientJar]() {
+        if (epoch != m_reuseScanId)
+            return;
+        if (m_isPaused)
+        {
+            // 暂停：客户端 JAR 丢弃（恢复时整文件重新下载），其余释放槽位重新入队
+            m_activeDownloadCount--;
+            if (isClientJar)
+                return;
+            PendingDownload pending;
+            pending.url = url;
+            pending.filePath = filePath;
+            pending.fileSize = fileSize;
+            pending.expectedHash = expectedHash;
+            pending.fallbackUrl = fallbackUrl;
+            pending.retryCount = nextRetryCount;
+            if (m_currentPhase == DownloadPhase::Assets)
+                m_pendingAssets.enqueue(pending);
+            else
+                m_pendingDownloads.enqueue(pending);
+            return;
+        }
+        if (!m_isDownloading)
+        {
+            // 已取消/失败：abortAllActiveReplies 已将计数清零，无需释放
+            return;
+        }
+        downloadSingleFile(url, filePath, fileSize, expectedHash, nextRetryCount, fallbackUrl,
+                           isClientJar);
     });
 }
 
@@ -631,6 +706,7 @@ void VersionDownloader::onLibraryFileFinished()
     int retryCount = reply->property("retryCount").toInt();
     bool isClientJar = reply->property("isClientJar").toBool();
     QString expectedHash = reply->property("expectedHash").toString();
+    QString fallbackUrl = reply->property("fallbackUrl").toString();
 
     if (m_isPaused || !m_isDownloading)
     {
@@ -642,6 +718,7 @@ void VersionDownloader::onLibraryFileFinished()
             pending.filePath = filePath;
             pending.fileSize = fileSize;
             pending.expectedHash = expectedHash;
+            pending.fallbackUrl = fallbackUrl;
             pending.retryCount = retryCount;
             if (m_currentPhase == DownloadPhase::Assets)
                 m_pendingAssets.enqueue(pending);
@@ -666,6 +743,18 @@ void VersionDownloader::onLibraryFileFinished()
             return;
         }
 
+        // 镜像源失败后切换到官方源兜底重试（BMCL 的镜像后端可能单个故障，
+        // 如 403/429；官方地址仍在原始清单里，切换一次不增加总重试次数）
+        QString retryUrl = url;
+        QString retryFallback = fallbackUrl;
+        if (!fallbackUrl.isEmpty() && fallbackUrl != url)
+        {
+            retryUrl = fallbackUrl;
+            retryFallback.clear();
+            emit statusChanged(tr("镜像源下载 %1 失败，改用官方源重试...")
+                                   .arg(QFileInfo(filePath).fileName()));
+        }
+
         if (err == QNetworkReply::TimeoutError && retryCount < MAX_RETRY_COUNT)
         {
             if (retryCount > 0)
@@ -676,7 +765,8 @@ void VersionDownloader::onLibraryFileFinished()
             }
 
             m_activeDownloadCount++;
-            downloadSingleFile(url, filePath, fileSize, expectedHash, retryCount + 1);
+            scheduleFileRetry(retryUrl, filePath, fileSize, expectedHash, retryCount + 1,
+                              false, retryFallback);
             return;
         }
 
@@ -690,7 +780,10 @@ void VersionDownloader::onLibraryFileFinished()
             }
 
             m_activeDownloadCount++;
-            downloadSingleFile(url, filePath, fileSize, expectedHash, retryCount + 1);
+            // 429/503 属于镜像限流，采用更长的退避间隔
+            const bool rateLimited = (statusCode == 429 || statusCode == 503);
+            scheduleFileRetry(retryUrl, filePath, fileSize, expectedHash, retryCount + 1,
+                              rateLimited, retryFallback);
             return;
         }
 
@@ -703,9 +796,9 @@ void VersionDownloader::onLibraryFileFinished()
         }
         else
         {
-            failMsg = tr("下载失败 (已重试 %1 次): %2")
+            failMsg = tr("下载失败 (已重试 %1 次): %2 (%3)")
                 .arg(MAX_RETRY_COUNT)
-                .arg(QFileInfo(filePath).fileName());
+                .arg(QFileInfo(filePath).fileName(), reply->errorString());
         }
         failDownload(failMsg);
         return;
@@ -737,11 +830,30 @@ void VersionDownloader::onLibraryFileFinished()
         {
             if (retryCount < 3)
             {
+                // 同一镜像反复给出坏文件时切换官方源（与网络错误分支同一兜底策略）
+                QString retryUrl = url;
+                QString retryFallback = fallbackUrl;
+                if (!fallbackUrl.isEmpty() && fallbackUrl != url)
+                {
+                    retryUrl = fallbackUrl;
+                    retryFallback.clear();
+                }
+                if (isClientJar)
+                {
+                    // 客户端 JAR 损坏：直接按原参数重下（带官方源兜底）。
+                    // 不能进公共队列：ClientJar 阶段没有任何队列泵，入队后会永久滞留
+                    m_activeDownloadCount++;
+                    qWarning() << "客户端 JAR 校验失败，重新下载:" << filePath;
+                    scheduleFileRetry(retryUrl, filePath, fileSize, expectedHash, retryCount + 1,
+                                      false, retryFallback, true);
+                    return;
+                }
                 PendingDownload pending;
-                pending.url = url;
+                pending.url = retryUrl;
                 pending.filePath = filePath;
                 pending.fileSize = fileSize;
                 pending.expectedHash = expectedHash;
+                pending.fallbackUrl = retryFallback;
                 pending.retryCount = retryCount + 1;
                 // 按当前阶段入队，避免跨阶段借用队列被后续扫描覆盖
                 if (m_currentPhase == DownloadPhase::Assets)
@@ -756,6 +868,7 @@ void VersionDownloader::onLibraryFileFinished()
                 }
                 return;
             }
+            qWarning() << "文件校验失败且重试耗尽，继续安装:" << filePath;
         }
     }
 
@@ -778,15 +891,46 @@ void VersionDownloader::onLibraryFileFinished()
     }
 }
 
+void VersionDownloader::issueSegmentRequest(const QString &url, const QString &tempPath,
+                                            int segIndex, int totalSegs, const QString &finalPath,
+                                            qint64 finalSize, qint64 start, qint64 end,
+                                            int retryCount)
+{
+    QNetworkRequest request;
+    request.setUrl(QUrl(url));
+    request.setRawHeader("Range", QString("bytes=%1-%2").arg(start).arg(end).toUtf8());
+    request.setTransferTimeout(300000);
+    // 参考 HMCL：强制 HTTP/1.1 避免 HTTP/2 + Range 协议错误
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    QNetworkReply *reply = m_networkManager->get(request);
+    m_activeReplies.append(reply);
+
+    reply->setProperty("tempPath", tempPath);
+    reply->setProperty("segmentIndex", segIndex);
+    reply->setProperty("totalSegments", totalSegs);
+    reply->setProperty("finalPath", finalPath);
+    reply->setProperty("finalSize", finalSize);
+    reply->setProperty("segmentStart", start);
+    reply->setProperty("segmentEnd", end);
+    reply->setProperty("retryCount", retryCount);
+
+    connect(reply, &QNetworkReply::finished, this, &VersionDownloader::onSegmentReplyFinished);
+}
+
 void VersionDownloader::downloadFileSegments(const QString &url, const QString &filePath, qint64 fileSize)
 {
     int maxSegments = qMax(2, SettingsManager::instance()->getDownloadThreadCount());
+    // BMCLAPI 对单 IP 并发限流严格（429），分段数压缩到 4；官方源维持原有策略
+    const int segmentCap = (m_downloadSource == BMCL) ? 4 : 128;
     qint64 segCount = qMin(
         static_cast<qint64>(maxSegments * 2),
         qMax(static_cast<qint64>(2), fileSize / (512 * 1024))
     );
+    if (segCount > segmentCap) segCount = segmentCap;
     if (segCount > 128) segCount = 128;
 
+    m_segmentFallbackStarted = false;
     qint64 segmentSize = fileSize / segCount;
     m_tempSegmentDir = QFileInfo(filePath).absolutePath() + "/.tmpsegments_" + QFileInfo(filePath).fileName();
 
@@ -796,27 +940,9 @@ void VersionDownloader::downloadFileSegments(const QString &url, const QString &
         qint64 end = (i == segCount - 1) ? fileSize - 1 : (i + 1) * segmentSize - 1;
         QString tempPath = m_tempSegmentDir + QString("/seg_%1.tmp").arg(i);
 
-        QNetworkRequest request;
-        request.setUrl(QUrl(url));
-        request.setRawHeader("Range", QString("bytes=%1-%2").arg(start).arg(end).toUtf8());
-        request.setTransferTimeout(300000);
-        // 参考 HMCL：强制 HTTP/1.1 避免 HTTP/2 + Range 协议错误
-        request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-
-        QNetworkReply *reply = m_networkManager->get(request);
-        m_activeReplies.append(reply);
         m_activeDownloadCount++;
-
-        reply->setProperty("tempPath", tempPath);
-        reply->setProperty("segmentIndex", i);
-        reply->setProperty("totalSegments", static_cast<int>(segCount));
-        reply->setProperty("finalPath", filePath);
-        reply->setProperty("finalSize", fileSize);
-        reply->setProperty("segmentStart", start);
-        reply->setProperty("segmentEnd", end);
-        reply->setProperty("retryCount", 0);
-
-        connect(reply, &QNetworkReply::finished, this, &VersionDownloader::onSegmentReplyFinished);
+        issueSegmentRequest(url, tempPath, i, static_cast<int>(segCount),
+                            filePath, fileSize, start, end, 0);
     }
 }
 
@@ -837,9 +963,12 @@ void VersionDownloader::onSegmentReplyFinished()
     if (segReply->error() != QNetworkReply::NoError)
     {
         int retries = segReply->property("retryCount").toInt();
-        if (retries < 3)
+        const int statusCode = segReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        qWarning() << "分段下载失败 (第" << retries << "次重试后):" << segReply->errorString()
+                   << segReply->request().url().toString();
+        if (retries < 3 && !m_segmentFallbackStarted)
         {
-            // 重试该分段
+            // 采集参数
             qint64 start = segReply->property("segmentStart").toLongLong();
             qint64 end = segReply->property("segmentEnd").toLongLong();
             QString tempPath = segReply->property("tempPath").toString();
@@ -850,31 +979,45 @@ void VersionDownloader::onSegmentReplyFinished()
             QString url = segReply->request().url().toString();
 
             cleanupActiveReply(segReply);
+            // 退避期间继续持有并发槽位，防止分段计数被并发收尾逻辑误判
             m_activeDownloadCount++;
 
-            QNetworkRequest retryRequest;
-            retryRequest.setUrl(QUrl(url));
-            retryRequest.setRawHeader("Range", QString("bytes=%1-%2").arg(start).arg(end).toUtf8());
-            retryRequest.setTransferTimeout(300000);
-            retryRequest.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-
-            QNetworkReply *retryReply = m_networkManager->get(retryRequest);
-            m_activeReplies.append(retryReply);
-
-            retryReply->setProperty("tempPath", tempPath);
-            retryReply->setProperty("segmentIndex", segIndex);
-            retryReply->setProperty("totalSegments", totalSegs);
-            retryReply->setProperty("finalPath", finalPath);
-            retryReply->setProperty("finalSize", finalSize);
-            retryReply->setProperty("segmentStart", start);
-            retryReply->setProperty("segmentEnd", end);
-            retryReply->setProperty("retryCount", retries + 1);
-
-            connect(retryReply, &QNetworkReply::finished, this, &VersionDownloader::onSegmentReplyFinished);
+            // 镜像限流（429/503）表现为瞬时失败，立即重试只会原地烧完重试次数
+            const bool rateLimited = (statusCode == 429 || statusCode == 503);
+            const int backoffMs = (rateLimited ? 2000 : 800) * (retries + 1);
+            const int epoch = m_reuseScanId;
+            QTimer::singleShot(backoffMs, this, [this, epoch, url, tempPath, segIndex, totalSegs,
+                                                 finalPath, finalSize, start, end, retries]() {
+                if (epoch != m_reuseScanId)
+                    return; // 任务已更换/取消：过期重试作废
+                if (m_segmentFallbackStarted)
+                    return; // 已降级单连接：分段重试作废
+                if (m_isPaused)
+                {
+                    // 暂停：丢弃该分段（恢复时整文件重新走分段下载）
+                    m_activeDownloadCount--;
+                    return;
+                }
+                if (!m_isDownloading)
+                {
+                    // 已取消/失败：abortAllActiveReplies 已将计数清零，无需释放
+                    return;
+                }
+                issueSegmentRequest(url, tempPath, segIndex, totalSegs,
+                                    finalPath, finalSize, start, end, retries + 1);
+            });
             return;
         }
 
-        // 重试耗尽，降级到单连接下载
+        if (m_segmentFallbackStarted)
+        {
+            // 已有降级下载在进行：本分段直接丢弃，不重复降级也不打断在途下载
+            cleanupActiveReply(segReply);
+            return;
+        }
+
+        // 重试耗尽，降级到单连接下载（同一文件只降级一次，防止并发分段互相踩踏）
+        m_segmentFallbackStarted = true;
         cleanupActiveReply(segReply);
         qWarning() << "分段下载重试耗尽，降级到单连接下载:" << segReply->request().url().toString();
 
@@ -892,9 +1035,12 @@ void VersionDownloader::onSegmentReplyFinished()
         QDir(m_tempSegmentDir).removeRecursively();
 
         // 降级到单连接下载
+        // isClientJar=true：降级下载完成后仍需走 proceedAfterClientJar 推进阶段，
+        // 否则任务会永远停在客户端 JAR 阶段（既不完成也不失败）
         QString finalPath = segReply->property("finalPath").toString();
         qint64 finalSize = segReply->property("finalSize").toLongLong();
-        downloadSingleFile(segReply->request().url().toString(), finalPath, finalSize);
+        downloadSingleFile(segReply->request().url().toString(), finalPath, finalSize,
+                           m_clientJarSha1, 0, m_clientJarFallbackUrl, true);
         return;
     }
 
@@ -1043,6 +1189,8 @@ void VersionDownloader::startLibrariesDownload()
 
                     if (m_downloadSource == BMCL)
                     {
+                        // 保留官方地址：BMCL 的镜像后端可能单个故障（403/429），用于兜底重试
+                        dl.fallbackUrl = dl.url;
                         dl.url.replace("https://libraries.minecraft.net", "https://bmclapi2.bangbang93.com/maven");
                     }
 
@@ -1132,7 +1280,7 @@ void VersionDownloader::applyLibraryScanResult(QList<PendingDownload> remaining,
 
     emit statusChanged(tr("正在下载 %1 个依赖库...").arg(m_pendingDownloads.size()));
 
-    int concurrent = qMin(MAX_CONCURRENT_DOWNLOADS, m_pendingDownloads.size());
+    int concurrent = qMin(effectiveConcurrentLimit(), m_pendingDownloads.size());
     for (int i = 0; i < concurrent; ++i)
     {
         processLibraryQueue();
@@ -1155,11 +1303,12 @@ void VersionDownloader::processLibraryQueue()
         return;
     }
 
-    while (m_activeDownloadCount < MAX_CONCURRENT_DOWNLOADS && !m_pendingDownloads.isEmpty())
+    while (m_activeDownloadCount < effectiveConcurrentLimit() && !m_pendingDownloads.isEmpty())
     {
         PendingDownload dl = m_pendingDownloads.dequeue();
         m_activeDownloadCount++;
-        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash, dl.retryCount);
+        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash, dl.retryCount,
+                           dl.fallbackUrl);
     }
 }
 
@@ -1290,7 +1439,9 @@ void VersionDownloader::startAssetsFromIndex(const QJsonObject &objects, const Q
         PendingDownload dl;
         if (m_downloadSource == BMCL)
         {
+            // 保留官方地址：BMCL 的镜像后端可能单个故障（403/429），用于兜底重试
             dl.url = QString("https://bmclapi2.bangbang93.com/assets/%1/%2").arg(hashPrefix).arg(hash);
+            dl.fallbackUrl = QString("https://resources.download.minecraft.net/%1/%2").arg(hashPrefix).arg(hash);
         }
         else
         {
@@ -1373,7 +1524,7 @@ void VersionDownloader::applyAssetScanResult(QList<PendingDownload> remaining, q
 
     emit statusChanged(tr("正在下载 %1 个资源文件...").arg(m_pendingAssets.size()));
 
-    int concurrent = qMin(MAX_CONCURRENT_DOWNLOADS, m_pendingAssets.size());
+    int concurrent = qMin(effectiveConcurrentLimit(), m_pendingAssets.size());
     for (int i = 0; i < concurrent; ++i)
     {
         processAssetQueue();
@@ -1383,10 +1534,12 @@ void VersionDownloader::applyAssetScanResult(QList<PendingDownload> remaining, q
 void VersionDownloader::completeDownload()
 {
     m_currentPhase = DownloadPhase::Completed;
+    // 先复位下载状态再广播完成：完成回调里若同步发起下一次安装，
+    // downloadVanillaTo 的 m_isDownloading 守卫会误吞新任务
+    m_isDownloading = false;
     emit downloadCompleted(m_currentVersionId, getActualVersionPath());
     DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Completed, tr("下载完成"));
     DownloadTaskManager::instance()->updateTaskStage(m_currentTaskId, DownloadStage::Completed, 100);
-    m_isDownloading = false;
 }
 
 void VersionDownloader::processAssetQueue()
@@ -1403,11 +1556,12 @@ void VersionDownloader::processAssetQueue()
         return;
     }
 
-    while (m_activeDownloadCount < MAX_CONCURRENT_DOWNLOADS && !m_pendingAssets.isEmpty())
+    while (m_activeDownloadCount < effectiveConcurrentLimit() && !m_pendingAssets.isEmpty())
     {
         PendingDownload dl = m_pendingAssets.dequeue();
         m_activeDownloadCount++;
-        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash, dl.retryCount);
+        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash, dl.retryCount,
+                           dl.fallbackUrl);
     }
 }
 
@@ -1490,11 +1644,19 @@ QString VersionDownloader::getClientDownloadUrl(const QJsonObject &versionManife
 
     if (m_downloadSource == BMCL)
     {
-        url.replace("https://launcher.mojang.com/v1/objects", "https://bmclapi2.bangbang93.com/objects");
-        url.replace("https://piston-data.mojang.com/v1/objects", "https://bmclapi2.bangbang93.com/objects");
+        // BMCLAPI 的客户端镜像端点保留 /v1 路径段（/objects/<hash>/client.jar 会 429）
+        url.replace("https://launcher.mojang.com/v1/objects", "https://bmclapi2.bangbang93.com/v1/objects");
+        url.replace("https://piston-data.mojang.com/v1/objects", "https://bmclapi2.bangbang93.com/v1/objects");
     }
 
     return url;
+}
+
+/* 依赖库/资源的并发下载上限：BMCLAPI 对单 IP 并发限流严格（429），
+ * 用低并发换成功率；官方源维持原有高并发 */
+int VersionDownloader::effectiveConcurrentLimit() const
+{
+    return (m_downloadSource == BMCL) ? 8 : MAX_CONCURRENT_DOWNLOADS;
 }
 
 void VersionDownloader::calculateTotalSize(const QJsonObject &versionManifest)

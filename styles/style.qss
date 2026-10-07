@@ -465,10 +465,11 @@ QPushButton#closeBtn:pressed {
  * Section 5. 侧边栏样式（SideBar、parentNavButton、sidebarSelectionHighlight�?
  * ============================================================ */
 /* 侧边栏容�?�?渐变背景近似毛玻�?*/
+/* 侧边栏容器渐变与顶栏一致，保证默认底色统一 */
 SideBar {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 rgba(255, 255, 255, 0.62),
-        stop:1 rgba(248, 250, 252, 0.68));
+        stop:1 rgba(255, 255, 255, 0.68));
     border-right: 1px solid @BORDER_LIGHT@;
 }
 
@@ -2317,6 +2318,22 @@ QPushButton#recentPlayActionBtn:pressed {
     background-color: @BG_PRESSED@;
 }
 
+/* 固定按钮的固定态（主色浅底强调，提示已固定在最近游玩区域） */
+QPushButton#recentPlayActionBtnPinned {
+    background-color: @PRIMARY_RGBA_30@;
+    border: none;
+    border-radius: 8px;
+    padding: 5px;
+}
+
+QPushButton#recentPlayActionBtnPinned:hover {
+    background-color: @PRIMARY_RGBA_40@;
+}
+
+QPushButton#recentPlayActionBtnPinned:pressed {
+    background-color: @PRIMARY_RGBA_51@;
+}
+
 /* 卡片启动按钮（主色填充圆角，图标 + 文字）
  * 注意：Qt 对超过控件高度一半的圆角不做过 clamp，而是直接跳过圆角渲染
  * （同 overviewLaunchBtn 的注释）。按钮 min-height 22px，故半角为 11px。 */
@@ -2792,21 +2809,21 @@ QPushButton#carouselCtaBtn:hover {
 QPushButton#carouselDot {
     background: @BLACK_RGBA_64@;
     border: none;
-    border-radius: 2px;
-    min-width: 4px;
-    max-width: 4px;
-    min-height: 4px;
-    max-height: 4px;
+    border-radius: 1px;
+    min-width: 2px;
+    max-width: 2px;
+    min-height: 2px;
+    max-height: 2px;
     margin: 0;
 }
 
 QPushButton#carouselDot[active="true"] {
     background: @PRIMARY@;
-    min-width: 4px;
-    max-width: 4px;
-    min-height: 4px;
-    max-height: 4px;
-    border-radius: 2px;
+    min-width: 2px;
+    max-width: 2px;
+    min-height: 2px;
+    max-height: 2px;
+    border-radius: 1px;
 }
 
 QPushButton#carouselDot:hover {
@@ -4816,10 +4833,9 @@ QComboBox#aiChatPermissionCombo {
     color: @TEXT_SECONDARY@;
     border: 1px solid @BORDER@;
     border-radius: 999px;
-    padding: 4px 8px 4px 12px;
+    padding: 0 12px;
     font-size: 12px;
     font-weight: 500;
-    min-height: 20px;
 }
 
 QComboBox#aiChatThinkingEffortCombo:hover,
@@ -4837,12 +4853,9 @@ QComboBox#aiChatPermissionCombo::drop-down {
 
 QComboBox#aiChatThinkingEffortCombo::down-arrow,
 QComboBox#aiChatPermissionCombo::down-arrow {
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid @TEXT_TERTIARY@;
-    width: 0;
-    height: 0;
+    image: url(:/Images/Icons/arrow_down_triangle.svg);
+    width: 10px;
+    height: 8px;
 }
 
 QComboBox#aiChatThinkingEffortCombo QAbstractItemView,
@@ -7769,8 +7782,7 @@ QWidget#javaToolbar {
     padding: 8px 12px;
 }
 
-/* Java 扫描/添加/检�?下载按钮 */
-QPushButton#javaScanBtn,
+/* Java 检测/添加/下载按钮 */
 QPushButton#javaAddBtn,
 QPushButton#javaDetectBtn,
 QPushButton#downloadJavaBtn {
@@ -7782,7 +7794,6 @@ QPushButton#downloadJavaBtn {
     font-size: 12px;
 }
 
-QPushButton#javaScanBtn:hover,
 QPushButton#javaAddBtn:hover,
 QPushButton#javaDetectBtn:hover,
 QPushButton#downloadJavaBtn:hover {
@@ -7791,7 +7802,6 @@ QPushButton#downloadJavaBtn:hover {
     color: @TEXT_PRIMARY@;
 }
 
-QPushButton#javaScanBtn:checked,
 QPushButton#javaAddBtn:checked,
 QPushButton#javaDetectBtn:checked,
 QPushButton#downloadJavaBtn:checked {
@@ -11599,9 +11609,8 @@ AiChatPage[compactMode="true"] QPushButton#aiChatWorkspaceBtn {
 
 AiChatPage[compactMode="true"] QComboBox#aiChatThinkingEffortCombo,
 AiChatPage[compactMode="true"] QComboBox#aiChatPermissionCombo {
-    padding: 4px 6px 4px 8px;
+    padding: 0 8px;
     font-size: 11px;
-    min-height: 20px;
 }
 
 QDialog#localModelDialog,

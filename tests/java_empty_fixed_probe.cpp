@@ -95,7 +95,7 @@ void refreshList(QListWidget *list, const QList<QPair<QString, QString>> &instal
     if (installations.isEmpty()) {
         // 空状态标签每轮新建（修复：不再持有跨 clear() 的成员指针）
         auto *emptyLabel = new QLabel(
-            QStringLiteral("尚未发现任何 Java 安装。\n点击上方「全盘扫描」或「手动添加」以检测 Java。"),
+            QStringLiteral("尚未发现任何 Java 安装。\n点击上方「Java检测」或「手动添加」以检测 Java。"),
             list);
         emptyLabel->setObjectName(QStringLiteral("javaEmptyLabel"));
         emptyLabel->setAlignment(Qt::AlignCenter);

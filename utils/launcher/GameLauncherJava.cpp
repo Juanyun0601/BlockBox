@@ -12,15 +12,16 @@
 #include <QPair>
 #include <QRegularExpression>
 #include <QSet>
-#include <QSettings>
 #include <QStandardPaths>
 
+#include "utils/JavaScanWorker.h"
 #include "utils/SettingsManager.h"
 
 GameLauncher::JavaInfo GameLauncher::detectJava()
 {
     JavaInfo info;
 
+    // ── 快速路径：PATH 上的 java（一次 -version 即可返回）──
     QProcess process;
     process.setProcessChannelMode(QProcess::MergedChannels);
     process.start("java", {"-version"});
@@ -43,78 +44,17 @@ GameLauncher::JavaInfo GameLauncher::detectJava()
         }
     }
 
-    QList<QString> commonPaths;
-
-#ifdef Q_OS_ANDROID
-    // Android: scan common Java paths
-    commonPaths << "/system/bin";
-    commonPaths << "/data/data/com.termux/files/usr/bin";
-    commonPaths << QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/BlockBox/java";
-    commonPaths << QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + "/java";
-#else
-    commonPaths << "C:/Program Files/Java";
-    commonPaths << "C:/Program Files (x86)/Java";
-
-    // 注册表检测: 现代 JDK（9+，如 Microsoft JDK/Oracle JDK）注册在 JavaSoft\JDK 下，
-    // 旧 JRE 注册在 JavaSoft\Java Runtime Environment，两处都需要查询
-    static const char* javaSoftKeys[] = {
-        "HKEY_LOCAL_MACHINE\\SOFTWARE\\JavaSoft\\Java Runtime Environment",
-        "HKEY_LOCAL_MACHINE\\SOFTWARE\\JavaSoft\\JDK",
-    };
-    for (const char* javaSoftKey : javaSoftKeys)
+    // ── 兜底：按开源启动器（HMCL/PrismLauncher/MultiMC）通行做法做统一快速检测──
+    // 依次查环境变量（JAVA_HOME/PATH）→ 注册表（全厂商键）→ 厂商安装目录 →
+    // Minecraft 启动器自带运行时；具体实现见 JavaScanWorker::runQuickScan
+    JavaScanWorker worker;
+    const QList<QPair<QString, QString>> found = worker.runQuickScan();
+    if (!found.isEmpty())
     {
-        QSettings settings(javaSoftKey, QSettings::NativeFormat);
-        QString currentVersion = settings.value("CurrentVersion").toString();
-        if (!currentVersion.isEmpty())
-        {
-            QString javaHome = settings.value(currentVersion + "/JavaHome").toString();
-            if (!javaHome.isEmpty())
-            {
-                commonPaths << javaHome + "/bin";
-            }
-        }
-    }
-#endif
-
-    for (const QString& basePath : commonPaths)
-    {
-        QDir dir(basePath);
-        if (dir.exists())
-        {
-#ifdef Q_OS_ANDROID
-            QString javaExePath = dir.absoluteFilePath("java");
-#else
-            QDir binDir(dir.absolutePath() + "/bin");
-            QString javaExePath = binDir.absoluteFilePath("java.exe");
-#endif
-            if (QFileInfo::exists(javaExePath))
-            {
-                JavaInfo tempInfo;
-                if (validateJavaPath(javaExePath, tempInfo))
-                {
-                    return tempInfo;
-                }
-            }
-
-            QFileInfoList subdirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-            for (const QFileInfo& subdir : subdirs)
-            {
-#ifdef Q_OS_ANDROID
-                QString javaExePath = subdir.absoluteFilePath() + "/bin/java";
-#else
-                QDir binDir(subdir.absolutePath() + "/bin");
-                QString javaExePath = binDir.absoluteFilePath("java.exe");
-#endif
-                if (QFileInfo::exists(javaExePath))
-                {
-                    JavaInfo tempInfo;
-                    if (validateJavaPath(javaExePath, tempInfo))
-                    {
-                        return tempInfo;
-                    }
-                }
-            }
-        }
+        info.path = found.first().first;
+        info.version = found.first().second;
+        info.valid = true;
+        return info;
     }
 
     return info;

@@ -243,9 +243,9 @@ QWidget *buildContent(QWidget *parent)
     auto *tb = new QHBoxLayout(toolbar);
     tb->setContentsMargins(0, 0, 0, 0);
     tb->setSpacing(8);
-    const char *btnNames[] = {"javaScanBtn", "javaAddBtn", "javaDetectBtn"};
-    const char *btnTexts[] = {"全盘扫描", "手动添加", "快速检测"};
-    for (int i = 0; i < 3; ++i) {
+    const char *btnNames[] = {"javaDetectBtn", "javaAddBtn"};
+    const char *btnTexts[] = {"Java检测", "手动添加"};
+    for (int i = 0; i < 2; ++i) {
         auto *b = new QPushButton(QString::fromUtf8(btnTexts[i]), toolbar);
         b->setObjectName(QString::fromUtf8(btnNames[i]));
         b->setCursor(Qt::PointingHandCursor);

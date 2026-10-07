@@ -2,6 +2,8 @@
 #define MODDATA_H
 
 #include <QDateTime>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -94,5 +96,11 @@ struct LocalModList {
     int disabledCount = 0;
     int totalCount = 0;
 };
+
+// ModInfo <-> JSON 序列化（用于列表缓存等场景）
+QJsonObject modInfoToJson(const ModInfo &info);
+ModInfo modInfoFromJson(const QJsonObject &obj);
+QJsonObject modSearchResultToJson(const ModSearchResult &result);
+ModSearchResult modSearchResultFromJson(const QJsonObject &obj);
 
 #endif

@@ -236,6 +236,7 @@ components/ProjectionBlockEditorDialog.cpp \
     utils/modpack/ModpackFileAdviser.cpp \
     utils/modpack/ModpackExporter.cpp \
     utils/content/ContentDownloader.cpp \
+    utils/content/ContentListCache.cpp \
      utils/ClipboardMonitor.cpp \
      utils/FileImportRouter.cpp \
      utils/AiService.cpp \
@@ -463,6 +464,7 @@ pages/ProjectionManagePage.h \
     utils/modpack/ModpackExporter.h \
     utils/content/ContentData.h \
     utils/content/ContentDownloader.h \
+    utils/content/ContentListCache.h \
      utils/ClipboardMonitor.h \
      utils/FileImportRouter.h \
      utils/AiService.h \
