@@ -51,12 +51,16 @@ private:
     void initDownloadTaskManager();
     void updateVisibility();
     void setupCardConnections(DownloadTaskCard *card, const QString &taskId);
+    void updateCountBadge();
 
     QHBoxLayout *m_mainLayout;
+    QWidget *m_tray;
+    QHBoxLayout *m_trayLayout;
     QScrollArea *m_scrollArea;
     QWidget *m_cardsContent;
     QHBoxLayout *m_cardsLayout;
     QPushButton *m_viewAllBtn;
+    QLabel *m_countBadge;
 
     // Launch task
     LaunchTaskCard *m_launchTaskCard;

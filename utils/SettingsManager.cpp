@@ -408,6 +408,11 @@ void SettingsManager::setProperty(const QString &key, const QVariant &value)
     m_settings->setValue(key, value);
 }
 
+QVariant SettingsManager::property(const char *key, const QVariant &defaultValue) const
+{
+    return m_settings->value(key, defaultValue);
+}
+
 QVariant SettingsManager::getProperty(const QString &key, const QVariant &defaultValue) const
 {
     return m_settings->value(key, defaultValue);
@@ -744,6 +749,39 @@ DownloadSource SettingsManager::getDownloadSource() const
 void SettingsManager::setDownloadSource(DownloadSource source)
 {
     m_settings->setValue("download/source", static_cast<int>(source));
+}
+
+FilePickerType SettingsManager::getFilePickerType() const
+{
+    return static_cast<FilePickerType>(
+        m_settings->value("filePicker/type", static_cast<int>(FilePickerType::BuiltIn)).toInt());
+}
+
+void SettingsManager::setFilePickerType(FilePickerType type)
+{
+    m_settings->setValue("filePicker/type", static_cast<int>(type));
+}
+
+MapStructureIconStyle SettingsManager::getMapStructureIconStyle() const
+{
+    return static_cast<MapStructureIconStyle>(
+        m_settings->value("worldMap/structureIconStyle",
+                          static_cast<int>(MapStructureIconStyle::Icon)).toInt());
+}
+
+void SettingsManager::setMapStructureIconStyle(MapStructureIconStyle style)
+{
+    m_settings->setValue("worldMap/structureIconStyle", static_cast<int>(style));
+}
+
+bool SettingsManager::isAutoStartEnabled() const
+{
+    return Platform::isAutoStartEnabled();
+}
+
+void SettingsManager::setAutoStartEnabled(bool enabled)
+{
+    Platform::setAutoStartEnabled(enabled);
 }
 
 int SettingsManager::getDownloadThreadCount() const

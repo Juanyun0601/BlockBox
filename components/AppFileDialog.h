@@ -41,7 +41,8 @@ class ModrinthAPI;
  *             手动设置分类（实例分类 + 资源分类筛选）。
  *
  * 静态接口 getOpenFileName / getSaveFileName / getOpenFileNames / getExistingDirectory
- * 与旧版保持一致，默认进入系统式。
+ * 与旧版保持一致，默认进入系统式；具体弹哪种对话框由设置页「选择器类型」决定
+ * （系统文件资源管理器 → QFileDialog，软件自带 → 本类内嵌浏览器）。
  */
 class AppFileDialog : public AppDialogBase
 {

@@ -504,6 +504,10 @@ QMap<QString, QString> ThemeManager::buildTokenTable() const
                     : (isDark ? "rgba(45, 45, 45, 0.65)"
                               : "rgba(42, 42, 42, 0.65)");
 
+    // 玻璃态渐变端点（账户管理页左侧悬浮气泡等，保留渐变层次并透出页面/自定义背景）
+    T["@BG_CARD_GLASS@"]    = rgbaString(QColor(T.value("@BG_CARD@")), "0.65");
+    T["@BG_CONTENT_GLASS@"] = rgbaString(QColor(T.value("@BG_CONTENT@")), "0.65");
+
     // ──────────────────────────── 动态文字 / 次要主题色 ────────────────────────────
     T["@TEXT_PRIMARY@"] = m_currentTextColor;
     T["@TEXT_BORDER@"]  = m_textBorderColor;
@@ -813,6 +817,19 @@ QWidget#aiChatTopBar {
 }
 QFrame#aiChatLeftPanel {
     background-color: rgba(42, 42, 42, 0.7);
+    border: 1px solid #444444;
+}
+QWidget#instanceLeftSidebar {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(45, 45, 45, 0.66),
+        stop:1 rgba(42, 42, 42, 0.7));
+    border-right: 1px solid #444444;
+}
+QWidget#accountLeftSidebar,
+QWidget#accountRightSidebar {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(45, 45, 45, 0.66),
+        stop:1 rgba(42, 42, 42, 0.7));
     border: 1px solid #444444;
 }
 )";

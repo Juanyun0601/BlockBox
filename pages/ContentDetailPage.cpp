@@ -5,6 +5,7 @@
 #include "utils/FavoritesManager.h"
 #include "components/NotificationManager.h"
 #include "components/ScreenshotViewer.h"
+#include "components/SourceSwitchBar.h"
 #include <QDesktopServices>
 #include <QEvent>
 #include <QMenu>
@@ -52,6 +53,7 @@ ContentDetailPage::ContentDetailPage(ContentType contentType, QWidget *parent)
     , m_scrollArea(nullptr)
     , m_contentWidget(nullptr)
     , m_contentLayout(nullptr)
+    , m_sourceSwitchBar(nullptr)
     , m_headerWidget(nullptr)
     , m_iconLabel(nullptr)
     , m_chineseNameLabel(nullptr)
@@ -107,6 +109,9 @@ void ContentDetailPage::initUI()
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
+    // 顶部来源切换（跨源合并卡片显示；置于滚动区外固定不随内容滚动）
+    mainLayout->addWidget(buildSourceSwitch());
+
     m_scrollArea = new QScrollArea();
     m_scrollArea->setObjectName("modDetailScrollArea");
     m_scrollArea->setWidgetResizable(true);
@@ -148,6 +153,44 @@ void ContentDetailPage::initUI()
         stopCarousel();
         m_carouselResumeTimer->start();
     });
+}
+
+QWidget *ContentDetailPage::buildSourceSwitch()
+{
+    // 外层容器负责与内容区对齐的边距，避免分段控件轨道背景被拉满整行
+    QWidget *row = new QWidget(this);
+    QHBoxLayout *rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(20, 12, 20, 0);
+    rowLayout->setSpacing(0);
+
+    m_sourceSwitchBar = new SourceSwitchBar(row);
+    m_sourceSwitchBar->hide();
+    connect(m_sourceSwitchBar, &SourceSwitchBar::sourceSelected,
+            this, &ContentDetailPage::switchToSource);
+    rowLayout->addWidget(m_sourceSwitchBar);
+    rowLayout->addStretch();
+
+    return row;
+}
+
+void ContentDetailPage::switchToSource(const QString &source)
+{
+    if (source == m_modInfo.source)
+        return;
+
+    ModInfo view = switchModInfoSource(m_modInfo);
+    if (view.source != source)
+        return;
+
+    // 版本/截图/前置等详情数据随源失效；本页按卡片数据展示，直接置空重建
+    view.versionFiles.clear();
+    view.screenshots.clear();
+    view.dependencies.clear();
+
+    // setModInfo 仅在 m_currentSource 为空时才跟随 info.source，这里须显式换源
+    m_currentSource = view.source;
+    setModInfo(view);
+    updateFavoriteButtonIcon();
 }
 
 void ContentDetailPage::clearContent()
@@ -204,6 +247,11 @@ void ContentDetailPage::clearContent()
 void ContentDetailPage::setModInfo(const ModInfo &info)
 {
     m_modInfo = info;
+
+    if (m_sourceSwitchBar) {
+        m_sourceSwitchBar->setVisible(info.isCrossSourceMerged());
+        m_sourceSwitchBar->setActiveSource(info.source);
+    }
 
     // 初始化来源（CurseForge / Modrinth）
     if (m_currentSource.isEmpty() && !m_modInfo.source.isEmpty())

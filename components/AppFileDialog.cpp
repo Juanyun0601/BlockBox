@@ -1,4 +1,4 @@
-﻿#include "AppFileDialog.h"
+#include "AppFileDialog.h"
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileIconProvider>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFrame>
@@ -3681,9 +3682,18 @@ void AppFileDialog::initStyle()
 
 /* ============================ 静态接口 ============================ */
 
+/** 当前是否使用系统文件资源管理器（设置页「选择器类型」） */
+static bool useSystemFilePicker()
+{
+    return SettingsManager::instance()->getFilePickerType() == FilePickerType::System;
+}
+
 QString AppFileDialog::getOpenFileName(QWidget *parent, const QString &caption, const QString &dir,
                                        const QString &filter, QString *selectedFilter, int options)
 {
+    if (useSystemFilePicker())
+        return QFileDialog::getOpenFileName(parent, caption, dir, filter, selectedFilter,
+                                            static_cast<QFileDialog::Options>(options));
     AppFileDialog dlg(parent, OpenFile);
     dlg.setWindowTitle(caption);
     dlg.m_options = options;
@@ -3703,6 +3713,9 @@ QString AppFileDialog::getOpenFileName(QWidget *parent, const QString &caption, 
 QString AppFileDialog::getSaveFileName(QWidget *parent, const QString &caption, const QString &dir,
                                        const QString &filter, QString *selectedFilter, int options)
 {
+    if (useSystemFilePicker())
+        return QFileDialog::getSaveFileName(parent, caption, dir, filter, selectedFilter,
+                                            static_cast<QFileDialog::Options>(options));
     AppFileDialog dlg(parent, SaveFile);
     dlg.setWindowTitle(caption);
     dlg.m_options = options;
@@ -3724,6 +3737,9 @@ QString AppFileDialog::getSaveFileName(QWidget *parent, const QString &caption, 
 QStringList AppFileDialog::getOpenFileNames(QWidget *parent, const QString &caption, const QString &dir,
                                             const QString &filter, QString *selectedFilter, int options)
 {
+    if (useSystemFilePicker())
+        return QFileDialog::getOpenFileNames(parent, caption, dir, filter, selectedFilter,
+                                             static_cast<QFileDialog::Options>(options));
     AppFileDialog dlg(parent, OpenFileNames);
     dlg.setWindowTitle(caption);
     dlg.m_options = options;
@@ -3743,6 +3759,9 @@ QStringList AppFileDialog::getOpenFileNames(QWidget *parent, const QString &capt
 QString AppFileDialog::getExistingDirectory(QWidget *parent, const QString &caption, const QString &dir,
                                             int options)
 {
+    if (useSystemFilePicker())
+        return QFileDialog::getExistingDirectory(parent, caption, dir,
+                                                 static_cast<QFileDialog::Options>(options));
     AppFileDialog dlg(parent, ExistingDirectory);
     dlg.setWindowTitle(caption);
     dlg.m_options = options;

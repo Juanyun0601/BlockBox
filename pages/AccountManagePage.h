@@ -102,44 +102,25 @@ public slots:
     void onExecuteActionClicked();
 
     /**
-     * @brief 执行皮肤预览区"皮肤动作"下拉框中当前选中的动作
-     *
-     * 支持多个动作：左旋 / 右旋 / 放大 / 缩小 / 重置视角 /
-     * 自动旋转开关 / 模型切换（参考 skinview3d 皮肤预览控件）。
-     */
-    void onExecuteSkinActionClicked();
-
-    /**
-     * @brief 执行皮肤预览区"模型动作"下拉框中当前选中的动作
+     * @brief 点击"模型动作"图标按钮，直接切换皮肤模型动作
      *
      * 驱动皮肤模型肢体动画（参考 skinview3d walking/wave/riding）：
      * 待机 / 挥手 / 走路 / 跑步 / 骑马坐姿。
      */
-    void onExecuteModelActionClicked();
-
-    /**
-     * @brief 皮肤预览区"模型背景"下拉框选中变化
-     *
-     * 立即将选中的背景（跟随主题 / 纯色 / 渐变）应用到 3D 皮肤控件并持久化。
-     */
-    void onBackgroundPresetChanged(int index);
-
-    /**
-     * @brief 点击"自定义颜色"按钮，选择任意纯色背景
-     */
-    void onCustomBackgroundClicked();
-
-    /**
-     * @brief 点击"选择图片"按钮，选择本地图片作为模型背景
-     */
-    void onSelectBackgroundImageClicked();
+    void onModelPoseButtonClicked();
 
 private:
     void initLeftAccountList();
     void initCenterSkinDisplay();
     void initRightAccountPanel();
-    /** 初始化皮肤/模型动作与模型背景控件（统一放入右侧账户面板区域） */
-    void initSkinModelActions();
+    /** 初始化模型动作控件（统一放入右侧账户面板区域） */
+    void initModelActions();
+    /** 切换皮肤模型动作：更新勾选态/图标颜色，tip 非空时弹出提示 */
+    void setModelPose(SkinPose pose, const QString &tip = QString());
+    /** 主题/主题色变化时按勾选态重新着色模型动作按钮图标 */
+    void refreshModelPoseIcons();
+    /** 模型动作按钮图标颜色：选中用主题色，未选中用中性灰 */
+    QColor modelPoseIconColor(bool checked) const;
     void initLoginPage();
     /** 按当前登录方式的实际高度收缩添加账户卡片（QStackedWidget 默认取所有页的最大值，会让最短表单留下大片空白） */
     void updateLoginColumnHeight();
@@ -150,16 +131,8 @@ private:
     /** 从皮肤纹理截取头部正面并发出 accountSkinUpdated 头像信号 */
     void applySkinAvatar(const QImage &texture);
 
-    // 皮肤模型背景
-    void initBackgroundPresetCombo();
-    /** 应用指定背景预设键到 3D 皮肤控件（不持久化，供切换/加载共用） */
-    void applySkinBackgroundPreset(const QString &presetKey);
     /** 应用"跟随主题"背景：设置页启用了自定义应用背景时清屏全透明透出，否则用主题色 */
     void applyThemePresetBackground();
-    /** 根据预设键回选下拉框对应项 */
-    void selectBackgroundPreset(const QString &presetKey);
-    /** 持久化当前背景预设键 */
-    void saveSkinBackgroundPreset();
 
     // 左侧账户列表：统一选中逻辑（含图标颜色切换 + 滑动高亮 + 入场动画）
     // 与 InstanceSelectPage / SubNavPanel 的实现完全一致
@@ -199,28 +172,14 @@ private:
     QLabel *m_noAccountHint;
     QPushButton *m_addFirstAccountBtn;
 
-    // 皮肤动作选择（更多皮肤操作）—— 参考 skinview3d 预览控件
-    QWidget *m_skinActionWidget;
-    QComboBox *m_skinActionCombo;
-    QPushButton *m_skinExecuteActionBtn;
-    SkinModelType m_skinModelType;   // 当前皮肤模型类型（模型切换动作使用）
-
     // 模型动作选择（肢体动画）—— 参考 skinview3d walking/wave/riding
+    // 图标 + 文字按钮网格，点击直接切换动作
     QWidget *m_modelActionWidget;
-    QComboBox *m_modelActionCombo;
-    QPushButton *m_modelExecuteActionBtn;
+    QList<QPushButton *> m_modelPoseButtons;
     SkinPose m_modelPose;            // 当前模型动作（待机/挥手/走路/跑步/骑马）
 
-    // 模型背景选择 —— 跟随主题 / 纯色 / 渐变 / 图片
-    QWidget *m_bgWidget;
-    QComboBox *m_bgCombo;
-    QPushButton *m_customBgBtn;
-    QPushButton *m_bgImageBtn;
-    QString m_skinBackgroundKey;     // 当前背景预设键（持久化用，如 "theme" / "solid:#..." / "grad:#..:#.." / "image:<路径>"）
-    QColor m_customBgColor;          // 自定义纯色背景颜色
-    QString m_bgImagePath;           // 当前图片背景路径
-
     // Right account panel
+    QWidget *m_rightWidget;
     QVBoxLayout *m_rightLayout;
     QLabel *m_accountNameLabel;
     QLabel *m_accountTypeDot;     // 账户类型彩色圆点

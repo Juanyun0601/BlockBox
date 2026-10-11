@@ -27,12 +27,12 @@
 #include "components/AppMessageBox.h"
 #include <QPixmap>
 #include <QPushButton>
-#include <QRadioButton>
 #include <QScrollArea>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSize>
 #include <QStackedWidget>
+#include <QSurfaceFormat>
 #include <QVBoxLayout>
 
 #include <QPainter>
@@ -40,6 +40,7 @@
 // 项目内部头文件
 #include "components/Skin3DWidget.h"
 #include "components/SkinTextureCanvas.h"
+#include "utils/BackgroundManager.h"
 #include "utils/SkinDownloader.h"
 #include "utils/SkinEditorDocument.h"
 #include "utils/ThemeManager.h"
@@ -249,12 +250,8 @@ SkinEditorPage::SkinEditorPage(QWidget* parent)
     updateCropSelection();
   });
   connect(m_document, &SkinEditorDocument::modelChanged, this, [this](bool slim) {
-    QSignalBlocker b1(m_classicRadio);
-    QSignalBlocker b2(m_slimRadio);
-    if (slim)
-      m_slimRadio->setChecked(true);
-    else
-      m_classicRadio->setChecked(true);
+    QSignalBlocker b(m_modelCombo);
+    m_modelCombo->setCurrentIndex(slim ? 1 : 0);
     // 文档模型变更时同步刷新 3D 预览/编辑器（Skin3DWidget 会自动检测模型）
     m_preview3D->setSkin(m_document->skinImage());
     m_editor3D->setSkin(m_document->skinImage());
@@ -262,12 +259,8 @@ SkinEditorPage::SkinEditorPage(QWidget* parent)
     updateCropSelection();
   });
   connect(m_document, &SkinEditorDocument::formatChanged, this, [this](bool is64x64) {
-    QSignalBlocker b1(m_format64Radio);
-    QSignalBlocker b2(m_format32Radio);
-    if (is64x64)
-      m_format64Radio->setChecked(true);
-    else
-      m_format32Radio->setChecked(true);
+    QSignalBlocker b(m_formatCombo);
+    m_formatCombo->setCurrentIndex(is64x64 ? 0 : 1);
     updateCropSelection();
   });
   connect(m_document, &SkinEditorDocument::dirtyChanged, this, [this](bool) {
@@ -280,23 +273,15 @@ SkinEditorPage::SkinEditorPage(QWidget* parent)
     updateUndoRedoButtons();
   });
 
-  // 信号连接：模型/格式单选按钮
-  connect(m_classicRadio, &QRadioButton::toggled, this, [this](bool checked) {
-    if (checked)
-      onModelChanged(false);
-  });
-  connect(m_slimRadio, &QRadioButton::toggled, this, [this](bool checked) {
-    if (checked)
-      onModelChanged(true);
-  });
-  connect(m_format64Radio, &QRadioButton::toggled, this, [this](bool checked) {
-    if (checked)
-      onFormatChanged(true);
-  });
-  connect(m_format32Radio, &QRadioButton::toggled, this, [this](bool checked) {
-    if (checked)
-      onFormatChanged(false);
-  });
+  // 信号连接：模型/格式下拉框
+  connect(m_modelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int index) {
+            onModelChanged(index == 1);
+          });
+  connect(m_formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int index) {
+            onFormatChanged(index == 0);
+          });
 
   // 信号连接：主题色
   if (ThemeManager::instance())
@@ -306,6 +291,16 @@ SkinEditorPage::SkinEditorPage(QWidget* parent)
     const bool dark = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
     m_preview3D->setThemeBackground(dark);
     m_editor3D->setThemeBackground(dark);
+    // 主题切换时也刷新自定义背景对应的左右玻璃底/中央透明表现
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &SkinEditorPage::applyCustomBackgroundMode);
+  }
+
+  // 信号连接：自定义背景（纯色/图片/必应壁纸等）启用时调整左右区域玻璃底与中央画布透明度
+  if (BackgroundManager::instance())
+  {
+    connect(BackgroundManager::instance(), &BackgroundManager::backgroundChanged,
+            this, &SkinEditorPage::applyCustomBackgroundMode);
   }
 
   // 初始化状态栏
@@ -320,6 +315,9 @@ SkinEditorPage::SkinEditorPage(QWidget* parent)
 
   // 初始化截取选区（默认头部前面）
   updateCropSelection();
+
+  // 初始化自定义背景表现（左右玻璃底 / 中央画布透明度）
+  applyCustomBackgroundMode();
 }
 
 SkinEditorPage::~SkinEditorPage()
@@ -361,11 +359,62 @@ void SkinEditorPage::refreshSkin3DPreview()
 void SkinEditorPage::onThemeColorChanged(const QString& color)
 {
   Q_UNUSED(color);
-  if (ThemeManager::instance())
+  // 主题色变化时同样走 applyCustomBackgroundMode：
+  // 自定义背景启用时为 3D 控件保持全透明、未启用时恢复主题背景，避免覆盖透明状态
+  applyCustomBackgroundMode();
+}
+
+void SkinEditorPage::applyCustomBackgroundMode()
+{
+  if (m_canvas == nullptr || m_rightPanel == nullptr)
+    return;
+
+  const bool custom = BackgroundManager::instance()
+      && BackgroundManager::instance()->currentMode() != BackgroundManager::Classic;
+  const bool dark = ThemeManager::instance()
+      && ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme;
+
+  // 中央画布：自定义背景时底色全透明，让壁纸/纯色背景完整透出；未启用时恢复默认深灰
+  m_canvas->setBaseColor(custom ? QColor(0, 0, 0, 0) : QColor(60, 60, 60));
+  if (m_miniTexture)
+    m_miniTexture->setBaseColor(custom ? QColor(0, 0, 0, 0) : QColor(60, 60, 60));
+
+  // 3D 编辑器 / 3D 预览：自定义背景时清屏全透明，去掉灰色背景并透出自定义背景；
+  // 未启用时恢复主题背景色
+  if (custom)
   {
-    const bool dark = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
-    m_preview3D->setThemeBackground(dark);
-    m_editor3D->setThemeBackground(dark);
+    if (m_editor3D)
+      m_editor3D->setBackgroundColor(QColor(0, 0, 0, 0));
+    if (m_preview3D)
+      m_preview3D->setBackgroundColor(QColor(0, 0, 0, 0));
+  }
+  else
+  {
+    if (m_editor3D)
+      m_editor3D->setThemeBackground(dark);
+    if (m_preview3D)
+      m_preview3D->setThemeBackground(dark);
+  }
+
+  // 左右区域（左侧工具栏 / 右侧面板）：自定义背景时改为接近不透明的玻璃底，
+  // 只透出一点点背景，保证工具按钮/面板内容可读；未启用时恢复到无底色（随主题）
+  const QString glassColor = dark ? QStringLiteral("rgba(45, 45, 45, 0.92)")
+                                  : QStringLiteral("rgba(255, 255, 255, 0.92)");
+  const QString borderColor = dark ? QStringLiteral("#444444") : QStringLiteral("#e2e2e2");
+
+  if (custom)
+  {
+    m_toolBar->setStyleSheet(QStringLiteral(
+      "QWidget#skinEditorLeftBar { background-color: %1; border-right: 1px solid %2; }")
+        .arg(glassColor, borderColor));
+    m_rightPanel->setStyleSheet(QStringLiteral(
+      "QWidget#skinEditorRightPanel { background-color: %1; border-left: 1px solid %2; }")
+        .arg(glassColor, borderColor));
+  }
+  else
+  {
+    m_toolBar->setStyleSheet(QString());
+    m_rightPanel->setStyleSheet(QString());
   }
 }
 
@@ -390,6 +439,7 @@ void SkinEditorPage::initUI()
 void SkinEditorPage::initToolBar()
 {
   m_toolBar = new QWidget(this);
+  m_toolBar->setObjectName("skinEditorLeftBar");
   m_toolBar->setFixedWidth(60);
   m_toolBarLayout = new QVBoxLayout(m_toolBar);
   m_toolBarLayout->setContentsMargins(0, 6, 0, 6);
@@ -519,6 +569,12 @@ void SkinEditorPage::initCanvasArea()
   m_editor3D->setMinimumSize(320, 400);
   m_editor3D->setInteractionMode(InteractionMode::Paint);
   m_editor3D->setDocument(m_document);
+  // 与首页/账户管理页皮肤预览一致：alpha 缓冲 + AlwaysStackOnTop 合成路径，
+  // 自定义背景启用时可清屏全透明，让主窗口自定义背景从 3D 编辑器区域完整透出
+  QSurfaceFormat editorFormat = m_editor3D->format();
+  editorFormat.setAlphaBufferSize(8);
+  m_editor3D->setFormat(editorFormat);
+  m_editor3D->setAttribute(Qt::WA_AlwaysStackOnTop);
   m_editor3D->setAutoRotate(false);  // 绘制模式下不需要自动旋转（渲染循环另行驱动）
   // 编辑器"画哪层显示哪层"：默认只显示内层（勾选"绘制外层"时才会同步显示外层）。
   // 同时把相机拉近一点，让手臂/腿等窄部位在屏幕上更大、更易精确点击。
@@ -538,6 +594,8 @@ void SkinEditorPage::initPreviewPanel()
   m_mainLayout->addWidget(scrollArea);
 
   auto* container = new QWidget;
+  container->setObjectName("skinEditorRightPanel");
+  m_rightPanel = container;
   m_panelLayout = new QVBoxLayout(container);
   m_panelLayout->setContentsMargins(8, 8, 8, 8);
   m_panelLayout->setSpacing(6);
@@ -551,29 +609,16 @@ void SkinEditorPage::initPreviewPanel()
   modeLabel->setFont(boldFont);
   m_panelLayout->addWidget(modeLabel);
 
-  // 独立容器隔离自动互斥，避免与下方模型/格式单选互相抢占
-  auto* modeBox = new QWidget;
-  auto* modeLayout = new QHBoxLayout(modeBox);
-  modeLayout->setContentsMargins(0, 0, 0, 0);
-  modeLayout->setSpacing(6);
-  m_mode2DRadio = new QRadioButton(QStringLiteral("2D 像素"), modeBox);
-  m_mode3DRadio = new QRadioButton(QStringLiteral("3D 立体"), modeBox);
-  m_mode2DRadio->setChecked(true);
-  m_mode2DRadio->setToolTip(QStringLiteral("在平面纹理上逐像素绘制（当前方式）"));
-  m_mode3DRadio->setToolTip(QStringLiteral("像 BlockBench 一样直接在 3D 模型表面绘制，左键绘制、右键旋转、滚轮缩放"));
-  modeLayout->addWidget(m_mode2DRadio);
-  modeLayout->addWidget(m_mode3DRadio);
-  modeLayout->addStretch();
-  m_panelLayout->addWidget(modeBox);
+  m_modeCombo = new QComboBox;
+  m_modeCombo->addItems({QStringLiteral("2D 像素"), QStringLiteral("3D 立体")});
+  m_modeCombo->setCurrentIndex(0);
+  m_modeCombo->setToolTip(QStringLiteral("2D 像素：在平面纹理上逐像素绘制；3D 立体：像 BlockBench 一样直接在模型表面绘制，左键绘制、右键旋转、滚轮缩放"));
+  m_panelLayout->addWidget(m_modeCombo);
 
-  connect(m_mode2DRadio, &QRadioButton::toggled, this, [this](bool checked) {
-    if (checked)
-      onEditModeChanged(false);
-  });
-  connect(m_mode3DRadio, &QRadioButton::toggled, this, [this](bool checked) {
-    if (checked)
-      onEditModeChanged(true);
-  });
+  connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int index) {
+            onEditModeChanged(index == 1);
+          });
 
   // 笔刷大小（2D / 3D 共用）
   auto* brushRow = new QHBoxLayout;
@@ -602,6 +647,12 @@ void SkinEditorPage::initPreviewPanel()
 
   m_preview3D = new Skin3DWidget;
   m_preview3D->setFixedSize(300, 400);
+  // 与首页/账户管理页皮肤预览一致：alpha 缓冲 + AlwaysStackOnTop 合成路径，
+  // 自定义背景启用时可清屏全透明，让主窗口自定义背景从 3D 预览区域完整透出
+  QSurfaceFormat previewFormat = m_preview3D->format();
+  previewFormat.setAlphaBufferSize(8);
+  m_preview3D->setFormat(previewFormat);
+  m_preview3D->setAttribute(Qt::WA_AlwaysStackOnTop);
   previewV->addWidget(m_preview3D, 0, Qt::AlignHCenter);
   m_panelLayout->addWidget(m_preview3DBlock);
 
@@ -631,22 +682,16 @@ void SkinEditorPage::initPreviewPanel()
   m_panelLayout->addWidget(m_miniTextureBlock);
   m_miniTextureBlock->setVisible(false);
 
-  // 模型设置区（独立容器隔离自动互斥）
+  // 模型设置区
   auto* modelLabel = new QLabel(QStringLiteral("模型"));
   modelLabel->setFont(boldFont);
   m_panelLayout->addWidget(modelLabel);
 
-  auto* modelBox = new QWidget;
-  auto* modelLayout = new QHBoxLayout(modelBox);
-  modelLayout->setContentsMargins(0, 0, 0, 0);
-  modelLayout->setSpacing(6);
-  m_classicRadio = new QRadioButton(QStringLiteral("Classic"), modelBox);
-  m_slimRadio = new QRadioButton(QStringLiteral("Slim"), modelBox);
-  m_classicRadio->setChecked(true);
-  modelLayout->addWidget(m_classicRadio);
-  modelLayout->addWidget(m_slimRadio);
-  modelLayout->addStretch();
-  m_panelLayout->addWidget(modelBox);
+  m_modelCombo = new QComboBox;
+  m_modelCombo->addItems({QStringLiteral("Classic"), QStringLiteral("Slim")});
+  m_modelCombo->setCurrentIndex(0);
+  m_modelCombo->setToolTip(QStringLiteral("Classic 手臂宽 4 像素，Slim 手臂宽 3 像素"));
+  m_panelLayout->addWidget(m_modelCombo);
 
   // 绘制外层开关（参考 Blockbench 的图层设计：默认只画内层基础皮肤，
   // 勾选后才把画笔落到帽子/外套等外层 overlay 区域，避免"没勾选却在涂外层"）
@@ -675,22 +720,16 @@ void SkinEditorPage::initPreviewPanel()
   connect(m_visiblePartCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &SkinEditorPage::onVisiblePartChanged);
 
-  // 格式设置区（独立容器隔离自动互斥）
+  // 格式设置区
   auto* formatLabel = new QLabel(QStringLiteral("格式"));
   formatLabel->setFont(boldFont);
   m_panelLayout->addWidget(formatLabel);
 
-  auto* formatBox = new QWidget;
-  auto* formatLayout = new QHBoxLayout(formatBox);
-  formatLayout->setContentsMargins(0, 0, 0, 0);
-  formatLayout->setSpacing(6);
-  m_format64Radio = new QRadioButton(QStringLiteral("64x64"), formatBox);
-  m_format32Radio = new QRadioButton(QStringLiteral("64x32"), formatBox);
-  m_format64Radio->setChecked(true);
-  formatLayout->addWidget(m_format64Radio);
-  formatLayout->addWidget(m_format32Radio);
-  formatLayout->addStretch();
-  m_panelLayout->addWidget(formatBox);
+  m_formatCombo = new QComboBox;
+  m_formatCombo->addItems({QStringLiteral("64x64"), QStringLiteral("64x32")});
+  m_formatCombo->setCurrentIndex(0);
+  m_formatCombo->setToolTip(QStringLiteral("64x64 支持外层(overlay)，64x32 不含外层"));
+  m_panelLayout->addWidget(m_formatCombo);
 
   // 预设皮肤导入区
   initPresetSkins();
@@ -1156,9 +1195,9 @@ void SkinEditorPage::onFormatChanged(bool is64x64)
                                         QStringLiteral("切换到 64x32 格式将丢弃外层(overlay)内容，确定继续吗？"));
     if (result != AppMessageBox::Yes)
     {
-      // 恢复单选按钮状态
-      QSignalBlocker b(m_format64Radio);
-      m_format64Radio->setChecked(true);
+      // 恢复下拉框状态
+      QSignalBlocker b(m_formatCombo);
+      m_formatCombo->setCurrentIndex(0);
       return;
     }
   }

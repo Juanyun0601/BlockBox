@@ -12,10 +12,13 @@
 TaskBar::TaskBar(QWidget *parent)
     : QWidget(parent)
     , m_mainLayout(nullptr)
+    , m_tray(nullptr)
+    , m_trayLayout(nullptr)
     , m_scrollArea(nullptr)
     , m_cardsContent(nullptr)
     , m_cardsLayout(nullptr)
     , m_viewAllBtn(nullptr)
+    , m_countBadge(nullptr)
     , m_launchTaskCard(nullptr)
     , m_hasLaunchCard(false)
     , m_exitAnim(nullptr)
@@ -33,19 +36,37 @@ TaskBar::~TaskBar()
 void TaskBar::initUI()
 {
     setObjectName("taskBar");
-    setFixedHeight(72);
+    // 外层 taskBar 保持透明（QSS），四周留白让内部玻璃托盘悬浮于窗口背景之上
+    setFixedHeight(82);
 
     m_mainLayout = new QHBoxLayout(this);
-    m_mainLayout->setContentsMargins(16, 10, 16, 10);
-    m_mainLayout->setSpacing(8);
+    m_mainLayout->setContentsMargins(16, 6, 16, 10);
+    m_mainLayout->setSpacing(0);
 
-    // Launch task card (hidden by default)
+    m_tray = new QWidget(this);
+    m_tray->setObjectName("taskBarTray");
+    m_mainLayout->addWidget(m_tray);
+
+    m_trayLayout = new QHBoxLayout(m_tray);
+    m_trayLayout->setContentsMargins(12, 5, 12, 5);
+    m_trayLayout->setSpacing(10);
+
+    // 活跃下载任务计数胶囊
+    m_countBadge = new QLabel(m_tray);
+    m_countBadge->setObjectName("taskCountBadge");
+    m_countBadge->setAlignment(Qt::AlignCenter);
+    m_countBadge->setFixedHeight(26);
+    m_countBadge->setMinimumWidth(26);
+    m_countBadge->hide();
+    m_trayLayout->addWidget(m_countBadge, 0, Qt::AlignVCenter);
+
+    // Launch task card (hidden by default)，常驻托盘左侧，不参与滚动
     m_launchTaskCard = new LaunchTaskCard();
     m_launchTaskCard->hide();
+    m_launchTaskCard->setFixedHeight(48);
     m_launchTaskCard->setFixedWidth(260);
-    m_launchTaskCard->setFixedHeight(52);
     connect(m_launchTaskCard, &LaunchTaskCard::showDetailsPageRequested, this, &TaskBar::launchTaskCardClicked);
-    m_mainLayout->addWidget(m_launchTaskCard);
+    m_trayLayout->addWidget(m_launchTaskCard, 0, Qt::AlignVCenter);
 
     m_scrollArea = new QScrollArea();
     m_scrollArea->setObjectName("taskBarScrollArea");
@@ -53,23 +74,35 @@ void TaskBar::initUI()
     m_scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_scrollArea->setFrameShape(QFrame::NoFrame);
+    // 比卡片高 8px：给横向滚动条预留竖向空间，滚动条出现时卡片仍完整可见
+    m_scrollArea->setFixedHeight(56);
 
     m_cardsContent = new QWidget();
     m_cardsContent->setObjectName("taskBarCardsContent");
     m_cardsLayout = new QHBoxLayout(m_cardsContent);
     m_cardsLayout->setContentsMargins(0, 0, 0, 0);
-    m_cardsLayout->setSpacing(8);
+    m_cardsLayout->setSpacing(10);
     m_cardsLayout->addStretch();
 
     m_scrollArea->setWidget(m_cardsContent);
-    m_mainLayout->addWidget(m_scrollArea, 1);
+    m_trayLayout->addWidget(m_scrollArea, 1);
 
-    m_viewAllBtn = new QPushButton(tr("全部 ▶"));
+    m_viewAllBtn = new QPushButton(tr("全部任务 ›"));
     m_viewAllBtn->setObjectName("viewAllTaskBtn");
     m_viewAllBtn->setCursor(QCursor(Qt::PointingHandCursor));
-    m_viewAllBtn->setFixedWidth(70);
+    m_viewAllBtn->setFixedHeight(48);
+    m_viewAllBtn->setMinimumWidth(96);
     connect(m_viewAllBtn, &QPushButton::clicked, this, &TaskBar::showTaskListPageRequested);
-    m_mainLayout->addWidget(m_viewAllBtn);
+    m_trayLayout->addWidget(m_viewAllBtn, 0, Qt::AlignVCenter);
+
+    updateCountBadge();
+}
+
+void TaskBar::updateCountBadge()
+{
+    const int count = m_downloadTaskCards.size();
+    m_countBadge->setText(QString::number(count));
+    m_countBadge->setVisible(count > 0);
 }
 
 void TaskBar::initDownloadTaskManager()
@@ -104,6 +137,7 @@ void TaskBar::updateVisibility()
 {
     bool hasDownloadTasks = !m_downloadTaskCards.isEmpty();
     bool shouldShow = m_hasLaunchCard || hasDownloadTasks;
+    updateCountBadge();
 
     if (shouldShow) {
         if (m_exitAnimRunning && m_exitAnim) {
@@ -153,7 +187,7 @@ void TaskBar::showLaunchTaskCard(bool show)
 {
     m_hasLaunchCard = show;
     m_launchTaskCard->setVisible(show);
-    m_launchTaskCard->setFixedSize(260, 52);
+    m_launchTaskCard->setFixedSize(260, 48);
     if (show) {
         if (m_exitAnimRunning && m_exitAnim) {
             m_exitAnim->stop();
@@ -221,13 +255,11 @@ void TaskBar::onTaskAdded(const QString &taskId)
 
     DownloadTaskCard *card = new DownloadTaskCard(taskId);
     card->updateFromTask(task);
-    card->setFixedWidth(260);
-    card->setFixedHeight(52);
 
     setupCardConnections(card, taskId);
 
     m_downloadTaskCards[taskId] = card;
-    m_cardsLayout->insertWidget(m_cardsLayout->count() - 1, card);
+    m_cardsLayout->insertWidget(m_cardsLayout->count() - 1, card, 0, Qt::AlignVCenter);
     updateVisibility();
 
     card->show();

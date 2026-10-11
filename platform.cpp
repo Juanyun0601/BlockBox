@@ -9,9 +9,105 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSettings>
 #include <QStandardPaths>
+#include <QTextStream>
 
 namespace Platform {
+
+    // Windows: HKCU 注册表 Run 键；macOS: LaunchAgents plist；Linux: autostart .desktop
+    namespace AutoStart {
+
+        static QString windowsRunValue()
+        {
+            QSettings runKey(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                             QSettings::NativeFormat);
+            return runKey.value(QStringLiteral("BlockBox")).toString();
+        }
+
+        static void windowsSetRunValue(bool enabled)
+        {
+            QSettings runKey(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                             QSettings::NativeFormat);
+            if (enabled) {
+                const QString appPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+                runKey.setValue(QStringLiteral("BlockBox"), QStringLiteral("\"%1\"").arg(appPath));
+            } else {
+                runKey.remove(QStringLiteral("BlockBox"));
+            }
+            runKey.sync();
+        }
+
+        static QString macLaunchAgentPath()
+        {
+            return QDir::home().filePath(QStringLiteral("Library/LaunchAgents/com.BlockBox.BlockBox.plist"));
+        }
+
+        static bool macSetLaunchAgent(bool enabled)
+        {
+            const QString path = macLaunchAgentPath();
+            if (enabled) {
+                QDir dir(QFileInfo(path).absolutePath());
+                if (!dir.exists() && !dir.mkpath(QStringLiteral(".")))
+                    return false;
+                QFile file(path);
+                if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                    return false;
+                QTextStream stream(&file);
+                stream << QStringLiteral(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+                    "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+                    "<plist version=\"1.0\">\n"
+                    "<dict>\n"
+                    "    <key>Label</key>\n"
+                    "    <string>com.BlockBox.BlockBox</string>\n"
+                    "    <key>ProgramArguments</key>\n"
+                    "    <array>\n"
+                    "        <string>%1</string>\n"
+                    "    </array>\n"
+                    "    <key>RunAtLoad</key>\n"
+                    "    <true/>\n"
+                    "</dict>\n"
+                    "</plist>\n").arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
+                file.close();
+                return true;
+            }
+            return QFile::remove(path);
+        }
+
+        static QString linuxDesktopFilePath()
+        {
+            return QDir::home().filePath(QStringLiteral(".config/autostart/blockbox.desktop"));
+        }
+
+        static bool linuxSetDesktopFile(bool enabled)
+        {
+            const QString path = linuxDesktopFilePath();
+            if (enabled) {
+                QDir dir(QFileInfo(path).absolutePath());
+                if (!dir.exists() && !dir.mkpath(QStringLiteral(".")))
+                    return false;
+                QFile file(path);
+                if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                    return false;
+                QTextStream stream(&file);
+                stream << QStringLiteral(
+                    "[Desktop Entry]\n"
+                    "Type=Application\n"
+                    "Name=BlockBox\n"
+                    "Exec=%1\n"
+                    "Terminal=false\n"
+                    "X-GNOME-Autostart-enabled=true\n")
+                    .arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
+                file.close();
+                return true;
+            }
+            return QFile::remove(path);
+        }
+    }
     QString getDataDirectory() {
 #ifdef PLATFORM_ANDROID
         // Android: 使用外部存储的Documents目录（应用私有）
@@ -84,6 +180,34 @@ namespace Platform {
             bedrockPath.mkpath(bedrockDir);
         }
         return bedrockDir;
+#endif
+    }
+
+    bool isAutoStartEnabled()
+    {
+#ifdef PLATFORM_WINDOWS
+        return !AutoStart::windowsRunValue().isEmpty();
+#elif defined(PLATFORM_MAC)
+        return QFile::exists(AutoStart::macLaunchAgentPath());
+#elif defined(PLATFORM_LINUX)
+        return QFile::exists(AutoStart::linuxDesktopFilePath());
+#else
+        return false;
+#endif
+    }
+
+    bool setAutoStartEnabled(bool enabled)
+    {
+#ifdef PLATFORM_WINDOWS
+        AutoStart::windowsSetRunValue(enabled);
+        return isAutoStartEnabled() == enabled;
+#elif defined(PLATFORM_MAC)
+        return AutoStart::macSetLaunchAgent(enabled);
+#elif defined(PLATFORM_LINUX)
+        return AutoStart::linuxSetDesktopFile(enabled);
+#else
+        Q_UNUSED(enabled);
+        return false;
 #endif
     }
 }

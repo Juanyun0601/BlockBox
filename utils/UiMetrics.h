@@ -27,9 +27,9 @@ static constexpr int kGridPadH = 14;
 /* ---- 卡片 ---- */
 /** 瀑布流内容卡片 / 任务栏任务卡的固定宽度 */
 static constexpr int kCardWidth = 260;
-/** 实例概览统计卡片的固定宽度，保证各卡片宽度统一；
- *  下限由「大小」卡的极端文本决定（如 1023.9 MB ≈117px + 30px 内边距） */
-static constexpr int kStatCardWidth = 150;
+/** 实例概览统计卡片固定为正方形，边长保证各卡片统一；
+ *  下限由「数量 + 类型同行」中最宽的文本组合决定 */
+static constexpr int kStatCardSize = 124;
 /** 自适应卡片（首页最近游玩等）的最小宽度 */
 static constexpr int kCardMinWidth = 220;
 

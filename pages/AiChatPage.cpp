@@ -8,7 +8,9 @@
 #include "AiChatPage.h"
 
 #include "components/AppFileDialog.h"
+#include "components/MarkdownOutlinedLabel.h"
 #include "components/OutlinedLabel.h"
+#include "components/OutlinedTextEdit.h"
 #include "components/ResourceReferenceDialog.h"
 
 #include <QApplication>
@@ -2697,9 +2699,13 @@ static void syncStreamEditHeight(QTextEdit *edit)
     }
 }
 
-QTextEdit* AiChatPage::createStreamEdit(const QString &objectName, QWidget *parent)
+QTextEdit* AiChatPage::createStreamEdit(const QString &objectName, QWidget *parent,
+                                        bool outlineEnabled)
 {
-    auto *edit = new QTextEdit(parent);
+    // outlineEnabled：AI 回答正文开启文字外描边，与收尾后的 MarkdownOutlinedLabel
+    // 观感一致；思考内容等灰字场景保持无描边
+    auto *edit = new OutlinedTextEdit(parent);
+    edit->setOutlineEnabled(outlineEnabled);
     edit->setObjectName(objectName);
     edit->setReadOnly(true);
     edit->setUndoRedoEnabled(false);
@@ -2787,7 +2793,8 @@ void AiChatPage::onStreamContent(const QString &delta)
         }
         if (auto *bubbleFrame = m_currentAiBubble->findChild<QFrame*>(QStringLiteral("aiChatAiBubble")))
         {
-            m_currentContentEdit = createStreamEdit(QStringLiteral("streamMsgContent"), bubbleFrame);
+            // AI 回答正文：流式期间即开启文字外描边，与收尾后的 MarkdownOutlinedLabel 一致
+            m_currentContentEdit = createStreamEdit(QStringLiteral("streamMsgContent"), bubbleFrame, true);
             if (auto *bubbleLayout = bubbleFrame->layout())
             {
                 bubbleLayout->addWidget(m_currentContentEdit);
@@ -3317,7 +3324,11 @@ QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
             displayText = displayText.left(refMarker).trimmed();
         }
     }
-    auto *contentLabel = new QLabel(displayText);
+    // AI 气泡用 MarkdownOutlinedLabel（正文保留 Markdown 渲染并叠加文字笔画描边）；
+    // 用户气泡用普通 QLabel（纯文本）
+    QLabel *contentLabel = isUser
+        ? new QLabel(displayText)
+        : new MarkdownOutlinedLabel(displayText);
     contentLabel->setObjectName("msgContent");
     contentLabel->setWordWrap(true);
     // 用户气泡用纯文本；AI 气泡用 Markdown 渲染
@@ -3325,6 +3336,9 @@ QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
     contentLabel->setOpenExternalLinks(true);
     // 文本可选（鼠标拖选）
     contentLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // AI 气泡正文顶部对齐，保证描边层与 QLabel 正文位置一致
+    if (!isUser)
+        contentLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
 
     // AI 气泡：水平扩展占满可用宽度（随窗口自适应）
     // 用户气泡：保持紧凑右对齐

@@ -20,6 +20,7 @@
 #include "../utils/content/ContentData.h"
 
 class QParallelAnimationGroup;
+class SourceSwitchBar;
 
 class ContentDetailPage : public QWidget
 {
@@ -55,6 +56,8 @@ protected:
 private:
     void initUI();
     void clearContent();
+    QWidget *buildSourceSwitch();
+    void switchToSource(const QString &source);
     void buildHeader();
     void buildLeftSidebar();
     void buildRightMain();
@@ -111,6 +114,7 @@ private:
     QScrollArea *m_scrollArea;
     QWidget *m_contentWidget;
     QVBoxLayout *m_contentLayout;
+    SourceSwitchBar *m_sourceSwitchBar;
 
     // Header
     QWidget *m_headerWidget;

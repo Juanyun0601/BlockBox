@@ -132,7 +132,13 @@ void PluginPage::initUI()
     mainLayout->setSpacing(0);
 
     // ========== 顶部操作栏 ==========
-    QWidget *header = new QWidget(this);
+    // 顶部区域四周留白，避免贴住页面边缘
+    QWidget *headerWrap = new QWidget(this);
+    QVBoxLayout *headerWrapLayout = new QVBoxLayout(headerWrap);
+    headerWrapLayout->setContentsMargins(24, 16, 24, 12);
+    headerWrapLayout->setSpacing(0);
+
+    QWidget *header = new QWidget(headerWrap);
     header->setObjectName(QStringLiteral("pluginPageHeader"));
     header->setFixedHeight(64);
 
@@ -170,7 +176,8 @@ void PluginPage::initUI()
     headerLayout->addWidget(m_createBtn);
     headerLayout->addWidget(m_openDirBtn);
 
-    mainLayout->addWidget(header);
+    headerWrapLayout->addWidget(header);
+    mainLayout->addWidget(headerWrap);
 
     // ========== 内容区 ==========
     m_stack = new QStackedWidget(this);

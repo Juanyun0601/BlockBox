@@ -4,10 +4,14 @@
 #include <QEnterEvent>
 #include <QEvent>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QResizeEvent>
+#include <QShowEvent>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -42,17 +46,25 @@ protected:
     void enterEvent(QEnterEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void changeEvent(QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private slots:
     void onContextMenu(const QPoint &pos);
 
 private:
     void initUI();
-    void paintStatusIcon(QPainter &painter, const QRect &rect);
-    void paintProgressBar(QPainter &painter, const QRect &rect);
+    void applyChrome();
+    void refreshElidedText();
+    void updateAnimationState();
+    void paintStatusBadge(QPainter &painter);
+    void paintProgressBar(QPainter &painter);
 
     QVBoxLayout *m_mainLayout;
     QHBoxLayout *m_headerLayout;
+    QHBoxLayout *m_metaLayout;
 
     QLabel *m_statusTextLabel;
     QLabel *m_progressLabel;
@@ -63,6 +75,7 @@ private:
     QString m_message;
     QStringList m_details;
     bool m_hovered;
+    QTimer *m_spinTimer;
 };
 
 #endif // LAUNCHTASKCARD_H

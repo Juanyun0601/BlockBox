@@ -11,10 +11,72 @@
 #include <QCursor>
 #include <QDateTime>
 #include <QFont>
+#include <QIcon>
 #include <QMenu>
 #include <QPainterPath>
+#include <QPixmap>
 
 #include "utils/ThemeManager.h"
+
+namespace {
+// 卡片几何常量：与 initUI 的布局边距、paintStatusBadge / paintProgressBar 的手绘坐标保持一致
+constexpr int kCardH = 48;
+constexpr int kPadTop = 5;
+constexpr int kPadBottom = 10;
+constexpr int kPadLeft = 44;    // 状态徽章 10 + 24 + 间距 10
+constexpr int kPadRight = 10;
+constexpr int kBadgeLeft = 10;
+constexpr int kBadgeSize = 24;
+constexpr int kProgressW = 56;
+constexpr int kRowGap = 8;
+
+void applyWidgetStyle(QWidget *widget, const QString &style)
+{
+    if (widget && widget->styleSheet() != style)
+        widget->setStyleSheet(style);
+}
+
+/// 操作按钮图标：自绘而不是用字形，避免 ▶ / ⏸ 被 Segoe UI Emoji 接管成彩色图标
+QIcon actionIcon(const QColor &color, int shape)
+{
+    const int size = 14;
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
+
+    switch (shape)
+    {
+    case 0: // 暂停：两竖条
+        p.drawRoundedRect(QRectF(3.5, 3, 2.6, 8), 1.2, 1.2);
+        p.drawRoundedRect(QRectF(7.9, 3, 2.6, 8), 1.2, 1.2);
+        break;
+    case 1: // 继续：右向三角
+    {
+        QPainterPath tri;
+        tri.moveTo(4.5, 3.2);
+        tri.lineTo(11.4, 7);
+        tri.lineTo(4.5, 10.8);
+        tri.closeSubpath();
+        p.drawPath(tri);
+        break;
+    }
+    default: // 取消：叉
+    {
+        QPen pen(color, 2.0);
+        pen.setCapStyle(Qt::RoundCap);
+        p.setPen(pen);
+        p.drawLine(QPointF(4.2, 4.2), QPointF(9.8, 9.8));
+        p.drawLine(QPointF(9.8, 4.2), QPointF(4.2, 9.8));
+        break;
+    }
+    }
+    p.end();
+    return QIcon(pm);
+}
+} // namespace
 
 DownloadTaskCard::DownloadTaskCard(const QString &taskId, QWidget *parent)
     : QWidget(parent)
@@ -23,6 +85,8 @@ DownloadTaskCard::DownloadTaskCard(const QString &taskId, QWidget *parent)
     , m_hovered(false)
     , m_smoothProgress(0.0)
     , m_smoothEta(-1)
+    , m_spinTimer(nullptr)
+    , m_pauseIconShape(-1)
 {
     initUI();
 }
@@ -33,81 +97,96 @@ DownloadTaskCard::~DownloadTaskCard()
 
 void DownloadTaskCard::initUI()
 {
-    m_mainLayout = new QVBoxLayout(this);
-    m_mainLayout->setContentsMargins(8, 4, 8, 8);
-    m_mainLayout->setSpacing(4);
-
     setObjectName("downloadTaskCard");
     setCursor(QCursor(Qt::PointingHandCursor));
-    setMinimumHeight(36);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     setAttribute(Qt::WA_Hover);
     setContextMenuPolicy(Qt::CustomContextMenu);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setFixedHeight(kCardH);
+    setMinimumWidth(240);
+    setMaximumWidth(380);
     connect(this, &QWidget::customContextMenuRequested, this, &DownloadTaskCard::onContextMenu);
 
+    m_mainLayout = new QVBoxLayout(this);
+    m_mainLayout->setContentsMargins(kPadLeft, kPadTop, kPadRight, kPadBottom);
+    m_mainLayout->setSpacing(1);
+
+    // 第一行：实例名 + 进度
     m_headerLayout = new QHBoxLayout();
-    m_headerLayout->setContentsMargins(22, 0, 0, 0);
-    m_headerLayout->setSpacing(6);
+    m_headerLayout->setContentsMargins(0, 0, 0, 0);
+    m_headerLayout->setSpacing(kRowGap);
 
     m_instanceNameLabel = new QLabel();
     m_instanceNameLabel->setObjectName("instanceNameLabel");
+    m_instanceNameLabel->setMinimumWidth(0);
+    m_instanceNameLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     QFont instanceFont = m_instanceNameLabel->font();
-    instanceFont.setPointSize(9);
-    instanceFont.setBold(true);
+    instanceFont.setPixelSize(12);
+    instanceFont.setWeight(QFont::DemiBold);
     m_instanceNameLabel->setFont(instanceFont);
     m_headerLayout->addWidget(m_instanceNameLabel, 1);
+
+    m_progressLabel = new QLabel("0.00%");
+    m_progressLabel->setObjectName("progressLabel");
+    m_progressLabel->setFixedWidth(kProgressW);
+    m_progressLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    QFont progressFont = m_progressLabel->font();
+    progressFont.setPixelSize(12);
+    progressFont.setWeight(QFont::DemiBold);
+    m_progressLabel->setFont(progressFont);
+    m_headerLayout->addWidget(m_progressLabel);
+
+    m_mainLayout->addLayout(m_headerLayout);
+
+    // 第二行：状态 · 速度 + 操作按钮
+    m_metaLayout = new QHBoxLayout();
+    m_metaLayout->setContentsMargins(0, 0, 0, 0);
+    m_metaLayout->setSpacing(6);
 
     m_statusTextLabel = new QLabel(tr("下载新实例"));
     m_statusTextLabel->setObjectName("statusTextLabel");
     QFont statusFont = m_statusTextLabel->font();
-    statusFont.setPointSize(8);
+    statusFont.setPixelSize(11);
     m_statusTextLabel->setFont(statusFont);
-    m_headerLayout->addWidget(m_statusTextLabel);
-
-    m_progressLabel = new QLabel("0.00%");
-    m_progressLabel->setObjectName("progressLabel");
-    m_progressLabel->setFixedWidth(50);
-    m_progressLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    QFont progressFont = m_progressLabel->font();
-    progressFont.setPointSize(9);
-    progressFont.setBold(true);
-    m_progressLabel->setFont(progressFont);
-    m_headerLayout->addWidget(m_progressLabel);
+    m_metaLayout->addWidget(m_statusTextLabel);
 
     m_speedLabel = new QLabel();
     m_speedLabel->setObjectName("speedLabel");
-    m_speedLabel->setFixedWidth(70);
-    m_speedLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     QFont speedFont = m_speedLabel->font();
-    speedFont.setPointSize(8);
+    speedFont.setPixelSize(11);
     m_speedLabel->setFont(speedFont);
-    m_headerLayout->addWidget(m_speedLabel);
+    m_metaLayout->addWidget(m_speedLabel);
+
+    m_metaLayout->addStretch();
 
     m_cancelButton = new QPushButton();
-    m_cancelButton->setFixedSize(18, 18);
+    m_cancelButton->setFixedSize(16, 16);
     m_cancelButton->setCursor(Qt::PointingHandCursor);
     m_cancelButton->setToolTip(tr("取消"));
+    m_cancelButton->setIcon(actionIcon(QColor("#f44336"), 2));
+    m_cancelButton->setIconSize(QSize(14, 14));
     connect(m_cancelButton, &QPushButton::clicked, this, &DownloadTaskCard::onCancelButtonClicked);
-    m_headerLayout->addWidget(m_cancelButton);
+    m_metaLayout->addWidget(m_cancelButton);
 
     m_pauseButton = new QPushButton();
-    m_pauseButton->setFixedSize(18, 18);
+    m_pauseButton->setFixedSize(16, 16);
     m_pauseButton->setCursor(Qt::PointingHandCursor);
+    m_pauseButton->setIconSize(QSize(14, 14));
     connect(m_pauseButton, &QPushButton::clicked, this, &DownloadTaskCard::onPauseButtonClicked);
-    m_headerLayout->addWidget(m_pauseButton);
+    m_metaLayout->addWidget(m_pauseButton);
 
-    m_mainLayout->addLayout(m_headerLayout);
+    m_mainLayout->addLayout(m_metaLayout);
 
     m_detailsWidget = new QWidget();
     m_detailsWidget->setVisible(false);
     m_detailsLayout = new QVBoxLayout(m_detailsWidget);
-    m_detailsLayout->setContentsMargins(24, 2, 0, 2);
+    m_detailsLayout->setContentsMargins(0, 2, 0, 2);
     m_detailsLayout->setSpacing(2);
 
     m_loadersLabel = new QLabel();
     m_loadersLabel->setObjectName("loadersLabel");
     QFont detailFont = m_loadersLabel->font();
-    detailFont.setPointSize(9);
+    detailFont.setPixelSize(11);
     m_loadersLabel->setFont(detailFont);
     m_detailsLayout->addWidget(m_loadersLabel);
 
@@ -125,6 +204,12 @@ void DownloadTaskCard::initUI()
 
     m_toggleDetailsButton = nullptr;
 
+    // 下载中的状态徽章需要持续旋转，定时重绘（其余状态停止计时，避免空转）
+    m_spinTimer = new QTimer(this);
+    m_spinTimer->setInterval(60);
+    connect(m_spinTimer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
+
+    applyChrome();
     updateDisplay();
 }
 
@@ -141,7 +226,8 @@ QString DownloadTaskCard::taskId() const
 void DownloadTaskCard::updateFromTask(const DownloadTask &task)
 {
     m_currentTask = task;
-    m_instanceNameLabel->setText(task.instanceName);
+    m_instanceName = task.instanceName;
+    refreshElidedText();
     setExpanded(m_expanded);
     updateDisplay();
 }
@@ -150,21 +236,6 @@ void DownloadTaskCard::setExpanded(bool expanded)
 {
     m_expanded = expanded;
     m_detailsWidget->setVisible(expanded);
-    if (m_toggleDetailsButton)
-    {
-        m_toggleDetailsButton->setText(expanded ? "\u25B2" : "\u25BC");
-    }
-
-    if (expanded)
-    {
-        setMinimumHeight(80);
-        setMaximumHeight(16777215);
-    }
-    else
-    {
-        setMinimumHeight(36);
-        setMaximumHeight(16777215);
-    }
 }
 
 bool DownloadTaskCard::isExpanded() const
@@ -283,123 +354,212 @@ void DownloadTaskCard::leaveEvent(QEvent *event)
     update();
 }
 
+void DownloadTaskCard::applyChrome()
+{
+    ThemeManager *tm = ThemeManager::instance();
+    const QColor text(tm->currentTextColor());
+    const QColor theme(tm->currentThemeColor());
+
+    const QString primary = text.name(QColor::HexArgb);
+    QColor secondary = text;
+    secondary.setAlpha(160);
+    QColor tertiary = text;
+    tertiary.setAlpha(130);
+
+    applyWidgetStyle(m_instanceNameLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(primary));
+    applyWidgetStyle(m_progressLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(primary));
+    applyWidgetStyle(m_statusTextLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(secondary.name(QColor::HexArgb)));
+    applyWidgetStyle(m_speedLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(tertiary.name(QColor::HexArgb)));
+    applyWidgetStyle(m_loadersLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(secondary.name(QColor::HexArgb)));
+    applyWidgetStyle(m_stepLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(secondary.name(QColor::HexArgb)));
+    applyWidgetStyle(m_sizeLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(secondary.name(QColor::HexArgb)));
+
+    const QString base = QStringLiteral(
+        "QPushButton { border: none; border-radius: 8px; font-size: 10px; font-weight: 600; padding: 0; }");
+
+    applyWidgetStyle(m_cancelButton,
+                     base + QStringLiteral(
+                         "QPushButton { background: rgba(244,67,54,0.14); color: #f44336; }"
+                         "QPushButton:hover { background: rgba(244,67,54,0.26); }"));
+
+    if (m_currentTask.status == DownloadTaskStatus::Paused)
+    {
+        applyWidgetStyle(m_pauseButton,
+                         base + QStringLiteral(
+                                    "QPushButton { background: rgba(%1,%2,%3,0.16); color: %4; }"
+                                    "QPushButton:hover { background: rgba(%1,%2,%3,0.28); }")
+                                    .arg(theme.red()).arg(theme.green()).arg(theme.blue())
+                                    .arg(theme.name()));
+    }
+    else
+    {
+        applyWidgetStyle(m_pauseButton,
+                         base + QStringLiteral(
+                         "QPushButton { background: rgba(255,152,0,0.14); color: #ff9800; }"
+                         "QPushButton:hover { background: rgba(255,152,0,0.26); }"));
+    }
+
+    // 暂停/继续图标随状态与主题色更新（图标是自绘的，颜色不吃字形回退影响）
+    const bool resumable = m_currentTask.status == DownloadTaskStatus::Paused;
+    const int shape = resumable ? 1 : 0;
+    const QColor iconColor = resumable ? theme : QColor(QStringLiteral("#ff9800"));
+    if (shape != m_pauseIconShape || iconColor != m_pauseIconColor)
+    {
+        m_pauseIconShape = shape;
+        m_pauseIconColor = iconColor;
+        m_pauseButton->setIcon(actionIcon(iconColor, shape));
+    }
+}
+
+void DownloadTaskCard::refreshElidedText()
+{
+    if (m_instanceName.isEmpty())
+    {
+        m_instanceNameLabel->clear();
+        return;
+    }
+    const int available = width() - kPadLeft - kPadRight - kProgressW - kRowGap;
+    m_instanceNameLabel->setText(m_instanceNameLabel->fontMetrics().elidedText(
+        m_instanceName, Qt::ElideRight, qMax(40, available)));
+}
+
+void DownloadTaskCard::updateAnimationState()
+{
+    const bool spinning = m_currentTask.status == DownloadTaskStatus::Downloading;
+    if (spinning && !m_spinTimer->isActive())
+        m_spinTimer->start();
+    else if (!spinning && m_spinTimer->isActive())
+        m_spinTimer->stop();
+}
+
+void DownloadTaskCard::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    refreshElidedText();
+}
+
+void DownloadTaskCard::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::StyleChange || event->type() == QEvent::ApplicationPaletteChange)
+    {
+        applyChrome();
+        update();
+    }
+    QWidget::changeEvent(event);
+}
+
 void DownloadTaskCard::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    QColor themeColor(ThemeManager::instance()->currentThemeColor());
-    QString textColorStr = ThemeManager::instance()->currentTextColor();
-    QColor textColor(textColorStr);
+    ThemeManager *tm = ThemeManager::instance();
+    const QColor themeColor(tm->currentThemeColor());
+    const bool isDark = tm->currentTheme() != ThemeManager::LightTheme;
 
-    // 绘制卡片背景
-    QColor cardBg = themeColor.lighter(190);
-    if (!cardBg.isValid())
+    // 玻璃卡面：亮色用白色提亮、暗色用白色微透明叠加，托盘与壁纸背景都能透出层次
+    const QColor fill = isDark ? QColor(255, 255, 255, m_hovered ? 34 : 18)
+                               : QColor(255, 255, 255, m_hovered ? 252 : 214);
+    QColor borderColor;
+    if (m_hovered)
     {
-        cardBg = QColor("#f0f4f0");
+        borderColor = themeColor;
+        borderColor.setAlpha(isDark ? 130 : 100);
     }
-    QColor cardBgHover = themeColor.lighter(175);
-    if (!cardBgHover.isValid())
+    else
     {
-        cardBgHover = QColor("#e8eee8");
+        borderColor = isDark ? QColor(255, 255, 255, 26) : QColor(0, 0, 0, 18);
     }
-    QColor borderColor = themeColor;
-    borderColor.setAlpha(m_hovered ? 80 : 40);
 
     QPainterPath cardPath;
-    cardPath.addRoundedRect(rect().adjusted(0, 0, -1, -1), 6, 6);
-    painter.fillPath(cardPath, m_hovered ? cardBgHover : cardBg);
+    cardPath.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12);
+    painter.fillPath(cardPath, fill);
     painter.setPen(QPen(borderColor, 1));
+    painter.setBrush(Qt::NoBrush);
     painter.drawPath(cardPath);
 
-    // 绘制状态图标
+    paintStatusBadge(painter);
+    paintProgressBar(painter);
+}
+
+void DownloadTaskCard::paintStatusBadge(QPainter &painter)
+{
+    ThemeManager *tm = ThemeManager::instance();
+    const QColor themeColor(tm->currentThemeColor());
+    const bool isDark = tm->currentTheme() != ThemeManager::LightTheme;
+
     QColor statusColor;
     switch (m_currentTask.status)
     {
-    case DownloadTaskStatus::Queued:
-        statusColor = QColor("#9E9E9E");
-        break;
-    case DownloadTaskStatus::Downloading:
-        statusColor = QColor(ThemeManager::instance()->currentInfoAccentColor());
-        break;
-    case DownloadTaskStatus::Paused:
-        statusColor = QColor("#FF9800");
-        break;
-    case DownloadTaskStatus::Completed:
-        statusColor = themeColor;
-        break;
-    case DownloadTaskStatus::Failed:
-        statusColor = QColor("#F44336");
-        break;
-    case DownloadTaskStatus::Cancelled:
-        statusColor = QColor("#FF9800");
-        break;
-    default:
-        statusColor = QColor("#9E9E9E");
-        break;
+    case DownloadTaskStatus::Queued:       statusColor = QColor("#9E9E9E"); break;
+    case DownloadTaskStatus::Downloading:  statusColor = QColor(tm->currentInfoAccentColor()); break;
+    case DownloadTaskStatus::Paused:       statusColor = QColor("#FF9800"); break;
+    case DownloadTaskStatus::Completed:    statusColor = themeColor; break;
+    case DownloadTaskStatus::Failed:       statusColor = QColor("#F44336"); break;
+    case DownloadTaskStatus::Cancelled:    statusColor = QColor("#FF9800"); break;
+    default:                               statusColor = QColor("#9E9E9E"); break;
     }
 
-    QRect iconRect;
-    int iconSize = 14;
-    int iconY = (height() < 36) ? 2 : 6;
-    iconRect = QRect(10, iconY, iconSize, iconSize);
+    const int badgeY = kPadTop + qMax(0, (height() - kPadTop - kPadBottom - kBadgeSize) / 2);
+    const QRect badgeRect(kBadgeLeft, badgeY, kBadgeSize, kBadgeSize);
 
     painter.setPen(Qt::NoPen);
+    QColor badgeFill = statusColor;
+    badgeFill.setAlpha(isDark ? 40 : 24);
+    painter.setBrush(badgeFill);
+    painter.drawRoundedRect(badgeRect, 8, 8);
+
+    const int iconSize = 14;
+    const QRect iconRect(badgeRect.center().x() - iconSize / 2,
+                         badgeRect.center().y() - iconSize / 2, iconSize, iconSize);
 
     switch (m_currentTask.status)
     {
     case DownloadTaskStatus::Queued:
-        // 实心圆 - 排队中
         painter.setBrush(statusColor);
-        painter.drawEllipse(iconRect.adjusted(2, 2, -2, -2));
+        painter.drawEllipse(iconRect.adjusted(4, 4, -4, -4));
         break;
     case DownloadTaskStatus::Downloading:
     {
-        // 旋转弧 - 下载中
-        QPen arcPen(statusColor, 2);
+        QPen arcPen(statusColor, 2.4);
         arcPen.setCapStyle(Qt::RoundCap);
         painter.setPen(arcPen);
         painter.setBrush(Qt::NoBrush);
-        QRect arcRect = iconRect.adjusted(1, 1, -1, -1);
-        int startAngle = (QDateTime::currentMSecsSinceEpoch() / 8) % 360 * 16;
-        painter.drawArc(arcRect, startAngle, 240 * 16);
+        const int startAngle = static_cast<int>((QDateTime::currentMSecsSinceEpoch() / 8) % 360) * 16;
+        painter.drawArc(iconRect.adjusted(2, 2, -2, -2), startAngle, 250 * 16);
         break;
     }
     case DownloadTaskStatus::Paused:
-        // 暂停双竖线
-    {
         painter.setBrush(statusColor);
-        int barWidth = 3;
-        int barHeight = iconSize - 4;
-        int barY = iconRect.y() + 2;
-        painter.drawRoundedRect(QRect(iconRect.x() + 2, barY, barWidth, barHeight), 1, 1);
-        painter.drawRoundedRect(QRect(iconRect.x() + iconSize - barWidth - 2, barY, barWidth, barHeight), 1, 1);
+        painter.drawRoundedRect(QRect(iconRect.x() + 3, iconRect.y() + 2, 3, iconSize - 4), 1.5, 1.5);
+        painter.drawRoundedRect(QRect(iconRect.x() + iconSize - 6, iconRect.y() + 2, 3, iconSize - 4), 1.5, 1.5);
         break;
-    }
     case DownloadTaskStatus::Completed:
-        // 对勾 - 已完成
     {
         painter.setBrush(Qt::NoBrush);
-        QPen checkPen(statusColor, 2);
+        QPen checkPen(statusColor, 2.2);
         checkPen.setCapStyle(Qt::RoundCap);
         checkPen.setJoinStyle(Qt::RoundJoin);
         painter.setPen(checkPen);
-        QPointF p1(iconRect.x() + iconSize * 0.2, iconRect.y() + iconSize * 0.55);
-        QPointF p2(iconRect.x() + iconSize * 0.45, iconRect.y() + iconSize * 0.78);
-        QPointF p3(iconRect.x() + iconSize * 0.82, iconRect.y() + iconSize * 0.22);
         QPainterPath checkPath;
-        checkPath.moveTo(p1);
-        checkPath.lineTo(p2);
-        checkPath.lineTo(p3);
+        checkPath.moveTo(iconRect.x() + 3, iconRect.y() + 7);
+        checkPath.lineTo(iconRect.x() + 6, iconRect.y() + 10.5);
+        checkPath.lineTo(iconRect.x() + 11.5, iconRect.y() + 3.5);
         painter.drawPath(checkPath);
         break;
     }
     case DownloadTaskStatus::Failed:
-        // X标记 - 失败
     {
         painter.setBrush(Qt::NoBrush);
-        QPen xPen(statusColor, 2);
+        QPen xPen(statusColor, 2.2);
         xPen.setCapStyle(Qt::RoundCap);
         painter.setPen(xPen);
         QRect xRect = iconRect.adjusted(3, 3, -3, -3);
@@ -408,75 +568,17 @@ void DownloadTaskCard::paintEvent(QPaintEvent *event)
         break;
     }
     case DownloadTaskStatus::Cancelled:
-        // 正方形 - 已取消
         painter.setBrush(statusColor);
         painter.drawRoundedRect(iconRect.adjusted(3, 3, -3, -3), 2, 2);
         break;
     default:
         painter.setBrush(statusColor);
-        painter.drawEllipse(iconRect.adjusted(2, 2, -2, -2));
+        painter.drawEllipse(iconRect.adjusted(4, 4, -4, -4));
         break;
     }
-
-    // 绘制进度条
-    paintProgressBar(painter, rect());
-
-    // 更新子控件样式
-    QString btnStyleBase =
-        "QPushButton {"
-        "   border: none;"
-        "   border-radius: 9px;"
-        "   font-size: 10px;"
-        "   font-weight: bold;"
-        "}";
-    QString cancelStyle = btnStyleBase +
-        "QPushButton { background: rgba(244,67,54,0.12); color: #f44336; }"
-        "QPushButton:hover { background: rgba(244,67,54,0.22); }";
-    m_cancelButton->setStyleSheet(cancelStyle);
-    m_cancelButton->setText("\u2715");
-
-    bool isPausable = m_currentTask.status == DownloadTaskStatus::Downloading;
-    bool isResumable = m_currentTask.status == DownloadTaskStatus::Paused;
-    m_pauseButton->setVisible(isPausable || isResumable);
-
-    if (isResumable)
-    {
-        QString themeColorStr = themeColor.name();
-        QString themeHover = ThemeManager::instance()->getThemeColorHover();
-        QString resumeStyle = btnStyleBase +
-            QString("QPushButton { background: rgba(%1,%2,%3,0.12); color: %4; }"
-                    "QPushButton:hover { background: rgba(%1,%2,%3,0.22); color: %5; }")
-                .arg(themeColor.red()).arg(themeColor.green()).arg(themeColor.blue())
-                .arg(themeColorStr, themeHover);
-        m_pauseButton->setStyleSheet(resumeStyle);
-        m_pauseButton->setText("\u25B6");
-        m_pauseButton->setToolTip(tr("继续"));
-    }
-    else if (isPausable)
-    {
-        QString pauseStyle = btnStyleBase +
-            "QPushButton { background: rgba(255,152,0,0.12); color: #FF9800; }"
-            "QPushButton:hover { background: rgba(255,152,0,0.22); }";
-        m_pauseButton->setStyleSheet(pauseStyle);
-        m_pauseButton->setText("\u23F8");
-        m_pauseButton->setToolTip(tr("暂停"));
-    }
-
-    // 标签颜色
-    QColor detailColor = textColor;
-    detailColor.setAlpha(160);
-    QString labelColor = detailColor.name(QColor::HexArgb);
-    QString labelStyle = QString("background: transparent; color: %1;").arg(labelColor);
-    m_statusTextLabel->setStyleSheet(labelStyle);
-    m_progressLabel->setStyleSheet(QString("background: transparent; color: %1;").arg(textColorStr));
-    m_speedLabel->setStyleSheet(labelStyle);
-    m_instanceNameLabel->setStyleSheet(QString("background: transparent; color: %1;").arg(textColorStr));
-    m_loadersLabel->setStyleSheet(labelStyle);
-    m_stepLabel->setStyleSheet(labelStyle);
-    m_sizeLabel->setStyleSheet(labelStyle);
 }
 
-void DownloadTaskCard::paintProgressBar(QPainter &painter, const QRect &rect)
+void DownloadTaskCard::paintProgressBar(QPainter &painter)
 {
     if (m_currentTask.status != DownloadTaskStatus::Downloading
         && m_currentTask.status != DownloadTaskStatus::Paused
@@ -485,13 +587,15 @@ void DownloadTaskCard::paintProgressBar(QPainter &painter, const QRect &rect)
         return;
     }
 
-    QColor themeColor(ThemeManager::instance()->currentThemeColor());
-    QColor progressEnd = themeColor.lighter(130);
+    ThemeManager *tm = ThemeManager::instance();
+    const QColor themeColor(tm->currentThemeColor());
+    const QColor progressEnd = themeColor.lighter(130);
+    const bool isDark = tm->currentTheme() != ThemeManager::LightTheme;
 
-    int barHeight = 3;
-    int barY = rect.bottom() - barHeight - 2;
-    int barX = 2;
-    int barWidth = rect.width() - 4;
+    const int barHeight = 3;
+    const int barY = height() - 7 - barHeight;
+    const int barX = 12;
+    const int barWidth = width() - 24;
 
     double progress = m_smoothProgress;
     if (m_currentTask.status == DownloadTaskStatus::Queued)
@@ -506,10 +610,10 @@ void DownloadTaskCard::paintProgressBar(QPainter &painter, const QRect &rect)
     QPainterPath trackPath;
     trackPath.addRoundedRect(barX, barY, barWidth, barHeight, barHeight / 2.0, barHeight / 2.0);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0, 0, 0, 20));
+    painter.setBrush(isDark ? QColor(255, 255, 255, 26) : QColor(0, 0, 0, 16));
     painter.drawPath(trackPath);
 
-    // 渐变填充条
+    // 主题色渐变填充，端点与任务列表页进度条一致
     if (filledWidth > 0)
     {
         QLinearGradient gradient(barX, 0, barX + filledWidth, 0);
@@ -656,5 +760,16 @@ void DownloadTaskCard::updateDisplay()
         m_sizeLabel->setText(tr("大小：计算中..."));
     }
 
+    // 操作按钮：取消常驻于可取消状态；暂停/继续随状态切换（图标由 applyChrome 绘制）
+    const bool isPausable = m_currentTask.status == DownloadTaskStatus::Downloading;
+    const bool isResumable = m_currentTask.status == DownloadTaskStatus::Paused;
+    m_pauseButton->setVisible(isPausable || isResumable);
+    if (isResumable)
+        m_pauseButton->setToolTip(tr("继续"));
+    else if (isPausable)
+        m_pauseButton->setToolTip(tr("暂停"));
+
+    applyChrome();
+    updateAnimationState();
     update();
 }

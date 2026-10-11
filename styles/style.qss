@@ -1559,14 +1559,13 @@ QRadioButton::indicator:checked:hover {
         stop:1 @BG_CARD@);
 }
 
-/* 焦点状态 - 添加外发光效果 */
+/* 焦点状态：Qt 6 QSS 不支持 box-shadow，仅保留文字与描边变主色 */
 QRadioButton:focus {
     color: @PRIMARY@;
 }
 
 QRadioButton:focus::indicator {
     border-color: @PRIMARY@;
-    box-shadow: 0 0 0 3px @PRIMARY_RGBA_26@;
 }
 
 /* 伪态补�?*/
@@ -2401,17 +2400,19 @@ QScrollArea#taskScrollArea > QWidget > QWidget {
 }
 
 /* 启动任务卡片 �?玻璃态近�?*/
-QWidget#launchTaskCard {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 999px;
-    padding: 6px 14px 6px 6px;
-    min-width: 240px;
+/* 卡片外观（玻璃卡面 / 状态徽章 / 底部进度轨）由 paintEvent 自绘，
+ * 这里只声明对象名，不写 padding 与 border，避免样式表改变布局几何 */
+QWidget#launchTaskCard,
+QWidget#downloadTaskCard,
+QWidget#aggregateTaskCard {
+    background-color: transparent;
+    border: none;
 }
 
-QWidget#launchTaskCard:hover {
-    background-color: @BG_HOVER@;
-    border: 1px solid @BORDER_STRONG@;
+QWidget#launchTaskCard:hover,
+QWidget#downloadTaskCard:hover,
+QWidget#aggregateTaskCard:hover {
+    background-color: transparent;
 }
 
 /* 启动任务卡片状态文�?*/
@@ -2441,18 +2442,6 @@ QWidget#launchTaskCard QLabel#progressLabel {
 }
 
 /* 下载任务卡片 �?玻璃态近�?*/
-QWidget#downloadTaskCard {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 999px;
-    padding: 6px 14px 6px 6px;
-    min-width: 240px;
-}
-
-QWidget#downloadTaskCard:hover {
-    background-color: @BG_HOVER@;
-    border: 1px solid @BORDER_STRONG@;
-}
 
 /* 下载任务卡片实例�?*/
 QWidget#downloadTaskCard QLabel#instanceNameLabel {
@@ -2514,16 +2503,12 @@ QWidget#downloadTaskCard QLabel#sizeLabel {
 
 /* 聚合任务卡片 �?玻璃态近�?*/
 QWidget#aggregateTaskCard {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 999px;
-    padding: 6px 14px 6px 6px;
-    min-width: 180px;
+    background-color: transparent;
+    border: none;
 }
 
 QWidget#aggregateTaskCard:hover {
-    background-color: @BG_HOVER@;
-    border: 1px solid @BORDER_STRONG@;
+    background-color: transparent;
 }
 
 /* 聚合任务卡片图标 */
@@ -2559,18 +2544,22 @@ QLabel#aggregateTaskCountLabel {
 /* 任务栏查看全部按�?*/
 QPushButton#viewAllTaskBtn {
     background-color: transparent;
-    color: @TEXT_TERTIARY@;
+    color: @TEXT_SECONDARY@;
     border: 1px solid @BORDER@;
-    border-radius: 999px;
-    padding: 6px 14px;
+    border-radius: 12px;
+    padding: 0 16px;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
 }
 
 QPushButton#viewAllTaskBtn:hover {
-    background-color: @PRIMARY_BG@;
+    background-color: @PRIMARY_RGBA_12@;
     color: @PRIMARY@;
     border-color: @PRIMARY_RGBA_38@;
+}
+
+QPushButton#viewAllTaskBtn:pressed {
+    background-color: @PRIMARY_RGBA_20@;
 }
 
 /* 下载任务卡片取消按钮 */
@@ -3681,6 +3670,7 @@ QPushButton#contentViewSwitchBtn {
     background-color: transparent;
     border: none;
     border-radius: 13px;
+    color: @TEXT_PRIMARY@;
 }
 
 QPushButton#contentViewSwitchBtn:hover {
@@ -3691,9 +3681,11 @@ QPushButton#contentViewSwitchBtn:pressed {
     background-color: @BG_PRESSED@;
 }
 
-/* 选中段：主色实心药丸（图标反白，见 ContentViewSwitch::updateButtons） */
+/* 选中段：主色实心药丸（图标反白见 ContentViewSwitch::updateButtons；
+ * 文本段（SourceSwitchBar 来源切换）反白由 color 保证） */
 QPushButton#contentViewSwitchBtn[active="true"] {
     background-color: @PRIMARY@;
+    color: @TEXT_ON_PRIMARY@;
 }
 
 QPushButton#contentViewSwitchBtn[active="true"]:hover {
@@ -4854,6 +4846,7 @@ QComboBox#aiChatPermissionCombo::drop-down {
 QComboBox#aiChatThinkingEffortCombo::down-arrow,
 QComboBox#aiChatPermissionCombo::down-arrow {
     image: url(:/Images/Icons/arrow_down_triangle.svg);
+    border: none;
     width: 10px;
     height: 8px;
 }
@@ -5327,8 +5320,8 @@ QPushButton#overviewLaunchBtn:pressed {
 QWidget#overviewStatCard {
     background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
-    border-radius: 16px;
-    padding: 16px;
+    border-radius: 14px;
+    padding: 6px;
 }
 
 QWidget#overviewStatCard:hover {
@@ -5341,10 +5334,10 @@ QLabel#overviewStatIcon {
     background-color: @PRIMARY_BG@;
     border: none;
     border-radius: 8px;
-    min-width: 32px;
-    min-height: 32px;
-    max-width: 32px;
-    max-height: 32px;
+    min-width: 36px;
+    min-height: 36px;
+    max-width: 36px;
+    max-height: 36px;
     color: @PRIMARY@;
 }
 
@@ -5352,7 +5345,7 @@ QLabel#overviewStatIcon {
 QLabel#overviewStatCount {
     background-color: transparent;
     color: @PRIMARY@;
-    font-size: 24px;
+    font-size: 18px;
     font-weight: 800;
     font-family: "Consolas", "Cascadia Code", monospace;
     border: none;
@@ -5776,10 +5769,12 @@ QPushButton#searchResultActionBtn:hover {
  * Section 24. AccountManagePage 补充样式
  * ============================================================ */
 /* 账户左侧�?�?悬浮玻璃面板 */
-QWidget#accountLeftSidebar {
+/* 账户左右悬浮玻璃面板 */
+QWidget#accountLeftSidebar,
+QWidget#accountRightSidebar {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 @BG_CARD@,
-        stop:1 @BG_CONTENT@);
+        stop:0 @BG_CARD_GLASS@,
+        stop:1 @BG_CONTENT_GLASS@);
     border: 1px solid @BORDER@;
     border-radius: 16px;
 }
@@ -5818,7 +5813,7 @@ QLabel#accountSidebarCount {
 QWidget#accountHighlight {
     background-color: @PRIMARY@;
     border: none;
-    border-radius: 0 4px 4px 0;
+    border-radius: 0 3px 3px 0;
     min-width: 3px;
     max-width: 3px;
 }
@@ -5844,7 +5839,7 @@ QFrame#accountSidebarSeparator {
 /* 账户列表�?�?现代卡片行（hover 上浮 + 选中主色描边/左侧竖条�?*/
 QPushButton#accountNavBtn {
     background-color: transparent;
-    border: 1px solid transparent;
+    border: none;
     border-radius: 10px;
     padding: 8px 12px;
     color: @TEXT_SECONDARY@;
@@ -5853,17 +5848,15 @@ QPushButton#accountNavBtn {
 }
 
 QPushButton#accountNavBtn:hover {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
+    background-color: @BLACK_RGBA_0.06@;
     color: @TEXT_PRIMARY@;
 }
 
 QPushButton#accountNavBtn:checked {
-    background-color: @PRIMARY_RGBA_20@;
-    border: 1px solid @PRIMARY_RGBA_38@;
-    border-left: 3px solid @PRIMARY@;
-    padding-left: 10px;
-    color: @TEXT_PRIMARY@;
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 @PRIMARY_RGBA_20@,
+        stop:1 @PRIMARY_RGBA_8@);
+    color: @PRIMARY@;
     font-weight: 600;
 }
 
@@ -6047,8 +6040,7 @@ QLabel#accountActionTitle {
 }
 
 /* 动作选择下拉�?�?复用表单控件观感，紧凑适配右侧面板/皮肤预览�?*/
-QComboBox#accountActionCombo,
-QComboBox#skinActionCombo {
+QComboBox#accountActionCombo {
     background-color: @BG_CARD@;
     color: @TEXT_PRIMARY@;
     border: 1px solid @BORDER@;
@@ -6058,20 +6050,17 @@ QComboBox#skinActionCombo {
     min-height: 18px;
 }
 
-QComboBox#accountActionCombo:hover,
-QComboBox#skinActionCombo:hover {
+QComboBox#accountActionCombo:hover {
     border-color: @BORDER_STRONG@;
 }
 
-QComboBox#accountActionCombo:focus,
-QComboBox#skinActionCombo:focus {
+QComboBox#accountActionCombo:focus {
     border: 2px solid @PRIMARY@;
     border-radius: 8px;
     padding: 3px 29px 3px 9px;
 }
 
-QComboBox#accountActionCombo::drop-down,
-QComboBox#skinActionCombo::drop-down {
+QComboBox#accountActionCombo::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 26px;
@@ -6082,8 +6071,7 @@ QComboBox#skinActionCombo::drop-down {
     background-color: transparent;
 }
 
-QComboBox#accountActionCombo::down-arrow,
-QComboBox#skinActionCombo::down-arrow {
+QComboBox#accountActionCombo::down-arrow {
     image: none;
     border-left: 4px solid transparent;
     border-right: 4px solid transparent;
@@ -6092,8 +6080,7 @@ QComboBox#skinActionCombo::down-arrow {
     height: 0;
 }
 
-QComboBox#accountActionCombo QAbstractItemView,
-QComboBox#skinActionCombo QAbstractItemView {
+QComboBox#accountActionCombo QAbstractItemView {
     background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
     border-radius: 8px;
@@ -6101,23 +6088,47 @@ QComboBox#skinActionCombo QAbstractItemView {
     outline: none;
 }
 
-QComboBox#accountActionCombo QAbstractItemView::item,
-QComboBox#skinActionCombo QAbstractItemView::item {
+QComboBox#accountActionCombo QAbstractItemView::item {
     min-height: 28px;
     padding: 0 10px;
     border-radius: 6px;
     color: @TEXT_PRIMARY@;
 }
 
-QComboBox#accountActionCombo QAbstractItemView::item:hover,
-QComboBox#skinActionCombo QAbstractItemView::item:hover {
+QComboBox#accountActionCombo QAbstractItemView::item:hover {
     background-color: @BG_HOVER@;
 }
 
-QComboBox#accountActionCombo QAbstractItemView::item:selected,
-QComboBox#skinActionCombo QAbstractItemView::item:selected {
+QComboBox#accountActionCombo QAbstractItemView::item:selected {
     background-color: @PRIMARY_LIGHT@;
     color: @TEXT_PRIMARY@;
+}
+
+/* 模型动作按钮（图标 + 文字，可勾选）：账户页右侧面板动作网格 */
+QPushButton#skinPoseButton {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 4px 8px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QPushButton#skinPoseButton:hover {
+    background-color: @BG_HOVER@;
+    border-color: @BORDER_STRONG@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#skinPoseButton:checked {
+    background-color: @PRIMARY_LIGHT@;
+    border: 1px solid @PRIMARY@;
+    color: @PRIMARY@;
+    font-weight: 600;
+}
+
+QPushButton#skinPoseButton:checked:hover {
+    background-color: @PRIMARY_LIGHT@;
 }
 
 /* ============================================================
@@ -7183,9 +7194,10 @@ QPushButton#hongshiStartBtn:disabled {
 /* 实例左侧�?�?渐变背景 */
 QWidget#instanceLeftSidebar {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 @BG_MUTED@,
-        stop:1 @BG_BASE@);
+        stop:0 rgba(255, 255, 255, 0.72),
+        stop:1 rgba(255, 255, 255, 0.62));
     border-right: 1px solid @BORDER_LIGHT@;
+    border-radius: 12px;
 }
 
 /* 实例文件夹高亮条 �?3px 主色 */
@@ -9500,10 +9512,29 @@ QListWidget#historyDialogList::item:selected {
  * Section 35.6. TaskBar / TopBar 补充 / NewsCard / PerformanceDetailDialog / PluginRunnerDialog 样式
  * ------------------------------------------------------------ */
 /* 任务�?�?玻璃�?*/
+/* 任务栏外层透明：真正的玻璃托盘是 #taskBarTray，四周留白透出窗口背景 */
 QWidget#taskBar {
-    background-color: @BAR_BG@;
-    border-top: 1px solid @BORDER_LIGHT@;
-    padding: 8px 12px;
+    background-color: transparent;
+    border: none;
+    padding: 0;
+}
+
+/* 悬浮玻璃托盘 */
+QWidget#taskBarTray {
+    background-color: @BG_GLASS@;
+    border: 1px solid @BORDER@;
+    border-radius: 18px;
+}
+
+/* 活跃下载任务计数胶囊 */
+QLabel#taskCountBadge {
+    background-color: @PRIMARY_RGBA_12@;
+    color: @PRIMARY@;
+    border: 1px solid @PRIMARY_RGBA_38@;
+    border-radius: 12px;
+    padding: 0 8px;
+    font-size: 11px;
+    font-weight: 700;
 }
 
 /* 任务栏滚动区/内容 */
@@ -9512,25 +9543,23 @@ QScrollArea#taskBarScrollArea {
     border: none;
 }
 
+/* 横向滚动条收窄：托盘内只留 6px，避免出现任务时卡片整体上跳 */
+QScrollArea#taskBarScrollArea QScrollBar:horizontal {
+    height: 6px;
+    margin: 0 10px;
+}
+
+QScrollArea#taskBarScrollArea QScrollBar::handle:horizontal {
+    min-width: 40px;
+    border-radius: 3px;
+}
+
 QWidget#taskBarCardsContent {
     background-color: transparent;
 }
 
 /* 查看全部任务按钮 �?玻璃�?*/
-QPushButton#viewAllTaskBtn {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 6px 14px;
-    color: @TEXT_SECONDARY@;
-    font-size: 12px;
-}
-
-QPushButton#viewAllTaskBtn:hover {
-    background-color: @BG_HOVER@;
-    border: 1px solid @BORDER_STRONG@;
-    color: @TEXT_PRIMARY@;
-}
+/* QPushButton#viewAllTaskBtn 的规则统一写在 Section 14 任务栏区块，避免两处定义互相覆盖 */
 
 /* 顶栏滚动到顶按钮 */
 QPushButton#topBarScrollToTopBtn {
@@ -10461,26 +10490,27 @@ QLabel#forgeStatusLabel, QLabel#fabricStatusLabel, QLabel#neoForgeStatusLabel {
 }
 
 /* 版本列表 �?玻璃态卡�?*/
+/* 版本列表：容器透明化，行卡片（modCardListItem）独立悬浮，与「下载模组」等页一致 */
 QListWidget#forgeVersionList, QListWidget#fabricVersionList, QListWidget#neoForgeVersionList {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 12px;
-    padding: 8px;
+    background-color: transparent;
+    border: none;
+    padding: 0px 14px;
     outline: none;
 }
 
 QListWidget#forgeVersionList::item, QListWidget#fabricVersionList::item, QListWidget#neoForgeVersionList::item {
-    padding: 10px 12px;
-    border-radius: 8px;
+    background-color: transparent;
+    padding: 0px;
+    border-radius: 12px;
 }
 
 QListWidget#forgeVersionList::item:hover, QListWidget#fabricVersionList::item:hover, QListWidget#neoForgeVersionList::item:hover {
-    background-color: @BG_HOVER@;
+    background-color: transparent;
 }
 
 QListWidget#forgeVersionList::item:selected, QListWidget#fabricVersionList::item:selected, QListWidget#neoForgeVersionList::item:selected {
-    background-color: @PRIMARY_RGBA_18@;
-    color: @PRIMARY@;
+    background-color: transparent;
+    color: @TEXT_PRIMARY@;
 }
 
 /* 版本页状态信�?�?13px 三级�?*/
@@ -11247,26 +11277,27 @@ QPushButton#loaderAddFolderBtn:hover {
     color: @TEXT_PRIMARY@;
 }
 
+/* 加载器详情页：列表容器透明化，让 modCardListItem 卡片像「下载模组」等页一样独立悬浮 */
 QListWidget#loaderListWidget {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 12px;
-    padding: 8px;
+    background-color: transparent;
+    border: none;
+    padding: 0px 14px;
     outline: none;
 }
 
 QListWidget#loaderListWidget::item {
-    padding: 10px 12px;
-    border-radius: 8px;
+    background-color: transparent;
+    padding: 0px;
+    border-radius: 12px;
 }
 
 QListWidget#loaderListWidget::item:hover {
-    background-color: @BG_HOVER@;
+    background-color: transparent;
 }
 
 QListWidget#loaderListWidget::item:selected {
-    background-color: @PRIMARY_RGBA_18@;
-    color: @PRIMARY@;
+    background-color: transparent;
+    color: @TEXT_PRIMARY@;
 }
 
 QLabel#loaderMessageLabel {
@@ -13002,4 +13033,291 @@ QListWidget#customModelsList::item:hover {
 QListWidget#customModelsList::item:selected {
     background-color: @PRIMARY_BG@;
     color: @TEXT_ACCENT@;
+}
+
+
+/* ===== Section 51: WorldMapPage 存档地表地图页 ===== */
+
+/* 顶部地图操作区 —— 玻璃态卡片，内部按「标题块 │ 渲染 │ 视图 │ 定位」分组 */
+QWidget#worldMapToolbar {
+    background-color: @BG_GLASS@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+/* —— 标题块：图标 + 存档名 / 副标题 —— */
+QLabel#worldMapTitleIcon {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 9px;
+}
+
+QLabel#worldMapTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#worldMapSubtitle {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+}
+
+/* —— 分组竖分隔线（C++ 侧是 1px 宽的 QFrame） —— */
+QFrame#worldMapToolSep {
+    background-color: @BLACK_RGBA_0.12@;
+    max-width: 1px;
+    max-height: 28px;
+    border: none;
+}
+
+/* —— 功能分组容器：淡底圆角，把同类控件收在一起 —— */
+QWidget#worldMapToolGroup {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 9px;
+}
+
+/* —— 组内扁平下拉（透明底，靠 hover / :on 反馈） —— */
+QComboBox#worldMapToolCombo {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 2px 6px 2px 8px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    min-width: 66px;
+}
+
+QComboBox#worldMapToolCombo:hover {
+    background-color: @BG_CARD@;
+}
+
+QComboBox#worldMapToolCombo:on {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+}
+
+QComboBox#worldMapToolCombo::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    border: none;
+    width: 20px;
+    margin-right: 4px;
+}
+
+QComboBox#worldMapToolCombo::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid @TEXT_TERTIARY@;
+    width: 0;
+    height: 0;
+}
+
+QComboBox#worldMapToolCombo:hover::down-arrow {
+    border-top-color: @PRIMARY@;
+}
+
+QComboBox#worldMapToolCombo QAbstractItemView {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 4px;
+    outline: none;
+    selection-background-color: @PRIMARY_BG@;
+    selection-color: @TEXT_PRIMARY@;
+}
+
+/* —— 高度选择框可编辑：框内输入框与下拉同风格（透明，随外框 hover/focus） —— */
+QComboBox#worldMapToolCombo QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    selection-background-color: @PRIMARY_BG@;
+    selection-color: @TEXT_PRIMARY@;
+}
+
+QComboBox#worldMapToolCombo QLineEdit:focus {
+    background: transparent;
+    border: none;
+}
+/* —— 组内扁平按钮 —— */
+QPushButton#worldMapGroupBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 4px 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QPushButton#worldMapGroupBtn:hover {
+    background-color: @BG_CARD@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#worldMapGroupBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+QPushButton#worldMapGroupBtn:checked {
+    background-color: @PRIMARY@;
+    color: @TEXT_ON_PRIMARY@;
+}
+
+/* —— 右侧输出动作按钮（带框，与组内扁平控件区分） —— */
+QPushButton#worldMapActionBtn {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 5px 12px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QPushButton#worldMapActionBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_STRONG@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#worldMapActionBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+QPushButton#worldMapActionBtn:disabled {
+    background-color: @BG_DISABLED@;
+    border: 1px solid @BORDER_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+/* —— 组内缩放比例读数 —— */
+QLabel#worldMapToolLabel {
+    color: @TEXT_SECONDARY@;
+    font-size: 11px;
+    font-weight: 600;
+    background-color: transparent;
+    border: none;
+}
+
+/* —— 第二行：结构开关（图标 + 可勾选，默认全选） — */
+QPushButton#worldMapStructBtn {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 7px;
+    padding: 0px;
+    color: @TEXT_SECONDARY@;
+}
+
+
+QPushButton#worldMapStructBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_STRONG@;
+}
+
+
+QPushButton#worldMapStructBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+
+QPushButton#worldMapStructBtn:checked {
+    background-color: @PRIMARY@;
+    border: 1px solid @PRIMARY@;
+}
+
+/* —— 结构信息弹窗 — */
+QWidget#worldMapStructPopup {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+}
+
+
+QLabel#worldMapStructTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+    border: none;
+}
+
+
+QLabel#worldMapStructCoord {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+
+QPushButton#worldMapStructAction {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER@;
+    border-radius: 7px;
+    padding: 4px 10px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+}
+
+
+QPushButton#worldMapStructAction:hover {
+    background-color: @BG_PRESSED@;
+    border: 1px solid @BORDER_STRONG@;
+}
+
+
+QPushButton#worldMapStructAction:pressed {
+    background-color: @BG_DISABLED@;
+}
+
+
+
+/* —— 组内坐标输入（focus 主色描边，边框盒不位移） —— */
+QLineEdit#worldMapCoordEdit {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 3px 6px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+}
+
+QLineEdit#worldMapCoordEdit:hover {
+    background-color: @BG_CARD@;
+}
+
+QLineEdit#worldMapCoordEdit:focus {
+    background-color: @BG_CARD@;
+    border: 1px solid @PRIMARY@;
+}
+QLabel#worldMapEmpty {
+    color: @TEXT_TERTIARY@;
+    font-size: 13px;
+    padding: 24px;
+}
+
+QWidget#worldMapStatusBar {
+    background-color: @BG_GLASS@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+}
+
+QLabel#worldMapStatus {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QProgressBar#worldMapProgress {
+    background-color: @BG_MUTED@;
+    border: none;
+    border-radius: 4px;
+}
+
+QProgressBar#worldMapProgress::chunk {
+    background-color: @PRIMARY@;
+    border-radius: 4px;
 }

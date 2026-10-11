@@ -1,10 +1,11 @@
 #ifndef LAUNCHDETAILSPAGE_H
 #define LAUNCHDETAILSPAGE_H
 
+#include "components/OutlinedLabel.h"
+#include "components/OutlinedTextEdit.h"
+
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QPushButton>
-#include <QTextEdit>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -30,11 +31,11 @@ private:
     QHBoxLayout *m_headerLayout;
 
     QWidget *m_statusDot;
-    QLabel *m_statusLabel;
+    OutlinedLabel *m_statusLabel;
     QPushButton *m_cancelBtn;
     QPushButton *m_clearBtn;
     QPushButton *m_exportBtn;
-    QTextEdit *m_detailsTextEdit;
+    OutlinedTextEdit *m_detailsTextEdit;
 };
 
 #endif // LAUNCHDETAILSPAGE_H

@@ -246,6 +246,8 @@ void MainWindow::initEssentialPages()
             this, &MainWindow::onQuickLaunchServerClicked);
     connect(m_instanceManagePage, &InstanceManagePage::saveSettingsOpened,
             this, &MainWindow::onSaveSettingsOpened);
+    connect(m_instanceManagePage, &InstanceManagePage::saveMapOpened,
+            this, &MainWindow::onSaveMapOpened);
     connect(m_instanceManagePage, &InstanceManagePage::shaderSettingsOpened,
             this, &MainWindow::onShaderSettingsOpened);
     connect(m_instanceManagePage, &InstanceManagePage::projectionEditOpened,
@@ -628,6 +630,23 @@ void MainWindow::initModDetailPage()
             this, [this](const QString &error) {
         if (m_modDetailPage) m_modDetailPage->hideLoading();
         NotificationManager::showError(m_modDetailPage, tr("获取模组详情失败: ") + error);
+    });
+    // 跨源合并卡片：顶部切换来源后按新源重新拉取详情（切换后 m_modInfo 已换到目标源）
+    connect(m_modDetailPage, &ModDetailPage::sourceSwitchRequested,
+            this, [this](const QString &source) {
+        if (!m_modDetailPage)
+            return;
+        const ModInfo info = m_modDetailPage->currentModInfo();
+        if (info.id.isEmpty() || info.source != source) {
+            m_modDetailPage->hideLoading();
+            return;
+        }
+        if (source == QStringLiteral("curseforge"))
+            m_modDownloadPage->curseforgeAPI()->fetchModDetail(info.id);
+        else if (source == QStringLiteral("modrinth"))
+            m_modDownloadPage->modrinthAPI()->fetchModDetail(info.id);
+        else
+            m_modDetailPage->hideLoading();
     });
     // Connect MC百科 URL resolution to detail page
     connect(m_modDownloadPage, &ModDownloadPage::modMcmodUrlResolved,

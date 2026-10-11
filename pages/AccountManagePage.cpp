@@ -6,17 +6,15 @@
  */
 #include "AccountManagePage.h"
 #include "MicrosoftLoginDialog.h"
-#include "components/AppColorDialog.h"
-#include "components/AppFileDialog.h"
 
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QFrame>
 #include <QGraphicsDropShadowEffect>
 #include <QGraphicsOpacityEffect>
+#include <QGridLayout>
 #include <QShowEvent>
 #include <QHideEvent>
 #include <QTabBar>
@@ -48,21 +46,9 @@ AccountManagePage::AccountManagePage(QWidget *parent) : QWidget(parent)
     m_isDefaultAccount = false;
     m_accountCountLabel = nullptr;
     m_accountTypeDot = nullptr;
-    m_skinActionWidget = nullptr;
-    m_skinActionCombo = nullptr;
-    m_skinExecuteActionBtn = nullptr;
-    m_skinModelType = SkinModelType::Auto;
     m_modelActionWidget = nullptr;
-    m_modelActionCombo = nullptr;
-    m_modelExecuteActionBtn = nullptr;
     m_modelPose = SkinPose::Idle;
-    m_bgWidget = nullptr;
-    m_bgCombo = nullptr;
-    m_customBgBtn = nullptr;
-    m_bgImageBtn = nullptr;
-    m_skinBackgroundKey = "theme";
-    m_customBgColor = QColor(0x1e, 0x1e, 0x2e);
-    m_bgImagePath.clear();
+    m_rightWidget = nullptr;
     m_iconNormalColor = QColor("#666666");
     m_iconSelectedColor = QColor("#ffffff");
 
@@ -99,19 +85,19 @@ AccountManagePage::AccountManagePage(QWidget *parent) : QWidget(parent)
         connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ThemeManager::ThemeType type)
         {
             Q_UNUSED(type);
-            // 仅在"跟随主题"背景下跟随主题色/应用背景，否则保持用户选择的背景
-            if (m_skinBackgroundKey == "theme")
-                applyThemePresetBackground();
+            // 皮肤预览始终跟随主题背景（主题切换时刷新预览背景色）
+            applyThemePresetBackground();
+            // 模型动作按钮图标颜色随明暗主题重新着色
+            refreshModelPoseIcons();
         });
     }
 
-    // 连接应用背景变化信号（设置页自定义背景切换/修改时刷新"跟随主题"预览背景）
+    // 连接应用背景变化信号（设置页自定义背景切换/修改时刷新预览背景）
     if (BackgroundManager::instance())
     {
         connect(BackgroundManager::instance(), &BackgroundManager::backgroundChanged, this, [this]()
         {
-            if (m_skinBackgroundKey == "theme")
-                applyThemePresetBackground();
+            applyThemePresetBackground();
         });
     }
 }
@@ -152,7 +138,7 @@ void AccountManagePage::initUI()
     bubbleShadow->setColor(QColor(0, 0, 0, 50));
     m_leftWidget->setGraphicsEffect(bubbleShadow);
 
-    accountManageLayout->setContentsMargins(kBubbleWidth + kBubbleMargin, 0, 0, 0);
+    accountManageLayout->setContentsMargins(kBubbleWidth + kBubbleMargin, 0, kBubbleWidth + kBubbleMargin, 0);
 
     // Initialize center skin display
     QWidget *centerWidget = new QWidget();
@@ -161,18 +147,24 @@ void AccountManagePage::initUI()
     centerWidget->setMinimumWidth(300);
     centerWidget->setMaximumWidth(400);
 
-    // Initialize right account panel
-    QWidget *rightWidget = new QWidget();
-    m_rightLayout = new QVBoxLayout(rightWidget);
+    // Initialize right account panel（悬浮卡片：不占布局，float 于右上）
+    m_rightWidget = new QWidget(m_accountManageWidget);
+    m_rightWidget->setObjectName("accountRightSidebar");
+    m_rightWidget->setAttribute(Qt::WA_StyledBackground);
+    m_rightWidget->setFixedWidth(kBubbleWidth);
+    m_rightLayout = new QVBoxLayout(m_rightWidget);
     initRightAccountPanel();
-    rightWidget->setMinimumWidth(300);
-    rightWidget->setMaximumWidth(400);
+
+    // 悬浮卡片外阴影（与左侧气泡一致）
+    auto *bubbleShadowRight = new QGraphicsDropShadowEffect(m_rightWidget);
+    bubbleShadowRight->setBlurRadius(8);
+    bubbleShadowRight->setOffset(0, 3);
+    bubbleShadowRight->setColor(QColor(0, 0, 0, 50));
+    m_rightWidget->setGraphicsEffect(bubbleShadowRight);
 
     // Add widgets to account management layout
     accountManageLayout->addWidget(centerWidget);
-    accountManageLayout->addWidget(rightWidget);
     accountManageLayout->setStretchFactor(centerWidget, 1);
-    accountManageLayout->setStretchFactor(rightWidget, 0);
 
     // 滑动高亮背景（与 InstanceSelectPage / SubNavPanel 一致的选中指示器）
     m_accountHighlight = new QWidget(m_accountScrollContent);
@@ -219,9 +211,24 @@ void AccountManagePage::updateLeftBubbleGeometry()
     const int y = kBubbleMargin;
     const int h = qMax(120, m_accountManageWidget->height() - 2 * kBubbleMargin);
     m_leftWidget->setGeometry(x, y, kBubbleWidth, h);
+    // 右侧悬浮卡片：与左侧等宽，float 于右上
+    if (m_rightWidget)
+    {
+        const int rx = m_accountManageWidget->width() - kBubbleWidth - kBubbleMargin;
+        m_rightWidget->setGeometry(rx, y, kBubbleWidth, h);
+    }
     // 若正在展示登录页，气泡不应显示
-    m_leftWidget->setVisible(m_stackedWidget->currentWidget() == m_accountManageWidget);
+    const bool visible = m_stackedWidget->currentWidget() == m_accountManageWidget;
+    m_leftWidget->setVisible(visible);
+    if (m_rightWidget)
+    {
+        m_rightWidget->setVisible(visible);
+    }
     m_leftWidget->raise();
+    if (m_rightWidget)
+    {
+        m_rightWidget->raise();
+    }
 }
 
 void AccountManagePage::initLeftAccountList()
@@ -347,107 +354,60 @@ void AccountManagePage::initCenterSkinDisplay()
     connect(m_addFirstAccountBtn, &QPushButton::clicked, this, &AccountManagePage::onAddAccountClicked);
 }
 
-void AccountManagePage::initSkinModelActions()
+void AccountManagePage::initModelActions()
 {
-    // --- 皮肤动作（一行：标签 + 下拉 + 执行） ---
-    m_skinActionWidget = new QWidget();
-    QHBoxLayout *skinActionRow = new QHBoxLayout(m_skinActionWidget);
-    skinActionRow->setContentsMargins(0, 0, 0, 0);
-    skinActionRow->setSpacing(8);
-
-    QLabel *skinActionTitle = new QLabel(tr("皮肤动作"));
-    skinActionTitle->setObjectName("accountTypeLabel");
-    skinActionRow->addWidget(skinActionTitle);
-
-    m_skinActionCombo = new QComboBox();
-    m_skinActionCombo->setObjectName("skinActionCombo");
-    m_skinActionCombo->addItem(tr("向左旋转 15°"), "rotate_left");
-    m_skinActionCombo->addItem(tr("向右旋转 15°"), "rotate_right");
-    m_skinActionCombo->addItem(tr("放大"), "zoom_in");
-    m_skinActionCombo->addItem(tr("缩小"), "zoom_out");
-    m_skinActionCombo->addItem(tr("重置视角"), "reset_view");
-    m_skinActionCombo->addItem(tr("自动旋转：开"), "auto_rotate_on");
-    m_skinActionCombo->addItem(tr("自动旋转：关"), "auto_rotate_off");
-    m_skinActionCombo->addItem(tr("切换模型 (Steve/Alex)"), "toggle_model");
-    m_skinActionCombo->setCursor(Qt::PointingHandCursor);
-    skinActionRow->addWidget(m_skinActionCombo, 1);
-
-    m_skinExecuteActionBtn = new QPushButton(tr("执行"));
-    m_skinExecuteActionBtn->setObjectName("actionButton");
-    m_skinExecuteActionBtn->setFixedHeight(30);
-    m_skinExecuteActionBtn->setCursor(Qt::PointingHandCursor);
-    skinActionRow->addWidget(m_skinExecuteActionBtn);
-
-    // --- 模型动作（一行：标签 + 下拉 + 执行） ---
+    // --- 模型动作（图标 + 文字按钮网格，点击直接切换动作） ---
     m_modelActionWidget = new QWidget();
-    QHBoxLayout *modelActionRow = new QHBoxLayout(m_modelActionWidget);
-    modelActionRow->setContentsMargins(0, 0, 0, 0);
-    modelActionRow->setSpacing(8);
+    QVBoxLayout *modelActionColumn = new QVBoxLayout(m_modelActionWidget);
+    modelActionColumn->setContentsMargins(0, 0, 0, 0);
+    modelActionColumn->setSpacing(6);
 
     QLabel *modelActionTitle = new QLabel(tr("模型动作"));
     modelActionTitle->setObjectName("accountTypeLabel");
-    modelActionRow->addWidget(modelActionTitle);
+    modelActionColumn->addWidget(modelActionTitle);
 
-    m_modelActionCombo = new QComboBox();
-    m_modelActionCombo->setObjectName("skinActionCombo");
-    m_modelActionCombo->addItem(tr("待机"), "pose_idle");
-    m_modelActionCombo->addItem(tr("挥手"), "pose_wave");
-    m_modelActionCombo->addItem(tr("走路"), "pose_walk");
-    m_modelActionCombo->addItem(tr("跑步"), "pose_run");
-    m_modelActionCombo->addItem(tr("骑马坐姿"), "pose_ride");
-    m_modelActionCombo->setCursor(Qt::PointingHandCursor);
-    modelActionRow->addWidget(m_modelActionCombo, 1);
+    // 2 列网格：待机/挥手/走路/跑步 各占一格，骑马坐姿（文字较长）独占一行
+    QGridLayout *poseGrid = new QGridLayout();
+    poseGrid->setContentsMargins(0, 0, 0, 0);
+    poseGrid->setHorizontalSpacing(6);
+    poseGrid->setVerticalSpacing(6);
 
-    m_modelExecuteActionBtn = new QPushButton(tr("执行"));
-    m_modelExecuteActionBtn->setObjectName("actionButton");
-    m_modelExecuteActionBtn->setFixedHeight(30);
-    m_modelExecuteActionBtn->setCursor(Qt::PointingHandCursor);
-    modelActionRow->addWidget(m_modelExecuteActionBtn);
-
-    // --- 模型背景（两行：标签+下拉+自定义颜色 / 选择图片） ---
-    m_bgWidget = new QWidget();
-    QVBoxLayout *bgLayout = new QVBoxLayout(m_bgWidget);
-    bgLayout->setContentsMargins(0, 0, 0, 0);
-    bgLayout->setSpacing(6);
-
-    QHBoxLayout *bgSelectLayout = new QHBoxLayout();
-    bgSelectLayout->setSpacing(8);
-    QLabel *bgTitle = new QLabel(tr("模型背景"));
-    bgTitle->setObjectName("accountTypeLabel");
-    bgSelectLayout->addWidget(bgTitle);
-
-    initBackgroundPresetCombo();
-    m_bgCombo->setCursor(Qt::PointingHandCursor);
-    bgSelectLayout->addWidget(m_bgCombo, 1);
-
-    m_customBgBtn = new QPushButton(tr("自定义"));
-    m_customBgBtn->setObjectName("actionButton");
-    m_customBgBtn->setFixedHeight(30);
-    m_customBgBtn->setCursor(Qt::PointingHandCursor);
-    bgSelectLayout->addWidget(m_customBgBtn);
-    bgLayout->addLayout(bgSelectLayout);
-
-    // 图片背景选择按钮（铺满一行）
-    m_bgImageBtn = new QPushButton(tr("选择图片..."));
-    m_bgImageBtn->setObjectName("actionButton");
-    m_bgImageBtn->setFixedHeight(30);
-    m_bgImageBtn->setCursor(Qt::PointingHandCursor);
-    bgLayout->addWidget(m_bgImageBtn);
-
-    // Connect signals and slots
-    connect(m_skinExecuteActionBtn, &QPushButton::clicked, this, &AccountManagePage::onExecuteSkinActionClicked);
-    connect(m_modelExecuteActionBtn, &QPushButton::clicked, this, &AccountManagePage::onExecuteModelActionClicked);
-    connect(m_bgCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AccountManagePage::onBackgroundPresetChanged);
-    connect(m_customBgBtn, &QPushButton::clicked, this, &AccountManagePage::onCustomBackgroundClicked);
-    connect(m_bgImageBtn, &QPushButton::clicked, this, &AccountManagePage::onSelectBackgroundImageClicked);
-
-    // 恢复上次选择的背景（selectBackgroundPreset 会触发 currentIndexChanged → 应用并持久化）
-    if (SettingsManager::instance())
+    const struct
     {
-        const QString saved = SettingsManager::instance()->getProperty("skinModelBackground", "theme").toString();
-        selectBackgroundPreset(saved);
+        QString text;
+        const char *icon;
+        const char *data;
+    } poses[] = {
+        { tr("待机"), ":/Images/Icons/pose_idle.svg", "pose_idle" },
+        { tr("挥手"), ":/Images/Icons/pose_wave.svg", "pose_wave" },
+        { tr("走路"), ":/Images/Icons/pose_walk.svg", "pose_walk" },
+        { tr("跑步"), ":/Images/Icons/pose_run.svg", "pose_run" },
+        { tr("骑马坐姿"), ":/Images/Icons/pose_ride.svg", "pose_ride" },
+    };
+
+    for (int i = 0; i < 5; ++i)
+    {
+        QPushButton *btn = new QPushButton(poses[i].text);
+        btn->setObjectName("skinPoseButton");
+        btn->setProperty("iconPath", poses[i].icon);
+        btn->setProperty("poseData", poses[i].data);
+        btn->setIcon(loadColoredIcon(poses[i].icon, modelPoseIconColor(false)));
+        btn->setIconSize(QSize(16, 16));
+        btn->setCheckable(true);
+        btn->setChecked(i == 0);   // 默认待机
+        btn->setFixedHeight(30);
+        btn->setCursor(Qt::PointingHandCursor);
+        connect(btn, &QPushButton::clicked, this, &AccountManagePage::onModelPoseButtonClicked);
+        m_modelPoseButtons.append(btn);
+
+        if (i == 4)
+            poseGrid->addWidget(btn, i / 2, 0, 1, 2);
+        else
+            poseGrid->addWidget(btn, i / 2, i % 2);
     }
+    poseGrid->setColumnStretch(0, 1);
+    poseGrid->setColumnStretch(1, 1);
+    modelActionColumn->addLayout(poseGrid);
 }
 
 void AccountManagePage::initRightAccountPanel()
@@ -480,11 +440,9 @@ void AccountManagePage::initRightAccountPanel()
     accountInfoLayout->addStretch();
     m_rightLayout->addLayout(accountInfoLayout);
 
-    // 皮肤/模型动作与模型背景统一放入右侧账户面板区域
-    initSkinModelActions();
-    m_rightLayout->addWidget(m_skinActionWidget);
+    // 模型动作统一放入右侧账户面板区域
+    initModelActions();
     m_rightLayout->addWidget(m_modelActionWidget);
-    m_rightLayout->addWidget(m_bgWidget);
 
     // Add spacer
     m_rightLayout->addStretch();
@@ -1151,16 +1109,12 @@ void AccountManagePage::loadAccounts()
     // Update UI based on whether there are accounts
     if (m_accountButtons.isEmpty()) {
         m_skin3DWidget->hide();
-        if (m_skinActionWidget) m_skinActionWidget->hide();
         if (m_modelActionWidget) m_modelActionWidget->hide();
-        if (m_bgWidget) m_bgWidget->hide();
         if (m_emptyStateWidget) m_emptyStateWidget->show();
         m_accountHighlight->setVisible(false);
     } else {
         m_skin3DWidget->show();
-        if (m_skinActionWidget) m_skinActionWidget->show();
         if (m_modelActionWidget) m_modelActionWidget->show();
-        if (m_bgWidget) m_bgWidget->show();
         if (m_emptyStateWidget) m_emptyStateWidget->hide();
 
         // 入场动画：与 InstanceSelectPage / SubNavPanel 一致的交错淡入
@@ -1361,10 +1315,8 @@ void AccountManagePage::onLogoutClicked()
         m_currentUuid.clear();
         m_currentSkinUrl.clear();
         m_isDefaultAccount = false;
-        // 重置模型动作到待机
-        m_modelPose = SkinPose::Idle;
-        if (m_skin3DWidget)
-            m_skin3DWidget->setPose(SkinPose::Idle);
+        // 重置模型动作到待机（含按钮勾选态）
+        setModelPose(SkinPose::Idle);
         updateCurrentAccountInfo(m_currentAccountName, m_currentAccountType, m_isDefaultAccount);
 
         AppMessageBox::information(this, tr("删除成功"), tr("已成功删除当前账户"));
@@ -1445,97 +1397,73 @@ void AccountManagePage::onExecuteActionClicked()
     }
 }
 
-void AccountManagePage::onExecuteSkinActionClicked()
+void AccountManagePage::onModelPoseButtonClicked()
 {
-    if (!m_skinActionCombo || !m_skin3DWidget)
+    QPushButton *btn = qobject_cast<QPushButton *>(sender());
+    if (!btn)
     {
         return;
     }
 
-    const QString action = m_skinActionCombo->currentData().toString();
+    const QString action = btn->property("poseData").toString();
 
-    if (action == "rotate_left")
+    if (action == "pose_idle")
+        setModelPose(SkinPose::Idle, tr("已切换为待机"));
+    else if (action == "pose_wave")
+        setModelPose(SkinPose::Wave, tr("已切换为挥手"));
+    else if (action == "pose_walk")
+        setModelPose(SkinPose::Walk, tr("已切换为走路"));
+    else if (action == "pose_run")
+        setModelPose(SkinPose::Run, tr("已切换为跑步"));
+    else if (action == "pose_ride")
+        setModelPose(SkinPose::Ride, tr("已切换为骑马坐姿"));
+}
+
+void AccountManagePage::setModelPose(SkinPose pose, const QString &tip)
+{
+    m_modelPose = pose;
+    if (m_skin3DWidget)
+        m_skin3DWidget->setPose(pose);
+
+    // 同步按钮勾选态与图标颜色
+    QString poseData;
+    switch (pose)
     {
-        // 参考 skinview3d 的旋转步进（15° ≈ 0.26 rad）
-        m_skin3DWidget->rotateView(-0.26f, 0.0f);
+    case SkinPose::Idle: poseData = "pose_idle"; break;
+    case SkinPose::Wave: poseData = "pose_wave"; break;
+    case SkinPose::Walk: poseData = "pose_walk"; break;
+    case SkinPose::Run:  poseData = "pose_run";  break;
+    case SkinPose::Ride: poseData = "pose_ride"; break;
     }
-    else if (action == "rotate_right")
+
+    for (QPushButton *btn : m_modelPoseButtons)
     {
-        m_skin3DWidget->rotateView(0.26f, 0.0f);
+        const bool checked = (btn->property("poseData").toString() == poseData);
+        if (btn->isChecked() != checked)
+            btn->setChecked(checked);
+        btn->setIcon(loadColoredIcon(btn->property("iconPath").toString(), modelPoseIconColor(checked)));
     }
-    else if (action == "zoom_in")
+
+    if (!tip.isEmpty())
+        NotificationManager::showSuccess(this, tip);
+}
+
+void AccountManagePage::refreshModelPoseIcons()
+{
+    for (QPushButton *btn : m_modelPoseButtons)
     {
-        m_skin3DWidget->zoomView(1.15f);
-    }
-    else if (action == "zoom_out")
-    {
-        m_skin3DWidget->zoomView(0.87f);
-    }
-    else if (action == "reset_view")
-    {
-        m_skin3DWidget->resetView();
-    }
-    else if (action == "auto_rotate_on")
-    {
-        m_skin3DWidget->setAutoRotate(true);
-        NotificationManager::showSuccess(this, tr("已开启自动旋转"));
-    }
-    else if (action == "auto_rotate_off")
-    {
-        m_skin3DWidget->setAutoRotate(false);
-        NotificationManager::showSuccess(this, tr("已关闭自动旋转"));
-    }
-    else if (action == "toggle_model")
-    {
-        // Steve(宽型) <-> Alex(纤细) 交替切换
-        m_skinModelType = (m_skinModelType == SkinModelType::Slim)
-                              ? SkinModelType::Default
-                              : SkinModelType::Slim;
-        m_skin3DWidget->setModelType(m_skinModelType);
-        NotificationManager::showSuccess(this,
-            m_skinModelType == SkinModelType::Slim ? tr("已切换为纤细模型 (Alex)") : tr("已切换为宽型模型 (Steve)"));
+        const QString iconPath = btn->property("iconPath").toString();
+        if (!iconPath.isEmpty())
+            btn->setIcon(loadColoredIcon(iconPath, modelPoseIconColor(btn->isChecked())));
     }
 }
 
-void AccountManagePage::onExecuteModelActionClicked()
+QColor AccountManagePage::modelPoseIconColor(bool checked) const
 {
-    if (!m_modelActionCombo || !m_skin3DWidget)
-    {
-        return;
-    }
-
-    const QString action = m_modelActionCombo->currentData().toString();
-
-    if (action == "pose_idle")
-    {
-        m_modelPose = SkinPose::Idle;
-        m_skin3DWidget->setPose(SkinPose::Idle);
-        NotificationManager::showSuccess(this, tr("已切换为待机"));
-    }
-    else if (action == "pose_wave")
-    {
-        m_modelPose = SkinPose::Wave;
-        m_skin3DWidget->setPose(SkinPose::Wave);
-        NotificationManager::showSuccess(this, tr("已切换为挥手"));
-    }
-    else if (action == "pose_walk")
-    {
-        m_modelPose = SkinPose::Walk;
-        m_skin3DWidget->setPose(SkinPose::Walk);
-        NotificationManager::showSuccess(this, tr("已切换为走路"));
-    }
-    else if (action == "pose_run")
-    {
-        m_modelPose = SkinPose::Run;
-        m_skin3DWidget->setPose(SkinPose::Run);
-        NotificationManager::showSuccess(this, tr("已切换为跑步"));
-    }
-    else if (action == "pose_ride")
-    {
-        m_modelPose = SkinPose::Ride;
-        m_skin3DWidget->setPose(SkinPose::Ride);
-        NotificationManager::showSuccess(this, tr("已切换为骑马坐姿"));
-    }
+    // 选中态用主题色，未选中沿用左侧账户列表的中性灰（深浅主题均可辨识）
+    if (checked && ThemeManager::instance())
+        return QColor(ThemeManager::instance()->currentThemeColor());
+    return m_iconNormalColor;
 }
 
 void AccountManagePage::onLoginMethodChanged(int index)
@@ -1556,54 +1484,18 @@ void AccountManagePage::onBackToAccountList()
 
 void AccountManagePage::onThemeColorChanged(const QString &color)
 {
+    Q_UNUSED(color);
     // 更新默认账户标签的颜色
     if (m_defaultAccountLabel) {
         m_defaultAccountLabel->setStyleSheet(QString("background-color: %1; color: white; padding: 2px 8px; border-radius: 10px; font-size: 12px;").arg(color));
     }
-    // 3D 皮肤预览背景色随主题切换（仅在"跟随主题"背景下生效）
-    if (m_skin3DWidget && ThemeManager::instance() && m_skinBackgroundKey == "theme")
+    // 3D 皮肤预览背景色随主题切换实时刷新
+    if (m_skin3DWidget && ThemeManager::instance())
     {
         applyThemePresetBackground();
     }
-}
-
-// =============================================================================
-// 皮肤模型背景选择（模型背景下拉框）
-// =============================================================================
-
-namespace {
-
-struct SkinBgPreset
-{
-    const char *key;
-    const char *label;      // 需经 tr() 翻译
-    bool gradient;
-    const char *color1;     // 纯色 / 渐变顶部色（#RRGGBB）
-    const char *color2;     // 渐变底部色（#RRGGBB），纯色时为空
-};
-
-const SkinBgPreset kSkinBackgroundPresets[] = {
-    {"theme",       "跟随主题",   false, "#1e1e2e", ""},
-    {"solid_dark",  "深色",       false, "#1e1e2e", ""},
-    {"solid_light", "浅色",       false, "#d9d9e0", ""},
-    {"solid_black", "纯黑",       false, "#000000", ""},
-    {"solid_white", "纯白",       false, "#ffffff", ""},
-    {"grad_ocean",  "海洋蓝渐变", true,  "#1a2980", "#26d0ce"},
-    {"grad_forest", "森林绿渐变", true,  "#0f3443", "#34e89e"},
-    {"grad_sunset", "日落橙渐变", true,  "#ff9966", "#ff5e62"},
-    {"grad_night",  "夜幕紫渐变", true,  "#0f0c29", "#302b63"},
-};
-
-} // namespace
-
-void AccountManagePage::initBackgroundPresetCombo()
-{
-    m_bgCombo = new QComboBox();
-    m_bgCombo->setObjectName("skinActionCombo");
-    for (const SkinBgPreset &preset : kSkinBackgroundPresets)
-    {
-        m_bgCombo->addItem(tr(preset.label), QString::fromLatin1(preset.key));
-    }
+    // 模型动作按钮选中态图标跟随主题色重新着色
+    refreshModelPoseIcons();
 }
 
 void AccountManagePage::applyThemePresetBackground()
@@ -1631,183 +1523,6 @@ void AccountManagePage::applyThemePresetBackground()
     else
     {
         m_skin3DWidget->setBackgroundColor(QColor(40, 40, 40));
-    }
-}
-
-void AccountManagePage::applySkinBackgroundPreset(const QString &presetKey)
-{
-    if (!m_skin3DWidget)
-    {
-        return;
-    }
-
-    // 自定义纯色
-    if (presetKey.startsWith("custom:"))
-    {
-        const QColor color(presetKey.mid(7));
-        if (color.isValid())
-        {
-            m_customBgColor = color;
-        }
-        m_skin3DWidget->setBackgroundColor(m_customBgColor);
-        return;
-    }
-
-    // 图片背景
-    if (presetKey.startsWith("image:"))
-    {
-        const QString path = presetKey.mid(6);
-        if (QFile::exists(path))
-        {
-            QImage image(path);
-            if (!image.isNull())
-            {
-                m_bgImagePath = path;
-                m_skin3DWidget->setBackgroundImage(image);
-                return;
-            }
-        }
-        // 图片缺失或无法加载：回退到跟随主题
-        m_bgImagePath.clear();
-        applyThemePresetBackground();
-        return;
-    }
-
-    for (const SkinBgPreset &preset : kSkinBackgroundPresets)
-    {
-        if (presetKey == QString::fromLatin1(preset.key))
-        {
-            if (presetKey == "theme")
-            {
-                applyThemePresetBackground();
-            }
-            else if (preset.gradient)
-            {
-                m_skin3DWidget->setBackgroundGradient(QColor(QString::fromLatin1(preset.color1)),
-                                                      QColor(QString::fromLatin1(preset.color2)));
-            }
-            else
-            {
-                m_skin3DWidget->setBackgroundColor(QColor(QString::fromLatin1(preset.color1)));
-            }
-            return;
-        }
-    }
-}
-
-void AccountManagePage::selectBackgroundPreset(const QString &presetKey)
-{
-    if (!m_bgCombo)
-    {
-        return;
-    }
-
-    for (int i = 0; i < m_bgCombo->count(); ++i)
-    {
-        if (m_bgCombo->itemData(i).toString() == presetKey)
-        {
-            m_bgCombo->setCurrentIndex(i);
-            return;
-        }
-    }
-
-    // 自定义颜色：更新已有自定义项或追加
-    if (presetKey.startsWith("custom:"))
-    {
-        for (int i = 0; i < m_bgCombo->count(); ++i)
-        {
-            if (m_bgCombo->itemData(i).toString().startsWith("custom:"))
-            {
-                m_bgCombo->setItemData(i, presetKey);
-                m_bgCombo->setCurrentIndex(i);
-                return;
-            }
-        }
-        m_bgCombo->addItem(tr("自定义颜色"), presetKey);
-        m_bgCombo->setCurrentIndex(m_bgCombo->count() - 1);
-        return;
-    }
-
-    // 自定义图片：更新已有图片项或追加
-    if (presetKey.startsWith("image:"))
-    {
-        for (int i = 0; i < m_bgCombo->count(); ++i)
-        {
-            if (m_bgCombo->itemData(i).toString().startsWith("image:"))
-            {
-                m_bgCombo->setItemData(i, presetKey);
-                m_bgCombo->setCurrentIndex(i);
-                return;
-            }
-        }
-        m_bgCombo->addItem(tr("自定义图片"), presetKey);
-        m_bgCombo->setCurrentIndex(m_bgCombo->count() - 1);
-    }
-}
-
-void AccountManagePage::onBackgroundPresetChanged(int index)
-{
-    if (index < 0 || !m_bgCombo)
-    {
-        return;
-    }
-    const QString key = m_bgCombo->itemData(index).toString();
-    if (key.isEmpty())
-    {
-        return;
-    }
-    m_skinBackgroundKey = key;
-    applySkinBackgroundPreset(key);
-    saveSkinBackgroundPreset();
-}
-
-void AccountManagePage::onCustomBackgroundClicked()
-{
-    QColor color = AppColorDialog::getColor(m_customBgColor, this, tr("自定义背景颜色"));
-    if (!color.isValid())
-    {
-        return;
-    }
-    m_customBgColor = color;
-    const QString key = QString("custom:%1").arg(color.name());
-    m_skinBackgroundKey = key;
-    applySkinBackgroundPreset(key);
-    selectBackgroundPreset(key);
-    saveSkinBackgroundPreset();
-}
-
-void AccountManagePage::onSelectBackgroundImageClicked()
-{
-    const QString filePath = AppFileDialog::getOpenFileName(
-        this, tr("选择背景图片"),
-        m_bgImagePath,
-        tr("图片文件 (*.png *.jpg *.jpeg *.bmp *.webp);;所有文件 (*)"));
-
-    if (filePath.isEmpty())
-    {
-        return;
-    }
-
-    QImage image(filePath);
-    if (image.isNull())
-    {
-        NotificationManager::showError(this, tr("无法加载该图片文件"));
-        return;
-    }
-
-    m_bgImagePath = filePath;
-    const QString key = QString("image:%1").arg(filePath);
-    m_skinBackgroundKey = key;
-    m_skin3DWidget->setBackgroundImage(image);
-    selectBackgroundPreset(key);
-    saveSkinBackgroundPreset();
-}
-
-void AccountManagePage::saveSkinBackgroundPreset()
-{
-    if (SettingsManager::instance())
-    {
-        SettingsManager::instance()->setProperty("skinModelBackground", m_skinBackgroundKey);
     }
 }
 

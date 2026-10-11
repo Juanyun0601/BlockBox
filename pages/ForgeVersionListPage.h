@@ -11,11 +11,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QListWidget>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QTreeWidget>
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -51,7 +52,7 @@ signals:
     void forgeVersionSelected(const QString &loaderName, const QString &mcVersion, const QString &forgeVersion);
 
 private slots:
-    void onVersionItemClicked(QTreeWidgetItem *item, int column);
+    void onVersionItemClicked(QListWidgetItem *item);
     void onInstallClicked();
     void onInstallProgress(int progress, const QString &status);
     void onInstallCompleted(const QString &version);
@@ -82,13 +83,21 @@ private:
     void populateLiteLoaderVersionList(const QJsonObject &versionData);
     void populateCleanroomVersionList(const QJsonArray &versions);
     void populateOptiFabricVersionList(const QJsonArray &versions);
+    void addVersionCard(const ForgeVersionInfo &info, const QString &nameText,
+                        const QStringList &chips);
+    void selectVersionItem(QListWidgetItem *item);
+    QPixmap loaderLogoPixmap(int size) const;
     QString getLoaderDisplayName() const;
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
     QVBoxLayout *m_mainLayout;
     QLabel *m_titleLabel;
     BlurLoadingOverlay *m_loadingOverlay;
     QLabel *m_statusLabel;
-    QTreeWidget *m_versionList;
+    QListWidget *m_versionList;
 
     QNetworkAccessManager *m_networkManager;
     QNetworkReply *m_currentReply;

@@ -8,6 +8,7 @@
 #define DOWNLOADTASKCARD_H
 
 #include <QEnterEvent>
+#include <QColor>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -15,6 +16,8 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPushButton>
+#include <QResizeEvent>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -52,21 +55,32 @@ private slots:
 private:
     void initUI();
     void updateDisplay();
-    void paintProgressBar(QPainter &painter, const QRect &rect);
+    void applyChrome();
+    void refreshElidedText();
+    void updateAnimationState();
+    void paintStatusBadge(QPainter &painter);
+    void paintProgressBar(QPainter &painter);
     void paintEvent(QPaintEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void changeEvent(QEvent *event) override;
     void enterEvent(QEnterEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
 
     QString m_taskId;
+    QString m_instanceName;
     bool m_expanded;
     bool m_hovered;
     DownloadTask m_currentTask;
     double m_smoothProgress;
     int m_smoothEta;
+    QTimer *m_spinTimer;
+    int m_pauseIconShape;      // -1 未绘制，0 暂停条，1 继续三角
+    QColor m_pauseIconColor;
 
     QVBoxLayout *m_mainLayout;
     QHBoxLayout *m_headerLayout;
+    QHBoxLayout *m_metaLayout;
     QLabel *m_statusTextLabel;
     QLabel *m_progressLabel;
     QLabel *m_speedLabel;

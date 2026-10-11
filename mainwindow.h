@@ -144,6 +144,7 @@ private slots:
     void onQuickLaunchSaveClicked(const QString &saveName);
     void onQuickLaunchServerClicked(const QString &address, quint16 port);
     void onSaveSettingsOpened();
+    void onSaveMapOpened();
     void onShaderSettingsOpened();
     void onProjectionEditOpened();
     void onLaunchTaskCardClicked();

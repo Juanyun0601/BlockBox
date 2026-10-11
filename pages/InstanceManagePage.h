@@ -18,6 +18,7 @@ class ModpackExportPage;
 class ServerManagePage;
 class ProjectionManagePage;
 class SaveSettingsPage;
+class WorldMapPage;
 class ShaderPackSettingsPage;
 class ProjectionEditPage;
 class BlurLoadingOverlay;
@@ -58,6 +59,8 @@ signals:
     void quickLaunchServerRequested(const QString &address, quint16 port);
     /** 已进入存档设置子页面（由存档列表的「存档设置」按钮触发） */
     void saveSettingsOpened();
+    /** 已进入存档地表地图子页面（由存档列表的「地图」按钮触发） */
+    void saveMapOpened();
     /** 已进入光影设置子页面（由光影包列表的「光影设置」按钮触发） */
     void shaderSettingsOpened();
     /** 已进入投影编辑子页面（由投影列表的编辑按钮/双击触发） */
@@ -91,6 +94,7 @@ private:
     InstanceFilePage *m_shaderPacksPage;
     InstanceLogPage *m_logPage;
     SaveSettingsPage *m_saveSettingsPage;
+    WorldMapPage *m_worldMapPage;
     ShaderPackSettingsPage *m_shaderSettingsPage;
     ProjectionEditPage *m_projectionEditPage;
     QString m_currentInstancePath;

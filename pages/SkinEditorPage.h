@@ -25,7 +25,6 @@ class QGridLayout;
 class QHBoxLayout;
 class QLabel;
 class QPushButton;
-class QRadioButton;
 class QStackedWidget;
 class QVBoxLayout;
 
@@ -76,6 +75,16 @@ public:
    * 解决 QGraphicsEffect 移除后 QOpenGLWidget 不自动重绘的问题。
    */
   void refreshSkin3DPreview();
+
+  /**
+   * @brief 根据自定义背景启用状态刷新皮肤编辑页背景表现
+   *
+   * 使用自定义背景（纯色/图片/必应壁纸等）时：
+   *   - 左右区域（工具栏/右侧面板）改为接近不透明的玻璃底，仅透出一点点背景；
+   *   - 中央画布底色全透明，让自定义背景完整透出；
+   * 未启用自定义背景时恢复主题/默认表现。
+   */
+  void applyCustomBackgroundMode();
 
 signals:
   /**
@@ -165,6 +174,7 @@ private:
   QHBoxLayout* m_mainLayout = nullptr;
   QWidget* m_toolBar = nullptr;
   QVBoxLayout* m_toolBarLayout = nullptr;
+  QWidget* m_rightPanel = nullptr;  ///< 右侧预览面板容器（自定义背景时叠加玻璃底色）
   QVBoxLayout* m_panelLayout = nullptr;  ///< 右侧面板内容布局（供 initPalette 使用）
 
   // 绘制工具按钮
@@ -204,18 +214,15 @@ private:
   SkinTextureCanvas* m_miniTexture = nullptr; ///< 3D 模式下的只读 2D 纹理小视图
   QWidget* m_preview3DBlock = nullptr;      ///< 右侧 3D 预览块（2D 模式显示）
   QWidget* m_miniTextureBlock = nullptr;    ///< 右侧迷你纹理块（3D 模式显示）
-  QRadioButton* m_mode2DRadio = nullptr;
-  QRadioButton* m_mode3DRadio = nullptr;
+  QComboBox* m_modeCombo = nullptr;              ///< 编辑方式下拉（0=2D 像素 1=3D 立体）
   QComboBox* m_brushSizeCombo = nullptr;
   QCheckBox* m_paintOuterCheck = nullptr;  ///< "绘制外层 (Overlay)"勾选（3D 模式图层切换）
   QComboBox* m_visiblePartCombo = nullptr; ///< "选取部分"下拉（-1 全部 / 0~5 对应部位，3D 模式生效）
   bool m_editMode3D = false;                ///< 当前是否 3D 编辑模式
 
   // 右侧面板控件
-  QRadioButton* m_classicRadio = nullptr;
-  QRadioButton* m_slimRadio = nullptr;
-  QRadioButton* m_format64Radio = nullptr;
-  QRadioButton* m_format32Radio = nullptr;
+  QComboBox* m_modelCombo = nullptr;    ///< 模型下拉（0=Classic 1=Slim）
+  QComboBox* m_formatCombo = nullptr;   ///< 格式下拉（0=64x64 1=64x32）
 
   // 截取部分控件
   QComboBox* m_cropPartCombo = nullptr;   ///< 部件（头部/身体/右臂/左臂/右腿/左腿）

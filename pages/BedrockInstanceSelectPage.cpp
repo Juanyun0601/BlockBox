@@ -517,8 +517,10 @@ void BedrockInstanceSelectPage::addListCard(const BedrockInstance &inst, QListWi
 /* ── 瀑布流卡片（与 Java 版 contentCard 样式一致） ── */
 QWidget *BedrockInstanceSelectPage::buildMasonryCard(const BedrockInstance &inst, QWidget *parent)
 {
-    const QColor c1 = kBedrockAccent;
-    const QColor c2 = kBedrockAccent.darker(130);
+    QColor c1 = kBedrockAccent;
+    QColor c2 = kBedrockAccent.darker(130);
+    // 浅色模式偏亮 / 深色模式偏暗（banner 与字母徽标同取这对色）
+    MasonryContentCard::shapePairForTheme(c1, c2);
 
     const int bannerH = 96;
     const int kCardW = 260;
@@ -538,13 +540,13 @@ QWidget *BedrockInstanceSelectPage::buildMasonryCard(const BedrockInstance &inst
     banner->setPixmap(MasonryContentCard::makeBannerPixmap(c1, c2, kCardW - 2, bannerH));
     cardLayout->addWidget(banner);
 
-    // 半压 logo：基岩版石块图标
+    // 徽标：实例卡没有封面 → 首字母徽标在封面区正中放大（四周留空）
     QLabel *logo = new QLabel(banner);
     logo->setObjectName("contentCardLogo");
-    logo->setFixedSize(52, 52);
     logo->setAlignment(Qt::AlignCenter);
-    logo->setPixmap(MasonryContentCard::makeLogoPixmap(c1, c2, QStringLiteral("B")));
-    logo->move(kCardW - 2 - 52 - 12, bannerH - (52 - 10));
+    const int badgeSize = MasonryContentCard::logoSizeFor(true, bannerH);
+    logo->setPixmap(MasonryContentCard::makeLogoPixmap(c1, c2, QStringLiteral("B"), badgeSize));
+    MasonryContentCard::placeLogo(logo, true, kCardW - 2, bannerH);
     auto *logoShadow = new QGraphicsDropShadowEffect(logo);
     logoShadow->setBlurRadius(4);
     logoShadow->setOffset(0, 1);

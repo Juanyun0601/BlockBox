@@ -89,8 +89,12 @@ components/CustomCheckBox.cpp \
      components/ResourceReferenceDialog.cpp \
      components/FavoriteFolderDialog.cpp \
      components/ContentViewSwitch.cpp \
+     components/SourceSwitchBar.cpp \
      components/MasonryContentCard.cpp \
      components/OutlinedLabel.cpp \
+     components/MarkdownOutlinedLabel.cpp \
+     components/TextOutlineLayer.cpp \
+     components/OutlinedTextEdit.cpp \
      components/LocalCategoryDialog.cpp \
      components/VoxelViewWidget.cpp \
 components/ProjectionBlockEditorDialog.cpp \
@@ -128,6 +132,7 @@ components/ProjectionBlockEditorDialog.cpp \
          pages/InstanceFilePage.cpp \
      pages/InstanceResourcesPage.cpp \
      pages/SaveSettingsPage.cpp \
+     pages/WorldMapPage.cpp \
      pages/InstanceHomePage.cpp \
      pages/InstanceJavaPage.cpp \
      pages/InstanceJavaDownloadPage.cpp \
@@ -250,6 +255,9 @@ components/ProjectionBlockEditorDialog.cpp \
     utils/CommandAssistant/LevelDatReader.cpp \
     utils/CommandAssistant/LitematicReader.cpp \
     utils/Saves/LevelDatEditor.cpp \
+    utils/WorldMap/WorldMapRenderer.cpp \
+    utils/WorldMap/StructureFinder.cpp \
+    utils/WorldMap/StructureIcons.cpp \
     utils/Schematic/NbtCodec.cpp \
     utils/Schematic/LitematicEditor.cpp \
     utils/Schematic/SchematicDocument.cpp \
@@ -328,8 +336,12 @@ components/CustomCheckBox.h \
        components/ResourceReferenceDialog.h \
         components/FavoriteFolderDialog.h \
          components/ContentViewSwitch.h \
+         components/SourceSwitchBar.h \
          components/MasonryContentCard.h \
          components/OutlinedLabel.h \
+         components/MarkdownOutlinedLabel.h \
+         components/TextOutlineLayer.h \
+         components/OutlinedTextEdit.h \
         components/LocalCategoryDialog.h \
         components/VoxelViewWidget.h \
 components/ProjectionBlockEditorDialog.h \
@@ -433,6 +445,7 @@ components/ProjectionBlockEditorDialog.h \
          pages/InstanceFilePage.h \
      pages/InstanceResourcesPage.h \
      pages/SaveSettingsPage.h \
+     pages/WorldMapPage.h \
      pages/InstanceHomePage.h \
      pages/InstanceJavaPage.h \
      pages/InstanceJavaDownloadPage.h \
@@ -451,6 +464,7 @@ pages/ProjectionManagePage.h \
       utils/WebpLoader.h \
       utils/ThumbnailProvider.h \
       utils/mod/CurseForgeAPI.h \
+    utils/CfApiKey.h \
     utils/mod/ModrinthAPI.h \
     utils/mod/MCModAPI.h \
     utils/mod/ModScanner.h \
@@ -483,6 +497,9 @@ pages/ProjectionManagePage.h \
     utils/Schematic/InstanceTextureLoader.h \
     utils/Schematic/BlockShapeLoader.h \
     utils/Saves/LevelDatEditor.h \
+    utils/WorldMap/WorldMapRenderer.h \
+    utils/WorldMap/StructureFinder.h \
+    utils/WorldMap/StructureIcons.h \
     utils/CommandAssistant/CommandTranslator.h \
     utils/CommandAssistant/CommandCompleter.h \
     utils/CommandAssistant/GameDetector.h \
@@ -620,4 +637,15 @@ android: {
 }
 
 
-
+# ── Cubiomes：按种子计算结构位置（MIT，https://github.com/Cubitect/cubiomes） ──
+INCLUDEPATH += third_party/cubiomes
+QMAKE_CFLAGS += -fwrapv -O2
+SOURCES += \
+    third_party/cubiomes/noise.c \
+    third_party/cubiomes/biomes.c \
+    third_party/cubiomes/layers.c \
+    third_party/cubiomes/biomenoise.c \
+    third_party/cubiomes/generator.c \
+    third_party/cubiomes/finders.c \
+    third_party/cubiomes/util.c \
+    third_party/cubiomes/quadbase.c

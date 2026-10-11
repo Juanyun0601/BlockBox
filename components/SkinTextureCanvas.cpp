@@ -31,6 +31,7 @@ SkinTextureCanvas::SkinTextureCanvas(QWidget* parent)
   , m_brushSize(1)
   , m_fgColor(Qt::black)
   , m_bgColor(Qt::white)
+  , m_baseColor(60, 60, 60)
   , m_strokeColor(Qt::black)
   , m_zoom(DEFAULT_ZOOM)
   , m_showGrid(true)
@@ -47,6 +48,16 @@ SkinTextureCanvas::SkinTextureCanvas(QWidget* parent)
 }
 
 SkinTextureCanvas::~SkinTextureCanvas() = default;
+
+void SkinTextureCanvas::setBaseColor(const QColor& color)
+{
+  if (m_baseColor == color)
+    return;
+  m_baseColor = color;
+  // 底色透明时取消 WA_OpaquePaintEvent，让透出生效
+  setAttribute(Qt::WA_OpaquePaintEvent, m_baseColor.alpha() >= 255);
+  update();
+}
 
 void SkinTextureCanvas::setDocument(SkinEditorDocument* doc)
 {
@@ -130,6 +141,11 @@ void SkinTextureCanvas::setBackgroundColor(const QColor& color)
 QColor SkinTextureCanvas::backgroundColor() const
 {
   return m_bgColor;
+}
+
+QColor SkinTextureCanvas::baseColor() const
+{
+  return m_baseColor;
 }
 
 void SkinTextureCanvas::setShowGrid(bool show)
@@ -229,8 +245,8 @@ void SkinTextureCanvas::paintEvent(QPaintEvent* /*event*/)
   painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
   painter.setRenderHint(QPainter::TextAntialiasing, true);
 
-  // 1. 基础背景（画布外区域）
-  painter.fillRect(rect(), QColor(60, 60, 60));
+  // 1. 基础背景（画布外区域；自定义背景时透明，让壁纸完整透出）
+  painter.fillRect(rect(), m_baseColor);
 
   if (m_document == nullptr)
   {

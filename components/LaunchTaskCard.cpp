@@ -10,11 +10,30 @@
 
 #include "utils/ThemeManager.h"
 
+namespace {
+// 卡片几何常量：与 initUI 的布局边距、paintStatusBadge / paintProgressBar 的手绘坐标保持一致
+constexpr int kCardH = 48;
+constexpr int kPadTop = 5;
+constexpr int kPadBottom = 10;
+constexpr int kPadLeft = 44;    // 状态徽章 10 + 24 + 间距 10
+constexpr int kPadRight = 10;
+constexpr int kBadgeLeft = 10;
+constexpr int kBadgeSize = 24;
+constexpr int kProgressW = 56;
+
+void applyWidgetStyle(QWidget *widget, const QString &style)
+{
+    if (widget && widget->styleSheet() != style)
+        widget->setStyleSheet(style);
+}
+} // namespace
+
 LaunchTaskCard::LaunchTaskCard(QWidget *parent)
     : QWidget(parent)
     , m_status(Idle)
     , m_progress(0)
     , m_hovered(false)
+    , m_spinTimer(nullptr)
 {
     initUI();
 }
@@ -25,49 +44,66 @@ LaunchTaskCard::~LaunchTaskCard()
 
 void LaunchTaskCard::initUI()
 {
-    m_mainLayout = new QVBoxLayout(this);
-    m_mainLayout->setContentsMargins(8, 4, 8, 8);
-    m_mainLayout->setSpacing(4);
-
     setObjectName("launchTaskCard");
     setCursor(QCursor(Qt::PointingHandCursor));
-    setMinimumHeight(36);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     setAttribute(Qt::WA_Hover);
     setContextMenuPolicy(Qt::CustomContextMenu);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setFixedHeight(kCardH);
     connect(this, &QWidget::customContextMenuRequested, this, &LaunchTaskCard::onContextMenu);
 
+    m_mainLayout = new QVBoxLayout(this);
+    m_mainLayout->setContentsMargins(kPadLeft, kPadTop, kPadRight, kPadBottom);
+    m_mainLayout->setSpacing(1);
+
+    // 第一行：状态 + 进度
     m_headerLayout = new QHBoxLayout();
-    m_headerLayout->setContentsMargins(22, 0, 0, 0);
-    m_headerLayout->setSpacing(6);
+    m_headerLayout->setContentsMargins(0, 0, 0, 0);
+    m_headerLayout->setSpacing(8);
 
     m_statusTextLabel = new QLabel(tr("准备启动"));
     m_statusTextLabel->setObjectName("statusTextLabel");
     QFont statusFont = m_statusTextLabel->font();
-    statusFont.setPointSize(9);
-    statusFont.setBold(true);
+    statusFont.setPixelSize(12);
+    statusFont.setWeight(QFont::DemiBold);
     m_statusTextLabel->setFont(statusFont);
-
-    m_messageLabel = new QLabel(tr("准备启动游戏..."));
-    m_messageLabel->setObjectName("messageLabel");
-    QFont msgFont = m_messageLabel->font();
-    msgFont.setPointSize(8);
-    m_messageLabel->setFont(msgFont);
+    m_headerLayout->addWidget(m_statusTextLabel, 1);
 
     m_progressLabel = new QLabel("0%");
     m_progressLabel->setObjectName("progressLabel");
-    m_progressLabel->setFixedWidth(50);
+    m_progressLabel->setFixedWidth(kProgressW);
     m_progressLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     QFont progressFont = m_progressLabel->font();
-    progressFont.setPointSize(9);
-    progressFont.setBold(true);
+    progressFont.setPixelSize(12);
+    progressFont.setWeight(QFont::DemiBold);
     m_progressLabel->setFont(progressFont);
-
-    m_headerLayout->addWidget(m_statusTextLabel, 1);
-    m_headerLayout->addWidget(m_messageLabel);
     m_headerLayout->addWidget(m_progressLabel);
 
     m_mainLayout->addLayout(m_headerLayout);
+
+    // 第二行：当前消息（超长省略号截断）
+    m_metaLayout = new QHBoxLayout();
+    m_metaLayout->setContentsMargins(0, 0, 0, 0);
+    m_metaLayout->setSpacing(0);
+
+    m_messageLabel = new QLabel(tr("准备启动游戏..."));
+    m_messageLabel->setObjectName("messageLabel");
+    m_messageLabel->setMinimumWidth(0);
+    m_messageLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    QFont msgFont = m_messageLabel->font();
+    msgFont.setPixelSize(11);
+    m_messageLabel->setFont(msgFont);
+    m_metaLayout->addWidget(m_messageLabel);
+
+    m_mainLayout->addLayout(m_metaLayout);
+
+    // 启动中的状态徽章需要持续旋转，定时重绘
+    m_spinTimer = new QTimer(this);
+    m_spinTimer->setInterval(60);
+    connect(m_spinTimer, &QTimer::timeout, this, qOverload<>(&QWidget::update));
+
+    applyChrome();
+    updateAnimationState();
 }
 
 void LaunchTaskCard::setStatus(LaunchStatus status)
@@ -80,6 +116,7 @@ void LaunchTaskCard::setStatus(LaunchStatus status)
     case Failed:    m_statusTextLabel->setText(tr("启动失败")); break;
     case Stopped:   m_statusTextLabel->setText(tr("游戏停止")); break;
     }
+    updateAnimationState();
     update();
 }
 
@@ -93,7 +130,7 @@ void LaunchTaskCard::setProgress(int progress)
 void LaunchTaskCard::setMessage(const QString &message)
 {
     m_message = message;
-    m_messageLabel->setText(m_message);
+    refreshElidedText();
 }
 
 void LaunchTaskCard::addDetail(const QString &detail)
@@ -111,116 +148,172 @@ QStringList LaunchTaskCard::details() const
     return m_details;
 }
 
+void LaunchTaskCard::applyChrome()
+{
+    ThemeManager *tm = ThemeManager::instance();
+    const QColor text(tm->currentTextColor());
+
+    const QString primary = text.name(QColor::HexArgb);
+    QColor secondary = text;
+    secondary.setAlpha(160);
+
+    applyWidgetStyle(m_statusTextLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(primary));
+    applyWidgetStyle(m_progressLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(primary));
+    applyWidgetStyle(m_messageLabel,
+                     QStringLiteral("background: transparent; color: %1;").arg(secondary.name(QColor::HexArgb)));
+}
+
+void LaunchTaskCard::refreshElidedText()
+{
+    if (m_message.isEmpty())
+    {
+        m_messageLabel->clear();
+        return;
+    }
+    const int available = width() - kPadLeft - kPadRight;
+    m_messageLabel->setText(m_messageLabel->fontMetrics().elidedText(
+        m_message, Qt::ElideRight, qMax(40, available)));
+}
+
+void LaunchTaskCard::updateAnimationState()
+{
+    // 窗口隐藏（卡片被收起）时不空转定时器
+    const bool spinning = m_status == Launching && isVisible();
+    if (spinning && !m_spinTimer->isActive())
+        m_spinTimer->start();
+    else if (!spinning && m_spinTimer->isActive())
+        m_spinTimer->stop();
+}
+
+void LaunchTaskCard::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    refreshElidedText();
+}
+
+void LaunchTaskCard::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::StyleChange || event->type() == QEvent::ApplicationPaletteChange)
+    {
+        applyChrome();
+        update();
+    }
+    QWidget::changeEvent(event);
+}
+
+void LaunchTaskCard::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    updateAnimationState();
+}
+
+void LaunchTaskCard::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    updateAnimationState();
+}
+
 void LaunchTaskCard::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    QColor themeColor(ThemeManager::instance()->currentThemeColor());
-    QString textColorStr = ThemeManager::instance()->currentTextColor();
-    QColor textColor(textColorStr);
+    ThemeManager *tm = ThemeManager::instance();
+    const QColor themeColor(tm->currentThemeColor());
+    const bool isDark = tm->currentTheme() != ThemeManager::LightTheme;
 
-    QColor cardBg = themeColor.lighter(190);
-    if (!cardBg.isValid())
-        cardBg = QColor("#f0f4f0");
-
-    QColor cardBgHover = themeColor.lighter(175);
-    if (!cardBgHover.isValid())
-        cardBgHover = QColor("#e8eee8");
-
-    QColor borderColor = themeColor;
-    borderColor.setAlpha(m_hovered ? 80 : 40);
+    // 玻璃卡面：与下载任务卡片同一套处理
+    const QColor fill = isDark ? QColor(255, 255, 255, m_hovered ? 34 : 18)
+                               : QColor(255, 255, 255, m_hovered ? 252 : 214);
+    QColor borderColor;
+    if (m_hovered)
+    {
+        borderColor = themeColor;
+        borderColor.setAlpha(isDark ? 130 : 100);
+    }
+    else
+    {
+        borderColor = isDark ? QColor(255, 255, 255, 26) : QColor(0, 0, 0, 18);
+    }
 
     QPainterPath cardPath;
-    cardPath.addRoundedRect(rect().adjusted(0, 0, -1, -1), 6, 6);
-    painter.fillPath(cardPath, m_hovered ? cardBgHover : cardBg);
+    cardPath.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12);
+    painter.fillPath(cardPath, fill);
     painter.setPen(QPen(borderColor, 1));
+    painter.setBrush(Qt::NoBrush);
     painter.drawPath(cardPath);
 
-    paintStatusIcon(painter, rect());
-    paintProgressBar(painter, rect());
-
-    QString labelColor = textColor.name(QColor::HexArgb);
-    m_statusTextLabel->setStyleSheet(QString("background: transparent; color: %1;").arg(textColor.name()));
-    m_messageLabel->setStyleSheet(QString("background: transparent; color: %1;").arg(labelColor));
-    m_progressLabel->setStyleSheet(QString("background: transparent; color: %1;").arg(textColor.name()));
+    paintStatusBadge(painter);
+    paintProgressBar(painter);
 }
 
-void LaunchTaskCard::paintStatusIcon(QPainter &painter, const QRect &rect)
+void LaunchTaskCard::paintStatusBadge(QPainter &painter)
 {
-    QColor themeColor(ThemeManager::instance()->currentThemeColor());
-    QColor statusColor;
+    ThemeManager *tm = ThemeManager::instance();
+    const QColor themeColor(tm->currentThemeColor());
+    const bool isDark = tm->currentTheme() != ThemeManager::LightTheme;
 
+    QColor statusColor;
     switch (m_status)
     {
-    case Idle:
-        statusColor = QColor("#9E9E9E");
-        break;
-    case Launching:
-        statusColor = QColor(ThemeManager::instance()->currentInfoAccentColor());
-        break;
-    case Running:
-        statusColor = themeColor;
-        break;
-    case Failed:
-        statusColor = QColor("#F44336");
-        break;
-    case Stopped:
-        statusColor = QColor("#FF9800");
-        break;
-    default:
-        statusColor = QColor("#9E9E9E");
-        break;
+    case Idle:      statusColor = QColor("#9E9E9E"); break;
+    case Launching: statusColor = QColor(tm->currentInfoAccentColor()); break;
+    case Running:   statusColor = themeColor; break;
+    case Failed:    statusColor = QColor("#F44336"); break;
+    case Stopped:   statusColor = QColor("#FF9800"); break;
+    default:        statusColor = QColor("#9E9E9E"); break;
     }
 
-    int iconSize = 14;
-    int iconY = (height() < 36) ? 2 : 6;
-    QRect iconRect(10, iconY, iconSize, iconSize);
+    const int badgeY = kPadTop + qMax(0, (height() - kPadTop - kPadBottom - kBadgeSize) / 2);
+    const QRect badgeRect(kBadgeLeft, badgeY, kBadgeSize, kBadgeSize);
 
     painter.setPen(Qt::NoPen);
-    painter.setRenderHint(QPainter::Antialiasing);
+    QColor badgeFill = statusColor;
+    badgeFill.setAlpha(isDark ? 40 : 24);
+    painter.setBrush(badgeFill);
+    painter.drawRoundedRect(badgeRect, 8, 8);
+
+    const int iconSize = 14;
+    const QRect iconRect(badgeRect.center().x() - iconSize / 2,
+                         badgeRect.center().y() - iconSize / 2, iconSize, iconSize);
 
     switch (m_status)
     {
     case Idle:
-    {
         painter.setBrush(statusColor);
-        painter.drawEllipse(iconRect.adjusted(2, 2, -2, -2));
+        painter.drawEllipse(iconRect.adjusted(4, 4, -4, -4));
         break;
-    }
     case Launching:
     {
-        QPen arcPen(statusColor, 2);
+        QPen arcPen(statusColor, 2.4);
         arcPen.setCapStyle(Qt::RoundCap);
         painter.setPen(arcPen);
         painter.setBrush(Qt::NoBrush);
-        QRect arcRect = iconRect.adjusted(1, 1, -1, -1);
-        int startAngle = (QDateTime::currentMSecsSinceEpoch() / 8) % 360 * 16;
-        painter.drawArc(arcRect, startAngle, 240 * 16);
+        const int startAngle = static_cast<int>((QDateTime::currentMSecsSinceEpoch() / 8) % 360) * 16;
+        painter.drawArc(iconRect.adjusted(2, 2, -2, -2), startAngle, 250 * 16);
         break;
     }
     case Running:
     {
         painter.setBrush(Qt::NoBrush);
-        QPen checkPen(statusColor, 2);
+        QPen checkPen(statusColor, 2.2);
         checkPen.setCapStyle(Qt::RoundCap);
         checkPen.setJoinStyle(Qt::RoundJoin);
         painter.setPen(checkPen);
-        QPointF p1(iconRect.x() + iconSize * 0.2, iconRect.y() + iconSize * 0.55);
-        QPointF p2(iconRect.x() + iconSize * 0.45, iconRect.y() + iconSize * 0.78);
-        QPointF p3(iconRect.x() + iconSize * 0.82, iconRect.y() + iconSize * 0.22);
         QPainterPath checkPath;
-        checkPath.moveTo(p1);
-        checkPath.lineTo(p2);
-        checkPath.lineTo(p3);
+        checkPath.moveTo(iconRect.x() + 3, iconRect.y() + 7);
+        checkPath.lineTo(iconRect.x() + 6, iconRect.y() + 10.5);
+        checkPath.lineTo(iconRect.x() + 11.5, iconRect.y() + 3.5);
         painter.drawPath(checkPath);
         break;
     }
     case Failed:
     {
         painter.setBrush(Qt::NoBrush);
-        QPen xPen(statusColor, 2);
+        QPen xPen(statusColor, 2.2);
         xPen.setCapStyle(Qt::RoundCap);
         painter.setPen(xPen);
         QRect xRect = iconRect.adjusted(3, 3, -3, -3);
@@ -229,36 +322,31 @@ void LaunchTaskCard::paintStatusIcon(QPainter &painter, const QRect &rect)
         break;
     }
     case Stopped:
-    {
         painter.setBrush(statusColor);
-        int barWidth = 3;
-        int barHeight = iconSize - 4;
-        int barY = iconRect.y() + 2;
-        painter.drawRoundedRect(QRect(iconRect.x() + 2, barY, barWidth, barHeight), 1, 1);
-        painter.drawRoundedRect(QRect(iconRect.x() + iconSize - barWidth - 2, barY, barWidth, barHeight), 1, 1);
+        painter.drawRoundedRect(QRect(iconRect.x() + 3, iconRect.y() + 2, 3, iconSize - 4), 1.5, 1.5);
+        painter.drawRoundedRect(QRect(iconRect.x() + iconSize - 6, iconRect.y() + 2, 3, iconSize - 4), 1.5, 1.5);
         break;
-    }
     default:
-    {
         painter.setBrush(statusColor);
-        painter.drawEllipse(iconRect.adjusted(2, 2, -2, -2));
+        painter.drawEllipse(iconRect.adjusted(4, 4, -4, -4));
         break;
-    }
     }
 }
 
-void LaunchTaskCard::paintProgressBar(QPainter &painter, const QRect &rect)
+void LaunchTaskCard::paintProgressBar(QPainter &painter)
 {
     if (m_status != Launching)
         return;
 
-    QColor themeColor(ThemeManager::instance()->currentThemeColor());
-    QColor progressEnd = themeColor.lighter(130);
+    ThemeManager *tm = ThemeManager::instance();
+    const QColor themeColor(tm->currentThemeColor());
+    const QColor progressEnd = themeColor.lighter(130);
+    const bool isDark = tm->currentTheme() != ThemeManager::LightTheme;
 
-    int barHeight = 3;
-    int barY = rect.bottom() - barHeight - 2;
-    int barX = 2;
-    int barWidth = rect.width() - 4;
+    const int barHeight = 3;
+    const int barY = height() - 7 - barHeight;
+    const int barX = 12;
+    const int barWidth = width() - 24;
 
     double filledWidth = barWidth * (m_progress / 100.0);
     if (filledWidth < 0) filledWidth = 0;
@@ -267,7 +355,7 @@ void LaunchTaskCard::paintProgressBar(QPainter &painter, const QRect &rect)
     QPainterPath trackPath;
     trackPath.addRoundedRect(barX, barY, barWidth, barHeight, barHeight / 2.0, barHeight / 2.0);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0, 0, 0, 20));
+    painter.setBrush(isDark ? QColor(255, 255, 255, 26) : QColor(0, 0, 0, 16));
     painter.drawPath(trackPath);
 
     if (filledWidth > 0)

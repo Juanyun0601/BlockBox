@@ -71,6 +71,18 @@ enum class DownloadSource {
     Auto
 };
 
+/** 文件选择器类型：系统文件资源管理器 / 软件自带 */
+enum class FilePickerType {
+    System = 0,
+    BuiltIn = 1
+};
+
+/** 存档地图结构标记图标风格：文字旁小图标（默认） / 结构概览缩略图 */
+enum class MapStructureIconStyle {
+    Icon = 0,     ///< 生成结构表中文字旁的 16px 小图标（EnvSprite）
+    Overview = 1  ///< 结构页面主图（Wiki pageimages 缩略图）
+};
+
 class SettingsManager : public QObject
 {
     Q_OBJECT
@@ -143,6 +155,10 @@ public:
     
     // Property methods
     void setProperty(const QString &key, const QVariant &value);
+    /** 读取通用属性，与 setProperty 同源（均落在 QSettings）。
+     *  此重载刻意遮蔽 QObject::property(const char*)，否则字符串字面量调用会
+     *  命中 Qt 动态属性而非 QSettings，永远读不到 setProperty 写入的值。 */
+    QVariant property(const char *key, const QVariant &defaultValue = QVariant()) const;
     QVariant getProperty(const QString &key, const QVariant &defaultValue = QVariant()) const;
     /** 移除指定属性（不存在时无操作） */
     void removeProperty(const QString &key);
@@ -170,6 +186,14 @@ public:
     // Download source methods
     DownloadSource getDownloadSource() const;
     void setDownloadSource(DownloadSource source);
+
+    // 文件选择器类型（系统文件资源管理器 / 软件自带）
+    FilePickerType getFilePickerType() const;
+    void setFilePickerType(FilePickerType type);
+
+    // 存档地图结构标记图标风格（文字旁小图标 / 结构概览）
+    MapStructureIconStyle getMapStructureIconStyle() const;
+    void setMapStructureIconStyle(MapStructureIconStyle style);
     
     void initDefaultAuthServers();
 
@@ -222,6 +246,19 @@ public:
      * @param packs 指令包路径与启用状态列表
      */
     void saveCommandPackList(const QList<QPair<QString, bool>> &packs);
+
+    // 开机自启动（委托平台层操作注册表/LaunchAgents/autostart 目录）
+    /**
+     * @brief 查询是否已开启开机自启动
+     * @return 当前系统层面自启动状态
+     */
+    bool isAutoStartEnabled() const;
+
+    /**
+     * @brief 开启或关闭开机自启动
+     * @param enabled 是否开启
+     */
+    void setAutoStartEnabled(bool enabled);
 
     // Translation settings methods (翻译设置)
     /**

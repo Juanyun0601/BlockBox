@@ -178,6 +178,12 @@ void SettingsPage::initAboutSettings()
     addOpenSourceRow("skinview3d", tr("皮肤 3D 渲染库，参考动画与视角。"),
         "MIT", "https://github.com/bs-community/skinview3d");
 
+    // 地图与存档
+    appendSettingRow(opensourceCard, tr("地图与存档"), QString(), QString(), true);
+
+    addOpenSourceRow("MCA Selector", tr("Anvil 区域文件解析、地表俯视着色与多线程渐进渲染思路参考（存档地图）。"),
+        "GPL-3.0", "https://github.com/Querz/mcaselector");
+
     // Mod 平台
     appendSettingRow(opensourceCard, tr("Mod 平台"), QString(), QString(), true);
 

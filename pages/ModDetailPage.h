@@ -20,6 +20,7 @@
 #include "../utils/mod/ModData.h"
 
 class QParallelAnimationGroup;
+class SourceSwitchBar;
 
 class ModDetailPage : public QWidget
 {
@@ -31,6 +32,7 @@ public:
 
     void setModInfo(const ModInfo &info);
     void setInstanceFilter(const QString &gameVersion, const QString &loaderType);
+    ModInfo currentModInfo() const { return m_modInfo; }
 
 public slots:
     void receiveDetail(const ModInfo &detail);
@@ -40,6 +42,8 @@ public slots:
 signals:
     void backToListRequested();
     void downloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile);
+    /** 用户点击顶部来源切换，请求拉取另一来源的详情（source: "modrinth"/"curseforge"） */
+    void sourceSwitchRequested(const QString &source);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -47,6 +51,8 @@ protected:
 private:
     void initUI();
     void clearContent();
+    QWidget *buildSourceSwitch();
+    void switchToSource(const QString &source);
     void buildHeader();
     void buildLeftSidebar();
     void buildRightMain();
@@ -87,6 +93,7 @@ private:
     QScrollArea *m_scrollArea;
     QWidget *m_contentWidget;
     QVBoxLayout *m_contentLayout;
+    SourceSwitchBar *m_sourceSwitchBar;
 
     // Header
     QWidget *m_headerWidget;

@@ -72,6 +72,8 @@ public:
   QColor foregroundColor() const;
   void setBackgroundColor(const QColor& color);
   QColor backgroundColor() const;
+  void setBaseColor(const QColor& color);  ///< 设置画布底面色（默认深灰；透明时透出页面/自定义背景）
+  QColor baseColor() const;
 
   // 显示控制
   void setShowGrid(bool show);
@@ -149,6 +151,7 @@ private:
   int m_brushSize;        ///< 笔刷大小（1/2/4）
   QColor m_fgColor;       ///< 前景色
   QColor m_bgColor;       ///< 背景色
+  QColor m_baseColor;     ///< 画布底色（默认 QColor(60,60,60)；透明时透出页面/自定义背景）
   QColor m_strokeColor;   ///< 当前笔画使用的颜色（左键=前景，右键=背景，橡皮=透明）
 
   // 显示

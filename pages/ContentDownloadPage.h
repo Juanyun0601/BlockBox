@@ -83,6 +83,8 @@ private:
     void initUI();
     void initAPI();
     void performSearch(bool append = false);
+    /** 全部来源模式：两源结果齐后按名称合并同名资源并刷出卡片 */
+    void flushAllSourceResults();
     bool eventFilter(QObject *watched, QEvent *event) override;
     void loadCardIcon(QLabel *iconLabel, const QString &iconUrl);
     void clearCards();
@@ -138,6 +140,8 @@ private:
     int m_currentPage;
     QString m_currentQuery;
     QList<ModInfo> m_allMods;
+    QList<ModInfo> m_bufferedMrResults;  // 全部来源：Modrinth 结果缓冲（待合并）
+    QList<ModInfo> m_bufferedCfResults;  // 全部来源：CurseForge 结果缓冲（待合并）
     QList<QWidget*> m_cardWidgets;
     bool m_hasMore;
     bool m_isLoading;

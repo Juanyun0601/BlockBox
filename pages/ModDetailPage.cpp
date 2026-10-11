@@ -3,6 +3,7 @@
 #include "utils/McimHelper.h"
 #include "utils/ThemeManager.h"
 #include "components/ScreenshotViewer.h"
+#include "components/SourceSwitchBar.h"
 #include <QDesktopServices>
 #include <QEvent>
 #include <QGraphicsDropShadowEffect>
@@ -49,6 +50,7 @@ ModDetailPage::ModDetailPage(QWidget *parent)
     , m_scrollArea(nullptr)
     , m_contentWidget(nullptr)
     , m_contentLayout(nullptr)
+    , m_sourceSwitchBar(nullptr)
     , m_headerWidget(nullptr)
     , m_iconLabel(nullptr)
     , m_chineseNameLabel(nullptr)
@@ -98,6 +100,9 @@ void ModDetailPage::initUI()
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
+    // 顶部来源切换（跨源合并卡片显示；置于滚动区外固定不随内容滚动）
+    mainLayout->addWidget(buildSourceSwitch());
+
     m_scrollArea = new QScrollArea();
     m_scrollArea->setObjectName("modDetailScrollArea");
     m_scrollArea->setWidgetResizable(true);
@@ -134,6 +139,42 @@ void ModDetailPage::initUI()
     connect(m_carouselResumeTimer, &QTimer::timeout, this, [this]() {
         startCarousel();
     });
+}
+
+QWidget *ModDetailPage::buildSourceSwitch()
+{
+    // 外层容器负责与内容区对齐的边距，避免分段控件轨道背景被拉满整行
+    QWidget *row = new QWidget(this);
+    QHBoxLayout *rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(20, 12, 20, 0);
+    rowLayout->setSpacing(0);
+
+    m_sourceSwitchBar = new SourceSwitchBar(row);
+    m_sourceSwitchBar->hide();
+    connect(m_sourceSwitchBar, &SourceSwitchBar::sourceSelected,
+            this, &ModDetailPage::switchToSource);
+    rowLayout->addWidget(m_sourceSwitchBar);
+    rowLayout->addStretch();
+
+    return row;
+}
+
+void ModDetailPage::switchToSource(const QString &source)
+{
+    if (source == m_modInfo.source)
+        return;
+
+    ModInfo view = switchModInfoSource(m_modInfo);
+    if (view.source != source)
+        return;
+
+    // 版本/截图/前置等详情数据随源失效，由切换后的详情拉取重建
+    view.versionFiles.clear();
+    view.screenshots.clear();
+    view.dependencies.clear();
+
+    setModInfo(view);
+    emit sourceSwitchRequested(source);
 }
 
 void ModDetailPage::clearContent()
@@ -185,6 +226,11 @@ void ModDetailPage::clearContent()
 void ModDetailPage::setModInfo(const ModInfo &info)
 {
     m_modInfo = info;
+
+    if (m_sourceSwitchBar) {
+        m_sourceSwitchBar->setVisible(info.isCrossSourceMerged());
+        m_sourceSwitchBar->setActiveSource(info.source);
+    }
 
     if (m_loadingOverlay)
         m_loadingOverlay->showOverlay(tr("正在获取模组详情..."));
@@ -1129,6 +1175,10 @@ void ModDetailPage::onScreenshotInteraction()
 
 void ModDetailPage::receiveDetail(const ModInfo &detail)
 {
+    // 来源跟随详情返回值（来源切换后保证下载/收藏走对源）
+    if (!detail.source.isEmpty())
+        m_modInfo.source = detail.source;
+
     // 1. 合并远程详情到 m_modInfo，更新头部和标签信息
     if (!detail.name.isEmpty())
         m_modInfo.name = detail.name;

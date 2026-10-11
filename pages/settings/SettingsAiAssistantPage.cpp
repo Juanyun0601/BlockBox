@@ -10,7 +10,6 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QFile>
-#include <QFileDialog>
 #include <QFormLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -23,6 +22,7 @@
 #include <QUuid>
 #include <QVBoxLayout>
 
+#include "components/AppFileDialog.h"
 #include "components/CustomCheckBox.h"
 #include "components/OutlinedLabel.h"
 #include "utils/SettingsManager.h"
@@ -375,7 +375,7 @@ void SettingsPage::initAiAssistantSettings()
 
             // 导入
             connect(importBtn, &QPushButton::clicked, &dlg, [&, modelList, loadModels, item]() {
-                QString filePath = QFileDialog::getOpenFileName(&dlg, tr("导入模型配置"), QString(),
+                QString filePath = AppFileDialog::getOpenFileName(&dlg, tr("导入模型配置"), QString(),
                     tr("JSON 文件 (*.json);;所有文件 (*)"));
                 if (filePath.isEmpty()) return;
 
@@ -423,7 +423,7 @@ void SettingsPage::initAiAssistantSettings()
                 QSettings s;
                 QString json = s.value("ai/customModels", "").toString();
                 if (json.isEmpty()) return;
-                QString filePath = QFileDialog::getSaveFileName(&dlg, tr("导出模型配置"), QString(),
+                QString filePath = AppFileDialog::getSaveFileName(&dlg, tr("导出模型配置"), QString(),
                     tr("JSON 文件 (*.json)"));
                 if (filePath.isEmpty()) return;
                 QFile file(filePath);

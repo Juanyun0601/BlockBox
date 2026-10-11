@@ -638,11 +638,21 @@ QWidget *InstanceSelectPage::buildMasonryInstanceCard(const QFileInfo &instanceI
                          (data.loaderType == "Fabric") ? QColor("#FF9800") :
                          (data.loaderType == "Quilt") ? QColor("#9C27B0") :
                          (data.loaderType == "NeoForge") ? QColor("#E91E63") : QColor("#9E9E9E");
-    const QColor c1 = loaderColor;
-    const QColor c2 = loaderColor.darker(130);
+    QColor c1 = loaderColor;
+    QColor c2 = loaderColor.darker(130);
+    // 浅色模式偏亮 / 深色模式偏暗（banner 兜底色与字母徽标同取这对色）
+    MasonryContentCard::shapePairForTheme(c1, c2);
 
     const int bannerH = 96;
     const int kCardW = 260;
+
+    // 自定义图标：居中徽标与 banner 底色共用（banner 优先取图标同色系渐变）
+    QPixmap iconPm;
+    if (!data.iconPath.isEmpty() && QFile::exists(data.iconPath))
+        iconPm = QPixmap(data.iconPath);
+    QColor banner1 = c1, banner2 = c2;   // 拿不到图标 → 加载器色
+    MasonryContentCard::paletteForIcon(iconPm, banner1, banner2);
+
     auto *card = new QWidget(parent);
     card->setObjectName("contentCard");
     card->setProperty("flatCard", true);
@@ -657,35 +667,36 @@ QWidget *InstanceSelectPage::buildMasonryInstanceCard(const QFileInfo &instanceI
     auto *banner = new QLabel(card);
     banner->setObjectName("contentCardBanner");
     banner->setFixedHeight(bannerH);
-    banner->setPixmap(MasonryContentCard::makeBannerPixmap(c1, c2, kCardW - 2, bannerH));
+    banner->setPixmap(MasonryContentCard::makeBannerPixmap(banner1, banner2, kCardW - 2, bannerH));
     cardLayout->addWidget(banner);
 
-    // 半压 logo：优先使用自定义图标，否则加载器首字母
+    // 徽标：实例卡没有封面 → 图标/首字母在封面区正中放大（四周留空）
     auto *logo = new QLabel(banner);
     logo->setObjectName("contentCardLogo");
-    logo->setFixedSize(52, 52);
     logo->setAlignment(Qt::AlignCenter);
-    if (!data.iconPath.isEmpty() && QFile::exists(data.iconPath))
+    const int badgeSize = MasonryContentCard::logoSizeFor(true, bannerH);
+    if (!iconPm.isNull())
     {
-        QPixmap iconPm(data.iconPath);
-        if (!iconPm.isNull())
-        {
-            logo->setPixmap(iconPm.scaled(52, 52, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        }
-        else
-        {
-            const QString letter = data.loaderType.isEmpty() ? QStringLiteral("?")
-                                   : data.loaderType.left(1).toUpper();
-            logo->setPixmap(MasonryContentCard::makeLogoPixmap(c1, c2, letter));
-        }
+        // 垫成正方形后交给 placeLogo 的 scaledContents，避免非方图被拉伸
+        QPixmap badge(badgeSize, badgeSize);
+        badge.fill(Qt::transparent);
+        const QPixmap glyph = iconPm.scaled(badgeSize, badgeSize, Qt::KeepAspectRatio,
+                                            Qt::SmoothTransformation);
+        QPainter painter(&badge);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawPixmap((badgeSize - glyph.width()) / 2,
+                           (badgeSize - glyph.height()) / 2, glyph);
+        painter.end();
+        logo->setPixmap(badge);
     }
     else
     {
         const QString letter = data.loaderType.isEmpty() ? QStringLiteral("?")
                                : data.loaderType.left(1).toUpper();
-        logo->setPixmap(MasonryContentCard::makeLogoPixmap(c1, c2, letter));
+        logo->setPixmap(MasonryContentCard::makeLogoPixmap(c1, c2, letter, badgeSize));
     }
-    logo->move(kCardW - 2 - 52 - 12, bannerH - (52 - 10));
+    MasonryContentCard::placeLogo(logo, true, kCardW - 2, bannerH);
     auto *logoShadow = new QGraphicsDropShadowEffect(logo);
     logoShadow->setBlurRadius(4);
     logoShadow->setOffset(0, 1);

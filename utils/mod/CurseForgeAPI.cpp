@@ -1,5 +1,7 @@
 #include "CurseForgeAPI.h"
 
+#include "../SettingsManager.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -12,7 +14,8 @@
 CurseForgeAPI::CurseForgeAPI(QObject *parent)
     : QObject(parent)
     , m_networkManager(new QNetworkAccessManager(this))
-    , m_baseUrl("https://api.curseforge.com")
+    , m_baseUrl(mirrorEnabled() ? QStringLiteral("https://mod.mcimirror.top/curseforge")
+                                : QStringLiteral("https://api.curseforge.com"))
     , m_classId("6")
     , m_currentSearchReply(nullptr)
     , m_currentCategoriesReply(nullptr)
@@ -28,6 +31,24 @@ CurseForgeAPI::CurseForgeAPI(QObject *parent)
 
 CurseForgeAPI::~CurseForgeAPI()
 {
+}
+
+bool CurseForgeAPI::mirrorEnabled()
+{
+    const QVariant val = SettingsManager::instance()->property("use_mcim");
+    return val.isValid() ? val.toBool() : true;
+}
+
+bool CurseForgeAPI::usingMirror() const
+{
+    return m_baseUrl.contains(QStringLiteral("mcimirror.top"), Qt::CaseInsensitive);
+}
+
+QString CurseForgeAPI::effectiveApiKey() const
+{
+    if (!m_apiKey.isEmpty())
+        return m_apiKey;
+    return localApiKey();
 }
 
 void CurseForgeAPI::setApiKey(const QString &key)
@@ -55,9 +76,9 @@ void CurseForgeAPI::searchMods(const QString &query, const QString &gameVersion,
                                 int pageSize, const QString &sortField,
                                 const QString &sortOrder)
 {
-    if (m_apiKey.isEmpty()) {
+    if (effectiveApiKey().isEmpty() && !usingMirror()) {
         QTimer::singleShot(0, this, [this]() {
-            emit searchFailed(tr("未配置 CurseForge API Key，请在设置中填入"));
+            emit searchFailed(tr("未配置 CurseForge API Key，请在设置中填入或启用 MCIM 镜像加速"));
         });
         return;
     }
@@ -90,8 +111,9 @@ void CurseForgeAPI::searchMods(const QString &query, const QString &gameVersion,
 
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/json");
-    if (!m_apiKey.isEmpty())
-        request.setRawHeader("X-API-KEY", m_apiKey.toUtf8());
+    const QString apiKey = effectiveApiKey();
+    if (!apiKey.isEmpty())
+        request.setRawHeader("X-API-KEY", apiKey.toUtf8());
 
     abortReply(m_currentSearchReply);
     m_currentSearchReply = m_networkManager->get(request);
@@ -100,9 +122,9 @@ void CurseForgeAPI::searchMods(const QString &query, const QString &gameVersion,
 
 void CurseForgeAPI::getCategories()
 {
-    if (m_apiKey.isEmpty()) {
+    if (effectiveApiKey().isEmpty() && !usingMirror()) {
         QTimer::singleShot(0, this, [this]() {
-            emit categoriesFailed(tr("未配置 CurseForge API Key，请在设置中填入"));
+            emit categoriesFailed(tr("未配置 CurseForge API Key，请在设置中填入或启用 MCIM 镜像加速"));
         });
         return;
     }
@@ -114,8 +136,9 @@ void CurseForgeAPI::getCategories()
 
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/json");
-    if (!m_apiKey.isEmpty())
-        request.setRawHeader("X-API-KEY", m_apiKey.toUtf8());
+    const QString apiKey = effectiveApiKey();
+    if (!apiKey.isEmpty())
+        request.setRawHeader("X-API-KEY", apiKey.toUtf8());
 
     abortReply(m_currentCategoriesReply);
     m_currentCategoriesReply = m_networkManager->get(request);
@@ -218,9 +241,9 @@ void CurseForgeAPI::onCategoriesReplyFinished()
 
 void CurseForgeAPI::fetchModDetail(const QString &modId)
 {
-    if (m_apiKey.isEmpty()) {
+    if (effectiveApiKey().isEmpty() && !usingMirror()) {
         QTimer::singleShot(0, this, [this]() {
-            emit modDetailFailed(tr("未配置 CurseForge API Key"));
+            emit modDetailFailed(tr("未配置 CurseForge API Key，请在设置中填入或启用 MCIM 镜像加速"));
         });
         return;
     }
@@ -228,8 +251,9 @@ void CurseForgeAPI::fetchModDetail(const QString &modId)
     QUrl url(m_baseUrl + "/v1/mods/" + modId);
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/json");
-    if (!m_apiKey.isEmpty())
-        request.setRawHeader("X-API-KEY", m_apiKey.toUtf8());
+    const QString apiKey = effectiveApiKey();
+    if (!apiKey.isEmpty())
+        request.setRawHeader("X-API-KEY", apiKey.toUtf8());
 
     abortReply(m_currentDetailReply);
     m_currentDetailReply = m_networkManager->get(request);
@@ -238,9 +262,9 @@ void CurseForgeAPI::fetchModDetail(const QString &modId)
 
 void CurseForgeAPI::fingerprintMod(quint32 fingerprint)
 {
-    if (m_apiKey.isEmpty()) {
+    if (effectiveApiKey().isEmpty() && !usingMirror()) {
         QTimer::singleShot(0, this, [this]() {
-            emit fingerprintFailed(tr("未配置 CurseForge API Key，请在设置中填入"));
+            emit fingerprintFailed(tr("未配置 CurseForge API Key，请在设置中填入或启用 MCIM 镜像加速"));
         });
         return;
     }
@@ -256,8 +280,9 @@ void CurseForgeAPI::fingerprintMod(quint32 fingerprint)
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("Content-Type", "application/json");
-    if (!m_apiKey.isEmpty())
-        request.setRawHeader("X-API-KEY", m_apiKey.toUtf8());
+    const QString apiKey = effectiveApiKey();
+    if (!apiKey.isEmpty())
+        request.setRawHeader("X-API-KEY", apiKey.toUtf8());
 
     // 构建 JSON payload: {"fingerprints": [hash]}
     QJsonObject payload;

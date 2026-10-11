@@ -1,11 +1,14 @@
 #include "LaunchDetailsPage.h"
+#include "components/AppFileDialog.h"
+#include "components/OutlinedLabel.h"
+#include "components/OutlinedTextEdit.h"
 #include "utils/GameLauncher.h"
 #include "utils/ThemeManager.h"
 
 #include <QClipboard>
+#include <QColor>
 #include <QDateTime>
 #include <QFile>
-#include <QFileDialog>
 #include <QMessageBox>
 #include <QScrollBar>
 #include <QStyle>
@@ -35,8 +38,10 @@ void LaunchDetailsPage::initUI()
     m_statusDot->setObjectName("statusDot");
     m_statusDot->setFixedSize(12, 12);
 
-    m_statusLabel = new QLabel(tr("启动日志"));
+    m_statusLabel = new OutlinedLabel(tr("启动日志"));
     m_statusLabel->setObjectName("logStatusLabel");
+    m_statusLabel->setOutlineColor(QColor(Qt::white));
+    m_statusLabel->setOutlineWidth(2);
 
     m_cancelBtn = new QPushButton(tr("取消启动"));
     m_cancelBtn->setObjectName("cancelLaunchBtn");
@@ -59,8 +64,10 @@ void LaunchDetailsPage::initUI()
     m_headerLayout->addWidget(m_clearBtn);
 
     // Log area
-    m_detailsTextEdit = new QTextEdit();
+    m_detailsTextEdit = new OutlinedTextEdit();
     m_detailsTextEdit->setObjectName("detailsTextEdit");
+    m_detailsTextEdit->setOutlineColor(QColor(Qt::white));
+    m_detailsTextEdit->setOutlineWidth(1);
     m_detailsTextEdit->setReadOnly(true);
     m_detailsTextEdit->setUndoRedoEnabled(false);
     m_detailsTextEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
@@ -167,7 +174,7 @@ void LaunchDetailsPage::exportLog()
     QString defaultName = QString("BlockBox_launch_log_%1.txt")
         .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
     
-    QString filePath = QFileDialog::getSaveFileName(
+    QString filePath = AppFileDialog::getSaveFileName(
         this,
         tr("导出启动日志"),
         defaultName,

@@ -8,6 +8,7 @@
 
 #include <QComboBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QSlider>
 #include <QVBoxLayout>
@@ -17,6 +18,7 @@
 #include "components/OutlinedLabel.h"
 #include "utils/SettingsManager.h"
 #include "utils/UpdateChecker.h"
+#include "utils/WorldMap/StructureIcons.h"
 
 void SettingsPage::initGeneralSettings()
 {
@@ -52,6 +54,18 @@ void SettingsPage::initGeneralSettings()
         tr("MCIM 模组 API 镜像加速"), tr("将模组下载请求转发至 MCIM 加速节点，提高国内下载速度。"),
         tr("MCIM 镜像加速可显著提升国内模组下载速度。"), true);
     mcimRow->addWidget(mcimCheck);
+
+    QHBoxLayout *cfKeyRow = appendSettingRow(downloadSourceCard,
+        tr("CurseForge API Key"), tr("直连 CurseForge 官方源时所需的密钥，启用 MCIM 镜像加速时可不填。"),
+        tr("在 CurseForge 官网个人后台申请；密钥仅保存在本机设置中，不会随启动器分发或上传。官方源必须填入，MCIM 镜像加速开启时无需填入即可使用。"));
+    QLineEdit *cfKeyEdit = new QLineEdit();
+    cfKeyEdit->setEchoMode(QLineEdit::Password);
+    cfKeyEdit->setPlaceholderText(tr("填入你的 CurseForge API Key"));
+    cfKeyEdit->setText(settings->property("curseforge_api_key").toString());
+    connect(cfKeyEdit, &QLineEdit::editingFinished, cfKeyEdit, [cfKeyEdit]() {
+        SettingsManager::instance()->setProperty("curseforge_api_key", cfKeyEdit->text().trimmed());
+    });
+    cfKeyRow->addWidget(cfKeyEdit);
 
     // ── 模组加载器下载源 ──
     QVBoxLayout *forgeSourceCard = createSettingsCard(layout, tr("模组加载器下载源"));
@@ -173,6 +187,74 @@ void SettingsPage::initGeneralSettings()
     threadCountRow->addWidget(threadCountSlider, 1);
     threadCountRow->addWidget(threadCountLabel);
     threadCountRow->addWidget(threadCountWarning);
+
+    // ── 选择器类型 ──
+    QVBoxLayout *pickerCard = createSettingsCard(layout, tr("选择器类型"));
+
+    QComboBox *pickerTypeCombo = new QComboBox();
+    pickerTypeCombo->addItem(tr("系统文件资源管理器"), static_cast<int>(FilePickerType::System));
+    pickerTypeCombo->addItem(tr("软件自带"), static_cast<int>(FilePickerType::BuiltIn));
+    disableWheelEffect(pickerTypeCombo);
+
+    int pickerIndex = pickerTypeCombo->findData(
+        static_cast<int>(settings->getFilePickerType()));
+    pickerTypeCombo->setCurrentIndex(pickerIndex >= 0 ? pickerIndex
+                                                      : pickerTypeCombo->findData(static_cast<int>(FilePickerType::BuiltIn)));
+
+    connect(pickerTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [pickerTypeCombo](int idx) {
+        SettingsManager::instance()->setFilePickerType(
+            static_cast<FilePickerType>(pickerTypeCombo->itemData(idx).toInt()));
+    });
+
+    QHBoxLayout *pickerTypeRow = appendSettingRow(pickerCard,
+        tr("选择器类型"), tr("选择打开文件、文件夹时使用的对话框。"),
+        tr("系统文件资源管理器使用操作系统自带的选择窗口；软件自带使用启动器内置的文件浏览器，支持实例资源浏览与预览。"), true);
+    pickerTypeRow->addWidget(pickerTypeCombo);
+
+    // ── 地图结构图标：文字旁小图标（默认） / 结构概览 ──
+    QVBoxLayout *mapIconCard = createSettingsCard(layout, tr("地图结构图标"));
+
+    QComboBox *mapIconCombo = new QComboBox();
+    mapIconCombo->addItem(tr("图标（文字旁小图标）"),
+                          static_cast<int>(MapStructureIconStyle::Icon));
+    mapIconCombo->addItem(tr("结构概览（页面主图）"),
+                          static_cast<int>(MapStructureIconStyle::Overview));
+    disableWheelEffect(mapIconCombo);
+
+    int mapIconIndex = mapIconCombo->findData(
+        static_cast<int>(settings->getMapStructureIconStyle()));
+    mapIconCombo->setCurrentIndex(mapIconIndex >= 0 ? mapIconIndex : 0);
+
+    connect(mapIconCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [mapIconCombo](int idx) {
+        const auto style = static_cast<MapStructureIconStyle>(
+            mapIconCombo->itemData(idx).toInt());
+        SettingsManager::instance()->setMapStructureIconStyle(style);
+        // 立即生效：清内存缓存并通知已打开的地图页重取图标
+        StructureIcons::setStyle(style == MapStructureIconStyle::Overview
+                                     ? StructureIcons::Style::Overview
+                                     : StructureIcons::Style::Icon);
+    });
+
+    QHBoxLayout *mapIconRow = appendSettingRow(mapIconCard,
+        tr("地图结构图标"), tr("存档地图页第二行结构开关与地图标记使用的图标。"),
+        tr("图标为生成结构表中文字旁的 16px 小图标（默认）；结构概览为 Wiki 条目页面的主图。离线时回退为内置徽章。"), true);
+    mapIconRow->addWidget(mapIconCombo);
+
+    // ── 启动行为 ──
+    QVBoxLayout *startupCard = createSettingsCard(layout, tr("启动行为"));
+
+    CustomCheckBox *autoStartCheck = new CustomCheckBox();
+    autoStartCheck->setChecked(settings->isAutoStartEnabled());
+    connect(autoStartCheck, &CustomCheckBox::toggled, [](bool checked) {
+        SettingsManager::instance()->setAutoStartEnabled(checked);
+    });
+
+    QHBoxLayout *autoStartRow = appendSettingRow(startupCard,
+        tr("开机自启动"), tr("登录系统后自动启动方块盒子。"),
+        tr("Windows 上写入当前用户注册表 Run 键，macOS 写入 LaunchAgents，Linux 写入 autostart 目录；关闭时移除对应条目。"), true);
+    autoStartRow->addWidget(autoStartCheck);
 
     // ── 启动器更新 ──
     QVBoxLayout *updaterCard = createSettingsCard(layout, tr("启动器更新"));

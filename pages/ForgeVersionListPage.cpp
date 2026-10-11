@@ -17,7 +17,9 @@
 #include <QUrlQuery>
 
 #include "components/BlurLoadingOverlay.h"
+#include "components/MasonryContentCard.h"
 #include "components/NotificationManager.h"
+#include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/forge/ForgeInstaller.h"
@@ -25,6 +27,9 @@
 #include "utils/LiteLoaderInstaller.h"
 #include "utils/CleanroomInstaller.h"
 #include "utils/OptiFabricInstaller.h"
+
+#include <QHash>
+#include <QMouseEvent>
 
 ForgeVersionListPage::ForgeVersionListPage(QWidget *parent)
     : QWidget(parent)
@@ -76,17 +81,17 @@ void ForgeVersionListPage::initUI()
     m_loadingOverlay = new BlurLoadingOverlay(this);
     m_loadingOverlay->hide();
 
-    m_versionList = new QTreeWidget(this);
+    m_versionList = new QListWidget(this);
     m_versionList->setObjectName("forgeVersionList");
     m_versionList->setSelectionMode(QAbstractItemView::SingleSelection);
-    m_versionList->setHeaderHidden(true);
-    m_versionList->setColumnCount(1);
-    m_versionList->header()->setStretchLastSection(true);
-    m_versionList->setUniformRowHeights(true);
+    m_versionList->setUniformItemSizes(true);
+    m_versionList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_versionList->setMovement(QListView::Static);
+    m_versionList->setSpacing(8);
     m_versionList->setMinimumHeight(400);
     m_mainLayout->addWidget(m_versionList);
 
-    connect(m_versionList, &QTreeWidget::itemClicked, this, &ForgeVersionListPage::onVersionItemClicked);
+    connect(m_versionList, &QListWidget::itemClicked, this, &ForgeVersionListPage::onVersionItemClicked);
 
     // 安装按钮区域
     QHBoxLayout *buttonLayout = new QHBoxLayout();
@@ -730,7 +735,7 @@ void ForgeVersionListPage::populateVersionList()
         }
     }
 
-    std::sort(availableVersions.begin(), availableVersions.end(), 
+    std::sort(availableVersions.begin(), availableVersions.end(),
         [](const ForgeVersionInfo &a, const ForgeVersionInfo &b) {
             return a.build > b.build;
         });
@@ -739,96 +744,42 @@ void ForgeVersionListPage::populateVersionList()
             return a.build > b.build;
         });
 
-    QString loaderDisplayName = getLoaderDisplayName();
-
     for (const ForgeVersionInfo &info : availableVersions) {
-        QString displayText;
-        QString modifiedStr;
+        QStringList chips;
+        if (info.build > 0)
+            chips << tr("Build %1").arg(info.build);
         if (!info.modified.isEmpty()) {
             QDateTime modifiedTime = QDateTime::fromString(info.modified, Qt::ISODate);
-            modifiedStr = modifiedTime.toString("yyyy-MM-dd");
+            if (modifiedTime.isValid())
+                chips << modifiedTime.toString("yyyy-MM-dd");
         }
-
-        QString branchStr = info.branch.isEmpty() ? "" : QString(" [%1]").arg(info.branch);
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold;'>%1 %2%3</div>"
-            "<div style='font-size:9pt; color:#666666;'>Build: %4 | %5</div>"
-        ).arg(loaderDisplayName).arg(info.version).arg(branchStr).arg(info.build).arg(modifiedStr);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        m_versionList->setItemWidget(item, 0, label);
+        if (!info.branch.isEmpty())
+            chips << info.branch;
+        addVersionCard(info, info.version, chips);
     }
 
     for (const ForgeVersionInfo &info : unavailableVersions) {
-        QString displayText;
-        QString modifiedStr;
+        QStringList chips;
+        if (info.build > 0)
+            chips << tr("Build %1").arg(info.build);
         if (!info.modified.isEmpty()) {
             QDateTime modifiedTime = QDateTime::fromString(info.modified, Qt::ISODate);
-            modifiedStr = modifiedTime.toString("yyyy-MM-dd");
+            if (modifiedTime.isValid())
+                chips << modifiedTime.toString("yyyy-MM-dd");
         }
-
-        QString branchStr = info.branch.isEmpty() ? "" : QString(" [%1]").arg(info.branch);
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold; color:#999999;'>%1 %2%3 (不可用)</div>"
-            "<div style='font-size:9pt; color:#999999;'>Build: %4 | %5</div>"
-        ).arg(loaderDisplayName).arg(info.version).arg(branchStr).arg(info.build).arg(modifiedStr);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, false);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        label->setStyleSheet("color: #999999;");
-        m_versionList->setItemWidget(item, 0, label);
+        if (!info.branch.isEmpty())
+            chips << info.branch;
+        addVersionCard(info, info.version, chips);
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
 }
 
-void ForgeVersionListPage::onVersionItemClicked(QTreeWidgetItem *item, int column)
+void ForgeVersionListPage::onVersionItemClicked(QListWidgetItem *item)
 {
-    Q_UNUSED(column);
-
-    QString version = item->data(0, Qt::UserRole).toString();
-
-    for (const ForgeVersionInfo &info : m_forgeVersions) {
-        if (info.version == version) {
-            m_selectedVersion = info;
-            m_hasSelection = true;
-            break;
-        }
-    }
-
-    if (m_hasSelection) {
-        emit forgeVersionSelected(m_loaderName, m_minecraftVersion, m_selectedVersion.version);
-        
-        // 更新安装按钮状态
-        if (m_selectedVersion.isAvailable) {
-            m_installButton->setEnabled(true);
-            m_installButton->setText(tr("安装 %1 %2").arg(getLoaderDisplayName()).arg(m_selectedVersion.version));
-        } else {
-            m_installButton->setEnabled(false);
-            m_installButton->setText(tr("此版本不可用"));
-        }
-    }
+    selectVersionItem(item);
 }
 
 void ForgeVersionListPage::populateNeoForgeVersionList(const QJsonArray &versions)
@@ -856,39 +807,11 @@ void ForgeVersionListPage::populateNeoForgeVersionList(const QJsonArray &version
         });
 
     for (const ForgeVersionInfo &info : m_forgeVersions) {
-        QString displayText;
-        
-        if (info.isAvailable) {
-            displayText = QString(
-                "<div style='font-size:12pt; font-weight:bold;'>NeoForge %1</div>"
-                "<div style='font-size:9pt; color:#666666;'>Minecraft: %2</div>"
-            ).arg(info.version).arg(info.mcversion);
-        } else {
-            displayText = QString(
-                "<div style='font-size:12pt; font-weight:bold; color:#999999;'>NeoForge %1 (不可用)</div>"
-                "<div style='font-size:9pt; color:#999999;'>Minecraft: %2</div>"
-            ).arg(info.version).arg(info.mcversion);
-        }
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        if (!info.isAvailable) {
-            label->setStyleSheet("color: #999999;");
-        }
-        m_versionList->setItemWidget(item, 0, label);
+        addVersionCard(info, info.version, { info.mcversion });
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
 }
 
@@ -915,29 +838,11 @@ void ForgeVersionListPage::populateOptiFineVersionList(const QJsonArray &version
     }
 
     for (const ForgeVersionInfo &info : m_forgeVersions) {
-        QString displayText;
-        
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold;'>OptiFine %1</div>"
-            "<div style='font-size:9pt; color:#666666;'>Minecraft: %2</div>"
-        ).arg(info.version).arg(info.mcversion);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        m_versionList->setItemWidget(item, 0, label);
+        addVersionCard(info, info.version, { info.mcversion });
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
 }
 
@@ -962,29 +867,11 @@ void ForgeVersionListPage::populateFabricVersionList(const QJsonArray &versions)
     }
 
     for (const ForgeVersionInfo &info : m_forgeVersions) {
-        QString displayText;
-        
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold;'>Fabric Loader %1</div>"
-            "<div style='font-size:9pt; color:#666666;'>Minecraft: %2</div>"
-        ).arg(info.version).arg(info.mcversion);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        m_versionList->setItemWidget(item, 0, label);
+        addVersionCard(info, info.version, { info.mcversion });
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
 }
 
@@ -1009,29 +896,11 @@ void ForgeVersionListPage::populateQuiltVersionList(const QJsonArray &versions)
     }
 
     for (const ForgeVersionInfo &info : m_forgeVersions) {
-        QString displayText;
-        
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold;'>Quilt Loader %1</div>"
-            "<div style='font-size:9pt; color:#666666;'>Minecraft: %2</div>"
-        ).arg(info.version).arg(info.mcversion);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        m_versionList->setItemWidget(item, 0, label);
+        addVersionCard(info, info.version, { info.mcversion });
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
 }
 
@@ -1056,29 +925,11 @@ void ForgeVersionListPage::populateLegacyFabricVersionList(const QJsonArray &ver
     }
 
     for (const ForgeVersionInfo &info : m_forgeVersions) {
-        QString displayText;
-        
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold;'>LegacyFabric Loader %1</div>"
-            "<div style='font-size:9pt; color:#666666;'>Minecraft: %2</div>"
-        ).arg(info.version).arg(info.mcversion);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        m_versionList->setItemWidget(item, 0, label);
+        addVersionCard(info, info.version, { info.mcversion });
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
 }
 
@@ -1106,29 +957,11 @@ void ForgeVersionListPage::populateLiteLoaderVersionList(const QJsonObject &vers
     }
 
     for (const ForgeVersionInfo &info : m_forgeVersions) {
-        QString displayText;
-        
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold;'>LiteLoader %1</div>"
-            "<div style='font-size:9pt; color:#666666;'>Minecraft: %2</div>"
-        ).arg(info.version).arg(info.mcversion);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        m_versionList->setItemWidget(item, 0, label);
+        addVersionCard(info, info.version, { info.mcversion });
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
 }
 
@@ -1168,29 +1001,11 @@ void ForgeVersionListPage::populateCleanroomVersionList(const QJsonArray &versio
     }
 
     for (const ForgeVersionInfo &info : m_forgeVersions) {
-        QString displayText;
-        
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold;'>Cleanroom %1</div>"
-            "<div style='font-size:9pt; color:#666666;'>Minecraft: %2</div>"
-        ).arg(info.version).arg(info.mcversion);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        m_versionList->setItemWidget(item, 0, label);
+        addVersionCard(info, info.version, { info.mcversion });
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
 }
 
@@ -1223,30 +1038,175 @@ void ForgeVersionListPage::populateOptiFabricVersionList(const QJsonArray &versi
     }
 
     for (const ForgeVersionInfo &info : m_forgeVersions) {
-        QString displayText;
-        
-        displayText = QString(
-            "<div style='font-size:12pt; font-weight:bold;'>OptiFabric %1</div>"
-            "<div style='font-size:9pt; color:#666666;'>Minecraft: %2</div>"
-        ).arg(info.version).arg(info.mcversion);
-
-        QTreeWidgetItem *item = new QTreeWidgetItem();
-        item->setText(0, displayText);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(info.version));
-        item->setData(0, Qt::UserRole + 1, info.isAvailable);
-        m_versionList->addTopLevelItem(item);
-
-        QLabel *label = new QLabel(displayText);
-        label->setWordWrap(true);
-        label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        label->setMargin(10);
-        label->setMinimumHeight(60);
-        m_versionList->setItemWidget(item, 0, label);
+        addVersionCard(info, info.version, { info.mcversion });
     }
 
-    if (m_versionList->topLevelItemCount() > 0) {
-        m_versionList->setCurrentItem(m_versionList->topLevelItem(0));
+    if (m_versionList->count() > 0) {
+        m_versionList->setCurrentRow(0);
     }
+}
+
+/* 版本行卡片：与「下载模组」等页的列表卡片同款结构（modCardListItem 系列） */
+void ForgeVersionListPage::addVersionCard(const ForgeVersionInfo &info,
+                                          const QString &nameText,
+                                          const QStringList &chips)
+{
+    QListWidgetItem *item = new QListWidgetItem(m_versionList);
+    item->setData(Qt::UserRole, info.version);
+    item->setData(Qt::UserRole + 1, info.isAvailable);
+
+    QWidget *card = new QWidget();
+    card->setObjectName("modCardListItem");
+    card->setProperty("cardRole", "container");
+    card->setProperty("versionId", info.version);
+    card->setFixedHeight(76);
+    card->setCursor(Qt::PointingHandCursor);
+    card->installEventFilter(this);
+
+    QHBoxLayout *mainLayout = new QHBoxLayout(card);
+    mainLayout->setContentsMargins(14, 12, 14, 12);
+    mainLayout->setSpacing(14);
+
+    QLabel *iconLabel = new QLabel();
+    iconLabel->setObjectName("modCardIcon");
+    iconLabel->setProperty("cardRole", "icon");
+    iconLabel->setFixedSize(48, 48);
+    iconLabel->setAlignment(Qt::AlignCenter);
+    iconLabel->setPixmap(loaderLogoPixmap(48));
+    mainLayout->addWidget(iconLabel);
+
+    QVBoxLayout *infoLayout = new QVBoxLayout();
+    infoLayout->setSpacing(6);
+    infoLayout->setContentsMargins(0, 0, 0, 0);
+
+    QLabel *nameLabel = new QLabel(nameText, card);
+    nameLabel->setObjectName("modCardName");
+    nameLabel->setProperty("cardRole", "name");
+    if (!info.isAvailable)
+        nameLabel->setStyleSheet("color: #999999;");
+    infoLayout->addWidget(nameLabel);
+
+    QWidget *chipsWidget = new QWidget();
+    QHBoxLayout *chipsLayout = new QHBoxLayout(chipsWidget);
+    chipsLayout->setContentsMargins(0, 0, 0, 0);
+    chipsLayout->setSpacing(6);
+    for (const QString &chip : chips) {
+        if (chip.isEmpty())
+            continue;
+        QLabel *chipLabel = new QLabel(chip, chipsWidget);
+        chipLabel->setObjectName("modChip");
+        chipLabel->setProperty("cardRole", "chip");
+        chipsLayout->addWidget(chipLabel);
+    }
+    if (!info.isAvailable) {
+        QLabel *unavailableChip = new QLabel(tr("不可用"), chipsWidget);
+        unavailableChip->setObjectName("modChip");
+        unavailableChip->setProperty("cardRole", "chip");
+        chipsLayout->addWidget(unavailableChip);
+    }
+    chipsLayout->addStretch();
+    infoLayout->addWidget(chipsWidget);
+    mainLayout->addLayout(infoLayout, 1);
+
+    QHBoxLayout *btnLayout = new QHBoxLayout();
+    btnLayout->setSpacing(4);
+    btnLayout->setContentsMargins(0, 0, 0, 0);
+    QPushButton *selectBtn = new QPushButton(card);
+    selectBtn->setObjectName("modCardActionBtn");
+    selectBtn->setProperty("cardRole", "actionBtn");
+    selectBtn->setFixedSize(32, 32);
+    selectBtn->setToolTip(tr("选择此版本"));
+    selectBtn->setCursor(Qt::PointingHandCursor);
+    selectBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/install.svg",
+                                                   ThemeManager::instance()->currentThemeColor(), 18));
+    selectBtn->setIconSize(QSize(18, 18));
+    connect(selectBtn, &QPushButton::clicked, this, [this, item]() {
+        m_versionList->setCurrentItem(item);
+        selectVersionItem(item);
+    });
+    btnLayout->addWidget(selectBtn);
+    btnLayout->addStretch();
+    mainLayout->addLayout(btnLayout);
+
+    m_versionList->setItemWidget(item, card);
+    item->setSizeHint(QSize(0, 76));
+}
+
+/* 卡片点击 / 行点击共用的选择逻辑（点击后回填安装按钮状态并通知上级） */
+void ForgeVersionListPage::selectVersionItem(QListWidgetItem *item)
+{
+    if (!item)
+        return;
+
+    QString version = item->data(Qt::UserRole).toString();
+
+    for (const ForgeVersionInfo &info : m_forgeVersions) {
+        if (info.version == version) {
+            m_selectedVersion = info;
+            m_hasSelection = true;
+            break;
+        }
+    }
+
+    if (m_hasSelection) {
+        emit forgeVersionSelected(m_loaderName, m_minecraftVersion, m_selectedVersion.version);
+
+        // 更新安装按钮状态
+        if (m_selectedVersion.isAvailable) {
+            m_installButton->setEnabled(true);
+            m_installButton->setText(tr("安装 %1 %2").arg(getLoaderDisplayName()).arg(m_selectedVersion.version));
+        } else {
+            m_installButton->setEnabled(false);
+            m_installButton->setText(tr("此版本不可用"));
+        }
+    }
+}
+
+/* 卡片内点击落在子控件上时不一定走 itemClicked，参照实例选择页用事件过滤器兜底 */
+bool ForgeVersionListPage::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::MouseButtonPress) {
+        QWidget *card = qobject_cast<QWidget *>(watched);
+        if (card) {
+            const QVariant versionVar = card->property("versionId");
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (versionVar.isValid() && mouseEvent->button() == Qt::LeftButton) {
+                const QString version = versionVar.toString();
+                for (int i = 0; i < m_versionList->count(); ++i) {
+                    QListWidgetItem *item = m_versionList->item(i);
+                    if (item && item->data(Qt::UserRole).toString() == version) {
+                        m_versionList->setCurrentRow(i);
+                        selectVersionItem(item);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+/* 加载器 logo（与版本详情页加载器卡片同源），缺失时回退首字母渐变占位 */
+QPixmap ForgeVersionListPage::loaderLogoPixmap(int size) const
+{
+    static const QHash<QString, QString> kLogos = {
+        { QStringLiteral("forge"),        QStringLiteral(":/Images/Loader/Forge.png") },
+        { QStringLiteral("fabric"),       QStringLiteral(":/Images/Loader/Fabric.png") },
+        { QStringLiteral("quilt"),        QStringLiteral(":/Images/Loader/Quilt.png") },
+        { QStringLiteral("neoforge"),     QStringLiteral(":/Images/Loader/NeoForge.png") },
+        { QStringLiteral("liteloader"),   QStringLiteral(":/Images/Loader/Liteloader.ico") },
+        { QStringLiteral("optifabric"),   QStringLiteral(":/Images/Loader/OptiFabric.png") },
+        { QStringLiteral("cleanroom"),    QStringLiteral(":/Images/Loader/Cleanroom.png") },
+        { QStringLiteral("legacyfabric"), QStringLiteral(":/Images/Loader/legacyfabric.png") },
+        { QStringLiteral("optifine"),     QStringLiteral(":/Images/Loader/OptiFine.png") },
+    };
+    QPixmap logo(kLogos.value(m_loaderName.toLower()));
+    if (logo.isNull()) {
+        logo = MasonryContentCard::makeLogoPixmap(QColor("#6FCF97"), QColor("#2E7D32"),
+                                                  getLoaderDisplayName().left(1).toUpper());
+        return logo.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    return MasonryContentCard::makeRoundIcon(logo, size);
 }
 
 QString ForgeVersionListPage::getLoaderDisplayName() const

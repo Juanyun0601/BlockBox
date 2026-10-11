@@ -7,6 +7,11 @@
         <file>translations/BlockBox_en.qm</file>
         <file>translations/BlockBox_es.qm</file>
         <file>Images/Icons/back.svg</file>
+        <file>Images/Icons/pose_idle.svg</file>
+        <file>Images/Icons/pose_wave.svg</file>
+        <file>Images/Icons/pose_walk.svg</file>
+        <file>Images/Icons/pose_run.svg</file>
+        <file>Images/Icons/pose_ride.svg</file>
         <file>Images/Icons/instance_select.svg</file>
         <file>Images/Icons/instance_settings.svg</file>
         <file>Images/Icons/instance_assistant.svg</file>
@@ -64,6 +69,7 @@
         <file>Images/Icons/search.svg</file>
         <file>Images/Icons/star.svg</file>
         <file>Images/Icons/grid.svg</file>
+        <file>Images/Icons/map.svg</file>
         <file>Images/Icons/list_view.svg</file>
         <file>Images/Icons/link.svg</file>
         <file>Images/Icons/bolt.svg</file>

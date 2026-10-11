@@ -18,6 +18,7 @@
 #include "pages/ProjectionManagePage.h"
 #include "pages/ProjectionEditPage.h"
 #include "pages/SaveSettingsPage.h"
+#include "pages/WorldMapPage.h"
 #include "pages/ShaderPackSettingsPage.h"
 #include "pages/InstanceLogPage.h"
 #include "utils/SettingsManager.h"
@@ -36,6 +37,7 @@ InstanceManagePage::InstanceManagePage(QWidget *parent)
     , m_shaderPacksPage(nullptr)
     , m_logPage(nullptr)
     , m_saveSettingsPage(nullptr)
+    , m_worldMapPage(nullptr)
     , m_shaderSettingsPage(nullptr)
     , m_projectionEditPage(nullptr)
 {
@@ -53,7 +55,7 @@ void InstanceManagePage::setCurrentTab(int index)
     //            10=存档设置（非侧边栏页，仅由存档列表进入），
     //            11=光影设置（非侧边栏页，仅由光影包列表进入），
     //            12=投影编辑（非侧边栏页，仅由投影列表进入），
-    //            13=日志, 14=文件传输
+    //            13=日志, 14=文件传输, 15=存档地图（非侧边栏页，仅由存档列表进入）
     // 侧边栏"修改"子项已改为直接前往安装新实例页进入修改模式，不再对应本页标签
     static const int tabMap[] = {0, 1, -1, 2, 14, 4, 8, 9, 5, 3, 6, 7, 13};
     if (index < 0 || index > 12)
@@ -73,6 +75,9 @@ void InstanceManagePage::setCurrentInstancePath(const QString &instancePath)
     // 存档设置页可能残留上个实例的信息，切换实例时重置
     if (m_saveSettingsPage)
         m_saveSettingsPage->reset();
+    // 地图页可能残留上个实例的地表地图
+    if (m_worldMapPage)
+        m_worldMapPage->reset();
     // 光影设置页可能残留上个实例的信息，切换实例时重置
     if (m_shaderSettingsPage)
         m_shaderSettingsPage->reset();
@@ -147,6 +152,8 @@ void InstanceManagePage::initUI()
     // 10=存档设置（非侧边栏页，仅由存档列表进入），
     // 11=光影设置（非侧边栏页，仅由光影包列表进入）
     // 12=投影编辑（非侧边栏页，仅由投影列表进入）
+    // 13=日志, 14=文件传输
+    // 15=存档地图（非侧边栏页，仅由存档列表进入）
 
     // 0: 概览页
     m_overviewPage = new InstanceOverviewPage(this);
@@ -308,6 +315,24 @@ void InstanceManagePage::initUI()
     m_lanTransferPage = new LanTransferPage(this);
     m_contentStack->addWidget(m_lanTransferPage); // index 14
 
+    // 15: 存档地表地图（由存档列表卡片「地图」按钮进入，非侧边栏页）
+    m_worldMapPage = new WorldMapPage(this);
+    m_contentStack->addWidget(m_worldMapPage); // index 15
+    connect(m_savesPage, &InstanceFilePage::saveMapRequested, this,
+            [this](const QString &saveName) {
+        if (m_currentInstancePath.isEmpty())
+            return;
+        if (m_worldMapPage)
+        {
+            // 先切换到地图页再渲染，避免在隐藏页上执行
+            m_contentStack->setCurrentWidget(m_worldMapPage);
+            m_worldMapPage->setCurrentSave(
+                m_currentInstancePath + QStringLiteral("/saves/") + saveName, saveName);
+            // 通知主窗口更新 TopBar 返回按钮与标题
+            emit saveMapOpened();
+        }
+    });
+
     m_contentStack->setCurrentIndex(0);
     mainLayout->addWidget(m_contentStack);
 }
@@ -344,6 +369,9 @@ void InstanceManagePage::refresh()
     // 目前仅日志页需要手动刷新（页面内不再放刷新按钮，统一走顶栏）
     if (m_contentStack && m_contentStack->currentIndex() == 13 && m_logPage)
         m_logPage->loadGameLog();
+    // 存档地图页：顶栏刷新 = 重新渲染当前维度
+    if (m_contentStack && m_contentStack->currentIndex() == 15 && m_worldMapPage)
+        m_worldMapPage->refresh();
 }
 
 template <typename T>

@@ -5,6 +5,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include "ModData.h"
+#include "../CfApiKey.h"
 
 class CurseForgeAPI : public QObject
 {
@@ -19,6 +20,12 @@ public:
     void setClassId(const QString &classId);
     /** 设置游戏 ID（默认 432=Minecraft Java；基岩版为 78022） */
     void setGameId(const QString &gameId);
+
+    /** MCIM 镜像是否启用（use_mcim 设置，未配置时默认启用；镜像端免 API Key） */
+    static bool mirrorEnabled();
+
+    /** 本地密钥文件（utils/CfApiKey.h，skip-worktree 保护不入库）中的兜底 key */
+    static QString localApiKey() { return QStringLiteral(BLOCKBOX_CF_API_KEY); }
 
     void searchMods(const QString &query, const QString &gameVersion = QString(),
                     const QString &categoryId = QString(), int page = 0,
@@ -60,6 +67,10 @@ private slots:
 private:
     void parseAddon(const QJsonObject &obj, ModInfo &info);
     void abortReply(QNetworkReply *&reply);
+    /** 当前 baseUrl 是否指向 MCIM 镜像（镜像端免 API Key） */
+    bool usingMirror() const;
+    /** 实际生效的 key：setApiKey 传入值优先，其次本地密钥文件兜底 */
+    QString effectiveApiKey() const;
 
     QNetworkAccessManager *m_networkManager;
     QString m_apiKey;

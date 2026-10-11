@@ -2686,7 +2686,7 @@ ModSearchResult AiService::syncSearchCurseForge(const QString& query, const QStr
     ModSearchResult result;
 
     QString apiKey = SettingsManager::instance()->property("curseforge_api_key").toString();
-    if (apiKey.isEmpty())
+    if (apiKey.isEmpty() && CurseForgeAPI::localApiKey().isEmpty() && !CurseForgeAPI::mirrorEnabled())
     {
         error = QStringLiteral("CURSEFORGE_API_KEY_MISSING");
         return result;
@@ -2759,7 +2759,7 @@ ModInfo AiService::syncFetchDetailCurseForge(const QString& projectId, QString& 
     ModInfo info;
 
     QString apiKey = SettingsManager::instance()->property("curseforge_api_key").toString();
-    if (apiKey.isEmpty())
+    if (apiKey.isEmpty() && CurseForgeAPI::localApiKey().isEmpty() && !CurseForgeAPI::mirrorEnabled())
     {
         error = QStringLiteral("CURSEFORGE_API_KEY_MISSING");
         return info;

@@ -24,10 +24,14 @@
 #include <QStackedWidget>
 
 #include "utils/mod/ModData.h"
+#include "../components/ContentViewSwitch.h"
 
 class BlurLoadingOverlay;
+class LocalCategoryManager;
 class ModrinthAPI;
+class MasonryLayout;
 class QGraphicsOpacityEffect;
+class QMenu;
 class QPropertyAnimation;
 
 class InstanceFilePage : public QWidget
@@ -61,6 +65,8 @@ signals:
     void quickLaunchSaveRequested(const QString &saveName);
     /** 请求打开指定存档的存档设置页（仅 Save 类型触发） */
     void saveSettingsRequested(const QString &saveName);
+    /** 请求打开指定存档的地表地图页（仅 Save 类型触发） */
+    void saveMapRequested(const QString &saveName);
     /** 请求打开指定光影包的光影设置页（仅 ShaderPack 类型触发） */
     void shaderSettingsRequested(const QString &packPath);
 
@@ -81,6 +87,10 @@ private slots:
     void onUpdateCheckBatchFailed(const QString &error);
     void onUpdateSelectedClicked();
     void onToggleDragMode();
+    void onCategoryFilterChanged(int index);
+    void onCategoryManageClicked();
+    void onCategoriesChanged();
+    void onAssignmentsChanged();
 
 private:
     /** 文件型资源条目 */
@@ -105,6 +115,12 @@ private:
     void applyFilterAndSearch();
     QWidget *createFileCard(const QString &filePath, const QString &fileName,
                             qint64 fileSize, const QDateTime &lastModified);
+    /** 瀑布流卡片（截图用真实缩略图作封面，其余类型用提取图标作 logo） */
+    QWidget *createMasonryCard(const FileEntry &entry);
+    /** 视图偏好持久化键（按文件类型隔离） */
+    QString viewPrefKey() const;
+    void onViewModeChanged(ContentViewSwitch::ViewMode mode);
+    void rebuildCards();
     void updateBottomBarState();
     void toggleCardSelection(int idx);
     void deselectAllCards();
@@ -126,6 +142,12 @@ private:
     void markCardHasUpdate(int index, const ModVersionFile &target);
     void processNextModUpdate();
     void removeOldFile(const FileEntry &entry, const QString &newPath);
+    /** 重新填充分类筛选下拉框（保留当前选中） */
+    void reloadCategoryCombo();
+    /** 刷新卡片上的分类标签（分配变化/重命名后调用） */
+    void refreshCardCategoryChips();
+    /** 为指定卡片弹出含"设置分类"的右键子菜单（复用右键菜单构建逻辑） */
+    void appendCategoryMenu(QMenu *menu, const QString &fileName, const QString &filePath);
 
     FileType m_fileType;
 
@@ -135,9 +157,18 @@ private:
     QScrollArea *m_scrollArea;
     QWidget *m_cardContainer;
     QGridLayout *m_cardGridLayout;
+    MasonryLayout *m_cardFlowLayout;   // 瀑布流布局（与 m_cardGridLayout 二选一）
+    ContentViewSwitch *m_viewSwitch;   // 列表式 / 瀑布流切换
+    int m_viewMode;                    // ContentViewSwitch::ViewMode
     BlurLoadingOverlay *m_loadingOverlay;
     QLabel *m_emptyLabel;
     QPushButton *m_downloadSearchBtn;
+
+    // 本地资源分类筛选（按实例、按资源类型独立）
+    LocalCategoryManager *m_categoryManager;
+    QComboBox *m_categoryCombo;
+    QPushButton *m_categoryManageBtn;
+    QString m_currentCategoryId;      // 空 = 全部；特殊哨兵值 = 未分类
 
     // Drag mode UI
     QStackedWidget *m_stackedWidget;

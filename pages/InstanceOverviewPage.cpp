@@ -160,36 +160,51 @@ void InstanceOverviewPage::initUI()
         card = new QWidget(m_statsCardsRow);
         card->setObjectName("overviewStatCard");
         card->setCursor(Qt::PointingHandCursor);
-        // 固定宽度：各统计卡片边框对齐，宽窄一致
-        card->setFixedWidth(UiMetrics::kStatCardWidth);
+        // 固定为正方形：各统计卡片边框对齐，宽高一致
+        const int side = UiMetrics::kStatCardSize;
+        card->setFixedSize(side, side);
         QVBoxLayout *layout = new QVBoxLayout(card);
-        layout->setContentsMargins(14, 12, 14, 12);
+        layout->setContentsMargins(8, 8, 8, 8);
         layout->setSpacing(6);
+        layout->setAlignment(Qt::AlignVCenter);
 
+        // 图标置于方块上部居中
         QLabel *iconLabel = new QLabel(card);
         iconLabel->setObjectName("overviewStatIcon");
         iconLabel->setAlignment(Qt::AlignCenter);
-        iconLabel->setFixedSize(32, 32);
-        QIcon statIcon = IconHelper::loadColoredIcon(iconPath, themeColor, 18);
-        iconLabel->setPixmap(statIcon.pixmap(18, 18));
+        iconLabel->setFixedSize(36, 36);
+        QIcon statIcon = IconHelper::loadColoredIcon(iconPath, themeColor, 20);
+        iconLabel->setPixmap(statIcon.pixmap(20, 20));
         layout->addWidget(iconLabel, 0, Qt::AlignHCenter);
 
-        countLabel = new QLabel("--", card);
+        // 数量与类型放在同一行；「大小」卡不显示类型，仅展示数据
+        QWidget *valueRow = new QWidget(card);
+        QHBoxLayout *valueRowLayout = new QHBoxLayout(valueRow);
+        valueRowLayout->setContentsMargins(0, 0, 0, 0);
+        valueRowLayout->setSpacing(3);
+        valueRowLayout->setAlignment(Qt::AlignHCenter);
+
+        countLabel = new QLabel("--", valueRow);
         countLabel->setObjectName("overviewStatCount");
         countLabel->setAlignment(Qt::AlignCenter);
-        layout->addWidget(countLabel, 0, Qt::AlignHCenter);
+        valueRowLayout->addWidget(countLabel, 0, Qt::AlignBottom);
 
-        QLabel *titleLabel = new QLabel(title, card);
-        titleLabel->setObjectName("overviewStatTitle");
-        titleLabel->setAlignment(Qt::AlignCenter);
-        layout->addWidget(titleLabel, 0, Qt::AlignHCenter);
+        if (!title.isEmpty())
+        {
+            QLabel *titleLabel = new QLabel(title, valueRow);
+            titleLabel->setObjectName("overviewStatTitle");
+            titleLabel->setAlignment(Qt::AlignCenter);
+            valueRowLayout->addWidget(titleLabel, 0, Qt::AlignBottom);
+        }
+
+        layout->addWidget(valueRow, 0, Qt::AlignHCenter);
     };
 
     createStatCard(":/Images/Icons/nav_mods.svg", tr("模组"), m_modCountLabel, m_modCard);
     createStatCard(":/Images/Icons/nav_resourcepacks.svg", tr("资源包"), m_resourcePackCountLabel, m_resourcePackCard);
     createStatCard(":/Images/Icons/nav_shaders.svg", tr("光影包"), m_shaderCountLabel, m_shaderCard);
     createStatCard(":/Images/Icons/nav_worlds.svg", tr("存档"), m_savesCountLabel, m_savesCard);
-    createStatCard(":/Images/Icons/size.svg", tr("大小"), m_sizeLabel, m_sizeCard);
+    createStatCard(":/Images/Icons/size.svg", QString(), m_sizeLabel, m_sizeCard);
     createStatCard(":/Images/Icons/play.svg", tr("启动次数"), m_launchCountLabel, m_launchCountCard);
 
     statsLayout->addWidget(m_modCard);

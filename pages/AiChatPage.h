@@ -193,7 +193,7 @@ private:
     QWidget* createTypingIndicator();
 
     // 流式渲染（正文/思考增量追加，避免 QLabel 全量重排）
-    QTextEdit* createStreamEdit(const QString &objectName, QWidget *parent);
+    QTextEdit* createStreamEdit(const QString &objectName, QWidget *parent, bool outlineEnabled = false);
     void appendStreamText(QTextEdit *edit, const QString &full, int &flushedLen);
     void finalizeStreamWidgets(); ///< 收尾：正文切回 QLabel 的 Markdown 渲染，思考编辑器保留
     void invalidateStreamingWidgets(); ///< 消息控件整体销毁前作废流式指针与挂起的刷新

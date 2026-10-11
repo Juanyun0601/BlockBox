@@ -546,11 +546,10 @@ void ContentDownloadPage::onSourceChanged(int index)
         refreshCurrentSource();
     }
 
-    if (!m_currentQuery.isEmpty()) {
-        m_currentPage = 0;
-        m_allMods.clear();
-        performSearch(false);
-    }
+    // 无论有无搜索词都重新加载，避免切换下载源后残留上一来源的旧列表
+    m_currentPage = 0;
+    m_allMods.clear();
+    performSearch(false);
 }
 
 void ContentDownloadPage::onInstanceChanged(int index)
@@ -726,6 +725,8 @@ void ContentDownloadPage::performSearch(bool append)
     if (!append) {
         clearCards();
         m_allMods.clear();
+        m_bufferedMrResults.clear();
+        m_bufferedCfResults.clear();
         m_totalHits = 0;
         m_hasMore = false;
         m_pageCache.clear();
@@ -783,21 +784,28 @@ void ContentDownloadPage::performSearch(bool append)
 
 void ContentDownloadPage::onSearchCompleted(const ModSearchResult &result)
 {
+    if (m_currentSource == AllSources) {
+        // 全部来源模式：双源结果先缓冲，两源都返回后按名称合并同名资源再刷出卡片
+        if (sender() == m_modrinthAPI)
+            m_bufferedMrResults.append(result.mods);
+        else
+            m_bufferedCfResults.append(result.mods);
+        m_hasMore = m_hasMore || result.hasMore;
+        m_totalHits += result.totalHits;
+        m_pendingCount--;
+        if (m_pendingCount > 0)
+            return;
+        flushAllSourceResults();
+        return;
+    }
+
     m_pageCache[m_currentPage] = result.mods;
     m_allMods.append(result.mods);
     for (const ModInfo &info : result.mods)
         addCard(info);
 
-    if (m_currentSource == AllSources) {
-        m_pendingCount--;
-        m_hasMore = m_hasMore || result.hasMore;
-        m_totalHits += result.totalHits;
-        if (m_pendingCount > 0)
-            return;
-    } else {
-        m_hasMore = result.hasMore;
-        m_totalHits = result.totalHits;
-    }
+    m_hasMore = result.hasMore;
+    m_totalHits = result.totalHits;
 
     m_isLoading = false;
     showLoading(false);
@@ -821,19 +829,54 @@ void ContentDownloadPage::onSearchCompleted(const ModSearchResult &result)
     }
 }
 
+void ContentDownloadPage::flushAllSourceResults()
+{
+    m_allMods = mergeCrossSourceResults(m_bufferedMrResults, m_bufferedCfResults);
+    m_bufferedMrResults.clear();
+    m_bufferedCfResults.clear();
+    m_pageCache[m_currentPage] = m_allMods;
+
+    for (const ModInfo &info : m_allMods)
+        addCard(info);
+
+    m_isLoading = false;
+    showLoading(false);
+    placeCards();
+
+    updatePaginationControls();
+    m_loadingOverlay->clearError();
+
+    // 缓存合并后的第一页列表（仅当查询为空时）
+    if (m_currentPage == 0 && m_currentQuery.isEmpty()) {
+        ModSearchResult firstPage;
+        firstPage.mods = m_allMods;
+        firstPage.totalHits = m_totalHits;
+        firstPage.hasMore = m_hasMore;
+        ContentListCache::instance()->save(
+            ContentListCache::makeKey(
+                m_contentType, m_currentSource,
+                selectedGameVersion(), selectedLoader(),
+                m_sortCombo->currentData().toString(), QString(), 0),
+            firstPage);
+    }
+}
+
 void ContentDownloadPage::onSearchFailed(const QString &error)
 {
     if (m_currentSource == AllSources) {
         m_pendingCount--;
         if (m_pendingCount > 0)
             return;
-        if (!m_allMods.isEmpty()) {
-            m_isLoading = false;
-            showLoading(false);
-            placeCards();
-            updatePaginationControls();
+        // 两源均已返回（含单源失败）：另一源已有结果时仍然合并刷出
+        if (!m_bufferedMrResults.isEmpty() || !m_bufferedCfResults.isEmpty()) {
+            flushAllSourceResults();
             return;
         }
+        m_isLoading = false;
+        showLoading(false);
+        m_loadingOverlay->showError(error);
+        updatePaginationControls();
+        return;
     }
 
     m_isLoading = false;

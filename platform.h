@@ -94,4 +94,11 @@ namespace Platform {
 
     // 获取基岩版游戏数据目录（与 Java 版 .minecraft 分离）
     QString getBedrockDataDirectory();
+
+    // 开机自启动：查询当前是否已开启（Windows 查注册表 Run 键，
+    // macOS 查 LaunchAgents，Linux 查 ~/.config/autostart）
+    bool isAutoStartEnabled();
+
+    // 开启/关闭开机自启动，返回是否成功
+    bool setAutoStartEnabled(bool enabled);
 }

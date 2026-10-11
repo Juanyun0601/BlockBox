@@ -16,6 +16,7 @@
 #include <QMenu>
 #include <QCursor>
 #include "components/AppMessageBox.h"
+#include "components/AppFileDialog.h"
 #include <QMouseEvent>
 #include <QPropertyAnimation>
 #include <QScrollArea>
@@ -27,7 +28,6 @@
 #include <QVBoxLayout>
 #include <QFileInfo>
 #include <QFile>
-#include <QFileDialog>
 #include <QTextStream>
 #include <QDir>
 #include <QDirIterator>
@@ -727,7 +727,7 @@ void MainWindow::onImportPluginRequested()
 {
     ensurePageInitialized(PageIndex::PluginPage);
     // 批量导入：支持多选 .BlockBox 文件
-    const QStringList files = QFileDialog::getOpenFileNames(
+    const QStringList files = AppFileDialog::getOpenFileNames(
         this, tr("批量导入插件"), PluginManager::instance()->pluginsDir(),
         tr("BlockBox 插件 (*.BlockBox)"));
     if (files.isEmpty())
@@ -1846,6 +1846,25 @@ void MainWindow::onSaveSettingsOpened()
 {
     // 进入存档设置子页面：复用 TopBar 的返回按钮与标题
     m_topBar->setTitle(tr("实例管理>存档设置"));
+
+    // 断开所有 backClicked 信号连接
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+
+    connect(m_topBar, &TopBar::backClicked, this, [this]() {
+        // 返回存档列表
+        if (m_instanceManagePage)
+            m_instanceManagePage->setCurrentTab(5);
+        m_topBar->setTitle(tr("实例管理>存档"));
+        // 恢复主流程返回行为
+        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    });
+}
+
+void MainWindow::onSaveMapOpened()
+{
+    // 进入存档地表地图子页面：复用 TopBar 的返回按钮与标题
+    m_topBar->setTitle(tr("实例管理>存档地图"));
 
     // 断开所有 backClicked 信号连接
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
