@@ -53,6 +53,16 @@ QStringList LocalCategoryManager::suggestedNames(const QString &type)
     {
         return { tr("机制"), tr("配方"), tr("结构"), tr("玩法"), tr("其他") };
     }
+    if (t == QStringLiteral("servers"))
+    {
+        return { tr("生存服"), tr("创造服"), tr("小游戏"), tr("空岛"),
+                 tr("红石/科技"), tr("建筑服"), tr("代理/大区"), tr("其他") };
+    }
+    if (t == QStringLiteral("schematics"))
+    {
+        return { tr("建筑"), tr("内饰"), tr("红石机械"), tr("地形/景观"),
+                 tr("雕像/像素画"), tr("家具"), tr("其他") };
+    }
     return { tr("常用"), tr("辅助"), tr("美化"), tr("优化"), tr("其他") };
 }
 

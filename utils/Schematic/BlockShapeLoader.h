@@ -12,6 +12,10 @@
  *
  * JSON 解析深度：完整 parent 继承链、variants / multipart 属性匹配、elements(from/to/rotation/faces)、
  * 纹理变量(#xxx)解析、面级 uv 子区域，以及 blockstate 级 x/y 旋转（活板门等按朝向正确显示）。
+ *
+ * 启动提速：不再一次性解压 jar 里全部 blockstate/model（数千文件），而是先扫一次中心目录
+ * 建索引，再在真正需要某个方块形状时才按需读取；同一 jar 进程内共享一份。
+ *
  * 由宿主持有，供投影方块编辑器渲染与拾取使用；无可解析形状时由调用方回退为完整立方体。
  */
 #pragma once
@@ -19,8 +23,10 @@
 #include <QJsonObject>
 #include <QList>
 #include <QMap>
+#include <QSet>
 #include <QString>
 #include <QStringList>
+#include <memory>
 
 /**
  * @brief 单个面的贴图信息（模型元素的一个面）
@@ -64,11 +70,16 @@ class BlockShapeLoader
 {
 public:
     /**
-     * @brief 从实例目录加载 blockstate/model 数据
+     * @brief 从实例目录建立 jar 索引（不解压内容）
      * @param instancePath 实例的 versions/<版本> 目录（内含客户端 .jar）
-     * @return 找到 jar 并成功加载数据返回 true
+     * @return 找到 jar 并成功建立索引返回 true
      */
     bool load(const QString &instancePath, QString *errorOut = nullptr);
+
+    /**
+     * @brief 取进程内共享加载器（同一 jar 只建一次索引）
+     */
+    static BlockShapeLoader *sharedForInstance(const QString &instancePath);
 
     bool isValid() const { return m_loaded; }
 
@@ -78,8 +89,19 @@ public:
      */
     bool shapeFor(const QString &blockStateName, BlockShapes &out) const;
 
+    /** 预热一批方块状态形状（打开编辑器时按调色板调用，避免首帧大量随机 IO） */
+    void prewarm(const QStringList &blockStateNames) const;
+
 private:
     // ---- 内部数据结构 ----
+    struct ZipEntryMeta
+    {
+        quint32 offset = 0;
+        quint16 method = 0;
+        quint32 csize = 0;
+        quint32 usize = 0;
+    };
+
     struct ModelJson
     {
         QString parent;
@@ -87,14 +109,21 @@ private:
         bool hasElements = false;
         QJsonObject elemObj;               // 保留原始 elements 数组（延迟解析）
     };
-    QMap<QString, ModelJson> m_models;     // 模型名(不带 assets/minecraft/) -> 模型
-    QMap<QString, QJsonObject> m_blockstates; // 方块名 -> blockstate JSON
-
-    void addModelEntry(const QString &name, const QJsonObject &obj);
 
     // 解析一个模型(含 parent 链)得到元素
     void collectElements(const QString &modelKey, const QMap<QString, QString> *texOverride,
                          QList<ShapeBox> &boxes, QStringList &visited) const;
+
+    bool ensureBlockstate(const QString &type) const;
+    bool ensureModel(const QString &key) const;
+    bool readEntry(const QString &entryPath, QByteArray &data) const;
+
+    QString m_jarPath;
+    mutable QMap<QString, ZipEntryMeta> m_index; // 相对 jar 路径 -> 元数据
+    mutable QMap<QString, ModelJson> m_models;     // 模型名(不带 assets/minecraft/) -> 模型
+    mutable QMap<QString, QJsonObject> m_blockstates; // 方块名 -> blockstate JSON
+    mutable QSet<QString> m_missingBlockstates;
+    mutable QSet<QString> m_missingModels;
 
     bool m_loaded = false;
 };

@@ -28,6 +28,7 @@ class QShowEvent;
 class Skin3DWidget;
 class CarouselView;
 class HomeSkinPanel;
+struct InstanceFolderInfo;
 
 struct RecentPlayEntry
 {
@@ -112,7 +113,11 @@ signals:
 private:
   void initUI();
   void loadPictures();
+  // 触发后台扫描最近游玩（完成后自动重建卡片）
   void loadRecentPlays();
+  // 后台线程：遍历实例目录并解析存档信息，不触碰界面
+  static QVector<RecentPlayEntry> scanRecentPlays(const QList<InstanceFolderInfo> &folders,
+                                                   const QStringList &pinnedKeys);
   void loadInstances();
 
   // 首页布局（默认）
@@ -160,10 +165,11 @@ private:
   bool m_recentPlaysRebuildPending = false;  // 已有延迟重建排队（合并连续 resize）
   bool m_recentPlaysRefreshPending = false;  // 已有延迟数据刷新排队
   bool m_recentPlaysForceRebuild = false;    // 数据有变化，下次重建不可跳过
+  bool m_recentPlaysScanPending = false;     // 后台扫描进行中（防止重复触发）
   int m_recentPlaysBuiltWidth = -1;          // 上次重建使用的卡片宽度
   int m_recentPlaysBuiltCount = -1;          // 上次重建的卡片数量
   // 最近游玩固定（置顶）功能
-  QString recentPlayKey(const RecentPlayEntry &entry) const; // 稳定的记录标识
+  static QString recentPlayKey(const RecentPlayEntry &entry); // 稳定的记录标识
   void toggleRecentPlayPin(const QString &key);              // 固定/取消固定
   void sortRecentPlays();                                    // 固定置顶后按时间降序
   QStringList m_pinnedRecentKeys;                            // 已固定的记录标识（持久化）
@@ -176,6 +182,7 @@ private:
   QWidget* createPerformanceSection();
   QVector<PerfMonitorCard*> m_perfCards;
   HardwareMonitor *m_hardwareMonitor;
+  bool m_perfMonitorStarted = false;  // 硬件采样是否已启动（延迟到首页显示后）
   void refreshPerformanceData();
   void showPerformanceDetail(const QString &cardName);
   PerformanceDetailDialog *m_perfDetailDialog;

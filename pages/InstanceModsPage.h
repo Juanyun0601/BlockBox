@@ -11,6 +11,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QEvent>
+#include <QHash>
 #include <QLineEdit>
 #include <QQueue>
 #include <QScrollArea>
@@ -81,6 +82,9 @@ private slots:
     void onCategoryManageClicked();
     void onCategoriesChanged();
     void onAssignmentsChanged();
+    void onTimeFilterChanged(int index);
+    void onSizeFilterChanged(int index);
+    void onSortChanged(int index);
 
 private:
     void initUI();
@@ -90,6 +94,10 @@ private:
     void showLoading(bool show);
     void showEmptyHint(bool show);
     void applyFilterAndSearch();
+    /** 按当前排序模式重排 m_modList.mods（不触碰卡片与索引映射） */
+    void sortFileList();
+    /** 排序变化：重排列表并整体重建卡片与索引映射 */
+    void applySortOrder();
     void detectInstanceMeta();
     void resetUpdateState();
     void markCardHasUpdate(int index, const ModVersionFile &target);
@@ -130,6 +138,9 @@ private:
     // UI elements
     QLineEdit *m_searchEdit;
     QComboBox *m_filterCombo;
+    QComboBox *m_timeCombo;            // 时间筛选
+    QComboBox *m_sizeCombo;            // 大小筛选
+    QComboBox *m_sortCombo;            // 排序
     QLabel *m_statsLabel;
     QScrollArea *m_scrollArea;
     QWidget *m_cardContainer;
@@ -152,6 +163,7 @@ private:
     QPushButton *m_detailBtn;
     QPushButton *m_pasteModBtn;
     QPushButton *m_updateModBtn;
+    QPushButton *m_installNewBtn;      // 底部「安装新模组」入口
 
     // Data
     ModScanner *m_scanner;
@@ -170,6 +182,9 @@ private:
     int m_updateCheckTotal;          // 本次检查总数
     int m_updateCheckFound;          // 发现更新的数量
     int m_currentFilter;
+    int m_timeFilter = 0;              // 0=全部 1=7天 2=30天 3=一年
+    int m_sizeFilter = 0;              // 0=全部 1=<10MB 2=10~100MB 3=>100MB
+    int m_sortMode = 0;                // 0=名称↑ 1=名称↓ 2=大小↓ 3=大小↑ 4=新→旧 5=旧→新
     QString m_currentSearch;
     QString m_instancePath;
     bool m_isLoading;
@@ -177,6 +192,7 @@ private:
     QSet<int> m_selectedModIndices;   // 多选索引集合
     QList<int> m_updateQueue;         // 待更新的模组索引队列
     bool m_updateInProgress = false;  // 正在更新模组
+    QHash<QString, QDateTime> m_mtimeCache; // filePath → 修改时间（扫描器不填 dateModified）
 
     // 本地资源分类
     LocalCategoryManager *m_categoryManager;

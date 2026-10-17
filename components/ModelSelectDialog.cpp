@@ -16,12 +16,14 @@
 #include "components/AppFileDialog.h"
 #include "components/LocalModelDialog.h"
 #include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -36,8 +38,133 @@
 #include <QTimer>
 #include <QUrl>
 
+#include "utils/AiProviderPresets.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
+
+namespace {
+
+QString formatTokens(int tokens)
+{
+    if (tokens >= 1048576 && tokens % 1048576 == 0)
+    {
+        return QStringLiteral("%1M").arg(tokens / 1048576);
+    }
+    if (tokens >= 1024 && tokens % 1024 == 0)
+    {
+        return QStringLiteral("%1K").arg(tokens / 1024);
+    }
+    return QString::number(tokens);
+}
+
+/**
+ * @brief 从服务商 /models 返回的单条目解析元数据
+ *
+ * 兼容常见结构：OpenAI/OpenRouter 的 data[]（context_length、
+ * architecture.modality="text+image->text"、supported_parameters）与
+ * Gemini 的 models[]（inputTokenLimit）。服务商未提供的字段保持默认值。
+ */
+AiModelMeta metaFromEntry(const QJsonObject& entry)
+{
+    AiModelMeta meta;
+
+    // 上下文窗口
+    static const char* ctxKeys[] = {"context_length", "context_window",
+                                    "max_input_tokens", "inputTokenLimit"};
+    for (const char* key : ctxKeys)
+    {
+        const QJsonValue v = entry.value(QLatin1String(key));
+        if (v.isDouble() && v.toInt() > 0)
+        {
+            meta.contextTokens = v.toInt();
+            break;
+        }
+    }
+
+    // 输入模态：architecture.modality = "text+image->text"，或 input_modalities 数组
+    const QString modality = entry.value(QLatin1String("architecture")).toObject()
+                                 .value(QLatin1String("modality")).toString();
+    if (!modality.isEmpty())
+    {
+        const QString inputs = modality.section(QStringLiteral("->"), 0, 0);
+        const QStringList tokens = inputs.split(QLatin1Char('+'), Qt::SkipEmptyParts);
+        for (const QString& t : tokens)
+        {
+            meta.inputModalities << t.trimmed().toLower();
+        }
+    }
+    else
+    {
+        for (const char* arrKey : {"input_modalities", "inputModalities"})
+        {
+            const QJsonArray arr = entry.value(QLatin1String(arrKey)).toArray();
+            for (const QJsonValue& v : arr)
+            {
+                const QString t = v.toString().trimmed().toLower();
+                if (!t.isEmpty())
+                {
+                    meta.inputModalities << t;
+                }
+            }
+            if (!meta.inputModalities.isEmpty())
+            {
+                break;
+            }
+        }
+    }
+
+    // 推理/思考
+    for (const char* arrKey : {"supported_parameters", "capabilities"})
+    {
+        const QJsonArray arr = entry.value(QLatin1String(arrKey)).toArray();
+        for (const QJsonValue& v : arr)
+        {
+            const QString s = v.toString().toLower();
+            if (s == QLatin1String("reasoning") || s == QLatin1String("thinking"))
+            {
+                meta.reasoning = true;
+                break;
+            }
+        }
+        if (meta.reasoning)
+        {
+            break;
+        }
+    }
+    return meta;
+}
+
+/// 条目 ID 归一化（Gemini 的 name 形如 "models/gemini-1.5-pro"）
+QString normalizedEntryId(const QJsonObject& entry)
+{
+    QString id = entry.value(QLatin1String("id")).toString();
+    if (id.isEmpty())
+    {
+        id = entry.value(QLatin1String("name")).toString();
+    }
+    if (id.startsWith(QLatin1String("models/")))
+    {
+        id.remove(0, 7);
+    }
+    return id;
+}
+
+/// 条目与模型 ID 匹配：完全相等，或一方带厂商前缀（openai/gpt-4o 与 gpt-4o）
+bool entryMatchesModel(const QString& entryId, const QString& modelId)
+{
+    if (entryId.isEmpty() || modelId.isEmpty())
+    {
+        return false;
+    }
+    if (entryId == modelId)
+    {
+        return true;
+    }
+    return modelId.endsWith(QStringLiteral("/") + entryId)
+        || entryId.endsWith(QStringLiteral("/") + modelId);
+}
+
+} // namespace
 
 ModelSelectDialog::ModelSelectDialog(QWidget* parent)
     : AppDialogBase(parent)
@@ -217,7 +344,19 @@ void ModelSelectDialog::setModels(const QList<AiModel>& models)
 
 void ModelSelectDialog::setCurrentModel(const QString& modelId)
 {
+    if (m_currentModelId == modelId)
+    {
+        return;
+    }
     m_currentModelId = modelId;
+
+    // 上层在 setModels 之后才调用本方法：首次打开时列表已按旧的当前模型构建，
+    // 这里补一次重建，保证当前模型的勾选标记正确。
+    if (!m_lastSignature.isEmpty())
+    {
+        rebuildConfiguredSection();
+        markRebuilt();
+    }
 }
 
 AiModel ModelSelectDialog::selectedModel() const
@@ -300,18 +439,25 @@ void ModelSelectDialog::rebuildConfiguredSection()
     m_configuredSection->setObjectName("modelConfiguredSection");
     m_configuredLayout = new QVBoxLayout(m_configuredSection);
     m_configuredLayout->setContentsMargins(0, 12, 0, 12);
-    m_configuredLayout->setSpacing(6);
+    m_configuredLayout->setSpacing(4);
 
     auto* sectionTitle = new QLabel(tr("已配置的模型"));
     sectionTitle->setObjectName("modelSectionTitle");
     m_configuredLayout->addWidget(sectionTitle);
 
-    for (const AiModel& model : configured)
+    for (int i = 0; i < configured.size(); ++i)
     {
+        const AiModel& model = configured[i];
+
+        // 列表项：整行可点击（左键切换模型并关闭窗口，右键弹出删除菜单）
         auto* item = new QWidget();
         item->setObjectName("modelConfiguredItem");
+        item->setProperty("modelId", model.id);
+        item->setProperty("modelRemovable", !model.isLocal);
+        item->setCursor(Qt::PointingHandCursor);
+        item->installEventFilter(this);
         auto* itemLayout = new QHBoxLayout(item);
-        itemLayout->setContentsMargins(12, 10, 12, 10);
+        itemLayout->setContentsMargins(10, 7, 10, 7);
         itemLayout->setSpacing(8);
 
         bool isCurrent = (model.id == m_currentModelId);
@@ -319,69 +465,307 @@ void ModelSelectDialog::rebuildConfiguredSection()
         checkIcon->setObjectName(isCurrent ? "modelCheckActive" : "modelCheckInactive");
         checkIcon->setAlignment(Qt::AlignCenter);
         checkIcon->setFixedSize(20, 20);
+        checkIcon->setAttribute(Qt::WA_TransparentForMouseEvents);
         if (isCurrent)
         {
             checkIcon->setPixmap(IconHelper::loadColoredIcon(":/Images/Icons/check.svg", QColor("#ffffff"), 12).pixmap(12, 12));
         }
         itemLayout->addWidget(checkIcon);
 
-        auto* infoLayout = new QVBoxLayout();
-        infoLayout->setSpacing(2);
-
         auto* nameLabel = new QLabel(model.displayName);
         nameLabel->setObjectName("modelConfigName");
-        infoLayout->addWidget(nameLabel);
+        nameLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+        itemLayout->addWidget(nameLabel, 1);
 
-        // 本地模型显示来源信息，云端模型显示 API Key 占位
-        auto* keyLabel = new QLabel(
-            model.isLocal ? tr("本地模型 · Ollama (端口 11434)")
-                          : tr("API Key: %1").arg("••••••••"));
-        keyLabel->setObjectName("modelConfigKey");
-        infoLayout->addWidget(keyLabel);
-
-        itemLayout->addLayout(infoLayout, 1);
-
-        auto* useBtn = new QPushButton(tr("使用"));
-        useBtn->setObjectName("modelUseBtn");
-        useBtn->setCursor(Qt::PointingHandCursor);
-        useBtn->setFixedWidth(56);
-        QString modelId = model.id;
-        connect(useBtn, &QPushButton::clicked, this, [this, modelId]() {
-            m_currentModelId = modelId;
-            emit modelSelected(selectedModel());
-        });
-        itemLayout->addWidget(useBtn);
-
-        // 本地模型不显示"删除"按钮（删除应通过本地模型对话框在 Ollama 中操作）
-        if (!model.isLocal)
-        {
-            auto* delBtn = new QPushButton();
-            delBtn->setObjectName("modelDelBtn");
-            delBtn->setCursor(Qt::PointingHandCursor);
-            delBtn->setFixedSize(28, 28);
-            delBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/close.svg", QColor("#f44336"), 14));
-            delBtn->setIconSize(QSize(14, 14));
-            connect(delBtn, &QPushButton::clicked, this, [this, modelId]() {
-                for (int i = 0; i < m_allModels.size(); ++i)
-                {
-                    if (m_allModels[i].id == modelId)
-                    {
-                        m_allModels[i].apiKey = "";
-                        break;
-                    }
-                }
-                emit modelRemoved(modelId);
-                rebuildConfiguredSection();
-                rebuildProviderSections();
-                markRebuilt();
-            });
-            itemLayout->addWidget(delBtn);
-        }
+        // 悬浮信息（上下文长度 / 模态 / 推理），默认隐藏，行悬浮时在右侧展开
+        auto* metaLabel = new QLabel(buildMetaText(model));
+        metaLabel->setObjectName("modelMetaInfo");
+        metaLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+        metaLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        metaLabel->setVisible(false);
+        itemLayout->addWidget(metaLabel);
 
         m_configuredLayout->addWidget(item);
+
+        // 行间分隔线（最后一行不加）
+        if (i + 1 < configured.size())
+        {
+            auto* separator = new QFrame();
+            separator->setObjectName("modelItemSeparator");
+            separator->setFixedHeight(1);
+            m_configuredLayout->addWidget(separator);
+        }
     }
 
     m_contentLayout->insertWidget(0, m_configuredSection);
+
+    // 已配置模型有变化时拉取服务商元数据（内部按 baseUrl/tag 去重，只拉一次）
+    requestProviderMeta();
+}
+
+// ============================================================================
+// 服务商元数据（悬浮展示用）
+// ============================================================================
+
+void ModelSelectDialog::requestProviderMeta()
+{
+    // 1. 云端：按 baseUrl 去重，GET {base}/models（OpenAI 兼容协议）
+    QMap<QString, QString> baseToKey;   // baseUrl → 首个可用 API Key
+    for (const AiModel& model : m_allModels)
+    {
+        if (model.isLocal || model.apiKey.isEmpty() || model.apiUrl.isEmpty())
+        {
+            continue;
+        }
+        QString base = model.apiUrl;
+        while (base.endsWith(QLatin1Char('/')))
+        {
+            base.chop(1);
+        }
+        if (!baseToKey.contains(base))
+        {
+            baseToKey.insert(base, model.apiKey);
+        }
+    }
+
+    for (auto it = baseToKey.constBegin(); it != baseToKey.constEnd(); ++it)
+    {
+        const QString base = it.key();
+        if (m_metaRequested.contains(base))
+        {
+            continue;
+        }
+        m_metaRequested.insert(base);
+
+        QString url = base;
+        if (url.endsWith(QLatin1String("/v1")) || url.endsWith(QLatin1String("/v1beta")))
+        {
+            url += QStringLiteral("/models");
+        }
+        else
+        {
+            url += QStringLiteral("/v1/models");
+        }
+
+        QNetworkRequest request{QUrl(url)};
+        request.setTransferTimeout(8000);
+        const QString apiKey = it.value();
+        if (!apiKey.isEmpty())
+        {
+            if (base.contains(QLatin1String("googleapis.com")))
+            {
+                // Gemini 用 ?key= 鉴权
+                url += (url.contains(QLatin1Char('?')) ? QLatin1Char('&') : QLatin1Char('?'))
+                    + QStringLiteral("key=") + QString::fromLatin1(QUrl::toPercentEncoding(apiKey));
+                request.setUrl(QUrl(url));
+            }
+            else
+            {
+                request.setRawHeader("Authorization", "Bearer " + apiKey.toUtf8());
+            }
+        }
+
+        QNetworkReply* reply = m_networkManager->get(request);
+        connect(reply, &QNetworkReply::finished, this, [this, reply, base]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError ||
+                reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200)
+            {
+                return;
+            }
+
+            QJsonParseError parseError;
+            const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+            {
+                return;
+            }
+
+            QJsonArray entries = doc.object().value(QStringLiteral("data")).toArray();
+            if (entries.isEmpty())
+            {
+                entries = doc.object().value(QStringLiteral("models")).toArray();   // Gemini
+            }
+
+            bool changed = false;
+            for (const QJsonValue& value : entries)
+            {
+                const QJsonObject entry = value.toObject();
+                const QString entryId = normalizedEntryId(entry);
+                for (const AiModel& model : m_allModels)
+                {
+                    if (model.isLocal || model.apiUrl.isEmpty())
+                    {
+                        continue;
+                    }
+                    QString modelBase = model.apiUrl;
+                    while (modelBase.endsWith(QLatin1Char('/')))
+                    {
+                        modelBase.chop(1);
+                    }
+                    if (modelBase != base || !entryMatchesModel(entryId, model.id))
+                    {
+                        continue;
+                    }
+                    m_metaCache.insert(model.id, metaFromEntry(entry));
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                applyMetaToRows();
+            }
+        });
+    }
+
+    // 2. 本地（Ollama）：POST /api/show 拉 capabilities 与 model_info
+    for (const AiModel& model : m_allModels)
+    {
+        if (!model.isLocal || model.localTag.isEmpty() || model.apiUrl.isEmpty())
+        {
+            continue;
+        }
+        const QString key = QStringLiteral("ollama:") + model.localTag;
+        if (m_metaRequested.contains(key))
+        {
+            continue;
+        }
+        m_metaRequested.insert(key);
+
+        QString root = model.apiUrl;
+        while (root.endsWith(QLatin1Char('/')))
+        {
+            root.chop(1);
+        }
+        if (root.endsWith(QLatin1String("/v1")))
+        {
+            root.chop(3);
+        }
+
+        QNetworkRequest request{QUrl(root + QStringLiteral("/api/show"))};
+        request.setTransferTimeout(8000);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        const QJsonObject body{{QStringLiteral("model"), model.localTag}};
+
+        QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+        const QString modelId = model.id;
+        connect(reply, &QNetworkReply::finished, this, [this, reply, modelId]() {
+            reply->deleteLater();
+            if (reply->error() != QNetworkReply::NoError ||
+                reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200)
+            {
+                return;
+            }
+
+            QJsonParseError parseError;
+            const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &parseError);
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+            {
+                return;
+            }
+            const QJsonObject obj = doc.object();
+
+            AiModelMeta meta;
+            const QJsonArray caps = obj.value(QStringLiteral("capabilities")).toArray();
+            for (const QJsonValue& value : caps)
+            {
+                const QString cap = value.toString();
+                if (cap == QLatin1String("completion"))
+                {
+                    meta.inputModalities << QStringLiteral("text");
+                }
+                else if (cap == QLatin1String("vision"))
+                {
+                    meta.inputModalities << QStringLiteral("image");
+                }
+                else if (cap == QLatin1String("thinking"))
+                {
+                    meta.reasoning = true;
+                }
+            }
+
+            const QJsonObject info = obj.value(QStringLiteral("model_info")).toObject();
+            for (auto infoIt = info.constBegin(); infoIt != info.constEnd(); ++infoIt)
+            {
+                if (infoIt.key().endsWith(QLatin1String("context_length")) &&
+                    infoIt.value().isDouble() && infoIt.value().toInt() > 0)
+                {
+                    meta.contextTokens = infoIt.value().toInt();
+                    break;
+                }
+            }
+
+            m_metaCache.insert(modelId, meta);
+            applyMetaToRows();
+        });
+    }
+}
+
+void ModelSelectDialog::applyMetaToRows()
+{
+    if (!m_contentWidget)
+    {
+        return;
+    }
+    const auto rows = m_contentWidget->findChildren<QWidget*>(QStringLiteral("modelConfiguredItem"));
+    for (QWidget* row : rows)
+    {
+        auto* info = row->findChild<QLabel*>(QStringLiteral("modelMetaInfo"));
+        if (!info)
+        {
+            continue;
+        }
+        const QString modelId = row->property("modelId").toString();
+        const AiModel* model = nullptr;
+        for (const AiModel& m : m_allModels)
+        {
+            if (m.id == modelId)
+            {
+                model = &m;
+                break;
+            }
+        }
+        const QString text = model ? buildMetaText(*model) : QString();
+        info->setText(text);
+        if (text.isEmpty() && info->isVisible())
+        {
+            info->setVisible(false);
+        }
+    }
+}
+
+/// 悬浮信息文本：只用服务商返回的数据 + 目录的推理标记；无数据时返回空（不展示）
+QString ModelSelectDialog::buildMetaText(const AiModel& model) const
+{
+    const AiModelMeta meta = m_metaCache.value(model.id);
+    QStringList parts;
+
+    if (meta.contextTokens > 0)
+    {
+        parts << tr("上下文 %1").arg(formatTokens(meta.contextTokens));
+    }
+
+    if (!meta.inputModalities.isEmpty())
+    {
+        QStringList mods;
+        for (const QString& token : meta.inputModalities)
+        {
+            if (token == QLatin1String("text")) mods << tr("文本");
+            else if (token == QLatin1String("image")) mods << tr("图片");
+            else if (token == QLatin1String("video")) mods << tr("视频");
+            else if (token == QLatin1String("audio")) mods << tr("音频");
+        }
+        if (!mods.isEmpty())
+        {
+            parts << tr("支持：%1").arg(mods.join(tr("、")));
+        }
+    }
+
+    if (meta.reasoning || model.supportsThinking)
+    {
+        parts << tr("支持推理");
+    }
+    return parts.join(QStringLiteral(" · "));
 }
 
 // ============================================================================
@@ -439,42 +823,44 @@ void ModelSelectDialog::rebuildProviderSections()
         allProviderGroups[key].append(model);
     }
 
-    // 从设置页读取服务商配置并应用到模型
+    // 从设置页读取服务商配置并应用到模型（清单见 utils/AiProviderPresets.h）
     QSettings settings;
-    QMap<QString, QPair<QString, QString>> providerConfigs;
-    struct ProviderConfigInfo {
-        QString key;
-        QString configKey;
-    };
-    QList<ProviderConfigInfo> configInfos = {
-        {"DeepSeek", "ai/provider_deepseek"},
-        {"OpenAI", "ai/provider_openai"},
-        {"Anthropic", "ai/provider_anthropic"},
-        {"Gemini", "ai/provider_gemini"},
-        {"OpenRouter", "ai/provider_openrouter"},
-        {"GLM", "ai/provider_glm"},
-        {"Qwen", "ai/provider_qwen"},
-        {"ERNIE", "ai/provider_ernie"},
-    };
-    for (const ProviderConfigInfo &info : configInfos) {
-        QString url = settings.value(info.configKey + "/url", "").toString();
-        QString key = settings.value(info.configKey + "/key", "").toString();
+    QList<AiProviderPreset> presets = aiProviderPresets();
+    QMap<QString, QPair<QString, QString>> providerConfigs;   // key → (url, apiKey)
+    QMap<QString, QString> providerUrlHint;                   // key → url 特征
+    for (const AiProviderPreset &p : presets) {
+        providerUrlHint[p.key] = p.urlHint;
+        QString url = settings.value(p.configKey + "/url", "").toString();
+        QString key = settings.value(p.configKey + "/key", "").toString();
         if (!url.isEmpty() || !key.isEmpty()) {
-            providerConfigs[info.key] = qMakePair(url, key);
+            providerConfigs[p.key] = qMakePair(url, key);
         }
     }
 
-    // 将服务商配置应用到模型
+    // 将服务商配置应用到模型：优先按 url 特征匹配（避免
+    // “DeepSeek V3 (SiliconFlow)” 这类同名不同源被官方 DeepSeek 配置覆盖），
+    // 不命中再回退到 displayName 首词。
     for (AiModel &model : m_allModels) {
-        QString pKey = providerKey(model);
-        if (providerConfigs.contains(pKey)) {
-            auto &config = providerConfigs[pKey];
-            if (!config.first.isEmpty()) {
-                model.apiUrl = config.first;
+        QString matchedKey;
+        for (auto it = providerUrlHint.constBegin(); it != providerUrlHint.constEnd(); ++it) {
+            if (!it.value().isEmpty() && model.apiUrl.contains(it.value())) {
+                matchedKey = it.key();
+                break;
             }
-            if (!config.second.isEmpty()) {
-                model.apiKey = config.second;
-            }
+        }
+        if (matchedKey.isEmpty()) {
+            const QString pKey = providerKey(model);
+            if (providerConfigs.contains(pKey))
+                matchedKey = pKey;
+        }
+        if (matchedKey.isEmpty() || !providerConfigs.contains(matchedKey))
+            continue;
+        auto &config = providerConfigs[matchedKey];
+        if (!config.first.isEmpty()) {
+            model.apiUrl = config.first;
+        }
+        if (!config.second.isEmpty()) {
+            model.apiKey = config.second;
         }
     }
 
@@ -594,6 +980,7 @@ void ModelSelectDialog::openProviderWebsite(const QString& providerKey)
         {"Pangu",       "https://www.huaweicloud.com/product/pangu.html"},
         {"Qwen",        "https://tongyi.aliyun.com"},
         {"SenseChat",   "https://platform.sensenova.cn"},
+        {"SiliconFlow", "https://siliconflow.cn"},
         {"Spark",       "https://xinghuo.xfyun.cn"},
         {"Step",        "https://www.stepfun.com"},
         {"TRS",         "https://www.trs.com.cn"},
@@ -874,6 +1261,78 @@ void ModelSelectDialog::onLocalModelClicked()
 
 bool ModelSelectDialog::eventFilter(QObject* obj, QEvent* event)
 {
+    // 悬浮进入/离开列表行时，在行右侧展开/收起模型信息（上下文、模态、推理）
+    if (event->type() == QEvent::Enter || event->type() == QEvent::Leave)
+    {
+        auto* row = qobject_cast<QWidget*>(obj);
+        if (row && !row->property("modelId").toString().isEmpty())
+        {
+            if (auto* info = row->findChild<QLabel*>(QStringLiteral("modelMetaInfo")))
+            {
+                info->setVisible(event->type() == QEvent::Enter && !info->text().isEmpty());
+            }
+            return false;
+        }
+    }
+
+    // 模型列表项交互：左键切换模型并关闭窗口，右键弹出删除菜单
+    if (event->type() == QEvent::MouseButtonPress)
+    {
+        auto* row = qobject_cast<QWidget*>(obj);
+        if (row && !row->property("modelId").toString().isEmpty())
+        {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            const QString modelId = row->property("modelId").toString();
+
+            if (mouseEvent->button() == Qt::LeftButton)
+            {
+                m_currentModelId = modelId;
+                emit modelSelected(selectedModel());
+                accept();
+                return true;
+            }
+
+            if (mouseEvent->button() == Qt::RightButton)
+            {
+                // 本地模型只能通过本地模型对话框在 Ollama 中删除，不弹菜单
+                if (!row->property("modelRemovable").toBool())
+                {
+                    return true;
+                }
+
+                QMenu menu(this);
+                QAction* removeAction = menu.addAction(tr("删除"));
+                QAction* chosen = menu.exec(mouseEvent->globalPosition().toPoint());
+                if (chosen == removeAction)
+                {
+                    for (int i = 0; i < m_allModels.size(); ++i)
+                    {
+                        if (m_allModels[i].id == modelId)
+                        {
+                            m_allModels[i].apiKey = "";
+                            break;
+                        }
+                    }
+                    emit modelRemoved(modelId);
+                    rebuildConfiguredSection();
+                    rebuildProviderSections();
+                    markRebuilt();
+                }
+                return true;
+            }
+        }
+    }
+
+    // 屏蔽列表项的默认上下文菜单（删除菜单已在上面的右键按下时弹出）
+    if (event->type() == QEvent::ContextMenu)
+    {
+        auto* row = qobject_cast<QWidget*>(obj);
+        if (row && !row->property("modelId").toString().isEmpty())
+        {
+            return true;
+        }
+    }
+
     if (event->type() == QEvent::MouseButtonDblClick)
     {
         auto* btn = qobject_cast<QPushButton*>(obj);

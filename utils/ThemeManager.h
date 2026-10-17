@@ -265,6 +265,13 @@ public:
     QString getInfoColorMediumAccent() const;
 
     /**
+     * @brief 将样式表中所有 @TOKEN@ 占位符替换为对应颜色值
+     * @param style 含占位符的样式表
+     * @return QString 替换完成后的样式表
+     */
+    QString resolveTokens(const QString& style) const;
+
+    /**
      * @brief 应用主题色到当前主题
      */
     void applyThemeColor();
@@ -414,13 +421,6 @@ private:
      * @return QMap<QString, QString> token 表（key 为 @TOKEN@）
      */
     QMap<QString, QString> buildTokenTable() const;
-
-    /**
-     * @brief 将样式表中所有 @TOKEN@ 占位符替换为对应颜色值
-     * @param style 含占位符的样式表
-     * @return QString 替换完成后的样式表
-     */
-    QString resolveTokens(const QString& style) const;
 
     /**
      * @brief 生成 rgba 颜色字符串

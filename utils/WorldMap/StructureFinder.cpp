@@ -80,12 +80,16 @@ const QVector<StructureDef> &allStructures()
         { Trial_Chambers,  "trial_chambers",  "试炼密室",   "Trial Chambers",      "",                     "EnvSprite_trial-chambers.png",   true  },
         { Trail_Ruins,     "trail_ruins",     "古迹废墟",   "Trail Ruins",         "",                     "EnvSprite_trail-ruins.png",      false },
         { Desert_Well,     "desert_well",     "沙漠水井",   "Desert Well",         "",                     "EnvSprite_desert-well.png",      false },
+        { kUnsupportedType, "abandoned_camp", "废弃营地",   "Abandoned Camp",      "",                     "EnvSprite_abandoned-camp.png",   false },
         // 下界
         { Fortress,        "fortress",        "下界要塞",   "Nether Fortress",     "Nether Fossil",        "EnvSprite_fortress.png",         true  },
         { Bastion,         "bastion",         "猪灵堡垒",   "Bastion Remnant",     "",                     "EnvSprite_bastion-remnant.png",  true  },
         { Ruined_Portal_N, "ruined_portal_nether", "下界废弃传送门", "Ruined Portal", "",                 "EnvSprite_ruined-portal.png",    false },
+        { kUnsupportedType, "nether_fossil",  "下界化石",   "Nether Fossil",       "",                     "EnvSprite_nether-fossil.png",    false },
         // 末地
         { End_City,        "end_city",        "末地城",     "End City",            "",                     "EnvSprite_end-city.png",         true  },
+        { End_Gateway,     "end_gateway",     "末地折跃门", "End Gateway",         "",                     "EnvSprite_end-gateway.png",      false },
+        { kUnsupportedType, "end_ship",       "末地船",     "End Ship",            "",                     "EnvSprite_end-ship.png",         false },
     };
     return kDefs;
 }
@@ -191,6 +195,12 @@ QVector<Hit> find(quint64 seed, int mc, int dim,
         if (span <= 0)
             continue;
 
+        // 扫描预算分级：regionSize=1 的类型（埋藏宝藏 / 矿井 / 水井 / 折跃门）
+        // 每 16 方块一个网格点，16384 方块范围就有百万级点数（纯 RNG 很快），
+        // 用老的 4096 上限会把大范围查询截断成一角；大网格类型维持原上限。
+        const qint64 maxScan = cfg.regionSize <= 4 ? qint64(1) << 22
+                                                    : kMaxRegionsPerType;
+
         const int rx0 = int(std::floor(double(minX) / double(span)));
         const int rz0 = int(std::floor(double(minZ) / double(span)));
         const int rx1 = int(std::floor(double(maxX) / double(span)));
@@ -202,7 +212,7 @@ QVector<Hit> find(quint64 seed, int mc, int dim,
         {
             for (int rx = rx0; rx <= rx1; ++rx)
             {
-                if (++scanned > kMaxRegionsPerType)
+                if (++scanned > maxScan)
                 {
                     overflow = true; // 极端范围：收工，别卡住 UI
                     break;

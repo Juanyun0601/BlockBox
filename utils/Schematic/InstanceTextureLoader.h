@@ -12,6 +12,11 @@
  *   或版本隔离时 <实例根>/versions/<版本>/<版本>.jar
  * 传入的 instancePath 即该 versions/<版本> 目录，本类在该目录下查找 .jar。
  *
+ * 启动提速：
+ *   - 整包一次遍历批量解压（不再逐条打开 jar 扫中心目录）
+ *   - 进程内按 jar 路径共享缓存，编辑器与封面渲染共用同一份图集
+ *   - 首次构建后写入磁盘缓存，下次打开秒载
+ *
  * 由宿主持有，供投影方块编辑器（原生插件界面）渲染真实材质使用；
  * 未映射到贴图的方块由调用方以颜色回退。
  */
@@ -22,12 +27,18 @@
 #include <QString>
 #include <QStringList>
 
+class QMutex;
+
 /**
  * @brief 实例方块材质加载器（生成纹理图集）
  */
 class InstanceTextureLoader
 {
 public:
+    InstanceTextureLoader() = default;
+    InstanceTextureLoader(const InstanceTextureLoader &) = default;
+    InstanceTextureLoader &operator=(const InstanceTextureLoader &) = default;
+
     /**
      * @brief 从指定实例目录加载方块贴图并构建图集
      * @param instancePath 实例的 versions/<版本> 目录（内含客户端 .jar）
@@ -35,6 +46,13 @@ public:
      * @return 成功返回 true；找不到 jar/无贴图返回 false
      */
     bool load(const QString &instancePath, QString *errorOut = nullptr);
+
+    /**
+     * @brief 取进程内共享图集（同一 jar 只加载一次；无缓存时同步构建）
+     * @param instancePath 实例的 versions/<版本> 目录
+     * @return 共享加载器；失败返回空指针
+     */
+    static InstanceTextureLoader *sharedForInstance(const QString &instancePath);
 
     bool isValid() const { return !m_atlas.isNull() && m_textureCount > 0; }
 
@@ -79,6 +97,9 @@ private:
     bool resolveByName(const QString &base, int &tile) const;
 
     bool findClientJar(const QString &instancePath, QString &jarPath) const;
+    bool loadFromJar(const QString &jarPath, QString *errorOut);
+    bool tryLoadDiskCache(const QString &jarPath);
+    bool saveDiskCache(const QString &jarPath) const;
     void buildAtlas(const QMap<QString, QImage> &textures);
 
     QImage   m_atlas;
@@ -86,4 +107,5 @@ private:
     int      m_atlasSize = 0;
     int      m_textureCount = 0;
     QMap<QString, int> m_nameToTile;   // 规范化方块名 -> 贴图格下标
+    QString  m_cacheKey;               // 磁盘缓存用的 jar 路径
 };

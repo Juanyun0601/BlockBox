@@ -1890,9 +1890,7 @@ void PluginPage::openProjectionInEditor(const PluginInfo &info)
 
     // 由插件设置初始化编辑器（显示空气 / 默认工具等），并应用实例材质
     ProjectionBlockEditorDialog dlg(this);
-    if (!instancePath.isEmpty())
-        dlg.setTextureSource(instancePath);
-    if (!dlg.loadProjection(file))
+    if (!dlg.loadProjection(file, instancePath))
         return;
     dlg.exec();
 

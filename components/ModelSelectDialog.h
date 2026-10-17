@@ -11,12 +11,14 @@
 #include "components/AppDialogBase.h"
 
 #include <QCheckBox>
+#include <QHash>
 #include <QJsonObject>
 #include <QLineEdit>
 #include <QMap>
 #include <QNetworkAccessManager>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSet>
 #include <QTextEdit>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -24,6 +26,18 @@
 #include "utils/AiService.h"
 
 class LocalModelDialog;
+
+/**
+ * @brief 模型元数据（从服务商 API 拉取，用于列表项悬浮展示）
+ *
+ * 字段以服务商返回为准，未知字段保持默认值（0 / 空 / false）。
+ */
+struct AiModelMeta
+{
+    int contextTokens = 0;          ///< 上下文窗口（token），0 = 服务商未提供
+    QStringList inputModalities;    ///< 输入模态（text/image/video/audio），空 = 未提供
+    bool reasoning = false;         ///< 服务商标记支持推理/思考
+};
 
 class ModelSelectDialog : public AppDialogBase
 {
@@ -79,12 +93,17 @@ private:
     void hideConfigForm();
     QString providerKey(const AiModel& model) const;
     void openProviderWebsite(const QString& providerKey);
+    void requestProviderMeta();
+    void applyMetaToRows();
+    QString buildMetaText(const AiModel& model) const;
 
     // 数据
     QList<AiModel> m_allModels;
     QString m_currentModelId;
     QString m_lastSignature;    ///< 上次完整重建时的渲染签名（用于跳过无变化重建）
     QTimer* m_searchTimer;      ///< 搜索输入防抖定时器
+    QHash<QString, AiModelMeta> m_metaCache;   ///< 模型 ID → 服务商元数据
+    QSet<QString> m_metaRequested;             ///< 已发起/已完成拉取的去重键（baseUrl 或 ollama:tag）
 
     // UI 组件
     QScrollArea* m_scrollArea;

@@ -17,6 +17,7 @@
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/MemoryAllocator.h"
+#include "utils/Schematic/ProjectionEditorSettings.h"
 #include "components/CollapsibleSectionCard.h"
 #include "components/OutlinedLabel.h"
 #include "settings/SettingsKeyBindPage.h"
@@ -72,6 +73,8 @@ void SettingsPage::initRightContent()
     m_aiAssistantSettings->setObjectName("settingsAiAssistantContent");
     m_aboutSettings = new QWidget(m_contentStack);
     m_aboutSettings->setObjectName("settingsAboutContent");
+    m_projectionEditorSettings = new QWidget(m_contentStack);
+    m_projectionEditorSettings->setObjectName("settingsProjectionEditorContent");
     initGeneralSettings();
     initInterfaceSettings();
     initGlobalGameSettings();
@@ -83,6 +86,7 @@ void SettingsPage::initRightContent()
     initSystemInfoSettings();
     initAiAssistantSettings();
     initAboutSettings();
+    initProjectionEditorSettings();
     m_contentStack->addWidget(m_generalSettings);
     m_contentStack->addWidget(m_interfaceSettings);
     m_contentStack->addWidget(m_globalGameSettings);
@@ -94,6 +98,7 @@ void SettingsPage::initRightContent()
     m_contentStack->addWidget(m_systemInfoSettings);
     m_contentStack->addWidget(m_aiAssistantSettings);
     m_contentStack->addWidget(m_aboutSettings);
+    m_contentStack->addWidget(m_projectionEditorSettings);
     // 按当前版本模式重建顺序，保证页签索引与侧边栏一致
     rebuildEditionStack();
     m_rightLayout->addWidget(m_contentStack);
@@ -162,6 +167,11 @@ void SettingsPage::onRestoreDefaults()
         SettingsManager::instance()->setProperty("ai/customSystemPrompt/work", QString());
         SettingsManager::instance()->setProperty("ai/systemPromptLibrary", QString());
         break;
+    case 10:
+        qDebug() << "[SettingsPage]" << "恢复投影编辑器设置默认值";
+        ProjectionEditorSettings::resetToDefaults();
+        refreshProjectionEditorSettingsControls();
+        break;
     default: break;
     }
 }
@@ -217,6 +227,7 @@ void SettingsPage::rebuildEditionStack()
     m_contentStack->removeWidget(m_systemInfoSettings);
     m_contentStack->removeWidget(m_aiAssistantSettings);
     m_contentStack->removeWidget(m_aboutSettings);
+    m_contentStack->removeWidget(m_projectionEditorSettings);
 
     m_contentStack->addWidget(m_generalSettings);
     m_contentStack->addWidget(m_interfaceSettings);
@@ -234,6 +245,9 @@ void SettingsPage::rebuildEditionStack()
     m_contentStack->addWidget(m_systemInfoSettings);
     m_contentStack->addWidget(m_aiAssistantSettings);
     m_contentStack->addWidget(m_aboutSettings);
+    // 投影编辑器为 Java 版内置功能，仅 Java 版设置页保留该项
+    if (!m_bedrockMode)
+        m_contentStack->addWidget(m_projectionEditorSettings);
 
     // 重建后 Java/基岩版子项顺序不同，旧 m_currentIndex 不再对应正确页签。
     // 复位到"常规设置"（0），并交由外层（onChildNavClicked）重新导航到目标子项。

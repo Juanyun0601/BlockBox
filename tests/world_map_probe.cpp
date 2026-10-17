@@ -27,7 +27,14 @@
 #include <zlib.h>
 
 #include "utils/Schematic/NbtCodec.h"
+#include "utils/WorldMap/SeedTerrainRenderer.h"
 #include "utils/WorldMap/WorldMapRenderer.h"
+
+// MC_1_21（种子预测测试用的版本号）。包进命名空间避免其 enum Dimension
+// 与 WorldMapRenderer::Dimension 在探针里互相污染
+namespace cubiomes_mc {
+#include "biomes.h"
+}
 
 namespace {
 
@@ -424,6 +431,30 @@ int main(int argc, char *argv[])
         check(false, "height mode render");
     }
 
+    // ── 2b. 地形着色模式（海拔分层设色 + 山体阴影）──
+    auto resT = WorldMapRenderer::render(modernSave, WorldMapRenderer::Dimension::Overworld,
+                                         WorldMapRenderer::ShadeMode::Terrain, {}, {});
+    if (!resT.image.isNull())
+    {
+        const QRgb leftT = resT.image.pixel(0, 0);    // 草方块 y71
+        const QRgb rightT = resT.image.pixel(15, 0);  // 石头 y71
+        check(qAlpha(leftT) == 255, "terrain pixel opaque");
+        // 不是灰度（与 Height 模式区分），且低地为绿系（蓝通道明显更低）
+        check(!(qRed(leftT) == qGreen(leftT) && qGreen(leftT) == qBlue(leftT)),
+              "terrain mode is colored");
+        check(qBlue(leftT) + 40 < qGreen(leftT), "terrain tint lowland is greenish");
+        // 同一海拔 → 同一色（分层设色只看高度，与地表是草还是石无关）
+        check(leftT == rightT, "terrain tint depends on elevation only");
+        resT.image.save(QStringLiteral("D:/BlockBox/_out/world_map_probe_terrain.png"));
+        std::printf("  terrain grass col=(%d,%d,%d) stone col=(%d,%d,%d)\n",
+                    qRed(leftT), qGreen(leftT), qBlue(leftT),
+                    qRed(rightT), qGreen(rightT), qBlue(rightT));
+    }
+    else
+    {
+        check(false, "terrain mode render");
+    }
+
     // ── 3. 1.14 旧格式 ──
     const QString legacySave = tmp.path() + QStringLiteral("/legacy");
     QList<NbtTag> legacyChunks;
@@ -455,6 +486,261 @@ int main(int argc, char *argv[])
     auto resE = WorldMapRenderer::render(emptySave, WorldMapRenderer::Dimension::Overworld,
                                          WorldMapRenderer::ShadeMode::BlockColor, {}, {});
     check(!resE.error.isEmpty(), "empty save reports error");
+
+    // ── 4b. 种子预测：未加载区域按种子渲染近似地形 ──
+    {
+        const quint64 seedVal = 4562377579810721523ULL;
+        const int mc = cubiomes_mc::MC_1_21;
+        using WorldMapRenderer::Dimension;
+        using WorldMapRenderer::ShadeMode;
+        using WorldMapRenderer::SeedPreview;
+        using WorldMapRenderer::render;
+        using WorldMapRenderer::renderRegionTile;
+
+        // 单区域接口：直渲一张预测图，确定性 + 有内容 + 不同种子结果不同
+        const QImage s0 = SeedTerrainRenderer::renderRegionTile(
+            0, 0, Dimension::Overworld, ShadeMode::BlockColor, seedVal, mc, 128);
+        check(!s0.isNull() && s0.width() == 128 && s0.height() == 128,
+              "seed tile renders 128x128");
+        int opaque = 0;
+        if (!s0.isNull())
+        {
+            for (int y = 0; y < s0.height(); ++y)
+            {
+                const QRgb *line = reinterpret_cast<const QRgb *>(s0.constScanLine(y));
+                for (int x = 0; x < s0.width(); ++x)
+                    if (qAlpha(line[x]) == 255) ++opaque;
+            }
+        }
+        check(opaque > s0.width() * s0.height() / 2,
+              "seed tile has mostly opaque surface");
+        const QImage s1 = SeedTerrainRenderer::renderRegionTile(
+            0, 0, Dimension::Overworld, ShadeMode::BlockColor, seedVal, mc, 128);
+        check(!s0.isNull() && !s1.isNull()
+              && std::memcmp(s0.constBits(), s1.constBits(),
+                             size_t(s0.sizeInBytes())) == 0,
+              "seed tile deterministic for same seed");
+        const QImage s2 = SeedTerrainRenderer::renderRegionTile(
+            0, 0, Dimension::Overworld, ShadeMode::BlockColor,
+            seedVal + 1, mc, 128);
+        check(!s0.isNull() && !s2.isNull()
+              && std::memcmp(s0.constBits(), s2.constBits(),
+                             size_t(s0.sizeInBytes())) != 0,
+              "seed tile differs for different seed");
+        check(SeedTerrainRenderer::renderRegionTile(
+                  0, 0, Dimension::Overworld, ShadeMode::BlockColor,
+                  seedVal, 0, 128).isNull(),
+              "seed tile empty for unknown version");
+        // 低分辨率（概览 bpp=8 → outSize=64）下相邻 region 必须连续：
+        // 采样栅格铺满整个 region，左右边缘采样的是相邻格，色差应很小
+        {
+            const QImage ta = SeedTerrainRenderer::renderRegionTile(
+                0, 0, Dimension::Overworld, ShadeMode::BlockColor, seedVal, mc, 64);
+            const QImage tb = SeedTerrainRenderer::renderRegionTile(
+                1, 0, Dimension::Overworld, ShadeMode::BlockColor, seedVal, mc, 64);
+            check(!ta.isNull() && !tb.isNull(), "coarse seed tiles render");
+            if (!ta.isNull() && !tb.isNull())
+            {
+                int diff = 0;
+                for (int y = 0; y < 64; ++y)
+                {
+                    const QRgb a = ta.pixel(63, y);
+                    const QRgb b = tb.pixel(0, y);
+                    diff += qAbs(qRed(a) - qRed(b)) + qAbs(qGreen(a) - qGreen(b))
+                           + qAbs(qBlue(a) - qBlue(b));
+                }
+                diff /= 64 * 3;
+                std::printf("  coarse neighbor edge avg diff = %d\n", diff);
+                check(diff < 24, "coarse seed tiles continuous across region edge");
+            }
+        }
+        // 方块级精度（outSize=512）：群系 scale=1 + 连续高度，
+        // 相邻像素不应整块 4×4 复制（那是旧 128 采样的特征）
+        {
+            const QImage sB = SeedTerrainRenderer::renderRegionTile(
+                0, 0, Dimension::Overworld, ShadeMode::BlockColor, seedVal, mc, 512);
+            check(!sB.isNull() && sB.width() == 512 && sB.height() == 512,
+                  "block-level seed tile is 512x512");
+            if (!sB.isNull())
+            {
+                // 4×4 邻域内高度（用红通道近似）若全相同 → 还在 4 格台阶上
+                int flat4 = 0, total4 = 0;
+                for (int y = 0; y + 4 <= 512; y += 8)
+                {
+                    for (int x = 0; x + 4 <= 512; x += 8)
+                    {
+                        const QRgb p00 = sB.pixel(x, y);
+                        if (qAlpha(p00) == 0)
+                            continue;
+                        bool same = true;
+                        for (int dy = 0; dy < 4 && same; ++dy)
+                            for (int dx = 0; dx < 4 && same; ++dx)
+                            {
+                                const QRgb p = sB.pixel(x + dx, y + dy);
+                                if (qRed(p) != qRed(p00) || qGreen(p) != qGreen(p00)
+                                    || qBlue(p) != qBlue(p00))
+                                    same = false;
+                            }
+                        if (same)
+                            ++flat4;
+                        ++total4;
+                    }
+                }
+                check(total4 > 100, "block-level tile has enough samples");
+                // 若仍是 4×4 色块，flat4/total4 ≈ 1；方块级应显著更少
+                const double flatRatio = total4 ? double(flat4) / total4 : 1.0;
+                std::printf("  block-level flat 4x4 ratio = %.3f\n", flatRatio);
+                check(flatRatio < 0.85,
+                      "block-level tile not stuck at 4-block steps");
+                QDir().mkpath(QStringLiteral("D:/BlockBox/_out"));
+                sB.save(QStringLiteral("D:/BlockBox/_out/world_map_seed_block512.png"));
+            }
+            // 确定性：同种子两次渲染一致
+            const QImage sB2 = SeedTerrainRenderer::renderRegionTile(
+                0, 0, Dimension::Overworld, ShadeMode::BlockColor, seedVal, mc, 512);
+            check(!sB.isNull() && !sB2.isNull()
+                  && std::memcmp(sB.constBits(), sB2.constBits(),
+                                 size_t(sB.sizeInBytes())) == 0,
+                  "block-level tile deterministic");
+        }
+        // 高度着色模式：灰度输出
+        const QImage sH = SeedTerrainRenderer::renderRegionTile(
+            5, -3, Dimension::Overworld, ShadeMode::Height, seedVal, mc, 64);
+        bool gray = !sH.isNull();
+        if (gray)
+        {
+            for (int y = 0; y < sH.height() && gray; ++y)
+            {
+                const QRgb *line = reinterpret_cast<const QRgb *>(sH.constScanLine(y));
+                for (int x = 0; x < sH.width(); ++x)
+                {
+                    if (qAlpha(line[x]) == 0)
+                        continue;
+                    if (qRed(line[x]) != qGreen(line[x])
+                        || qGreen(line[x]) != qBlue(line[x]))
+                    {
+                        gray = false;
+                        break;
+                    }
+                }
+            }
+        }
+        check(gray, "seed tile height mode is grayscale");
+
+        // 地形模式（种子预测）：彩色输出 + 能看出山体阴影明暗变化
+        const QImage sT = SeedTerrainRenderer::renderRegionTile(
+            5, -3, Dimension::Overworld, ShadeMode::Terrain, seedVal, mc, 128);
+        check(!sT.isNull(), "seed tile terrain mode renders");
+        if (!sT.isNull())
+        {
+            bool colored = false, hasVariation = false;
+            QRgb first = 0;
+            for (int y = 0; y < sT.height() && !(colored && hasVariation); ++y)
+            {
+                const QRgb *line = reinterpret_cast<const QRgb *>(sT.constScanLine(y));
+                for (int x = 0; x < sT.width(); ++x)
+                {
+                    if (qAlpha(line[x]) == 0)
+                        continue;
+                    if (qRed(line[x]) != qGreen(line[x])
+                        || qGreen(line[x]) != qBlue(line[x]))
+                        colored = true;
+                    if (first == 0)
+                        first = line[x];
+                    else if (line[x] != first)
+                        hasVariation = true; // 山体阴影 / 海拔带来明暗层次
+                    if (colored && hasVariation)
+                        break;
+                }
+            }
+            check(colored, "seed terrain mode is colored");
+            check(hasVariation, "seed terrain mode has hillshade/height variation");
+            QDir().mkpath(QStringLiteral("D:/BlockBox/_out"));
+            sT.save(QStringLiteral("D:/BlockBox/_out/world_map_seed_terrain.png"));
+        }
+
+        // 空维度 + 种子预测：不再报错，围绕中心渲染出预览图
+        SeedPreview sp;
+        sp.enabled = true;
+        sp.seed = seedVal;
+        sp.mc = mc;
+        sp.padRegions = 2;
+        sp.radiusRegions = 2; // 探针用小窗口，断言槽位数好算
+        sp.hasCenter = true;
+        sp.centerRegionX = 1;
+        sp.centerRegionZ = -1;
+        auto resSE = render(emptySave, Dimension::Overworld,
+                            ShadeMode::BlockColor, {}, {}, nullptr, 0, -1, sp);
+        check(resSE.error.isEmpty(), "seed preview renders empty dimension");
+        check(!resSE.image.isNull(), "seed preview image not null");
+        check(resSE.seedRegions == 25 && resSE.renderedRegions == 25,
+              "seed preview fills (2*pad+1)^2 regions");
+        check(resSE.regionCount == 25, "seed preview regionCount == slots");
+        check(resSE.minChunkX == (1 - 2) * 32 && resSE.minChunkZ == (-1 - 2) * 32,
+              "seed preview centered on requested region");
+        if (!resSE.image.isNull())
+        {
+            std::printf("  seed-only: %dx%d seedRegions=%d (%lld ms)\n",
+                        resSE.image.width(), resSE.image.height(),
+                        resSE.seedRegions,
+                        static_cast<long long>(resSE.elapsedMs));
+            QDir().mkpath(QStringLiteral("D:/BlockBox/_out"));
+            resSE.image.save(QStringLiteral("D:/BlockBox/_out/world_map_seed_empty.png"));
+        }
+
+        // 已有文件 + 种子预测：真实数据优先，包围盒外扩 pad 圈
+        auto resSW = render(modernSave, Dimension::Overworld,
+                            ShadeMode::BlockColor, {}, {}, nullptr, 0, -1, sp);
+        check(resSW.error.isEmpty(), "seed preview + real files no error");
+        check(resSW.renderedRegions == resSW.regionCount,
+              "seed preview renders every slot");
+        check(resSW.seedRegions > 0, "seed preview renders seed slots");
+        check(resSW.failedRegions == 0, "seed preview no failures");
+        // 文件区域 (0,0) 的真实草地还在：外扩 2 圈后 min = -2 → 图上 (2*512, 2*512)
+        if (!resSW.image.isNull())
+        {
+            // 偏移按实际画布原点逐轴换算（X/Z 窗口可能不对称）
+            const int offX = (0 - resSW.minChunkX / 32) * 512;
+            const int offZ = (0 - resSW.minChunkZ / 32) * 512;
+            const QRgb grass = resSW.image.pixel(offX + 4, offZ + 4); // 区块左半 = 草
+            check(qAlpha(grass) == 255 && qGreen(grass) > qRed(grass) + 10,
+                  "real region content preserved under seed padding");
+            // 外扩出来的种子区域也有内容（画布左上角附近）
+            check(qAlpha(resSW.image.pixel(2, 2)) == 255,
+                  "padded ring filled by seed terrain");
+            // 半生成 region（只写了 2×2 区块）内部的空洞也被种子垫底补齐，
+            // 已加载与未加载之间不留空缺
+            check(qAlpha(resSW.image.pixel(offX + 400, offZ + 400)) == 255,
+                  "holes inside partial region filled by seed underlay");
+            resSW.image.save(QStringLiteral("D:/BlockBox/_out/world_map_seed_padded.png"));
+        }
+
+        // 细节瓦片接口：缺失区域 + 种子预测 → 有图；关掉预测 → 空图
+        const QImage st = renderRegionTile(emptySave, Dimension::Overworld,
+                                           1, -1, ShadeMode::BlockColor, -1, sp);
+        check(!st.isNull() && st.width() == 512 && st.height() == 512,
+              "renderRegionTile falls back to seed tile");
+        check(renderRegionTile(emptySave, Dimension::Overworld, 1, -1,
+                               ShadeMode::BlockColor).isNull(),
+              "renderRegionTile still empty without seed preview");
+
+        // 下界种子预测：群系配色可用
+        auto resSN = render(emptySave, Dimension::Nether,
+                            ShadeMode::BlockColor, {}, {}, nullptr, 0, -1, sp);
+        check(resSN.error.isEmpty() && !resSN.image.isNull(),
+              "seed preview works for nether");
+
+        // 半径窗口：radius 远大于 pad 时，画布按 radius 铺开（视角中心向外）
+        SeedPreview spW = sp;
+        spW.padRegions = 1;
+        spW.radiusRegions = 6;
+        auto resW = render(emptySave, Dimension::Overworld,
+                           ShadeMode::BlockColor, {}, {}, nullptr, 0, -1, spW);
+        check(resW.seedRegions == 13 * 13,
+              "radius window covers (2*radius+1)^2 regions");
+        check(resW.minChunkX == (1 - 6) * 32 && resW.minChunkZ == (-1 - 6) * 32,
+              "radius window centered on view center");
+    }
 
     // ── 5. 下界路径 ──
     const QString netherSave = tmp.path() + QStringLiteral("/nether");

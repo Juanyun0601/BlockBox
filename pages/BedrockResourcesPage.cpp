@@ -6,10 +6,14 @@
  */
 #include "BedrockResourcesPage.h"
 
+#include <algorithm>
+
 #include <QApplication>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QCursor>
 #include <QEasingCurve>
 #include <QFileInfo>
@@ -37,20 +41,18 @@ namespace {
 const QString kDisabledPrefix = QStringLiteral("[disabled] ");
 
 /**
- * @brief 递归计算目录大小
+ * @brief 递归统计目录总大小（大小筛选/排序用）
  */
-qint64 dirSize(const QString &path)
+qint64 dirTotalSize(const QString &path)
 {
-    QDir dir(path);
-    qint64 size = 0;
-    for (const QFileInfo &fi : dir.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden))
+    qint64 total = 0;
+    QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext())
     {
-        if (fi.isDir())
-            size += dirSize(fi.absoluteFilePath());
-        else
-            size += fi.size();
+        it.next();
+        total += it.fileInfo().size();
     }
-    return size;
+    return total;
 }
 } // namespace
 
@@ -66,6 +68,10 @@ BedrockResourcesPage::BedrockResourcesPage(QWidget *parent)
     , m_highlightPos(0)
     , m_searchEdit(nullptr)
     , m_statsLabel(nullptr)
+    , m_statusCombo(nullptr)
+    , m_timeCombo(nullptr)
+    , m_sizeCombo(nullptr)
+    , m_sortCombo(nullptr)
     , m_scrollArea(nullptr)
     , m_cardContainer(nullptr)
     , m_cardLayout(nullptr)
@@ -156,6 +162,56 @@ void BedrockResourcesPage::initUI()
 
     mainLayout->addWidget(searchBar);
 
+    // ---- 筛选行（状态/时间/大小/排序，叠加在搜索之上；顶部最多两行：搜索行 + 本行）----
+    auto makeFilterCombo = [this]() -> QComboBox * {
+        auto *combo = new QComboBox(this);
+        combo->setObjectName("filterCombo");
+        combo->setFixedHeight(28);
+        combo->setMinimumWidth(80);   // 窄窗 422px：四下拉靠内容自适应，不锁 104
+        return combo;
+    };
+
+    auto *filterRow = new QHBoxLayout();
+    filterRow->setSpacing(6);
+    filterRow->setContentsMargins(14, 4, 14, 4);
+
+    m_statusCombo = makeFilterCombo();
+    m_statusCombo->setToolTip(tr("状态筛选"));
+    m_statusCombo->addItem(tr("全部"), 0);
+    m_statusCombo->addItem(tr("已启用"), 1);
+    m_statusCombo->addItem(tr("已禁用"), 2);
+    filterRow->addWidget(m_statusCombo);
+
+    m_timeCombo = makeFilterCombo();
+    m_timeCombo->setToolTip(tr("时间筛选"));
+    m_timeCombo->addItem(tr("全部时间"), 0);
+    m_timeCombo->addItem(tr("最近 7 天"), 1);
+    m_timeCombo->addItem(tr("最近 30 天"), 2);
+    m_timeCombo->addItem(tr("最近一年"), 3);
+    filterRow->addWidget(m_timeCombo);
+
+    m_sizeCombo = makeFilterCombo();
+    m_sizeCombo->setToolTip(tr("大小筛选"));
+    m_sizeCombo->addItem(tr("全部大小"), 0);
+    m_sizeCombo->addItem(tr("小于 10 MB"), 1);
+    m_sizeCombo->addItem(tr("10 ~ 100 MB"), 2);
+    m_sizeCombo->addItem(tr("大于 100 MB"), 3);
+    filterRow->addWidget(m_sizeCombo);
+
+    m_sortCombo = makeFilterCombo();
+    m_sortCombo->setObjectName("searchSortCombo");
+    m_sortCombo->setToolTip(tr("排序"));
+    m_sortCombo->addItem(tr("名称 A→Z"), 0);
+    m_sortCombo->addItem(tr("名称 Z→A"), 1);
+    m_sortCombo->addItem(tr("大小 大→小"), 2);
+    m_sortCombo->addItem(tr("大小 小→大"), 3);
+    m_sortCombo->addItem(tr("时间 新→旧"), 4);
+    m_sortCombo->addItem(tr("时间 旧→新"), 5);
+    filterRow->addWidget(m_sortCombo);
+
+    filterRow->addStretch();
+    mainLayout->addLayout(filterRow);
+
     // ---- 卡片滚动区 ----
     m_scrollArea = new QScrollArea(this);
     m_scrollArea->setWidgetResizable(true);
@@ -221,6 +277,15 @@ void BedrockResourcesPage::setupConnections()
     connect(m_selectAllBtn, &QPushButton::clicked, this, &BedrockResourcesPage::onSelectAllClicked);
     connect(m_openFolderBtn, &QPushButton::clicked, this, &BedrockResourcesPage::onOpenFolderClicked);
     connect(m_deleteBtn, &QPushButton::clicked, this, &BedrockResourcesPage::onDeleteClicked);
+
+    connect(m_statusCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &BedrockResourcesPage::onStatusFilterChanged);
+    connect(m_timeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &BedrockResourcesPage::onTimeFilterChanged);
+    connect(m_sizeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &BedrockResourcesPage::onSizeFilterChanged);
+    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &BedrockResourcesPage::onSortChanged);
 }
 
 // ============================================================================
@@ -398,14 +463,17 @@ void BedrockResourcesPage::scanFiles()
         entry.lastModified = fi.lastModified();
         entry.isEnabled = !entry.fileName.startsWith(kDisabledPrefix);
 
-        if (m_currentType == TypeWorlds)
-            entry.fileSize = dirSize(fi.absoluteFilePath());
+        // 目录条目递归统计大小（供大小筛选/排序）
+        if (entry.isDir)
+            entry.fileSize = dirTotalSize(fi.absoluteFilePath());
         else
             entry.fileSize = fi.size();
 
         m_fileList.append(entry);
     }
 
+    // 重扫后保持用户当前选择的排序
+    sortFileList();
     applyFilterAndSearch();
 }
 
@@ -415,11 +483,38 @@ void BedrockResourcesPage::applyFilterAndSearch()
 
     QString search = m_searchEdit ? m_searchEdit->text().trimmed().toLower() : QString();
 
+    // 时间筛选截止点（0 = 不启用）
+    const QDateTime now = QDateTime::currentDateTime();
+    QDateTime timeCutoff;
+    if (m_timeFilter == 1)
+        timeCutoff = now.addDays(-7);
+    else if (m_timeFilter == 2)
+        timeCutoff = now.addDays(-30);
+    else if (m_timeFilter == 3)
+        timeCutoff = now.addDays(-365);
+
+    const qint64 k10MB = 10LL * 1024 * 1024;
+    const qint64 k100MB = 100LL * 1024 * 1024;
+
     int visibleCount = 0;
     for (int i = 0; i < m_fileList.size(); ++i)
     {
         const FileEntry &entry = m_fileList[i];
+
+        // 搜索 + 状态 + 时间 + 大小 全部 AND 叠加
         if (!search.isEmpty() && !entry.fileName.toLower().contains(search))
+            continue;
+        if (m_statusFilter == 1 && !entry.isEnabled)
+            continue;
+        if (m_statusFilter == 2 && entry.isEnabled)
+            continue;
+        if (timeCutoff.isValid() && entry.lastModified < timeCutoff)
+            continue;
+        if (m_sizeFilter == 1 && entry.fileSize >= k10MB)
+            continue;
+        if (m_sizeFilter == 2 && (entry.fileSize < k10MB || entry.fileSize > k100MB))
+            continue;
+        if (m_sizeFilter == 3 && entry.fileSize <= k100MB)
             continue;
 
         QWidget *card = createFileCard(entry);
@@ -428,7 +523,16 @@ void BedrockResourcesPage::applyFilterAndSearch()
         visibleCount++;
     }
 
-    showEmptyHint(visibleCount == 0);
+    if (visibleCount == 0 && !m_fileList.isEmpty())
+    {
+        // 有资源但全被筛掉
+        m_emptyLabel->setText(tr("没有符合筛选条件的%1").arg(typeDisplayName()));
+        m_emptyLabel->show();
+    }
+    else
+    {
+        showEmptyHint(visibleCount == 0);
+    }
     updateStatsLabel();
 }
 
@@ -438,6 +542,9 @@ void BedrockResourcesPage::clearCards()
         w->deleteLater();
     m_cardWidgets.clear();
     m_selectedIndices.clear();
+    // 选择被整体清空，全选状态与按钮文案一并复位
+    m_allSelected = false;
+    m_selectAllBtn->setText(tr("全选"));
     updateBottomBarState();
 }
 
@@ -459,11 +566,87 @@ void BedrockResourcesPage::updateStatsLabel()
 {
     if (!m_statsLabel) return;
     int total = m_fileList.size();
+    int visible = m_cardWidgets.size();   // 卡片只建可见项，即可见数
     int selected = m_selectedIndices.size();
-    if (selected > 0)
+    const bool filterActive = (m_searchEdit && !m_searchEdit->text().trimmed().isEmpty())
+        || m_statusFilter != 0 || m_timeFilter != 0 || m_sizeFilter != 0;
+    if (filterActive)
+    {
+        if (selected > 0)
+            m_statsLabel->setText(tr("%1/%2 项").arg(selected).arg(visible));
+        else
+            m_statsLabel->setText(tr("%1/%2 项").arg(visible).arg(total));
+    }
+    else if (selected > 0)
         m_statsLabel->setText(tr("%1/%2 项").arg(selected).arg(total));
     else
         m_statsLabel->setText(tr("%1 项").arg(total));
+}
+
+void BedrockResourcesPage::sortFileList()
+{
+    const int mode = m_sortMode;
+    // 名称比较忽略 [disabled] 前缀，禁用项与本体排在一起
+    auto displayName = [](const FileEntry &e) {
+        QString n = e.fileName;
+        if (n.startsWith(kDisabledPrefix))
+            n = n.mid(kDisabledPrefix.length());
+        return n;
+    };
+    std::sort(m_fileList.begin(), m_fileList.end(),
+              [mode, &displayName](const FileEntry &a, const FileEntry &b) {
+        switch (mode)
+        {
+        case 1:  // 名称 Z→A
+            return QString::compare(displayName(a), displayName(b), Qt::CaseInsensitive) > 0;
+        case 2:  // 大小 大→小
+            return a.fileSize > b.fileSize;
+        case 3:  // 大小 小→大
+            return a.fileSize < b.fileSize;
+        case 4:  // 时间 新→旧
+            return a.lastModified > b.lastModified;
+        case 5:  // 时间 旧→新
+            return a.lastModified < b.lastModified;
+        default: // 名称 A→Z
+            return QString::compare(displayName(a), displayName(b), Qt::CaseInsensitive) < 0;
+        }
+    });
+}
+
+void BedrockResourcesPage::onStatusFilterChanged(int index)
+{
+    if (!m_statusCombo)
+        return;
+    m_statusFilter = m_statusCombo->itemData(index).toInt();
+    applyFilterAndSearch();
+}
+
+void BedrockResourcesPage::onTimeFilterChanged(int index)
+{
+    if (!m_timeCombo)
+        return;
+    m_timeFilter = m_timeCombo->itemData(index).toInt();
+    applyFilterAndSearch();
+}
+
+void BedrockResourcesPage::onSizeFilterChanged(int index)
+{
+    if (!m_sizeCombo)
+        return;
+    m_sizeFilter = m_sizeCombo->itemData(index).toInt();
+    applyFilterAndSearch();
+}
+
+void BedrockResourcesPage::onSortChanged(int index)
+{
+    if (!m_sortCombo)
+        return;
+    const int newMode = m_sortCombo->itemData(index).toInt();
+    if (newMode == m_sortMode)
+        return;
+    m_sortMode = newMode;
+    sortFileList();
+    applyFilterAndSearch();
 }
 
 // ============================================================================
@@ -658,6 +841,7 @@ bool BedrockResourcesPage::eventFilter(QObject *watched, QEvent *event)
 
 void BedrockResourcesPage::toggleCardSelection(int idx)
 {
+    // idx 是 m_fileList 下标；m_cardWidgets 只含可见卡片，须按 fileIndex 属性定位
     if (m_selectedIndices.contains(idx))
         m_selectedIndices.remove(idx);
     else
@@ -665,14 +849,16 @@ void BedrockResourcesPage::toggleCardSelection(int idx)
 
     // 更新卡片视觉
     QString themeColor = ThemeManager::instance()->currentThemeColor();
-    if (idx >= 0 && idx < m_cardWidgets.size())
+    for (QWidget *card : m_cardWidgets)
     {
-        QWidget *card = m_cardWidgets[idx];
+        if (card->property("fileIndex").toInt() != idx)
+            continue;
         if (m_selectedIndices.contains(idx))
             card->setStyleSheet(QString("QWidget#bedrockResCard { border: 2px solid %1; }").arg(themeColor));
         else
             card->setStyleSheet(QString("QWidget#bedrockResCard { border: 1px solid %1; }")
                 .arg(ThemeManager::instance()->currentBorderColor()));
+        break;
     }
 
     updateBottomBarState();
@@ -713,17 +899,18 @@ void BedrockResourcesPage::onSelectAllClicked()
     }
     else
     {
-        for (int i = 0; i < m_fileList.size(); ++i)
+        // 只全选当前可见卡片，索引取自各卡片的 fileIndex 属性
+        for (QWidget *card : m_cardWidgets)
         {
-            m_selectedIndices.insert(i);
-            if (i < m_cardWidgets.size())
-            {
-                m_cardWidgets[i]->setStyleSheet(
-                    QString("QWidget#bedrockResCard { border: 2px solid %1; }").arg(themeColor));
-            }
+            const int idx = card->property("fileIndex").toInt();
+            if (idx < 0 || idx >= m_fileList.size())
+                continue;
+            m_selectedIndices.insert(idx);
+            card->setStyleSheet(
+                QString("QWidget#bedrockResCard { border: 2px solid %1; }").arg(themeColor));
         }
-        m_allSelected = true;
-        m_selectAllBtn->setText(tr("取消全选"));
+        m_allSelected = !m_selectedIndices.isEmpty();
+        m_selectAllBtn->setText(m_allSelected ? tr("取消全选") : tr("全选"));
         updateBottomBarState();
         updateStatsLabel();
     }

@@ -1,13 +1,22 @@
 #include "TaskBar.h"
 
 #include <QCursor>
+#include <QEvent>
 #include <QFrame>
+#include <QGraphicsDropShadowEffect>
 #include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
 #include <QScrollBar>
 #include <QSpacerItem>
 
 #include "utils/VersionDownloader.h"
+
+namespace {
+// 悬浮外边距：左右对称，底部略大给柔化阴影留呼吸空间
+constexpr int kFloatMarginX = 16;
+constexpr int kFloatMarginTop = 6;
+constexpr int kFloatMarginBottom = 24;
+} // namespace
 
 TaskBar::TaskBar(QWidget *parent)
     : QWidget(parent)
@@ -24,6 +33,9 @@ TaskBar::TaskBar(QWidget *parent)
     , m_exitAnim(nullptr)
     , m_exitAnimRunning(false)
 {
+    // 悬浮叠层：不参与父布局，靠几何定位压在内容上方
+    if (parent)
+        parent->installEventFilter(this);
     initUI();
     initDownloadTaskManager();
     setVisible(false);
@@ -36,15 +48,22 @@ TaskBar::~TaskBar()
 void TaskBar::initUI()
 {
     setObjectName("taskBar");
-    // 外层 taskBar 保持透明（QSS），四周留白让内部玻璃托盘悬浮于窗口背景之上
-    setFixedHeight(82);
+    // 外层 taskBar 保持透明（QSS），四周留白让内部玻璃托盘悬浮于内容之上
+    // 总高 = 上边距 + 托盘 66 + 下边距（阴影呼吸空间）
+    setFixedHeight(96);
 
     m_mainLayout = new QHBoxLayout(this);
-    m_mainLayout->setContentsMargins(16, 6, 16, 10);
+    m_mainLayout->setContentsMargins(kFloatMarginX, kFloatMarginTop, kFloatMarginX, kFloatMarginBottom);
     m_mainLayout->setSpacing(0);
 
     m_tray = new QWidget(this);
     m_tray->setObjectName("taskBarTray");
+    // 轻柔外阴影：托盘从内容上“浮起来”，避免硬贴在界面底部
+    auto *trayShadow = new QGraphicsDropShadowEffect(m_tray);
+    trayShadow->setBlurRadius(28);
+    trayShadow->setOffset(0, 6);
+    trayShadow->setColor(QColor(0, 0, 0, 55));
+    m_tray->setGraphicsEffect(trayShadow);
     m_mainLayout->addWidget(m_tray);
 
     m_trayLayout = new QHBoxLayout(m_tray);
@@ -98,6 +117,29 @@ void TaskBar::initUI()
     updateCountBadge();
 }
 
+void TaskBar::updateFloatGeometry()
+{
+    QWidget *host = parentWidget();
+    if (!host)
+        return;
+    const int h = height();
+    const int w = qMax(0, host->width() - 2 * kFloatMarginX);
+    const int x = kFloatMarginX;
+    const int y = host->height() - h - kFloatMarginBottom;
+    setGeometry(x, y, w, h);
+    raise();
+}
+
+bool TaskBar::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == parentWidget() && event->type() == QEvent::Resize) {
+        // 父容器尺寸变化时重算悬浮位置；动画进行中跳过，避免与 geometry 动画打架
+        if (!m_exitAnimRunning)
+            updateFloatGeometry();
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void TaskBar::updateCountBadge()
 {
     const int count = m_downloadTaskCards.size();
@@ -143,11 +185,13 @@ void TaskBar::updateVisibility()
         if (m_exitAnimRunning && m_exitAnim) {
             m_exitAnim->stop();
             m_exitAnimRunning = false;
-            setGeometry(m_exitAnimTargetGeo);
+            updateFloatGeometry();
         }
 
         if (!isVisible()) {
+            updateFloatGeometry();
             QWidget::show();
+            raise();
             QRect finalGeo = geometry();
             QRect startGeo = finalGeo;
             startGeo.moveTop(finalGeo.top() + height());
@@ -159,9 +203,12 @@ void TaskBar::updateVisibility()
             anim->setEndValue(finalGeo);
             anim->setEasingCurve(QEasingCurve::OutCubic);
             anim->start(QAbstractAnimation::DeleteWhenStopped);
+        } else {
+            raise();
         }
     } else {
         if (isVisible() && !m_exitAnimRunning) {
+            updateFloatGeometry();
             m_exitAnimTargetGeo = geometry();
             QRect endGeo = m_exitAnimTargetGeo;
             endGeo.moveTop(m_exitAnimTargetGeo.top() + height());
@@ -176,7 +223,7 @@ void TaskBar::updateVisibility()
                 m_exitAnimRunning = false;
                 m_exitAnim = nullptr;
                 hide();
-                setGeometry(m_exitAnimTargetGeo);
+                updateFloatGeometry();
             });
             m_exitAnim->start(QAbstractAnimation::DeleteWhenStopped);
         }
@@ -192,11 +239,13 @@ void TaskBar::showLaunchTaskCard(bool show)
         if (m_exitAnimRunning && m_exitAnim) {
             m_exitAnim->stop();
             m_exitAnimRunning = false;
-            setGeometry(m_exitAnimTargetGeo);
+            updateFloatGeometry();
         }
         bool wasHidden = !isVisible();
         if (wasHidden) {
+            updateFloatGeometry();
             QWidget::show();
+            raise();
             QRect finalGeo = geometry();
             QRect startGeo = finalGeo;
             startGeo.moveTop(finalGeo.top() + height());
@@ -210,6 +259,7 @@ void TaskBar::showLaunchTaskCard(bool show)
             anim->start(QAbstractAnimation::DeleteWhenStopped);
         } else {
             setVisible(true);
+            raise();
         }
     } else {
         updateVisibility();

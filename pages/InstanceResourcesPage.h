@@ -79,6 +79,10 @@ private slots:
     void onOpenFolderClicked();
     void onPasteFileClicked();
     void onCategoryFilterChanged(int index);
+    void onStatusFilterChanged(int index);
+    void onTimeFilterChanged(int index);
+    void onSizeFilterChanged(int index);
+    void onSortChanged(int index);
     void onCategoryManageClicked();
     void onCategoriesChanged();
     void onAssignmentsChanged();
@@ -101,7 +105,8 @@ private:
         QString fileName;
         qint64 fileSize = 0;
         QDateTime lastModified;
-        bool isDir = false; // 存档为 true
+        bool isDir = false;     // 存档为 true
+        bool enabled = true;    // 是否未被 .disabled 后缀禁用
     };
 private:
     void initUI();
@@ -124,6 +129,8 @@ private:
     void showLoading(bool show);
     void showEmptyHint(bool show);
     void applyFilterAndSearch();
+    /** 按当前排序模式重排当前数据列表与卡片（保持索引对齐），并刷新过滤/统计 */
+    void applySortOrder();
     QString formatFileSize(qint64 bytes) const;
     QString selectedCardStyle() const;
     void toggleCardSelection(int idx);
@@ -176,7 +183,17 @@ private:
     LocalCategoryManager *m_categoryManager;
     QComboBox *m_categoryCombo;
     QPushButton *m_categoryManageBtn;
-    QString m_currentCategoryId;      // 空 = 全部；特殊哨兵值 = 未分类
+    QString m_currentCategoryId;      // 空 = 全部；特殊哨兵值 = 未分类 / __recent__ / __large__
+
+    // 状态 / 时间 / 大小 / 排序筛选
+    QComboBox *m_statusCombo;         // 筛选：全部 / 已启用 / 已禁用
+    QComboBox *m_timeCombo;           // 时间：全部 / 7 天 / 30 天 / 一年
+    QComboBox *m_sizeCombo;           // 大小：全部 / <10MB / 10~100MB / >100MB
+    QComboBox *m_sortCombo;           // 排序：名称 / 大小 / 修改时间
+    int m_statusFilter = 0;           // 0=全部 1=已启用 2=已禁用
+    int m_timeFilter = 0;             // 0=全部 1=7 天 2=30 天 3=一年
+    int m_sizeFilter = 0;             // 0=全部 1=<10MB 2=10~100MB 3=>100MB
+    int m_sortMode = 0;               // 0=名称↑ 1=名称↓ 2=大小↓ 3=大小↑ 4=新→旧 5=旧→新
 
     // 底部操作栏
     QWidget *m_bottomBar;
@@ -198,6 +215,10 @@ private:
 
     // 文件型资源数据
     QList<FileEntry> m_fileList;
+
+    // 模组修改时间缓存（ModScanner 不提供 lastModified，扫描完成后用 QFileInfo 构建；
+    // 启用/禁用 rename 会触发 refreshList 重扫并自动重建）
+    QHash<QString, QDateTime> m_mtimeCache; // filePath → lastModified
 
     // 卡片控件与选中索引
     QList<QWidget *> m_cardWidgets;

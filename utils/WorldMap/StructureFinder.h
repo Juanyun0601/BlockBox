@@ -26,6 +26,13 @@ namespace StructureFinder {
  */
 constexpr int kStrongholdType = -1;
 
+/**
+ * 生成结构表内、但 cubiomes 尚无位置算法的条目（废弃营地 / 下界化石 /
+ * 末地船）。列表里展示但不参与计算：`getStructureConfig()` 对未知 type
+ * 走 default 分支返回 0，`find()` 自然跳过；UI 侧据此渲染为禁用开关。
+ */
+constexpr int kUnsupportedType = -2;
+
 /** 一个可开关的结构类型（第二行开关的数据源） */
 struct StructureDef
 {

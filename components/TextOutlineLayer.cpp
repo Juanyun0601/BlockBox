@@ -94,7 +94,7 @@ QImage renderLabelText(const QLabel *label, const QRect &rect)
     doc.rootFrame()->setFrameFormat(frameFmt);
     doc.setTextWidth(double(rect.width()));
     QTextOption textOpt;
-    textOpt.setAlignment(Qt::AlignLeft);
+    textOpt.setAlignment(label->alignment());
     textOpt.setWrapMode(label->wordWrap() ? QTextOption::WordWrap : QTextOption::ManualWrap);
     doc.setDefaultTextOption(textOpt);
 

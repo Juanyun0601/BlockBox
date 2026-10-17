@@ -68,6 +68,8 @@ components/CustomCheckBox.cpp \
       components/BlurLoadingOverlay.cpp \
      components/AppMessageBox.cpp \
      components/AppDialogBase.cpp \
+     components/WorldConvertDialog.cpp \
+     components/HighRiskConfirmDialog.cpp \
      components/AppInputDialog.cpp \
      components/AppColorDialog.cpp \
      components/AppFileDialog.cpp \
@@ -114,8 +116,9 @@ components/ProjectionBlockEditorDialog.cpp \
     pages/settings/SettingsGamePage.cpp \
     pages/settings/SettingsInstancePage.cpp \
     pages/settings/SettingsJavaPage.cpp \
-    pages/settings/SettingsAdvancedPage.cpp \
-     pages/settings/SettingsKeyBindPage.cpp \
+pages/settings/SettingsAdvancedPage.cpp \
+     pages/settings/SettingsProjectionEditorPage.cpp \
+      pages/settings/SettingsKeyBindPage.cpp \
      pages/settings/SettingsSystemInfoPage.cpp \
      pages/settings/SettingsBedrockGamePage.cpp \
      pages/settings/BedrockInstanceSettingsPage.cpp \
@@ -168,6 +171,7 @@ components/ProjectionBlockEditorDialog.cpp \
     utils/BackgroundManager.cpp \
     utils/BingWallpaperManager.cpp \
     utils/ThemeManager.cpp \
+    utils/StyleKit.cpp \
     utils/GameLauncher.cpp \
     utils/BedrockLauncher.cpp \
     utils/launcher/GameLauncherJava.cpp \
@@ -256,11 +260,15 @@ components/ProjectionBlockEditorDialog.cpp \
     utils/CommandAssistant/LitematicReader.cpp \
     utils/Saves/LevelDatEditor.cpp \
     utils/WorldMap/WorldMapRenderer.cpp \
+    utils/WorldMap/SeedTerrainRenderer.cpp \
     utils/WorldMap/StructureFinder.cpp \
     utils/WorldMap/StructureIcons.cpp \
+    utils/WorldConvert/WorldConverter.cpp \
     utils/Schematic/NbtCodec.cpp \
     utils/Schematic/LitematicEditor.cpp \
     utils/Schematic/SchematicDocument.cpp \
+    utils/Schematic/SchematicCoverRenderer.cpp \
+    utils/Schematic/ProjectionEditorSettings.cpp \
     utils/Schematic/InstanceTextureLoader.cpp \
     utils/Schematic/BlockShapeLoader.cpp \
     utils/CommandAssistant/CommandDatabase.cpp \
@@ -315,6 +323,8 @@ components/CustomCheckBox.h \
        components/BlurLoadingOverlay.h \
        components/AppMessageBox.h \
        components/AppDialogBase.h \
+       components/WorldConvertDialog.h \
+       components/HighRiskConfirmDialog.h \
        components/AppInputDialog.h \
        components/AppColorDialog.h \
        components/AppFileDialog.h \
@@ -388,6 +398,7 @@ components/ProjectionBlockEditorDialog.h \
     utils/BackgroundManager.h \
     utils/BingWallpaperManager.h \
     utils/ThemeManager.h \
+    utils/StyleKit.h \
     utils/GameLauncher.h \
     utils/BedrockLauncher.h \
     utils/ErrorAnalyzer.h \
@@ -494,12 +505,16 @@ pages/ProjectionManagePage.h \
     utils/Schematic/NbtCodec.h \
     utils/Schematic/LitematicEditor.h \
     utils/Schematic/SchematicDocument.h \
+    utils/Schematic/SchematicCoverRenderer.h \
+    utils/Schematic/ProjectionEditorSettings.h \
     utils/Schematic/InstanceTextureLoader.h \
     utils/Schematic/BlockShapeLoader.h \
     utils/Saves/LevelDatEditor.h \
     utils/WorldMap/WorldMapRenderer.h \
+    utils/WorldMap/SeedTerrainRenderer.h \
     utils/WorldMap/StructureFinder.h \
     utils/WorldMap/StructureIcons.h \
+    utils/WorldConvert/WorldConverter.h \
     utils/CommandAssistant/CommandTranslator.h \
     utils/CommandAssistant/CommandCompleter.h \
     utils/CommandAssistant/GameDetector.h \

@@ -329,6 +329,14 @@ void SideBar::buildNavStructure()
         about.iconPath = ":/Images/Icons/nav_about.svg";
         settings.children.append(about);
 
+        if (!m_bedrockMode)
+        {
+            NavItem projectionEditor;
+            projectionEditor.text = tr("投影编辑器");
+            projectionEditor.iconPath = ":/Images/Icons/brush.svg";
+            settings.children.append(projectionEditor);
+        }
+
         m_parentItems.append(settings);
     }
 

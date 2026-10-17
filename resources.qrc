@@ -70,6 +70,7 @@
         <file>Images/Icons/star.svg</file>
         <file>Images/Icons/grid.svg</file>
         <file>Images/Icons/map.svg</file>
+        <file>Images/Icons/convert.svg</file>
         <file>Images/Icons/list_view.svg</file>
         <file>Images/Icons/link.svg</file>
         <file>Images/Icons/bolt.svg</file>
@@ -142,6 +143,7 @@
         <file>Images/Block/Egg_enchanted.png</file>
         <file>Images/Block/Stone.png</file>
         <file>utils/mod/mcmod_names.json</file>
+        <file>resources/nonOccluding.json</file>
         <file>resources/command_database.json</file>
         <file>resources/bedrock_command_database.json</file>
         <file>resources/terracotta_version.json</file>

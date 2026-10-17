@@ -41,6 +41,26 @@
 #include "utils/CommandAssistant/LitematicReader.h"
 #include "utils/skill/SkillManager.h"
 
+namespace {
+
+/// 把服务商基础端点补全为 /chat/completions 完整地址。
+/// 已带完整路径的原样返回；以 /v1 /v1beta /v2 /v3 等版本段结尾的直接拼 /chat/completions，
+/// 其余（如 https://api.deepseek.com）补 /v1/chat/completions。
+QString buildChatCompletionsUrl(QString fullUrl)
+{
+    while (fullUrl.endsWith('/'))
+        fullUrl.chop(1);
+    if (fullUrl.endsWith(QLatin1String("/chat/completions"), Qt::CaseInsensitive))
+        return fullUrl;
+    static const QRegularExpression versionSuffix(
+        QStringLiteral("/v\\d+(alpha|beta)?/?$"), QRegularExpression::CaseInsensitiveOption);
+    if (versionSuffix.match(fullUrl).hasMatch())
+        return fullUrl + QStringLiteral("/chat/completions");
+    return fullUrl + QStringLiteral("/v1/chat/completions");
+}
+
+} // namespace
+
 AiService::AiService(QObject* parent)
     : QObject(parent)
     , m_networkManager(new QNetworkAccessManager(this))
@@ -387,24 +407,7 @@ void AiService::sendRequestInternal(const QJsonArray &messages, const AiModel &m
     QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
 
     // 构建完整 URL（避免 /v1 重复拼接）
-    QString fullUrl = model.apiUrl;
-    while (fullUrl.endsWith('/'))
-    {
-        fullUrl.chop(1);
-    }
-    if (fullUrl.endsWith("/chat/completions", Qt::CaseInsensitive))
-    {
-        // 已是完整端点，直接使用
-    }
-    else if (fullUrl.endsWith("/v1", Qt::CaseInsensitive) ||
-             fullUrl.endsWith("/v1beta", Qt::CaseInsensitive))
-    {
-        fullUrl += "/chat/completions";
-    }
-    else
-    {
-        fullUrl += "/v1/chat/completions";
-    }
+    QString fullUrl = buildChatCompletionsUrl(model.apiUrl);
 
     QNetworkRequest request{QUrl(fullUrl)};
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -1238,24 +1241,7 @@ void AiService::generateTitle(const QString& userMessage, const QString& aiReply
     QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
 
     // 构建完整 URL（与 sendRequestInternal 相同的拼接逻辑）
-    QString fullUrl = model.apiUrl;
-    while (fullUrl.endsWith('/'))
-    {
-        fullUrl.chop(1);
-    }
-    if (fullUrl.endsWith("/chat/completions", Qt::CaseInsensitive))
-    {
-        // 已是完整端点
-    }
-    else if (fullUrl.endsWith("/v1", Qt::CaseInsensitive) ||
-             fullUrl.endsWith("/v1beta", Qt::CaseInsensitive))
-    {
-        fullUrl += "/chat/completions";
-    }
-    else
-    {
-        fullUrl += "/v1/chat/completions";
-    }
+    QString fullUrl = buildChatCompletionsUrl(model.apiUrl);
 
     QNetworkRequest request{QUrl(fullUrl)};
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -1366,24 +1352,7 @@ void AiService::optimizePrompt(const QString &draft, const AiModel &model)
     QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
 
     // 构建完整 URL（与 generateTitle 相同的拼接逻辑）
-    QString fullUrl = model.apiUrl;
-    while (fullUrl.endsWith('/'))
-    {
-        fullUrl.chop(1);
-    }
-    if (fullUrl.endsWith("/chat/completions", Qt::CaseInsensitive))
-    {
-        // 已是完整端点
-    }
-    else if (fullUrl.endsWith("/v1", Qt::CaseInsensitive) ||
-             fullUrl.endsWith("/v1beta", Qt::CaseInsensitive))
-    {
-        fullUrl += "/chat/completions";
-    }
-    else
-    {
-        fullUrl += "/v1/chat/completions";
-    }
+    QString fullUrl = buildChatCompletionsUrl(model.apiUrl);
 
     QNetworkRequest request{QUrl(fullUrl)};
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -1818,24 +1787,7 @@ QList<ChatMessage> AiService::compressContext(const QList<ChatMessage> &history,
     QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
 
     // 拼接完整 URL
-    QString fullUrl = model.apiUrl;
-    while (fullUrl.endsWith('/'))
-    {
-        fullUrl.chop(1);
-    }
-    if (fullUrl.endsWith("/chat/completions", Qt::CaseInsensitive))
-    {
-        // 已是完整端点
-    }
-    else if (fullUrl.endsWith("/v1", Qt::CaseInsensitive) ||
-             fullUrl.endsWith("/v1beta", Qt::CaseInsensitive))
-    {
-        fullUrl += "/chat/completions";
-    }
-    else
-    {
-        fullUrl += "/v1/chat/completions";
-    }
+    QString fullUrl = buildChatCompletionsUrl(model.apiUrl);
 
     QNetworkRequest request{QUrl(fullUrl)};
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");

@@ -14,6 +14,7 @@ INCLUDEPATH += $$PWD/fake $$PWD/../.. $$PWD/../../third_party/cubiomes
 SOURCES += world_map_page_probe.cpp \
            ../../pages/WorldMapPage.cpp \
            ../../utils/WorldMap/WorldMapRenderer.cpp \
+           ../../utils/WorldMap/SeedTerrainRenderer.cpp \
            ../../utils/WorldMap/StructureFinder.cpp \
            ../../utils/WorldMap/StructureIcons.cpp \
            ../../utils/Schematic/NbtCodec.cpp \
@@ -31,6 +32,7 @@ SOURCES += world_map_page_probe.cpp \
 
 HEADERS += ../../pages/WorldMapPage.h \
            ../../utils/WorldMap/WorldMapRenderer.h \
+           ../../utils/WorldMap/SeedTerrainRenderer.h \
            ../../utils/WorldMap/StructureFinder.h \
            ../../utils/WorldMap/StructureIcons.h \
            ../../utils/Schematic/NbtCodec.h \

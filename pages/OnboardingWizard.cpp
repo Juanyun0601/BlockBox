@@ -178,7 +178,7 @@ QWidget *OnboardingWizard::buildHeader(QWidget *parent)
 }
 
 /* ============================================================
- * 步骤条（5 节点 + 连接线，状态由 syncStepper 驱动）
+ * 步骤条（节点 + 连接线，整体水平居中，状态由 syncStepper 驱动）
  * ============================================================ */
 void OnboardingWizard::buildStepper(QWidget *parent)
 {
@@ -205,7 +205,8 @@ void OnboardingWizard::buildStepper(QWidget *parent)
     m_stepLabels.clear();
     m_stepLines.clear();
 
-    // 7 个节点 + 6 条连接线在 960px 卡片内刚好铺满，故连接线收窄到 40px
+    // 两侧等分拉伸，使步骤组在宽卡片内居中（隐藏部分步骤后仍保持居中）
+    lay->addStretch(1);
     for (int i = 0; i < 7; ++i) {
         if (i > 0) {
             QFrame *line = new QFrame(m_stepperWidget);
@@ -237,7 +238,7 @@ void OnboardingWizard::buildStepper(QWidget *parent)
         m_stepDots.append(dot);
         m_stepLabels.append(label);
     }
-    lay->addStretch();
+    lay->addStretch(1);
 }
 
 /* ============================================================
@@ -336,16 +337,7 @@ void OnboardingWizard::buildStep0()
         icon->setObjectName(QStringLiteral("obwMethodIcon"));
         icon->setFixedSize(46, 46);
         icon->setAlignment(Qt::AlignCenter);
-        {
-            ThemeManager *tm = ThemeManager::instance();
-            QString primary = tm->currentThemeColor();
-            QColor soft = QColor(primary);
-            soft.setAlphaF(tm->currentTheme() == ThemeManager::LightTheme ? 0.12 : 0.20);
-            icon->setStyleSheet(QStringLiteral(
-                "background-color: %1; border-radius: 11px; color: %2;"
-                "font-size: 16px; font-weight: 700;")
-                .arg(soft.name(QColor::HexArgb), primary));
-        }
+        // 默认/悬停/选中底色全部由 QSS Section 50 控制（内联样式会压过后代选择器）
         clay->addWidget(icon, 0, Qt::AlignHCenter);
         clay->addSpacing(4);
 
@@ -440,16 +432,7 @@ void OnboardingWizard::buildStepDlSource()
         icon->setObjectName(QStringLiteral("obwMethodIcon"));
         icon->setFixedSize(50, 50);
         icon->setAlignment(Qt::AlignCenter);
-        {
-            ThemeManager *tm = ThemeManager::instance();
-            QString primary = tm->currentThemeColor();
-            QColor soft = QColor(primary);
-            soft.setAlphaF(tm->currentTheme() == ThemeManager::LightTheme ? 0.12 : 0.20);
-            icon->setStyleSheet(QStringLiteral(
-                "background-color: %1; border-radius: 12px; color: %2;"
-                "font-size: 18px; font-weight: 700;")
-                .arg(soft.name(QColor::HexArgb), primary));
-        }
+        // 底色/字色由 QSS 控制，悬停与选中自动切换为渐变底白字
         clay->addWidget(icon, 0, Qt::AlignHCenter);
         clay->addSpacing(4);
 
@@ -565,21 +548,7 @@ void OnboardingWizard::buildStep1()
         icon->setObjectName(QStringLiteral("obwMethodIcon"));
         icon->setFixedSize(52, 52);
         icon->setAlignment(Qt::AlignCenter);
-        // 默认态：accent-soft 浅绿底 + accent 色字母（对齐 HTML .ob-choose-icon 默认）；
-        // setStyleSheet 是 widget 级不经过 ThemeManager 占位符替换，需用当前主题色动态构造
-        // checked/hover 态由 QSS 后代选择器覆盖为渐变底白字
-        {
-            ThemeManager *tm = ThemeManager::instance();
-            QString primary = tm->currentThemeColor();
-            // 浅色主题用 12% 透明主色（accent-soft），深色主题用 20% 透明主色
-            QColor soft = QColor(primary);
-            soft.setAlphaF(tm->currentTheme() == ThemeManager::LightTheme ? 0.12 : 0.20);
-            icon->setStyleSheet(QStringLiteral(
-                "background-color: %1;"
-                "border-radius: 12px; color: %2;"
-                "font-size: 19px; font-weight: 700;")
-                .arg(soft.name(QColor::HexArgb), primary));
-        }
+        // 默认/悬停/选中由 QSS 统一控制（内联样式会压过 QSS 后代选择器，导致选中不变渐变）
         clay->addWidget(icon, 0, Qt::AlignHCenter);
         clay->addSpacing(6);
 
@@ -826,7 +795,7 @@ void OnboardingWizard::buildStep2Manual()
     m_accountListWidget = new QWidget(page);
     m_accountListWidget->setObjectName(QStringLiteral("obwAccountList"));
     QVBoxLayout *listLay = new QVBoxLayout(m_accountListWidget);
-    listLay->setContentsMargins(0, 8, 0, 0);
+    listLay->setContentsMargins(12, 12, 12, 12);
     listLay->setSpacing(8);
     // stretch=1 让 listWidget 占据 toolbar 与 panel 之间的中间区域，
     // 同时强制 vertical=Fixed 让 layout 不再把多余空间均匀分到 row 之间空隙
@@ -995,7 +964,7 @@ void OnboardingWizard::buildStep3()
     m_javaListWidget = new QWidget(scroll);
     m_javaListWidget->setObjectName(QStringLiteral("obwJavaList"));
     QVBoxLayout *jList = new QVBoxLayout(m_javaListWidget);
-    jList->setContentsMargins(0, 0, 0, 0);
+    jList->setContentsMargins(10, 10, 10, 10);
     jList->setSpacing(8);
     scroll->setWidget(m_javaListWidget);
     lay->addWidget(scroll, 1);
@@ -1084,7 +1053,7 @@ void OnboardingWizard::buildStep4()
     m_folderListWidget = new QWidget(page);
     m_folderListWidget->setObjectName(QStringLiteral("obwFolderList"));
     QVBoxLayout *fList = new QVBoxLayout(m_folderListWidget);
-    fList->setContentsMargins(0, 8, 0, 0);
+    fList->setContentsMargins(12, 12, 12, 12);
     fList->setSpacing(8);
     // 同 m_accountListWidget：stretch=0 + vertical=Fixed（见 buildStep2Manual 注释）
     lay->addWidget(m_folderListWidget, 0);
@@ -1800,10 +1769,12 @@ void OnboardingWizard::syncStepper()
         QLabel *label = m_stepLabels.at(idx);
         const bool done = progress > n;
         const bool active = progress == n;
-        dot->setText(QString::number(n + 1));
+        // 完成步骤显示对勾，进行中/待办显示序号
+        dot->setText(done ? QStringLiteral("✓") : QString::number(n + 1));
         dot->setProperty("state", done ? QStringLiteral("done")
                                        : (active ? QStringLiteral("active") : QStringLiteral("todo")));
-        label->setProperty("state", done || active ? QStringLiteral("on") : QStringLiteral("off"));
+        label->setProperty("state", done ? QStringLiteral("done")
+                                         : (active ? QStringLiteral("active") : QStringLiteral("off")));
         dot->style()->unpolish(dot);
         dot->style()->polish(dot);
         label->style()->unpolish(label);
@@ -2191,7 +2162,7 @@ void OnboardingWizard::refreshAccountList()
         delete oldLay;
     }
     QVBoxLayout *listLay = new QVBoxLayout(m_accountListWidget);
-    listLay->setContentsMargins(0, 8, 0, 0);
+    listLay->setContentsMargins(12, 12, 12, 12);
     listLay->setSpacing(8);
 
     const QList<AccountInfo> accounts = SettingsManager::instance()->getAccounts();
@@ -2338,7 +2309,7 @@ void OnboardingWizard::refreshJavaList()
         delete oldLay;
     }
     QVBoxLayout *listLay = new QVBoxLayout(m_javaListWidget);
-    listLay->setContentsMargins(0, 0, 0, 0);
+    listLay->setContentsMargins(10, 10, 10, 10);
     listLay->setSpacing(8);
     // m_javaListWidget 是被 QScrollArea 包裹的，scroll 内容按 listWidget 实际高度展开
 
@@ -2460,7 +2431,7 @@ void OnboardingWizard::refreshFolderList()
         delete oldLay;
     }
     QVBoxLayout *listLay = new QVBoxLayout(m_folderListWidget);
-    listLay->setContentsMargins(0, 8, 0, 0);
+    listLay->setContentsMargins(12, 12, 12, 12);
     listLay->setSpacing(8);
 
     const QList<InstanceFolderInfo> folders = SettingsManager::instance()->getInstanceFolders();

@@ -50,6 +50,7 @@
 #include "components/GameFloatingIcon.h"
 #include "components/TopBar.h"
 #include "components/UpdateProgressButton.h"
+#include "components/FileDropOverlay.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
 #include "utils/ThemeManager.h"
@@ -92,8 +93,14 @@
 #include "utils/ClipboardMonitor.h"
 #include "utils/PageTransitionAnimator.h"
 #include "utils/ContentAnimator.h"
+#include "utils/UpdateChecker.h"
 
 #include <QPainter>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDragLeaveEvent>
+#include <QDropEvent>
+#include <QMimeData>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -132,7 +139,10 @@ MainWindow::MainWindow(QWidget *parent)
     , m_lastChildSidebarIndex{-1, -1, -1, -1, -1, -1, -1, -1}
 {
     ui->setupUi(this);
-    
+
+    // 接受外部拖入的方块盒子更新安装包（setup/portable 等），松开即走安装流程
+    setAcceptDrops(true);
+
     // 初始化页面初始化状态跟踪
     m_pageInitialized[PageIndex::InstanceSelectPage] = false;
     m_pageInitialized[PageIndex::AccountManagePage] = false;
@@ -349,9 +359,9 @@ void MainWindow::initUI()
     // Add content area to main layout
     mainLayout->addWidget(contentArea, 1);
 
-    // Create task bar at the bottom of the window (hidden by default)
-    m_taskBar = new TaskBar(this);
-    mainLayout->addWidget(m_taskBar);
+    // 任务栏：悬浮叠在内容区底部（不占布局空间），有任务时滑入
+    m_taskBar = new TaskBar(contentArea);
+    m_taskBar->updateFloatGeometry();
 
 #ifdef Q_OS_ANDROID
     // 安卓版：游戏内悬浮的方块盒子图标，点击弹出/收起实例助手侧栏
@@ -507,6 +517,7 @@ void MainWindow::onSideBarItemClicked(int parentIndex)
     } else if (parentIndex == 2) { // Settings
         m_topBar->setSettingsTitle();
         m_subNavPanel->showForParent(2);
+        ensurePageInitialized(PageIndex::SettingsPage);
         animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, parentIndex);
         onChildNavClicked(2, 0);
     }
@@ -537,6 +548,7 @@ void MainWindow::onParentNavClicked(int parentIndex)
     } else if (parentIndex == 2) { // Settings
         m_subNavPanel->showForParent(2);
         m_topBar->setSettingsTitle();
+        ensurePageInitialized(PageIndex::SettingsPage);
         animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, parentIndex);
         // Trigger default child navigation
         onChildNavClicked(2, 0);
@@ -633,6 +645,8 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
             }
         }
     } else if (parentIndex == 2) { // Settings child
+        // 设置页为按需创建，切到设置子项前先确保已初始化
+        ensurePageInitialized(PageIndex::SettingsPage);
         QScrollArea *scrollArea = qobject_cast<QScrollArea*>(m_stackedWidget->widget(2));
         if (scrollArea) {
             SettingsPage *settingsPage = qobject_cast<SettingsPage*>(scrollArea->widget());
@@ -651,6 +665,7 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
         case 7: m_topBar->setTitle(tr("设置>系统信息")); break;
         case 8: m_topBar->setTitle(tr("设置>AI 助手")); break;
         case 9: m_topBar->setTitle(tr("设置>关于")); break;
+        case 10: m_topBar->setTitle(tr("设置>投影编辑器")); break;
         default: m_topBar->setSettingsTitle(); break;
         }
     } else if (parentIndex == 4) { // Instance Manage child
@@ -849,6 +864,9 @@ void MainWindow::refreshPluginNav()
 
 void MainWindow::onSettingsNavItemClicked(int index)
 {
+    // 设置页为按需创建，切设置子页前先确保已初始化
+    ensurePageInitialized(PageIndex::SettingsPage);
+
     // Get the scroll area containing the settings page
     QScrollArea *scrollArea = qobject_cast<QScrollArea*>(m_stackedWidget->widget(2));
     if (scrollArea) {
@@ -864,11 +882,15 @@ void MainWindow::onSettingsNavItemClicked(int index)
     switch (index) {
     case 0: m_topBar->setTitle(tr("设置>常规设置")); break;
     case 1: m_topBar->setTitle(tr("设置>界面设置")); break;
-    case 2: m_topBar->setTitle(tr("设置>鍏ㄥ眬游戏设置")); break;
-    case 3: m_topBar->setTitle(tr("设置>瀹炰緥设置")); break;
-    case 4: m_topBar->setTitle(tr("设置>Java绠＄悊")); break;
+    case 2: m_topBar->setTitle(tr("设置>全局游戏设置")); break;
+    case 3: m_topBar->setTitle(tr("设置>实例设置")); break;
+    case 4: m_topBar->setTitle(tr("设置>Java管理")); break;
     case 5: m_topBar->setTitle(tr("设置>高级设置")); break;
     case 6: m_topBar->setTitle(tr("设置>按键绑定")); break;
+    case 7: m_topBar->setTitle(tr("设置>系统信息")); break;
+    case 8: m_topBar->setTitle(tr("设置>AI 助手")); break;
+    case 9: m_topBar->setTitle(tr("设置>关于")); break;
+    case 10: m_topBar->setTitle(tr("设置>投影编辑器")); break;
     default: m_topBar->setSettingsTitle(); break;
     }
 }
@@ -1203,13 +1225,115 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         m_backgroundWidget->setGeometry(m_backgroundWidget->parentWidget()->rect());
     }
 
-    // 主内容区尺寸变化时，同步悬浮子导航气泡的位置与高度
-    if (watched == m_mainContentArea && event->type() == QEvent::Resize
-        && m_subNavPanel && m_subNavPanel->isVisible()) {
-        m_subNavPanel->updateFloatGeometry();
+    // 主内容区尺寸变化时，同步悬浮子导航气泡与底部任务栏的位置
+    if (watched == m_mainContentArea && event->type() == QEvent::Resize) {
+        if (m_subNavPanel && m_subNavPanel->isVisible()) {
+            m_subNavPanel->updateFloatGeometry();
+        }
+        if (m_taskBar && m_taskBar->isVisible()) {
+            m_taskBar->updateFloatGeometry();
+        }
     }
 
     return QMainWindow::eventFilter(watched, event);
+}
+
+QStringList MainWindow::extractUpdatePackages(const QMimeData *mime) const
+{
+    QStringList packages;
+    if (!mime || !mime->hasUrls())
+        return packages;
+    const QList<QUrl> urls = mime->urls();
+    for (const QUrl &url : urls) {
+        if (!url.isLocalFile())
+            continue;
+        const QString path = url.toLocalFile();
+        if (UpdateChecker::isUpdatePackageFile(path))
+            packages.append(path);
+    }
+    return packages;
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (!event->mimeData() || !event->mimeData()->hasUrls()) {
+        QMainWindow::dragEnterEvent(event);
+        return;
+    }
+
+    m_pendingDropPackages = extractUpdatePackages(event->mimeData());
+    if (m_pendingDropPackages.isEmpty()) {
+        // 不是更新包：不接受，避免干扰其他页面自身的拖放逻辑
+        event->ignore();
+        return;
+    }
+
+    event->acceptProposedAction();
+    if (!m_dropOverlay) {
+        m_dropOverlay = new FileDropOverlay(this);
+        m_dropOverlay->setGeometry(rect());
+    }
+    m_dropOverlay->setGeometry(rect());
+    m_dropOverlay->activate(m_pendingDropPackages.size());
+    m_dropOverlay->updatePreview(tr("松开以安装新版本：%1")
+                                     .arg(QFileInfo(m_pendingDropPackages.first()).fileName()));
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent *event)
+{
+    if (!m_pendingDropPackages.isEmpty() && m_dropOverlay && m_dropOverlay->isActive()) {
+        event->acceptProposedAction();
+        return;
+    }
+    if (event->mimeData() && event->mimeData()->hasUrls()) {
+        const QStringList packages = extractUpdatePackages(event->mimeData());
+        if (!packages.isEmpty()) {
+            m_pendingDropPackages = packages;
+            event->acceptProposedAction();
+            if (!m_dropOverlay) {
+                m_dropOverlay = new FileDropOverlay(this);
+            }
+            m_dropOverlay->setGeometry(rect());
+            if (!m_dropOverlay->isActive()) {
+                m_dropOverlay->activate(packages.size());
+            }
+            m_dropOverlay->updatePreview(tr("松开以安装新版本：%1")
+                                             .arg(QFileInfo(packages.first()).fileName()));
+            return;
+        }
+    }
+    m_pendingDropPackages.clear();
+    if (m_dropOverlay && m_dropOverlay->isActive())
+        m_dropOverlay->deactivate();
+    event->ignore();
+}
+
+void MainWindow::dragLeaveEvent(QDragLeaveEvent *event)
+{
+    // 拖出窗口：收起覆盖层并丢弃待装列表（若已 drop，dropEvent 会先清空）
+    if (m_dropOverlay && m_dropOverlay->isActive())
+        m_dropOverlay->deactivate();
+    m_pendingDropPackages.clear();
+    QMainWindow::dragLeaveEvent(event);
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    QStringList packages = extractUpdatePackages(event->mimeData());
+    if (packages.isEmpty())
+        packages = m_pendingDropPackages;
+    m_pendingDropPackages.clear();
+    if (m_dropOverlay && m_dropOverlay->isActive())
+        m_dropOverlay->deactivate();
+
+    if (packages.isEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    event->acceptProposedAction();
+    // 多文件时只安装第一个可识别更新包
+    UpdateChecker::instance()->installExternalPackage(this, packages.first());
 }
 
 void MainWindow::onAddAccountPageOpened()

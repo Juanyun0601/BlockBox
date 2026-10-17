@@ -9,15 +9,24 @@
 
 #include "utils/JarUtils.h"
 
+#include <QCryptographicHash>
+#include <QDataStream>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPainter>
+#include <QStandardPaths>
+#include <QHash>
 #include <QtMath>
 #include <algorithm>
+#include <memory>
 
 namespace {
 
 const char kTexPrefix[] = "assets/minecraft/textures/block/";
+const int  kCacheFormatVersion = 1;
 
 // 常见派生方块后缀：优先尝试去掉这些后缀后找基础贴图
 const char *kDerivedSuffixes[] = {
@@ -26,6 +35,29 @@ const char *kDerivedSuffixes[] = {
     "_carpet", "_wool", "_leaves", "_torch", "_lantern",
     nullptr
 };
+
+QMutex g_sharedMutex;
+QHash<QString, std::shared_ptr<InstanceTextureLoader>> g_shared;
+
+QString diskCacheDir()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                        + QStringLiteral("/projection_editor/atlas");
+    QDir().mkpath(dir);
+    return dir;
+}
+
+QString diskCachePath(const QString &jarPath)
+{
+    const QFileInfo fi(jarPath);
+    QByteArray id;
+    id.append(fi.absoluteFilePath().toUtf8());
+    id.append(QByteArray::number(fi.size()));
+    id.append(QByteArray::number(fi.lastModified().toMSecsSinceEpoch()));
+    const QString hash = QString::fromLatin1(
+        QCryptographicHash::hash(id, QCryptographicHash::Md5).toHex());
+    return diskCacheDir() + QLatin1Char('/') + hash + QStringLiteral(".atlas");
+}
 
 } // namespace
 
@@ -81,6 +113,7 @@ bool InstanceTextureLoader::load(const QString &instancePath, QString *errorOut)
     m_tilesPerRow = 0;
     m_atlasSize = 0;
     m_textureCount = 0;
+    m_cacheKey.clear();
 
     QString jarPath;
     if (!findClientJar(instancePath, jarPath))
@@ -90,25 +123,125 @@ bool InstanceTextureLoader::load(const QString &instancePath, QString *errorOut)
         return false;
     }
 
-    // 列出方块贴图
-    const QStringList entries = JarUtils::listEntriesInJar(jarPath, kTexPrefix);
-    QMap<QString, QImage> textures;   // 文件名（不含扩展名/路径） -> 图
+    // 磁盘缓存优先（同一 jar 二次打开走毫秒级路径）
+    if (tryLoadDiskCache(jarPath))
+        return true;
+
+    if (!loadFromJar(jarPath, errorOut))
+        return false;
+
+    saveDiskCache(jarPath);
+    return true;
+}
+
+InstanceTextureLoader *InstanceTextureLoader::sharedForInstance(const QString &instancePath)
+{
+    if (instancePath.isEmpty())
+        return nullptr;
+
+    // 先定位 jar 作为共享 key，避免同一 jar 被不同实例路径重复加载
+    QString jarPath;
+    {
+        InstanceTextureLoader probe;
+        if (!probe.findClientJar(instancePath, jarPath))
+            return nullptr;
+    }
+
+    QMutexLocker lock(&g_sharedMutex);
+    auto it = g_shared.constFind(jarPath);
+    if (it != g_shared.constEnd() && it.value() && it.value()->isValid())
+        return it.value().get();
+
+    auto loader = std::make_shared<InstanceTextureLoader>();
+    if (!loader->load(instancePath, nullptr) || !loader->isValid())
+        return nullptr;
+    g_shared.insert(jarPath, loader);
+    return loader.get();
+}
+
+bool InstanceTextureLoader::tryLoadDiskCache(const QString &jarPath)
+{
+    const QString path = diskCachePath(jarPath);
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return false;
+
+    QDataStream in(&f);
+    in.setVersion(QDataStream::Qt_5_12);
+    quint32 magic = 0, ver = 0;
+    in >> magic >> ver;
+    if (magic != 0x42424154u /* 'BBAT' */ || ver != kCacheFormatVersion)
+        return false;
+
+    QImage atlas;
+    int tilesPerRow = 0, atlasSize = 0, count = 0;
+    in >> atlas >> tilesPerRow >> atlasSize >> count;
+    QMap<QString, int> nameToTile;
+    in >> nameToTile;
+    if (in.status() != QDataStream::Ok || atlas.isNull() || count <= 0
+        || tilesPerRow <= 0 || nameToTile.isEmpty())
+        return false;
+
+    m_atlas = atlas;
+    m_tilesPerRow = tilesPerRow;
+    m_atlasSize = atlasSize;
+    m_textureCount = count;
+    m_nameToTile = nameToTile;
+    m_cacheKey = jarPath;
+    return true;
+}
+
+bool InstanceTextureLoader::saveDiskCache(const QString &jarPath) const
+{
+    if (m_atlas.isNull() || m_textureCount <= 0)
+        return false;
+
+    const QString path = diskCachePath(jarPath);
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly))
+        return false;
+
+    QDataStream out(&f);
+    out.setVersion(QDataStream::Qt_5_12);
+    out << quint32(0x42424154u) << quint32(kCacheFormatVersion);
+    out << m_atlas << m_tilesPerRow << m_atlasSize << m_textureCount;
+    out << m_nameToTile;
+    return out.status() == QDataStream::Ok;
+}
+
+bool InstanceTextureLoader::loadFromJar(const QString &jarPath, QString *errorOut)
+{
+    // 列出方块贴图后整包一次批量解压（原先逐条 open+扫中心目录，是打开慢的主因）
+    QStringList entries = JarUtils::listEntriesInJar(jarPath, kTexPrefix);
+    QStringList pngs;
+    pngs.reserve(entries.size());
     for (const QString &entry : entries)
     {
-        if (!entry.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
-            continue;
-        QByteArray data;
-        if (!JarUtils::extractFromJarToMemory(jarPath, entry, data))
-            continue;
+        if (entry.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+            pngs.append(entry);
+    }
+    if (pngs.isEmpty())
+    {
+        if (errorOut)
+            *errorOut = QStringLiteral("实例 jar 中没有方块贴图（%1）").arg(jarPath);
+        return false;
+    }
+
+    QMap<QString, QByteArray> raw;
+    JarUtils::extractMultipleFromJarToMemory(jarPath, pngs, raw);
+
+    QMap<QString, QImage> textures;   // 文件名（不含扩展名/路径） -> 图
+    for (auto it = raw.constBegin(); it != raw.constEnd(); ++it)
+    {
         QImage img;
-        if (!img.loadFromData(data) || img.isNull())
+        if (!img.loadFromData(it.value()) || img.isNull())
             continue;
         // 统一转成 RGBA
         if (img.format() != QImage::Format_RGBA8888)
             img = img.convertToFormat(QImage::Format_RGBA8888);
         if (img.width() <= 0 || img.height() <= 0)
             continue;
-        const QString key = QFileInfo(entry).completeBaseName().toLower();
+        const QString key = QFileInfo(it.key()).completeBaseName().toLower();
         // 仅保留第一张同名贴图
         if (!textures.contains(key))
             textures.insert(key, img);
@@ -122,6 +255,7 @@ bool InstanceTextureLoader::load(const QString &instancePath, QString *errorOut)
     }
 
     buildAtlas(textures);
+    m_cacheKey = jarPath;
     return true;
 }
 
@@ -143,10 +277,19 @@ void InstanceTextureLoader::buildAtlas(const QMap<QString, QImage> &textures)
         const int col = idx % m_tilesPerRow;
         const int row = idx / m_tilesPerRow;
         QImage tex = it.value();
-        QImage scaled = tex.scaled(tile, tile, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-        // 缩放后可能是 ARGB，复制到 RGBA 图集
-        QPainter p(&atlas);
-        p.drawImage(col * tile, row * tile, scaled);
+        if (tex.width() != tile || tex.height() != tile)
+            tex = tex.scaled(tile, tile, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        // 16×16 直接 memcpy 进图集，比逐次 QPainter 快
+        if (tex.format() != QImage::Format_RGBA8888)
+            tex = tex.convertToFormat(QImage::Format_RGBA8888);
+        const int dstX = col * tile;
+        const int dstY = row * tile;
+        for (int y = 0; y < tile; ++y)
+        {
+            uchar *dst = atlas.scanLine(dstY + y) + dstX * 4;
+            const uchar *src = tex.constScanLine(y);
+            memcpy(dst, src, size_t(tile) * 4);
+        }
         m_nameToTile.insert(it.key(), idx);
         ++idx;
     }

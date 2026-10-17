@@ -23,6 +23,7 @@
 #include <QString>
 #include <QWidget>
 
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPropertyAnimation;
@@ -59,6 +60,10 @@ private slots:
     void onSelectAllClicked();
     void onOpenFolderClicked();
     void onDeleteClicked();
+    void onStatusFilterChanged(int index);
+    void onTimeFilterChanged(int index);
+    void onSizeFilterChanged(int index);
+    void onSortChanged(int index);
 
 private:
     /** 资源类型 */
@@ -106,6 +111,7 @@ private:
     void scanFiles();
     void showEmptyHint(bool show);
     void applyFilterAndSearch();
+    void sortFileList();
     QString formatFileSize(qint64 bytes) const;
     void toggleCardSelection(int idx);
     void deselectAllCards();
@@ -125,6 +131,14 @@ private:
     int m_highlightPos;
     QLineEdit *m_searchEdit;
     QLabel *m_statsLabel;
+    QComboBox *m_statusCombo;  // 筛选：全部 / 已启用 / 已禁用
+    QComboBox *m_timeCombo;    // 时间：全部 / 7 天 / 30 天 / 一年
+    QComboBox *m_sizeCombo;    // 大小：全部 / <10MB / 10~100MB / >100MB
+    QComboBox *m_sortCombo;    // 排序：名称 / 大小 / 修改时间
+    int m_statusFilter = 0;    // 0=全部 1=已启用 2=已禁用
+    int m_timeFilter = 0;      // 0=全部 1=7 天 2=30 天 3=一年
+    int m_sizeFilter = 0;      // 0=全部 1=<10MB 2=10~100MB 3=>100MB
+    int m_sortMode = 0;        // 0=名称↑ 1=名称↓ 2=大小↓ 3=大小↑ 4=新→旧 5=旧→新
     QScrollArea *m_scrollArea;
     QWidget *m_cardContainer;
     QVBoxLayout *m_cardLayout;

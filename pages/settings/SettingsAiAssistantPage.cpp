@@ -25,6 +25,7 @@
 #include "components/AppFileDialog.h"
 #include "components/CustomCheckBox.h"
 #include "components/OutlinedLabel.h"
+#include "utils/AiProviderPresets.h"
 #include "utils/SettingsManager.h"
 
 void SettingsPage::initAiAssistantSettings()
@@ -76,29 +77,24 @@ void SettingsPage::initAiAssistantSettings()
     providerHint->setWordWrap(true);
     providerContentLayout->addWidget(providerHint);
 
-    // 服务商配置列表
+    // 服务商配置列表（内置清单见 utils/AiProviderPresets.h）
     struct ProviderInfo {
         QString key;
         QString name;
         QString defaultUrl;
         QString configKey;
+        QString urlHint;
     };
 
-    QList<ProviderInfo> providers = {
-        {"DeepSeek", "DeepSeek", "https://api.deepseek.com/v1", "ai/provider_deepseek"},
-        {"OpenAI", "OpenAI", "https://api.openai.com/v1", "ai/provider_openai"},
-        {"Anthropic", "Anthropic", "https://api.anthropic.com", "ai/provider_anthropic"},
-        {"Gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1", "ai/provider_gemini"},
-        {"OpenRouter", "OpenRouter", "https://openrouter.ai/api/v1", "ai/provider_openrouter"},
-        {"GLM", "智谱 GLM", "https://open.bigmodel.cn/api/paas/v4", "ai/provider_glm"},
-        {"Qwen", "通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "ai/provider_qwen"},
-        {"ERNIE", "文心一言", "https://aip.baidubce.com", "ai/provider_ernie"},
-    };
+    QList<ProviderInfo> providers;
+    for (const AiProviderPreset &p : aiProviderPresets()) {
+        providers.append({p.key, p.name, p.defaultUrl, p.configKey, p.urlHint});
+    }
 
     QListWidget *providerList = new QListWidget();
     providerList->setObjectName("providerList");
     providerList->setMinimumHeight(100);
-    providerList->setMaximumHeight(200);
+    providerList->setMaximumHeight(280);
 
     // 自定义服务商（排在最前面）
     QSettings customSettings;
@@ -119,6 +115,7 @@ void SettingsPage::initAiAssistantSettings()
     customItem->setData(Qt::UserRole + 1, QVariant::fromValue(QString()));
     customItem->setData(Qt::UserRole + 2, QVariant::fromValue(QString()));
     customItem->setData(Qt::UserRole + 3, QVariant::fromValue(QString()));
+    customItem->setData(Qt::UserRole + 4, QVariant::fromValue(QString()));
     providerList->addItem(customItem);
 
     // 内置服务商
@@ -133,6 +130,7 @@ void SettingsPage::initAiAssistantSettings()
         item->setData(Qt::UserRole + 1, QVariant::fromValue(provider.name));
         item->setData(Qt::UserRole + 2, QVariant::fromValue(provider.defaultUrl));
         item->setData(Qt::UserRole + 3, QVariant::fromValue(provider.configKey));
+        item->setData(Qt::UserRole + 4, QVariant::fromValue(provider.urlHint));
         providerList->addItem(item);
     }
 
@@ -440,6 +438,7 @@ void SettingsPage::initAiAssistantSettings()
         QString providerName = item->data(Qt::UserRole + 1).toString();
         QString defaultUrl = item->data(Qt::UserRole + 2).toString();
         QString configKey = item->data(Qt::UserRole + 3).toString();
+        QString urlHint = item->data(Qt::UserRole + 4).toString();
 
         QDialog dialog(this);
         dialog.setWindowTitle(tr("配置 %1").arg(providerName));
@@ -464,17 +463,9 @@ void SettingsPage::initAiAssistantSettings()
                 for (const QJsonValue &v : arr) {
                     QJsonObject m = v.toObject();
                     QString apiUrl = m["apiUrl"].toString();
-                    // 按服务商名称匹配 URL 或 displayName 前缀
-                    bool match = false;
-                    if (providerKey == "OpenAI") match = apiUrl.contains("openai.com");
-                    else if (providerKey == "DeepSeek") match = apiUrl.contains("deepseek.com");
-                    else if (providerKey == "Anthropic") match = apiUrl.contains("anthropic.com");
-                    else if (providerKey == "Gemini") match = apiUrl.contains("googleapis.com");
-                    else if (providerKey == "OpenRouter") match = apiUrl.contains("openrouter.ai");
-                    else if (providerKey == "GLM") match = apiUrl.contains("bigmodel.cn");
-                    else if (providerKey == "Qwen") match = apiUrl.contains("dashscope.aliyuncs");
-                    else if (providerKey == "ERNIE") match = apiUrl.contains("baidubce.com");
-                    if (!match) continue;
+                    // 按服务商 URL 特征匹配预设模型
+                    if (urlHint.isEmpty() || !apiUrl.contains(urlHint))
+                        continue;
 
                     QString id = m["id"].toString();
                     QString displayName = m["displayName"].toString();

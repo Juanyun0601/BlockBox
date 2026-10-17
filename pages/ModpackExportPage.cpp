@@ -17,11 +17,15 @@
 #include "components/AppFileDialog.h"
 #include <QFileInfo>
 #include "components/AppMessageBox.h"
+#include <QFrame>
+#include <QGridLayout>
 #include <QScrollArea>
+#include <QStyle>
 #include <QUrl>
 
 ModpackExportPage::ModpackExportPage(QWidget* parent)
   : QWidget(parent)
+  , m_stepperWidget(nullptr)
   , m_stepStack(nullptr)
   , m_prevBtn(nullptr)
   , m_nextBtn(nullptr)
@@ -54,8 +58,6 @@ ModpackExportPage::ModpackExportPage(QWidget* parent)
   , m_serverLaunchArgsEdit(nullptr)
   , m_fileTree(nullptr)
   , m_moduleSelectionPage(nullptr)
-  , m_moduleNextBtn(nullptr)
-  , m_modulePrevBtn(nullptr)
 {
   initUI();
 }
@@ -150,8 +152,12 @@ void ModpackExportPage::setInstancePath(const QString& path)
 void ModpackExportPage::initUI()
 {
   QVBoxLayout* mainLayout = new QVBoxLayout(this);
-  mainLayout->setContentsMargins(20, 10, 20, 10);
-  mainLayout->setSpacing(10);
+  mainLayout->setContentsMargins(20, 8, 20, 10);
+  mainLayout->setSpacing(8);
+
+  // 顶部步骤条
+  buildStepper();
+  mainLayout->addWidget(m_stepperWidget);
 
   // 步骤内容区
   m_stepStack = new QStackedWidget(this);
@@ -164,11 +170,10 @@ void ModpackExportPage::initUI()
   // 进度条（隐藏）
   QHBoxLayout* progressLayout = new QHBoxLayout();
   m_progressLabel = new QLabel();
-  m_progressLabel->setStyleSheet("font-size: 12px; color: #888;");
+  m_progressLabel->setObjectName("modpackExportProgressLabel");
   m_progressLabel->hide();
-    m_progressBar = new QProgressBar();
-    m_progressBar->setObjectName("modpackExportProgress");
-    m_progressBar->setFixedHeight(20);
+  m_progressBar = new QProgressBar();
+  m_progressBar->setObjectName("modpackExportProgress");
   m_progressBar->setRange(0, 100);
   m_progressBar->hide();
   progressLayout->addWidget(m_progressLabel);
@@ -182,63 +187,160 @@ void ModpackExportPage::initUI()
 
   btnLayout->addStretch();
 
-  QString themeColor = ThemeManager::instance()->currentThemeColor();
-  QString themeHover = ThemeManager::instance()->getThemeColorHover();
-
-  QString btnStyle = QString(
-    "QPushButton {"
-    "  font-size: 14px;"
-    "  color: white;"
-    "  border: none;"
-    "  border-radius: 6px;"
-    "  padding: 8px 24px;"
-    "  background-color: %1;"
-    ""
-    "}"
-  ).arg(themeColor, themeHover);
-
-  QString secondaryBtnStyle = QString(
-    "QPushButton {"
-    "  font-size: 14px;"
-    "  color: %1;"
-    "  border: 1px solid %1;"
-    "  border-radius: 4px;"
-    "  padding: 8px 24px;"
-    "  background: transparent;"
-    "}"
-  ).arg(themeColor, ThemeManager::instance()->getThemeColorLight());
-
-  QString secondaryBtnStyle2 = QString(
-    "QPushButton {"
-    "  font-size: 14px;"
-    "  color: %1;"
-    "  border: 1px solid %1;"
-    "  border-radius: 6px;"
-    "  padding: 8px 24px;"
-    "  background: transparent;"
-    "}"
-  ).arg(themeColor, ThemeManager::instance()->getThemeColorLight());
-
   m_prevBtn = new QPushButton(tr("上一步"));
-  m_prevBtn->setStyleSheet(secondaryBtnStyle2);
+  m_prevBtn->setObjectName("mpxNavSecondaryBtn");
+  m_prevBtn->setCursor(Qt::PointingHandCursor);
   m_prevBtn->setEnabled(false);
   connect(m_prevBtn, &QPushButton::clicked, this, &ModpackExportPage::onPrevClicked);
   btnLayout->addWidget(m_prevBtn);
 
   m_nextBtn = new QPushButton(tr("下一步"));
-  m_nextBtn->setStyleSheet(btnStyle);
+  m_nextBtn->setObjectName("mpxNavPrimaryBtn");
+  m_nextBtn->setCursor(Qt::PointingHandCursor);
   m_nextBtn->setEnabled(false);
   connect(m_nextBtn, &QPushButton::clicked, this, &ModpackExportPage::onNextClicked);
   btnLayout->addWidget(m_nextBtn);
 
   m_exportBtn = new QPushButton(tr("导出"));
-  m_exportBtn->setStyleSheet(btnStyle);
+  m_exportBtn->setObjectName("mpxNavPrimaryBtn");
+  m_exportBtn->setCursor(Qt::PointingHandCursor);
   m_exportBtn->hide();
   connect(m_exportBtn, &QPushButton::clicked, this, &ModpackExportPage::onExportClicked);
   btnLayout->addWidget(m_exportBtn);
 
   mainLayout->addLayout(btnLayout);
 
+  syncStepper();
+}
+
+void ModpackExportPage::buildStepper()
+{
+  m_stepperWidget = new QWidget(this);
+  m_stepperWidget->setObjectName("mpxStepper");
+  m_stepperWidget->setFixedHeight(52);
+
+  QHBoxLayout* lay = new QHBoxLayout(m_stepperWidget);
+  lay->setContentsMargins(8, 4, 8, 4);
+  lay->setSpacing(8);
+
+  // BlockBox 格式多一步「选择模块」，其余格式跳过（步骤条上隐藏该节点）
+  const QStringList labels = {
+    tr("选择格式"),
+    tr("填写信息"),
+    tr("选择模块"),
+    tr("选择文件"),
+  };
+
+  m_stepDots.clear();
+  m_stepLabels.clear();
+  m_stepLines.clear();
+  m_stepNodes.clear();
+
+  lay->addStretch(1);
+  for (int i = 0; i < labels.size(); ++i)
+  {
+    if (i > 0)
+    {
+      QFrame* line = new QFrame(m_stepperWidget);
+      line->setObjectName("mpxStepLine");
+      line->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+      lay->addWidget(line, 1, Qt::AlignVCenter);
+      m_stepLines.append(line);
+    }
+
+    QWidget* node = new QWidget(m_stepperWidget);
+    node->setObjectName("mpxStepNode");
+    QVBoxLayout* nLay = new QVBoxLayout(node);
+    nLay->setContentsMargins(6, 0, 6, 0);
+    nLay->setSpacing(3);
+    nLay->setAlignment(Qt::AlignCenter);
+
+    QLabel* dot = new QLabel(QString::number(i + 1), node);
+    dot->setObjectName("mpxStepDot");
+    dot->setAlignment(Qt::AlignCenter);
+    nLay->addWidget(dot, 0, Qt::AlignHCenter);
+
+    QLabel* label = new QLabel(labels.at(i), node);
+    label->setObjectName("mpxStepLabel");
+    nLay->addWidget(label, 0, Qt::AlignHCenter);
+
+    lay->addWidget(node, 0, Qt::AlignVCenter);
+    m_stepNodes.append(node);
+    m_stepDots.append(dot);
+    m_stepLabels.append(label);
+  }
+  lay->addStretch(1);
+}
+
+void ModpackExportPage::syncStepper()
+{
+  if (m_stepDots.isEmpty())
+  {
+    return;
+  }
+
+  // 非 BlockBox 格式跳过「选择模块」步，步骤条隐藏该节点
+  const bool showModuleStep = (m_selectedFormat == "blockbox");
+
+  QVector<int> visibleSteps;
+  for (int i = 0; i < m_stepNodes.size(); ++i)
+  {
+    const bool visible = showModuleStep || i != 2;
+    m_stepNodes[i]->setVisible(visible);
+    if (visible)
+    {
+      visibleSteps.append(i);
+    }
+  }
+  // 连接线：两侧节点都可见时显示；
+  // 非 BlockBox 跳过「选择模块」节点时，节点2隐藏，相邻两段线拼成 info→files 的桥接线
+  for (int i = 0; i < m_stepLines.size(); ++i)
+  {
+    const bool leftVisible = visibleSteps.contains(i);
+    const bool rightVisible = visibleSteps.contains(i + 1);
+    bool lineVisible = leftVisible && rightVisible;
+    if (!showModuleStep && i >= 1)
+    {
+      lineVisible = true; // 模块节点两侧的两段线连续显示，桥接到「选择文件」
+    }
+    m_stepLines[i]->setVisible(lineVisible);
+  }
+
+  for (int i = 0; i < m_stepDots.size(); ++i)
+  {
+    const int visPos = visibleSteps.indexOf(i);
+    const int stepNo = visPos >= 0 ? visPos + 1 : -1;
+
+    // m_currentStep 即 stack 索引，与节点索引一一对应
+    QString state;
+    if (i < m_currentStep)
+    {
+      state = "done";
+    }
+    else if (i == m_currentStep)
+    {
+      state = "active";
+    }
+
+    m_stepDots[i]->setProperty("stepState", state);
+    m_stepDots[i]->setText(state == "done" ? QStringLiteral("✓") : QString::number(stepNo > 0 ? stepNo : i + 1));
+    m_stepLabels[i]->setProperty("stepState", state == "active" ? "active" : "");
+
+    // 连接线只有 dots.size()-1 条（首个节点前没有线），最后一个节点没有对应的线，
+    // 直接按下标取会越界读到野指针并在 setProperty 时崩溃
+    QVector<QWidget*> toPolish{m_stepDots[i], m_stepLabels[i]};
+    if (i < m_stepLines.size())
+    {
+      m_stepLines[i]->setProperty("stepState", i < m_currentStep ? "done" : "");
+      toPolish.append(m_stepLines[i]);
+    }
+
+    for (QWidget* w : toPolish)
+    {
+      w->style()->unpolish(w);
+      w->style()->polish(w);
+    }
+  }
 }
 
 QWidget* ModpackExportPage::createStep1()
@@ -246,19 +348,20 @@ QWidget* ModpackExportPage::createStep1()
   QScrollArea* scrollArea = new QScrollArea();
   scrollArea->setWidgetResizable(true);
   scrollArea->setFrameShape(QFrame::NoFrame);
+  scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
   QWidget* page = new QWidget();
   QVBoxLayout* layout = new QVBoxLayout(page);
-  layout->setContentsMargins(0, 10, 0, 10);
-  layout->setSpacing(16);
+  layout->setContentsMargins(4, 12, 4, 12);
+  layout->setSpacing(12);
 
   QLabel* titleLabel = new QLabel(tr("选择导出格式"));
-  titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
+  titleLabel->setObjectName("mpxSectionTitle");
   layout->addWidget(titleLabel);
 
   QLabel* descLabel = new QLabel(tr("请选择您要导出的整合包格式，不同格式适用于不同的启动器平台。"));
   descLabel->setWordWrap(true);
-  descLabel->setStyleSheet("font-size: 12px; color: #888;");
+  descLabel->setObjectName("mpxSectionDesc");
   layout->addWidget(descLabel);
 
   m_formatGroup = new QButtonGroup(this);
@@ -274,60 +377,60 @@ QWidget* ModpackExportPage::createStep1()
     {tr("Modrinth 格式"), tr("Modrinth 原生格式，支持模组自动下载"), tr("输出: .mrpack"), "modrinth"}
   };
 
-  QString themeColor = ThemeManager::instance()->currentThemeColor();
-  QString themeLight = ThemeManager::instance()->getThemeColorLight();
+  // 双列网格排布，减少纵向滚动
+  QGridLayout* grid = new QGridLayout();
+  grid->setHorizontalSpacing(12);
+  grid->setVerticalSpacing(12);
+  grid->setColumnStretch(0, 1);
+  grid->setColumnStretch(1, 1);
 
   for (int i = 0; i < formats.size(); ++i)
   {
     const FormatCardInfo& info = formats[i];
 
     QPushButton* card = new QPushButton();
-    card->setObjectName("exportFormatCard");
+    card->setObjectName("mpxFormatCard");
     card->setCheckable(true);
     card->setCursor(Qt::PointingHandCursor);
-    card->setFixedHeight(100);
-    // 卡片带背景（对应 @BG_CARD@），不再透明贴在页面底色上
-    const QString cardBg = (ThemeManager::instance()->currentTheme() == ThemeManager::LightTheme)
-                               ? QStringLiteral("#ffffff")
-                               : QStringLiteral("#2d2d2d");
-    card->setStyleSheet(QString(
-      "QPushButton#exportFormatCard {"
-      "  text-align: left;"
-      "  padding: 16px;"
-      "  border: 2px solid #d8d8d8;"
-      "  border-radius: 8px;"
-      "  background: %3;"
-      "}"
-      "QPushButton#exportFormatCard:hover {"
-      "  border-color: %1;"
-      "  background: %2;"
-      "}"
-      "QPushButton#exportFormatCard:checked {"
-      "  border-color: %1;"
-      "  background: %2;"
-      "}"
-    ).arg(themeColor, themeLight, cardBg));
+    card->setMinimumHeight(96);
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    QVBoxLayout* cardLayout = new QVBoxLayout(card);
-    cardLayout->setContentsMargins(0, 0, 0, 0);
-    cardLayout->setSpacing(4);
+    QHBoxLayout* cardLayout = new QHBoxLayout(card);
+    cardLayout->setContentsMargins(16, 14, 14, 14);
+    cardLayout->setSpacing(8);
+
+    QVBoxLayout* textLayout = new QVBoxLayout();
+    textLayout->setSpacing(4);
 
     QLabel* cardTitle = new QLabel(info.title);
-    cardTitle->setStyleSheet("font-size: 15px; font-weight: bold; border: none; background: transparent;");
-    cardLayout->addWidget(cardTitle);
+    cardTitle->setObjectName("mpxFormatTitle");
+    textLayout->addWidget(cardTitle);
 
     QLabel* cardDesc = new QLabel(info.description);
     cardDesc->setWordWrap(true);
-    cardDesc->setStyleSheet("font-size: 12px; color: #888; border: none; background: transparent;");
-    cardLayout->addWidget(cardDesc);
+    cardDesc->setObjectName("mpxFormatDesc");
+    textLayout->addWidget(cardDesc);
 
     QLabel* cardOutput = new QLabel(info.outputHint);
-    cardOutput->setStyleSheet("font-size: 11px; color: #aaa; border: none; background: transparent;");
-    cardLayout->addWidget(cardOutput);
+    cardOutput->setObjectName("mpxFormatOutput");
+    textLayout->addWidget(cardOutput);
+
+    cardLayout->addLayout(textLayout, 1);
+
+    QLabel* checkMark = new QLabel(QStringLiteral("✓"), card);
+    checkMark->setObjectName("mpxFormatCheck");
+    checkMark->setAlignment(Qt::AlignTop | Qt::AlignRight);
+    checkMark->setVisible(false);
+    cardLayout->addWidget(checkMark, 0, Qt::AlignTop | Qt::AlignRight);
+    // 选中时显示对勾
+    QObject::connect(card, &QPushButton::toggled, checkMark, [checkMark](bool checked) {
+      checkMark->setVisible(checked);
+    });
 
     m_formatGroup->addButton(card, i);
-    layout->addWidget(card);
+    grid->addWidget(card, i / 2, i % 2);
   }
+  layout->addLayout(grid);
 
   connect(m_formatGroup, &QButtonGroup::idClicked, this, &ModpackExportPage::onFormatCardClicked);
 
@@ -345,25 +448,31 @@ QWidget* ModpackExportPage::createStep2()
   QScrollArea* scrollArea = new QScrollArea();
   scrollArea->setWidgetResizable(true);
   scrollArea->setFrameShape(QFrame::NoFrame);
+  scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
   m_step2Page = new QWidget();
   QVBoxLayout* layout = new QVBoxLayout(m_step2Page);
-  layout->setContentsMargins(0, 10, 0, 10);
-  layout->setSpacing(12);
+  layout->setContentsMargins(4, 12, 4, 12);
+  layout->setSpacing(14);
 
   QLabel* titleLabel = new QLabel(tr("整合包信息"));
-  titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
+  titleLabel->setObjectName("mpxSectionTitle");
   layout->addWidget(titleLabel);
+
+  QLabel* descLabel = new QLabel(tr("填写整合包的名称、作者等基本信息，导入方时将展示这些内容。"));
+  descLabel->setWordWrap(true);
+  descLabel->setObjectName("mpxSectionDesc");
+  layout->addWidget(descLabel);
 
   // 使用 QFormLayout 风格的布局
   auto createField = [this](const QString& label, QWidget* edit, bool required = false) -> QHBoxLayout* {
     QHBoxLayout* row = new QHBoxLayout();
-    row->setSpacing(10);
+    row->setSpacing(12);
 
     QLabel* lbl = new QLabel(label);
     lbl->setFixedWidth(80);
     lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    lbl->setStyleSheet("font-size: 13px;");
+    lbl->setObjectName("mpxFieldLabel");
     if (required)
     {
       lbl->setText(label + " *");
@@ -373,89 +482,57 @@ QWidget* ModpackExportPage::createStep2()
     return row;
   };
 
-  QString lineEditStyle =
-    "QLineEdit {"
-    "  font-size: 13px;"
-    "  padding: 8px 12px;"
-    "  border: 1px solid #d8d8d8;"
-    "  border-radius: 6px;"
-    ""
-    "}"
-    "QLineEdit:focus {"
-    "  border-color: " + ThemeManager::instance()->currentThemeColor() + ";"
-    ""
-    "}";
-
   // 名称
   m_nameEdit = new QLineEdit();
   m_nameEdit->setPlaceholderText(tr("整合包名称"));
-  m_nameEdit->setStyleSheet(lineEditStyle);
-  m_nameEdit->setFixedHeight(34);
+  m_nameEdit->setObjectName("mpxFieldEdit");
+  m_nameEdit->setFixedHeight(36);
   layout->addLayout(createField(tr("名称"), m_nameEdit, true));
 
   // 作者
   m_authorEdit = new QLineEdit();
   m_authorEdit->setText("Anonymous");
-  m_authorEdit->setStyleSheet(lineEditStyle);
-  m_authorEdit->setFixedHeight(34);
+  m_authorEdit->setObjectName("mpxFieldEdit");
+  m_authorEdit->setFixedHeight(36);
   layout->addLayout(createField(tr("作者"), m_authorEdit, true));
 
   // 版本号
   m_versionEdit = new QLineEdit();
   m_versionEdit->setText("1.0");
-  m_versionEdit->setStyleSheet(lineEditStyle);
-  m_versionEdit->setFixedHeight(34);
+  m_versionEdit->setObjectName("mpxFieldEdit");
+  m_versionEdit->setFixedHeight(36);
   layout->addLayout(createField(tr("版本号"), m_versionEdit, true));
 
   // 描述
   QLabel* descTitle = new QLabel(tr("描述"));
-  descTitle->setStyleSheet("font-size: 13px;");
+  descTitle->setObjectName("mpxFieldLabel");
   layout->addWidget(descTitle);
 
   m_descEdit = new QTextEdit();
   m_descEdit->setPlaceholderText(tr("整合包描述（可选）"));
   m_descEdit->setFixedHeight(80);
-  m_descEdit->setStyleSheet(
-    "QTextEdit {"
-    "  font-size: 13px;"
-    "  padding: 8px 12px;"
-    "  border: 1px solid #d8d8d8;"
-    "  border-radius: 6px;"
-    "}"
-    "QTextEdit:focus {"
-    "  border-color: " + ThemeManager::instance()->currentThemeColor() + ";"
-    "}"
-  );
+  m_descEdit->setObjectName("mpxFieldEdit");
   layout->addWidget(m_descEdit);
 
   // 保存路径
   QHBoxLayout* savePathRow = new QHBoxLayout();
-  savePathRow->setSpacing(10);
+  savePathRow->setSpacing(12);
 
   QLabel* saveLbl = new QLabel(tr("保存路径") + " *");
   saveLbl->setFixedWidth(80);
   saveLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  saveLbl->setStyleSheet("font-size: 13px;");
+  saveLbl->setObjectName("mpxFieldLabel");
   savePathRow->addWidget(saveLbl);
 
   m_savePathEdit = new QLineEdit();
-  m_savePathEdit->setStyleSheet(lineEditStyle);
-  m_savePathEdit->setFixedHeight(34);
+  m_savePathEdit->setObjectName("mpxFieldEdit");
+  m_savePathEdit->setFixedHeight(36);
   savePathRow->addWidget(m_savePathEdit, 1);
 
   QPushButton* browseBtn = new QPushButton(tr("浏览"));
-  browseBtn->setFixedHeight(34);
-  browseBtn->setFixedWidth(70);
-  browseBtn->setStyleSheet(
-    "QPushButton {"
-    "  font-size: 13px;"
-    "  color: white;"
-    "  border: none;"
-    "  border-radius: 6px;"
-    "  padding: 6px 12px;"
-    "  background-color: #4CAF50;"
-    "}"
-  );
+  browseBtn->setFixedHeight(36);
+  browseBtn->setObjectName("mpxBrowseBtn");
+  browseBtn->setCursor(Qt::PointingHandCursor);
   connect(browseBtn, &QPushButton::clicked, this, &ModpackExportPage::onBrowseSavePath);
   savePathRow->addWidget(browseBtn);
 
@@ -463,43 +540,43 @@ QWidget* ModpackExportPage::createStep2()
 
   // MCBBS 额外字段
   m_mcbbsExtraWidget = new QWidget();
+  m_mcbbsExtraWidget->setObjectName("mpxExtraGroup");
   QVBoxLayout* mcbbsLayout = new QVBoxLayout(m_mcbbsExtraWidget);
   mcbbsLayout->setContentsMargins(0, 0, 0, 0);
-  mcbbsLayout->setSpacing(8);
+  mcbbsLayout->setSpacing(10);
 
   QLabel* mcbbsTitle = new QLabel(tr("MCBBS 额外选项"));
-  mcbbsTitle->setStyleSheet("font-size: 14px; font-weight: bold; margin-top: 8px;");
+  mcbbsTitle->setObjectName("mpxExtraTitle");
   mcbbsLayout->addWidget(mcbbsTitle);
 
   m_fileApiEdit = new QLineEdit();
   m_fileApiEdit->setPlaceholderText(tr("文件 API 地址"));
-  m_fileApiEdit->setStyleSheet(lineEditStyle);
-  m_fileApiEdit->setFixedHeight(34);
+  m_fileApiEdit->setObjectName("mpxFieldEdit");
+  m_fileApiEdit->setFixedHeight(36);
   mcbbsLayout->addLayout(createField(tr("文件API"), m_fileApiEdit, true));
 
   m_urlEdit = new QLineEdit();
   m_urlEdit->setPlaceholderText(tr("项目主页 URL"));
-  m_urlEdit->setStyleSheet(lineEditStyle);
-  m_urlEdit->setFixedHeight(34);
+  m_urlEdit->setObjectName("mpxFieldEdit");
+  m_urlEdit->setFixedHeight(36);
   mcbbsLayout->addLayout(createField(tr("项目主页"), m_urlEdit, true));
 
   m_forceUpdateCheck = new QCheckBox(tr("强制更新"));
-  m_forceUpdateCheck->setStyleSheet("font-size: 13px;");
   mcbbsLayout->addWidget(m_forceUpdateCheck);
 
   m_authlibInjectorEdit = new QLineEdit();
   m_authlibInjectorEdit->setPlaceholderText(tr("authlib-injector 服务器地址（可选）"));
-  m_authlibInjectorEdit->setStyleSheet(lineEditStyle);
-  m_authlibInjectorEdit->setFixedHeight(34);
+  m_authlibInjectorEdit->setObjectName("mpxFieldEdit");
+  m_authlibInjectorEdit->setFixedHeight(36);
   mcbbsLayout->addLayout(createField(tr("authlib"), m_authlibInjectorEdit));
 
   // 最低内存
   QHBoxLayout* mcbbsMemRow = new QHBoxLayout();
-  mcbbsMemRow->setSpacing(10);
+  mcbbsMemRow->setSpacing(12);
   QLabel* mcbbsMemLbl = new QLabel(tr("最低内存"));
   mcbbsMemLbl->setFixedWidth(80);
   mcbbsMemLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  mcbbsMemLbl->setStyleSheet("font-size: 13px;");
+  mcbbsMemLbl->setObjectName("mpxFieldLabel");
   mcbbsMemRow->addWidget(mcbbsMemLbl);
 
   m_minMemorySlider = new QSlider(Qt::Horizontal);
@@ -510,13 +587,13 @@ QWidget* ModpackExportPage::createStep2()
 
   m_minMemoryEdit = new QLineEdit();
   m_minMemoryEdit->setText("2048");
-  m_minMemoryEdit->setFixedWidth(60);
+  m_minMemoryEdit->setFixedWidth(64);
   m_minMemoryEdit->setAlignment(Qt::AlignCenter);
-  m_minMemoryEdit->setStyleSheet(lineEditStyle);
+  m_minMemoryEdit->setObjectName("mpxFieldEdit");
   mcbbsMemRow->addWidget(m_minMemoryEdit);
 
   QLabel* mcbbsMemUnit = new QLabel("MB");
-  mcbbsMemUnit->setStyleSheet("font-size: 13px;");
+  mcbbsMemUnit->setObjectName("mpxFieldLabel");
   mcbbsMemRow->addWidget(mcbbsMemUnit);
 
   mcbbsLayout->addLayout(mcbbsMemRow);
@@ -525,18 +602,17 @@ QWidget* ModpackExportPage::createStep2()
 
   // 支持的 Java 版本
   QHBoxLayout* javaVersionRow = new QHBoxLayout();
-  javaVersionRow->setSpacing(8);
+  javaVersionRow->setSpacing(10);
   QLabel* javaVersionLbl = new QLabel(tr("Java版本"));
   javaVersionLbl->setFixedWidth(80);
   javaVersionLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  javaVersionLbl->setStyleSheet("font-size: 13px;");
+  javaVersionLbl->setObjectName("mpxFieldLabel");
   javaVersionRow->addWidget(javaVersionLbl);
 
   QVector<int> javaVersions = {8, 11, 16, 17, 21};
   for (int ver : javaVersions)
   {
     QCheckBox* check = new QCheckBox(QString("Java %1").arg(ver));
-    check->setStyleSheet("font-size: 13px;");
     javaVersionRow->addWidget(check);
     m_javaVersionChecks.append(check);
   }
@@ -546,15 +622,15 @@ QWidget* ModpackExportPage::createStep2()
   // JVM 参数
   m_javaArgsEdit = new QLineEdit();
   m_javaArgsEdit->setPlaceholderText(tr("JVM 参数（可选）"));
-  m_javaArgsEdit->setStyleSheet(lineEditStyle);
-  m_javaArgsEdit->setFixedHeight(34);
+  m_javaArgsEdit->setObjectName("mpxFieldEdit");
+  m_javaArgsEdit->setFixedHeight(36);
   mcbbsLayout->addLayout(createField(tr("JVM参数"), m_javaArgsEdit));
 
   // 启动参数
   m_launchArgsEdit = new QLineEdit();
   m_launchArgsEdit->setPlaceholderText(tr("Minecraft 启动参数（可选）"));
-  m_launchArgsEdit->setStyleSheet(lineEditStyle);
-  m_launchArgsEdit->setFixedHeight(34);
+  m_launchArgsEdit->setObjectName("mpxFieldEdit");
+  m_launchArgsEdit->setFixedHeight(36);
   mcbbsLayout->addLayout(createField(tr("启动参数"), m_launchArgsEdit));
 
   layout->addWidget(m_mcbbsExtraWidget);
@@ -562,27 +638,28 @@ QWidget* ModpackExportPage::createStep2()
 
   // Server 额外字段
   m_serverExtraWidget = new QWidget();
+  m_serverExtraWidget->setObjectName("mpxExtraGroup");
   QVBoxLayout* svLayout = new QVBoxLayout(m_serverExtraWidget);
   svLayout->setContentsMargins(0, 0, 0, 0);
-  svLayout->setSpacing(8);
+  svLayout->setSpacing(10);
 
   QLabel* svTitle = new QLabel(tr("服务器包额外选项"));
-  svTitle->setStyleSheet("font-size: 14px; font-weight: bold; margin-top: 8px;");
+  svTitle->setObjectName("mpxExtraTitle");
   svLayout->addWidget(svTitle);
 
   m_serverFileApiEdit = new QLineEdit();
   m_serverFileApiEdit->setPlaceholderText(tr("文件 API 地址（可选）"));
-  m_serverFileApiEdit->setStyleSheet(lineEditStyle);
-  m_serverFileApiEdit->setFixedHeight(34);
+  m_serverFileApiEdit->setObjectName("mpxFieldEdit");
+  m_serverFileApiEdit->setFixedHeight(36);
   svLayout->addLayout(createField(tr("文件API"), m_serverFileApiEdit));
 
   // 最低内存
   QHBoxLayout* svMemRow = new QHBoxLayout();
-  svMemRow->setSpacing(10);
+  svMemRow->setSpacing(12);
   QLabel* svMemLbl = new QLabel(tr("最低内存"));
   svMemLbl->setFixedWidth(80);
   svMemLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  svMemLbl->setStyleSheet("font-size: 13px;");
+  svMemLbl->setObjectName("mpxFieldLabel");
   svMemRow->addWidget(svMemLbl);
 
   m_serverMinMemorySlider = new QSlider(Qt::Horizontal);
@@ -593,13 +670,13 @@ QWidget* ModpackExportPage::createStep2()
 
   m_serverMinMemoryEdit = new QLineEdit();
   m_serverMinMemoryEdit->setText("2048");
-  m_serverMinMemoryEdit->setFixedWidth(60);
+  m_serverMinMemoryEdit->setFixedWidth(64);
   m_serverMinMemoryEdit->setAlignment(Qt::AlignCenter);
-  m_serverMinMemoryEdit->setStyleSheet(lineEditStyle);
+  m_serverMinMemoryEdit->setObjectName("mpxFieldEdit");
   svMemRow->addWidget(m_serverMinMemoryEdit);
 
   QLabel* svMemUnit = new QLabel("MB");
-  svMemUnit->setStyleSheet("font-size: 13px;");
+  svMemUnit->setObjectName("mpxFieldLabel");
   svMemRow->addWidget(svMemUnit);
 
   svLayout->addLayout(svMemRow);
@@ -614,15 +691,15 @@ QWidget* ModpackExportPage::createStep2()
   // JVM 参数
   m_serverJavaArgsEdit = new QLineEdit();
   m_serverJavaArgsEdit->setPlaceholderText(tr("JVM 参数（可选）"));
-  m_serverJavaArgsEdit->setStyleSheet(lineEditStyle);
-  m_serverJavaArgsEdit->setFixedHeight(34);
+  m_serverJavaArgsEdit->setObjectName("mpxFieldEdit");
+  m_serverJavaArgsEdit->setFixedHeight(36);
   svLayout->addLayout(createField(tr("JVM参数"), m_serverJavaArgsEdit));
 
   // 启动参数
   m_serverLaunchArgsEdit = new QLineEdit();
   m_serverLaunchArgsEdit->setPlaceholderText(tr("启动参数（可选）"));
-  m_serverLaunchArgsEdit->setStyleSheet(lineEditStyle);
-  m_serverLaunchArgsEdit->setFixedHeight(34);
+  m_serverLaunchArgsEdit->setObjectName("mpxFieldEdit");
+  m_serverLaunchArgsEdit->setFixedHeight(36);
   svLayout->addLayout(createField(tr("启动参数"), m_serverLaunchArgsEdit));
 
   layout->addWidget(m_serverExtraWidget);
@@ -673,32 +750,25 @@ QWidget* ModpackExportPage::createStep3()
 {
   QWidget* page = new QWidget();
   QVBoxLayout* layout = new QVBoxLayout(page);
-  layout->setContentsMargins(0, 10, 0, 10);
-  layout->setSpacing(8);
+  layout->setContentsMargins(4, 12, 4, 12);
+  layout->setSpacing(10);
 
   QLabel* titleLabel = new QLabel(tr("选择导出文件"));
-  titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
+  titleLabel->setObjectName("mpxSectionTitle");
   layout->addWidget(titleLabel);
 
   QLabel* descLabel = new QLabel(tr("勾选要包含在整合包中的文件。建议的文件已默认勾选，大型文件（如 libraries、assets）默认不勾选。"));
   descLabel->setWordWrap(true);
-  descLabel->setStyleSheet("font-size: 12px; color: #888;");
+  descLabel->setObjectName("mpxSectionDesc");
   layout->addWidget(descLabel);
 
   // 全选/取消全选按钮
   QHBoxLayout* selectAllLayout = new QHBoxLayout();
-  selectAllLayout->setSpacing(10);
+  selectAllLayout->setSpacing(8);
 
   QPushButton* selectAllBtn = new QPushButton(tr("全选"));
-  selectAllBtn->setStyleSheet(
-    "QPushButton {"
-    "  font-size: 12px;"
-    "  padding: 4px 12px;"
-    "  border: 1px solid #ccc;"
-    "  border-radius: 4px;"
-    "  background: transparent;"
-    "}"
-  );
+  selectAllBtn->setObjectName("mpxGhostBtn");
+  selectAllBtn->setCursor(Qt::PointingHandCursor);
   connect(selectAllBtn, &QPushButton::clicked, this, [this]() {
     std::function<void(QTreeWidgetItem*)> checkAll = [&](QTreeWidgetItem* item) {
       item->setCheckState(0, Qt::Checked);
@@ -715,15 +785,8 @@ QWidget* ModpackExportPage::createStep3()
   selectAllLayout->addWidget(selectAllBtn);
 
   QPushButton* deselectAllBtn = new QPushButton(tr("取消全选"));
-  deselectAllBtn->setStyleSheet(
-    "QPushButton {"
-    "  font-size: 12px;"
-    "  padding: 4px 12px;"
-    "  border: 1px solid #ccc;"
-    "  border-radius: 4px;"
-    "  background: transparent;"
-    "}"
-  );
+  deselectAllBtn->setObjectName("mpxGhostBtn");
+  deselectAllBtn->setCursor(Qt::PointingHandCursor);
   connect(deselectAllBtn, &QPushButton::clicked, this, [this]() {
     std::function<void(QTreeWidgetItem*)> uncheckAll = [&](QTreeWidgetItem* item) {
       item->setCheckState(0, Qt::Unchecked);
@@ -744,9 +807,11 @@ QWidget* ModpackExportPage::createStep3()
 
   // 文件树
   m_fileTree = new QTreeWidget();
+  m_fileTree->setObjectName("mpxFileTree");
   m_fileTree->setHeaderLabels({tr("文件/文件夹"), tr("大小")});
   m_fileTree->setColumnWidth(0, 400);
   m_fileTree->setColumnWidth(1, 80);
+  m_fileTree->setAlternatingRowColors(true);
   layout->addWidget(m_fileTree, 1);
 
   return page;
@@ -757,66 +822,62 @@ QWidget* ModpackExportPage::createModuleSelectionPage()
   QScrollArea* scrollArea = new QScrollArea();
   scrollArea->setWidgetResizable(true);
   scrollArea->setFrameShape(QFrame::NoFrame);
+  scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
   QWidget* page = new QWidget();
   QVBoxLayout* layout = new QVBoxLayout(page);
-  layout->setContentsMargins(0, 10, 0, 10);
+  layout->setContentsMargins(4, 12, 4, 12);
   layout->setSpacing(10);
 
   QLabel* titleLabel = new QLabel(tr("选择打包模块"));
-  titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
+  titleLabel->setObjectName("mpxSectionTitle");
   layout->addWidget(titleLabel);
 
   QLabel* descLabel = new QLabel(tr("选择要打包的内容模块，未勾选的模块将不会被导出"));
   descLabel->setWordWrap(true);
-  descLabel->setStyleSheet("font-size: 12px; color: #888;");
+  descLabel->setObjectName("mpxSectionDesc");
   layout->addWidget(descLabel);
 
-  QString themeColor = ThemeManager::instance()->currentThemeColor();
-
-  // 模块列表
+  // 模块列表（卡片行）
   auto modules = modpack::ModpackFileAdviser::getModules();
   for (const auto& module : modules)
   {
-    QHBoxLayout* row = new QHBoxLayout();
-    row->setSpacing(10);
+    QWidget* row = new QWidget(page);
+    row->setObjectName("mpxModuleRow");
+    QHBoxLayout* rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(14, 8, 14, 8);
+    rowLayout->setSpacing(10);
 
-    QCheckBox* check = new QCheckBox(module.name);
+    QCheckBox* check = new QCheckBox(module.name, row);
+    check->setObjectName("mpxModuleCheck");
     check->setChecked(module.defaultSelected);
     connect(check, &QCheckBox::toggled, this, [this, id = module.id](bool checked) {
       onModuleChecked(id, checked);
     });
 
     QLabel* sizeLabel = new QLabel();
-    sizeLabel->setStyleSheet("font-size: 12px; color: #888;");
+    sizeLabel->setObjectName("mpxModuleSize");
     sizeLabel->setMinimumWidth(150);
 
-    row->addWidget(check);
-    row->addWidget(sizeLabel);
-    row->addStretch();
+    rowLayout->addWidget(check);
+    rowLayout->addWidget(sizeLabel);
+    rowLayout->addStretch();
 
-    layout->addLayout(row);
+    layout->addWidget(row);
 
     m_moduleChecks[module.id] = check;
     m_moduleSizeLabels[module.id] = sizeLabel;
   }
 
-  layout->addSpacing(8);
+  layout->addSpacing(4);
 
   // 全选/全不选按钮
   QHBoxLayout* selectAllLayout = new QHBoxLayout();
-  selectAllLayout->setSpacing(10);
+  selectAllLayout->setSpacing(8);
 
   QPushButton* selectAllBtn = new QPushButton(tr("全选"));
-  selectAllBtn->setStyleSheet(
-    "QPushButton {"
-    "  font-size: 12px;"
-    "  padding: 4px 12px;"
-    "  border: 1px solid #ccc;"
-    "  border-radius: 4px;"
-    "  background: transparent;"
-    "}"
-  );
+  selectAllBtn->setObjectName("mpxGhostBtn");
+  selectAllBtn->setCursor(Qt::PointingHandCursor);
   connect(selectAllBtn, &QPushButton::clicked, this, [this]() {
     for (auto it = m_moduleChecks.begin(); it != m_moduleChecks.end(); ++it)
     {
@@ -826,15 +887,8 @@ QWidget* ModpackExportPage::createModuleSelectionPage()
   selectAllLayout->addWidget(selectAllBtn);
 
   QPushButton* deselectAllBtn = new QPushButton(tr("全不选"));
-  deselectAllBtn->setStyleSheet(
-    "QPushButton {"
-    "  font-size: 12px;"
-    "  padding: 4px 12px;"
-    "  border: 1px solid #ccc;"
-    "  border-radius: 4px;"
-    "  background: transparent;"
-    "}"
-  );
+  deselectAllBtn->setObjectName("mpxGhostBtn");
+  deselectAllBtn->setCursor(Qt::PointingHandCursor);
   connect(deselectAllBtn, &QPushButton::clicked, this, [this]() {
     for (auto it = m_moduleChecks.begin(); it != m_moduleChecks.end(); ++it)
     {
@@ -846,47 +900,6 @@ QWidget* ModpackExportPage::createModuleSelectionPage()
   layout->addLayout(selectAllLayout);
 
   layout->addStretch();
-
-  // 底部导航按钮
-  QHBoxLayout* btnLayout = new QHBoxLayout();
-  btnLayout->setSpacing(10);
-  btnLayout->addStretch();
-
-  QString secondaryBtnStyle = QString(
-    "QPushButton {"
-    "  font-size: 14px;"
-    "  color: %1;"
-    "  border: 1px solid %1;"
-    "  border-radius: 6px;"
-    "  padding: 8px 24px;"
-    "  background: transparent;"
-    ""
-    "}"
-  ).arg(themeColor, ThemeManager::instance()->getThemeColorLight());
-
-  QString btnStyle = QString(
-    "QPushButton {"
-    "  font-size: 14px;"
-    "  color: white;"
-    "  border: none;"
-    "  border-radius: 6px;"
-    "  padding: 8px 24px;"
-    "  background-color: %1;"
-    ""
-    "}"
-  ).arg(themeColor, ThemeManager::instance()->getThemeColorHover());
-
-  m_modulePrevBtn = new QPushButton(tr("上一步"));
-  m_modulePrevBtn->setStyleSheet(secondaryBtnStyle);
-  connect(m_modulePrevBtn, &QPushButton::clicked, this, &ModpackExportPage::onPrevClicked);
-  btnLayout->addWidget(m_modulePrevBtn);
-
-  m_moduleNextBtn = new QPushButton(tr("下一步"));
-  m_moduleNextBtn->setStyleSheet(btnStyle);
-  connect(m_moduleNextBtn, &QPushButton::clicked, this, &ModpackExportPage::onNextClicked);
-  btnLayout->addWidget(m_moduleNextBtn);
-
-  layout->addLayout(btnLayout);
 
   scrollArea->setWidget(page);
   return scrollArea;
@@ -1143,6 +1156,7 @@ void ModpackExportPage::onFormatCardClicked(int id)
   {
     m_nextBtn->setEnabled(true);
   }
+  syncStepper();
 }
 
 void ModpackExportPage::onPrevClicked()
@@ -1165,6 +1179,7 @@ void ModpackExportPage::onPrevClicked()
     m_nextBtn->show();
     m_exportBtn->hide();
     m_prevBtn->setEnabled(m_currentStep > 0);
+    syncStepper();
   }
 }
 
@@ -1215,6 +1230,7 @@ void ModpackExportPage::onNextClicked()
     m_exportBtn->show();
     m_prevBtn->setEnabled(true);
   }
+  syncStepper();
 }
 
 void ModpackExportPage::onBrowseSavePath()

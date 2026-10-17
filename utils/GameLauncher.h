@@ -21,6 +21,7 @@
 #include <QElapsedTimer>
 #include <QDateTime>
 #include <QPair>
+#include <functional>
 
 class ErrorAnalyzer;
 
@@ -104,6 +105,17 @@ public:
     // Java related methods
     JavaInfo detectJava();
     QList<JavaInfo> findAllJavaInstallations();
+    // 带参版本：缓存由调用方在主线程读取，persistToCache=false 时不在本函数内写回设置，
+    // 供后台线程调用（避免跨线程访问同一份 QSettings）
+    QList<JavaInfo> findAllJavaInstallations(const QList<QPair<QString, QString>>& cachedInstallations,
+                                             bool persistToCache);
+    // 只读取已保存的 Java 缓存（不启动 java -version、不扫描磁盘），
+    // 用于界面构造期填充列表，避免阻塞主线程
+    QList<JavaInfo> cachedJavaInstallations() const;
+    // 缓存为空时在后台补扫 Java：扫描在工作线程完成，结果先在主线程写回缓存，
+    // 再通过 onFinished 回调（仍在主线程），供界面填充下拉列表使用
+    void scanJavaInBackground(QObject* context,
+                              std::function<void(const QList<JavaInfo>&)> onFinished);
     QList<JavaInfo> findJavaOnSystem();
     void initJavaCache();
     void searchJavaInDirectory(const QString& dirPath, QList<JavaInfo>& javaList,

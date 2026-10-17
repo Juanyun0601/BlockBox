@@ -1,0 +1,21 @@
+pages/InstanceModsPage.cpp: In member function 'virtual bool InstanceModsPage::eventFilter(QObject*, QEvent*)':
+pages/InstanceModsPage.cpp:1791:51: warning: 'QPoint QMouseEvent::globalPos() const' is deprecated: Use globalPosition() [-Wdeprecated-declarations]
+ 1791 |             m_dragPressPos = mouseEvent->globalPos();
+      |                              ~~~~~~~~~~~~~~~~~~~~~^~
+In file included from D:/APP/Qt/6.11.1/mingw_64/include/QtGui/QMouseEvent:1,
+                 from pages/InstanceModsPage.cpp:39:
+D:/APP/Qt/6.11.1/mingw_64/include/QtGui/qevent.h:225:19: note: declared here
+  225 |     inline QPoint globalPos() const { return globalPosition().toPoint(); }
+      |                   ^~~~~~~~~
+pages/InstanceModsPage.cpp:1806:39: warning: 'QPoint QMouseEvent::globalPos() const' is deprecated: Use globalPosition() [-Wdeprecated-declarations]
+ 1806 |                 (mouseEvent->globalPos() - m_dragPressPos).manhattanLength() >= QApplication::startDragDistance())
+      |                  ~~~~~~~~~~~~~~~~~~~~~^~
+D:/APP/Qt/6.11.1/mingw_64/include/QtGui/qevent.h:225:19: note: declared here
+  225 |     inline QPoint globalPos() const { return globalPosition().toPoint(); }
+      |                   ^~~~~~~~~
+pages/InstanceModsPage.cpp:1814:71: warning: 'QPoint QMouseEvent::globalPos() const' is deprecated: Use globalPosition() [-Wdeprecated-declarations]
+ 1814 |                 int hoverIdx = cardIndexAtGlobal(mouseEvent->globalPos());
+      |                                                  ~~~~~~~~~~~~~~~~~~~~~^~
+D:/APP/Qt/6.11.1/mingw_64/include/QtGui/qevent.h:225:19: note: declared here
+  225 |     inline QPoint globalPos() const { return globalPosition().toPoint(); }
+      |                   ^~~~~~~~~

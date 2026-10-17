@@ -6,14 +6,14 @@
  *
  * 基于 VoxelViewWidget 的 3D 体素方块编辑器，数据模型使用 SchematicDocument。
  * 功能：
- *   - 3D 立体查看（左键拖动旋转、滚轮缩放）
+ *   - 3D 立体查看（WASD 移动、空格升、Shift 降、左键拖动转向、滚轮前后）
  *   - 交互编辑：右键破坏、Ctrl+左键放置当前选中方块
  *   - 方块调色板：浏览/选择投影中出现的方块进行放置
  *   - 批量操作：整块替换、全空间填充、区域填充
  *   - 图层过滤（按 Y 层突出显示）
  *   - 撤销/重做、保存副本、就地保存
  *
- * 作为"原生插件"的宿主界面入口使用；数据读写位于启动器核心 SchematicDocument。
+ * 作为启动器内置创作工具使用；数据读写位于启动器核心 SchematicDocument。
  */
 #pragma once
 
@@ -58,8 +58,12 @@ public:
     explicit ProjectionBlockEditorDialog(QWidget *parent = nullptr);
     ~ProjectionBlockEditorDialog() override;
 
-    /** 加载后返回是否成功 */
-    bool loadProjection(const QString &filePath);
+    /**
+     * @brief 加载后返回是否成功
+     * @param filePath     .litematic 路径
+     * @param instancePath 可选：材质来源实例（与 setTextureSource 等价，但只触发一次视图重建）
+     */
+    bool loadProjection(const QString &filePath, const QString &instancePath = QString());
 
     /**
      * @brief 设置实例材质来源（可选）；从对应实例的客户端 jar 加载方块贴图
@@ -99,14 +103,16 @@ private slots:
 
 private:
     void initUI();
+    void applyEditorChrome();
     void populatePalette();
     void applyExistingBlockAsCurrent();
+    void applyTextureAndShapes();
     void rebuildView();
     QString currentBlockName() const;
     void pushUndo();
     void updateTitle();
     void updateUndoRedo();
-    void applyPluginSettings();
+    void applyEditorSettings();
     void loadBlockRegistry();
     QString buildStatsText() const;
 
@@ -115,8 +121,8 @@ private:
     QString         m_lastSavedPath;
     QString         m_instancePath;
     SchematicDocument m_doc;
-    InstanceTextureLoader m_texLoader;   // 材质加载器（成员以保持生命周期）
-    BlockShapeLoader m_shapeLoader;      // 方块真实形状加载器（成员以保持生命周期）
+    InstanceTextureLoader *m_texLoader = nullptr;   // 进程内共享图集（不拥有）
+    BlockShapeLoader *m_shapeLoader = nullptr;      // 进程内共享形状加载器（不拥有）
     GameRegistry m_gameRegistry;         // 游戏注册表（方块中英文名映射）
     QHash<QString, QString> m_blockCnMap; // 方块ID(小写) -> 中文名
 

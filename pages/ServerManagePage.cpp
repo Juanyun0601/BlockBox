@@ -1,6 +1,9 @@
 #include "ServerManagePage.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
+#include "utils/LocalCategoryManager.h"
+#include "components/LocalCategoryDialog.h"
+#include "components/FavoriteFolderDialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -16,11 +19,14 @@
 #include <QJsonObject>
 #include <QLabel>
 #include "components/AppMessageBox.h"
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
 #include <QSpacerItem>
 #include <QUrl>
+
+#include <algorithm>
 
 ServerManagePage::ServerManagePage(QWidget *parent)
     : QWidget(parent)
@@ -33,7 +39,13 @@ ServerManagePage::ServerManagePage(QWidget *parent)
     , m_bottomBar(nullptr)
     , m_addServerBtn(nullptr)
     , m_deleteServerBtn(nullptr)
+    , m_categoryManager(nullptr)
+    , m_categoryCombo(nullptr)
+    , m_categoryManageBtn(nullptr)
+    , m_sortCombo(nullptr)
 {
+    m_categoryManager = new LocalCategoryManager(this);
+    m_categoryManager->setResourceType(QStringLiteral("servers"));
     initUI();
 }
 
@@ -46,6 +58,8 @@ void ServerManagePage::setInstancePath(const QString &path)
     if (m_instancePath != path)
     {
         m_instancePath = path;
+        m_categoryManager->setInstancePath(path);
+        reloadCategoryCombo();
         if (!path.isEmpty())
         {
             loadServers();
@@ -60,27 +74,71 @@ void ServerManagePage::initUI()
     mainLayout->setContentsMargins(20, 10, 20, 10);
     mainLayout->setSpacing(10);
 
-    // 顶部搜索/统计条：微透明玻璃态卡片
+    // 顶部筛选卡：行1=搜索+分类，行2=排序+统计（与其他本地资源页两行统一；
+    // 服务器为 JSON 条目，无大小/时间/禁用态数据，故不放假的状态/时间/大小筛选）
     QWidget *filterCard = new QWidget(this);
     filterCard->setObjectName("filterCard");
     QVBoxLayout *cardLayout = new QVBoxLayout(filterCard);
     cardLayout->setContentsMargins(14, 10, 14, 10);
     cardLayout->setSpacing(8);
 
+    // ---- 行1：搜索 + 分类 ----
+    QHBoxLayout *topBarLayout = new QHBoxLayout();
+    topBarLayout->setSpacing(8);
+
     m_searchEdit = new QLineEdit();
     m_searchEdit->setObjectName("modSearchEdit");
     m_searchEdit->setPlaceholderText(tr("搜索服务器名称或地址..."));
     m_searchEdit->setFixedHeight(36);
     m_searchEdit->setClearButtonEnabled(true);
-    cardLayout->addWidget(m_searchEdit);
+    topBarLayout->addWidget(m_searchEdit, 1);
 
-    QHBoxLayout *statsBar = new QHBoxLayout();
-    statsBar->setSpacing(8);
+    QLabel *categoryLabel = new QLabel(tr("分类:"), this);
+    categoryLabel->setObjectName("filterLabel");
+    topBarLayout->addWidget(categoryLabel);
+
+    m_categoryCombo = new QComboBox(this);
+    m_categoryCombo->setObjectName("categoryCombo");
+    m_categoryCombo->setFixedHeight(32);
+    m_categoryCombo->setMinimumWidth(140);
+    m_categoryCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_categoryCombo->setMinimumContentsLength(5);
+    reloadCategoryCombo();
+    topBarLayout->addWidget(m_categoryCombo);
+
+    m_categoryManageBtn = new QPushButton(tr("管理分类"), this);
+    m_categoryManageBtn->setObjectName("categoryManageBtn");
+    m_categoryManageBtn->setFixedHeight(32);
+    m_categoryManageBtn->setCursor(Qt::PointingHandCursor);
+    topBarLayout->addWidget(m_categoryManageBtn);
+
+    cardLayout->addLayout(topBarLayout);
+
+    // ---- 行2：排序 + 统计 ----
+    QHBoxLayout *filterRow = new QHBoxLayout();
+    filterRow->setSpacing(6);
+
+    QLabel *sortLabel = new QLabel(tr("排序:"), this);
+    sortLabel->setObjectName("filterLabel");
+    filterRow->addWidget(sortLabel);
+
+    m_sortCombo = new QComboBox(this);
+    m_sortCombo->setObjectName("searchSortCombo");
+    m_sortCombo->setFixedHeight(32);
+    m_sortCombo->setMinimumWidth(104);
+    m_sortCombo->addItem(tr("名称 A→Z"), 0);
+    m_sortCombo->addItem(tr("名称 Z→A"), 1);
+    m_sortCombo->addItem(tr("地址 A→Z"), 2);
+    m_sortCombo->addItem(tr("地址 Z→A"), 3);
+    filterRow->addWidget(m_sortCombo);
+
+    filterRow->addStretch();
+
     m_statsLabel = new QLabel();
     m_statsLabel->setObjectName("statusLabel");
-    statsBar->addWidget(m_statsLabel);
-    statsBar->addStretch();
-    cardLayout->addLayout(statsBar);
+    filterRow->addWidget(m_statsLabel);
+    cardLayout->addLayout(filterRow);
+
     mainLayout->addWidget(filterCard);
 
     m_scrollArea = new QScrollArea();
@@ -93,11 +151,12 @@ void ServerManagePage::initUI()
     m_scrollArea->setWidget(m_cardContainer);
     mainLayout->addWidget(m_scrollArea, 1);
 
+    // 空提示放滚动区外（原实现放在卡片网格内会被 clearCards 误删）
     m_emptyLabel = new QLabel(tr("暂无服务器，点击底部「添加服务器」按钮添加"));
     m_emptyLabel->setObjectName("exampleContentLabel");
     m_emptyLabel->setAlignment(Qt::AlignCenter);
     m_emptyLabel->hide();
-    m_cardGridLayout->addWidget(m_emptyLabel, 0, 0, 1, 1, Qt::AlignCenter);
+    mainLayout->addWidget(m_emptyLabel, 1);
 
     m_bottomBar = new QWidget();
     m_bottomBar->setObjectName("modBottomBar");
@@ -127,6 +186,16 @@ void ServerManagePage::initUI()
 
     connect(m_searchEdit, &QLineEdit::textChanged,
             this, &ServerManagePage::onSearchTextChanged);
+    connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ServerManagePage::onCategoryFilterChanged);
+    connect(m_categoryManageBtn, &QPushButton::clicked,
+            this, &ServerManagePage::onCategoryManageClicked);
+    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ServerManagePage::onSortChanged);
+    connect(m_categoryManager, &LocalCategoryManager::categoriesChanged,
+            this, &ServerManagePage::onCategoriesChanged);
+    connect(m_categoryManager, &LocalCategoryManager::assignmentsChanged,
+            this, &ServerManagePage::onAssignmentsChanged);
     connect(m_addServerBtn, &QPushButton::clicked,
             this, &ServerManagePage::onAddServerClicked);
     connect(m_deleteServerBtn, &QPushButton::clicked,
@@ -212,20 +281,25 @@ void ServerManagePage::placeCards()
 
     if (m_servers.isEmpty())
     {
+        m_emptyLabel->setText(tr("暂无服务器，点击底部「添加服务器」按钮添加"));
         showEmptyHint(true);
         m_statsLabel->setText(tr("共 0 个服务器"));
         return;
     }
     showEmptyHint(false);
 
+    // 按当前排序模式重排副本（不动持久化顺序）
+    QList<ServerEntry> sorted = m_servers;
+    sortServers(sorted);
+
     QColor themeColor = ThemeManager::instance()->currentThemeColor();
     int col = 0;
     int row = 0;
     int visibleCount = 0;
 
-    for (int i = 0; i < m_servers.size(); ++i)
+    for (int i = 0; i < sorted.size(); ++i)
     {
-        const ServerEntry &entry = m_servers[i];
+        const ServerEntry &entry = sorted[i];
         if (!m_currentSearch.isEmpty())
         {
             bool match = entry.name.contains(m_currentSearch, Qt::CaseInsensitive)
@@ -235,10 +309,33 @@ void ServerManagePage::placeCards()
                 continue;
         }
 
+        // 分类筛选（键=服务器地址）
+        if (!m_currentCategoryId.isEmpty())
+        {
+            const QString cat = m_categoryManager->categoryOf(entry.address);
+            if (m_currentCategoryId == QStringLiteral("__uncategorized__"))
+            {
+                if (!cat.isEmpty())
+                    continue;
+            }
+            else if (cat != m_currentCategoryId)
+            {
+                continue;
+            }
+        }
+
         QWidget *card = new QWidget(m_cardContainer);
         card->setObjectName("resourceCard");
         card->setFixedHeight(80);
         card->setCursor(Qt::PointingHandCursor);
+        card->setContextMenuPolicy(Qt::CustomContextMenu);
+        const QString catKey = entry.address;
+        connect(card, &QWidget::customContextMenuRequested, this,
+            [this, catKey](const QPoint &pos) {
+                QMenu menu(this);
+                appendCategoryMenu(&menu, catKey);
+                menu.exec(pos);
+            });
 
         QHBoxLayout *cardLayout = new QHBoxLayout(card);
         cardLayout->setContentsMargins(12, 8, 12, 8);
@@ -255,10 +352,25 @@ void ServerManagePage::placeCards()
 
         QVBoxLayout *infoLayout = new QVBoxLayout();
         infoLayout->setSpacing(2);
+
+        // 名称行：名称 + 分类芯片（右）
+        const QString catName = m_categoryManager->categoryName(entry.address);
+        QHBoxLayout *nameRow = new QHBoxLayout();
+        nameRow->setContentsMargins(0, 0, 0, 0);
+        nameRow->setSpacing(6);
         QLabel *nameLabel = new QLabel(entry.name, card);
         nameLabel->setObjectName("modNameLabel");
         nameLabel->setStyleSheet("font-size: 14px; font-weight: bold;");
-        infoLayout->addWidget(nameLabel);
+        nameRow->addWidget(nameLabel);
+        if (!catName.isEmpty())
+        {
+            QLabel *catChip = new QLabel(catName, card);
+            catChip->setObjectName("modChip");
+            catChip->setProperty("cardRole", "chip");
+            nameRow->addWidget(catChip);
+        }
+        nameRow->addStretch();
+        infoLayout->addLayout(nameRow);
 
         QString addrText = entry.address;
         if (entry.port != 25565)
@@ -346,12 +458,34 @@ void ServerManagePage::placeCards()
     QSpacerItem *spacer = new QSpacerItem(1, 1, QSizePolicy::Minimum, QSizePolicy::Expanding);
     m_cardGridLayout->addItem(spacer, row + 1, 0);
 
-    m_statsLabel->setText(tr("共 %1 个服务器").arg(visibleCount));
+    // 统计：筛选/搜索激活时显示「显示 N (共 M)」；筛空给提示（不引导下载）
+    const bool anyFilterActive = !m_currentSearch.isEmpty()
+        || !m_currentCategoryId.isEmpty();
+    if (visibleCount == 0)
+    {
+        m_emptyLabel->setText(tr("没有符合筛选条件的服务器"));
+        showEmptyHint(true);
+    }
+    else
+    {
+        showEmptyHint(false);
+    }
+    if (anyFilterActive)
+    {
+        m_statsLabel->setText(tr("显示 %1 个服务器 (共 %2 个)")
+            .arg(visibleCount).arg(m_servers.size()));
+    }
+    else
+    {
+        m_statsLabel->setText(tr("共 %1 个服务器").arg(m_servers.size()));
+    }
 }
 
 void ServerManagePage::showEmptyHint(bool show)
 {
     m_emptyLabel->setVisible(show);
+    // 空提示占据列表区域时隐藏滚动区（原实现提示在网格内会被 clearCards 删除）
+    m_scrollArea->setVisible(!show);
 }
 
 void ServerManagePage::onSearchTextChanged(const QString &text)
@@ -544,4 +678,135 @@ void ServerManagePage::onDeleteServerClicked()
         saveServers();
         placeCards();
     }
+}
+
+// ─────────────── 分类 / 排序筛选 ───────────────
+
+void ServerManagePage::reloadCategoryCombo()
+{
+    if (!m_categoryCombo)
+        return;
+
+    m_categoryCombo->blockSignals(true);
+    m_categoryCombo->clear();
+    m_categoryCombo->addItem(tr("全部"), QString());
+    // 服务器为 JSON 条目，无文件大小/修改时间数据，不加智能筛选项
+    const QList<LocalResourceCategory> cats = m_categoryManager->categories();
+    for (const LocalResourceCategory &c : cats)
+    {
+        m_categoryCombo->addItem(c.name, c.id);
+    }
+    m_categoryCombo->addItem(tr("未分类"), QStringLiteral("__uncategorized__"));
+
+    // 恢复之前选中的分类（已被删除则回退「全部」）
+    int restore = 0;
+    if (!m_currentCategoryId.isEmpty())
+    {
+        for (int i = 0; i < m_categoryCombo->count(); ++i)
+        {
+            if (m_categoryCombo->itemData(i).toString() == m_currentCategoryId)
+            {
+                restore = i;
+                break;
+            }
+        }
+    }
+    m_categoryCombo->setCurrentIndex(restore);
+    m_currentCategoryId = m_categoryCombo->itemData(restore).toString();
+    m_categoryCombo->blockSignals(false);
+}
+
+void ServerManagePage::onCategoryFilterChanged(int index)
+{
+    if (!m_categoryCombo)
+        return;
+    m_currentCategoryId = m_categoryCombo->itemData(index).toString();
+    placeCards();
+}
+
+void ServerManagePage::onCategoryManageClicked()
+{
+    LocalCategoryDialog dialog(m_categoryManager, this);
+    dialog.exec();
+}
+
+void ServerManagePage::onCategoriesChanged()
+{
+    reloadCategoryCombo();
+    placeCards();
+}
+
+void ServerManagePage::onAssignmentsChanged()
+{
+    placeCards();
+}
+
+void ServerManagePage::onSortChanged(int index)
+{
+    if (!m_sortCombo)
+        return;
+    m_sortMode = m_sortCombo->itemData(index).toInt();
+    placeCards();
+}
+
+void ServerManagePage::sortServers(QList<ServerEntry> &list) const
+{
+    const int mode = m_sortMode;
+    std::sort(list.begin(), list.end(), [mode](const ServerEntry &a, const ServerEntry &b) {
+        switch (mode)
+        {
+        case 1:  // 名称 Z→A
+            return QString::compare(a.name, b.name, Qt::CaseInsensitive) > 0;
+        case 2:  // 地址 A→Z
+            return QString::compare(a.address, b.address, Qt::CaseInsensitive) < 0;
+        case 3:  // 地址 Z→A
+            return QString::compare(a.address, b.address, Qt::CaseInsensitive) > 0;
+        default: // 名称 A→Z
+            return QString::compare(a.name, b.name, Qt::CaseInsensitive) < 0;
+        }
+    });
+}
+
+void ServerManagePage::appendCategoryMenu(QMenu *menu, const QString &key)
+{
+    // ── 设置分类子菜单（键 = 服务器地址）──
+    QMenu *categoryMenu = menu->addMenu(tr("设置分类"));
+    const QString currentCat = m_categoryManager->categoryOf(key);
+    const QList<LocalResourceCategory> cats = m_categoryManager->categories();
+    for (const LocalResourceCategory &c : cats)
+    {
+        QAction *action = categoryMenu->addAction(c.name);
+        action->setCheckable(true);
+        action->setChecked(currentCat == c.id);
+        connect(action, &QAction::triggered, this,
+            [this, key, categoryId = c.id]() {
+                m_categoryManager->assignCategory(key, categoryId);
+            });
+    }
+    if (cats.isEmpty())
+    {
+        QAction *emptyAction = categoryMenu->addAction(tr("暂无分类"));
+        emptyAction->setEnabled(false);
+    }
+    QAction *clearAction = categoryMenu->addAction(tr("清除分类"));
+    clearAction->setEnabled(!currentCat.isEmpty());
+    connect(clearAction, &QAction::triggered, this,
+        [this, key]() {
+            m_categoryManager->assignCategory(key, QString());
+        });
+    categoryMenu->addSeparator();
+    QAction *newCatAction = categoryMenu->addAction(tr("新建分类…"));
+    connect(newCatAction, &QAction::triggered, this,
+        [this, key]() {
+            FavoriteFolderDialog dialog(FavoriteFolderDialog::CreateMode, this);
+            dialog.setWindowTitle(tr("新建分类"));
+            dialog.setPresets(LocalCategoryManager::suggestedNames(m_categoryManager->resourceType()));
+            if (dialog.exec() != QDialog::Accepted)
+                return;
+            const QString name = dialog.folderName();
+            if (name.isEmpty())
+                return;
+            const QString newId = m_categoryManager->addCategory(name);
+            m_categoryManager->assignCategory(key, newId);
+        });
 }

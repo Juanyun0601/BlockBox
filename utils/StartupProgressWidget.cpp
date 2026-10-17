@@ -62,17 +62,11 @@ void StartupProgressWidget::initUI()
     m_mainLayout->setSpacing(15);
     m_mainLayout->setContentsMargins(30, 25, 30, 25);
 
-    // 创建Logo标签
+    // 创建Logo标签（先用默认浅色主题的图，主题就绪后由 applyTheme 切换）
     m_logoLabel = new QLabel(this);
     m_logoLabel->setObjectName(QStringLiteral("startupLogoLabel"));
     m_logoLabel->setAlignment(Qt::AlignCenter);
-    const bool isDark = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
-    const QString logoPath = isDark
-        ? QStringLiteral(":/Images/blockbox_icon_dark.png")
-        : QStringLiteral(":/Images/logo.png");
-    QPixmap logoPix(logoPath);
-    m_logoLabel->setPixmap(logoPix.scaled(QSize(160, 56), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    m_logoLabel->setFixedSize(160, 56);
+    updateLogo(false);
 
     // 创建状态标签
     m_statusLabel = new QLabel(QStringLiteral("正在初始化..."), this);
@@ -105,11 +99,31 @@ void StartupProgressWidget::initUI()
 
 void StartupProgressWidget::initStyle()
 {
-    ThemeManager* tm = ThemeManager::instance();
-    const QString themeColor = tm->currentThemeColor();
-    const QString themeHover = tm->getThemeColorMediumAccent();
-    const bool isDark = (tm->currentTheme() == ThemeManager::DarkTheme);
+    // 主题尚未就绪时先用默认浅色配色：构造阶段不再触碰 ThemeManager，
+    // 让启动窗口能尽快显示（主题样式表的套用会明显拖慢首个窗口出现）
+    applyStyleWith(QStringLiteral("#2E7D32"), QStringLiteral("#256428"), false);
+}
 
+void StartupProgressWidget::applyTheme()
+{
+    ThemeManager* tm = ThemeManager::instance();
+    const bool isDark = (tm->currentTheme() == ThemeManager::DarkTheme);
+    applyStyleWith(tm->currentThemeColor(), tm->getThemeColorMediumAccent(), isDark);
+    updateLogo(isDark);
+}
+
+void StartupProgressWidget::updateLogo(bool isDark)
+{
+    const QString logoPath = isDark
+        ? QStringLiteral(":/Images/blockbox_icon_dark.png")
+        : QStringLiteral(":/Images/logo.png");
+    QPixmap logoPix(logoPath);
+    m_logoLabel->setPixmap(logoPix.scaled(QSize(160, 56), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    m_logoLabel->setFixedSize(160, 56);
+}
+
+void StartupProgressWidget::applyStyleWith(const QString& themeColor, const QString& themeHover, bool isDark)
+{
     QString style = QString(
         "StartupProgressWidget {"
         "    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
@@ -154,19 +168,8 @@ void StartupProgressWidget::initAnimations()
     m_progressAnimation->setDuration(300);  // 300ms动画时长
     m_progressAnimation->setEasingCurve(QEasingCurve::OutCubic);
 
-    // 透明度效果
-    m_opacityEffect = new QGraphicsOpacityEffect(this);
-    m_opacityEffect->setOpacity(1.0);
-    setGraphicsEffect(m_opacityEffect);
-
-    // 淡出动画
-    m_fadeOutAnimation = new QPropertyAnimation(m_opacityEffect, "opacity", this);
-    m_fadeOutAnimation->setDuration(200);  // 200ms淡出时长
-    m_fadeOutAnimation->setStartValue(1.0);
-    m_fadeOutAnimation->setEndValue(0.0);
-    m_fadeOutAnimation->setEasingCurve(QEasingCurve::OutCubic);
-
-    connect(m_fadeOutAnimation, &QPropertyAnimation::finished, this, &QWidget::hide);
+    // 淡出用的透明度效果延迟到 hideStartup() 再创建：
+    // 透明度效果会让启动窗口的首次绘制走离屏渲染路径，拖慢启动窗口出现速度
 }
 
 int StartupProgressWidget::progressValue() const
@@ -261,9 +264,26 @@ void StartupProgressWidget::showStartup()
 void StartupProgressWidget::hideStartup()
 {
     // 根据动画启用状态决定是否执行淡出动画
-    if (m_animationsEnabled.load() && m_fadeOutAnimation) {
+    if (m_animationsEnabled.load())
+    {
+        // 淡出用的透明度效果按需创建（见 initAnimations 注释）
+        if (!m_opacityEffect)
+        {
+            m_opacityEffect = new QGraphicsOpacityEffect(this);
+            m_opacityEffect->setOpacity(1.0);
+            setGraphicsEffect(m_opacityEffect);
+
+            m_fadeOutAnimation = new QPropertyAnimation(m_opacityEffect, "opacity", this);
+            m_fadeOutAnimation->setDuration(200);  // 200ms淡出时长
+            m_fadeOutAnimation->setStartValue(1.0);
+            m_fadeOutAnimation->setEndValue(0.0);
+            m_fadeOutAnimation->setEasingCurve(QEasingCurve::OutCubic);
+            connect(m_fadeOutAnimation, &QPropertyAnimation::finished, this, &QWidget::hide);
+        }
         m_fadeOutAnimation->start();
-    } else {
+    }
+    else
+    {
         hide();
     }
 }

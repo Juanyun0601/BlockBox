@@ -3810,7 +3810,7 @@ QComboBox#sortCombo:hover,
 QComboBox#sourceCombo:hover,
 QComboBox#instanceCombo:hover,
 QComboBox#modDetailCombo:hover,
-QComboBox#searchSortCombo,
+QComboBox#searchSortCombo:hover,
 QComboBox#categoryCombo:hover {
     border: 1px solid @BORDER_HOVER@;
 }
@@ -3820,7 +3820,7 @@ QComboBox#sortCombo:focus,
 QComboBox#sourceCombo:focus,
 QComboBox#instanceCombo:focus,
 QComboBox#modDetailCombo:focus,
-QComboBox#searchSortCombo,
+QComboBox#searchSortCombo:focus,
 QComboBox#categoryCombo:focus {
     border: 1.5px solid @PRIMARY@;
 }
@@ -3830,7 +3830,7 @@ QComboBox#sortCombo::drop-down,
 QComboBox#sourceCombo::drop-down,
 QComboBox#instanceCombo::drop-down,
 QComboBox#modDetailCombo::drop-down,
-QComboBox#searchSortCombo,
+QComboBox#searchSortCombo::drop-down,
 QComboBox#categoryCombo::drop-down {
     border: none;
     width: 22px;
@@ -3841,7 +3841,7 @@ QComboBox#sortCombo::down-arrow,
 QComboBox#sourceCombo::down-arrow,
 QComboBox#instanceCombo::down-arrow,
 QComboBox#modDetailCombo::down-arrow,
-QComboBox#searchSortCombo,
+QComboBox#searchSortCombo::down-arrow,
 QComboBox#categoryCombo::down-arrow {
     image: none;
     border-left: 4px solid transparent;
@@ -3855,7 +3855,7 @@ QComboBox#sortCombo QAbstractItemView,
 QComboBox#sourceCombo QAbstractItemView,
 QComboBox#instanceCombo QAbstractItemView,
 QComboBox#modDetailCombo QAbstractItemView,
-QComboBox#searchSortCombo,
+QComboBox#searchSortCombo QAbstractItemView,
 QComboBox#categoryCombo QAbstractItemView {
     background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
@@ -3871,7 +3871,7 @@ QComboBox#sortCombo QAbstractItemView::item,
 QComboBox#sourceCombo QAbstractItemView::item,
 QComboBox#instanceCombo QAbstractItemView::item,
 QComboBox#modDetailCombo QAbstractItemView::item,
-QComboBox#searchSortCombo,
+QComboBox#searchSortCombo QAbstractItemView::item,
 QComboBox#categoryCombo QAbstractItemView::item {
     padding: 6px 10px;
     font-size: 12px;
@@ -3884,7 +3884,7 @@ QComboBox#sortCombo QAbstractItemView::item:hover,
 QComboBox#sourceCombo QAbstractItemView::item:hover,
 QComboBox#instanceCombo QAbstractItemView::item:hover,
 QComboBox#modDetailCombo QAbstractItemView::item:hover,
-QComboBox#searchSortCombo,
+QComboBox#searchSortCombo QAbstractItemView::item:hover,
 QComboBox#categoryCombo QAbstractItemView::item:hover {
     background-color: @BG_MUTED@;
 }
@@ -3894,7 +3894,7 @@ QComboBox#sortCombo QAbstractItemView::item:selected,
 QComboBox#sourceCombo QAbstractItemView::item:selected,
 QComboBox#instanceCombo QAbstractItemView::item:selected,
 QComboBox#modDetailCombo QAbstractItemView::item:selected,
-QComboBox#searchSortCombo,
+QComboBox#searchSortCombo QAbstractItemView::item:selected,
 QComboBox#categoryCombo QAbstractItemView::item:selected {
     background-color: @PRIMARY_BG@;
     color: @TEXT_ACCENT@;
@@ -8604,17 +8604,25 @@ QPushButton#jumpToInstanceSettingsBtn:hover {
 /* ------------------------------------------------------------
  * Section 35.1. ModelSelectDialog 补充样式
  * ------------------------------------------------------------ */
-/* 模型配置�?�?卡片 */
+/* 模型列表项：扁平列表行（无卡片描边）+ hover 高亮 */
 QWidget#modelConfiguredItem {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 12px;
-    padding: 10px 12px;
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 10px;
 }
 
 QWidget#modelConfiguredItem:hover {
     background-color: @BG_HOVER@;
-    border: 1px solid @PRIMARY_RGBA_38@;
+    border: none;
+}
+
+/* 列表行分隔线 */
+QFrame#modelItemSeparator {
+    background-color: @BORDER@;
+    border: none;
+    min-height: 1px;
+    max-height: 1px;
 }
 
 /* 模型复选图�?�?active=主色 / inactive=灰色 */
@@ -8647,6 +8655,15 @@ QLabel#modelConfigName {
     font-size: 13px;
     font-weight: 600;
     border: none;
+}
+
+/* 列表项右侧悬浮信息（上下文/模态/推理）· 11px 弱化色 */
+QLabel#modelMetaInfo {
+    background-color: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    border: none;
+    padding-left: 12px;
 }
 
 /* 模型配置 key �?11px Consolas */
@@ -9519,10 +9536,10 @@ QWidget#taskBar {
     padding: 0;
 }
 
-/* 悬浮玻璃托盘 */
+/* 悬浮玻璃托盘：更通透底色 + 极淡描边，自然叠在内容上方 */
 QWidget#taskBarTray {
-    background-color: @BG_GLASS@;
-    border: 1px solid @BORDER@;
+    background-color: @BG_GLASS_TASKBAR@;
+    border: 1px solid @BORDER_GLASS_TASKBAR@;
     border-radius: 18px;
 }
 
@@ -11878,7 +11895,7 @@ QProgressBar#startupProgressBar::chunk {
 
 /* ============================================================
  * Section 50. OnboardingWizard 新手引导向导
- * objectName 前缀 obw，全部控件跟随全局主题占位�?
+ * objectName 前缀 obw，全部控件跟随全局主题占位符
  * ============================================================ */
 
 /* --- 50.1 向导卡片容器 --- */
@@ -11887,17 +11904,19 @@ QFrame#OnboardingWizardCard {
     border: 1px solid @BORDER@;
     border-radius: 22px;
 }
-/* 容器自身透明（让父级页面透出主对话框背景�?*/
+/* 容器自身透明（让父级页面透出主对话框背景） */
 QFrame#obwHeader, QWidget#obwStepper, QWidget#obwStepNode,
-QStackedWidget#obwStack, QWidget#obwPage0, QWidget#obwPage1, QWidget#obwPage2Import,
-QWidget#obwPage2Manual, QWidget#obwPage3, QWidget#obwPage4,
+QStackedWidget#obwStack, QWidget#obwPage0, QWidget#obwPageDlSource, QWidget#obwPage1,
+QWidget#obwPage2Import, QWidget#obwPage2Manual, QWidget#obwPage3, QWidget#obwPage4,
 QWidget#obwPage5, QWidget#obwPageDone, QScrollArea#obwScroll,
 QFrame#obwFooter {
     background-color: transparent;
 }
-/* 列表容器：保持不透明（继�?@BG_BASE 浅灰），让卡片（白色 BG_CARD + 边框）有视觉对比 */
+/* 列表容器：圆角浅灰面板，与白色卡片形成层次对比 */
 QWidget#obwAccountList, QWidget#obwFolderList, QWidget#obwJavaList {
     background-color: @BG_BASE@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
 }
 
 /* --- 50.2 头部 --- */
@@ -11907,7 +11926,7 @@ QFrame#obwHeader {
 }
 QLabel#obwBrandLogo {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @PRIMARY@, stop:1 @PRIMARY_DARK@);
-    border-radius: 10px;
+    border-radius: 12px;
     color: #FFFFFF;
     font-size: 18px;
     font-weight: 800;
@@ -11920,20 +11939,24 @@ QLabel#obwBrandTitle {
 QLabel#obwBrandSub {
     color: @TEXT_TERTIARY@;
     font-size: 11.5px;
+    margin-top: 1px;
 }
 QPushButton#obwSkipBtn {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: 8px;
     color: @TEXT_TERTIARY@;
-    padding: 6px 14px;
+    padding: 7px 16px;
     font-size: 12.5px;
     font-weight: 500;
 }
 QPushButton#obwSkipBtn:hover {
     color: @TEXT_PRIMARY@;
-    border-color: @BORDER_STRONG@;
+    border-color: @BORDER@;
     background-color: @BG_HOVER@;
+}
+QPushButton#obwSkipBtn:pressed {
+    background-color: @BG_PRESSED@;
 }
 
 /* --- 50.3 步骤�?--- */
@@ -11961,17 +11984,19 @@ QLabel#obwStepDot[state="done"] {
     background-color: @PRIMARY_BG@;
     border: 1.5px solid @PRIMARY@;
     color: @PRIMARY@;
+    font-size: 14px;
 }
 QLabel#obwStepLabel {
     color: @TEXT_TERTIARY@;
     font-size: 12.5px;
     font-weight: 600;
 }
-QLabel#obwStepLabel[state="on"] {
-    color: @TEXT_PRIMARY@;
+QLabel#obwStepLabel[state="active"] {
+    color: @PRIMARY@;
+    font-weight: 700;
 }
-QLabel#obwStepLabel[state="on"] {
-    color: @TEXT_PRIMARY@;
+QLabel#obwStepLabel[state="done"] {
+    color: @TEXT_SECONDARY@;
 }
 QFrame#obwStepLine {
     background-color: @BORDER@;
@@ -12026,6 +12051,12 @@ QPushButton#obwMethodCard:checked {
     border-color: @PRIMARY@;
     background-color: @PRIMARY_BG@;
 }
+QPushButton#obwMethodCard:pressed {
+    background-color: @BG_HOVER@;
+}
+QPushButton#obwMethodCard:checked:pressed {
+    background-color: @PRIMARY_BG@;
+}
 QLabel#obwMethodCheck {
     background-color: transparent;
     border: none;
@@ -12067,6 +12098,7 @@ QLabel#obwMethodDesc {
 }
 QLabel#obwMethodTag {
     background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
     border-radius: 9px;
     color: @TEXT_TERTIARY@;
     font-size: 11px;
@@ -12075,14 +12107,16 @@ QLabel#obwMethodTag {
 }
 QPushButton#obwMethodCard:checked QLabel#obwMethodTag {
     background-color: @PRIMARY_BG@;
+    border-color: @PRIMARY_MEDIUM@;
     color: @PRIMARY@;
 }
 
-/* --- 50.6 提示�?--- */
+/* --- 50.6 提示条 --- */
 QLabel#obwTip {
     background-color: @PRIMARY_BG@;
     border: 1px solid @PRIMARY_MEDIUM@;
-    border-radius: 12px;
+    border-left: 3px solid @PRIMARY@;
+    border-radius: 10px;
     color: @TEXT_SECONDARY@;
     font-size: 12px;
     padding: 10px 14px;
@@ -12147,10 +12181,14 @@ QPushButton#obwBtnPrimary {
     color: @TEXT_ON_PRIMARY@;
     font-size: 12.5px;
     font-weight: 600;
-    padding: 7px 16px;
+    padding: 8px 18px;
+    min-width: 88px;
 }
 QPushButton#obwBtnPrimary:hover {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @PRIMARY_HOVER@, stop:1 @PRIMARY_DARK@);
+}
+QPushButton#obwBtnPrimary:pressed {
+    background-color: @PRIMARY_PRESSED@;
 }
 QPushButton#obwBtnPrimary:disabled {
     background-color: @BG_DISABLED@;
@@ -12163,12 +12201,16 @@ QPushButton#obwBtnSecondary {
     color: @TEXT_SECONDARY@;
     font-size: 12.5px;
     font-weight: 500;
-    padding: 7px 16px;
+    padding: 8px 18px;
+    min-width: 88px;
 }
 QPushButton#obwBtnSecondary:hover {
     background-color: @BG_HOVER@;
     color: @TEXT_PRIMARY@;
     border-color: @BORDER_STRONG@;
+}
+QPushButton#obwBtnSecondary:pressed {
+    background-color: @BG_PRESSED@;
 }
 
 /* --- 50.9 账户管理（Step2 手动�?--- */
@@ -12230,7 +12272,7 @@ QWidget#obwAccountPanel, QWidget#obwFolderPanel {
 }
 QPushButton#obwAccountTab {
     background-color: @BG_MUTED@;
-    border: none;
+    border: 1px solid transparent;
     border-radius: 6px;
     color: @TEXT_TERTIARY@;
     font-size: 12px;
@@ -12512,12 +12554,13 @@ QLabel#obwAccentName {
     font-size: 11.5px;
 }
 
-/* --- 50.13 完成�?--- */
+/* --- 50.13 完成页 --- */
 QLabel#obwDoneIcon {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @PRIMARY@, stop:1 @PRIMARY_DARK@);
+    border: 6px solid @PRIMARY_BG@;
     border-radius: 48px;
     color: #FFFFFF;
-    font-size: 44px;
+    font-size: 40px;
     font-weight: 800;
 }
 QLabel#obwDoneTitle {
@@ -12530,8 +12573,8 @@ QLabel#obwDoneDesc {
     font-size: 13px;
 }
 QLabel#obwDoneChip {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
+    background-color: @PRIMARY_BG@;
+    border: 1px solid @PRIMARY_MEDIUM@;
     border-radius: 14px;
     color: @TEXT_SECONDARY@;
     font-size: 12px;
@@ -12547,6 +12590,12 @@ QFrame#obwFooter {
 QLabel#obwFooterHint {
     color: @TEXT_TERTIARY@;
     font-size: 12px;
+}
+QFrame#obwFooter QPushButton#obwBtnPrimary {
+    min-width: 100px;
+}
+QFrame#obwFooter QPushButton#obwBtnSecondary {
+    min-width: 88px;
 }
 
 /* ============================================================
@@ -13229,6 +13278,56 @@ QPushButton#worldMapStructBtn:checked {
     border: 1px solid @PRIMARY@;
 }
 
+QPushButton#worldMapStructBtn:disabled {
+    background-color: @BG_DISABLED@;
+    border: 1px solid @BORDER_DISABLED@;
+}
+
+/* —— 结构条檮动容器 — */
+QScrollArea#worldMapStructScroll {
+    background: transparent;
+    border: none;
+}
+
+
+QScrollArea#worldMapStructScroll > QWidget > QWidget {
+    background: transparent;
+}
+
+
+QScrollArea#worldMapStructScroll QScrollBar:horizontal {
+    background: transparent;
+    height: 8px;
+    margin: 0px;
+}
+
+
+QScrollArea#worldMapStructScroll QScrollBar::handle:horizontal {
+    background: @BORDER@;
+    border-radius: 4px;
+    min-width: 32px;
+}
+
+
+QScrollArea#worldMapStructScroll QScrollBar::handle:horizontal:hover {
+    background: @BORDER_STRONG@;
+}
+
+
+QScrollArea#worldMapStructScroll QScrollBar::add-line:horizontal,
+QScrollArea#worldMapStructScroll QScrollBar::sub-line:horizontal {
+    height: 0px;
+    width: 0px;
+}
+
+
+QScrollArea#worldMapStructScroll QScrollBar::add-page:horizontal,
+QScrollArea#worldMapStructScroll QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+
+
 /* —— 结构信息弹窗 — */
 QWidget#worldMapStructPopup {
     background-color: @BG_CARD@;
@@ -13321,3 +13420,326 @@ QProgressBar#worldMapProgress::chunk {
     background-color: @PRIMARY@;
     border-radius: 4px;
 }
+
+/* ============================================================
+ * Section 51. ModpackExportPage 样式（mpx* 系列，实例管理>导出整合包）
+ * ============================================================ */
+/* 步骤条容器 */
+QWidget#mpxStepper {
+    background-color: transparent;
+    border: none;
+}
+QWidget#mpxStepNode {
+    background-color: transparent;
+    border: none;
+}
+QLabel#mpxStepDot {
+    background-color: @BG_CARD@;
+    border: 1.5px solid @BORDER_STRONG@;
+    border-radius: 15px;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    font-weight: 700;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+}
+QLabel#mpxStepDot[stepState="active"] {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_DARK@);
+    border: 1.5px solid transparent;
+    color: @TEXT_ON_PRIMARY@;
+}
+QLabel#mpxStepDot[stepState="done"] {
+    background-color: @PRIMARY_BG@;
+    border: 1.5px solid @PRIMARY@;
+    color: @PRIMARY@;
+}
+QLabel#mpxStepLabel {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    font-weight: 600;
+    background: transparent;
+    border: none;
+}
+QLabel#mpxStepLabel[stepState="active"] {
+    color: @TEXT_PRIMARY@;
+}
+QFrame#mpxStepLine {
+    background-color: @BORDER_STRONG@;
+    border: none;
+    max-height: 2px;
+    min-height: 2px;
+}
+QFrame#mpxStepLine[stepState="done"] {
+    background-color: @PRIMARY@;
+}
+
+/* 步骤内标题 / 说明 */
+QLabel#mpxSectionTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 18px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+}
+QLabel#mpxSectionDesc {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+/* 格式选择卡片 */
+QPushButton#mpxFormatCard {
+    text-align: left;
+    padding: 14px 16px;
+    border: 1.5px solid @BORDER@;
+    border-radius: 12px;
+    background-color: @BG_CARD@;
+}
+QPushButton#mpxFormatCard:hover {
+    border: 1.5px solid @PRIMARY@;
+    background-color: @BG_HOVER@;
+}
+QPushButton#mpxFormatCard:checked {
+    border: 1.5px solid @PRIMARY@;
+    background-color: @PRIMARY_BG@;
+}
+QPushButton#mpxFormatCard QLabel {
+    background: transparent;
+    border: none;
+}
+QLabel#mpxFormatTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 15px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+}
+QPushButton#mpxFormatCard:checked QLabel#mpxFormatTitle {
+    color: @PRIMARY@;
+}
+QLabel#mpxFormatDesc {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+QLabel#mpxFormatOutput {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+}
+QLabel#mpxFormatCheck {
+    color: @PRIMARY@;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+}
+
+/* 信息表单字段 */
+QLabel#mpxFieldLabel {
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+    background: transparent;
+    border: none;
+}
+QLineEdit#mpxFieldEdit {
+    background-color: @BG_CARD@;
+    border: 1.5px solid @BORDER@;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    color: @TEXT_PRIMARY@;
+    selection-background-color: @PRIMARY@;
+    selection-color: @TEXT_ON_PRIMARY@;
+}
+QLineEdit#mpxFieldEdit:hover {
+    border: 1.5px solid @BORDER_STRONG@;
+}
+QLineEdit#mpxFieldEdit:focus {
+    border: 1.5px solid @PRIMARY@;
+    background-color: @BG_CARD@;
+}
+QTextEdit#mpxFieldEdit {
+    background-color: @BG_CARD@;
+    border: 1.5px solid @BORDER@;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    color: @TEXT_PRIMARY@;
+    selection-background-color: @PRIMARY@;
+    selection-color: @TEXT_ON_PRIMARY@;
+}
+QTextEdit#mpxFieldEdit:hover {
+    border: 1.5px solid @BORDER_STRONG@;
+}
+QTextEdit#mpxFieldEdit:focus {
+    border: 1.5px solid @PRIMARY@;
+}
+
+/* 额外选项分组（MCBBS / 服务器包） */
+QWidget#mpxExtraGroup {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+    padding: 14px;
+}
+QLabel#mpxExtraTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+}
+QCheckBox#mpxModuleCheck {
+    font-size: 13px;
+    color: @TEXT_PRIMARY@;
+    spacing: 8px;
+    background: transparent;
+    border: none;
+}
+QLabel#mpxModuleSize {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+QWidget#mpxModuleRow {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+}
+QWidget#mpxModuleRow:hover {
+    border: 1px solid @BORDER_STRONG@;
+}
+
+/* 文件树 */
+QTreeWidget#mpxFileTree {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    alternate-background-color: @BG_MUTED@;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+}
+QTreeWidget#mpxFileTree::item {
+    padding: 4px 2px;
+    border-radius: 4px;
+}
+QTreeWidget#mpxFileTree::item:selected {
+    background-color: @PRIMARY_BG@;
+    color: @TEXT_PRIMARY@;
+}
+
+/* 全选/取消全选等轻量按钮 */
+QPushButton#mpxGhostBtn {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    padding: 4px 14px;
+    font-size: 12px;
+}
+QPushButton#mpxGhostBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_STRONG@;
+    color: @TEXT_PRIMARY@;
+}
+QPushButton#mpxGhostBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+/* 底部导航按钮 */
+QPushButton#mpxNavPrimaryBtn {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_DARK@);
+    color: @TEXT_ON_PRIMARY@;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 28px;
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 96px;
+}
+QPushButton#mpxNavPrimaryBtn:hover {
+    background-color: @PRIMARY_HOVER@;
+}
+QPushButton#mpxNavPrimaryBtn:pressed {
+    background-color: @PRIMARY_PRESSED@;
+}
+QPushButton#mpxNavPrimaryBtn:disabled {
+    background-color: @BG_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+QPushButton#mpxNavSecondaryBtn {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 8px;
+    padding: 9px 28px;
+    font-size: 14px;
+    font-weight: 500;
+    min-width: 96px;
+}
+QPushButton#mpxNavSecondaryBtn:hover {
+    background-color: @BG_HOVER@;
+    color: @TEXT_PRIMARY@;
+    border: 1px solid @BORDER_HOVER@;
+}
+QPushButton#mpxNavSecondaryBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+QPushButton#mpxNavSecondaryBtn:disabled {
+    color: @TEXT_DISABLED@;
+    border: 1px solid @BORDER_DISABLED@;
+}
+
+/* 浏览保存路径按钮 */
+QPushButton#mpxBrowseBtn {
+    background-color: @BG_CARD@;
+    color: @PRIMARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 500;
+}
+QPushButton#mpxBrowseBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @PRIMARY@;
+}
+QPushButton#mpxBrowseBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+/* 导出进度 */
+QProgressBar#modpackExportProgress {
+    background-color: @BG_TRACK@;
+    border: none;
+    border-radius: 5px;
+    min-height: 10px;
+    max-height: 10px;
+    text-align: center;
+    font-size: 10px;
+    color: @TEXT_ON_PRIMARY@;
+}
+QProgressBar#modpackExportProgress::chunk {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_HOVER@);
+    border-radius: 5px;
+}
+QLabel#modpackExportProgressLabel {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+

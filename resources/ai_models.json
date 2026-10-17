@@ -73,12 +73,12 @@
         {"id": "accounts/fireworks/models/mixtral-8x22b-instruct",   "displayName": "Fireworks Mixtral 8x22B",  "apiUrl": "https://api.fireworks.ai/inference/v1"},
         {"id": "accounts/fireworks/models/firefunction-v2",           "displayName": "Fireworks FireFunction V2", "apiUrl": "https://api.fireworks.ai/inference/v1"},
 
-        {"id": "gemini-2.5-pro",                        "displayName": "Gemini 2.5 Pro",     "apiUrl": "https://generativelanguage.googleapis.com/v1beta"},
-        {"id": "gemini-2.5-flash",                      "displayName": "Gemini 2.5 Flash",   "apiUrl": "https://generativelanguage.googleapis.com/v1beta"},
-        {"id": "gemini-2.0-flash",                      "displayName": "Gemini 2.0 Flash",   "apiUrl": "https://generativelanguage.googleapis.com/v1beta"},
-        {"id": "gemini-1.5-pro",                        "displayName": "Gemini 1.5 Pro",     "apiUrl": "https://generativelanguage.googleapis.com/v1beta"},
-        {"id": "gemini-1.5-flash",                      "displayName": "Gemini 1.5 Flash",   "apiUrl": "https://generativelanguage.googleapis.com/v1beta"},
-        {"id": "gemini-pro",                            "displayName": "Gemini Pro",          "apiUrl": "https://generativelanguage.googleapis.com/v1beta"},
+        {"id": "gemini-2.5-pro",                        "displayName": "Gemini 2.5 Pro",     "apiUrl": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
+        {"id": "gemini-2.5-flash",                      "displayName": "Gemini 2.5 Flash",   "apiUrl": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
+        {"id": "gemini-2.0-flash",                      "displayName": "Gemini 2.0 Flash",   "apiUrl": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
+        {"id": "gemini-1.5-pro",                        "displayName": "Gemini 1.5 Pro",     "apiUrl": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
+        {"id": "gemini-1.5-flash",                      "displayName": "Gemini 1.5 Flash",   "apiUrl": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
+        {"id": "gemini-pro",                            "displayName": "Gemini Pro",          "apiUrl": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"},
 
         {"id": "grok-3",                                "displayName": "Grok 3",      "apiUrl": "https://api.x.ai/v1"},
         {"id": "grok-3-mini",                           "displayName": "Grok 3 Mini", "apiUrl": "https://api.x.ai/v1"},

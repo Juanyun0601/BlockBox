@@ -9,10 +9,12 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QPair>
 #include <QRegularExpression>
 #include <QSet>
 #include <QStandardPaths>
+#include <QtConcurrent>
 
 #include "utils/JavaScanWorker.h"
 #include "utils/SettingsManager.h"
@@ -28,7 +30,13 @@ GameLauncher::JavaInfo GameLauncher::detectJava()
 
     // PATH 上的 java 可能是失效的 Oracle javapath 存根（快速退出），
     // 也可能因杀软扫描/系统负载而启动缓慢，超时需留足余量
-    if (process.waitForFinished(5000))
+    if (!process.waitForFinished(5000))
+    {
+        // 超时：结束残留进程（失效的 javapath 存根会一直挂着不退出）
+        process.kill();
+        process.waitForFinished(1000);
+    }
+    else
     {
         QByteArray output = process.readAll();
         QString outputStr = QString::fromLocal8Bit(output);
@@ -60,7 +68,80 @@ GameLauncher::JavaInfo GameLauncher::detectJava()
     return info;
 }
 
+QList<GameLauncher::JavaInfo> GameLauncher::cachedJavaInstallations() const
+{
+    QList<JavaInfo> javaList;
+    QSet<QString> seenPaths;
+
+    const QList<QPair<QString, QString>> cachedInstallations =
+        SettingsManager::instance()->getJavaInstallations();
+    for (const QPair<QString, QString>& inst : cachedInstallations)
+    {
+        if (!QFile::exists(inst.first))
+        {
+            continue;
+        }
+        const QString absPath = QDir::toNativeSeparators(inst.first);
+        if (seenPaths.contains(absPath))
+        {
+            continue;
+        }
+        seenPaths.insert(absPath);
+
+        JavaInfo info;
+        info.path = inst.first;
+        info.version = inst.second;
+        info.valid = true;
+        javaList.append(info);
+    }
+
+    return javaList;
+}
+
+void GameLauncher::scanJavaInBackground(QObject* context,
+                                        std::function<void(const QList<JavaInfo>&)> onFinished)
+{
+    // 缓存读取放在主线程；扫描阶段只做目录遍历与 java -version 进程探测，
+    // 不触碰设置存储，因此可以在工作线程安全执行
+    const QList<QPair<QString, QString>> cachedInstallations =
+        SettingsManager::instance()->getJavaInstallations();
+
+    auto* watcher = new QFutureWatcher<QList<JavaInfo>>(context);
+    QObject::connect(watcher, &QFutureWatcher<QList<JavaInfo>>::finished, context,
+                     [watcher, onFinished]()
+    {
+        const QList<JavaInfo> result = watcher->result();
+        watcher->deleteLater();
+
+        // 回到主线程后写回缓存（下次启动可直接复用），再通知调用方填充界面
+        if (!result.isEmpty())
+        {
+            QList<QPair<QString, QString>> installations;
+            installations.reserve(result.size());
+            for (const JavaInfo& info : result)
+            {
+                installations.append(qMakePair(info.path, info.version));
+            }
+            SettingsManager::instance()->setJavaInstallations(installations);
+        }
+
+        if (onFinished)
+            onFinished(result);
+    });
+
+    watcher->setFuture(QtConcurrent::run([cachedInstallations]()
+    {
+        return instance()->findAllJavaInstallations(cachedInstallations, false);
+    }));
+}
+
 QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations()
+{
+    return findAllJavaInstallations(SettingsManager::instance()->getJavaInstallations(), true);
+}
+
+QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations(
+    const QList<QPair<QString, QString>>& cachedInstallations, bool persistToCache)
 {
     QList<JavaInfo> javaList;
     QSet<QString> seenPaths;
@@ -69,8 +150,6 @@ QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations()
     // PATH 上的 java 可能是失效的 Oracle javapath 存根、常见目录也可能没有 Java，
     // 此时目录扫描与 detectJava 都会扑空，但 config.ini 缓存里的 Java 仍然有效。
     // 与 findBestJavaVersion 保持一致：缓存条目验证存在性 + 可执行性后纳入。
-    const QList<QPair<QString, QString>> cachedInstallations =
-        SettingsManager::instance()->getJavaInstallations();
     for (const QPair<QString, QString>& inst : cachedInstallations)
     {
         if (!QFile::exists(inst.first))
@@ -89,7 +168,6 @@ QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations()
             javaList.append(info);
         }
     }
-
     QList<QString> commonPaths;
 #ifdef Q_OS_ANDROID
     commonPaths << "/system/bin";
@@ -142,6 +220,19 @@ QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations()
             seenPaths.insert(absPath);
             javaList.append(pathJava);
         }
+    }
+
+    // 扫描结果写回缓存：下次启动/打开设置页直接复用，不必再做整轮全量扫描
+    // （后台线程调用方会自行在主线程写回，此处跳过以避免跨线程访问 QSettings）
+    if (persistToCache && !javaList.isEmpty())
+    {
+        QList<QPair<QString, QString>> installations;
+        installations.reserve(javaList.size());
+        for (const JavaInfo& info : javaList)
+        {
+            installations.append(qMakePair(info.path, info.version));
+        }
+        SettingsManager::instance()->setJavaInstallations(installations);
     }
 
     return javaList;
@@ -291,19 +382,24 @@ bool GameLauncher::validateJavaPath(const QString& path, JavaInfo& info)
 
     // 正常情况 java -version 在百毫秒级完成，但杀软实时扫描/系统负载下
     // JVM 启动可能超过 2 秒（实测 2.1s+），超时过短会把有效的 Java 误判为无效
-    if (process.waitForFinished(5000))
+    if (!process.waitForFinished(5000))
     {
-        QByteArray output = process.readAll();
-        QString outputStr = QString::fromLocal8Bit(output);
+        // 超时：结束残留进程，避免每次探测都留下一个挂起的 java.exe
+        process.kill();
+        process.waitForFinished(1000);
+        return false;
+    }
 
-        static const QRegularExpression versionRegex("version \"([0-9]+(\\.[0-9]+)*(_[0-9]+)?)");
-        QRegularExpressionMatch match = versionRegex.match(outputStr);
-        if (match.hasMatch())
-        {
-            info.version = match.captured(1);
-            info.valid = true;
-            return true;
-        }
+    QByteArray output = process.readAll();
+    QString outputStr = QString::fromLocal8Bit(output);
+
+    static const QRegularExpression versionRegex("version \"([0-9]+(\\.[0-9]+)*(_[0-9]+)?)");
+    QRegularExpressionMatch match = versionRegex.match(outputStr);
+    if (match.hasMatch())
+    {
+        info.version = match.captured(1);
+        info.valid = true;
+        return true;
     }
 
     return false;

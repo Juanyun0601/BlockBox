@@ -1,0 +1,24 @@
+pages/ContentListPage.cpp: In lambda function:
+pages/ContentListPage.cpp:454:40: warning: 'constexpr typename std::add_const<_Tp>::type& qAsConst(T&) [with T = QList<ModInfo>; typename std::add_const<_Tp>::type = const QList<ModInfo>]' is deprecated: Use std::as_const() instead. [-Wdeprecated-declarations]
+  454 |         for (const auto &mod : qAsConst(result.mods))
+      |                                ~~~~~~~~^~~~~~~~~~~~~
+In file included from D:/APP/Qt/6.11.1/mingw_64/include/QtCore/qforeach.h:12,
+                 from D:/APP/Qt/6.11.1/mingw_64/include/QtCore/qglobal.h:56,
+                 from D:/APP/Qt/6.11.1/mingw_64/include/QtGui/qtguiglobal.h:7,
+                 from D:/APP/Qt/6.11.1/mingw_64/include/QtWidgets/qtwidgetsglobal.h:8,
+                 from D:/APP/Qt/6.11.1/mingw_64/include/QtWidgets/qwidget.h:8,
+                 from D:/APP/Qt/6.11.1/mingw_64/include/QtWidgets/QWidget:1,
+                 from pages/ContentListPage.h:4,
+                 from pages/ContentListPage.cpp:1:
+D:/APP/Qt/6.11.1/mingw_64/include/QtCore/qttypetraits.h:41:45: note: declared here
+   41 | constexpr typename std::add_const<T>::type &qAsConst(T &t) noexcept { return t; }
+      |                                             ^~~~~~~~
+pages/ContentListPage.cpp: In member function 'void ContentListPage::doScan(const QString&)':
+pages/ContentListPage.cpp:471:7: warning: ignoring return value of 'auto QtConcurrent::run(Function&&, Args&& ...) [with Function = ContentListPage::doScan(const QString&)::<lambda()>; Args = {}]', declared with attribute 'nodiscard': 'Use QThreadPool::start(Callable&&) if you don't need the returned QFuture' [-Wunused-result]
+  471 |     });
+      |       ^
+In file included from D:/APP/Qt/6.11.1/mingw_64/include/QtConcurrent/QtConcurrent:14,
+                 from pages/ContentListPage.cpp:27:
+D:/APP/Qt/6.11.1/mingw_64/include/QtConcurrent/qtconcurrentrun.h:63:6: note: declared here
+   63 | auto run(Function &&f, Args &&...args)
+      |      ^~~

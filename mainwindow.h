@@ -11,6 +11,7 @@
 #include <QVector>
 #include <QSet>
 #include <QShortcut>
+#include <QStringList>
 
 #include "utils/DownloadTaskManager.h"
 #include "utils/content/ContentData.h"
@@ -54,6 +55,12 @@ class QScrollBar;
 class SubNavPanel;
 class ClipboardMonitor;
 struct ClipboardLinkInfo;
+class FileDropOverlay;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDragLeaveEvent;
+class QDropEvent;
+class QMimeData;
 
 class PageTransitionAnimator;
 class ContentAnimator;
@@ -170,6 +177,10 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dragLeaveEvent(QDragLeaveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private:
     Ui::MainWindow *ui;
@@ -252,6 +263,12 @@ private:
     void ensurePageInitialized(PageIndex pageIndex);
     bool isPageInitialized(PageIndex pageIndex) const;
 
+    /** 从拖拽 mime 中取出方块盒子更新安装包的本地路径列表 */
+    QStringList extractUpdatePackages(const QMimeData *mime) const;
+    /** 更新包拖入覆盖层（悬停/松开时显示提示） */
+    FileDropOverlay *m_dropOverlay = nullptr;
+    QStringList m_pendingDropPackages;
+
     void initInstanceSelectPage();
     void initAccountManagePage();
     void initLaunchDetailsPage();
@@ -272,6 +289,7 @@ private:
     void initJavaDownloadPage();
     void initSkinEditorPage();
     void initPluginPage();
+    void initSettingsPage();
     void showJavaDownloadPage();
     void showFavoritesPage(const QString &folderId);
     void showContentDetailFromFavorite(const FavoriteItem &item);

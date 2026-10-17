@@ -28,11 +28,14 @@
 #include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <QtConcurrentRun>
 #include <QtMath>
 
@@ -59,6 +62,10 @@ const QColor kVoidColor(0x31, 0x34, 0x3A);
 /** 区块网格 / 区域网格线颜色 */
 const QColor kChunkGrid(255, 255, 255, 28);
 const QColor kRegionGrid(255, 255, 255, 78);
+/** 同时渲染的 1:1 细节瓦片数（放大后并行补细节） */
+constexpr int kMaxConcurrentTiles = 3;
+/** 每方块低于此屏幕像素数时不加载细节 —— 方块太小，只看概览就够 */
+constexpr double kDetailMinBlockPx = 0.5;
 
 } // namespace
 
@@ -352,6 +359,7 @@ public:
     {
         if (!valid())
             return;
+        m_pendingFit = false; // 显式居中取消挂起的初始视图，免得回调又拉回出生点
         const double ix = double(blockX - qint64(m_minChunkX) * 16) / m_bpp;
         const double iz = double(blockZ - qint64(m_minChunkZ) * 16) / m_bpp;
         m_offset = QPointF(width() * 0.5 - ix * m_scale,
@@ -447,6 +455,25 @@ public:
                      QPoint(toRegion(bR - eps), toRegion(bB - eps)));
     }
 
+    /**
+     * 画布图像覆盖的 region 闭区间：细节瓦片调度必须裁剪在画布内 ——
+     * 种子预测会让视口拖出图像后仍渲得出内容，画到边框外会很怪
+     */
+    QRect imageRegionRange() const
+    {
+        if (!valid())
+            return QRect();
+        const double ox = double(m_minChunkX) * 16.0;
+        const double oz = double(m_minChunkZ) * 16.0;
+        const double eps = 1e-6;
+        auto toRegion = [](double block) {
+            return int(std::floor(block / 512.0));
+        };
+        return QRect(QPoint(toRegion(ox), toRegion(oz)),
+                     QPoint(toRegion(ox + double(m_imageWidth) * m_bpp - eps),
+                            toRegion(oz + double(m_imageHeight) * m_bpp - eps)));
+    }
+
     /** 视口中心所在的 region（细节加载按到它的距离排序） */
     QPoint centerRegion() const
     {
@@ -462,17 +489,7 @@ public:
 protected:
     void paintEvent(QPaintEvent *) override
     {
-        // TEMP-DEBUG
-        static int s_paintCount = 0;
-        if (++s_paintCount <= 3 || s_paintCount % 50 == 0)
-            std::fprintf(stderr, "[paint] #%d valid=%d scale=%g off=(%g,%g) img=%dx%d\n",
-                         s_paintCount, int(valid()), m_scale,
-                         m_offset.x(), m_offset.y(),
-                         m_imageWidth, m_imageHeight);
         QPainter p(this);
-        if (s_paintCount <= 3)
-            std::fprintf(stderr, "[paint] painter active=%d\n",
-                         int(p.isActive()));
         p.fillRect(rect(), palette().color(QPalette::Window));
 
         if (!valid())
@@ -495,12 +512,13 @@ protected:
         if (m_grid)
             drawGrid(p, target);
 
-        // TEMP-DEBUG: drawMarkers 暂时停用以定位白屏
         drawMarkers(p);
 
         if (m_hasSelection)
             drawSelection(p, target);
 
+        // 显式清 brush：drawMarkers 的白描边若泄漏，这里会把整图画布刷白
+        p.setBrush(Qt::NoBrush);
         p.setPen(QColor(255, 255, 255, 32));
         p.drawRect(target);
     }
@@ -721,6 +739,96 @@ private:
         notifySelection();
     }
 
+    /** 方块坐标 → 画布屏幕坐标 */
+    QPointF screenPos(qint64 x, qint64 z) const
+    {
+        const double ox = double(m_minChunkX) * 16.0;
+        const double oz = double(m_minChunkZ) * 16.0;
+        return QPointF(m_offset.x() + (double(x) - ox) / m_bpp * m_scale,
+                       m_offset.y() + (double(z) - oz) / m_bpp * m_scale);
+    }
+
+    /** 屏幕上合并后的一组同类型结构标记（count≥2 时画右上角 ×N 角标） */
+    struct MarkerGroup
+    {
+        QPointF center;     ///< 成员屏幕坐标平均（绘制 / 命中共用）
+        int type = -1;      ///< allStructures() 下标
+        int count = 1;      ///< 合并进来的标记数
+        int firstIdx = 0;   ///< 组内首个标记下标（点击弹窗取它的坐标）
+        bool allDone = false; ///< 组内是否全部已标记完成（全完成才半透明）
+    };
+
+    /**
+     * 把屏幕上挤在一起的同类型标记合并成组：中心距小于一个图标边长即视为
+     * "太密集"（两个图标会叠住看不清），合并后只画一个并在右上角标 ×N。
+     * 仅同类型合并，不同类型即使挨着也各画各的。
+     */
+    QVector<MarkerGroup> buildMarkerGroups() const
+    {
+        QVector<MarkerGroup> groups;
+        const int n = m_markers.size();
+        if (n == 0)
+            return groups;
+        groups.reserve(n);
+        QVector<bool> used(n, false);
+        const double mergeDist = double(kMarkerSize);
+        const double mergeDist2 = mergeDist * mergeDist;
+
+        for (int i = 0; i < n; ++i)
+        {
+            if (used[i] || m_markers[i].type < 0)
+                continue;
+            used[i] = true;
+            MarkerGroup g;
+            g.type = m_markers[i].type;
+            g.firstIdx = i;
+            QVector<QPointF> pts;
+            pts.append(screenPos(m_markers[i].x, m_markers[i].z));
+            const bool firstDone = m_doneKeys.contains(
+                doneKey(m_markers[i].type, m_markers[i].x, m_markers[i].z));
+            bool allDone = firstDone;
+
+            // 单链接吸收：与组内任一成员够近的同类型标记并入
+            for (int j = i + 1; j < n; ++j)
+            {
+                if (used[j] || m_markers[j].type != g.type)
+                    continue;
+                const QPointF cj = screenPos(m_markers[j].x, m_markers[j].z);
+                bool near = false;
+                for (const QPointF &pk : pts)
+                {
+                    const double dx = cj.x() - pk.x();
+                    const double dy = cj.y() - pk.y();
+                    if (dx * dx + dy * dy < mergeDist2)
+                    {
+                        near = true;
+                        break;
+                    }
+                }
+                if (!near)
+                    continue;
+                used[j] = true;
+                pts.append(cj);
+                allDone = allDone
+                    && m_doneKeys.contains(doneKey(g.type, m_markers[j].x,
+                                                   m_markers[j].z));
+            }
+
+            double sx = 0, sy = 0;
+            for (const QPointF &q : pts)
+            {
+                sx += q.x();
+                sy += q.y();
+            }
+            g.center = QPointF(sx / double(pts.size()),
+                               sy / double(pts.size()));
+            g.count = pts.size();
+            g.allDone = allDone;
+            groups.append(g);
+        }
+        return groups;
+    }
+
     /** 结构标记：画在方块坐标上；缩到方块不可辨时只保留稀有结构 */
     void drawMarkers(QPainter &p)
     {
@@ -728,51 +836,60 @@ private:
             return;
         p.setRenderHint(QPainter::SmoothPixmapTransform, false);
         const bool tiny = blockScreenSize() < 0.5; // 方块太小：只画稀有结构
-        const double ox = double(m_minChunkX) * 16.0;
-        const double oz = double(m_minChunkZ) * 16.0;
         const auto &defs = StructureFinder::allStructures();
-        for (const Marker &m : m_markers)
+        const int half = kMarkerSize / 2 + kMarkerStroke;
+        for (const MarkerGroup &g : buildMarkerGroups())
         {
-            if (m.type < 0 || m.type >= defs.size())
+            if (g.type < 0 || g.type >= defs.size())
                 continue;
-            const auto &d = defs[m.type];
+            const auto &d = defs[g.type];
             if (tiny && !d.rare)
                 continue;
-            const QPointF c(m_offset.x() + (double(m.x) - ox) / m_bpp * m_scale,
-                            m_offset.y() + (double(m.z) - oz) / m_bpp * m_scale);
+            const QPointF &c = g.center;
             if (!QRectF(-40, -40, width() + 80, height() + 80).contains(c))
                 continue; // 视口外
-            // TEMP-DEBUG
-            {
-                static int s_dbg = 0;
-                if (s_dbg < 8)
-                {
-                    ++s_dbg;
-                    std::fprintf(stderr,
-                                 "[draw] #%d type=%d block=(%lld,%lld) c=(%.1f,%.1f) tiny=%d\n",
-                                 s_dbg, m.type, (long long)m.x, (long long)m.z,
-                                 c.x(), c.y(), int(tiny));
-                }
-            }
             const QPixmap pm = StructureIcons::pixmap(
-                m.type, QLatin1String(d.key),
+                g.type, QLatin1String(d.key),
                 QString(QChar::fromLatin1(d.displayName[0])),
                 QLatin1String(d.wikiTitle), QLatin1String(d.itemTitle),
                 QLatin1String(d.envSprite), kMarkerSize);
-            const int half = kMarkerSize / 2 + kMarkerStroke;
             const QRect bg(int(c.x()) - half, int(c.y()) - half,
                            half * 2, half * 2);
-            const bool done = m_doneKeys.contains(doneKey(m.type, m.x, m.z));
-            p.setOpacity(done ? 0.35 : 1.0);
+            p.setOpacity(g.allDone && g.count >= 1 ? 0.35 : 1.0);
             // 白色描边：比图标大一圈的白色圆角底，图标盖在上面
             p.setPen(Qt::NoPen);
             p.setBrush(Qt::white);
             p.drawRoundedRect(bg, 7, 7);
+            p.setBrush(Qt::NoBrush); // 不恢复的话 paintEvent 末尾的 drawRect 会填白整张画布
+            p.setPen(Qt::NoPen);
             p.drawPixmap(QPoint(int(c.x()) - pm.width() / 2,
                                 int(c.y()) - pm.height() / 2),
                          pm);
+
+            // 密集合并角标：×2 / ×3 … 贴在图标右上角
+            if (g.count >= 2)
+            {
+                QFont f = p.font();
+                f.setPixelSize(10);
+                f.setBold(true);
+                p.setFont(f);
+                const QString badge = QStringLiteral("×%1").arg(g.count);
+                const QFontMetrics fm(f);
+                const int padX = 4;
+                const int bw = fm.horizontalAdvance(badge) + padX * 2;
+                const int bh = fm.height() + 2;
+                const QRect br(bg.right() - bw + 4, bg.top() - bh + 4,
+                               bw, bh);
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(28, 30, 34, 230));
+                p.drawRoundedRect(br, bh / 2.0, bh / 2.0);
+                p.setPen(Qt::white);
+                p.drawText(br, Qt::AlignCenter, badge);
+            }
             p.setOpacity(1.0);
         }
+        p.setBrush(Qt::NoBrush);
+        p.setPen(Qt::NoPen);
     }
 
     /** 屏幕点命中的结构标记下标（未命中返回 -1；命中半径含白边） */
@@ -780,17 +897,12 @@ private:
     {
         if (m_markers.isEmpty() || !valid())
             return -1;
-        const double ox = double(m_minChunkX) * 16.0;
-        const double oz = double(m_minChunkZ) * 16.0;
         const double hit = (kMarkerSize / 2.0 + kMarkerStroke) + 3.0;
-        for (int i = 0; i < m_markers.size(); ++i)
+        for (const MarkerGroup &g : buildMarkerGroups())
         {
-            const Marker &m = m_markers[i];
-            const QPointF c(m_offset.x() + (double(m.x) - ox) / m_bpp * m_scale,
-                            m_offset.y() + (double(m.z) - oz) / m_bpp * m_scale);
-            if (std::abs(c.x() - pos.x()) <= hit
-                && std::abs(c.y() - pos.y()) <= hit)
-                return i;
+            if (std::abs(g.center.x() - pos.x()) <= hit
+                && std::abs(g.center.y() - pos.y()) <= hit)
+                return g.firstIdx;
         }
         return -1;
     }
@@ -1097,7 +1209,9 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     m_shadeCombo->setFixedHeight(26);
     m_shadeCombo->addItem(tr("地表方块"), int(WorldMapRenderer::ShadeMode::BlockColor));
     m_shadeCombo->addItem(tr("高度"), int(WorldMapRenderer::ShadeMode::Height));
-    m_shadeCombo->setToolTip(tr("着色：地表方块 = 按方块颜色；高度 = 按地表高低显示灰度"));
+    m_shadeCombo->addItem(tr("地形"), int(WorldMapRenderer::ShadeMode::Terrain));
+    m_shadeCombo->setToolTip(tr("着色：地表方块 = 按方块颜色；高度 = 按地表高低显示灰度；"
+                                "地形 = 按海拔分层设色并加山体阴影"));
     rgLay->addWidget(m_shadeCombo);
 
     // 高度：可编辑下拉 —— 框内既是输入框，也能下拉选预设 Y
@@ -1211,6 +1325,44 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     structLabel->setObjectName("worldMapToolLabel");
     bar2Lay->addWidget(structLabel);
 
+    // 种子预测开关放第二行行首：第一行已接近窄屏极限，再加控件会把
+    // 窗口最小宽度撑出探针断言的范围；第二行内容超出时本就走横向滚动
+    {
+        QSettings settings;
+        m_seedPreviewOn =
+            settings.value(QStringLiteral("worldMap/seedPreview"), true).toBool();
+    }
+    m_seedBtn = new QPushButton(tr("种子"), bar2);
+    m_seedBtn->setObjectName("worldMapSeedBtn");
+    m_seedBtn->setCheckable(true);
+    m_seedBtn->setChecked(m_seedPreviewOn);
+    m_seedBtn->setCursor(Qt::PointingHandCursor);
+    m_seedBtn->setToolTip(tr("种子预测：未生成的区域按世界种子渲染近似地形"
+                             "（仅供预览，实际地形以游戏为准）"));
+    bar2Lay->addWidget(m_seedBtn);
+    connect(m_seedBtn, &QPushButton::toggled,
+            this, &WorldMapPage::onSeedToggled);
+
+    // 按钮放进横向滚动容器：26+ 个按钮的行最小宽度不能把窗口撑大，
+    // 窄屏时横向滚动（滚轮经 eventFilter 转横滚）
+    m_structScroll = new QScrollArea(bar2);
+    m_structScroll->setObjectName(QStringLiteral("worldMapStructScroll"));
+    m_structScroll->setWidgetResizable(true);
+    m_structScroll->setFrameShape(QFrame::NoFrame);
+    m_structScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_structScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_structScroll->setFocusPolicy(Qt::NoFocus);
+    // widgetResizable 下 QScrollArea 会把内容最小宽传给布局 —— Ignored 解除，
+    // 窄屏才压得下去（内容靠横向滚动可达）
+    m_structScroll->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto *structInner = new QWidget(m_structScroll);
+    auto *structLay = new QHBoxLayout(structInner);
+    structLay->setContentsMargins(0, 0, 0, 0);
+    structLay->setSpacing(6);
+    m_structScroll->setWidget(structInner);
+    m_structScroll->viewport()->installEventFilter(this);
+    bar2Lay->addWidget(m_structScroll, 1);
+
     const auto &defs = StructureFinder::allStructures();
     m_structEnabled = QVector<bool>(defs.size(), true);
     m_structBtns.reserve(defs.size());
@@ -1223,14 +1375,24 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         b->setChecked(true);
         b->setFixedSize(30, 30);
         b->setCursor(Qt::PointingHandCursor);
-        b->setToolTip(QString::fromUtf8(d.displayName));
+        if (d.type == StructureFinder::kUnsupportedType)
+        {
+            // 生成结构表内、但当前无位置算法的条目：展示但禁用
+            b->setEnabled(false);
+            b->setToolTip(QStringLiteral("%1（暂不支持定位）")
+                              .arg(QString::fromUtf8(d.displayName)));
+        }
+        else
+        {
+            b->setToolTip(QString::fromUtf8(d.displayName));
+        }
         b->setIcon(StructureIcons::pixmap(
             i, QLatin1String(d.key),
             QString(QChar::fromLatin1(d.displayName[0])),
             QLatin1String(d.wikiTitle), QLatin1String(d.itemTitle),
             QLatin1String(d.envSprite), 18));
         b->setIconSize(QSize(18, 18));
-        bar2Lay->addWidget(b);
+        structLay->addWidget(b);
         m_structBtns.append(b);
 
         const int idx = i;
@@ -1241,7 +1403,7 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         });
     }
 
-    bar2Lay->addStretch(1);
+    structLay->addStretch(1); // 宽屏时按钮靠左，滚动容器吸收富余宽度
 
     auto *selectAll = new QPushButton(tr("全选"), bar2);
     selectAll->setObjectName("worldMapGroupBtn");
@@ -1330,8 +1492,9 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     m_pollTimer->setInterval(80);
     connect(m_pollTimer, &QTimer::timeout, this, &WorldMapPage::onPollProgress);
 
-    // 专用线程池：只跑渲染这一个外层任务，内部再按区域并行
-    m_renderPool.setMaxThreadCount(1);
+    // 专用线程池：概览跑 1 个外层任务（内部再按区域并行）；
+    // 细节瓦片最多同时 3 路，共用此池
+    m_renderPool.setMaxThreadCount(kMaxConcurrentTiles);
     // 结构查询独立成池：算标记时不会被大世界渲染堵住
     m_structPool.setMaxThreadCount(1);
 
@@ -1342,15 +1505,31 @@ WorldMapPage::WorldMapPage(QWidget *parent)
             m_view->update();
     });
 
-    // 1:1 细节瓦片：视口去抖调度 + 单块渲染结果回传
+    // 1:1 细节瓦片：视口去抖调度；渲染结果由各自 watcher 回传（见 onTileFinished）
     m_tileTimer = new QTimer(this);
     m_tileTimer->setSingleShot(true);
     m_tileTimer->setInterval(150);
     connect(m_tileTimer, &QTimer::timeout, this, &WorldMapPage::scheduleTiles);
 
-    m_tileWatcher = new QFutureWatcher<TileResult>(this);
-    connect(m_tileWatcher, &QFutureWatcherBase::finished,
-            this, &WorldMapPage::onTileFinished);
+    // 视野补洞心跳：即使 continueTiling 链路断了（在途计数卡住、
+    // 去抖被盖掉等），也会周期性按当前可见范围把缺的 region 补上，
+    // 保证"中心铺开后，视野左右/上下空隙最终都会渲到"
+    m_tileFillTimer = new QTimer(this);
+    m_tileFillTimer->setInterval(400);
+    connect(m_tileFillTimer, &QTimer::timeout, this, [this]() {
+        if (m_busy || !m_view || !m_view->hasImage())
+            return;
+        if (m_view->blockScreenSize() < kDetailMinBlockPx)
+            return;
+        scheduleTiles();
+    });
+
+    // 种子画布重定心去抖：视角离开当前窗口后停手片刻再以新中心重渲
+    m_seedRecenterTimer = new QTimer(this);
+    m_seedRecenterTimer->setSingleShot(true);
+    m_seedRecenterTimer->setInterval(600);
+    connect(m_seedRecenterTimer, &QTimer::timeout,
+            this, &WorldMapPage::onSeedRecenterTimeout);
 
     connect(m_dimCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &WorldMapPage::onDimensionChanged);
@@ -1389,6 +1568,7 @@ WorldMapPage::WorldMapPage(QWidget *parent)
             return;
         if (!m_busy)
             m_tileTimer->start();   // 细节瓦片：等概览渲染完再排
+        maybeScheduleSeedRecenter(); // 种子画布：视角离开窗口 → 去抖重定心
         startStructRefresh();       // 结构标记与渲染进度无关，立即重算（内部去重）
     };
 
@@ -1426,11 +1606,19 @@ void WorldMapPage::setCurrentSave(const QString &saveFolderPath, const QString &
     m_spawnZ = m_hasSpawn ? saveInfo->spawnZ : 0;
     m_view->setInitialCenter(m_spawnX, m_spawnZ, m_hasSpawn);
 
-    // 种子与版本 → 结构位置预测（cubiomes）
+    // 种子与版本 → 结构位置预测 + 未加载地形的种子预测（cubiomes）
     m_hasSeed = saveInfo.has_value() && saveInfo->hasSeed;
     m_seed = m_hasSeed ? quint64(saveInfo->seed) : 0;
     m_mcVersion = StructureFinder::versionToInt(
         saveInfo.has_value() ? saveInfo->versionName : QString());
+    if (m_seedBtn)
+    {
+        // 读不出种子或版本的存档没法预测，开关禁用并强制关闭
+        const bool usable = m_hasSeed && m_mcVersion != 0;
+        m_seedBtn->setEnabled(usable);
+        const QSignalBlocker blocker(m_seedBtn);
+        m_seedBtn->setChecked(usable && m_seedPreviewOn);
+    }
     loadStructDone(); // 上次存档的完成标记（弹窗半透明显示用）
     startStructRefresh();
 
@@ -1490,10 +1678,85 @@ void WorldMapPage::refresh()
 {
     if (m_savePath.isEmpty())
         return;
-    const int key = m_dimCombo->currentIndex() * 2 + m_shadeCombo->currentIndex();
-    m_cache.remove(key);
-    m_cacheOrder.removeAll(key);
+    m_cache.remove(renderCacheKey());
+    m_cacheOrder.removeAll(renderCacheKey());
     startRender();
+}
+
+WorldMapRenderer::SeedPreview WorldMapPage::buildSeedPreview() const
+{
+    WorldMapRenderer::SeedPreview sp;
+    sp.enabled = m_seedPreviewOn && m_hasSeed && m_mcVersion != 0
+        && m_seedBtn && m_seedBtn->isChecked();
+    sp.seed = m_seed;
+    sp.mc = m_mcVersion;
+    sp.padRegions = 3;
+    sp.radiusRegions = m_seedCanvasRadius;
+    // 中心 = 当前视角中心的 region（还没画布时退回出生点）——
+    // 画布跟着人走，视角中心向四周约 radius×512 格都有预测地形
+    sp.hasCenter = true;
+    if (m_view && m_view->hasImage())
+    {
+        const QPoint c = m_view->centerRegion();
+        sp.centerRegionX = c.x();
+        sp.centerRegionZ = c.y();
+    }
+    else
+    {
+        sp.centerRegionX = int(std::floor(double(m_spawnX) / 512.0));
+        sp.centerRegionZ = int(std::floor(double(m_spawnZ) / 512.0));
+    }
+    return sp;
+}
+
+void WorldMapPage::maybeScheduleSeedRecenter()
+{
+    if (!m_seedRecenterTimer || m_busy || !m_view || !m_view->hasImage()
+        || !m_seedCanvasCenterSet)
+        return;
+    if (!(m_seedPreviewOn && m_hasSeed && m_mcVersion != 0
+          && m_seedBtn && m_seedBtn->isChecked()))
+        return;
+    // 视角中心离开画布窗口（留 2 栈余量，避免贴边就重渲）→ 去抖后重定心
+    const QPoint c = m_view->centerRegion();
+    const int dist = std::max(std::abs(c.x() - m_seedCanvasCenter.x()),
+                              std::abs(c.y() - m_seedCanvasCenter.y()));
+    if (dist > m_seedCanvasRadius - 2)
+        m_seedRecenterTimer->start();
+}
+
+void WorldMapPage::onSeedRecenterTimeout()
+{
+    if (!m_view || !m_view->hasImage() || m_busy)
+        return;
+    // 去抖期间视角可能又回窗口内了，再确认一次
+    if (m_seedCanvasCenterSet)
+    {
+        const QPoint c = m_view->centerRegion();
+        const int dist = std::max(std::abs(c.x() - m_seedCanvasCenter.x()),
+                                  std::abs(c.y() - m_seedCanvasCenter.y()));
+        if (dist <= m_seedCanvasRadius - 2)
+            return;
+    }
+    // 记住当前视角中心，画布重建（几何变化会重置初始视图）后恢复
+    const QPoint centerBlock = m_view->centerBlock();
+    m_pendingRestoreBlock = centerBlock;
+    m_pendingRestoreBlockSet = true;
+    startRender(); // 新画布以视角中心为圆心；完成后 applyResult 恢复视口
+}
+
+int WorldMapPage::renderCacheKey() const
+{
+    // key 里编入高度限制与种子预测开关：不同 Y / 不同开关是不同的渲染结果；
+    // 种子开启时还要编入画布中心（同一设置在不同视角中心是不同画布）
+    const int dim = m_dimCombo ? m_dimCombo->currentIndex() : 0;
+    const int shade = m_shadeCombo ? m_shadeCombo->currentIndex() : 0;
+    const WorldMapRenderer::SeedPreview sp = buildSeedPreview();
+    int key = ((dim * 3 + shade) * 2 + (sp.enabled ? 1 : 0)) * 1000000
+        + (m_maxSurfaceY + 500000);
+    if (sp.enabled)
+        key = key * 31 + qHash(QPoint(sp.centerRegionX, sp.centerRegionZ));
+    return key;
 }
 
 void WorldMapPage::startRender()
@@ -1505,11 +1768,13 @@ void WorldMapPage::startRender()
         return;
     }
 
-    // key 里编入高度限制：同一维度/着色、不同 Y 是不同的渲染结果
-    const int key = (m_dimCombo->currentIndex() * 2 + m_shadeCombo->currentIndex())
-                        * 1000000
-                    + (m_maxSurfaceY + 500000);
+    const WorldMapRenderer::SeedPreview seedPrev = buildSeedPreview();
+    const int key = renderCacheKey();
     m_renderKey = key;
+    // 记下这张画布的种子中心，视角离开窗口时据此触发重定心
+    m_seedCanvasCenterSet = seedPrev.enabled;
+    if (seedPrev.enabled)
+        m_seedCanvasCenter = QPoint(seedPrev.centerRegionX, seedPrev.centerRegionZ);
 
     // 取消上一次渲染（job + sink 双通道），旧任务迟到的结果会被序号检查丢弃
     if (m_job)
@@ -1518,6 +1783,9 @@ void WorldMapPage::startRender()
         m_sink->cancel = true;
     m_sink.reset();
     m_layoutApplied = false;
+    // 旧概览还在跑时，细节瓦片调度停住；已发出的在途瓦片一并作废，
+    // 免得它们占着并发位，新画布就绪后左右两侧补不上
+    clearTileState(true);
 
     WorldMapRenderer::RenderResult cached;
     if (takeCached(key, &cached))
@@ -1555,7 +1823,7 @@ void WorldMapPage::startRender()
 
     // 区域之间并行解码；每完成一个就通过 sink 推给 UI 贴图，实现边渲染边显示
     auto future = QtConcurrent::run(&m_renderPool,
-        [path, dim, mode, job, sink, seq, maxSurfaceY]() {
+        [path, dim, mode, job, sink, seq, maxSurfaceY, seedPrev]() {
             WorldMapRenderer::RenderResult result = WorldMapRenderer::render(
                 path, dim, mode,
                 [job]() { return job->cancel.load(); },
@@ -1563,7 +1831,7 @@ void WorldMapPage::startRender()
                     job->done.store(done);
                     job->total.store(total);
                 },
-                sink, 0, maxSurfaceY);
+                sink, 0, maxSurfaceY, seedPrev);
             result.key = seq;
             return result;
         });
@@ -1773,6 +2041,13 @@ void WorldMapPage::applyLiveLayout()
     m_stack->setCurrentIndex(1);
     // 同布局的重新渲染（如切换着色方式）保留旧画面，新区域逐块覆盖
     m_view->setImageRef(&m_liveImage, minX, minZ, bpp, !sameCanvas);
+    if (m_pendingRestoreBlockSet)
+    {
+        // 种子画布重定心：渐进建画布时几何变化会重置视口，立即恢复视角中心，
+        // 避免渲染过程中视口先跳回出生点再跳回来
+        m_view->centerOnBlock(m_pendingRestoreBlock.x(),
+                              m_pendingRestoreBlock.y());
+    }
     m_layoutApplied = true;
     // 画布换了/着色变了：上一批 1:1 瓦片全部作废
     clearTileState(true);
@@ -1834,13 +2109,24 @@ void WorldMapPage::applyResult(const WorldMapRenderer::RenderResult &result)
     m_stack->setCurrentIndex(1);
     m_view->setImageRef(&m_liveImage, result.minChunkX, result.minChunkZ,
                         result.blockPerPixel, false);
-    if (!wasVisible)
+    if (m_pendingRestoreBlockSet)
+    {
+        // 种子画布重定心：几何变化会把视口重置到出生点，恢复成重渲前的视角中心
+        m_view->centerOnBlock(m_pendingRestoreBlock.x(),
+                              m_pendingRestoreBlock.y());
+        m_pendingRestoreBlockSet = false;
+    }
+    else if (!wasVisible)
+    {
         m_view->scheduleInitialView(); // 首次显示：等布局给出真实几何后设初始视图
+    }
 
     m_statSuffix = tr("区域 %1 · 已渲染 %2 · 每像素 %3 格")
                        .arg(result.regionCount)
                        .arg(result.renderedRegions)
                        .arg(result.blockPerPixel);
+    if (result.seedRegions > 0)
+        m_statSuffix += tr(" · 种子预测 %1").arg(result.seedRegions);
     if (result.failedRegions > 0)
         m_statSuffix += tr(" · 失败 %1").arg(result.failedRegions);
     if (result.elapsedMs > 0)
@@ -1852,6 +2138,8 @@ void WorldMapPage::applyResult(const WorldMapRenderer::RenderResult &result)
     clearTileState(true);
     if (m_tileTimer)
         m_tileTimer->start();
+    if (m_tileFillTimer && !m_busy)
+        m_tileFillTimer->start();
     startStructRefresh(); // 视口最终确定后重算结构标记
 }
 
@@ -1861,9 +2149,7 @@ namespace {
 /** 细节瓦片缓存上限：512×512×4B = 1MB/块，96 块 ≈ 96MB */
 constexpr int kMaxTiles = 96;
 /** 单轮最多排队的 region 数（渲染完成后再补，避免一次排满） */
-constexpr int kMaxTilePending = 12;
-/** 每方块低于此屏幕像素数时不加载细节 —— 方块太小，只看概览就够 */
-constexpr double kDetailMinBlockPx = 0.5;
+constexpr int kMaxTilePending = 24;
 /** 视口巨大时展开 region 的上限，防止遍历卡 UI */
 constexpr int kMaxRegionScan = 4096;
 
@@ -1884,10 +2170,24 @@ int parseSurfaceY(const QString &text)
 void WorldMapPage::clearTileState(bool clearViewTiles)
 {
     ++m_tileSeq; // 在途结果回来后按批次号丢弃
+
+    // 主动作废在途 watcher：断开回调并清空计数。
+    // 若只靠"结束后自己减回去"，旧任务在途时会占满并发位，
+    // 新一批（含视野左右两侧）一直发不出去 —— 表现为"中心铺完后边缘不再渲染"
+    for (QFutureWatcher<TileResult> *w : m_tileWatchers)
+    {
+        if (!w)
+            continue;
+        w->disconnect(this);
+        w->deleteLater();
+    }
+    m_tileWatchers.clear();
+    m_tileInFlightKeys.clear();
+    m_tileInFlight = 0;
+
     m_tilesPending.clear();
     m_tilesEmpty.clear();
     m_tileOrder.clear();
-    m_tileBusy = false;
     m_detailText.clear();
     if (clearViewTiles && m_view)
         m_view->clearTiles();
@@ -1915,7 +2215,11 @@ void WorldMapPage::scheduleTiles()
     if (m_view->blockScreenSize() < kDetailMinBlockPx)
         return; // 方块在屏幕上太小：概览足够，放大到能看清方块再补细节
 
-    const QRect range = m_view->visibleRegionRange();
+    QRect range = m_view->visibleRegionRange();
+    if (range.isNull() || range.width() <= 0 || range.height() <= 0)
+        return;
+    // 裁剪到画布覆盖的 region：画布外的瓦片画出来也没底图，白白浪费渲染
+    range &= m_view->imageRegionRange();
     if (range.isNull() || range.width() <= 0 || range.height() <= 0)
         return;
     const QPoint center = m_view->centerRegion();
@@ -1937,7 +2241,8 @@ void WorldMapPage::scheduleTiles()
         {
             const QPoint key(rx, rz);
             if (m_view->hasTile(key) || m_tilesPending.contains(key)
-                || m_tilesEmpty.contains(key))
+                || m_tilesEmpty.contains(key)
+                || m_tileInFlightKeys.contains(key))
                 continue;
             candidates.append(key);
         }
@@ -1975,62 +2280,102 @@ void WorldMapPage::scheduleTiles()
 
 void WorldMapPage::pumpTileQueue()
 {
-    if (m_tileBusy || m_tilesPending.isEmpty() || !m_view)
+    if (!m_view || m_tilesPending.isEmpty())
         return;
 
-    const QPoint center = m_view->centerRegion();
-    QPoint best;
-    bool found = false;
-    int bestChess = std::numeric_limits<int>::max();
-    int bestManh = std::numeric_limits<int>::max();
-    for (const QPoint &key : m_tilesPending)
+    while (m_tileInFlight < kMaxConcurrentTiles && !m_tilesPending.isEmpty())
     {
-        const int chess = std::max(std::abs(key.x() - center.x()),
-                                   std::abs(key.y() - center.y()));
-        const int manh = std::abs(key.x() - center.x())
-                       + std::abs(key.y() - center.y());
-        if (chess < bestChess || (chess == bestChess && manh < bestManh))
+        const QPoint center = m_view->centerRegion();
+        const auto chessOf = [&center](const QPoint &p) {
+            return std::max(std::abs(p.x() - center.x()),
+                            std::abs(p.y() - center.y()));
+        };
+
+        // 加载顺序仍是"由中心向外"：更近的环还在飞时，不放更远的进来并行，
+        // 否则邻居可能先渲完，顺序断言/观感都乱
+        int minInFlight = std::numeric_limits<int>::max();
+        for (const QPoint &k : m_tileInFlightKeys)
+            minInFlight = std::min(minInFlight, chessOf(k));
+        int minPending = std::numeric_limits<int>::max();
+        for (const QPoint &k : m_tilesPending)
+            minPending = std::min(minPending, chessOf(k));
+        if (minPending > minInFlight)
+            break;
+
+        // 只取当前最内圈（切比雪夫距离最小）的 region，同环可并行
+        QPoint best;
+        bool found = false;
+        int bestManh = std::numeric_limits<int>::max();
+        for (const QPoint &key : m_tilesPending)
         {
-            bestChess = chess;
-            bestManh = manh;
-            best = key;
-            found = true;
+            if (chessOf(key) != minPending)
+                continue;
+            const int manh = std::abs(key.x() - center.x())
+                           + std::abs(key.y() - center.y());
+            if (manh < bestManh)
+            {
+                bestManh = manh;
+                best = key;
+                found = true;
+            }
         }
+        if (!found)
+            return;
+
+        m_tilesPending.remove(best);
+
+        const QString path = m_savePath;
+        const auto dim = static_cast<WorldMapRenderer::Dimension>(
+            m_dimCombo ? m_dimCombo->currentIndex() : 0);
+        const auto mode = static_cast<WorldMapRenderer::ShadeMode>(
+            m_shadeCombo ? m_shadeCombo->currentIndex() : 0);
+        const int seq = m_tileSeq;
+        const QPoint key = best;
+        const int maxSurfaceY = m_maxSurfaceY;
+        const WorldMapRenderer::SeedPreview seedPrev = buildSeedPreview();
+
+        // 与概览共用专用线程池：概览跑着时这里会排队，不会抢 UI 的 CPU；
+        // 概览结束后最多 kMaxConcurrentTiles 路并行补细节
+        auto *watcher = new QFutureWatcher<TileResult>(this);
+        m_tileWatchers.append(watcher);
+        m_tileInFlightKeys.append(key);
+        ++m_tileInFlight;
+        connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher]() {
+            onTileFinished(watcher);
+        });
+        watcher->setFuture(QtConcurrent::run(&m_renderPool,
+            [path, dim, mode, key, seq, maxSurfaceY, seedPrev]() {
+                TileResult r;
+                r.key = key;
+                r.seq = seq;
+                r.image = WorldMapRenderer::renderRegionTile(
+                    path, dim, key.x(), key.y(), mode, maxSurfaceY, seedPrev);
+                return r;
+            }));
     }
-    if (!found)
-        return;
-
-    m_tilesPending.remove(best);
-    m_tileBusy = true;
-
-    const QString path = m_savePath;
-    const auto dim = static_cast<WorldMapRenderer::Dimension>(
-        m_dimCombo ? m_dimCombo->currentIndex() : 0);
-    const auto mode = static_cast<WorldMapRenderer::ShadeMode>(
-        m_shadeCombo ? m_shadeCombo->currentIndex() : 0);
-    const int seq = m_tileSeq;
-    const QPoint key = best;
-    const int maxSurfaceY = m_maxSurfaceY;
-
-    // 与概览共用专用线程池（串行）：概览跑着时这里会排队，不会抢 UI 的 CPU
-    m_tileWatcher->setFuture(QtConcurrent::run(&m_renderPool,
-        [path, dim, mode, key, seq, maxSurfaceY]() {
-            TileResult r;
-            r.key = key;
-            r.seq = seq;
-            r.image = WorldMapRenderer::renderRegionTile(
-                path, dim, key.x(), key.y(), mode, maxSurfaceY);
-            return r;
-        }));
 }
 
-void WorldMapPage::onTileFinished()
+void WorldMapPage::onTileFinished(QFutureWatcher<TileResult> *watcher)
 {
-    m_tileBusy = false;
-    if (!m_tileWatcher || !m_tileWatcher->isFinished())
+    if (!watcher || !watcher->isFinished())
         return;
 
-    const TileResult r = m_tileWatcher->result();
+    const int idx = m_tileWatchers.indexOf(watcher);
+    if (idx < 0)
+    {
+        // clearTileState 已作废的在途任务：不要再动 m_tileInFlight（可能已是新一批）
+        watcher->deleteLater();
+        return;
+    }
+    m_tileWatchers.removeAt(idx);
+    if (idx < m_tileInFlightKeys.size())
+        m_tileInFlightKeys.removeAt(idx);
+    if (m_tileInFlight > 0)
+        --m_tileInFlight;
+
+    const TileResult r = watcher->result();
+    watcher->deleteLater();
+
     if (r.seq != m_tileSeq)
     {
         // 换存档 / 换维度之前排队的：丢弃，新批次会重新调度
@@ -2080,6 +2425,14 @@ void WorldMapPage::setBusy(bool busy)
         m_refreshBtn->setEnabled(!busy);
     if (m_gotoBtn)
         m_gotoBtn->setEnabled(!busy);
+    // 概览结束后立刻开始"视野补洞"；渲染中停掉，避免和 m_busy 门闩打架
+    if (m_tileFillTimer)
+    {
+        if (busy || !m_view || !m_view->hasImage())
+            m_tileFillTimer->stop();
+        else
+            m_tileFillTimer->start();
+    }
 }
 
 void WorldMapPage::updateZoomLabel()
@@ -2344,6 +2697,25 @@ void WorldMapPage::showMapContextMenu(const QPoint &globalPos, qint64 blockX,
     menu->popup(globalPos);
 }
 
+bool WorldMapPage::eventFilter(QObject *watched, QEvent *event)
+{
+    // 结构条横向滚动：滚轮纵向转横滚（QScrollArea 纵向无行程时滚轮不生效）
+    if (event->type() == QEvent::Wheel && m_structScroll
+        && watched == m_structScroll->viewport())
+    {
+        const auto *wheel = static_cast<QWheelEvent *>(event);
+        const int delta = wheel->angleDelta().y() != 0 ? wheel->angleDelta().y()
+                                                       : wheel->angleDelta().x();
+        if (delta != 0)
+        {
+            QScrollBar *sb = m_structScroll->horizontalScrollBar();
+            sb->setValue(sb->value() - delta / 2);
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void WorldMapPage::keyPressEvent(QKeyEvent *event)
 {
     // 已有地图时才接管按键；否则交给父类（避免空白页吃掉全局键）
@@ -2492,6 +2864,15 @@ void WorldMapPage::onDimensionChanged(int)
 
 void WorldMapPage::onShadeChanged(int)
 {
+    startRender();
+}
+
+void WorldMapPage::onSeedToggled(bool on)
+{
+    m_seedPreviewOn = on;
+    QSettings settings;
+    settings.setValue(QStringLiteral("worldMap/seedPreview"), on);
+    // 开关影响渲染结果与缓存 key，直接重渲（同 key 有缓存则秒切）
     startRender();
 }
 

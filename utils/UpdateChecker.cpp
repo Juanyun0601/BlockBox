@@ -63,7 +63,7 @@ QUrl requestUrlFor(int attempt, const QString &url)
 // 支持的格式：
 //   正式版     X.Y.Z       -> {X, Y, Z}，非测试版
 //   测试版     X.Y.Z-betaN -> {X, Y, Z}，beta 第 N 期
-//   公测遗留   betaN       -> {0, 0, 0}，beta 第 N 期（当前发布的 beta2 即此格式）
+//   公测遗留   betaN       -> {0, 0, 0}，beta 第 N 期（当前发布的 beta3 即此格式）
 // 宽容处理：可带 v/V 前缀；beta 与数字间允许其他字符（如 beta.15）。
 
 struct SemanticVersion
@@ -187,15 +187,11 @@ QString psQuote(QString path)
     return path;
 }
 
-// 清理 Release 说明文本用于弹窗展示：统一换行并截断过长内容
+// 清理 Release 说明文本用于弹窗展示：统一换行（弹窗支持 Markdown 滚动，不再截断）
 QString normalizeNotes(const QString &notes)
 {
     QString text = notes;
     text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-    constexpr int kMaxNotesLength = 800;
-    if (text.size() > kMaxNotesLength) {
-        text = text.left(kMaxNotesLength) + QStringLiteral("\n…");
-    }
     return text.trimmed();
 }
 
@@ -504,8 +500,11 @@ void UpdateChecker::showUpdateDialog(const ReleaseCandidate &release)
     box.setIcon(AppMessageBox::Information);
     box.setWindowTitle(tr("发现新版本"));
     box.setText(text);
-    if (!notes.isEmpty())
-        box.setInformativeText(tr("更新说明：\n%1").arg(notes));
+    if (!notes.isEmpty()) {
+        // 更新日志按 Markdown 渲染，过长时可在弹窗内上下滚动查看全文
+        box.setInformativeMarkdown(QStringLiteral("## %1\n\n%2")
+                                       .arg(tr("更新说明"), notes));
+    }
 
     // 应用内更新可用时提供"更新"按钮：后台下载，进度显示在侧边栏圆形按钮上
     QPushButton *updateBtn = nullptr;
@@ -683,11 +682,69 @@ void UpdateChecker::installDownloadedUpdate()
                                    tr("更新包不存在或未下载完成，请重新检查更新。"));
         return;
     }
+    installPackageAtPath(m_parent, m_downloadPath);
+}
+
+bool UpdateChecker::isUpdatePackageFile(const QString &filePath)
+{
+    const QFileInfo fi(filePath);
+    if (!fi.exists() || !fi.isFile())
+        return false;
+
+    // 官方包名均为 BlockBox-<版本>-<平台>-…，要求含 blockbox 降低误装任意安装包的风险
+    const QString lower = fi.fileName().toLower();
+    if (!lower.contains(QStringLiteral("blockbox")))
+        return false;
+
+#if defined(Q_OS_WIN)
+    return lower.endsWith(QStringLiteral("-setup.exe"))
+        || lower.endsWith(QStringLiteral("setup.exe"))
+        || lower.endsWith(QStringLiteral("-portable.zip"))
+        || lower.endsWith(QStringLiteral("portable.zip"));
+#elif defined(Q_OS_ANDROID)
+    return lower.endsWith(QStringLiteral(".apk"));
+#elif defined(Q_OS_HARMONY)
+    return lower.endsWith(QStringLiteral(".hap"));
+#elif defined(Q_OS_LINUX)
+    return lower.endsWith(QStringLiteral(".deb"))
+        || lower.endsWith(QStringLiteral(".tar.gz"));
+#else
+    return false;
+#endif
+}
+
+void UpdateChecker::installExternalPackage(QWidget *parent, const QString &filePath)
+{
+    if (!isUpdatePackageFile(filePath)) {
+        if (parent)
+            AppMessageBox::warning(parent, tr("安装更新"),
+                                   tr("无法识别为方块盒子更新包：\n%1")
+                                       .arg(QDir::toNativeSeparators(filePath)));
+        return;
+    }
+    if (m_downloadState == DownloadRunning) {
+        if (parent)
+            AppMessageBox::information(parent, tr("安装更新"),
+                                       tr("正在下载更新，请等待下载完成后再试。"));
+        return;
+    }
+    installPackageAtPath(parent, QFileInfo(filePath).absoluteFilePath());
+}
+
+void UpdateChecker::installPackageAtPath(QWidget *parent, const QString &packagePath)
+{
+    if (!parent)
+        parent = m_parent ? static_cast<QWidget *>(m_parent)
+                          : QApplication::activeWindow();
+    if (!QFile::exists(packagePath)) {
+        if (parent)
+            AppMessageBox::warning(parent, tr("安装更新"),
+                                   tr("更新包不存在或未下载完成，请重新检查更新。"));
+        return;
+    }
 
 #if defined(Q_OS_ANDROID)
     // Android：确认后拉起系统安装器（不退出应用，由系统接管覆盖安装）
-    QWidget *parent = m_parent ? static_cast<QWidget *>(m_parent)
-                               : QApplication::activeWindow();
     if (parent) {
         const auto choice = AppMessageBox::question(
             parent, tr("安装更新"), tr("将打开系统安装器完成更新安装，确定继续吗？"),
@@ -695,15 +752,13 @@ void UpdateChecker::installDownloadedUpdate()
         if (choice != AppMessageBox::Yes)
             return;
     }
-    if (!AndroidBridge::installApk(m_downloadPath) && parent) {
+    if (!AndroidBridge::installApk(packagePath) && parent) {
         AppMessageBox::warning(parent, tr("安装更新"),
                                tr("无法打开系统安装器，请前往浏览器手动下载安装。"));
     }
 #elif defined(Q_OS_HARMONY)
     // 鸿蒙：确认后尝试通过系统包管理器安装 HAP（需 INSTALL_BUNDLE 权限），
     // 结果异步返回；无权限时由 onHarmonyInstallFinished 提供 hdc 命令兜底
-    QWidget *parent = m_parent ? static_cast<QWidget *>(m_parent)
-                               : QApplication::activeWindow();
     if (parent) {
         const auto choice = AppMessageBox::question(
             parent, tr("安装更新"), installConfirmText(),
@@ -711,10 +766,10 @@ void UpdateChecker::installDownloadedUpdate()
         if (choice != AppMessageBox::Yes)
             return;
     }
-    HarmonyBridge::instance()->installHap(m_downloadPath);
+    // 外部拖入的包不在下载目录，安装失败兜底对话框需要能读到该路径
+    m_downloadPath = packagePath;
+    HarmonyBridge::instance()->installHap(packagePath);
 #else
-    QWidget *parent = m_parent ? static_cast<QWidget *>(m_parent)
-                               : QApplication::activeWindow();
     if (parent) {
         const auto choice = AppMessageBox::question(
             parent, tr("安装更新"), installConfirmText(),
@@ -722,7 +777,7 @@ void UpdateChecker::installDownloadedUpdate()
         if (choice != AppMessageBox::Yes)
             return;
     }
-    if (launchDesktopUpdateInstaller(m_downloadPath))
+    if (launchDesktopUpdateInstaller(packagePath))
         QCoreApplication::quit();
     else if (parent)
         AppMessageBox::information(parent, tr("安装更新"),

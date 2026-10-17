@@ -7,8 +7,6 @@
 #include "PluginSafetyGuard.h"
 
 #include <QCheckBox>
-#include <QDialog>
-#include <QDialogButtonBox>
 #include <QFrame>
 #include <QLabel>
 #include <QPushButton>
@@ -17,7 +15,9 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "components/AppDialogBase.h"
 #include "components/AppMessageBox.h"
+#include "components/HighRiskConfirmDialog.h"
 #include "utils/ThemeManager.h"
 
 namespace PluginSafetyGuard {
@@ -233,58 +233,9 @@ QString buildMessage(const QString &pluginName, const QString &pluginAuthor,
 bool confirmHighRisk(QWidget *parent, const QString &title, const QString &message,
                      const QString &trustAction)
 {
-    const ThemeColors c = themeColors();
-    const QString themeHex = ThemeManager::instance()->currentThemeColor();
-
-    QDialog dlg(parent);
-    dlg.setWindowTitle(title);
-    dlg.setModal(true);
-    dlg.setMinimumWidth(500);
-
-    QVBoxLayout *layout = new QVBoxLayout(&dlg);
-    layout->setContentsMargins(24, 22, 24, 18);
-    layout->setSpacing(12);
-
-    QLabel *titleLabel = new QLabel(title, &dlg);
-    titleLabel->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 700; color: #e5484d;"));
-    layout->addWidget(titleLabel);
-
-    QLabel *msgLabel = new QLabel(message, &dlg);
-    msgLabel->setWordWrap(true);
-    msgLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    msgLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 13px;").arg(c.textMain));
-    layout->addWidget(msgLabel);
-
-    QCheckBox *confirmBox = new QCheckBox(
-        QObject::tr("我已了解风险，信任并允许该插件%1").arg(trustAction), &dlg);
-    confirmBox->setStyleSheet(QStringLiteral("color: #e5484d; font-size: 13px; font-weight: 600;"));
-    layout->addWidget(confirmBox);
-
-    QDialogButtonBox *buttons = new QDialogButtonBox(&dlg);
-    QPushButton *okBtn = buttons->addButton(
-        QObject::tr("信任并%1").arg(trustAction), QDialogButtonBox::AcceptRole);
-    QPushButton *cancelBtn = buttons->addButton(QObject::tr("拒绝"), QDialogButtonBox::RejectRole);
-    okBtn->setEnabled(false);   // 未勾选前不可执行
-    okBtn->setCursor(Qt::PointingHandCursor);
-    cancelBtn->setCursor(Qt::PointingHandCursor);
-
-    QObject::connect(confirmBox, &QCheckBox::toggled, okBtn, &QPushButton::setEnabled);
-    QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-    okBtn->setStyleSheet(QStringLiteral(
-        "QPushButton { background-color: %1; color: #ffffff; border: none; border-radius: 8px;"
-        " padding: 6px 18px; font-size: 13px; font-weight: 600; }"
-        "QPushButton:disabled { background-color: #c9c9c9; color: #f5f5f5; }").arg(themeHex));
-    cancelBtn->setStyleSheet(QStringLiteral(
-        "QPushButton { background-color: %1; color: %2; border: 1px solid %3; border-radius: 8px;"
-        " padding: 6px 18px; font-size: 13px; }").arg(c.cardBg, c.textMain, c.cardBorder));
-
-    dlg.setStyleSheet(QStringLiteral(
-        "QDialog { background-color: %1; border: 1px solid %2; border-radius: 12px; }")
-        .arg(c.cardBg, c.cardBorder));
-
-    return dlg.exec() == QDialog::Accepted;
+    HighRiskConfirmDialog dlg(title, message, trustAction, parent);
+    dlg.exec();
+    return dlg.confirmed();
 }
 
 } // namespace
@@ -549,21 +500,29 @@ bool confirmBatchInstall(QWidget *parent,
     const ThemeColors c = themeColors();
     const QString themeHex = ThemeManager::instance()->currentThemeColor();
 
-    QDialog dlg(parent);
+    AppDialogBase dlg(parent);
     dlg.setWindowTitle(QObject::tr("批量导入插件"));
-    dlg.setModal(true);
-    dlg.setMinimumWidth(560);
-    dlg.setMaximumWidth(640);
+    dlg.setObjectName(QStringLiteral("pluginImportDialog"));
 
     QVBoxLayout *mainLayout = new QVBoxLayout(&dlg);
-    mainLayout->setContentsMargins(24, 22, 24, 18);
-    mainLayout->setSpacing(14);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
+
+    // 居中卡片（内嵌弹窗样式：全屏暗色遮罩 + 圆角卡片）
+    QWidget *card = new QWidget(&dlg);
+    card->setObjectName(QStringLiteral("pluginImportCard"));
+    card->setMinimumWidth(560);
+    card->setMaximumWidth(640);
+
+    QVBoxLayout *cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(24, 22, 24, 18);
+    cardLayout->setSpacing(14);
 
     // 标题
     QLabel *titleLabel = new QLabel(
-        QObject::tr("批量导入 %1 个插件").arg(entries.size()), &dlg);
+        QObject::tr("批量导入 %1 个插件").arg(entries.size()), card);
     titleLabel->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 700; color: %1;").arg(c.title));
-    mainLayout->addWidget(titleLabel);
+    cardLayout->addWidget(titleLabel);
 
     // 说明
     QString descText;
@@ -572,13 +531,13 @@ bool confirmBatchInstall(QWidget *parent,
     } else {
         descText = QObject::tr("以下插件将被导入，点击「全部信任」一键导入。");
     }
-    QLabel *descLabel = new QLabel(descText, &dlg);
+    QLabel *descLabel = new QLabel(descText, card);
     descLabel->setWordWrap(true);
     descLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 13px;").arg(c.textSub));
-    mainLayout->addWidget(descLabel);
+    cardLayout->addWidget(descLabel);
 
     // 插件列表（滚动区域）
-    QScrollArea *scrollArea = new QScrollArea(&dlg);
+    QScrollArea *scrollArea = new QScrollArea(card);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     scrollArea->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; }"));
@@ -602,7 +561,7 @@ bool confirmBatchInstall(QWidget *parent,
         QHBoxLayout *row = new QHBoxLayout();
         row->setSpacing(10);
 
-        QCheckBox *cb = new QCheckBox(&dlg);
+        QCheckBox *cb = new QCheckBox(card);
         cb->setChecked(level != RiskHigh);  // 高风险默认不勾选
         cb->setMinimumWidth(20);
         row->addWidget(cb);
@@ -617,7 +576,7 @@ bool confirmBatchInstall(QWidget *parent,
         QHBoxLayout *topRow = new QHBoxLayout();
         topRow->setSpacing(8);
 
-        QLabel *nameLabel = new QLabel(e.name, &dlg);
+        QLabel *nameLabel = new QLabel(e.name, card);
         nameLabel->setStyleSheet(QStringLiteral("font-size: 13px; font-weight: 600; color: %1;").arg(c.title));
         topRow->addWidget(nameLabel);
 
@@ -630,7 +589,7 @@ bool confirmBatchInstall(QWidget *parent,
         else
             riskColor = QStringLiteral("#4caf50");
 
-        QLabel *riskBadge = new QLabel(levelDisplayName(level), &dlg);
+        QLabel *riskBadge = new QLabel(levelDisplayName(level), card);
         riskBadge->setStyleSheet(QStringLiteral(
             "font-size: 11px; font-weight: 600; color: %1; background: %1%2; "
             "border-radius: 4px; padding: 1px 6px;")
@@ -650,7 +609,7 @@ bool confirmBatchInstall(QWidget *parent,
             metaParts << QObject::tr("权限：%1").arg(e.permissions.join(QStringLiteral(", ")));
 
         if (!metaParts.isEmpty()) {
-            QLabel *metaLabel = new QLabel(metaParts.join(QStringLiteral("　")), &dlg);
+            QLabel *metaLabel = new QLabel(metaParts.join(QStringLiteral("　")), card);
             metaLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: %1;").arg(c.textSub));
             infoCol->addWidget(metaLabel);
         }
@@ -661,7 +620,7 @@ bool confirmBatchInstall(QWidget *parent,
             for (const RiskFinding &f : infos[i].findings)
                 findingStrs << f.detail;
             QLabel *findingsLabel = new QLabel(
-                QObject::tr("⚠ 检测到：%1").arg(findingStrs.join(QStringLiteral("、"))), &dlg);
+                QObject::tr("⚠ 检测到：%1").arg(findingStrs.join(QStringLiteral("、"))), card);
             findingsLabel->setWordWrap(true);
             findingsLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: #e5484d;"));
             infoCol->addWidget(findingsLabel);
@@ -673,7 +632,7 @@ bool confirmBatchInstall(QWidget *parent,
             for (const QString &p : infos[i].violations)
                 violStrs << permissionLabel(p);
             QLabel *violLabel = new QLabel(
-                QObject::tr("⚠ 未声明权限：%1").arg(violStrs.join(QStringLiteral("、"))), &dlg);
+                QObject::tr("⚠ 未声明权限：%1").arg(violStrs.join(QStringLiteral("、"))), card);
             violLabel->setWordWrap(true);
             violLabel->setStyleSheet(QStringLiteral("font-size: 11px; color: #e5484d; font-weight: 600;"));
             infoCol->addWidget(violLabel);
@@ -685,13 +644,13 @@ bool confirmBatchInstall(QWidget *parent,
 
     listLayout->addStretch();
     scrollArea->setWidget(listWidget);
-    mainLayout->addWidget(scrollArea);
+    cardLayout->addWidget(scrollArea);
 
     // 按钮区
     QHBoxLayout *btnLayout = new QHBoxLayout();
     btnLayout->addStretch();
 
-    QPushButton *cancelBtn = new QPushButton(QObject::tr("全部拒绝"), &dlg);
+    QPushButton *cancelBtn = new QPushButton(QObject::tr("全部拒绝"), card);
     cancelBtn->setCursor(Qt::PointingHandCursor);
     cancelBtn->setStyleSheet(QStringLiteral(
         "QPushButton { background-color: %1; color: %2; border: 1px solid %3; border-radius: 8px;"
@@ -699,7 +658,7 @@ bool confirmBatchInstall(QWidget *parent,
         "QPushButton:hover { background-color: %3; }").arg(c.cardBg, c.textMain, c.cardBorder));
     btnLayout->addWidget(cancelBtn);
 
-    QPushButton *trustAllBtn = new QPushButton(QObject::tr("全部信任"), &dlg);
+    QPushButton *trustAllBtn = new QPushButton(QObject::tr("全部信任"), card);
     trustAllBtn->setCursor(Qt::PointingHandCursor);
     trustAllBtn->setStyleSheet(QStringLiteral(
         "QPushButton { background-color: %1; color: #ffffff; border: none; border-radius: 8px;"
@@ -707,11 +666,13 @@ bool confirmBatchInstall(QWidget *parent,
         "QPushButton:hover { opacity: 0.9; }").arg(themeHex));
     btnLayout->addWidget(trustAllBtn);
 
-    mainLayout->addLayout(btnLayout);
+    cardLayout->addLayout(btnLayout);
 
-    dlg.setStyleSheet(QStringLiteral(
-        "QDialog { background-color: %1; border: 1px solid %2; border-radius: 12px; }")
-        .arg(c.cardBg, c.cardBorder));
+    card->setStyleSheet(QStringLiteral(
+        "QWidget#pluginImportCard { background-color: %1; border: 1px solid %2;"
+        " border-radius: 16px; }").arg(c.cardBg, c.cardBorder));
+
+    mainLayout->addWidget(card, 0, Qt::AlignCenter);
 
     // 连接按钮
     QObject::connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);

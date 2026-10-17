@@ -8,6 +8,7 @@
 #include <QUrl>
 
 #include "components/BlurLoadingOverlay.h"
+#include "components/WorldConvertDialog.h"
 #include "pages/settings/InstanceGameSettingsPage.h"
 #include "pages/InstanceModsPage.h"
 #include "pages/InstanceFilePage.h"
@@ -331,6 +332,19 @@ void InstanceManagePage::initUI()
             // 通知主窗口更新 TopBar 返回按钮与标题
             emit saveMapOpened();
         }
+    });
+
+    // 存档版本转换弹窗（由存档列表卡片「版本转化」按钮打开，Java ⇄ 基岩互转）
+    connect(m_savesPage, &InstanceFilePage::saveConvertRequested, this,
+            [this](const QString &saveName) {
+        if (m_currentInstancePath.isEmpty())
+            return;
+        const QString worldDir =
+            m_currentInstancePath + QStringLiteral("/saves/") + saveName;
+        auto *dlg = new WorldConvertDialog(worldDir, saveName,
+                                           m_currentInstancePath, window());
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->exec();
     });
 
     m_contentStack->setCurrentIndex(0);

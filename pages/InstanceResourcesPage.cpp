@@ -22,6 +22,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QEasingCurve>
 #include <QFile>
 #include <QFileInfo>
@@ -41,6 +42,8 @@
 #include <QSpacerItem>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace {
 /** 递归复制目录，用于存档粘贴 */
@@ -76,6 +79,19 @@ bool copyDir(const QString &srcPath, const QString &dstPath)
     }
     return true;
 }
+
+/** 递归统计目录总大小（存档等目录型资源用，供大小筛选/排序） */
+static qint64 dirTotalSize(const QString &path)
+{
+    qint64 total = 0;
+    QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext())
+    {
+        it.next();
+        total += it.fileInfo().size();
+    }
+    return total;
+}
 } // namespace
 
 InstanceResourcesPage::InstanceResourcesPage(QWidget *parent)
@@ -100,6 +116,10 @@ InstanceResourcesPage::InstanceResourcesPage(QWidget *parent)
     , m_categoryManager(nullptr)
     , m_categoryCombo(nullptr)
     , m_categoryManageBtn(nullptr)
+    , m_statusCombo(nullptr)
+    , m_timeCombo(nullptr)
+    , m_sizeCombo(nullptr)
+    , m_sortCombo(nullptr)
     , m_bottomBar(nullptr)
     , m_selectAllBtn(nullptr)
     , m_openFolderBtn(nullptr)
@@ -171,23 +191,32 @@ void InstanceResourcesPage::initUI()
 
     mainLayout->addWidget(m_tabBar);
 
-    // ---- 搜索/分类条：微透明玻璃态卡片 ----
+    // ---- 搜索/分类条：微透明玻璃态卡片（顶部最多两行）----
     QWidget *filterCard = new QWidget(this);
     filterCard->setObjectName("filterCard");
     QVBoxLayout *cardLayout = new QVBoxLayout(filterCard);
     cardLayout->setContentsMargins(14, 10, 14, 10);
     cardLayout->setSpacing(8);
 
+    auto makeFilterCombo = [this]() -> QComboBox * {
+        QComboBox *combo = new QComboBox(this);
+        combo->setObjectName("filterCombo");
+        combo->setFixedHeight(28);
+        combo->setMinimumWidth(80);   // 窄窗 406px：靠内容自适应，不锁 104
+        return combo;
+    };
+
+    // ---- 行1：搜索 + 分类 + 管理分类 ----
+    QHBoxLayout *categoryRow = new QHBoxLayout();
+    categoryRow->setSpacing(6);
+
     m_searchEdit = new QLineEdit(this);
     m_searchEdit->setObjectName("modSearchEdit");
     m_searchEdit->setPlaceholderText(tr("搜索模组名称..."));
     m_searchEdit->setFixedHeight(32);
     m_searchEdit->setClearButtonEnabled(true);
-    cardLayout->addWidget(m_searchEdit);
-
-    // ---- 分类筛选行（本地资源手动分类）----
-    QHBoxLayout *categoryRow = new QHBoxLayout();
-    categoryRow->setSpacing(6);
+    m_searchEdit->setMinimumWidth(100);
+    categoryRow->addWidget(m_searchEdit, 1);
 
     QLabel *categoryLabel = new QLabel(tr("分类:"), this);
     categoryLabel->setObjectName("filterLabel");
@@ -208,11 +237,49 @@ void InstanceResourcesPage::initUI()
     m_categoryManageBtn->setCursor(Qt::PointingHandCursor);
     categoryRow->addWidget(m_categoryManageBtn);
 
-    // ---- 统计行 ----
-    m_statsLabel = new QLabel(this);
-    m_statsLabel->setObjectName("statusLabel");
-    categoryRow->addWidget(m_statsLabel, 1);
     cardLayout->addLayout(categoryRow);
+
+    // ---- 行2：状态 / 时间 / 大小 / 排序（窄窗放不下标签，去标签靠 tooltip 说明）----
+    QHBoxLayout *filterRow = new QHBoxLayout();
+    filterRow->setSpacing(6);
+
+    m_statusCombo = makeFilterCombo();
+    m_statusCombo->setToolTip(tr("状态筛选"));
+    m_statusCombo->addItem(tr("全部"), 0);
+    m_statusCombo->addItem(tr("已启用"), 1);
+    m_statusCombo->addItem(tr("已禁用"), 2);
+    filterRow->addWidget(m_statusCombo);
+
+    m_timeCombo = makeFilterCombo();
+    m_timeCombo->setToolTip(tr("时间筛选"));
+    m_timeCombo->addItem(tr("全部时间"), 0);
+    m_timeCombo->addItem(tr("最近 7 天"), 1);
+    m_timeCombo->addItem(tr("最近 30 天"), 2);
+    m_timeCombo->addItem(tr("最近一年"), 3);
+    filterRow->addWidget(m_timeCombo);
+
+    m_sizeCombo = makeFilterCombo();
+    m_sizeCombo->setToolTip(tr("大小筛选"));
+    m_sizeCombo->addItem(tr("全部大小"), 0);
+    m_sizeCombo->addItem(tr("小于 10 MB"), 1);
+    m_sizeCombo->addItem(tr("10 ~ 100 MB"), 2);
+    m_sizeCombo->addItem(tr("大于 100 MB"), 3);
+    filterRow->addWidget(m_sizeCombo);
+
+    m_sortCombo = makeFilterCombo();
+    m_sortCombo->setObjectName("searchSortCombo");
+    m_sortCombo->setToolTip(tr("排序"));
+    m_sortCombo->addItem(tr("名称 A→Z"), 0);
+    m_sortCombo->addItem(tr("名称 Z→A"), 1);
+    m_sortCombo->addItem(tr("大小 大→小"), 2);
+    m_sortCombo->addItem(tr("大小 小→大"), 3);
+    m_sortCombo->addItem(tr("时间 新→旧"), 4);
+    m_sortCombo->addItem(tr("时间 旧→新"), 5);
+    filterRow->addWidget(m_sortCombo);
+
+    filterRow->addStretch();
+    cardLayout->addLayout(filterRow);
+
     mainLayout->addWidget(filterCard);
 
     // ---- 卡片滚动区域 ----
@@ -242,7 +309,9 @@ void InstanceResourcesPage::initUI()
 
     QHBoxLayout *bottomLayout = new QHBoxLayout(m_bottomBar);
     bottomLayout->setContentsMargins(4, 4, 4, 4);
-    bottomLayout->setSpacing(6);
+    // 实测底栏按钮（含图标）约 238px：spacing 2 时统计文字（三位数计数）
+    // 总宽约 432px，可完整放入 434px 的底栏宽度内
+    bottomLayout->setSpacing(2);
 
     QColor themeColor(ThemeManager::instance()->currentThemeColor());
 
@@ -273,6 +342,13 @@ void InstanceResourcesPage::initUI()
     bottomLayout->addWidget(m_openFolderBtn);
     bottomLayout->addWidget(m_pasteBtn);
     bottomLayout->addWidget(m_detailBtn);
+
+    // 统计标签从分类行移入底栏（顶部两行约束下 filterCard 放不下），
+    // 插在 stretch 之前，仅改摆放位置，统计刷新逻辑不变
+    m_statsLabel = new QLabel(this);
+    m_statsLabel->setObjectName("statusLabel");
+    m_statsLabel->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
+    bottomLayout->addWidget(m_statsLabel);
     bottomLayout->addStretch();
     mainLayout->addWidget(m_bottomBar);
 
@@ -293,6 +369,14 @@ void InstanceResourcesPage::setupConnections()
     connect(m_searchEdit, &QLineEdit::textChanged, this, &InstanceResourcesPage::onSearchTextChanged);
     connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &InstanceResourcesPage::onCategoryFilterChanged);
+    connect(m_statusCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &InstanceResourcesPage::onStatusFilterChanged);
+    connect(m_timeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &InstanceResourcesPage::onTimeFilterChanged);
+    connect(m_sizeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &InstanceResourcesPage::onSizeFilterChanged);
+    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &InstanceResourcesPage::onSortChanged);
     connect(m_categoryManageBtn, &QPushButton::clicked,
             this, &InstanceResourcesPage::onCategoryManageClicked);
     connect(m_categoryManager, &LocalCategoryManager::categoriesChanged,
@@ -461,8 +545,18 @@ void InstanceResourcesPage::onScanCompleted(const LocalModList &result)
     showLoading(false);
 
     m_modList = result.mods;
+    // 构建模组修改时间缓存（ModScanner 不提供 lastModified，供时间筛选/排序与「最近修改」智能项使用；
+    // 启用/禁用 rename 会触发 refreshList 重扫并自动重建）
+    m_mtimeCache.clear();
+    for (const ModInfo &m : m_modList)
+    {
+        m_mtimeCache.insert(m.filePath, QFileInfo(m.filePath).lastModified());
+    }
     clearCards();
     m_modIndexMap.clear();
+
+    // 按当前排序模式重排数据列表（卡片尚未创建，仅重排数据 + 重建索引映射）
+    applySortOrder();
 
     for (int i = 0; i < m_modList.size(); ++i)
     {
@@ -566,9 +660,9 @@ void InstanceResourcesPage::scanFiles()
     }
 
     // 根据类型选择扫描方式：
-    //  - 存档：扫描子目录
+    //  - 存档：扫描子目录（含 .disabled 禁用目录）
     //  - 截图：扫描图片文件
-    //  - 资源包/光影包：扫描 .zip 文件
+    //  - 资源包/光影包：扫描 .zip 文件（含 .zip.disabled 禁用文件）
     QFileInfoList entries;
     switch (m_currentType)
     {
@@ -583,7 +677,9 @@ void InstanceResourcesPage::scanFiles()
         break;
     case TypeResourcePack:
     case TypeShaderPack:
-        entries = dir.entryInfoList(QStringList() << QStringLiteral("*.zip"), QDir::Files, QDir::Name);
+        entries = dir.entryInfoList(QStringList() << QStringLiteral("*.zip")
+                                                  << QStringLiteral("*.zip.disabled"),
+                                    QDir::Files, QDir::Name);
         break;
     case TypeMods:
         // 模组走 ModScanner，不会进入此分支
@@ -595,11 +691,16 @@ void InstanceResourcesPage::scanFiles()
         FileEntry entry;
         entry.filePath = fi.absoluteFilePath();
         entry.fileName = fi.fileName();
-        entry.fileSize = fi.isDir() ? 0 : fi.size();
+        entry.enabled = !entry.fileName.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive);
+        // 目录型（存档）递归统计大小，供大小筛选/排序使用；空目录为 0
+        entry.fileSize = fi.isDir() ? dirTotalSize(fi.absoluteFilePath()) : fi.size();
         entry.lastModified = fi.lastModified();
         entry.isDir = fi.isDir();
         m_fileList.append(entry);
     }
+
+    // 按当前排序模式重排数据列表（卡片尚未创建，仅重排数据）
+    applySortOrder();
 
     m_isLoading = false;
     showLoading(false);
@@ -638,9 +739,9 @@ QWidget *InstanceResourcesPage::createModCard(const ModInfo &info)
     card->setProperty("modEnabled", info.enabled);
     card->setContextMenuPolicy(Qt::CustomContextMenu);
     card->installEventFilter(this);
-    int idx = m_cardWidgets.size();
-    connect(card, &QWidget::customContextMenuRequested, this, [this, idx](const QPoint &pos) {
-        onModContextMenu(pos, idx);
+    // 排序会重排 m_cardWidgets，索引须在触发时实时查询（不能创建时捕获）
+    connect(card, &QWidget::customContextMenuRequested, this, [this, card](const QPoint &pos) {
+        onModContextMenu(pos, m_cardWidgets.indexOf(card));
     });
 
     QHBoxLayout *cardLayout = new QHBoxLayout(card);
@@ -851,13 +952,18 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
     cardLayout->setContentsMargins(10, 8, 10, 8);
     cardLayout->setSpacing(10);
 
-    // 图标：根据类型从本地文件提取，失败回退到类型 SVG
+    // 图标：根据类型从本地文件提取，失败回退到类型 SVG（禁用项去掉 .disabled 后缀提取）
     QLabel *iconLabel = new QLabel(card);
     iconLabel->setObjectName("modCardIcon");
     iconLabel->setFixedSize(40, 40);
     iconLabel->setAlignment(Qt::AlignCenter);
     {
-        QString cacheKey = QString("rp_icon:%1").arg(entry.filePath);
+        QString iconPath = entry.filePath;
+        if (iconPath.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+        {
+            iconPath.chop(9);
+        }
+        QString cacheKey = QString("rp_icon:%1").arg(iconPath);
         QPixmap icon;
         if (!QPixmapCache::find(cacheKey, &icon))
         {
@@ -865,13 +971,13 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
             {
             case TypeResourcePack:
             case TypeShaderPack:
-                icon = ResourcesPage::extractResourcePackIcon(entry.filePath);
+                icon = ResourcesPage::extractResourcePackIcon(iconPath);
                 break;
             case TypeSave:
-                icon = ResourcesPage::extractSaveIcon(entry.filePath);
+                icon = ResourcesPage::extractSaveIcon(iconPath);
                 break;
             case TypeScreenshot:
-                icon = ResourcesPage::loadImageThumbnail(entry.filePath);
+                icon = ResourcesPage::loadImageThumbnail(iconPath);
                 break;
             case TypeMods:
                 // 不会进入此分支
@@ -908,7 +1014,13 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
     infoLayout->setSpacing(2);
     infoLayout->setContentsMargins(0, 0, 0, 0);
 
-    QLabel *nameLabel = new QLabel(entry.fileName, card);
+    // 文件名（禁用项去掉 .disabled 后缀显示，与 InstanceFilePage 一致）
+    QString displayName = entry.fileName;
+    if (displayName.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+    {
+        displayName.chop(9);
+    }
+    QLabel *nameLabel = new QLabel(displayName, card);
     nameLabel->setObjectName("cardNameLabel");
     nameLabel->setWordWrap(false);
     QFont nameFont = nameLabel->font();
@@ -942,6 +1054,16 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
         dateChip->setObjectName("modChip");
         chipsLayout->addWidget(dateChip);
     }
+    // 已禁用芯片（.disabled 后缀项）
+    if (!entry.enabled)
+    {
+        QLabel *disabledChip = new QLabel(tr("已禁用"), chipsWidget);
+        disabledChip->setObjectName("modChip");
+        disabledChip->setStyleSheet(QStringLiteral(
+            "background-color: #9E9E9E; color: white; "
+            "border-radius: 4px; padding: 1px 6px; font-size: 9pt;"));
+        chipsLayout->addWidget(disabledChip);
+    }
     // 分类标签（手动分类，默认隐藏，样式见 style.qss categoryChip="true"）
     QLabel *categoryChip = new QLabel(chipsWidget);
     categoryChip->setObjectName("modChip");
@@ -954,10 +1076,10 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
     cardLayout->addLayout(infoLayout, 1);
 
     // 右键菜单（设置分类/打开位置/复制路径等）
+    // 排序会重排 m_cardWidgets，索引须在触发时实时查询（不能创建时捕获）
     card->setContextMenuPolicy(Qt::CustomContextMenu);
-    int fileIdx = m_cardWidgets.size();
-    connect(card, &QWidget::customContextMenuRequested, this, [this, fileIdx](const QPoint &pos) {
-        showFileContextMenu(pos, fileIdx);
+    connect(card, &QWidget::customContextMenuRequested, this, [this, card](const QPoint &pos) {
+        showFileContextMenu(pos, m_cardWidgets.indexOf(card));
     });
 
     // 操作按钮
@@ -1202,6 +1324,18 @@ QString InstanceResourcesPage::selectedCardStyle() const
 void InstanceResourcesPage::applyFilterAndSearch()
 {
     int visibleCount = 0;
+    const QDateTime now = QDateTime::currentDateTime();
+    // 时间筛选截止点（0 = 不启用）
+    QDateTime timeCutoff;
+    if (m_timeFilter == 1)
+        timeCutoff = now.addDays(-7);
+    else if (m_timeFilter == 2)
+        timeCutoff = now.addDays(-30);
+    else if (m_timeFilter == 3)
+        timeCutoff = now.addDays(-365);
+
+    const qint64 k10MB = 10LL * 1024 * 1024;
+    const qint64 k100MB = 100LL * 1024 * 1024;
 
     for (int i = 0; i < m_cardWidgets.size(); ++i)
     {
@@ -1218,12 +1352,36 @@ void InstanceResourcesPage::applyFilterAndSearch()
                           || info.chineseName.toLower().contains(searchLower)
                           || info.englishName.toLower().contains(searchLower);
             }
-            // 分类筛选
+            // 状态筛选
+            if (visible && m_statusFilter == 1 && !info.enabled)
+                visible = false;
+            else if (visible && m_statusFilter == 2 && info.enabled)
+                visible = false;
+            // 时间筛选（模组无 lastModified，用扫描后构建的 mtime 缓存）
+            if (visible && timeCutoff.isValid()
+                && m_mtimeCache.value(info.filePath) < timeCutoff)
+                visible = false;
+            // 大小筛选
+            if (visible && m_sizeFilter > 0)
+            {
+                if (m_sizeFilter == 1 && info.fileSize >= k10MB)
+                    visible = false;
+                else if (m_sizeFilter == 2
+                         && (info.fileSize < k10MB || info.fileSize > k100MB))
+                    visible = false;
+                else if (m_sizeFilter == 3 && info.fileSize <= k100MB)
+                    visible = false;
+            }
+            // 分类筛选（手动分类 + 智能筛选哨兵值）
             if (visible && !m_currentCategoryId.isEmpty())
             {
                 const QString modCategory = m_categoryManager->categoryOf(info.fileName);
                 if (m_currentCategoryId == QStringLiteral("__uncategorized__"))
                     visible = modCategory.isEmpty();
+                else if (m_currentCategoryId == QStringLiteral("__recent__"))
+                    visible = m_mtimeCache.value(info.filePath) >= now.addDays(-7);
+                else if (m_currentCategoryId == QStringLiteral("__large__"))
+                    visible = info.fileSize > k100MB;
                 else
                     visible = (modCategory == m_currentCategoryId);
             }
@@ -1235,12 +1393,35 @@ void InstanceResourcesPage::applyFilterAndSearch()
             {
                 visible = entry.fileName.toLower().contains(m_currentSearch.toLower());
             }
-            // 分类筛选
+            // 状态筛选（截图等无禁用概念的类型恒为 enabled，筛选自然显示全部）
+            if (visible && m_statusFilter == 1 && !entry.enabled)
+                visible = false;
+            else if (visible && m_statusFilter == 2 && entry.enabled)
+                visible = false;
+            // 时间筛选
+            if (visible && timeCutoff.isValid() && entry.lastModified < timeCutoff)
+                visible = false;
+            // 大小筛选（存档为递归统计的目录大小）
+            if (visible && m_sizeFilter > 0)
+            {
+                if (m_sizeFilter == 1 && entry.fileSize >= k10MB)
+                    visible = false;
+                else if (m_sizeFilter == 2
+                         && (entry.fileSize < k10MB || entry.fileSize > k100MB))
+                    visible = false;
+                else if (m_sizeFilter == 3 && entry.fileSize <= k100MB)
+                    visible = false;
+            }
+            // 分类筛选（手动分类 + 智能筛选哨兵值）
             if (visible && !m_currentCategoryId.isEmpty())
             {
                 const QString entryCategory = m_categoryManager->categoryOf(entry.fileName);
                 if (m_currentCategoryId == QStringLiteral("__uncategorized__"))
                     visible = entryCategory.isEmpty();
+                else if (m_currentCategoryId == QStringLiteral("__recent__"))
+                    visible = entry.lastModified >= now.addDays(-7);
+                else if (m_currentCategoryId == QStringLiteral("__large__"))
+                    visible = entry.fileSize > k100MB;
                 else
                     visible = (entryCategory == m_currentCategoryId);
             }
@@ -1253,12 +1434,41 @@ void InstanceResourcesPage::applyFilterAndSearch()
         }
     }
 
-    // 若搜索后选中项被隐藏，保持选中索引不变（但隐藏样式无需变更）
-    Q_UNUSED(visibleCount);
+    // 筛选后无可见项且列表非空：显示空态提示并隐藏列表；恢复可见则清除
+    const int total = (m_currentType == TypeMods) ? m_modList.size() : m_fileList.size();
+    if (visibleCount == 0 && total > 0)
+    {
+        m_emptyLabel->setText(tr("没有符合筛选条件的%1").arg(typeDisplayName()));
+        m_emptyLabel->setVisible(true);
+        m_scrollArea->setVisible(false);
+    }
+    else if (total > 0)
+    {
+        m_emptyLabel->setVisible(false);
+        m_scrollArea->setVisible(true);
+    }
 }
 
 void InstanceResourcesPage::updateStatsLabel()
 {
+    const int total = (m_currentType == TypeMods) ? m_modList.size() : m_fileList.size();
+
+    // 新增筛选（状态/时间/大小）生效时显示筛选后的数量与总数
+    if (m_statusFilter != 0 || m_timeFilter != 0 || m_sizeFilter != 0)
+    {
+        int visibleCount = 0;
+        for (QWidget *w : m_cardWidgets)
+        {
+            if (w->isVisible())
+            {
+                ++visibleCount;
+            }
+        }
+        m_statsLabel->setText(tr("显示 %1 个%2 (共 %3 个)")
+                                  .arg(visibleCount).arg(typeDisplayName()).arg(total));
+        return;
+    }
+
     // 分类筛选生效时显示筛选后的数量
     if (!m_currentCategoryId.isEmpty())
     {
@@ -1297,6 +1507,118 @@ void InstanceResourcesPage::updateStatsLabel()
     else
     {
         m_statsLabel->setText(tr("共 %1 个%2").arg(m_fileList.size()).arg(typeDisplayName()));
+    }
+}
+
+/* 按当前排序模式重排当前数据列表与卡片（保持索引对齐），并刷新过滤/统计 */
+void InstanceResourcesPage::applySortOrder()
+{
+    const int mode = m_sortMode;
+    const bool isMods = (m_currentType == TypeMods);
+    const int count = isMods ? m_modList.size() : m_fileList.size();
+    if (count == 0)
+    {
+        return;
+    }
+
+    // 名称比较忽略 .disabled 后缀，禁用项与本体排在一起
+    auto displayName = [](const QString &name0) {
+        QString n = name0;
+        if (n.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+            n.chop(9);
+        return n;
+    };
+
+    QList<int> order(count);
+    for (int i = 0; i < count; ++i)
+    {
+        order[i] = i;
+    }
+    std::sort(order.begin(), order.end(), [mode, isMods, this, &displayName](int ia, int ib) {
+        if (isMods)
+        {
+            const ModInfo &a = m_modList.at(ia);
+            const ModInfo &b = m_modList.at(ib);
+            switch (mode)
+            {
+            case 1:  // 名称 Z→A
+                return QString::compare(displayName(a.fileName), displayName(b.fileName), Qt::CaseInsensitive) > 0;
+            case 2:  // 大小 大→小
+                return a.fileSize > b.fileSize;
+            case 3:  // 大小 小→大
+                return a.fileSize < b.fileSize;
+            case 4:  // 时间 新→旧
+                return m_mtimeCache.value(a.filePath) > m_mtimeCache.value(b.filePath);
+            case 5:  // 时间 旧→新
+                return m_mtimeCache.value(a.filePath) < m_mtimeCache.value(b.filePath);
+            default: // 名称 A→Z
+                return QString::compare(displayName(a.fileName), displayName(b.fileName), Qt::CaseInsensitive) < 0;
+            }
+        }
+        const FileEntry &a = m_fileList.at(ia);
+        const FileEntry &b = m_fileList.at(ib);
+        switch (mode)
+        {
+        case 1:  // 名称 Z→A
+            return QString::compare(displayName(a.fileName), displayName(b.fileName), Qt::CaseInsensitive) > 0;
+        case 2:  // 大小 大→小
+            return a.fileSize > b.fileSize;
+        case 3:  // 大小 小→大
+            return a.fileSize < b.fileSize;
+        case 4:  // 时间 新→旧
+            return a.lastModified > b.lastModified;
+        case 5:  // 时间 旧→新
+            return a.lastModified < b.lastModified;
+        default: // 名称 A→Z
+            return QString::compare(displayName(a.fileName), displayName(b.fileName), Qt::CaseInsensitive) < 0;
+        }
+    });
+
+    // 应用重排：数据列表 + （若有）索引映射
+    if (isMods)
+    {
+        QList<ModInfo> sortedMods;
+        sortedMods.reserve(count);
+        for (int idx : order)
+        {
+            sortedMods.append(m_modList.at(idx));
+        }
+        m_modList = sortedMods;
+
+        m_modIndexMap.clear();
+        for (int i = 0; i < m_modList.size(); ++i)
+        {
+            const ModInfo &info = m_modList.at(i);
+            m_modIndexMap.insert(info.id.isEmpty() ? info.fileName : info.id, i);
+        }
+    }
+    else
+    {
+        QList<FileEntry> sortedFiles;
+        sortedFiles.reserve(count);
+        for (int idx : order)
+        {
+            sortedFiles.append(m_fileList.at(idx));
+        }
+        m_fileList = sortedFiles;
+    }
+
+    // 同步重排卡片（扫描后建卡前 m_cardWidgets 为空，此时仅重排数据列表）
+    if (m_cardWidgets.size() == count)
+    {
+        QList<QWidget *> sortedCards;
+        sortedCards.reserve(count);
+        for (int idx : order)
+        {
+            sortedCards.append(m_cardWidgets.at(idx));
+        }
+        m_cardWidgets = sortedCards;
+
+        // 索引已变化，清除选中态避免错位
+        deselectAllCards();
+        placeCards();
+        applyFilterAndSearch();
+        updateStatsLabel();
     }
 }
 
@@ -1747,6 +2069,12 @@ void InstanceResourcesPage::reloadCategoryCombo()
     m_categoryCombo->blockSignals(true);
     m_categoryCombo->clear();
     m_categoryCombo->addItem(tr("全部"), QString());
+
+    // 智能筛选：由文件属性直接判定，无需手动归类（本页无更新检查，不加「可更新」）
+    m_categoryCombo->addItem(tr("最近修改"), QStringLiteral("__recent__"));
+    m_categoryCombo->addItem(tr("大文件"), QStringLiteral("__large__"));
+    m_categoryCombo->insertSeparator(m_categoryCombo->count());
+
     const QList<LocalResourceCategory> cats = m_categoryManager->categories();
     for (const LocalResourceCategory &c : cats)
     {
@@ -1781,6 +2109,54 @@ void InstanceResourcesPage::onCategoryFilterChanged(int index)
     m_currentCategoryId = m_categoryCombo->itemData(index).toString();
     applyFilterAndSearch();
     updateStatsLabel();
+}
+
+void InstanceResourcesPage::onStatusFilterChanged(int index)
+{
+    if (!m_statusCombo)
+    {
+        return;
+    }
+    m_statusFilter = m_statusCombo->itemData(index).toInt();
+    applyFilterAndSearch();
+    updateStatsLabel();
+}
+
+void InstanceResourcesPage::onTimeFilterChanged(int index)
+{
+    if (!m_timeCombo)
+    {
+        return;
+    }
+    m_timeFilter = m_timeCombo->itemData(index).toInt();
+    applyFilterAndSearch();
+    updateStatsLabel();
+}
+
+void InstanceResourcesPage::onSizeFilterChanged(int index)
+{
+    if (!m_sizeCombo)
+    {
+        return;
+    }
+    m_sizeFilter = m_sizeCombo->itemData(index).toInt();
+    applyFilterAndSearch();
+    updateStatsLabel();
+}
+
+void InstanceResourcesPage::onSortChanged(int index)
+{
+    if (!m_sortCombo)
+    {
+        return;
+    }
+    const int newMode = m_sortCombo->itemData(index).toInt();
+    if (newMode == m_sortMode)
+    {
+        return;
+    }
+    m_sortMode = newMode;
+    applySortOrder();
 }
 
 void InstanceResourcesPage::onCategoryManageClicked()

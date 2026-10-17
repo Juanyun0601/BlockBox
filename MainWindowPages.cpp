@@ -166,14 +166,10 @@ void MainWindow::initEssentialPages()
     });
     PerformanceMonitor::instance()->endMeasurement("Resources Page Initialization");
 
-    PerformanceMonitor::instance()->startMeasurement("Settings Page Initialization");
-    QScrollArea *scrollArea3 = new QScrollArea(this);
-    scrollArea3->setWidgetResizable(true);
-    auto *settingsPage = new SettingsPage(this);
-    scrollArea3->setWidget(settingsPage);
-    m_stackedWidget->addWidget(scrollArea3);
-    connect(settingsPage, &SettingsPage::downloadJavaRequested, this, &MainWindow::showJavaDownloadPage);
-    PerformanceMonitor::instance()->endMeasurement("Settings Page Initialization");
+    // 设置页改为首次进入时创建（见 initSettingsPage）：
+    // 其控件数量较多，启动阶段提前构造会白白拖慢启动
+    QWidget *placeholderSettings = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderSettings);
 
     QWidget *placeholderInstanceSelect = new QWidget(this);
     m_stackedWidget->addWidget(placeholderInstanceSelect);
@@ -388,6 +384,9 @@ void MainWindow::ensurePageInitialized(PageIndex pageIndex)
         break;
     case PageIndex::PluginPage:
         initPluginPage();
+        break;
+    case PageIndex::SettingsPage:
+        initSettingsPage();
         break;
     default:
         break;
@@ -737,6 +736,8 @@ void MainWindow::showModDownloadPage()
     if (m_modDownloadPage) {
         m_modDownloadPage->setCurrentInstancePath(m_currentInstancePath);
         m_modDownloadPage->loadInstances();
+        // 选中当前实例后重新拉取列表，保证版本/加载器筛选立即生效
+        m_modDownloadPage->loadInitialMods();
     }
     m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::ModDownloadPage));
 }
@@ -862,6 +863,7 @@ void MainWindow::initSearchPage()
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceSelectPage));
     });
     connect(m_searchPage, &SearchPage::navigateToSettings, this, [this](int tabIndex) {
+        ensurePageInitialized(PageIndex::SettingsPage);
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::SettingsPage));
         m_subNavPanel->showForParent(2);
         onSettingsNavItemClicked(tabIndex);
@@ -1006,6 +1008,7 @@ void MainWindow::initJavaDownloadPage()
     delete placeholder;
     connect(m_javaDownloadPage, &JavaDownloadPage::backToSettingsRequested, this, [this]()
     {
+        ensurePageInitialized(PageIndex::SettingsPage);
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::SettingsPage));
         setSideBarVisible(true);
         m_topBar->setTitle(tr("设置"));
@@ -1023,6 +1026,7 @@ void MainWindow::showJavaDownloadPage()
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, [this]()
     {
+        ensurePageInitialized(PageIndex::SettingsPage);
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::SettingsPage));
         setSideBarVisible(true);
         m_topBar->setTitle(tr("设置"));
@@ -1099,4 +1103,22 @@ void MainWindow::initPluginPage()
 
     m_pageInitialized[PageIndex::PluginPage] = true;
     PerformanceMonitor::instance()->endMeasurement("Plugin Page Initialization");
+}
+
+void MainWindow::initSettingsPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::SettingsPage]) { return; }
+    PerformanceMonitor::instance()->startMeasurement("Settings Page Initialization");
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::SettingsPage));
+    QScrollArea *scrollArea = new QScrollArea(this);
+    scrollArea->setWidgetResizable(true);
+    auto *settingsPage = new SettingsPage(this);
+    scrollArea->setWidget(settingsPage);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::SettingsPage), scrollArea);
+    delete placeholder;
+    connect(settingsPage, &SettingsPage::downloadJavaRequested, this, &MainWindow::showJavaDownloadPage);
+    m_pageInitialized[PageIndex::SettingsPage] = true;
+    PerformanceMonitor::instance()->endMeasurement("Settings Page Initialization");
 }

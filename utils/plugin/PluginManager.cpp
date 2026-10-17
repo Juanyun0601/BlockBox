@@ -114,8 +114,13 @@ void PluginManager::refresh()
     const QFileInfoList entries = dir.entryInfoList(QStringList() << kPluginSuffix,
                                                     QDir::Files | QDir::Readable,
                                                     QDir::Name);
-    for (const QFileInfo &fi : entries)
-        parsed.append(parsePluginFile(fi.absoluteFilePath()));
+    for (const QFileInfo &fi : entries) {
+        PluginInfo info = parsePluginFile(fi.absoluteFilePath());
+        // 投影方块编辑器已升级为启动器内置功能，历史遗留的插件包不再纳入插件管理
+        if (info.id == QLatin1String("projection_editor"))
+            continue;
+        parsed.append(info);
+    }
 
     m_plugins = parsed;
     emit pluginsChanged();

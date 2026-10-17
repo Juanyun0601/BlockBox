@@ -59,7 +59,9 @@ void SettingsPage::initGlobalGameSettings()
 
     javaPathCombo->addItem(tr("自动选择合适的Java"), "auto");
 
-    QList<GameLauncher::JavaInfo> javaList = GameLauncher::instance()->findAllJavaInstallations();
+    // 只填充已保存的 Java 缓存；完整扫描（java -version + 磁盘扫描）耗时可达数十秒，
+    // 放在构造期会严重拖慢启动，需要重新检测时由「刷新列表」按钮触发
+    QList<GameLauncher::JavaInfo> javaList = GameLauncher::instance()->cachedJavaInstallations();
     for (const GameLauncher::JavaInfo& javaInfo : javaList) {
         javaPathCombo->addItem(tr("Java %1 (%2)").arg(javaInfo.version).arg(javaInfo.path), javaInfo.path);
     }
@@ -72,6 +74,23 @@ void SettingsPage::initGlobalGameSettings()
         javaPathCombo->setCurrentIndex(savedIndex);
     } else {
         javaPathCombo->setCurrentIndex(0);
+    }
+
+    // 本地还没有 Java 缓存时，在后台补扫一次并回填下拉框：
+    // 扫描会启动 java -version 进程、耗时可达数十秒，放到线程池执行不阻塞界面
+    if (javaList.isEmpty()) {
+        GameLauncher::instance()->scanJavaInBackground(this,
+            [this, javaPathCombo, savedJavaPath](const QList<GameLauncher::JavaInfo>& scanned) {
+            while (javaPathCombo->count() > 1) {
+                javaPathCombo->removeItem(1);
+            }
+            for (const GameLauncher::JavaInfo& javaInfo : scanned) {
+                javaPathCombo->addItem(tr("Java %1 (%2)").arg(javaInfo.version).arg(javaInfo.path),
+                                       javaInfo.path);
+            }
+            const int index = javaPathCombo->findData(savedJavaPath);
+            javaPathCombo->setCurrentIndex(index != -1 ? index : 0);
+        });
     }
 
     QPushButton *javaBrowseBtn = new QPushButton(tr("浏览"));

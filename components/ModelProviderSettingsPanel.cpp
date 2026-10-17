@@ -27,6 +27,7 @@
 
 #include "components/AppMessageBox.h"
 #include "components/NotificationManager.h"
+#include "utils/AiProviderPresets.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/StyleKit.h"
@@ -148,30 +149,16 @@ bool ModelProviderSettingsPanel::eventFilter(QObject *obj, QEvent *event)
 
 QList<ModelProviderSettingsPanel::PresetInfo> ModelProviderSettingsPanel::presetProviders()
 {
-    return {
-        {QStringLiteral("DeepSeek"), tr("DeepSeek"), QStringLiteral("https://api.deepseek.com/v1"), QStringLiteral("ai/provider_deepseek")},
-        {QStringLiteral("OpenAI"), tr("OpenAI"), QStringLiteral("https://api.openai.com/v1"), QStringLiteral("ai/provider_openai")},
-        {QStringLiteral("Anthropic"), tr("Anthropic"), QStringLiteral("https://api.anthropic.com"), QStringLiteral("ai/provider_anthropic")},
-        {QStringLiteral("Gemini"), tr("Google Gemini"), QStringLiteral("https://generativelanguage.googleapis.com/v1"), QStringLiteral("ai/provider_gemini")},
-        {QStringLiteral("OpenRouter"), tr("OpenRouter"), QStringLiteral("https://openrouter.ai/api/v1"), QStringLiteral("ai/provider_openrouter")},
-        {QStringLiteral("GLM"), tr("智谱 GLM"), QStringLiteral("https://open.bigmodel.cn/api/paas/v4"), QStringLiteral("ai/provider_glm")},
-        {QStringLiteral("Qwen"), tr("通义千问"), QStringLiteral("https://dashscope.aliyuncs.com/compatible-mode/v1"), QStringLiteral("ai/provider_qwen")},
-        {QStringLiteral("ERNIE"), tr("文心一言"), QStringLiteral("https://aip.baidubce.com"), QStringLiteral("ai/provider_ernie")},
-    };
+    QList<PresetInfo> out;
+    for (const AiProviderPreset &p : aiProviderPresets())
+        out.append({p.key, p.name, p.defaultUrl, p.configKey});
+    return out;
 }
 
 QString ModelProviderSettingsPanel::presetUrlHint(const QString &key)
 {
     // 与预设模型清单（:/resources/ai_models.json）匹配的 URL 子串
-    if (key == QLatin1String("OpenAI")) return QStringLiteral("openai.com");
-    if (key == QLatin1String("DeepSeek")) return QStringLiteral("deepseek.com");
-    if (key == QLatin1String("Anthropic")) return QStringLiteral("anthropic.com");
-    if (key == QLatin1String("Gemini")) return QStringLiteral("googleapis.com");
-    if (key == QLatin1String("OpenRouter")) return QStringLiteral("openrouter.ai");
-    if (key == QLatin1String("GLM")) return QStringLiteral("bigmodel.cn");
-    if (key == QLatin1String("Qwen")) return QStringLiteral("dashscope.aliyuncs");
-    if (key == QLatin1String("ERNIE")) return QStringLiteral("baidubce.com");
-    return QString();
+    return aiProviderPresetByKey(key).urlHint;
 }
 
 // ============================================================================

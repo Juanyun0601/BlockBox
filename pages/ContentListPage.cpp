@@ -13,6 +13,7 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -25,12 +26,30 @@
 #include <QUrl>
 #include <QtConcurrent>
 
+namespace {
+// 递归统计目录总大小（世界等目录型资源用，供大小筛选/排序）
+qint64 dirTotalSize(const QString &path)
+{
+    qint64 total = 0;
+    QDirIterator it(path, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext())
+    {
+        it.next();
+        total += it.fileInfo().size();
+    }
+    return total;
+}
+} // namespace
+
 ContentListPage::ContentListPage(ContentType contentType, QWidget *parent)
     : QWidget(parent)
     , m_contentType(contentType)
     , m_config(ContentTypeConfig::getConfig(contentType))
     , m_instanceCombo(nullptr)
     , m_filterCombo(nullptr)
+    , m_timeCombo(nullptr)
+    , m_sizeCombo(nullptr)
+    , m_sortCombo(nullptr)
     , m_categoryManager(nullptr)
     , m_categoryCombo(nullptr)
     , m_categoryManageBtn(nullptr)
@@ -45,6 +64,9 @@ ContentListPage::ContentListPage(ContentType contentType, QWidget *parent)
     , m_loadingOverlay(nullptr)
     , m_emptyLabel(nullptr)
     , m_currentFilter(FilterAll)
+    , m_timeFilter(0)
+    , m_sizeFilter(0)
+    , m_sortMode(0)
     , m_isLoading(false)
 {
     m_categoryManager = new LocalCategoryManager(this);
@@ -64,25 +86,41 @@ void ContentListPage::initUI()
     mainLayout->setContentsMargins(20, 10, 20, 10);
     mainLayout->setSpacing(10);
 
-    // Top bar
+    // ---- 行1：实例选择 + 刷新 + 搜索 + 视图切换 + 分类 ----
     QHBoxLayout *topBar = new QHBoxLayout();
+    topBar->setSpacing(8);
     QLabel *instLabel = new QLabel(tr("实例:"));
     instLabel->setObjectName("filterLabel");
     m_instanceCombo = new QComboBox();
     m_instanceCombo->setObjectName("instanceCombo");
     m_instanceCombo->setFixedHeight(32);
     m_instanceCombo->setMinimumWidth(200);
-    QLabel *filterLabel = new QLabel(tr("筛选:"));
-    filterLabel->setObjectName("filterLabel");
-    m_filterCombo = new QComboBox();
-    m_filterCombo->setObjectName("filterCombo");
-    m_filterCombo->setFixedHeight(32);
-    m_filterCombo->addItem(tr("全部"), FilterAll);
-    m_filterCombo->addItem(tr("已启用"), FilterEnabled);
-    m_filterCombo->addItem(tr("已禁用"), FilterDisabled);
+    topBar->addWidget(instLabel);
+    topBar->addWidget(m_instanceCombo);
+
+    m_refreshBtn = new QPushButton(tr("刷新"));
+    m_refreshBtn->setObjectName("bottomActionBtn");
+    m_refreshBtn->setFixedHeight(32);
+    topBar->addWidget(m_refreshBtn);
+
+    // 搜索（按名称过滤）
+    m_searchEdit = new QLineEdit();
+    m_searchEdit->setObjectName("modSearchEdit");
+    m_searchEdit->setPlaceholderText(tr("搜索名称..."));
+    m_searchEdit->setFixedHeight(32);
+    m_searchEdit->setClearButtonEnabled(true);
+    topBar->addWidget(m_searchEdit, 1);
+
+    // 视图切换（列表式 / 瀑布流），偏好按内容类型持久化
+    m_viewSwitch = new ContentViewSwitch(this);
+    m_viewSwitch->setViewMode(ContentViewSwitch::loadPersisted(viewPrefKey(), ContentViewSwitch::List));
+    m_viewMode = static_cast<int>(m_viewSwitch->viewMode());
+    topBar->addWidget(m_viewSwitch);
+
     // 分类筛选（本地资源手动分类）
     QLabel *categoryLabel = new QLabel(tr("分类:"));
     categoryLabel->setObjectName("filterLabel");
+    topBar->addWidget(categoryLabel);
     m_categoryCombo = new QComboBox();
     m_categoryCombo->setObjectName("categoryCombo");
     m_categoryCombo->setFixedHeight(32);
@@ -90,32 +128,76 @@ void ContentListPage::initUI()
     m_categoryCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     m_categoryCombo->setMinimumContentsLength(5);
     reloadCategoryCombo();
+    topBar->addWidget(m_categoryCombo);
+
     m_categoryManageBtn = new QPushButton(tr("管理分类"));
     m_categoryManageBtn->setObjectName("categoryManageBtn");
     m_categoryManageBtn->setFixedHeight(32);
     m_categoryManageBtn->setCursor(Qt::PointingHandCursor);
-    m_refreshBtn = new QPushButton(tr("刷新"));
-    m_refreshBtn->setObjectName("bottomActionBtn");
-    m_refreshBtn->setFixedHeight(32);
+    topBar->addWidget(m_categoryManageBtn);
+    mainLayout->addLayout(topBar);
+
+    // ---- 行2：状态 / 时间 / 大小 / 排序 + 统计 ----
+    QHBoxLayout *filterRow = new QHBoxLayout();
+    filterRow->setSpacing(6);
+
+    QLabel *filterLabel = new QLabel(tr("筛选:"));
+    filterLabel->setObjectName("filterLabel");
+    filterRow->addWidget(filterLabel);
+    m_filterCombo = new QComboBox();
+    m_filterCombo->setObjectName("filterCombo");
+    m_filterCombo->setFixedHeight(32);
+    m_filterCombo->addItem(tr("全部"), FilterAll);
+    m_filterCombo->addItem(tr("已启用"), FilterEnabled);
+    m_filterCombo->addItem(tr("已禁用"), FilterDisabled);
+    filterRow->addWidget(m_filterCombo);
+
+    auto makeFilterLabel = [this](const QString &text) -> QLabel* {
+        QLabel *label = new QLabel(text, this);
+        label->setObjectName("filterLabel");
+        return label;
+    };
+    auto makeFilterCombo = [this]() -> QComboBox* {
+        QComboBox *combo = new QComboBox(this);
+        combo->setObjectName("filterCombo");
+        combo->setFixedHeight(32);
+        combo->setMinimumWidth(104);
+        return combo;
+    };
+
+    filterRow->addWidget(makeFilterLabel(tr("时间:")));
+    m_timeCombo = makeFilterCombo();
+    m_timeCombo->addItem(tr("全部时间"), 0);
+    m_timeCombo->addItem(tr("最近 7 天"), 1);
+    m_timeCombo->addItem(tr("最近 30 天"), 2);
+    m_timeCombo->addItem(tr("最近一年"), 3);
+    filterRow->addWidget(m_timeCombo);
+
+    filterRow->addWidget(makeFilterLabel(tr("大小:")));
+    m_sizeCombo = makeFilterCombo();
+    m_sizeCombo->addItem(tr("全部大小"), 0);
+    m_sizeCombo->addItem(tr("小于 10 MB"), 1);
+    m_sizeCombo->addItem(tr("10 ~ 100 MB"), 2);
+    m_sizeCombo->addItem(tr("大于 100 MB"), 3);
+    filterRow->addWidget(m_sizeCombo);
+
+    filterRow->addWidget(makeFilterLabel(tr("排序:")));
+    m_sortCombo = makeFilterCombo();
+    m_sortCombo->setObjectName("searchSortCombo");
+    m_sortCombo->addItem(tr("名称 A→Z"), 0);
+    m_sortCombo->addItem(tr("名称 Z→A"), 1);
+    m_sortCombo->addItem(tr("大小 大→小"), 2);
+    m_sortCombo->addItem(tr("大小 小→大"), 3);
+    m_sortCombo->addItem(tr("时间 新→旧"), 4);
+    m_sortCombo->addItem(tr("时间 旧→新"), 5);
+    filterRow->addWidget(m_sortCombo);
+
+    filterRow->addStretch();
+
     m_statsLabel = new QLabel();
     m_statsLabel->setObjectName("statusLabel");
-    topBar->addWidget(instLabel);
-    topBar->addWidget(m_instanceCombo);
-    topBar->addWidget(filterLabel);
-    topBar->addWidget(m_filterCombo);
-    topBar->addWidget(categoryLabel);
-    topBar->addWidget(m_categoryCombo);
-    topBar->addWidget(m_categoryManageBtn);
-    topBar->addWidget(m_refreshBtn);
-    topBar->addWidget(m_statsLabel);
-
-    // 视图切换（列表式 / 瀑布流），偏好按内容类型持久化
-    m_viewSwitch = new ContentViewSwitch(this);
-    m_viewSwitch->setViewMode(ContentViewSwitch::loadPersisted(viewPrefKey(), ContentViewSwitch::List));
-    m_viewMode = static_cast<int>(m_viewSwitch->viewMode());
-    topBar->addWidget(m_viewSwitch);
-    topBar->addStretch();
-    mainLayout->addLayout(topBar);
+    filterRow->addWidget(m_statsLabel);
+    mainLayout->addLayout(filterRow);
 
     // Scroll area
     m_scrollArea = new QScrollArea();
@@ -154,6 +236,12 @@ void ContentListPage::setupConnections()
             this, &ContentListPage::onInstanceChanged);
     connect(m_filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ContentListPage::onFilterChanged);
+    connect(m_timeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ContentListPage::onTimeFilterChanged);
+    connect(m_sizeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ContentListPage::onSizeFilterChanged);
+    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &ContentListPage::onSortChanged);
     connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &ContentListPage::onCategoryFilterChanged);
     connect(m_categoryManageBtn, &QPushButton::clicked,
@@ -163,6 +251,8 @@ void ContentListPage::setupConnections()
     connect(m_categoryManager, &LocalCategoryManager::assignmentsChanged,
             this, &ContentListPage::onAssignmentsChanged);
     connect(m_refreshBtn, &QPushButton::clicked, this, &ContentListPage::onRefreshClicked);
+    connect(m_searchEdit, &QLineEdit::textChanged,
+            this, &ContentListPage::onSearchTextChanged);
     connect(m_viewSwitch, &ContentViewSwitch::viewModeChanged,
             this, &ContentListPage::onViewModeChanged);
 }
@@ -196,11 +286,78 @@ void ContentListPage::onRefreshClicked()
     refreshContentList();
 }
 
+void ContentListPage::onSearchTextChanged(const QString &text)
+{
+    m_searchText = text.trimmed();
+    applyFilter();
+}
+
 void ContentListPage::onFilterChanged(int index)
 {
     Q_UNUSED(index);
     m_currentFilter = m_filterCombo->currentData().toInt();
     applyFilter();
+}
+
+void ContentListPage::onTimeFilterChanged(int index)
+{
+    if (!m_timeCombo)
+        return;
+    m_timeFilter = m_timeCombo->itemData(index).toInt();
+    applyFilter();
+}
+
+void ContentListPage::onSizeFilterChanged(int index)
+{
+    if (!m_sizeCombo)
+        return;
+    m_sizeFilter = m_sizeCombo->itemData(index).toInt();
+    applyFilter();
+}
+
+void ContentListPage::onSortChanged(int index)
+{
+    if (!m_sortCombo)
+        return;
+    const int newMode = m_sortCombo->itemData(index).toInt();
+    if (newMode == m_sortMode)
+        return;
+    m_sortMode = newMode;
+    sortFileList();
+    // 卡片与列表按索引一一对应，重排后须整体重建
+    if (!m_modList.mods.isEmpty())
+        rebuildCards();
+}
+
+/* 按当前排序模式重排 m_modList.mods（计数字段为标量，不受排序影响） */
+void ContentListPage::sortFileList()
+{
+    const int mode = m_sortMode;
+    // 名称比较忽略 .disabled 后缀，禁用项与本体排在一起
+    auto displayName = [](const ModInfo &m) {
+        QString n = m.fileName;
+        if (n.endsWith(".disabled", Qt::CaseInsensitive))
+            n.chop(9);
+        return n;
+    };
+    std::sort(m_modList.mods.begin(), m_modList.mods.end(),
+              [mode, &displayName](const ModInfo &a, const ModInfo &b) {
+        switch (mode)
+        {
+        case 1:  // 名称 Z→A
+            return QString::compare(displayName(a), displayName(b), Qt::CaseInsensitive) > 0;
+        case 2:  // 大小 大→小
+            return a.fileSize > b.fileSize;
+        case 3:  // 大小 小→大
+            return a.fileSize < b.fileSize;
+        case 4:  // 时间 新→旧
+            return a.dateModified > b.dateModified;
+        case 5:  // 时间 旧→新
+            return a.dateModified < b.dateModified;
+        default: // 名称 A→Z
+            return QString::compare(displayName(a), displayName(b), Qt::CaseInsensitive) < 0;
+        }
+    });
 }
 
 void ContentListPage::refreshContentList()
@@ -259,6 +416,9 @@ void ContentListPage::doScan(const QString &folderPath)
                 ModInfo info;
                 info.fileName = dirName;
                 info.filePath = worldPath;
+                // 世界是目录：递归统计总大小（工作线程内计算，供大小筛选/排序）
+                info.fileSize = dirTotalSize(worldPath);
+                info.dateModified = entry.lastModified();
                 if (isDisabled)
                 {
                     info.name = dirName.left(dirName.length() - 9);
@@ -290,6 +450,7 @@ void ContentListPage::doScan(const QString &folderPath)
                 info.fileName = fileName;
                 info.filePath = entry.absoluteFilePath();
                 info.fileSize = entry.size();
+                info.dateModified = entry.lastModified();
                 if (isDisabled)
                 {
                     info.name = fileName.left(fileName.length() - 9);
@@ -338,25 +499,17 @@ void ContentListPage::onScanFinished(const LocalModList &result)
     m_modList = result;
     clearCards();
 
-    for (const ModInfo &info : result.mods)
+    // 按当前排序模式重排（默认名称 A→Z，与扫描顺序一致）
+    sortFileList();
+
+    for (const ModInfo &info : m_modList.mods)
     {
         addCard(info);
     }
 
     placeCards();
+    // 统计文案与空态提示统一由 applyFilter 按筛选状态维护
     applyFilter();
-
-    QString displayName = m_config.displayName;
-    m_statsLabel->setText(tr("共 %1 个%2 (%3 启用, %4 禁用)")
-        .arg(result.totalCount)
-        .arg(displayName)
-        .arg(result.enabledCount)
-        .arg(result.disabledCount));
-
-    if (result.totalCount == 0)
-    {
-        showEmptyHint(true);
-    }
 }
 
 QString ContentListPage::viewPrefKey() const
@@ -826,11 +979,28 @@ void ContentListPage::showLoading(bool show)
 void ContentListPage::showEmptyHint(bool show)
 {
     m_emptyLabel->setVisible(show);
+    // 提示可见时列表为空，隐藏滚动区让提示占据列表区域
+    if (m_scrollArea)
+    {
+        m_scrollArea->setVisible(!show);
+    }
 }
 
 void ContentListPage::applyFilter()
 {
     int visibleCount = 0;
+    const QDateTime now = QDateTime::currentDateTime();
+    // 时间筛选截止点（0 = 不启用）
+    QDateTime timeCutoff;
+    if (m_timeFilter == 1)
+        timeCutoff = now.addDays(-7);
+    else if (m_timeFilter == 2)
+        timeCutoff = now.addDays(-30);
+    else if (m_timeFilter == 3)
+        timeCutoff = now.addDays(-365);
+
+    const qint64 k10MB = 10LL * 1024 * 1024;
+    const qint64 k100MB = 100LL * 1024 * 1024;
 
     for (int i = 0; i < m_cardWidgets.size() && i < m_modList.mods.size(); ++i)
     {
@@ -850,14 +1020,50 @@ void ContentListPage::applyFilter()
             break;
         }
 
-        // 分类筛选
+        // 搜索（名称/文件名模糊匹配）
+        if (visible && !m_searchText.isEmpty()
+            && !info.name.contains(m_searchText, Qt::CaseInsensitive)
+            && !info.fileName.contains(m_searchText, Qt::CaseInsensitive))
+        {
+            visible = false;
+        }
+
+        // 时间筛选（按修改时间）
+        if (visible && timeCutoff.isValid() && info.dateModified < timeCutoff)
+            visible = false;
+
+        // 大小筛选（世界为递归统计的目录大小）
+        if (visible && m_sizeFilter > 0)
+        {
+            if (m_sizeFilter == 1 && info.fileSize >= k10MB)
+                visible = false;
+            else if (m_sizeFilter == 2
+                     && (info.fileSize < k10MB || info.fileSize > k100MB))
+                visible = false;
+            else if (m_sizeFilter == 3 && info.fileSize <= k100MB)
+                visible = false;
+        }
+
+        // 分类筛选（手动分类 + 智能筛选哨兵值）
         if (visible && !m_currentCategoryId.isEmpty())
         {
-            const QString contentCategory = m_categoryManager->categoryOf(info.fileName);
             if (m_currentCategoryId == QStringLiteral("__uncategorized__"))
-                visible = contentCategory.isEmpty();
+            {
+                visible = m_categoryManager->categoryOf(info.fileName).isEmpty();
+            }
+            else if (m_currentCategoryId == QStringLiteral("__recent__"))
+            {
+                visible = info.dateModified >= now.addDays(-7);
+            }
+            else if (m_currentCategoryId == QStringLiteral("__large__"))
+            {
+                visible = info.fileSize > k100MB;
+            }
             else
-                visible = (contentCategory == m_currentCategoryId);
+            {
+                visible = (m_categoryManager->categoryOf(info.fileName)
+                           == m_currentCategoryId);
+            }
         }
 
         m_cardWidgets[i]->setVisible(visible);
@@ -870,15 +1076,20 @@ void ContentListPage::applyFilter()
 
     QString displayName = m_config.displayName;
 
-    // 分类筛选生效时显示筛选后的数量
-    if (!m_currentCategoryId.isEmpty())
+    // 任一筛选（搜索/状态/分类/时间/大小）激活时显示筛选后的数量
+    const bool anyFilterActive = !m_currentCategoryId.isEmpty()
+        || !m_searchText.isEmpty()
+        || m_currentFilter != FilterAll
+        || m_timeFilter != 0
+        || m_sizeFilter != 0;
+    if (anyFilterActive)
     {
-        m_statsLabel->setText(tr("显示 %1 个%2").arg(visibleCount).arg(displayName));
-        return;
+        m_statsLabel->setText(tr("显示 %1 个%2 (共 %3 个)")
+            .arg(visibleCount)
+            .arg(displayName)
+            .arg(m_modList.totalCount));
     }
-
-    // Update stats label to reflect filter state
-    if (m_currentFilter == FilterAll)
+    else
     {
         m_statsLabel->setText(tr("共 %1 个%2 (%3 启用, %4 禁用)")
             .arg(m_modList.totalCount)
@@ -886,13 +1097,21 @@ void ContentListPage::applyFilter()
             .arg(m_modList.enabledCount)
             .arg(m_modList.disabledCount));
     }
-    else if (m_currentFilter == FilterEnabled)
+
+    // 空态：总数为 0 → 空列表提示；筛选后无可见项 → 筛选提示
+    if (m_modList.totalCount == 0)
     {
-        m_statsLabel->setText(tr("已启用: %1 个%2").arg(m_modList.enabledCount).arg(displayName));
+        m_emptyLabel->setText(m_config.emptyHint);
+        showEmptyHint(true);
+    }
+    else if (visibleCount == 0)
+    {
+        m_emptyLabel->setText(tr("没有符合筛选条件的%1").arg(displayName));
+        showEmptyHint(true);
     }
     else
     {
-        m_statsLabel->setText(tr("已禁用: %1 个%2").arg(m_modList.disabledCount).arg(displayName));
+        showEmptyHint(false);
     }
 }
 
@@ -930,6 +1149,10 @@ void ContentListPage::reloadCategoryCombo()
     m_categoryCombo->blockSignals(true);
     m_categoryCombo->clear();
     m_categoryCombo->addItem(tr("全部"), QString());
+    // 智能筛选：由文件属性直接判定，无需手动归类（本页无在线更新检查，不加"可更新"）
+    m_categoryCombo->addItem(tr("最近修改"), QStringLiteral("__recent__"));
+    m_categoryCombo->addItem(tr("大文件"), QStringLiteral("__large__"));
+    m_categoryCombo->insertSeparator(m_categoryCombo->count());
     const QList<LocalResourceCategory> cats = m_categoryManager->categories();
     for (const LocalResourceCategory &c : cats)
     {

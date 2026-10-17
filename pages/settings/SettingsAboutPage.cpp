@@ -177,6 +177,12 @@ void SettingsPage::initAboutSettings()
         "GPL-3.0", "https://github.com/JannisX11/blockbench");
     addOpenSourceRow("skinview3d", tr("皮肤 3D 渲染库，参考动画与视角。"),
         "MIT", "https://github.com/bs-community/skinview3d");
+    addOpenSourceRow("SchematicWebViewer", tr("WorldEdit 官方投影预览器，封面 3D 渲染的遮挡剔除、资源包/客户端材质加载思路参考。"),
+        "MIT", "https://github.com/EngineHub/SchematicWebViewer");
+    addOpenSourceRow("litematic-viewer", tr("浏览器端 Litematica 预览器（基于 Deepslate），等距封面与投影解析思路参考。"),
+        "源码可见", "https://github.com/EndingCredits/litematic-viewer");
+    addOpenSourceRow("Deepslate", tr("Minecraft 结构/Web 渲染库，封面体素预览思路来源之一。"),
+        "MIT", "https://github.com/misode/deepslate");
 
     // 地图与存档
     appendSettingRow(opensourceCard, tr("地图与存档"), QString(), QString(), true);

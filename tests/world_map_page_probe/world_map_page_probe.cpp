@@ -26,6 +26,8 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollBar>
+#include <QScrollArea>
 #include <QSet>
 #include <QSettings>
 #include <QStackedWidget>
@@ -77,6 +79,8 @@ QString resolveTokens(QString style)
         {"@BG_TRACK@", "#e8e8e8"}, {"@BG_TAB@", "#f0f0f0"},
         {"@BG_DISABLED@", "#d5d7db"}, {"@BG_MSG@", "#edf0f4"},
         {"@BG_GLASS@", "rgba(255, 255, 255, 0.72)"},
+        {"@BG_GLASS_TASKBAR@", "rgba(255, 255, 255, 0.42)"},
+        {"@BORDER_GLASS_TASKBAR@", "rgba(255, 255, 255, 0.55)"},
         {"@BORDER@", "#e8eaed"}, {"@BORDER_STRONG@", "#dadce0"},
         {"@BORDER_HOVER@", "#bdbdbd"}, {"@BORDER_DASHED@", "#c4c7c5"},
         {"@BORDER_DISABLED@", "#b0b0b0"}, {"@BORDER_LIGHT@", "#f0f1f3"},
@@ -329,6 +333,13 @@ int main(int argc, char **argv)
 
     QDir().mkpath(QStringLiteral("D:/BlockBox/_out"));
 
+    // 既有像素/布局断言建立在"无种子预测"的画面上；先关掉开关，
+    // 流程末尾再单独开一段验证种子预测本身
+    {
+        QSettings bootSettings;
+        bootSettings.setValue(QStringLiteral("worldMap/seedPreview"), false);
+    }
+
     QTemporaryDir tmp;
     const QString savePath = tmp.path() + QStringLiteral("/saves/ProbeWorld");
     expect(writeRegionFile(savePath + "/region/r.0.0.mca", 0, 0, true), "write r.0.0 (full)");
@@ -389,40 +400,6 @@ int main(int argc, char **argv)
     QProgressBar *progress = page.findChild<QProgressBar *>("worldMapProgress");
     expect(progress && !progress->isVisible(), "progress bar hidden after render");
 
-    // 调试：渲染刚完成时的画布状态（定位白屏起始点）
-    {
-        QWidget *mv = page.findChild<QWidget *>(QStringLiteral("worldMapView"));
-        std::fprintf(stderr, "  dbg view vis=%d geo=(%d,%d %dx%d)\n",
-                     mv ? int(mv->isVisible()) : -1,
-                     mv ? mv->x() : 0, mv ? mv->y() : 0,
-                     mv ? mv->width() : 0, mv ? mv->height() : 0);
-        if (mv)
-            mv->repaint();
-        if (mv)
-        {
-            QImage vimg = mv->grab().toImage();
-            vimg.setDevicePixelRatio(1.0);
-            vimg.save(QStringLiteral("D:/BlockBox/_out/wmp_dbg_viewonly.png"));
-            std::fprintf(stderr, "  dbg view grab %dx%d px(600,270)=%08x\n",
-                         vimg.width(), vimg.height(),
-                         vimg.rect().contains(QPoint(600, 270))
-                             ? vimg.pixel(600, 270) : 0u);
-        }
-        QImage dbg = page.grab().toImage();
-        dbg.setDevicePixelRatio(1.0);
-        dbg.save(QStringLiteral("D:/BlockBox/_out/wmp_dbg_renderdone.png"));
-        int white = 0, total = 0;
-        for (int y = 160; y < 580; y += 8)
-            for (int x = 240; x < 940; x += 8)
-            {
-                ++total;
-                const QRgb px = dbg.pixel(x, y);
-                if (qRed(px) > 250 && qGreen(px) > 250 && qBlue(px) > 250)
-                    ++white;
-            }
-        std::fprintf(stderr, "  dbg@renderdone white=%d/%d\n", white, total);
-    }
-
     // ── 结构标记：按种子在后台算，等收敛后应有结果 ──
     expect(page.waitForStructs(8000), "structure query converged");
     {
@@ -439,16 +416,49 @@ int main(int argc, char **argv)
     expect(page.findChildren<QLineEdit *>("worldMapCoordEdit").size() == 2,
            "coordinate inputs");
 
+    // ── 着色下拉：新增第三项「地形」（海拔分层设色 + 山体阴影）──
+    if (combos.size() == 3)
+    {
+        QComboBox *shade = combos[1];
+        expect(shade->count() == 3, "shade combo has 3 modes");
+        expect(shade->itemText(2) == QStringLiteral("地形"),
+               "third shade mode is terrain");
+
+        shade->setCurrentIndex(2);
+        waitRenderDone(page, page.findChild<QStackedWidget *>("worldMapStack"),
+                       nullptr, 20000);
+        const QImage terr = page.mapImage();
+        if (!terr.isNull())
+        {
+            const QRgb p = terr.pixel(0, 0);
+            expect(qAlpha(p) == 255, "terrain mode renders the surface");
+            expect(!(qRed(p) == qGreen(p) && qGreen(p) == qBlue(p)),
+                   "terrain mode is colored (not height-gray)");
+            QDir().mkpath(QStringLiteral("D:/BlockBox/_out"));
+            terr.save(QStringLiteral("D:/BlockBox/_out/wmp_terrain_mode.png"));
+        }
+        else
+        {
+            expect(false, "terrain mode map image not null");
+        }
+
+        shade->setCurrentIndex(0); // 收尾恢复「地表方块」，不干扰后续断言
+        waitRenderDone(page, page.findChild<QStackedWidget *>("worldMapStack"),
+                       nullptr, 20000);
+    }
+
     // ── 第二行：结构开关条（图标 + 默认全选） ──
     const auto structBtns = page.findChildren<QPushButton *>("worldMapStructBtn");
     expect(structBtns.size() == StructureFinder::allStructures().size(),
            "structure bar has one button per structure type");
-    expect(StructureFinder::allStructures().size() == 22,
-           "structure set covers all 22 types");
+    expect(StructureFinder::allStructures().size() == 26,
+           "structure set covers all 26 types");
     {
         // 本轮补全的结构必须在列（要塞走 StrongholdIter，不走区域网格）
         const char *requiredKeys[] = { "stronghold", "trail_ruins",
-                                       "desert_well", "ruined_portal_nether" };
+                                       "desert_well", "ruined_portal_nether",
+                                       "end_gateway", "abandoned_camp",
+                                       "nether_fossil", "end_ship" };
         bool haveAll = true;
         for (const char *k : requiredKeys)
         {
@@ -459,7 +469,31 @@ int main(int argc, char **argv)
             if (!found)
                 haveAll = false;
         }
-        expect(haveAll, "new structure keys present (stronghold/trail/well/nether portal)");
+        expect(haveAll,
+               "all structure keys present incl. gateway/camp/fossil/ship");
+        // 不可计算的三（cubiomes 无算法）→ 按钮禁用但仍在列
+        int unsupported = 0, unsupportedDisabled = 0;
+        for (int i = 0; i < StructureFinder::allStructures().size(); ++i)
+        {
+            if (StructureFinder::allStructures()[i].type
+                    != StructureFinder::kUnsupportedType)
+                continue;
+            ++unsupported;
+            if (i < structBtns.size() && !structBtns[i]->isEnabled())
+                ++unsupportedDisabled;
+        }
+        std::fprintf(stderr, "  unsupported=%d disabled=%d\n", unsupported,
+                     unsupportedDisabled);
+        expect(unsupported == 3 && unsupportedDisabled == 3,
+               "unsupported structures listed but disabled");
+        // 末地折跃门可计算 → 按钮可用
+        for (int i = 0; i < StructureFinder::allStructures().size(); ++i)
+            if (StructureFinder::allStructures()[i].type
+                    == StructureFinder::kStrongholdType
+                || std::strcmp(StructureFinder::allStructures()[i].key,
+                               "end_gateway") == 0)
+                expect(i < structBtns.size() && structBtns[i]->isEnabled(),
+                       "computable structure button enabled");
         int rareCount = 0;
         for (const auto &d : StructureFinder::allStructures())
             if (d.rare)
@@ -518,6 +552,66 @@ int main(int argc, char **argv)
                          page.structureMarkerCount());
             expect(page.structureMarkerCount() > 0,
                    "select-all restores markers");
+        }
+    }
+
+    // ── 密集同类型图标合并：距 <30px 并成一个，右上角画 ×N 深色角标 ──
+    {
+        const int mcount = page.structureMarkerCount();
+        QWidget *mapView0 = page.findChild<QWidget *>(QStringLiteral("worldMapView"));
+        QVector<QPoint> denseMid;
+        for (int i = 0; i < mcount && denseMid.size() < 5; ++i)
+        {
+            const QPoint a = page.markerScreenPos(i);
+            if (a.isNull())
+                continue;
+            for (int j = i + 1; j < mcount; ++j)
+            {
+                if (page.markerType(j) != page.markerType(i))
+                    continue;
+                const QPoint b = page.markerScreenPos(j);
+                if (b.isNull())
+                    continue;
+                const int dx = a.x() - b.x();
+                const int dy = a.y() - b.y();
+                if (dx * dx + dy * dy < 30 * 30)
+                {
+                    denseMid.append(QPoint((a.x() + b.x()) / 2,
+                                           (a.y() + b.y()) / 2));
+                    break;
+                }
+            }
+        }
+        std::fprintf(stderr, "  dense same-type groups sampled=%d\n",
+                     int(denseMid.size()));
+        expect(!denseMid.isEmpty(),
+               "viewport has dense same-type marker pairs to merge");
+        if (!denseMid.isEmpty() && mapView0)
+        {
+            QImage shot = page.grab().toImage();
+            shot.setDevicePixelRatio(1.0);
+            const QPoint origin = mapView0->mapTo(&page, QPoint(0, 0));
+            int badged = 0;
+            for (const QPoint &m : denseMid)
+            {
+                // 角标在合并图标右上角：中心附近偏右上扫一小块找深色像素
+                int dark = 0;
+                for (int y = m.y() - 22; y <= m.y() - 6; ++y)
+                    for (int x = m.x() + 6; x <= m.x() + 24; ++x)
+                    {
+                        const QPoint q = origin + QPoint(x, y);
+                        if (!shot.rect().contains(q))
+                            continue;
+                        const QRgb px = shot.pixel(q);
+                        if (qRed(px) < 70 && qGreen(px) < 70 && qBlue(px) < 80)
+                            ++dark;
+                    }
+                if (dark >= 6)
+                    ++badged;
+            }
+            std::fprintf(stderr, "  merged groups with badge=%d/%d\n",
+                         badged, int(denseMid.size()));
+            expect(badged > 0, "dense merged icon shows dark ×N badge");
         }
     }
 
@@ -607,34 +701,6 @@ int main(int argc, char **argv)
     }
 
     QApplication::processEvents();
-    QImage liveImg = page.mapImage();
-    std::fprintf(stderr, "  liveImage null=%d size=(%d,%d)\n",
-                 liveImg.isNull(), liveImg.width(), liveImg.height());
-    if (!liveImg.isNull())
-    {
-        const QImage::Format fmt = liveImg.format();
-        const int w = liveImg.width(), h = liveImg.height();
-        int alphaOdd = 0, opaque = 0;
-        QRgb sample[4] = { 0, 0, 0, 0 };
-        const QPoint pts[4] = { QPoint(w / 2, h / 2), QPoint(w / 4, h / 4),
-                                QPoint(w / 2, h / 4), QPoint(10, 10) };
-        for (int i = 0; i < 4; ++i)
-            if (liveImg.rect().contains(pts[i]))
-                sample[i] = liveImg.pixel(pts[i]);
-        for (int y = 0; y < h; y += 16)
-            for (int x = 0; x < w; x += 16)
-            {
-                const int a = qAlpha(liveImg.pixel(x, y));
-                if (a != 0 && a != 255)
-                    ++alphaOdd;
-                if (a == 255)
-                    ++opaque;
-            }
-        std::fprintf(stderr,
-                     "  liveImage fmt=%d opaque=%d alphaOdd=%d px=%08x,%08x,%08x,%08x\n",
-                     int(fmt), opaque, alphaOdd, sample[0], sample[1],
-                     sample[2], sample[3]);
-    }
     QImage shot = page.grab().toImage();
     shot.setDevicePixelRatio(1.0);
     const QString out = QStringLiteral("D:/BlockBox/_out/world_map_page_probe.png");
@@ -677,6 +743,9 @@ int main(int argc, char **argv)
         if (tgt >= 0 && mapView2)
         {
             const QPoint c = page.markerScreenPos(tgt);
+            // markerScreenPos 是 view 内坐标；页面截图要加上 view 在页面里的偏移
+            const QPoint origin = mapView2->mapTo(&page, QPoint(0, 0));
+            const QPoint cp = c + origin;
             const QPoint blk = page.markerBlockPos(tgt);
             const int mtype = page.markerType(tgt);
             std::fprintf(stderr, "  marker[%d] type=%d block=(%d,%d) screen=(%d,%d)\n",
@@ -709,16 +778,16 @@ int main(int argc, char **argv)
             };
 
             QImage before = snap();
-            const QRgb pxOut = before.rect().contains(QPoint(c.x(), c.y() - 19))
-                                   ? before.pixel(c.x(), c.y() - 19)
+            const QRgb pxOut = before.rect().contains(QPoint(cp.x(), cp.y() - 19))
+                                   ? before.pixel(cp.x(), cp.y() - 19)
                                    : 0;
             std::fprintf(stderr, "  stroke px(0,-16)=%d px(0,-19)=rgb(%d,%d,%d)\n",
-                         nearWhite(before, c.x(), c.y() - 16),
+                         nearWhite(before, cp.x(), cp.y() - 16),
                          qRed(pxOut), qGreen(pxOut), qBlue(pxOut));
 
             // ① 白描边上沿：图标 30px + 2px 描边 → cy-16 应为白，cy-19 不应为白
-            const bool strokeTop = nearWhite(before, c.x(), c.y() - 16);
-            const bool outsideTop = !nearWhite(before, c.x(), c.y() - 19);
+            const bool strokeTop = nearWhite(before, cp.x(), cp.y() - 16);
+            const bool outsideTop = !nearWhite(before, cp.x(), cp.y() - 19);
             std::fprintf(stderr, "  white stroke top=%d outside=%d\n",
                          strokeTop, outsideTop);
             expect(strokeTop, "marker has white stroke at top edge (30px icon)");
@@ -822,7 +891,7 @@ int main(int argc, char **argv)
                     // 半透明：标记后同区域颜色应明显变化
                     QApplication::processEvents();
                     QImage after = snap();
-                    const QPoint p0(c.x(), c.y());
+                    const QPoint p0(cp.x(), cp.y());
                     auto av0 = avg(before, p0, 6);
                     auto av1 = avg(after, p0, 6);
                     std::fprintf(stderr, "  avg before=(%d,%d) after=(%d,%d)\n",
@@ -873,7 +942,9 @@ int main(int argc, char **argv)
                     const int t2 = page.markerType(i);
                     if (t2 < 0 || t2 >= defs2.size())
                         continue;
-                    const bool white = nearWhite(tinyShot, c2.x(), c2.y() - 16);
+                    const bool white =
+                        nearWhite(tinyShot, c2.x() + origin.x(),
+                                  c2.y() + origin.y() - 16);
                     if (defs2[t2].rare)
                     {
                         ++rareVisible;
@@ -933,6 +1004,20 @@ int main(int argc, char **argv)
     page.resize(1000, 640);
     for (int i = 0; i < 4; ++i)
         QApplication::processEvents(QEventLoop::AllEvents, 20);
+    std::fprintf(stderr, "  page width after resize(1000) = %d\n",
+                 page.width());
+    // 结构条在横向滚动容器里：窄屏内容放不下时必须可横滚（而非撑爆布局）
+    {
+        QScrollArea *structScroll = page.findChild<QScrollArea *>(
+            QStringLiteral("worldMapStructScroll"));
+        expect(structScroll != nullptr, "structure bar has scroll container");
+        if (structScroll)
+        {
+            const int maxH = structScroll->horizontalScrollBar()->maximum();
+            std::fprintf(stderr, "  struct scroll max@1000px = %d\n", maxH);
+            expect(maxH > 0, "narrow width: structure bar scrollable");
+        }
+    }
     page.grab().toImage().save(
         QStringLiteral("D:/BlockBox/_out/world_map_page_probe_narrow.png"));
     {
@@ -1218,6 +1303,55 @@ int main(int argc, char **argv)
     expect(emptyLabel && !emptyLabel->text().isEmpty(), "empty save shows hint");
     emptyPage.grab().toImage().save(
         QStringLiteral("D:/BlockBox/_out/world_map_page_probe_empty.png"));
+
+    // ── 种子预测开关（fixture 有种子 + 版本 → 可用） ──
+    {
+        QPushButton *seedBtn =
+            page.findChild<QPushButton *>(QStringLiteral("worldMapSeedBtn"));
+        expect(seedBtn != nullptr, "seed preview toggle exists");
+        if (seedBtn)
+        {
+            expect(seedBtn->isEnabled(), "seed toggle enabled (save has seed)");
+            expect(!seedBtn->isChecked(),
+                   "seed preview starts off (probe boot setting)");
+            const QImage before = page.mapImage();
+            expect(!before.isNull(), "map image before seed toggle");
+
+            seedBtn->setChecked(true); // toggled → 重渲
+            expect(waitRenderDone(page, stack, nullptr, 20000),
+                   "render after enabling seed preview");
+            QApplication::processEvents();
+
+            const QImage after = page.mapImage();
+            expect(!after.isNull(), "map image after seed toggle");
+            // 开启后包围盒外扩 pad 圈：图像必然变大
+            expect(after.width() > before.width()
+                       && after.height() > before.height(),
+                   "seed preview expands map bounds");
+            if (statusLabel)
+            {
+                std::fprintf(stderr, "  seed-on status: %s\n",
+                             statusLabel->text().toUtf8().constData());
+                expect(statusLabel->text().contains(QStringLiteral("种子预测")),
+                       "status reports seed region count");
+            }
+            page.grab().toImage().save(
+                QStringLiteral("D:/BlockBox/_out/world_map_page_probe_seed.png"));
+
+            // 关回去：画布缩回原范围，开关状态持久化
+            seedBtn->setChecked(false);
+            expect(waitRenderDone(page, stack, nullptr, 20000),
+                   "render after disabling seed preview");
+            const QImage back = page.mapImage();
+            expect(!back.isNull() && back.width() == before.width()
+                       && back.height() == before.height(),
+                   "disabling seed preview restores bounds");
+            QSettings st;
+            expect(st.value(QStringLiteral("worldMap/seedPreview"), true)
+                       .toBool() == false,
+                   "seed preview state persisted");
+        }
+    }
 
     expect(g_parseWarnings == 0, "no QSS parse warnings");
 

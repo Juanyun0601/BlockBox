@@ -8,6 +8,8 @@
 #include "VoxelViewWidget.h"
 
 #include <QDebug>
+#include <QFocusEvent>
+#include <QKeyEvent>
 #include <QWheelEvent>
 #include <QtMath>
 #include <climits>
@@ -114,8 +116,14 @@ VoxelViewWidget::VoxelViewWidget(QWidget *parent)
     : QOpenGLWidget(parent)
     , m_doc(nullptr)
 {
-    setFocusPolicy(Qt::ClickFocus);
+    setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+
+    m_flyTimer.setInterval(16);
+    m_flyTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_flyTimer, &QTimer::timeout, this, [this]() {
+        applyFlyKeys(0.016f);
+    });
 }
 
 VoxelViewWidget::~VoxelViewWidget()
@@ -182,12 +190,19 @@ void VoxelViewWidget::setHover(int x, int y, int z)
 
 void VoxelViewWidget::resetView()
 {
-    m_theta = 0.6f;
-    m_phi = 0.5f;
+    m_yaw = 0.6f;
+    m_pitch = -0.35f;
+
+    float radius = 12.0f;
     if (m_doc)
-        m_radius = static_cast<float>(qMax(6, m_doc->sizeX() / 2 + m_doc->sizeZ() / 2)) + 6.0f;
-    else
-        m_radius = 12.0f;
+        radius = static_cast<float>(qMax(6, m_doc->sizeX() / 2 + m_doc->sizeZ() / 2)) + 6.0f;
+
+    // 从模型斜上方俯视中心：眼位 = 中心 - 视线方向 × 距离
+    const QVector3D center = m_doc
+        ? QVector3D(m_doc->sizeX() / 2.0f, m_doc->sizeY() / 2.0f, m_doc->sizeZ() / 2.0f)
+        : QVector3D(0, 0, 0);
+    m_eye = center - lookForward() * radius;
+    m_eyeValid = true;
     update();
 }
 
@@ -698,11 +713,8 @@ void VoxelViewWidget::paintGL()
     QMatrix4x4 proj;
     proj.perspective(45.0f, aspect, 0.1f, 1000.0f);
 
-    const QVector3D center(m_doc->sizeX()/2.0f, m_doc->sizeY()/2.0f, m_doc->sizeZ()/2.0f);
     QMatrix4x4 view;
-    const QVector3D eye = center + m_radius * QVector3D(
-        qCos(m_phi)*qSin(m_theta), qSin(m_phi), qCos(m_phi)*qCos(m_theta));
-    view.lookAt(eye, center, QVector3D(0, 1, 0));
+    view.lookAt(eyePosition(), lookTarget(), QVector3D(0, 1, 0));
 
     m_program.bind();
 
@@ -729,11 +741,133 @@ void VoxelViewWidget::paintGL()
     m_dirty = false;
 }
 
-void VoxelViewWidget::orbitBy(float dTheta, float dPhi)
+QVector3D VoxelViewWidget::lookForward() const
 {
-    m_theta += dTheta;
-    m_phi = qBound(-1.2f, m_phi + dPhi, 1.2f);
+    const float cp = qCos(m_pitch);
+    return QVector3D(qSin(m_yaw) * cp, qSin(m_pitch), qCos(m_yaw) * cp).normalized();
+}
+
+QVector3D VoxelViewWidget::eyePosition() const
+{
+    if (m_eyeValid)
+        return m_eye;
+    // 文档加载后若未调用 resetView，按默认参数推一次
+    float radius = 12.0f;
+    if (m_doc)
+        radius = static_cast<float>(qMax(6, m_doc->sizeX() / 2 + m_doc->sizeZ() / 2)) + 6.0f;
+    const QVector3D center = m_doc
+        ? QVector3D(m_doc->sizeX() / 2.0f, m_doc->sizeY() / 2.0f, m_doc->sizeZ() / 2.0f)
+        : QVector3D(0, 0, 0);
+    return center - lookForward() * radius;
+}
+
+QVector3D VoxelViewWidget::lookTarget() const
+{
+    return eyePosition() + lookForward();
+}
+
+void VoxelViewWidget::lookBy(float dYaw, float dPitch)
+{
+    m_yaw += dYaw;
+    m_pitch = qBound(-1.5f, m_pitch - dPitch, 1.5f);
+    // 保证眼位已初始化，避免首次拖动时 eye 未定
+    if (!m_eyeValid)
+    {
+        m_eye = eyePosition();
+        m_eyeValid = true;
+    }
     update();
+}
+
+void VoxelViewWidget::moveEye(const QVector3D &delta)
+{
+    if (!m_eyeValid)
+    {
+        m_eye = eyePosition();
+        m_eyeValid = true;
+    }
+    m_eye += delta;
+    update();
+}
+
+bool VoxelViewWidget::isFlyKey(int qtKey) const
+{
+    switch (qtKey)
+    {
+    case Qt::Key_W:
+    case Qt::Key_A:
+    case Qt::Key_S:
+    case Qt::Key_D:
+    case Qt::Key_Space:
+    case Qt::Key_Shift:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void VoxelViewWidget::applyFlyKeys(float dt)
+{
+    if (m_heldKeys.isEmpty())
+    {
+        m_flyTimer.stop();
+        return;
+    }
+
+    const float speed = 14.0f * dt;
+    const QVector3D fwd = lookForward();
+    // 水平前向（WASD 不受俯仰影响，避免抬头时前后漂移）
+    QVector3D flat = QVector3D(fwd.x(), 0.0f, fwd.z());
+    if (flat.lengthSquared() < 1e-8f)
+        flat = QVector3D(qSin(m_yaw), 0.0f, qCos(m_yaw));
+    flat.normalize();
+    // 水平右向
+    const QVector3D right = QVector3D::crossProduct(flat, QVector3D(0, 1, 0)).normalized();
+
+    QVector3D move(0, 0, 0);
+    if (m_heldKeys.contains(Qt::Key_W))
+        move += flat * speed;
+    if (m_heldKeys.contains(Qt::Key_S))
+        move -= flat * speed;
+    if (m_heldKeys.contains(Qt::Key_D))
+        move += right * speed;
+    if (m_heldKeys.contains(Qt::Key_A))
+        move -= right * speed;
+    if (m_heldKeys.contains(Qt::Key_Space))
+        move += QVector3D(0, speed, 0);
+    if (m_heldKeys.contains(Qt::Key_Shift))
+        move -= QVector3D(0, speed, 0);
+
+    if (!move.isNull())
+        moveEye(move);
+}
+
+void VoxelViewWidget::keyPressEvent(QKeyEvent *e)
+{
+    if (isFlyKey(e->key()))
+    {
+        if (!e->isAutoRepeat())
+            m_heldKeys.insert(e->key());
+        if (!m_flyTimer.isActive())
+            m_flyTimer.start();
+        e->accept();
+        return;
+    }
+    QOpenGLWidget::keyPressEvent(e);
+}
+
+void VoxelViewWidget::keyReleaseEvent(QKeyEvent *e)
+{
+    if (isFlyKey(e->key()))
+    {
+        if (!e->isAutoRepeat())
+            m_heldKeys.remove(e->key());
+        if (m_heldKeys.isEmpty())
+            m_flyTimer.stop();
+        e->accept();
+        return;
+    }
+    QOpenGLWidget::keyReleaseEvent(e);
 }
 
 bool VoxelViewWidget::pickRay(const QPoint &pos, int &bx, int &by, int &bz) const
@@ -745,11 +879,8 @@ bool VoxelViewWidget::pickRay(const QPoint &pos, int &bx, int &by, int &bz) cons
     QMatrix4x4 proj;
     proj.perspective(45.0f, aspect, 0.1f, 1000.0f);
 
-    const QVector3D center(m_doc->sizeX()/2.0f, m_doc->sizeY()/2.0f, m_doc->sizeZ()/2.0f);
-    QVector3D eye = center + m_radius * QVector3D(
-        qCos(m_phi)*qSin(m_theta), qSin(m_phi), qCos(m_phi)*qCos(m_theta));
     QMatrix4x4 view;
-    view.lookAt(eye, center, QVector3D(0, 1, 0));
+    view.lookAt(eyePosition(), lookTarget(), QVector3D(0, 1, 0));
 
     QMatrix4x4 invVP = (proj * view).inverted();
     if (invVP.isIdentity())
@@ -890,6 +1021,8 @@ void VoxelViewWidget::mousePressEvent(QMouseEvent *e)
             return;
         }
     }
+    // 左键拖动 = 转向
+    setFocus(Qt::MouseFocusReason);
     m_dragging = true;
     m_lastPos = e->pos();
     setCursor(Qt::ClosedHandCursor);
@@ -901,7 +1034,7 @@ void VoxelViewWidget::mouseMoveEvent(QMouseEvent *e)
     {
         const int dx = e->pos().x() - m_lastPos.x();
         const int dy = e->pos().y() - m_lastPos.y();
-        orbitBy(dx * 0.008f, dy * 0.008f);
+        lookBy(dx * 0.008f, dy * 0.008f);
         m_lastPos = e->pos();
     }
     else
@@ -929,9 +1062,9 @@ void VoxelViewWidget::mouseReleaseEvent(QMouseEvent *e)
 
 void VoxelViewWidget::wheelEvent(QWheelEvent *e)
 {
-    const float delta = e->angleDelta().y() > 0 ? -0.9f : 0.9f;
-    m_radius = qBound(3.0f, m_radius + delta, 300.0f);
-    update();
+    // 沿视线前后移动
+    const float step = e->angleDelta().y() > 0 ? -1.2f : 1.2f;
+    moveEye(lookForward() * step);
 }
 
 void VoxelViewWidget::leaveEvent(QEvent *e)
@@ -940,6 +1073,13 @@ void VoxelViewWidget::leaveEvent(QEvent *e)
     if (m_dragging)
         return;
     setHover(INT_MIN, INT_MIN, INT_MIN);
+}
+
+void VoxelViewWidget::focusOutEvent(QFocusEvent *e)
+{
+    m_heldKeys.clear();
+    m_flyTimer.stop();
+    QOpenGLWidget::focusOutEvent(e);
 }
 
 void VoxelViewWidget::destroyGL()

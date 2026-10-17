@@ -98,6 +98,14 @@ public slots:
      */
     void hideStartup();
 
+    /**
+     * @brief 按当前主题刷新启动窗口外观（Logo 与配色）
+     *
+     * 启动窗口先以默认外观显示，主题就绪后再调用本方法套用实际主题，
+     * 避免主题样式表的解析与套用拖慢启动窗口出现。
+     */
+    void applyTheme();
+
 signals:
     /**
      * @brief 进度值变更信号
@@ -128,6 +136,16 @@ private:
      * @brief 初始化样式
      */
     void initStyle();
+
+    /**
+     * @brief 按指定配色套用样式表与 Logo
+     */
+    void applyStyleWith(const QString& themeColor, const QString& themeHover, bool isDark);
+
+    /**
+     * @brief 按深浅色主题切换 Logo 图片
+     */
+    void updateLogo(bool isDark);
 
     /**
      * @brief 初始化动画

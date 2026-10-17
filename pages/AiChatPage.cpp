@@ -9,7 +9,6 @@
 
 #include "components/AppFileDialog.h"
 #include "components/MarkdownOutlinedLabel.h"
-#include "components/OutlinedLabel.h"
 #include "components/OutlinedTextEdit.h"
 #include "components/ResourceReferenceDialog.h"
 
@@ -687,7 +686,7 @@ void AiChatPage::initUI()
     welcomeLayout->setSpacing(16);
     welcomeLayout->setAlignment(Qt::AlignCenter);
 
-    m_welcomeTitleLabel = new OutlinedLabel();
+    m_welcomeTitleLabel = new MarkdownOutlinedLabel();
     m_welcomeTitleLabel->setObjectName("aiChatWelcomeTitleLabel");
     m_welcomeTitleLabel->setAlignment(Qt::AlignCenter);
     m_welcomeTitleLabel->setWordWrap(true);
@@ -695,10 +694,11 @@ void AiChatPage::initUI()
     m_welcomeTitleLabel->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
     welcomeLayout->addWidget(m_welcomeTitleLabel);
 
-    m_welcomeDescLabel = new QLabel();
+    m_welcomeDescLabel = new MarkdownOutlinedLabel();
     m_welcomeDescLabel->setObjectName("aiChatWelcomeDescLabel");
     m_welcomeDescLabel->setAlignment(Qt::AlignCenter);
     m_welcomeDescLabel->setWordWrap(true);
+    m_welcomeDescLabel->setTextFormat(Qt::PlainText);
     // 水平收缩到文字宽度，让边框紧贴文字（居中显示）
     m_welcomeDescLabel->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
     welcomeLayout->addWidget(m_welcomeDescLabel);
@@ -2703,7 +2703,7 @@ QTextEdit* AiChatPage::createStreamEdit(const QString &objectName, QWidget *pare
                                         bool outlineEnabled)
 {
     // outlineEnabled：AI 回答正文开启文字外描边，与收尾后的 MarkdownOutlinedLabel
-    // 观感一致；思考内容等灰字场景保持无描边
+    // 观感一致；思考内容流式阶段同样开启，保证主内容区全部文字都有描边
     auto *edit = new OutlinedTextEdit(parent);
     edit->setOutlineEnabled(outlineEnabled);
     edit->setObjectName(objectName);
@@ -3325,10 +3325,8 @@ QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
         }
     }
     // AI 气泡用 MarkdownOutlinedLabel（正文保留 Markdown 渲染并叠加文字笔画描边）；
-    // 用户气泡用普通 QLabel（纯文本）
-    QLabel *contentLabel = isUser
-        ? new QLabel(displayText)
-        : new MarkdownOutlinedLabel(displayText);
+    // 用户气泡用同样带描边的标签（纯文本）
+    QLabel *contentLabel = new MarkdownOutlinedLabel(displayText);
     contentLabel->setObjectName("msgContent");
     contentLabel->setWordWrap(true);
     // 用户气泡用纯文本；AI 气泡用 Markdown 渲染
@@ -3407,19 +3405,19 @@ QWidget* AiChatPage::createThinkingWidget(const QString &text, bool running)
     setChevronPixmap(chevronLabel, false);
     headerLayout->addWidget(chevronLabel);
 
-    auto *titleLabel = new QLabel(tr("思考"), headerBtn);
+    auto *titleLabel = new MarkdownOutlinedLabel(tr("思考"), headerBtn);
     titleLabel->setObjectName("thinkingTitle");
     headerLayout->addWidget(titleLabel);
 
     // 状态：思考中…（琥珀色）→ 已完成（绿色）
-    auto *statusLabel = new QLabel(running ? tr("思考中…") : tr("已完成"), headerBtn);
+    auto *statusLabel = new MarkdownOutlinedLabel(running ? tr("思考中…") : tr("已完成"), headerBtn);
     statusLabel->setObjectName("thinkingStatusText");
     statusLabel->setProperty("type", running ? QStringLiteral("info") : QStringLiteral("success"));
     statusLabel->style()->polish(statusLabel);
     headerLayout->addWidget(statusLabel);
 
     // 思考内容占满剩余一行：流式时显示最新思考（前面的省略），行尾为最新内容
-    auto *previewLabel = new QLabel(headerBtn);
+    auto *previewLabel = new MarkdownOutlinedLabel(QString(), headerBtn);
     previewLabel->setObjectName("thinkingPreview");
     previewLabel->setMinimumWidth(0);
     headerLayout->addWidget(previewLabel, 1);
@@ -3435,13 +3433,14 @@ QWidget* AiChatPage::createThinkingWidget(const QString &text, bool running)
     QTextEdit *streamEdit = nullptr;
     if (running)
     {
-        streamEdit = createStreamEdit(QStringLiteral("thinkingStreamContent"), contentWidget);
+        // 思考内容流式阶段同样开启文字外描边，与历史思考内容/正文描边观感一致
+        streamEdit = createStreamEdit(QStringLiteral("thinkingStreamContent"), contentWidget, true);
         streamEdit->setPlainText(text);
         contentLayout->addWidget(streamEdit);
     }
     else
     {
-        auto *contentLabel = new QLabel(text);
+        auto *contentLabel = new MarkdownOutlinedLabel(text);
         contentLabel->setObjectName("thinkingContent");
         contentLabel->setWordWrap(true);
         contentLabel->setTextFormat(Qt::PlainText);
@@ -3478,15 +3477,15 @@ QWidget* AiChatPage::createTypingIndicator()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(4);
 
-    auto *dot1 = new QLabel("●");
+    auto *dot1 = new MarkdownOutlinedLabel("●");
     dot1->setObjectName("typingDot1");
     layout->addWidget(dot1);
 
-    auto *dot2 = new QLabel("●");
+    auto *dot2 = new MarkdownOutlinedLabel("●");
     dot2->setObjectName("typingDot2");
     layout->addWidget(dot2);
 
-    auto *dot3 = new QLabel("●");
+    auto *dot3 = new MarkdownOutlinedLabel("●");
     dot3->setObjectName("typingDot3");
     layout->addWidget(dot3);
 
@@ -3523,7 +3522,7 @@ void AiChatPage::createBubbleActions(QWidget *container, const QString &content)
     outerLayout->addWidget(actionsWidget);
 
     // 统计信息标签（初始为空，隐藏；onStreamFinished 时 updateBubbleStats 填充）
-    auto *statsLabel = new QLabel(actionsWidget);
+    auto *statsLabel = new MarkdownOutlinedLabel(QString(), actionsWidget);
     statsLabel->setObjectName("aiChatStatsLabel");
     statsLabel->setWordWrap(true);
     statsLabel->setTextInteractionFlags(Qt::NoTextInteraction);
@@ -4759,7 +4758,7 @@ void AiChatPage::rebuildTaskListCard(const QList<AgentTask> &tasks)
     headerLayout->setContentsMargins(0, 0, 0, 0);
     headerLayout->setSpacing(8);
 
-    auto *titleLabel = new QLabel(
+    auto *titleLabel = new MarkdownOutlinedLabel(
         QStringLiteral("任务清单"), m_currentTaskListCard);
     titleLabel->setStyleSheet(QStringLiteral(
         "font-size: 13px; font-weight: 600; color: #1a1a1a; border: none; background: transparent;"));
@@ -4783,7 +4782,7 @@ void AiChatPage::rebuildTaskListCard(const QList<AgentTask> &tasks)
     {
         progressText = QStringLiteral("%1/%2").arg(doneCount).arg(tasks.size());
     }
-    auto *progressBadge = new QLabel(progressText, m_currentTaskListCard);
+    auto *progressBadge = new MarkdownOutlinedLabel(progressText, m_currentTaskListCard);
     progressBadge->setStyleSheet(QStringLiteral(
         "font-size: 11px; font-weight: 600; color: #1565C0; "
         "background: rgba(33, 150, 243, 0.12); border: none; "
@@ -4864,7 +4863,7 @@ void AiChatPage::rebuildTaskListCard(const QList<AgentTask> &tasks)
             iconColor = QStringLiteral("#9E9E9E");
         }
 
-        auto *iconLabel = new QLabel(icon, row);
+        auto *iconLabel = new MarkdownOutlinedLabel(icon, row);
         iconLabel->setStyleSheet(QStringLiteral(
             "font-size: 14px; font-weight: bold; color: %1; border: none; background: transparent;")
             .arg(iconColor));
@@ -4873,7 +4872,7 @@ void AiChatPage::rebuildTaskListCard(const QList<AgentTask> &tasks)
         rowLayout->addWidget(iconLabel);
 
         // 内容
-        auto *contentLabel = new QLabel(task.content, row);
+        auto *contentLabel = new MarkdownOutlinedLabel(task.content, row);
         contentLabel->setWordWrap(true);
         QString contentBase = QStringLiteral(
             "font-size: 13px; border: none; background: transparent;");
@@ -4916,7 +4915,7 @@ void AiChatPage::rebuildTaskListCard(const QList<AgentTask> &tasks)
             prioColor = QStringLiteral("#616161");
             prioBg = QStringLiteral("rgba(158, 158, 158, 0.1)");
         }
-        auto *prioLabel = new QLabel(prioText, row);
+        auto *prioLabel = new MarkdownOutlinedLabel(prioText, row);
         prioLabel->setStyleSheet(QStringLiteral(
             "font-size: 11px; font-weight: 600; color: %1; background: %2; "
             "border: none; border-radius: 10px; padding: 2px 8px;")
@@ -5412,7 +5411,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
             displayName = QFileInfo(filePath).fileName();
         }
     }
-    auto *nameLabel = new QLabel(displayName, headerRow);
+    auto *nameLabel = new MarkdownOutlinedLabel(displayName, headerRow);
     nameLabel->setObjectName("agentToolStepName");
     headerLayout->addWidget(nameLabel);
 
@@ -5422,13 +5421,13 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
         const auto stat = computeFileDiffStat(argsObj);
         if (stat.first > 0)
         {
-            auto *addLabel = new QLabel(QStringLiteral("+%1").arg(stat.first), headerRow);
+            auto *addLabel = new MarkdownOutlinedLabel(QStringLiteral("+%1").arg(stat.first), headerRow);
             addLabel->setObjectName("agentToolStepDiffAdd");
             headerLayout->addWidget(addLabel);
         }
         if (stat.second > 0)
         {
-            auto *delLabel = new QLabel(QStringLiteral("-%1").arg(stat.second), headerRow);
+            auto *delLabel = new MarkdownOutlinedLabel(QStringLiteral("-%1").arg(stat.second), headerRow);
             delLabel->setObjectName("agentToolStepDiffDel");
             headerLayout->addWidget(delLabel);
         }
@@ -5439,7 +5438,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     QString badgeType = finished
         ? (success ? QStringLiteral("success") : QStringLiteral("danger"))
         : QStringLiteral("info");
-    auto *statusLabel = new QLabel(statusText, headerRow);
+    auto *statusLabel = new MarkdownOutlinedLabel(statusText, headerRow);
     statusLabel->setObjectName("agentToolStepStatusText");
     statusLabel->setProperty("type", badgeType);
     statusLabel->style()->polish(statusLabel);
@@ -5448,7 +5447,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     // 耗时
     if (finished && durationMs > 0)
     {
-        auto *durationLabel = new QLabel(formatStepDuration(durationMs), headerRow);
+        auto *durationLabel = new MarkdownOutlinedLabel(formatStepDuration(durationMs), headerRow);
         durationLabel->setObjectName("agentToolStepDuration");
         headerLayout->addWidget(durationLabel);
     }
@@ -5468,7 +5467,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     }
     if (!lineSummary.isEmpty())
     {
-        auto *summaryLabel = new QLabel(flattenSummary(lineSummary), headerRow);
+        auto *summaryLabel = new MarkdownOutlinedLabel(flattenSummary(lineSummary), headerRow);
         summaryLabel->setObjectName("agentToolStepSummary");
         headerLayout->addWidget(summaryLabel, 1);
     }
@@ -5485,7 +5484,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
 
     if (!arguments.isEmpty())
     {
-        auto *argsLabel = new QLabel(arguments, detailsWidget);
+        auto *argsLabel = new MarkdownOutlinedLabel(arguments, detailsWidget);
         argsLabel->setObjectName("agentToolStepArgs");
         argsLabel->setWordWrap(true);
         argsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -5494,7 +5493,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     }
 
     // 结果原文（进行中态留空占位，applyToolStepFinish 填充）
-    auto *resultLabel = new QLabel(detailsWidget);
+    auto *resultLabel = new MarkdownOutlinedLabel(QString(), detailsWidget);
     resultLabel->setObjectName("agentToolStepResult");
     resultLabel->setWordWrap(true);
     resultLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
@@ -5570,7 +5569,7 @@ void AiChatPage::applyToolStepFinish(QWidget *card, const QString &resultSummary
         auto *durationLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepDuration"));
         if (!durationLabel)
         {
-            durationLabel = new QLabel(headerRow);
+            durationLabel = new MarkdownOutlinedLabel(QString(), headerRow);
             durationLabel->setObjectName(QStringLiteral("agentToolStepDuration"));
             if (hLayout)
             {
@@ -5591,7 +5590,7 @@ void AiChatPage::applyToolStepFinish(QWidget *card, const QString &resultSummary
         auto *summaryLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepSummary"));
         if (!summaryLabel)
         {
-            summaryLabel = new QLabel(headerRow);
+            summaryLabel = new MarkdownOutlinedLabel(QString(), headerRow);
             summaryLabel->setObjectName(QStringLiteral("agentToolStepSummary"));
             if (hLayout)
             {
@@ -5641,7 +5640,7 @@ void AiChatPage::rebuildToolStepCards(const QList<AgentToolCall> &toolCalls)
         // 失败时追加错误信息
         if (!tc.success && !tc.errorMessage.isEmpty())
         {
-            auto *errLabel = new QLabel(tr("错误：%1").arg(tc.errorMessage), card);
+            auto *errLabel = new MarkdownOutlinedLabel(tr("错误：%1").arg(tc.errorMessage), card);
             card->findChild<QWidget*>("agentToolStepDetails")->layout()->addWidget(errLabel);
         }
         m_currentAgentStepsLayout->addWidget(card);
@@ -5796,7 +5795,7 @@ QWidget* AiChatPage::buildReadOnlyRefChips(const QList<ResourceReference> &refs)
         chipLayout->setSpacing(4);
 
         // 标号 1-based：[N] [类别] 名称
-        auto *label = new QLabel(QStringLiteral("[%1] [%2] %3")
+        auto *label = new MarkdownOutlinedLabel(QStringLiteral("[%1] [%2] %3")
                                      .arg(i + 1)
                                      .arg(ref.category, ref.name), chip);
         label->setObjectName(QStringLiteral("aiChatRefChipLabel"));

@@ -16,9 +16,13 @@
 #include "components/CustomCheckBox.h"
 #include "components/NotificationHistoryDialog.h"
 #include "components/OutlinedLabel.h"
+#include "pages/OnboardingWizard.h"
 #include "utils/SettingsManager.h"
 #include "utils/UpdateChecker.h"
 #include "utils/WorldMap/StructureIcons.h"
+
+#include <QCoreApplication>
+#include <QProcess>
 
 void SettingsPage::initGeneralSettings()
 {
@@ -316,6 +320,27 @@ void SettingsPage::initGeneralSettings()
     QHBoxLayout *checkUpdateRow = appendSettingRow(updaterCard,
         tr("手动检查更新"), tr("立即检查一次启动器更新。"), QString(), true);
     checkUpdateRow->addWidget(checkUpdateBtn);
+
+    // ── 新手引导 ──
+    QVBoxLayout *onboardingCard = createSettingsCard(layout, tr("新手引导"));
+
+    QPushButton *openGuideBtn = new QPushButton(tr("打开新手引导"));
+    openGuideBtn->setObjectName("historyBtn");
+    openGuideBtn->setCursor(Qt::PointingHandCursor);
+    connect(openGuideBtn, &QPushButton::clicked, this, [this]() {
+        QWidget *host = window();
+        OnboardingWizard wizard(host);
+        wizard.exec();
+        if (wizard.restartRequested() && host) {
+            host->hide();
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), QStringList());
+            QCoreApplication::quit();
+        }
+    });
+
+    QHBoxLayout *onboardingRow = appendSettingRow(onboardingCard,
+        tr("新手引导"), tr("重新打开首次启动时的配置向导，可重新设置语言、下载源、账户、Java 与实例文件夹等。"), QString(), true);
+    onboardingRow->addWidget(openGuideBtn);
 
     // ── 提示信息 ──
     QVBoxLayout *notificationCard = createSettingsCard(layout, tr("提示信息"));

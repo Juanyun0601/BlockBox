@@ -30,10 +30,16 @@ public:
     void updateLaunchTaskMessage(const QString &message);
     void addLaunchTaskDetail(const QString &detail);
 
+    /** 按父控件尺寸重算悬浮几何（贴底居中），并置顶显示 */
+    void updateFloatGeometry();
+
 signals:
     void taskDetailRequested(const QString &taskId);
     void launchTaskCardClicked();
     void showTaskListPageRequested();
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void onTaskAdded(const QString &taskId);

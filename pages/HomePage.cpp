@@ -27,9 +27,11 @@
 #include <QEvent>
 #include <QEasingCurve>
 #include <QFile>
+#include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QImageReader>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -49,6 +51,7 @@
 #include <QUrl>
 #include <QVariantAnimation>
 #include <QVBoxLayout>
+#include <QtConcurrent>
 
 #include "components/PerfMonitorCard.h"
 #include "components/PerformanceDetailDialog.h"
@@ -404,8 +407,8 @@ HomePage::HomePage(QWidget *parent)
   setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   setMinimumWidth(0);
   loadPictures();
-  loadRecentPlays();
-  loadInstances();
+  // 最近游玩记录改为后台线程异步扫描（见 loadRecentPlays），
+  // 「我的实例」区块仅在首次创建时才加载（见 createInstancesSection）
   initUI();
 
   // 账户列表变化（添加/删除/切换默认）时刷新皮肤面板
@@ -552,8 +555,10 @@ void HomePage::loadPictures()
   for (const QString &entry : entries)
   {
     const QString path = dir.absoluteFilePath(entry);
-    QPixmap probe(path);
-    if (probe.isNull())
+    // 只读文件头判断能否解码，不解码像素：轮播图为数 MB 的大图，
+    // 启动时逐张完整解码要多花几百毫秒
+    QImageReader reader(path);
+    if (!reader.canRead())
     {
       qWarning() << "[HomePage] 轮播图片无法加载，已跳过:" << path;
       continue;
@@ -562,15 +567,12 @@ void HomePage::loadPictures()
   }
 }
 
-void HomePage::loadRecentPlays()
+QVector<RecentPlayEntry> HomePage::scanRecentPlays(const QList<InstanceFolderInfo> &folders,
+                                                   const QStringList &pinnedKeys)
 {
-  m_recentPlays.clear();
-
-  // 读取已固定的记录标识（持久化于设置中）
-  m_pinnedRecentKeys = SettingsManager::instance()->getProperty("home/recentPinnedKeys", QStringList()).toStringList();
+  QVector<RecentPlayEntry> recentPlays;
 
   // 遍历所有实例文件夹（游戏根目录 .minecraft）
-  QList<InstanceFolderInfo> folders = SettingsManager::instance()->getInstanceFolders();
   for (const auto &folder : folders)
   {
     QDir versionsDir(folder.path + "/versions");
@@ -696,8 +698,8 @@ void HomePage::loadRecentPlays()
           entry.lastPlayed = tr("从未游玩");
         }
 
-        entry.pinned = m_pinnedRecentKeys.contains(recentPlayKey(entry));
-        m_recentPlays.append(entry);
+        entry.pinned = pinnedKeys.contains(recentPlayKey(entry));
+        recentPlays.append(entry);
       }
 
       // 加载该版本目录下的服务器列表（servers.json）
@@ -731,8 +733,8 @@ void HomePage::loadRecentPlays()
             // 服务器无游玩记录时间，使用 servers.json 的最后修改时间作为近似值
             srvEntry.lastPlayedTime = serversFileTime;
             srvEntry.lastPlayed = serversFileTime.toString("yyyy-MM-dd HH:mm");
-            srvEntry.pinned = m_pinnedRecentKeys.contains(recentPlayKey(srvEntry));
-            m_recentPlays.append(srvEntry);
+            srvEntry.pinned = pinnedKeys.contains(recentPlayKey(srvEntry));
+            recentPlays.append(srvEntry);
           }
         }
       }
@@ -740,11 +742,49 @@ void HomePage::loadRecentPlays()
   }
 
   // 固定项置顶，其余按最后游玩时间降序排序
-  sortRecentPlays();
+  std::sort(recentPlays.begin(), recentPlays.end(),
+            [](const RecentPlayEntry &a, const RecentPlayEntry &b)
+            {
+              if (a.pinned != b.pinned)
+                return a.pinned;
+              return a.lastPlayedTime > b.lastPlayedTime;
+            });
+
+  return recentPlays;
+}
+
+void HomePage::loadRecentPlays()
+{
+  // 遍历实例目录并解析 level.dat 属于磁盘密集操作，放到后台线程执行，
+  // 完成后回主线程重建卡片，避免阻塞启动与页面交互
+  if (m_recentPlaysScanPending)
+    return;
+  m_recentPlaysScanPending = true;
+
+  const QList<InstanceFolderInfo> folders = SettingsManager::instance()->getInstanceFolders();
+  const QStringList pinnedKeys =
+      SettingsManager::instance()->getProperty("home/recentPinnedKeys", QStringList()).toStringList();
+
+  auto *watcher = new QFutureWatcher<QVector<RecentPlayEntry>>(this);
+  connect(watcher, &QFutureWatcher<QVector<RecentPlayEntry>>::finished, this,
+          [this, watcher, pinnedKeys]()
+  {
+    m_recentPlaysScanPending = false;
+    const QVector<RecentPlayEntry> scanned = watcher->result();
+    watcher->deleteLater();
+
+    m_pinnedRecentKeys = pinnedKeys;
+    const QVector<RecentPlayEntry> previous = m_recentPlays;
+    m_recentPlays = scanned;
+    if (!sameRecentPlayList(previous, m_recentPlays))
+      m_recentPlaysForceRebuild = true;
+    rebuildRecentPlaysContent();
+  });
+  watcher->setFuture(QtConcurrent::run(HomePage::scanRecentPlays, folders, pinnedKeys));
 }
 
 // 最近游玩记录的稳定标识（存档用存档路径、服务器用地址，跨语言稳定）
-QString HomePage::recentPlayKey(const RecentPlayEntry &entry) const
+QString HomePage::recentPlayKey(const RecentPlayEntry &entry)
 {
   if (!entry.serverAddress.isEmpty())
     return QStringLiteral("server|%1|%2").arg(entry.instancePath, entry.serverAddress);
@@ -1365,19 +1405,27 @@ void HomePage::scheduleRecentPlaysRebuild()
   });
 }
 
-// 重新扫描最近游玩数据；仅当内容确实变化时强制重建卡片
+// 重新扫描最近游玩数据；扫描在后台线程完成，有变化时自动强制重建卡片
 void HomePage::reloadRecentPlaysIfChanged()
 {
-  const QVector<RecentPlayEntry> previous = m_recentPlays;
   loadRecentPlays();
-  if (!sameRecentPlayList(previous, m_recentPlays))
-    m_recentPlaysForceRebuild = true;
-  rebuildRecentPlaysContent();
 }
 
 void HomePage::showEvent(QShowEvent *event)
 {
   QWidget::showEvent(event);
+
+  // 硬件采样含 GPU 计数器枚举，首次执行会阻塞主线程一段时间；
+  // 延迟到首页显示之后再启动，避免拖慢软件启动
+  if (!m_perfMonitorStarted)
+  {
+    m_perfMonitorStarted = true;
+    QTimer::singleShot(500, this, [this]() {
+      if (m_hardwareMonitor)
+        m_hardwareMonitor->start(2000);
+    });
+  }
+
   // 首页显示时重新扫描：实例文件夹可能在构造之后才被添加
   // （新手引导、实例选择页手动添加），否则卡片会停留在“暂无游玩记录”。
   if (m_recentPlaysRefreshPending)
@@ -1700,6 +1748,9 @@ void HomePage::loadInstances()
 
 QWidget* HomePage::createInstancesSection()
 {
+  // 实例列表仅在本区块真正被创建时才扫描（默认首页布局不含该区块）
+  loadInstances();
+
   auto *section = new QWidget();
   section->setObjectName("homeCard");
   auto *vlay = new QVBoxLayout(section);
@@ -2390,7 +2441,8 @@ QWidget* HomePage::createPerformanceSection()
   {
     refreshPerformanceData();
   });
-  m_hardwareMonitor->start(2000);
+  // 采样（尤其是 GPU 计数器枚举）会阻塞主线程，启动阶段不启动，
+  // 等首页真正显示后再开始（见 showEvent）
 
   vlay->addWidget(container);
   return section;

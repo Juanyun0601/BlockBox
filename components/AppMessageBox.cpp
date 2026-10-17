@@ -1,6 +1,7 @@
 #include "AppMessageBox.h"
 
 #include <QApplication>
+#include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QImage>
@@ -11,7 +12,10 @@
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QStyle>
+#include <QTextBrowser>
+#include <QTextDocument>
 #include <QVBoxLayout>
+#include <QtMath>
 
 #include "utils/LanguageManager.h"
 #include "utils/ThemeManager.h"
@@ -23,6 +27,7 @@ AppMessageBox::AppMessageBox(QWidget *parent)
     , m_titleLabel(nullptr)
     , m_textLabel(nullptr)
     , m_informativeLabel(nullptr)
+    , m_infoBrowser(nullptr)
     , m_buttonRow(nullptr)
     , m_buttonLayout(nullptr)
     , m_defaultButton(nullptr)
@@ -86,9 +91,23 @@ void AppMessageBox::initUI()
     m_informativeLabel->setWordWrap(true);
     m_informativeLabel->hide();
 
+    // Markdown 说明区（更新日志等）：只读 QTextBrowser，过长时内部滚动
+    m_infoBrowser = new QTextBrowser(m_card);
+    m_infoBrowser->setObjectName(QStringLiteral("appMsgBoxInfoBrowser"));
+    m_infoBrowser->setOpenExternalLinks(true);
+    m_infoBrowser->setOpenLinks(true);
+    m_infoBrowser->setFrameShape(QFrame::NoFrame);
+    m_infoBrowser->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_infoBrowser->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_infoBrowser->document()->setDocumentMargin(0);
+    m_infoBrowser->setMinimumHeight(120);
+    m_infoBrowser->setMaximumHeight(340);
+    m_infoBrowser->hide();
+
     midLayout->addWidget(m_titleLabel);
     midLayout->addWidget(m_textLabel);
     midLayout->addWidget(m_informativeLabel);
+    midLayout->addWidget(m_infoBrowser);
 
     topLayout->addWidget(m_iconLabel, 0, Qt::AlignTop);
     topLayout->addLayout(midLayout, 1);
@@ -150,6 +169,35 @@ void AppMessageBox::initStyle()
         "    font-size: 12px;"
         "}"
         ""
+        "QTextBrowser#appMsgBoxInfoBrowser {"
+        "    color: %4;"
+        "    background-color: transparent;"
+        "    border: none;"
+        "    font-size: 12px;"
+        "}"
+        ""
+        "QScrollArea#appMsgBoxInfoScroll {"
+        "    background: transparent;"
+        "    border: none;"
+        "}"
+        ""
+        "QTextBrowser#appMsgBoxInfoBrowser QScrollBar:vertical {"
+        "    background: transparent;"
+        "    width: 8px;"
+        "    margin: 0;"
+        "}"
+        ""
+        "QTextBrowser#appMsgBoxInfoBrowser QScrollBar::handle:vertical {"
+        "    background: %7;"
+        "    border-radius: 4px;"
+        "    min-height: 30px;"
+        "}"
+        ""
+        "QTextBrowser#appMsgBoxInfoBrowser QScrollBar::add-line:vertical,"
+        "QTextBrowser#appMsgBoxInfoBrowser QScrollBar::sub-line:vertical {"
+        "    height: 0;"
+        "}"
+        ""
         "QWidget#appMsgBoxButtonRow {"
         "    background-color: transparent;"
         "}"
@@ -205,10 +253,69 @@ QString AppMessageBox::text() const
 void AppMessageBox::setInformativeText(const QString &text)
 {
     m_informativeText = text;
+    if (m_infoBrowser)
+        m_infoBrowser->hide();
     if (m_informativeLabel) {
         m_informativeLabel->setText(m_informativeText);
         m_informativeLabel->setVisible(!m_informativeText.isEmpty());
     }
+}
+
+void AppMessageBox::setInformativeMarkdown(const QString &markdown)
+{
+    m_informativeText = markdown;
+    if (m_informativeLabel)
+        m_informativeLabel->hide();
+    if (!m_infoBrowser)
+        return;
+
+    if (markdown.trimmed().isEmpty()) {
+        m_infoBrowser->clear();
+        m_infoBrowser->hide();
+        return;
+    }
+
+    applyMarkdownDocumentStyle();
+    m_infoBrowser->setMarkdown(markdown);
+    m_infoBrowser->show();
+    updateMarkdownBrowserHeight();
+}
+
+void AppMessageBox::applyMarkdownDocumentStyle()
+{
+    if (!m_infoBrowser)
+        return;
+
+    ThemeManager *tm = ThemeManager::instance();
+    const bool isLight = (tm->currentTheme() == ThemeManager::LightTheme);
+    const QString textColor   = isLight ? "#4a4a4a" : "#c9c9c9";
+    const QString headingColor = isLight ? "#1a1a1a" : "#f2f2f2";
+    const QString linkColor   = tm->currentThemeColor();
+    const QString codeBg      = isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.08)";
+
+    // 必须在 setMarkdown 之前设置，才能作用到生成的富文本节点
+    m_infoBrowser->document()->setDefaultStyleSheet(QStringLiteral(
+        "body, p, li, td { color: %1; font-size: 12px; }"
+        "h1, h2, h3, h4, h5, h6 { color: %2; font-size: 13px; margin-top: 8px; margin-bottom: 4px; }"
+        "a { color: %3; }"
+        "code, pre { color: %1; background-color: %4; }"
+        "ul, ol { margin-top: 2px; margin-bottom: 2px; }"
+        "blockquote { color: %1; margin-left: 0; padding-left: 8px; }"
+    ).arg(textColor, headingColor, linkColor, codeBg));
+}
+
+void AppMessageBox::updateMarkdownBrowserHeight()
+{
+    // 用 isHidden 而非 isVisible：弹窗 exec 前父控件尚未显示，isVisible 恒为 false
+    if (!m_infoBrowser || m_infoBrowser->isHidden())
+        return;
+
+    // 短内容贴合内容高度；长内容封顶后内部滚动，避免弹窗撑满屏幕
+    m_infoBrowser->document()->adjustSize();
+    const int contentH = qCeil(m_infoBrowser->document()->size().height()) + 12;
+    constexpr int kMinNotesHeight = 120;
+    constexpr int kMaxNotesHeight = 340;
+    m_infoBrowser->setFixedHeight(qBound(kMinNotesHeight, contentH, kMaxNotesHeight));
 }
 
 void AppMessageBox::setIcon(Icon icon)

@@ -1096,7 +1096,12 @@ bool JavaScanWorker::validateJavaPath(const QString& path, QString& outVersion)
     }
 
     if (process.state() != QProcess::NotRunning)
+    {
+        // 超时未退出（如失效的 javapath 存根）：结束进程，避免残留挂起的 java.exe
+        process.kill();
+        process.waitForFinished(1000);
         return false;
+    }
 
     {
         QByteArray output = process.readAll();
@@ -1137,7 +1142,12 @@ bool JavaScanWorker::validateJavaPathDetailed(const QString& path, JavaInstallIn
     }
 
     if (process.state() != QProcess::NotRunning)
+    {
+        // 超时未退出：结束进程，避免残留挂起的 java.exe
+        process.kill();
+        process.waitForFinished(1000);
         return false;
+    }
 
     QByteArray output = process.readAll();
     QString outputStr = QString::fromLocal8Bit(output);

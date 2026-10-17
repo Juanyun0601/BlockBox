@@ -34,6 +34,7 @@ class QLabel;
 class QLineEdit;
 class QProgressBar;
 class QPushButton;
+class QScrollArea;
 class QStackedWidget;
 class QTimer;
 class WorldMapView;
@@ -108,6 +109,9 @@ protected:
      */
     void keyPressEvent(QKeyEvent *event) override;
 
+    /** 结构条滚动容器：滚轮在横向滚动条上时转为横滚（QScrollArea 默认只滚纵向） */
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private slots:
     void onRenderFinished();
     void onDimensionChanged(int index);
@@ -124,6 +128,9 @@ private slots:
     /** 远程图标就位后刷新第二行按钮图标 */
     void refreshStructIcons();
     void onGridToggled(bool on);
+    void onSeedToggled(bool on);
+    /** 种子画布去抖到期：视角中心离开当前画布窗口 → 以新中心重渲 */
+    void onSeedRecenterTimeout();
     void onZoomIn();
     void onZoomOut();
     void onFitClicked();
@@ -135,10 +142,6 @@ private slots:
     void onPollProgress();
     /** 视口去抖到期：挑选需要补的 1:1 细节 region */
     void scheduleTiles();
-    /** 取队列里离视口中心最近的一块交给工作线程 */
-    void pumpTileQueue();
-    /** 单块细节渲染完成 */
-    void onTileFinished();
     /** 队列还有就接着渲，空了就补下一批（由中心向四周扩散） */
     void continueTiling();
 
@@ -166,7 +169,18 @@ private:
         int seq = 0;   ///< 批次号，用来丢弃换存档/换维度前的过期结果
     };
 
+    /** 取队列里离视口中心最近的若干块交给工作线程（并行） */
+    void pumpTileQueue();
+    /** 单块细节渲染完成（watcher 完成信号触发） */
+    void onTileFinished(QFutureWatcher<TileResult> *watcher);
+
     void startRender();
+    /** 组装当前的种子预测参数（开关 + 种子 + 版本 + 视角中心） */
+    WorldMapRenderer::SeedPreview buildSeedPreview() const;
+    /** 视角中心是否已离开种子画布窗口（离开则安排重定心渲染） */
+    void maybeScheduleSeedRecenter();
+    /** 当前 维度×着色×种子开关×高度 的渲染缓存 key（与 startRender 一致） */
+    int renderCacheKey() const;
     /** 顶部标题副行：跟随当前维度变化（地表地图 · 主世界） */
     void updateSubtitle();
     void applyResult(const WorldMapRenderer::RenderResult &result);
@@ -203,9 +217,23 @@ private:
     quint64 m_seed = 0;
     int m_mcVersion = 0;
     bool m_hasSeed = false;
+    /** 未加载区域的种子预测开关（QSettings 持久化；无种子时禁用） */
+    bool m_seedPreviewOn = true;
+    QPushButton *m_seedBtn = nullptr;
+    /** 当前种子画布的中心 region（视角中心）与半径，用于"离开窗口就重定心" */
+    QPoint m_seedCanvasCenter;
+    bool m_seedCanvasCenterSet = false;
+    int m_seedCanvasRadius = 20;
+    /** 重定心重渲期间保留视角中心（避免画布重建时跳回出生点） */
+    QPoint m_pendingRestoreBlock;
+    bool m_pendingRestoreBlockSet = false;
+    /** 视角离开画布窗口后的去抖定时器（停手 600ms 才重渲，拖动中不打断） */
+    QTimer *m_seedRecenterTimer = nullptr;
     /** 第二行结构开关：默认全选 */
     QVector<bool> m_structEnabled;
     QList<QPushButton *> m_structBtns;
+    /** 结构条的横向滚动容器（窄屏不撑大窗口） */
+    QScrollArea *m_structScroll = nullptr;
     /** 出生点：初始视图中心 + 渐进渲染的优先区域 */
     qint64 m_spawnX = 0;
     qint64 m_spawnZ = 0;
@@ -252,10 +280,16 @@ private:
     QThreadPool m_structPool;
     std::shared_ptr<StructJob> m_structJob;
     bool m_structDirty = false;   ///< 任务进行中又改了开关 / 视口 → 完成后再算一轮
-    /** 单区域 1:1 瓦片渲染结果的回传 */
-    QFutureWatcher<TileResult> *m_tileWatcher;
+    /** 单区域 1:1 瓦片渲染结果的回传（多路并行，各自一个 watcher） */
+    QList<QFutureWatcher<TileResult> *> m_tileWatchers;
+    /** 在途瓦片的 region 坐标（与 m_tileWatchers 对齐，控制"由中心向外"并行节奏） */
+    QList<QPoint> m_tileInFlightKeys;
+    /** 同时在渲的细节瓦片数（≤ kMaxConcurrentTiles） */
+    int m_tileInFlight = 0;
     /** 视口变化去抖：拖动中不反复重算要加载哪些 region */
     QTimer *m_tileTimer;
+    /** 视野补洞心跳：周期性重扫可见范围，防止调度链断掉后左右/四角停在概览 */
+    QTimer *m_tileFillTimer = nullptr;
     std::shared_ptr<RenderJob> m_job;
     /** 每次启动渲染自增；finished 时对不上说明是过期任务的结果，直接丢弃 */
     int m_renderSeq = 0;
@@ -267,7 +301,6 @@ private:
     QSet<QPoint> m_tilesEmpty;
     /** 细节瓦片 LRU 顺序（最旧在前），超出上限从 view 里剔除 */
     QList<QPoint> m_tileOrder;
-    bool m_tileBusy = false;
     QString m_detailText;   ///< 状态栏"细节 N"片段
     /** 渐进渲染上下文：渲染线程推图块，定时器在 UI 线程 drain 贴图 */
     WorldMapRenderer::ProgressiveSinkPtr m_sink;
@@ -277,7 +310,7 @@ private:
     QString m_liveKey;
     bool m_layoutApplied = false;
 
-    /** 已渲染结果缓存：key = dim * 2 + shadeMode（最多 4 条） */
+    /** 已渲染结果缓存：key 由 renderCacheKey() 编入 维度/着色/种子/高度 */
     QHash<int, WorldMapRenderer::RenderResult> m_cache;
     QList<int> m_cacheOrder;
     int m_renderKey = -1;

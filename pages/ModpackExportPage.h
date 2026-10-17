@@ -22,6 +22,8 @@
 #include <QVBoxLayout>
 #include <QVector>
 
+class QFrame;
+
 class ModpackExportPage : public QWidget
 {
   Q_OBJECT
@@ -46,6 +48,8 @@ private slots:
 
 private:
   void initUI();
+  void buildStepper();
+  void syncStepper();
   QWidget* createStep1();
   QWidget* createStep2();
   QWidget* createStep3();
@@ -59,6 +63,12 @@ private:
   QStringList getSelectedModules() const;
 
   QString m_instancePath;
+  // 顶部步骤条（选择格式 / 填写信息 / 选择模块 / 选择文件）
+  QWidget* m_stepperWidget;
+  QVector<QLabel*> m_stepDots;
+  QVector<QLabel*> m_stepLabels;
+  QVector<QFrame*> m_stepLines;
+  QVector<QWidget*> m_stepNodes;
   QStackedWidget* m_stepStack;
   QPushButton* m_prevBtn;
   QPushButton* m_nextBtn;
@@ -106,9 +116,6 @@ private:
   QWidget* m_moduleSelectionPage;
   QMap<QString, QCheckBox*> m_moduleChecks;
   QMap<QString, QLabel*> m_moduleSizeLabels;
-  QPushButton* m_moduleNextBtn;
-  QPushButton* m_modulePrevBtn;
-
 };
 
 /**

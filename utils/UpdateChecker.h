@@ -84,6 +84,20 @@ public:
     /** 弹确认框后重启流程完成安装（仅下载完成后有效） */
     void installDownloadedUpdate();
 
+    /**
+     * @brief 判断本地文件是否为方块盒子更新安装包
+     * 用于拖入安装前的识别（setup.exe / portable.zip / apk / hap / deb / tar.gz 等）
+     */
+    static bool isUpdatePackageFile(const QString &filePath);
+
+    /**
+     * @brief 安装用户拖入/指定的本地更新包（不经应用内下载）
+     * @param parent 确认框父窗口
+     * @param filePath 更新包绝对路径
+     * 校验文件类型后弹确认框，确认则走与已下载更新相同的平台安装流程
+     */
+    void installExternalPackage(QWidget *parent, const QString &filePath);
+
     DownloadState downloadState() const { return m_downloadState; }
     bool isDownloading() const { return m_downloadState == DownloadRunning; }
     /** 已下载完成的更新包完整路径（未完成时为空） */
@@ -132,6 +146,9 @@ private:
     void showHdcInstallFallbackDialog(const QString &error, const QString &devicePath);
 
     void showUpdateDialog(const ReleaseCandidate &release);
+
+    /** 确认后按路径执行平台安装（installDownloadedUpdate / installExternalPackage 共用） */
+    void installPackageAtPath(QWidget *parent, const QString &packagePath);
 
     QNetworkAccessManager *m_nam;
     // 弹窗父窗口：检查是异步的，用 QPointer 防止窗口销毁后悬空

@@ -20,7 +20,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include "components/OutlinedLabel.h"
+#include "components/MarkdownOutlinedLabel.h"
 #include "utils/AiService.h"
 #include "utils/content/ContentData.h"
 #include "utils/mod/ModData.h"
@@ -462,8 +462,8 @@ private:
 
     // 欢迎提示
     QWidget *m_welcomeWidget;       ///< 欢迎界面容器（标题 + 简介）
-    OutlinedLabel *m_welcomeTitleLabel;  ///< 欢迎大标题
-    QLabel *m_welcomeDescLabel;     ///< 欢迎简介文字
+    MarkdownOutlinedLabel *m_welcomeTitleLabel;  ///< 欢迎大标题
+    MarkdownOutlinedLabel *m_welcomeDescLabel;     ///< 欢迎简介文字
     QWidget *m_welcomeQuickBtns;    ///< 工作模式快捷按钮容器
     QGridLayout *m_welcomeQuickLayout; ///< 快捷按钮网格布局（便于切换列数）
     int m_currentMode;              ///< 当前模式：0=聊天，1=工作

@@ -3,12 +3,14 @@
 
 #include <QWidget>
 #include <QLineEdit>
+#include <QComboBox>
 #include <QScrollArea>
 #include <QVBoxLayout>
 #include <QGridLayout>
 #include <QPushButton>
 #include <QLabel>
 #include <QList>
+#include <QString>
 
 struct ServerEntry
 {
@@ -17,6 +19,9 @@ struct ServerEntry
     quint16 port = 25565;
     QString description;
 };
+
+class LocalCategoryManager;
+class QMenu;
 
 class ServerManagePage : public QWidget
 {
@@ -38,6 +43,11 @@ private slots:
     void onAddServerClicked();
     void onDeleteServerClicked();
     void onEditServerClicked(const QString &name);
+    void onCategoryFilterChanged(int index);
+    void onCategoryManageClicked();
+    void onCategoriesChanged();
+    void onAssignmentsChanged();
+    void onSortChanged(int index);
 
 private:
     void initUI();
@@ -47,6 +57,12 @@ private:
     void placeCards();
     void showEmptyHint(bool show);
     QString serversFilePath() const;
+    /** 重新填充分类筛选下拉框（保留当前选中） */
+    void reloadCategoryCombo();
+    /** 按当前排序模式重排服务器列表副本（名称/地址，忽略大小写） */
+    void sortServers(QList<ServerEntry> &list) const;
+    /** 右键「设置分类」子菜单（key 为服务器地址） */
+    void appendCategoryMenu(QMenu *menu, const QString &key);
 
     QLineEdit *m_searchEdit;
     QLabel *m_statsLabel;
@@ -58,6 +74,14 @@ private:
     QWidget *m_bottomBar;
     QPushButton *m_addServerBtn;
     QPushButton *m_deleteServerBtn;
+
+    // 分类 + 排序筛选（分类按实例持久化于 blockbox/categories.json，键=服务器地址）
+    LocalCategoryManager *m_categoryManager;
+    QComboBox *m_categoryCombo;
+    QPushButton *m_categoryManageBtn;
+    QComboBox *m_sortCombo;
+    QString m_currentCategoryId;      // 空 = 全部；哨兵 = 未分类
+    int m_sortMode = 0;               // 0=名称↑ 1=名称↓ 2=地址↑ 3=地址↓
 
     QList<ServerEntry> m_servers;
     QString m_currentSearch;

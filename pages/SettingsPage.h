@@ -83,6 +83,9 @@ private:
     void initSystemInfoSettings();
     void initAiAssistantSettings();
     void initAboutSettings();
+    void initProjectionEditorSettings();
+    /** 将存储的投影编辑器设置同步到设置页控件（初始化 / 恢复默认后调用） */
+    void refreshProjectionEditorSettingsControls();
 
     // Help tooltip — inserts a help button after the label, click to show description
     void addHelpTooltip(QBoxLayout *layout, QLabel *label, const QString &text);
@@ -133,6 +136,14 @@ private:
     QWidget *m_systemInfoSettings;
     QWidget *m_aiAssistantSettings;
     QWidget *m_aboutSettings;
+    QWidget *m_projectionEditorSettings = nullptr;
+
+    // 投影编辑器内置设置控件
+    QComboBox       *m_projToolCombo = nullptr;
+    CustomCheckBox  *m_projShowAirCheck = nullptr;
+    CustomCheckBox  *m_projTextureCheck = nullptr;
+    CustomCheckBox  *m_projShapesCheck = nullptr;
+    QLineEdit       *m_projSourceInstanceEdit = nullptr;
     
     int m_currentIndex;
     

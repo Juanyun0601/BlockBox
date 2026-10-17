@@ -15,6 +15,7 @@ class QLabel;
 class QPaintEvent;
 class QResizeEvent;
 class QShowEvent;
+class QTextBrowser;
 
 /**
  * @brief 软件内嵌的居中弹窗，替代原生 QMessageBox
@@ -78,6 +79,13 @@ public:
     void setText(const QString &text);
     QString text() const;
     void setInformativeText(const QString &text);
+    /**
+     * @brief 设置 Markdown 格式的说明文字（如更新日志）
+     *
+     * 内容按 Markdown 渲染（标题/列表/加粗/链接等），过长时在固定高度内
+     * 上下滚动查看，不再截断。空字符串会隐藏该区域。
+     */
+    void setInformativeMarkdown(const QString &markdown);
     void setIcon(Icon icon);
     void setIconPixmap(const QPixmap &pixmap);
     void setStandardButtons(StandardButtons buttons);
@@ -120,6 +128,8 @@ private:
     void captureBlurBackground();
     void positionOverWindow();
     void refreshTitleLabel();
+    void applyMarkdownDocumentStyle();
+    void updateMarkdownBrowserHeight();
     QPushButton *createStandardButton(StandardButton button);
     QString standardButtonText(StandardButton button) const;
     ButtonRole standardButtonRole(StandardButton button) const;
@@ -131,6 +141,7 @@ private:
     QLabel *m_titleLabel;
     QLabel *m_textLabel;
     QLabel *m_informativeLabel;
+    QTextBrowser *m_infoBrowser;
     QWidget *m_buttonRow;
     QHBoxLayout *m_buttonLayout;
 

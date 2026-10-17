@@ -36,3 +36,6 @@ nul
 _hits.txt
 *.tmp
 .DS_Store
+
+# 存档互转引擎（首次使用时在线下载到 BlockBox/world_convert/，不随仓库分发）
+libs/chunker-cli-*.jar

@@ -40,6 +40,8 @@ QString resolveTokens(QString style)
         {"@BG_TRACK@", "#e8e8e8"}, {"@BG_TAB@", "#f0f0f0"},
         {"@BG_DISABLED@", "#d5d7db"}, {"@BG_MSG@", "#edf0f4"},
         {"@BG_GLASS@", "rgba(255, 255, 255, 0.72)"},
+        {"@BG_GLASS_TASKBAR@", "rgba(255, 255, 255, 0.42)"},
+        {"@BORDER_GLASS_TASKBAR@", "rgba(255, 255, 255, 0.55)"},
         {"@BORDER@", "#e8eaed"}, {"@BORDER_STRONG@", "#dadce0"},
         {"@BORDER_HOVER@", "#bdbdbd"}, {"@BORDER_DASHED@", "#c4c7c5"},
         {"@BORDER_DISABLED@", "#b0b0b0"}, {"@BORDER_LIGHT@", "#f0f1f3"},

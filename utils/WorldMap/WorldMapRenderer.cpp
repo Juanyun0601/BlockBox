@@ -1,5 +1,7 @@
 #include "WorldMapRenderer.h"
 
+#include "SeedTerrainRenderer.h"
+
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -20,6 +22,8 @@
 #endif
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -547,6 +551,10 @@ bool decodeStates(const uchar *data, qint64 bufLen, const SectionRef &s,
     widths << bits;
     if (bits < 4) widths.prepend(4); // 旧版本位宽下限 4
 
+    // 抽样步长（质数，避免与常见打包周期共振）：先用少量格子淘汰错误
+    // 位宽/打包方式，再全量解码——错误方案几乎必然很快撞到越界索引
+    constexpr int kSampleStride = 19;
+
     const auto tryPacked = [&](int w) -> bool {
         const int per = 64 / w;
         if (per <= 0)
@@ -554,6 +562,13 @@ bool decodeStates(const uchar *data, qint64 bufLen, const SectionRef &s,
         const qint64 need = (qint64(4096) + per - 1) / per;
         if (need > longs.size())
             return false;
+        for (int i = 0; i < 4096; i += kSampleStride)
+        {
+            const int li = i / per;
+            const int off = (i % per) * w;
+            if (quint32((longs[li] >> off) & mask) >= quint32(paletteSize))
+                return false;
+        }
         for (int i = 0; i < 4096; ++i)
         {
             const int li = i / per;
@@ -567,6 +582,24 @@ bool decodeStates(const uchar *data, qint64 bufLen, const SectionRef &s,
     };
 
     const auto trySpanning = [&](int w) -> bool {
+        const auto sampleAt = [&](int i) -> quint64 {
+            const qint64 bitPos = qint64(i) * w;
+            const qint64 li = bitPos >> 6;
+            const int off = int(bitPos & 63);
+            if (li >= longs.size())
+                return quint64(paletteSize); // 越界 → 判失败
+            quint64 v = quint64((quint64(longs[li]) >> off) & quint64(mask));
+            if (off + w > 64)
+            {
+                if (li + 1 >= longs.size())
+                    return quint64(paletteSize);
+                v |= quint64((quint64(longs[li + 1]) << (64 - off)) & quint64(mask));
+            }
+            return v;
+        };
+        for (int i = 0; i < 4096; i += kSampleStride)
+            if (sampleAt(i) >= quint64(paletteSize))
+                return false;
         for (int i = 0; i < 4096; ++i)
         {
             const qint64 bitPos = qint64(i) * w;
@@ -888,17 +921,60 @@ QColor deepenWater(QColor c, int depth)
                   std::max(0, int(c.blue() * k)));
 }
 
+/** 同 deepenWater，但走 QRgb——地表扫描热路径用（免 QColor 构造） */
+QRgb deepenRgb(QRgb c, int depth)
+{
+    const qreal k = 1.0 - std::min(depth, 20) * 0.027;
+    return qRgba(std::max(0, int(qRed(c) * k)),
+                 std::max(0, int(qGreen(c) * k)),
+                 std::max(0, int(qBlue(c) * k)), 255);
+}
+
+/** 调色板预计算标志（每项只解析一次字符串，扫地表时纯整数比较） */
+enum PalFlag : quint8
+{
+    PalAir   = 1 << 0,  ///< 空气：穿透
+    PalWater = 1 << 1,  ///< 水：参与水深调暗
+    PalCover = 1 << 2,  ///< 可忽略覆盖物（草丛/花/火把…）：穿透
+};
+
+struct PalEntry
+{
+    QRgb color = 0;     ///< 地表基础色（alpha=255）
+    quint8 flags = 0;   ///< PalFlag 组合
+};
+
+/** 按方块名预计算一项调色板条目 */
+PalEntry makePalEntry(const QString &raw)
+{
+    const QString name = strippedName(raw);
+    const QColor c = blockColor(raw);
+    PalEntry e;
+    e.color = qRgba(c.red(), c.green(), c.blue(), 255);
+    quint8 f = 0;
+    if (isAirName(name)) f |= PalAir;
+    if (isIgnorableCover(name)) f |= PalCover;
+    if (isWaterName(name)) f |= PalWater;
+    e.flags = f;
+    return e;
+}
+
 /** 该像素无地表（区块未生成 / 全空气） */
 constexpr qint16 kNoHeight = std::numeric_limits<qint16>::min();
 
 /**
- * 区域收尾着色：基础色 + 高度 → 最终像素，叠两层明暗——
- * ① 高度明暗（0.72~1.16）；② 坡度阴影（与右/下邻居的高差，山脊受光、
- * 背光坡压暗）。坡度只在区域内部计算，边缘邻居缺失时用自身高度兜底，
- * 因此跨区域不会出现接缝。
+ * 区域收尾着色：基础色 + 高度 → 最终像素。
+ *
+ * BlockColor / Height 叠两层明暗——① 高度明暗（0.72~1.16）；② 坡度阴影
+ * （与右/下邻居的高差，山脊受光、背光坡压暗）。坡度只在区域内部计算，
+ * 边缘邻居缺失时用自身高度兜底，因此跨区域不会出现接缝。
+ *
+ * Terrain 走地形图：海拔分层设色 + 西北定向山体阴影；water 标出的水面
+ * 像素保持水色、不叠阴影（海面保持干净的平色）。
  */
 void shadeRegion(const QVector<QRgb> &baseColors, const QVector<qint16> &heights,
-                 ShadeMode mode, int minY, int maxY, QImage &img)
+                 ShadeMode mode, int minY, int maxY, QImage &img,
+                 const QVector<quint8> *water)
 {
     constexpr qreal kSlope = 0.010;
     for (int r = 0; r < 512; ++r)
@@ -911,6 +987,35 @@ void shadeRegion(const QVector<QRgb> &baseColors, const QVector<qint16> &heights
                 continue;
 
             const qint16 h = heights[i];
+
+            if (mode == ShadeMode::Terrain)
+            {
+                // 中心差分梯度（缺邻居用自身高度兜底，与坡度阴影同一约定）
+                const qreal hl = (c > 0 && heights[i - 1] != kNoHeight)
+                    ? qreal(heights[i - 1]) : qreal(h);
+                const qreal hrr = (c + 1 < 512 && heights[i + 1] != kNoHeight)
+                    ? qreal(heights[i + 1]) : qreal(h);
+                const qreal hu = (r > 0 && heights[i - 512] != kNoHeight)
+                    ? qreal(heights[i - 512]) : qreal(h);
+                const qreal hd = (r + 1 < 512 && heights[i + 512] != kNoHeight)
+                    ? qreal(heights[i + 512]) : qreal(h);
+                const qreal hs = terrainHillshade((hrr - hl) * 0.5,
+                                                  (hd - hu) * 0.5);
+
+                const QRgb base = baseColors[i];
+                if (water && water->at(i))
+                {
+                    dst[c] = base; // 水面平色：不叠阴影
+                    continue;
+                }
+                const QRgb col = terrainKeepsBase(base)
+                    ? base : terrainTint(h, minY, maxY);
+                dst[c] = qRgba(std::clamp(int(qRed(col) * hs), 0, 255),
+                               std::clamp(int(qGreen(col) * hs), 0, 255),
+                               std::clamp(int(qBlue(col) * hs), 0, 255), 255);
+                continue;
+            }
+
             qint16 hr = h, hd = h;
             if (c + 1 < 512 && heights[i + 1] != kNoHeight)
                 hr = heights[i + 1];
@@ -942,14 +1047,16 @@ void shadeRegion(const QVector<QRgb> &baseColors, const QVector<qint16> &heights
  * 把一个区块的地表提取到区域缓冲（基础色 + 高度），明暗由 shadeRegion 统一做。
  * @param originCol 图像列（= 区块内偏移 0）
  * @param originRow 图像行
+ * @param water     地形模式的水面标记缓冲（可空）：该像素地表是水 → 1
+ * @return 256 列是否全部解析出地表（false = 该区块有空缺，上层据此判断补种子图）
  */
-void renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
+bool renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
                  int originCol, int originRow,
                  QVector<QRgb> &baseColors, QVector<qint16> &heights,
-                 int maxSurfaceY)
+                 int maxSurfaceY, QVector<quint8> *water)
 {
     if (info.sections.isEmpty())
-        return;
+        return false;
 
     QVector<SectionRef> secs = info.sections;
     std::sort(secs.begin(), secs.end(),
@@ -957,18 +1064,15 @@ void renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
 
     const bool preferPacked = info.dataVersion >= 2566; // 1.16+
 
-    QVector<bool> resolved(256, false);
+    std::array<bool, 256> resolved{};
+    int remaining = 256;
     QVector<QRgb> colors(256, 0);          // 地表基础色（方块色 + 水深，未做明暗）
     QVector<qint16> colHeights(256, kNoHeight);
+    std::array<bool, 256> colWater{};      // 该列地表是否为水面（地形模式用）
 
     for (const SectionRef &s : secs)
     {
-        bool pending = false;
-        for (bool r : resolved)
-        {
-            if (!r) { pending = true; break; }
-        }
-        if (!pending)
+        if (remaining == 0)
             break;
 
         QStringList palette;
@@ -1020,9 +1124,36 @@ void renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
         }
 
         const int paletteSize = palette.size();
-        for (int col = 0; col < 256; ++col)
+
+        // 调色板 → 预计算条目：每个 section 只解析一次字符串/哈希，
+        // 下面 4096 格的内层扫描全部退化成整数比较（地表渲染的主要热点）
+        QVector<PalEntry> lut(paletteSize);
+        if (paletteSize > 0)
         {
-            if (resolved[col])
+            if (s.hasLegacy())
+            {
+                // 旧格式数字 ID 走固定色表，flags 按 ID 判定
+                for (int p = 0; p < paletteSize; ++p)
+                {
+                    const int id = p;
+                    const QColor c = legacyBlockColor(id);
+                    quint8 f = 0;
+                    if (id == 0) f |= PalAir;
+                    if (id == 8 || id == 9) f |= PalWater;
+                    lut[p].color = qRgba(c.red(), c.green(), c.blue(), 255);
+                    lut[p].flags = f;
+                }
+            }
+            else
+            {
+                for (int p = 0; p < paletteSize; ++p)
+                    lut[p] = makePalEntry(palette.at(p));
+            }
+        }
+
+        for (int col = 0; col < 256 && remaining > 0; ++col)
+        {
+            if (resolved[uint(col)])
                 continue;
             for (int yy = 15; yy >= 0; --yy)
             {
@@ -1036,15 +1167,15 @@ void renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
                 {
                     if (idx >= quint32(paletteSize))
                         break;
-                    const QString raw = palette[int(idx)];
-                    const QString name = strippedName(raw);
-                    // 穿透可忽略覆盖物（草丛/花/薄雪/火把…），取真正的地面
-                    if (isAirName(name) || isIgnorableCover(name))
+                    const PalEntry &e = lut[int(idx)];
+                    // 穿透空气与可忽略覆盖物（草丛/花/薄雪/火把…），取真正的地面
+                    if (e.flags & (PalAir | PalCover))
                         continue;
 
-                    QColor c = blockColor(raw);
-                    if (isWaterName(name))
+                    QRgb c = e.color;
+                    if (e.flags & PalWater)
                     {
+                        colWater[uint(col)] = true;
                         // 数水层厚度：浅滩亮、深潭沉
                         int depth = 1;
                         for (int y2 = yy - 1; y2 >= 0; --y2)
@@ -1052,14 +1183,14 @@ void renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
                             const quint32 i2 =
                                 indices[quint32(y2) * 256 + quint32(col)];
                             if (i2 >= quint32(paletteSize)
-                                || !isWaterName(strippedName(palette[int(i2)])))
+                                || !(lut[int(i2)].flags & PalWater))
                                 break;
                             if (++depth >= 24)
                                 break;
                         }
-                        c = deepenWater(c, depth);
+                        c = deepenRgb(c, depth);
                     }
-                    colors[uint(col)] = qRgba(c.red(), c.green(), c.blue(), 255);
+                    colors[uint(col)] = c;
                 }
                 else
                 {
@@ -1070,6 +1201,7 @@ void renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
                     QColor c = legacyBlockColor(id);
                     if (id == 8 || id == 9)
                     {
+                        colWater[uint(col)] = true;
                         int depth = 1;
                         for (int y2 = yy - 1; y2 >= 0; --y2)
                         {
@@ -1085,7 +1217,8 @@ void renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
                     colors[uint(col)] = qRgba(c.red(), c.green(), c.blue(), 255);
                 }
                 colHeights[uint(col)] = qint16(s.y * 16 + yy);
-                resolved[col] = true;
+                resolved[uint(col)] = true;
+                --remaining;
                 break;
             }
         }
@@ -1093,17 +1226,64 @@ void renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
 
     for (int col = 0; col < 256; ++col)
     {
-        if (!resolved[col])
+        if (!resolved[uint(col)])
             continue;
         const int lx = col & 15;
         const int lz = col >> 4;
         const int i = (originRow + lz) * 512 + (originCol + lx);
         baseColors[uint(i)] = colors[uint(col)];
         heights[uint(i)] = colHeights[uint(col)];
+        if (water && colWater[uint(col)])
+            water->operator[](uint(i)) = 1;
     }
+    return remaining == 0;
 }
 
 } // namespace
+
+// ═══════════════════ 地形模式共用（ShadeMode::Terrain） ═══════════════════
+
+QRgb terrainTint(int y, int minY, int maxY)
+{
+    // 分层设色色带：低地绿 → 海平面亮绿 → 黄绿 → 黄 → 棕 → 灰 → 雪顶白
+    static const QRgb kStops[] = {
+        qRgb(0x3E, 0x7C, 0x4F), // 0.00 深绿（最低）
+        qRgb(0x6B, 0xAF, 0x5F), // 0.33 主世界海平面附近亮绿
+        qRgb(0xA8, 0xC4, 0x6A), // 0.48 黄绿（丘陵）
+        qRgb(0xD9, 0xC1, 0x72), // 0.60 黄（高原）
+        qRgb(0xC9, 0x9A, 0x5E), // 0.72 棕黄（山地）
+        qRgb(0xA8, 0x75, 0x52), // 0.84 棕（高山）
+        qRgb(0x9C, 0x8F, 0x86), // 0.93 灰（岩峰）
+        qRgb(0xF7, 0xF7, 0xF5), // 1.00 白（雪顶）
+    };
+    constexpr int kSegs = int(sizeof(kStops) / sizeof(kStops[0])) - 1;
+    qreal t = (maxY > minY) ? (qreal(y) - minY) / qreal(maxY - minY) : 0.5;
+    t = std::clamp(t, 0.0, 1.0);
+    const qreal pos = t * kSegs;
+    const int s = std::min(int(pos), kSegs - 1);
+    const qreal f = pos - s;
+    const QRgb a = kStops[s];
+    const QRgb b = kStops[s + 1];
+    return qRgba(int(qRed(a) + (qRed(b) - qRed(a)) * f),
+                 int(qGreen(a) + (qGreen(b) - qGreen(a)) * f),
+                 int(qBlue(a) + (qBlue(b) - qBlue(a)) * f), 255);
+}
+
+qreal terrainHillshade(qreal dzDx, qreal dzDy)
+{
+    // 光源：方位西北、仰角 45° → L = (-0.5, -0.5, √2/2)，|L| = 1
+    constexpr qreal kLz = 0.7071067811865476;
+    // 法线 N = (-dzDx, -dzDy, 1)，Lambert 照度归一化到"平地 = 1"
+    const qreal len = std::sqrt(dzDx * dzDx + dzDy * dzDy + 1.0);
+    const qreal dotNL = (dzDx * 0.5 + dzDy * 0.5 + kLz) / len;
+    return std::clamp(dotNL / kLz, 0.35, 1.55);
+}
+
+bool terrainKeepsBase(QRgb c)
+{
+    // 雪 / 冰 / 白色方块保持本色：雪顶在任何海拔都显示为白
+    return qRed(c) >= 200 && qGreen(c) >= 200 && qBlue(c) >= 200;
+}
 
 // ═══════════════════════ 区域文件 ═══════════════════════
 
@@ -1124,6 +1304,30 @@ void dimensionHeightRange(Dimension dim, int *minY, int *maxY)
     case Dimension::End:    *minY = 0;   *maxY = 256; break;
     default:                *minY = -64; *maxY = 320; break;
     }
+}
+
+/**
+ * 用种子预测地形垫住真实图里的透明洞（半生成 region）。
+ * 真实像素画在上层、种子只填空缺 —— 已加载与未加载之间不再露出空缺。
+ * @param seedRes 种子渲染边长：细节瓦片传 512（方块级），概览传 512/bpp。
+ */
+QImage seedUnderlay(QImage &real, int regionX, int regionZ, Dimension dim,
+                    ShadeMode mode, const SeedPreview &seed, int seedRes)
+{
+    if (!seed.enabled || !SeedTerrainRenderer::supported(seed.mc, dim))
+        return real;
+    QImage under = SeedTerrainRenderer::renderRegionTile(regionX, regionZ, dim,
+                                                         mode, seed.seed,
+                                                         seed.mc, seedRes);
+    if (under.isNull())
+        return real;
+    if (under.size() != real.size())
+        under = under.scaled(real.size(), Qt::IgnoreAspectRatio,
+                             Qt::FastTransformation);
+    QPainter p(&under);
+    p.drawImage(0, 0, real);
+    p.end();
+    return under;
 }
 
 /**
@@ -1169,11 +1373,15 @@ struct RegionData
  * 渲染单个 region 文件为 512×512 图块（1 像素 = 1 方块）。
  * 解析思路参考 MCA Selector：文件头固定 32KB（位置表 4096×4B + 时间戳表 4096×4B），
  * 数据从第 8 扇区开始，每个区块按 (offset << 12) 定位，长度字段含 1 字节压缩类型。
+ * @param hasHoles 非空时回传"图里是否有透明空缺"（半生成 region），省掉整图 alpha 扫描
  */
 QImage renderRegionFile(const QString &path, ShadeMode mode,
-                        int minY, int maxY, int *failedChunks, int maxSurfaceY)
+                        int minY, int maxY, int *failedChunks, int maxSurfaceY,
+                        bool *hasHoles = nullptr)
 {
     QImage img;
+    if (hasHoles)
+        *hasHoles = false;
 
     // Anvil 头部固定 8KB：位置表 1024×4B + 时间戳表 1024×4B（一个 region 是 32×32 = 1024 个区块）。
     // 空 .mca（游戏运行中会创建 0 字节文件）与被截断的文件直接跳过。
@@ -1198,6 +1406,12 @@ QImage renderRegionFile(const QString &path, ShadeMode mode,
     // 区域缓冲：基础色 + 每像素地表高度（kNoHeight = 该处没有地表）
     QVector<QRgb> baseColors(512 * 512, 0);
     QVector<qint16> heights(512 * 512, kNoHeight);
+    // 地形模式的水面标记：水面保持水色、不叠山体阴影（其他模式不分配）
+    QVector<quint8> water;
+    if (mode == ShadeMode::Terrain)
+        water.resize(512 * 512);
+
+    bool holes = false;
 
     // 位置表只有 1024 项（32×32）；按 4096 项读会读进时间戳表与数据区，
     // 把时间戳当成偏移导致大量假跳过、还会把伪造槽位画上去盖掉真实像素。
@@ -1207,15 +1421,24 @@ QImage renderRegionFile(const QString &path, ShadeMode mode,
                           | (quint32(data[i * 4 + 1]) << 8)
                           |  quint32(data[i * 4 + 2]);
         if (off == 0)
+        {
+            holes = true; // 该区块槽位没有数据 → 图上是洞
             continue;
+        }
 
         const qint64 pos = qint64(off) * 4096;
         if (pos < kHeaderSize || pos + 5 > size)
+        {
+            holes = true;
             continue;
+        }
 
         const quint32 len = be32(data + pos);
         if (len <= 1 || pos + 4 + qint64(len) > size)
+        {
+            holes = true;
             continue;
+        }
 
         const int compType = int(data[pos + 4]);
         QByteArray chunk;
@@ -1223,6 +1446,7 @@ QImage renderRegionFile(const QString &path, ShadeMode mode,
         {
             qWarning() << "[WorldMap] inflate failed" << path << i << compType << int(len);
             if (failedChunks) ++*failedChunks;
+            holes = true;
             continue;
         }
 
@@ -1232,6 +1456,7 @@ QImage renderRegionFile(const QString &path, ShadeMode mode,
         {
             qWarning() << "[WorldMap] parse failed" << path << i << chunk.size();
             if (failedChunks) ++*failedChunks;
+            holes = true;
             continue;
         }
         if (info.sections.isEmpty())
@@ -1241,16 +1466,22 @@ QImage renderRegionFile(const QString &path, ShadeMode mode,
         // 早先优先取 NBT 的 xPos/zPos，遇到重复或错位坐标会把别的槽位盖掉。
         const int localX = i & 31;
         const int localZ = i >> 5;
-        renderChunk(info, cdata, chunk.size(), localX * 16, localZ * 16,
-                    baseColors, heights, maxSurfaceY);
+        if (!renderChunk(info, cdata, chunk.size(), localX * 16, localZ * 16,
+                         baseColors, heights, maxSurfaceY,
+                         water.isEmpty() ? nullptr : &water))
+            holes = true; // 区块里有列没解析出地表
     }
+
+    if (hasHoles)
+        *hasHoles = holes;
 
     img = QImage(512, 512, QImage::Format_ARGB32);
     if (img.isNull())
         return img;
     img.fill(qRgba(0, 0, 0, 0));
-    // 统一收尾：高度明暗 + 坡度阴影（Height 模式则转灰度再叠坡度）
-    shadeRegion(baseColors, heights, mode, minY, maxY, img);
+    // 统一收尾：高度明暗 + 坡度阴影（Height 转灰度再叠坡度；Terrain 走分层设色 + 山体阴影）
+    shadeRegion(baseColors, heights, mode, minY, maxY, img,
+                water.isEmpty() ? nullptr : &water);
 
     return img;
 }
@@ -1282,22 +1513,37 @@ bool hasRegions(const QString &savePath, Dimension dim)
 
 QImage renderRegionTile(const QString &savePath, Dimension dim,
                         int regionX, int regionZ, ShadeMode mode,
-                        int maxSurfaceY)
+                        int maxSurfaceY, const SeedPreview &seed)
 {
     const QString dir = regionDir(savePath, dim);
-    if (dir.isEmpty())
-        return QImage();
+    QImage img;
 
-    const QString path = dir + QStringLiteral("/r.%1.%2.mca")
+    if (!dir.isEmpty())
+    {
+        const QString path = dir + QStringLiteral("/r.%1.%2.mca")
                                            .arg(regionX).arg(regionZ);
-    if (!QFileInfo::exists(path))
-        return QImage();
+        if (QFileInfo::exists(path))
+        {
+            int minY = 0, maxY = 255;
+            dimensionHeightRange(dim, &minY, &maxY);
 
-    int minY = 0, maxY = 255;
-    dimensionHeightRange(dim, &minY, &maxY);
+            int failedChunks = 0;
+            bool holes = false;
+            img = renderRegionFile(path, mode, minY, maxY, &failedChunks,
+                                   maxSurfaceY, &holes);
+            if (!img.isNull() && holes)
+                img = seedUnderlay(img, regionX, regionZ, dim, mode, seed, 512);
+        }
+    }
 
-    int failedChunks = 0;
-    return renderRegionFile(path, mode, minY, maxY, &failedChunks, maxSurfaceY);
+    // 文件缺失 / 空文件 / 损坏 → 有种子预测参数就补一张近似地形
+    if (img.isNull() && seed.enabled
+        && SeedTerrainRenderer::supported(seed.mc, dim))
+    {
+        img = SeedTerrainRenderer::renderRegionTile(regionX, regionZ, dim, mode,
+                                                    seed.seed, seed.mc, 512);
+    }
+    return img;
 }
 
 namespace {
@@ -1337,6 +1583,7 @@ struct TileTaskResult
     QImage tile;
     QPoint dest;   ///< 最终图上的像素坐标
     bool ok = false;
+    bool isSeed = false; ///< 该区域是种子预测（预览性质，失败不计入 failedRegions）
 };
 
 /**
@@ -1385,81 +1632,229 @@ QImage boxDownscale(const QImage &src, int factor)
     return dst;
 }
 
-/** 工作线程里跑：解一个 region → 按 blockPerPixel 降采样 */
-TileTaskResult renderRegionTask(const QString &path, int destX, int destY, int bpp,
-                                ShadeMode mode, int minY, int maxY, int maxSurfaceY)
+/** 工作线程里跑：解一个 region → 按 blockPerPixel 降采样；无文件时走种子预测 */
+TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
+                                int destX, int destY, int bpp,
+                                ShadeMode mode, int minY, int maxY,
+                                int maxSurfaceY, const SeedPreview &seed,
+                                Dimension dim)
 {
     TileTaskResult r;
     r.dest = QPoint(destX, destY);
 
-    int failedChunks = 0;
-    QImage img = renderRegionFile(path, mode, minY, maxY, &failedChunks, maxSurfaceY);
+    QImage img;
+    if (!path.isEmpty())
+    {
+        int failedChunks = 0;
+        bool holes = false;
+        img = renderRegionFile(path, mode, minY, maxY, &failedChunks,
+                               maxSurfaceY, &holes);
+        // 半生成 region：真实图带透明洞，用种子地形垫底补齐接缝，
+        // 已加载与未加载之间不再露出一条空缺
+        if (!img.isNull() && holes)
+            img = seedUnderlay(img, regionX, regionZ, dim, mode, seed,
+                               std::clamp(512 / bpp, 4, 128));
+    }
+    else if (seed.enabled && SeedTerrainRenderer::supported(seed.mc, dim))
+    {
+        // 无 region 文件（已探索范围的空洞 / 边界外扩）→ 种子预测近似地形。
+        // 直接按输出尺寸渲染；概览封顶 128 采样（群系 1:4 粒度已够），
+        // 方块级 512 采样只留给放大后的细节瓦片路径
+        r.isSeed = true;
+        img = SeedTerrainRenderer::renderRegionTile(regionX, regionZ, dim, mode,
+                                                    seed.seed, seed.mc,
+                                                    std::clamp(512 / bpp, 4, 128));
+    }
+
     if (img.isNull())
         return r;
 
     r.ok = true;
-    r.tile = (bpp == 1) ? img : boxDownscale(img, bpp);
+    if (r.isSeed)
+        r.tile = img; // 种子预测已按输出尺寸渲染，无需再降采样
+    else
+        r.tile = (bpp == 1) ? img : boxDownscale(img, bpp);
     return r;
 }
 
 } // namespace
 
+/** 种子预测槽位上限：保证中心窗口（radius 20 → 41×41 = 1681 槽）完整铺开，
+ *  超出部分按到视角中心的距离由近及远裁剪 */
+constexpr int kMaxSeedSlots = 4096;
+
 RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     const std::function<bool()> &cancelled,
                     const std::function<void(int, int)> &progress,
                     const ProgressiveSinkPtr &sink, int maxThreads,
-                    int maxSurfaceY)
+                    int maxSurfaceY, const SeedPreview &seed)
 {
     QElapsedTimer timer;
     timer.start();
     RenderResult res;
 
     const QString dir = regionDir(savePath, dim);
-    if (dir.isEmpty() || !QDir(dir).exists())
-    {
-        res.error = QObject::tr("该维度还没有生成的区块");
-        return res;
-    }
-
     QVector<QPair<int, int>> coords;
     QStringList paths;
-    scanRegionFiles(dir, &coords, &paths);
-    if (coords.isEmpty())
+    if (!dir.isEmpty() && QDir(dir).exists())
+        scanRegionFiles(dir, &coords, &paths);
+
+    const bool seedOn = seed.enabled
+        && SeedTerrainRenderer::supported(seed.mc, dim);
+    if (coords.isEmpty() && !seedOn)
     {
         res.error = QObject::tr("该维度还没有生成的区块");
         return res;
     }
 
-    // 从优先区域（出生点所在 region）往四周一圈圈渲染：切比雪夫距离
-    // max(|dx|,|dz|) 正好是方环由内向外的顺序 —— 渐进画面从中心长出来
-    if (sink && sink->hasPriorityRegion && !paths.isEmpty())
+    // 渐进渲染优先点：出生点 region 没有就退回种子预览中心
+    const QPoint priority = (sink && sink->hasPriorityRegion)
+        ? sink->priorityRegion
+        : (seed.hasCenter ? QPoint(seed.centerRegionX, seed.centerRegionZ)
+                          : QPoint(0, 0));
+
+    // ── 种子预测：包围盒 = 已探索范围外扩 pad ∪（中心 ± radius 的方形窗口）——
+    //    视角中心向四周约一万格都有预测地形；盒内无文件的槽位交给种子渲染 ──
+    if (seedOn)
     {
-        QVector<int> order(paths.size());
-        for (int i = 0; i < order.size(); ++i)
-            order[i] = i;
-        const QPoint p = sink->priorityRegion;
-        std::sort(order.begin(), order.end(), [&coords, p](int a, int b) {
-            const int da = std::max(std::abs(coords[a].first - p.x()),
-                                    std::abs(coords[a].second - p.y()));
-            const int db = std::max(std::abs(coords[b].first - p.x()),
-                                    std::abs(coords[b].second - p.y()));
+        QHash<QPoint, QString> fileMap;
+        fileMap.reserve(coords.size());
+        for (int i = 0; i < coords.size(); ++i)
+            fileMap.insert(QPoint(coords[i].first, coords[i].second), paths[i]);
+
+        // 半径窗口的中心：优先用调用方传来的视角中心，没有就退回渐进优先点
+        const QPoint seedCenter = seed.hasCenter
+            ? QPoint(seed.centerRegionX, seed.centerRegionZ)
+            : priority;
+
+        int minRx = 0, maxRx = 0, minRz = 0, maxRz = 0;
+        if (!coords.isEmpty())
+        {
+            minRx = maxRx = coords.first().first;
+            minRz = maxRz = coords.first().second;
+            for (const auto &c : coords)
+            {
+                minRx = std::min(minRx, c.first);
+                maxRx = std::max(maxRx, c.first);
+                minRz = std::min(minRz, c.second);
+                maxRz = std::max(maxRz, c.second);
+            }
+            minRx -= seed.padRegions; maxRx += seed.padRegions;
+            minRz -= seed.padRegions; maxRz += seed.padRegions;
+        }
+        else
+        {
+            // 该维度还没有任何区块：先按中心占位，下面统一并入半径窗口
+            minRx = maxRx = seedCenter.x();
+            minRz = maxRz = seedCenter.y();
+        }
+        // 并入中心 ± radius 的方形窗口（视角中心向外约 radius×512 格）
+        minRx = std::min(minRx, seedCenter.x() - seed.radiusRegions);
+        maxRx = std::max(maxRx, seedCenter.x() + seed.radiusRegions);
+        minRz = std::min(minRz, seedCenter.y() - seed.radiusRegions);
+        maxRz = std::max(maxRz, seedCenter.y() + seed.radiusRegions);
+
+        // 槽位由近及远排序（切比雪夫距离），种子槽位超额时裁掉最远的。
+        // 包围盒过大（远处孤岛文件把跨度撑大）时不逐格枚举，只枚举
+        // 「中心窗口 + 文件槽位」—— 视角附近始终完整，远处真实文件也不丢
+        const qint64 bboxCells = qint64(maxRx - minRx + 1) * qint64(maxRz - minRz + 1);
+        constexpr qint64 kMaxEnumerateCells = 8192;
+        QVector<QPair<int, int>> regionSlots;
+        if (bboxCells <= kMaxEnumerateCells)
+        {
+            regionSlots.reserve(int(bboxCells));
+            for (int rz = minRz; rz <= maxRz; ++rz)
+                for (int rx = minRx; rx <= maxRx; ++rx)
+                    regionSlots.append(qMakePair(rx, rz));
+        }
+        else
+        {
+            QSet<QPoint> seen;
+            seen.reserve(coords.size() + 4096);
+            const int wx0 = seedCenter.x() - seed.radiusRegions;
+            const int wx1 = seedCenter.x() + seed.radiusRegions;
+            const int wz0 = seedCenter.y() - seed.radiusRegions;
+            const int wz1 = seedCenter.y() + seed.radiusRegions;
+            for (int rz = wz0; rz <= wz1; ++rz)
+                for (int rx = wx0; rx <= wx1; ++rx)
+                {
+                    regionSlots.append(qMakePair(rx, rz));
+                    seen.insert(QPoint(rx, rz));
+                }
+            for (const auto &c : coords)
+                if (!seen.contains(QPoint(c.first, c.second)))
+                    regionSlots.append(c);
+        }
+        std::sort(regionSlots.begin(), regionSlots.end(), [&seedCenter](const auto &a, const auto &b) {
+            const int da = std::max(std::abs(a.first - seedCenter.x()),
+                                    std::abs(a.second - seedCenter.y()));
+            const int db = std::max(std::abs(b.first - seedCenter.x()),
+                                    std::abs(b.second - seedCenter.y()));
             if (da != db)
                 return da < db;
-            return a < b; // 同环内保持稳定，免得每次刷新顺序都变
+            if (a.second != b.second)
+                return a.second < b.second;
+            return a.first < b.first;
         });
-        QVector<QPair<int, int>> sortedCoords;
-        QStringList sortedPaths;
-        sortedCoords.reserve(coords.size());
-        sortedPaths.reserve(paths.size());
-        for (int i : order)
+
+        QVector<QPair<int, int>> mergedCoords;
+        QStringList mergedPaths;
+        mergedCoords.reserve(regionSlots.size());
+        mergedPaths.reserve(regionSlots.size());
+        int seedSlots = 0;
+        for (const auto &s : regionSlots)
         {
-            sortedCoords.append(coords[i]);
-            sortedPaths.append(paths[i]);
+            const auto it = fileMap.constFind(QPoint(s.first, s.second));
+            if (it != fileMap.constEnd())
+            {
+                mergedCoords.append(s);
+                mergedPaths.append(it.value());
+            }
+            else if (seedSlots < kMaxSeedSlots)
+            {
+                ++seedSlots;
+                mergedCoords.append(s);
+                mergedPaths.append(QString()); // 空路径 = 种子预测
+            }
         }
-        coords = sortedCoords;
-        paths = sortedPaths;
+        coords = mergedCoords;
+        paths = mergedPaths;
+        // mergedCoords 已按到优先点的切比雪夫距离排好序，无需再排
+    }
+    else
+    {
+        // 从优先区域（出生点所在 region）往四周一圈圈渲染：切比雪夫距离
+        // max(|dx|,|dz|) 正好是方环由内向外的顺序 —— 渐进画面从中心长出来
+        if (sink && sink->hasPriorityRegion)
+        {
+            QVector<int> order(paths.size());
+            for (int i = 0; i < order.size(); ++i)
+                order[i] = i;
+            const QPoint p = sink->priorityRegion;
+            std::sort(order.begin(), order.end(), [&coords, p](int a, int b) {
+                const int da = std::max(std::abs(coords[a].first - p.x()),
+                                        std::abs(coords[a].second - p.y()));
+                const int db = std::max(std::abs(coords[b].first - p.x()),
+                                        std::abs(coords[b].second - p.y()));
+                if (da != db)
+                    return da < db;
+                return a < b; // 同环内保持稳定，免得每次刷新顺序都变
+            });
+            QVector<QPair<int, int>> sortedCoords;
+            QStringList sortedPaths;
+            sortedCoords.reserve(coords.size());
+            sortedPaths.reserve(paths.size());
+            for (int i : order)
+            {
+                sortedCoords.append(coords[i]);
+                sortedPaths.append(paths[i]);
+            }
+            coords = sortedCoords;
+            paths = sortedPaths;
+        }
     }
 
+    // 包围盒统一按最终槽位计算（种子预测分支里可能已裁剪缩小）
     int minRx = coords.first().first, maxRx = minRx;
     int minRz = coords.first().second, maxRz = minRz;
     for (const auto &c : coords)
@@ -1509,70 +1904,95 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
         return sink && sink->cancel.load();
     };
 
-    // ② 区域之间并行：批大小 = 并行度，批内逐个收结果贴主图。
-    //    并行度封顶 8：20 路同时 map/read 大 region 文件时提交内存会翻几倍
+    // ② 区域之间并行：工作线程自取队列（不再"一批等一批"，慢 region 不拖累同批邻居）。
+    //    并行度封顶 16：同时 map/read 大 region 时提交内存会明显上涨，留些给 UI
     int threads = (maxThreads > 0)
         ? maxThreads
         : qMax(1, QThreadPool::globalInstance()->maxThreadCount());
-    threads = qBound(1, threads, qMin(paths.size(), 8));
+    threads = qBound(1, threads, qMin(paths.size(), 16));
 
     QThreadPool pool;
     pool.setMaxThreadCount(threads);
 
     const int total = paths.size();
-    QPainter painter(&master);
-    int done = 0;
+    std::atomic<int> nextIdx{ 0 };
+    std::atomic<int> doneCount{ 0 };
+    std::atomic<int> failedCount{ 0 };
+    std::atomic<int> renderedCount{ 0 };
+    std::atomic<int> seedCount{ 0 };
+    QMutex blitMutex;
 
-    for (int base = 0; base < total; base += threads)
-    {
-        if (isCancelled())
-            break;
+    // 主图写入：QPainter Source 合成（与 sink 贴图一致），互斥保证只一线程画
+    const auto blitTile = [&](const TileTaskResult &task) {
+        const int tw = task.tile.width();
+        const int th = task.tile.height();
+        if (tw <= 0 || th <= 0)
+            return;
+        if (task.dest.x() < 0 || task.dest.y() < 0
+            || task.dest.x() + tw > imgW || task.dest.y() + th > imgH)
+            return;
+        QMutexLocker locker(&blitMutex);
+        QPainter painter(&master);
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.drawImage(task.dest, task.tile);
+        painter.end();
+    };
 
-        const int batchEnd = qMin(base + threads, total);
-        QList<QFuture<TileTaskResult>> batch;
-        batch.reserve(batchEnd - base);
-
-        for (int i = base; i < batchEnd; ++i)
+    auto worker = [&]() {
+        while (!isCancelled())
         {
+            const int i = nextIdx.fetch_add(1, std::memory_order_relaxed);
+            if (i >= total)
+                break;
+
             const QString path = paths[i];
-            const int destX = (coords[i].first - minRx) * 512 / bpp;
-            const int destY = (coords[i].second - minRz) * 512 / bpp;
-            batch.append(QtConcurrent::run(&pool,
-                [path, destX, destY, bpp, mode, minY, maxY, maxSurfaceY, sink]() {
-                    TileTaskResult task = renderRegionTask(path, destX, destY,
-                                                           bpp, mode, minY, maxY,
-                                                           maxSurfaceY);
-                    if (sink && task.ok)
-                    {
-                        // 一解完就入队，UI 定时 drain 就能看到新区域冒出来
-                        QMutexLocker locker(&sink->tileMutex);
-                        sink->pendingTiles.append(qMakePair(task.dest, task.tile));
-                    }
-                    return task;
-                }));
-        }
+            const int regionX = coords[i].first;
+            const int regionZ = coords[i].second;
+            const int destX = (regionX - minRx) * 512 / bpp;
+            const int destY = (regionZ - minRz) * 512 / bpp;
 
-        for (QFuture<TileTaskResult> &future : batch)
-        {
-            const TileTaskResult task = future.result();
+            TileTaskResult task = renderRegionTask(path, regionX, regionZ,
+                                                   destX, destY, bpp, mode,
+                                                   minY, maxY, maxSurfaceY,
+                                                   seed, dim);
+            if (sink && task.ok)
+            {
+                // 一解完就入队，UI 定时 drain 就能看到新区域冒出来
+                QMutexLocker locker(&sink->tileMutex);
+                sink->pendingTiles.append(qMakePair(task.dest, task.tile));
+            }
             if (!task.ok)
             {
-                ++res.failedRegions;
+                // 种子预测失败只是预览缺失，不算文件读取失败
+                if (!task.isSeed)
+                    failedCount.fetch_add(1, std::memory_order_relaxed);
             }
             else
             {
-                painter.drawImage(task.dest, task.tile);
-                ++res.renderedRegions;
+                blitTile(task);
+                renderedCount.fetch_add(1, std::memory_order_relaxed);
+                if (task.isSeed)
+                    seedCount.fetch_add(1, std::memory_order_relaxed);
             }
-            ++done;
-            if (sink)
-                sink->done.store(done);
-            if (progress)
-                progress(done, total);
-        }
-    }
 
-    painter.end();
+            const int d = doneCount.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (sink)
+                sink->done.store(d);
+            if (progress)
+                progress(d, total);
+        }
+    };
+
+    QList<QFuture<void>> workers;
+    workers.reserve(threads);
+    for (int w = 0; w < threads; ++w)
+        workers.append(QtConcurrent::run(&pool, worker));
+    for (QFuture<void> &f : workers)
+        f.waitForFinished();
+
+    res.failedRegions = failedCount.load();
+    res.renderedRegions = renderedCount.load();
+    res.seedRegions = seedCount.load();
 
     res.image = master;
     res.elapsedMs = int(timer.elapsed());

@@ -504,6 +504,13 @@ QMap<QString, QString> ThemeManager::buildTokenTable() const
                     : (isDark ? "rgba(45, 45, 45, 0.65)"
                               : "rgba(42, 42, 42, 0.65)");
 
+    // 底部任务栏托盘：比通用玻璃更通透，叠在内容上时能自然透出下层界面
+    T["@BG_GLASS_TASKBAR@"] = isLight ? "rgba(255, 255, 255, 0.42)"
+                             : (isDark ? "rgba(28, 28, 30, 0.48)"
+                                       : "rgba(32, 32, 34, 0.48)");
+    T["@BORDER_GLASS_TASKBAR@"] = isLight ? "rgba(255, 255, 255, 0.55)"
+                                  : "rgba(255, 255, 255, 0.10)";
+
     // 玻璃态渐变端点（账户管理页左侧悬浮气泡等，保留渐变层次并透出页面/自定义背景）
     T["@BG_CARD_GLASS@"]    = rgbaString(QColor(T.value("@BG_CARD@")), "0.65");
     T["@BG_CONTENT_GLASS@"] = rgbaString(QColor(T.value("@BG_CONTENT@")), "0.65");

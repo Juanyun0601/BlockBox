@@ -38,11 +38,31 @@ enum class Dimension
     End       = 2   ///< 末地   <save>/DIM1/region
 };
 
-/** 地表着色方式 */
+/** 地表着色方式（与存档地图着色下拉的选项顺序一致） */
 enum class ShadeMode
 {
     BlockColor = 0, ///< 按地表方块自身颜色（叠加高度明暗）
-    Height     = 1  ///< 按地表高度灰度
+    Height     = 1, ///< 按地表高度灰度
+    Terrain    = 2  ///< 地形图：按海拔分层设色 + 山体阴影（水面/雪冰保持本色）
+};
+
+/**
+ * @brief 种子预测参数：对未生成的区块按种子渲染近似地形预览
+ *
+ * 画布 = 已探索范围外扩 padRegions ∪（中心 ± radiusRegions 的方形窗口）——
+ * 视角中心向四周约一万格都有预测地形，不只贴着已探索边界；
+ * 真实数据永远优先。mc 为 StructureFinder::versionToInt() 的结果。
+ */
+struct SeedPreview
+{
+    bool enabled = false;
+    quint64 seed = 0;
+    int mc = 0;                 ///< cubiomes 版本号；0 = 读不出 → 不预测
+    int padRegions = 3;         ///< 已探索边界向外扩的 region 圈数
+    int radiusRegions = 20;     ///< 以中心无条件铺开的半径（region 数；20×512 = 10240 格）
+    bool hasCenter = false;     ///< 中心 region（视角中心；无画布时退回出生点）
+    int centerRegionX = 0;
+    int centerRegionZ = 0;
 };
 
 /** 渲染结果 */
@@ -52,8 +72,9 @@ struct RenderResult
     int minChunkX = 0;        ///< 图像左上角对应的区块坐标 X（世界方块 X = minChunkX * 16）
     int minChunkZ = 0;        ///< 图像左上角对应的区块坐标 Z
     int blockPerPixel = 1;    ///< 每像素代表的方块数（世界过大时 > 1）
-    int regionCount = 0;      ///< 扫描到的区域文件数
-    int renderedRegions = 0;  ///< 实际渲染成功的区域数
+    int regionCount = 0;      ///< 需渲染的区域总数（文件区域 + 种子预测区域）
+    int renderedRegions = 0;  ///< 实际渲染成功的区域数（含种子预测）
+    int seedRegions = 0;      ///< 其中按种子预测渲染的区域数
     int failedRegions = 0;    ///< 读取失败的区域数
     int elapsedMs = 0;        ///< 渲染耗时（毫秒）
     int key = -1;             ///< 调用方打的标记（如 维度×着色），用于丢弃过期渲染结果
@@ -105,12 +126,14 @@ bool hasRegions(const QString &savePath, Dimension dim);
  * @brief 渲染单个 region 为 1:1 图块（512×512，1 像素 = 1 方块）
  *
  * 视口细节层用：缩小先看概览（render() 的整图），放大后再按需补这块的精细图。
- * 须在工作线程调用；该 region 不存在 / 空文件 / 损坏时返回空图 ——
+ * 须在工作线程调用；该 region 不存在 / 空文件 / 损坏时 —— 若传入了可用的
+ * seed 预览参数则改为返回种子预测图，否则返回空图。
  * 调用方应把空结果记为"无内容"，别反复重试同一块。
  */
 QImage renderRegionTile(const QString &savePath, Dimension dim,
                         int regionX, int regionZ, ShadeMode mode,
-                        int maxSurfaceY = -1);
+                        int maxSurfaceY = -1,
+                        const SeedPreview &seed = SeedPreview());
 
 /**
  * @brief 阻塞渲染整张地表地图（须在工作线程调用）
@@ -125,16 +148,32 @@ QImage renderRegionTile(const QString &savePath, Dimension dim,
  * @param progress    进度回调（已完成区域数, 总区域数），sink 存在时同样会写 sink->done/total
  * @param sink        渐进渲染上下文；非空时先写布局再逐区域推图块
  * @param maxThreads  并行区域数上限；<=0 用 QThreadPool 默认线程数，1 = 单线程
+ * @param seed        种子预测：无文件的区域按种子渲染近似地形（enabled=false 时行为不变）
  */
 RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     const std::function<bool()> &cancelled,
                     const std::function<void(int, int)> &progress,
                     const ProgressiveSinkPtr &sink = nullptr,
                     int maxThreads = 0,
-                    int maxSurfaceY = -1);
+                    int maxSurfaceY = -1,
+                    const SeedPreview &seed = SeedPreview());
 
 /** 方块 ID（含或不含 minecraft: 前缀）→ 地表颜色 */
 QColor blockColor(const QString &blockName);
+
+// ── 地形模式（ShadeMode::Terrain）共用纯函数：真实地表与种子预测同款 ──
+
+/** 海拔 → 分层设色（低地绿 → 山地棕 → 雪顶白），返回不透明像素色 */
+QRgb terrainTint(int y, int minY, int maxY);
+
+/**
+ * 山体阴影系数：西北 45° 定向光照在高度梯度上，平地 = 1。
+ * dzDx/dzDy 为相邻采样之间的高度差（格 / 采样），已按采样步长折算。
+ */
+qreal terrainHillshade(qreal dzDx, qreal dzDy);
+
+/** 雪 / 冰等浅色地表保持本色（地形模式不按海拔给它们改色，雪顶恒白） */
+bool terrainKeepsBase(QRgb c);
 
 } // namespace WorldMapRenderer
 

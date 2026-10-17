@@ -415,11 +415,30 @@ void InstanceGameSettingsPage::initUI()
     m_javaPathCombo->setObjectName("instanceJavaPathCombo");
     m_javaPathCombo->addItem(tr("使用全局设置"), QString());
 
-    QList<GameLauncher::JavaInfo> javaList = GameLauncher::instance()->findAllJavaInstallations();
+    // 只填充已保存的 Java 缓存；完整扫描耗时可达数十秒，构造期执行会拖慢启动
+    QList<GameLauncher::JavaInfo> javaList = GameLauncher::instance()->cachedJavaInstallations();
     for (const GameLauncher::JavaInfo &javaInfo : javaList)
     {
         m_javaPathCombo->addItem(
             tr("Java %1 (%2)").arg(javaInfo.version).arg(javaInfo.path), javaInfo.path);
+    }
+
+    // 本地还没有 Java 缓存时，在后台补扫一次并回填（不阻塞界面）
+    if (javaList.isEmpty())
+    {
+        GameLauncher::instance()->scanJavaInBackground(
+            this, [this](const QList<GameLauncher::JavaInfo> &scanned) {
+            while (m_javaPathCombo->count() > 1)
+            {
+                m_javaPathCombo->removeItem(1);
+            }
+            for (const GameLauncher::JavaInfo &javaInfo : scanned)
+            {
+                m_javaPathCombo->addItem(
+                    tr("Java %1 (%2)").arg(javaInfo.version).arg(javaInfo.path), javaInfo.path);
+            }
+            loadSettings();
+        });
     }
 
     QPushButton *javaBrowseBtn = new QPushButton(tr("浏览"), contentWidget);

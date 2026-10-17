@@ -4,8 +4,9 @@
  * @author BlockBox Team
  * @date   2026-08-18
  *
- * 基于 QOpenGLWidget 渲染投影方块（non-air 方块以带简单光照的色块显示），
- * 提供轨道相机（左键拖动旋转、滚轮缩放）与射线拾取（右键破坏、Ctrl+左键放置）。
+ * 基于 QOpenGLWidget 渲染投影方块（non-air 方块以带简单光照的色块显示）。
+ * 提供自由飞行相机：WASD 水平移动、空格上升、Shift 下降、左键拖动转向，
+ * 滚轮沿视线前后；以及射线拾取（右键破坏、Ctrl+左键放置）。
  *
  * 数据来源于 SchematicDocument（宿主注入，不转移所有权）。
  */
@@ -13,6 +14,7 @@
 
 #include <QColor>
 #include <QHash>
+#include <QKeyEvent>
 #include <QMatrix4x4>
 #include <QMouseEvent>
 #include <QOpenGLBuffer>
@@ -22,6 +24,8 @@
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLWidget>
 #include <QPoint>
+#include <QSet>
+#include <QTimer>
 #include <QVector3D>
 #include <climits>
 
@@ -109,6 +113,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;
     void leaveEvent(QEvent *e) override;
+    void keyPressEvent(QKeyEvent *e) override;
+    void keyReleaseEvent(QKeyEvent *e) override;
+    void focusOutEvent(QFocusEvent *e) override;
 
 private:
     struct CubeVertex {
@@ -129,7 +136,13 @@ private:
 
     void buildGeometry();
     void destroyGL();
-    void orbitBy(float dTheta, float dPhi);
+    void lookBy(float dYaw, float dPitch);
+    void applyFlyKeys(float dt);
+    void moveEye(const QVector3D &delta);
+    QVector3D lookForward() const;
+    QVector3D eyePosition() const;
+    QVector3D lookTarget() const;
+    bool isFlyKey(int qtKey) const;
     bool pickRay(const QPoint &pos, int &x, int &y, int &z) const;
     /** 计算顶点数据（仅 CPU，可在控件显示前调用）；随后置 m_dirty */
     void computeVertexData();
@@ -158,13 +171,16 @@ private:
     QByteArray m_vertexData;   // 顶点数据缓冲（CPU 构建，paintGL 时上传）
     bool m_glReady = false;    // VBO/VAO/program 是否已构建（initializeGL 后为 true）
 
-    // 相机
-    float m_theta = 0.6f;
-    float m_phi = 0.5f;
-    float m_radius = 12.0f;
+    // 相机（自由飞行：位置 + 偏航/俯仰）
+    float m_yaw = 0.6f;
+    float m_pitch = -0.35f;
+    QVector3D m_eye;                 // 眼睛位置；未初始化时由 resetView/eyePosition 决定
+    bool m_eyeValid = false;
     QPoint m_lastPos;
     bool m_dragging = false;
     bool m_dirty = true;
+    QSet<int> m_heldKeys;            // 当前按住的飞行键（Qt::Key_*）
+    QTimer m_flyTimer;               // 按键持续移动节拍
 
     int m_hoverX = INT_MIN, m_hoverY = INT_MIN, m_hoverZ = INT_MIN;
     int m_layerFilter = -1;

@@ -149,12 +149,9 @@ int main(int argc, char *argv[])
 
         Backdrop w;
         w.resize(1240, 360);
-        auto *lay = new QVBoxLayout(&w);
-        lay->setContentsMargins(0, 0, 0, 0);
-        lay->setSpacing(0);
-        lay->addStretch(1); // 任务栏压在窗口底部，四周留白透出背景
+        // 真实用法：任务栏悬浮在内容区底部，不占布局空间
         auto *bar = new TaskBar(&w);
-        lay->addWidget(bar);
+        bar->updateFloatGeometry();
 
         if (withLaunch)
         {

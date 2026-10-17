@@ -63,6 +63,11 @@ int main(int argc, char *argv[])
 
     startupWidget->showStartup();
 
+    // 主题在启动窗口显示之后再初始化并套用：QSS 的解析与套用会明显拖慢
+    // 首个窗口的出现，先让用户看到启动窗口，再上主题样式
+    startupWidget->applyTheme();
+    qDebug() << "[App]" << "ThemeManager initialized and stylesheet applied";
+
     // 开始测量应用启动时间
     PerformanceMonitor::instance()->startMeasurement("Application Startup");
 
@@ -85,10 +90,8 @@ int main(int argc, char *argv[])
     LanguageManager::instance()->loadLanguageSync();
     qDebug() << "[App]" << "LanguageManager initialized synchronously";
 
-    // 初始化主题管理器，在创建任何Widget之前应用QSS样式表
-    startupWidget->updateProgress(18, QCoreApplication::translate("MainWindow", "正在加载主题样式..."));
-    ThemeManager::instance();
-    qDebug() << "[App]" << "ThemeManager initialized and stylesheet applied";
+    // 主题已在启动窗口显示后初始化并套用（见上方 applyTheme），
+    // 保证后续创建的主窗口与各页面直接带上主题样式
 
     // 检查资源文件是否正确加载
     qDebug() << "[App]" << "Resource paths:" << QDir::searchPaths(":");

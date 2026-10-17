@@ -10,11 +10,16 @@
 #include "utils/JarUtils.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QtMath>
+#include <memory>
 
 namespace {
 
@@ -47,13 +52,14 @@ QString normalizeModelKey(const QString &key)
     return k;
 }
 
+QMutex g_sharedMutex;
+QHash<QString, std::shared_ptr<BlockShapeLoader>> g_shared;
+
 } // namespace
 
-// ============================================================================
-// 解析一个模型（含 parent 链）——纹理与元素都逐层处理
-// ============================================================================
-
+// ============================================================
 // 沿纹理链解析纹理变量（#var -> 直接 key），成功返回 true
+// ============================================================
 static bool resolveTexture(QString var,
                            const QMap<QString, QString> &chain,
                            QString &out)
@@ -128,24 +134,6 @@ static void appendModelRefs(const QJsonValue &val,
     }
 }
 
-// ============================================================================
-// 构造 / 加载
-// ============================================================================
-
-void BlockShapeLoader::addModelEntry(const QString &name, const QJsonObject &obj)
-{
-    ModelJson m;
-    m.parent = obj.value(QStringLiteral("parent")).toString();
-    const QJsonObject tex = obj.value(QStringLiteral("textures")).toObject();
-    for (auto it = tex.constBegin(); it != tex.constEnd(); ++it)
-        m.textures.insert(it.key(), it.value().toString());
-    m.hasElements = obj.contains(QStringLiteral("elements"))
-        && obj.value(QStringLiteral("elements")).isArray();
-    if (m.hasElements)
-        m.elemObj = obj;
-    m_models.insert(name, m);
-}
-
 // 绕 pivot 旋转一点（右手系，正轴逆时针；角度为度）
 static void rotateBoxPoint(float &x, float &y, float &z,
                            float px, float py, float pz, float angDeg, int axis)
@@ -207,11 +195,19 @@ static void applyBlockRotation(QList<ShapeBox> &boxes, int start, float rotX, fl
     }
 }
 
+// ============================================================
+// 构造 / 加载
+// ============================================================
+
 bool BlockShapeLoader::load(const QString &instancePath, QString *errorOut)
 {
     m_loaded = false;
     m_models.clear();
     m_blockstates.clear();
+    m_missingBlockstates.clear();
+    m_missingModels.clear();
+    m_index.clear();
+    m_jarPath.clear();
 
     QDir dir(instancePath);
     if (!dir.exists())
@@ -239,51 +235,271 @@ bool BlockShapeLoader::load(const QString &instancePath, QString *errorOut)
         return false;
     }
 
-    // blockstates
-    const QStringList bs = JarUtils::listEntriesInJar(jarPath, kBS);
-    for (const QString &e : bs)
+    // 只扫一次中心目录，建立 entry 路径 -> 偏移/压缩参数 索引；内容按需再读
+    QFile jarFile(jarPath);
+    if (!jarFile.open(QIODevice::ReadOnly))
     {
-        if (!e.endsWith(QStringLiteral(".json"))) continue;
-        QByteArray data;
-        if (!JarUtils::extractFromJarToMemory(jarPath, e, data)) continue;
-        m_blockstates.insert(QFileInfo(e).completeBaseName(), parseJsonObject(data));
+        if (errorOut) *errorOut = QStringLiteral("无法打开客户端 jar：%1").arg(jarPath);
+        return false;
     }
 
-    // block models
-    const QStringList mb = JarUtils::listEntriesInJar(jarPath, kModelB);
-    for (const QString &e : mb)
+    const qint64 fileSize = jarFile.size();
+    if (fileSize < 22)
     {
-        if (!e.endsWith(QStringLiteral(".json"))) continue;
-        QByteArray data;
-        if (!JarUtils::extractFromJarToMemory(jarPath, e, data)) continue;
-        addModelEntry(QStringLiteral("block/") + QFileInfo(e).completeBaseName(),
-                      parseJsonObject(data));
+        if (errorOut) *errorOut = QStringLiteral("客户端 jar 过小或损坏：%1").arg(jarPath);
+        return false;
     }
 
-    // item models（部分 blockstate 引用）
-    const QStringList mi = JarUtils::listEntriesInJar(jarPath, kModelI);
-    for (const QString &e : mi)
+    jarFile.seek(fileSize - 22);
+    QByteArray eocdData = jarFile.read(22);
+    if (eocdData.size() < 22)
     {
-        if (!e.endsWith(QStringLiteral(".json"))) continue;
-        QByteArray data;
-        if (!JarUtils::extractFromJarToMemory(jarPath, e, data)) continue;
-        addModelEntry(QStringLiteral("item/") + QFileInfo(e).completeBaseName(),
-                      parseJsonObject(data));
+        if (errorOut) *errorOut = QStringLiteral("客户端 jar 缺少目录结束标记：%1").arg(jarPath);
+        return false;
     }
 
-    if (m_blockstates.isEmpty() && m_models.isEmpty())
+    quint32 eocdSignature = (quint8)eocdData[0] | ((quint8)eocdData[1] << 8)
+                          | ((quint8)eocdData[2] << 16) | ((quint8)eocdData[3] << 24);
+    if (eocdSignature != 0x06054b50)
+    {
+        eocdData.clear();
+        const qint64 searchStart = qMax((qint64)0, fileSize - 65557);
+        jarFile.seek(searchStart);
+        const QByteArray tail = jarFile.read(fileSize - searchStart);
+        int foundPos = -1;
+        for (int i = tail.size() - 22; i >= 0; --i)
+        {
+            if ((quint8)tail[i] == 0x50 && (quint8)tail[i + 1] == 0x4b
+                && (quint8)tail[i + 2] == 0x05 && (quint8)tail[i + 3] == 0x06)
+            {
+                foundPos = i;
+                break;
+            }
+        }
+        if (foundPos < 0)
+        {
+            if (errorOut) *errorOut = QStringLiteral("无法解析 jar 目录：%1").arg(jarPath);
+            return false;
+        }
+        eocdData = tail.mid(foundPos, 22);
+        eocdSignature = (quint8)eocdData[0] | ((quint8)eocdData[1] << 8)
+                      | ((quint8)eocdData[2] << 16) | ((quint8)eocdData[3] << 24);
+        if (eocdSignature != 0x06054b50)
+        {
+            if (errorOut) *errorOut = QStringLiteral("无法解析 jar 目录：%1").arg(jarPath);
+            return false;
+        }
+    }
+
+    const quint16 totalEntries = (quint8)eocdData[10] | ((quint8)eocdData[11] << 8);
+    const quint32 centralDirOffset = (quint8)eocdData[16] | ((quint8)eocdData[17] << 8)
+                                   | ((quint8)eocdData[18] << 16) | ((quint8)eocdData[19] << 24);
+    jarFile.seek(centralDirOffset);
+
+    const QString pBS   = QString::fromLatin1(kBS);
+    const QString pMB   = QString::fromLatin1(kModelB);
+    const QString pMI   = QString::fromLatin1(kModelI);
+
+    int indexed = 0;
+    for (int i = 0; i < totalEntries; ++i)
+    {
+        const QByteArray header = jarFile.read(46);
+        if (header.size() < 46)
+            break;
+        const quint32 signature = (quint8)header[0] | ((quint8)header[1] << 8)
+                                | ((quint8)header[2] << 16) | ((quint8)header[3] << 24);
+        if (signature != 0x02014b50)
+            break;
+
+        const quint16 cm = (quint8)header[10] | ((quint8)header[11] << 8);
+        const quint32 cs = (quint8)header[20] | ((quint8)header[21] << 8)
+                         | ((quint8)header[22] << 16) | ((quint8)header[23] << 24);
+        const quint32 us = (quint8)header[24] | ((quint8)header[25] << 8)
+                         | ((quint8)header[26] << 16) | ((quint8)header[27] << 24);
+        const quint16 fnLen = (quint8)header[28] | ((quint8)header[29] << 8);
+        const quint16 exLen = (quint8)header[30] | ((quint8)header[31] << 8);
+        const quint16 cmLen = (quint8)header[32] | ((quint8)header[33] << 8);
+        const quint32 lho = (quint8)header[42] | ((quint8)header[43] << 8)
+                          | ((quint8)header[44] << 16) | ((quint8)header[45] << 24);
+
+        const QByteArray fnData = jarFile.read(fnLen);
+        if (fnData.size() < fnLen)
+            break;
+        QString entryName = QString::fromUtf8(fnData);
+        entryName.replace('\\', '/');
+        jarFile.read(exLen + cmLen);
+
+        if (entryName.endsWith(QLatin1String(".json"))
+            && (entryName.startsWith(pBS) || entryName.startsWith(pMB) || entryName.startsWith(pMI)))
+        {
+            ZipEntryMeta meta;
+            meta.offset = lho;
+            meta.method = cm;
+            meta.csize = cs;
+            meta.usize = us;
+            m_index.insert(entryName, meta);
+            ++indexed;
+        }
+    }
+    jarFile.close();
+
+    if (indexed <= 0)
     {
         if (errorOut) *errorOut = QStringLiteral("实例 jar 中没有可用的方块模型数据：%1").arg(jarPath);
         return false;
     }
 
+    m_jarPath = jarPath;
     m_loaded = true;
     return true;
 }
 
-// ============================================================================
+BlockShapeLoader *BlockShapeLoader::sharedForInstance(const QString &instancePath)
+{
+    if (instancePath.isEmpty())
+        return nullptr;
+
+    // 以 jar 绝对路径为 key，避免同一 jar 多实例重复建索引
+    QString jarPath;
+    {
+        QDir dir(instancePath);
+        if (!dir.exists())
+            return nullptr;
+        const QString base = QFileInfo(instancePath).fileName();
+        QString bestJar;
+        qint64 bestSize = -1;
+        const QFileInfoList jars = dir.entryInfoList(QStringList() << "*.jar", QDir::Files, QDir::Name);
+        for (const QFileInfo &fi : jars)
+        {
+            if (fi.completeBaseName() == base) { jarPath = fi.absoluteFilePath(); break; }
+            if (fi.size() > bestSize) { bestSize = fi.size(); bestJar = fi.absoluteFilePath(); }
+        }
+        if (jarPath.isEmpty())
+            jarPath = bestJar;
+        if (jarPath.isEmpty())
+            return nullptr;
+    }
+
+    QMutexLocker lock(&g_sharedMutex);
+    auto it = g_shared.constFind(jarPath);
+    if (it != g_shared.constEnd() && it.value() && it.value()->isValid())
+        return it.value().get();
+
+    auto loader = std::make_shared<BlockShapeLoader>();
+    if (!loader->load(instancePath, nullptr) || !loader->isValid())
+        return nullptr;
+    g_shared.insert(jarPath, loader);
+    return loader.get();
+}
+
+bool BlockShapeLoader::readEntry(const QString &entryPath, QByteArray &data) const
+{
+    auto it = m_index.constFind(entryPath);
+    if (it == m_index.constEnd())
+        return false;
+    const ZipEntryMeta &meta = it.value();
+
+    QFile jarFile(m_jarPath);
+    if (!jarFile.open(QIODevice::ReadOnly))
+        return false;
+
+    jarFile.seek(meta.offset);
+    const QByteArray localHeader = jarFile.read(30);
+    if (localHeader.size() < 30)
+        return false;
+    const quint16 localFNLen = (quint8)localHeader[26] | ((quint8)localHeader[27] << 8);
+    const quint16 localExLen = (quint8)localHeader[28] | ((quint8)localHeader[29] << 8);
+    jarFile.read(localFNLen + localExLen);
+
+    const QByteArray compressedData = jarFile.read(meta.csize);
+    if (compressedData.size() < (int)meta.csize)
+        return false;
+
+    if (meta.method == 0)
+    {
+        data = compressedData;
+        return true;
+    }
+    if (meta.method == 8)
+    {
+        data = JarUtils::decompressRawDeflate(compressedData, meta.usize);
+        return !data.isEmpty();
+    }
+    return false;
+}
+
+bool BlockShapeLoader::ensureBlockstate(const QString &type) const
+{
+    if (m_blockstates.contains(type))
+        return true;
+    if (m_missingBlockstates.contains(type))
+        return false;
+
+    const QString entry = QString::fromLatin1(kBS) + type + QStringLiteral(".json");
+    QByteArray raw;
+    if (!readEntry(entry, raw))
+    {
+        m_missingBlockstates.insert(type);
+        return false;
+    }
+    const QJsonObject obj = parseJsonObject(raw);
+    if (obj.isEmpty())
+    {
+        m_missingBlockstates.insert(type);
+        return false;
+    }
+    m_blockstates.insert(type, obj);
+    return true;
+}
+
+bool BlockShapeLoader::ensureModel(const QString &key) const
+{
+    // key 形如 "block/stone" 或 "item/stone"
+    if (m_models.contains(key))
+        return true;
+    if (m_missingModels.contains(key))
+        return false;
+
+    QString entry;
+    if (key.startsWith(QLatin1String("block/")))
+        entry = QString::fromLatin1(kModelB) + key.mid(6) + QStringLiteral(".json");
+    else if (key.startsWith(QLatin1String("item/")))
+        entry = QString::fromLatin1(kModelI) + key.mid(5) + QStringLiteral(".json");
+    else
+    {
+        m_missingModels.insert(key);
+        return false;
+    }
+
+    QByteArray raw;
+    if (!readEntry(entry, raw))
+    {
+        m_missingModels.insert(key);
+        return false;
+    }
+    const QJsonObject obj = parseJsonObject(raw);
+    if (obj.isEmpty())
+    {
+        m_missingModels.insert(key);
+        return false;
+    }
+
+    ModelJson m;
+    m.parent = obj.value(QStringLiteral("parent")).toString();
+    const QJsonObject tex = obj.value(QStringLiteral("textures")).toObject();
+    for (auto it = tex.constBegin(); it != tex.constEnd(); ++it)
+        m.textures.insert(it.key(), it.value().toString());
+    m.hasElements = obj.contains(QStringLiteral("elements"))
+        && obj.value(QStringLiteral("elements")).isArray();
+    if (m.hasElements)
+        m.elemObj = obj;
+    m_models.insert(key, m);
+    return true;
+}
+
+// ============================================================
 // 收集模型元素（递归 parent 链）
-// ============================================================================
+// ============================================================
 
 void BlockShapeLoader::collectElements(const QString &modelKey,
                                        const QMap<QString, QString> *texOverride,
@@ -295,10 +511,9 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
         return;
     visited.append(norm);
 
-    auto it = m_models.constFind(norm);
-    if (it == m_models.constEnd())
+    if (!ensureModel(norm))
         return;
-    const ModelJson &model = it.value();
+    const ModelJson &model = m_models[norm];
 
     // ---- 合并纹理链：子模型纹理优先级最高，覆盖父模型同名变量 ----
     QMap<QString, QString> mergedTex;
@@ -310,11 +525,11 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
     {
         // 先合并父链纹理（父为基底，子覆盖）
         const QString pn = normalizeModelKey(model.parent);
-        auto pit = m_models.constFind(pn);
-        if (pit != m_models.constEnd())
+        if (ensureModel(pn))
         {
-            for (auto mit = pit.value().textures.constBegin();
-                 mit != pit.value().textures.constEnd(); ++mit)
+            const ModelJson &parent = m_models[pn];
+            for (auto mit = parent.textures.constBegin();
+                 mit != parent.textures.constEnd(); ++mit)
                 if (!mergedTex.contains(mit.key()))
                     mergedTex.insert(mit.key(), mit.value());
         }
@@ -394,9 +609,9 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
         collectElements(model.parent, &mergedTex, boxes, visited);
 }
 
-// ============================================================================
+// ============================================================
 // blockstate -> 形状
-// ============================================================================
+// ============================================================
 
 bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out) const
 {
@@ -424,10 +639,9 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
         }
     }
 
-    auto bsIt = m_blockstates.constFind(type);
-    if (bsIt == m_blockstates.constEnd())
+    if (!ensureBlockstate(type))
         return false;
-    const QJsonObject bsobj = bsIt.value();
+    const QJsonObject bsobj = m_blockstates[type];
 
     bool gotAny = false;
     QStringList visited;
@@ -559,4 +773,16 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
     }
 
     return gotAny && !out.empty();
+}
+
+void BlockShapeLoader::prewarm(const QStringList &blockStateNames) const
+{
+    if (!m_loaded)
+        return;
+    // 只预热 blockstate + 其引用的模型（collectElements 内部按需 ensureModel）
+    for (const QString &name : blockStateNames)
+    {
+        BlockShapes dummy;
+        shapeFor(name, dummy);
+    }
 }

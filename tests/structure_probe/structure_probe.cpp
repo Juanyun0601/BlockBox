@@ -102,6 +102,16 @@ int main(int argc, char *argv[])
     const int village = indexOfKey("village");
     check(village >= 0 && counts[village] > 0, "village found in overworld radius");
 
+    // 要塞走 StrongholdIter 环形迭代（不走区域网格）：中心附近必有一个
+    const int stronghold = indexOfKey("stronghold");
+    check(stronghold >= 0 && counts[stronghold] > 0,
+          "stronghold found via stronghold iterator");
+
+    // 古迹废墟等本轮补全的结构类型不应被版本配置漏掉
+    const int trailRuins = indexOfKey("trail_ruins");
+    check(trailRuins >= 0 && counts[trailRuins] > 0,
+          "trail_ruins found (new type wired)");
+
     // 下界要塞不该出现在主世界维度（维度过滤生效）
     const int fortress = indexOfKey("fortress");
     check(fortress >= 0 && counts[fortress] == 0,
@@ -115,6 +125,37 @@ int main(int argc, char *argv[])
         if (h.x < -radius || h.x > radius || h.z < -radius || h.z > radius)
             inRange = false;
     check(inRange, "all hits inside query range");
+
+    // ── 末地维度：末地折跃门（regionSize=1 每 16 方块一格 + rarity 1/700，
+    // 依赖放宽后的扫描预算；biome 只认 end_highlands，即外岛区域） ──
+    {
+        const int gateway = indexOfKey("end_gateway");
+        check(gateway >= 0, "end_gateway type registered");
+        QVector<bool> endEnabled(defs.size(), false);
+        if (gateway >= 0)
+            endEnabled[gateway] = true;
+        QElapsedTimer et;
+        et.start();
+        const auto endHits = StructureFinder::find(
+            quint64(info->seed), mc, 1, -16000, -16000, 16000, 16000,
+            endEnabled);
+        const qint64 endMs = et.elapsed();
+        std::printf("end_gateway hits=%d in %lld ms\n", int(endHits.size()),
+                    static_cast<long long>(endMs));
+        check(!endHits.isEmpty(), "end gateways found in The End");
+        check(endMs < 5000, "end gateway query under 5s");
+        // 全部落在查询范围内
+        bool endInRange = true;
+        for (const auto &h : endHits)
+            if (h.x < -16000 || h.x > 16000 || h.z < -16000 || h.z > 16000)
+                endInRange = false;
+        check(endInRange, "end gateway hits inside range");
+        // 折跃门只在末地：主世界维度查询必须为 0
+        const auto overworldGw = StructureFinder::find(
+            quint64(info->seed), mc, 0, -16000, -16000, 16000, 16000,
+            endEnabled);
+        check(overworldGw.isEmpty(), "end gateways filtered out in overworld");
+    }
 
     std::printf("failures: %d\n", g_failures);
     return g_failures == 0 ? 0 : 1;
