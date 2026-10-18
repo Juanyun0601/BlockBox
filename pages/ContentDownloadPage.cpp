@@ -34,6 +34,7 @@
 #include <QNetworkRequest>
 #include <QPixmap>
 #include <QPixmapCache>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSpacerItem>
 #include <QStandardPaths>
@@ -205,6 +206,11 @@ void ContentDownloadPage::initUI()
 
     m_scrollArea->setWidget(m_cardContainer);
     mainLayout->addWidget(m_scrollArea, 1);
+
+    // 右下角悬浮翻译卡片（先于加载遮罩创建，遮罩始终盖在卡片之上）
+    m_translateSwitch = new TranslateSwitchCard(this);
+    connect(m_translateSwitch, &TranslateSwitchCard::modeChangeRequested,
+            this, &ContentDownloadPage::onListTranslateModeChanged);
 
     m_loadingOverlay = new BlurLoadingOverlay(this);
     m_loadingOverlay->hide();
@@ -905,7 +911,9 @@ void ContentDownloadPage::onChineseNameResolved(const QString &modId, const QStr
     if (!card) return;
 
     QLabel *nameLabel = card->findChild<QLabel*>("modCardName");
-    if (nameLabel) {
+    // 中文态下标题由 AI 翻译统一控制，避免「中文名 (英文原名)」把英文带回来
+    const bool chineseMode = m_translateSwitch && m_translateSwitch->isChineseMode();
+    if (nameLabel && !chineseMode) {
         QString currentText = nameLabel->text();
         nameLabel->setText(chineseName + QStringLiteral("  (") + currentText + QStringLiteral(")"));
     }
@@ -1216,6 +1224,276 @@ void ContentDownloadPage::rebuildCards()
 
 
 
+/* ============================================================
+ * 右下角翻译卡片：EN 原文 / 中 AI 翻译（名称 + 简介）
+ * ============================================================ */
+
+namespace {
+
+bool containsHanText(const QString &text)
+{
+    for (const QChar &ch : text) {
+        if (ch.script() == QChar::Script_Han)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+void ContentDownloadPage::onListTranslateModeChanged(bool chinese)
+{
+    if (!m_translateSwitch)
+        return;
+
+    if (chinese) {
+        if (m_cardInfos.isEmpty()) {
+            // 还没有卡片（首次加载 / 空结果）：不进入中文态
+            m_translateSwitch->setChineseMode(false);
+            return;
+        }
+        if (m_listTranslating)
+            return;
+        if (m_listTranslatedReady) {
+            applyListTranslation();
+            return;
+        }
+        startListTranslation();
+        return;
+    }
+
+    // 切回 EN：取消进行中的请求并还原英文原文
+    if (m_listTranslating) {
+        if (m_listTranslator)
+            m_listTranslator->cancelCurrentRequest();
+        m_listTranslating = false;
+        m_translateSwitch->setBusy(false);
+    }
+    m_translateSwitch->setChineseMode(false);
+    restoreListTranslation();
+}
+
+void ContentDownloadPage::startListTranslation()
+{
+    if (m_cardInfos.isEmpty())
+        return;
+
+    if (!m_listTranslator) {
+        m_listTranslator = new TranslationService(this);
+        connect(m_listTranslator, &TranslationService::listTranslationFinished, this,
+                &ContentDownloadPage::onListTranslationFinished);
+        connect(m_listTranslator, &TranslationService::translationError, this,
+                [this](const QString &error) {
+            m_listTranslating = false;
+            if (m_translateSwitch) {
+                m_translateSwitch->setBusy(false);
+                m_translateSwitch->setChineseMode(false);
+            }
+            restoreListTranslation();
+            NotificationManager::showError(this, tr("翻译失败：%1").arg(error));
+        });
+    }
+
+    // 记录英文原文快照，切回 EN 时据此还原
+    m_originalCardInfos = m_cardInfos;
+    m_listTranslateItems.clear();
+    m_listTranslated.clear();
+
+    QStringList payload;
+    for (int i = 0; i < m_cardInfos.size(); ++i) {
+        const ModInfo &info = m_cardInfos.at(i);
+        ListTranslateItem item;
+        item.cardIndex = i;
+
+        // 已有中文名的资源不再让 AI 重翻名称，简介仍可翻
+        QString name = info.chineseName.isEmpty() ? info.name : QString();
+        if (!name.isEmpty() && containsHanText(name))
+            name.clear();
+        QString desc = info.description;
+        if (!desc.isEmpty() && containsHanText(desc))
+            desc.clear();
+
+        item.wantName = !name.isEmpty();
+        item.wantDesc = !desc.isEmpty();
+
+        if (item.wantName || item.wantDesc) {
+            item.marker = payload.size();
+            payload << QStringLiteral("[#%1#] %2 ||| %3").arg(item.marker).arg(name, desc);
+            m_listTranslateItems.append(item);
+        } else if (!info.chineseName.isEmpty()) {
+            // 名称本来就是中文：中文态直接顶上已知中文名
+            m_listTranslateItems.append(item);
+        }
+    }
+
+    if (payload.isEmpty()) {
+        // 没有任何需要送 AI 的内容：直接落到中文态
+        m_listTranslating = false;
+        m_listTranslatedReady = true;
+        applyListTranslation();
+        return;
+    }
+
+    m_listTranslating = true;
+    m_listTranslatedReady = false;
+    if (m_translateSwitch)
+        m_translateSwitch->setBusy(true);
+    m_listTranslator->translateList(payload.join('\n'),
+                                    SettingsManager::instance()->getTranslationConfig());
+}
+
+void ContentDownloadPage::onListTranslationFinished(const QString &text)
+{
+    m_listTranslating = false;
+    if (m_translateSwitch)
+        m_translateSwitch->setBusy(false);
+
+    if (m_listTranslateItems.isEmpty())
+        return;
+
+    // 按 [#序号#] 切分，容忍模型把多行合并或加了解释
+    QRegularExpression markerReg(
+        QStringLiteral("\\[#(\\d+)#\\]([\\s\\S]*?)(?=\\[#\\d+#\\]|$)"));
+    QMap<int, QPair<QString, QString>> parsed;
+    QRegularExpressionMatchIterator matchIt = markerReg.globalMatch(text);
+    while (matchIt.hasNext()) {
+        const QRegularExpressionMatch match = matchIt.next();
+        const int marker = match.captured(1).toInt();
+        QString body = match.captured(2).trimmed();
+        body.remove(QRegularExpression(QStringLiteral("<[^>]*>")));
+        body.remove(QRegularExpression(QStringLiteral("```[a-zA-Z]*")));
+        body.remove(QRegularExpression(QStringLiteral("```")));
+
+        // 模型偶尔会省掉 ||| 分隔符，退一步按「简介：」标记切分
+        QString name;
+        QString desc;
+        const int sep = body.indexOf(QStringLiteral("|||"));
+        if (sep >= 0) {
+            name = body.left(sep).trimmed();
+            desc = body.mid(sep + 3).trimmed();
+        } else {
+            const QRegularExpression descLabel(QStringLiteral("(?:简介|描述)\\s*[:：]"));
+            const QRegularExpressionMatch descMatch = descLabel.match(body);
+            if (descMatch.hasMatch()) {
+                name = body.left(descMatch.capturedStart()).trimmed();
+                desc = body.mid(descMatch.capturedEnd()).trimmed();
+            } else {
+                desc = body.trimmed();
+            }
+        }
+        name.remove(QRegularExpression(QStringLiteral("^名称\\s*[:：]\\s*")));
+        desc.remove(QRegularExpression(QStringLiteral("^简介\\s*[:：]\\s*")));
+        parsed.insert(marker, qMakePair(name, desc));
+    }
+
+    if (parsed.isEmpty()) {
+        // 模型没按约定格式返回：保持英文并提示
+        if (m_translateSwitch)
+            m_translateSwitch->setChineseMode(false);
+        restoreListTranslation();
+        NotificationManager::showError(this, tr("翻译结果格式异常，请稍后重试"));
+        return;
+    }
+
+    int maxMarker = -1;
+    for (const ListTranslateItem &item : m_listTranslateItems)
+        maxMarker = qMax(maxMarker, item.marker);
+    m_listTranslated.clear();
+    m_listTranslated.resize(maxMarker + 1);
+    for (auto it = parsed.cbegin(); it != parsed.cend(); ++it) {
+        if (it.key() >= 0 && it.key() < m_listTranslated.size())
+            m_listTranslated[it.key()] = it.value();
+    }
+
+    m_listTranslatedReady = true;
+    applyListTranslation();
+}
+
+void ContentDownloadPage::applyListTranslation()
+{
+    if (m_originalCardInfos.isEmpty() || m_originalCardInfos.size() != m_cardInfos.size())
+        return;
+
+    m_applyingListTranslation = true;
+    for (const ListTranslateItem &item : m_listTranslateItems) {
+        if (item.cardIndex < 0 || item.cardIndex >= m_originalCardInfos.size())
+            continue;
+        const ModInfo &original = m_originalCardInfos.at(item.cardIndex);
+        ModInfo info = original;
+
+        const QPair<QString, QString> translated =
+            (item.marker >= 0 && item.marker < m_listTranslated.size())
+                ? m_listTranslated.at(item.marker)
+                : qMakePair(QString(), QString());
+
+        if (!original.chineseName.isEmpty()) {
+            info.name = original.chineseName;   // 已有的中文名优先于 AI 译名
+        } else if (item.wantName && !translated.first.isEmpty()) {
+            info.name = translated.first;
+        }
+        if (item.wantDesc && !translated.second.isEmpty())
+            info.description = translated.second;
+
+        info.chineseName = info.name;   // 列表式与瀑布流统一显示中文标题
+        m_cardInfos[item.cardIndex] = info;
+    }
+    m_listApplied = true;
+    rebuildCards();
+    m_applyingListTranslation = false;
+
+    if (m_translateSwitch) {
+        m_translateSwitch->setBusy(false);
+        m_translateSwitch->setChineseMode(true);
+    }
+}
+
+void ContentDownloadPage::restoreListTranslation()
+{
+    if (!m_listApplied)
+        return;
+    m_listApplied = false;
+    if (m_originalCardInfos.isEmpty())
+        return;
+
+    m_applyingListTranslation = true;
+    m_cardInfos = m_originalCardInfos;
+    rebuildCards();
+    m_applyingListTranslation = false;
+}
+
+/* 卡片集合换了一批（翻页 / 重新搜索 / 追加加载）→ 翻译结果作废并回到 EN */
+void ContentDownloadPage::syncTranslateStateWithCards()
+{
+    if (!m_translateSwitch || m_applyingListTranslation)
+        return;
+
+    // 只比 id：翻译只改名称与简介，不会改 id
+    bool sameBatch = (m_cardInfos.size() == m_originalCardInfos.size());
+    if (sameBatch) {
+        for (int i = 0; i < m_cardInfos.size(); ++i) {
+            if (m_cardInfos.at(i).id != m_originalCardInfos.at(i).id) {
+                sameBatch = false;
+                break;
+            }
+        }
+    }
+    if (sameBatch)
+        return;
+
+    if (m_listTranslating) {
+        if (m_listTranslator)
+            m_listTranslator->cancelCurrentRequest();
+        m_listTranslating = false;
+        m_translateSwitch->setBusy(false);
+    }
+    m_listTranslatedReady = false;
+    m_listApplied = false;
+    m_listTranslateItems.clear();
+    m_listTranslated.clear();
+    m_originalCardInfos = m_cardInfos;
+    m_translateSwitch->setChineseMode(false);
+}
+
 void ContentDownloadPage::loadCardIcon(QLabel *iconLabel, const QString &iconUrl)
 {
     QString cacheKey = QString("mod_icon:%1").arg(iconUrl);
@@ -1348,6 +1626,7 @@ void ContentDownloadPage::placeCards()
             QSpacerItem *spacer = new QSpacerItem(0, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
             m_cardGridLayout->addItem(spacer, 0, 0);
         }
+        syncTranslateStateWithCards();
         return;
     }
 
@@ -1362,6 +1641,7 @@ void ContentDownloadPage::placeCards()
             QSpacerItem *spacer = new QSpacerItem(0, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
             m_cardFlowLayout->addItem(spacer);
         }
+        syncTranslateStateWithCards();
     }
 }
 

@@ -93,6 +93,7 @@ components/CustomCheckBox.cpp \
      components/ContentViewSwitch.cpp \
      components/SourceSwitchBar.cpp \
      components/MasonryContentCard.cpp \
+     components/TranslateSwitchCard.cpp \
      components/OutlinedLabel.cpp \
      components/MarkdownOutlinedLabel.cpp \
      components/TextOutlineLayer.cpp \
@@ -352,6 +353,7 @@ components/CustomCheckBox.h \
          components/ContentViewSwitch.h \
          components/SourceSwitchBar.h \
          components/MasonryContentCard.h \
+         components/TranslateSwitchCard.h \
          components/OutlinedLabel.h \
          components/MarkdownOutlinedLabel.h \
          components/TextOutlineLayer.h \

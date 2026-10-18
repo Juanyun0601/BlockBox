@@ -44,7 +44,6 @@ public:
     void setInstanceSettingsSelected(bool selected);
     void setInstanceSelectSelected(bool selected);
     void setAccountSelected(bool selected);
-    void setTranslateButtonVisible(bool visible);
 
     /** 当前游戏版本（true=Java版，false=基岩版） */
     bool isJavaEdition() const { return m_isJavaEdition; }
@@ -65,7 +64,6 @@ signals:
     void launchGameClicked();
     void accountManageClicked();
     void searchClicked();
-    void translateClicked();
 
     /** 游戏版本切换（true=Java版，false=基岩版），参数为新版本 */
     void editionSwitched(bool javaEdition);
@@ -107,7 +105,6 @@ private:
     QPushButton *m_backButton;
     QPushButton *m_scrollToTopBtn;
     QPushButton *m_refreshBtn;
-    QPushButton *m_translateBtn;
 
     // Left section - edition switcher card (Java版/基岩版)
     QWidget *m_editionCard = nullptr;

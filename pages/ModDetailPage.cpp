@@ -254,28 +254,43 @@ void ModDetailPage::setModInfo(const ModInfo &info)
     loadIcon();
 }
 
+void ModDetailPage::selectVersionFilter(const QString &gameVersion)
+{
+    if (!m_versionCombo || gameVersion.isEmpty())
+        return;
+
+    const bool wasBlocked = m_versionCombo->signalsBlocked();
+    m_versionCombo->blockSignals(true);
+
+    int idx = m_versionCombo->findText(gameVersion);
+    if (idx < 0) {
+        for (int i = 1; i < m_versionCombo->count(); ++i) {
+            if (m_versionCombo->itemText(i).contains(gameVersion, Qt::CaseInsensitive)
+                || gameVersion.contains(m_versionCombo->itemText(i), Qt::CaseInsensitive)) {
+                idx = i;
+                break;
+            }
+        }
+    }
+    // 资源本身没列出该版本时也补进下拉，保证筛选真实生效（结果为无匹配版本）
+    if (idx < 0) {
+        m_versionCombo->addItem(gameVersion);
+        idx = m_versionCombo->count() - 1;
+    }
+    m_versionCombo->setCurrentIndex(idx);
+
+    m_versionCombo->blockSignals(wasBlocked);
+}
+
 void ModDetailPage::setInstanceFilter(const QString &gameVersion, const QString &loaderType)
 {
     m_instanceGameVersion = gameVersion;
     m_instanceLoaderType = loaderType;
 
-    if (m_versionCombo) m_versionCombo->blockSignals(true);
     if (m_loaderCombo) m_loaderCombo->blockSignals(true);
 
-    if (m_versionCombo && !gameVersion.isEmpty()) {
-        int idx = m_versionCombo->findText(gameVersion);
-        if (idx < 0) {
-            for (int i = 1; i < m_versionCombo->count(); ++i) {
-                if (m_versionCombo->itemText(i).contains(gameVersion, Qt::CaseInsensitive)
-                    || gameVersion.contains(m_versionCombo->itemText(i), Qt::CaseInsensitive)) {
-                    idx = i;
-                    break;
-                }
-            }
-        }
-        if (idx >= 0)
-            m_versionCombo->setCurrentIndex(idx);
-    }
+    selectVersionFilter(gameVersion);
+
     if (m_loaderCombo && !loaderType.isEmpty()) {
         QString lower = loaderType.toLower();
         for (int i = 0; i < m_loaderCombo->count(); ++i) {
@@ -286,8 +301,13 @@ void ModDetailPage::setInstanceFilter(const QString &gameVersion, const QString 
         }
     }
 
-    if (m_versionCombo) m_versionCombo->blockSignals(false);
     if (m_loaderCombo) m_loaderCombo->blockSignals(false);
+
+    // 立即按带入的实例筛选刷新下载列表
+    if (!gameVersion.isEmpty() || !loaderType.isEmpty()) {
+        m_downloadCurrentPage = 0;
+        applyDownloadFilter();
+    }
 }
 
 void ModDetailPage::buildHeader()
@@ -1456,12 +1476,18 @@ void ModDetailPage::receiveDetail(const ModInfo &detail)
 
     // 5. 更新版本筛选 Combo
     if (m_versionCombo) {
+        // 记录当前筛选（用户手选优先，否则用列表页带入的实例版本），重建后恢复，
+        // 否则详情返回会把版本筛选悄悄重置成“全部版本”
+        const QString keepVersion = m_versionCombo->currentIndex() > 0
+                                        ? m_versionCombo->currentText()
+                                        : m_instanceGameVersion;
         m_versionCombo->blockSignals(true);
         while (m_versionCombo->count() > 1)
             m_versionCombo->removeItem(1);
         for (const QString &v : m_modInfo.gameVersions)
             m_versionCombo->addItem(v);
         m_versionCombo->blockSignals(false);
+        selectVersionFilter(keepVersion);
     }
 
     // 6. 更新下载列表

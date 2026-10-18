@@ -311,24 +311,6 @@ QPushButton#topBarBackBtn:pressed {
     background-color: @BG_PRESSED@;
 }
 
-/* 顶栏翻译按钮 */
-QPushButton#topBarTranslateBtn {
-    background-color: transparent;
-    border: none;
-    border-radius: 8px;
-    padding: 4px;
-    color: @TEXT_SECONDARY@;
-}
-
-QPushButton#topBarTranslateBtn:hover {
-    background-color: @BG_HOVER@;
-    color: @PRIMARY@;
-}
-
-QPushButton#topBarTranslateBtn:pressed {
-    background-color: @BG_PRESSED@;
-}
-
 /* 顶栏前进按钮 */
 QPushButton#topBarForwardBtn {
     background-color: transparent;
@@ -4551,6 +4533,20 @@ QLabel#modDetailDepName {
     color: @TEXT_PRIMARY@;
     font-size: 13px;
     font-weight: 600;
+    border: none;
+}
+
+/* 详情页前置资源图标 */
+QLabel#modDetailDepIcon {
+    background-color: transparent;
+    border: none;
+}
+
+/* 详情页前置资源来源（CurseForge / Modrinth） */
+QLabel#modDetailDepSource {
+    background-color: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
     border: none;
 }
 
@@ -12802,6 +12798,50 @@ QLabel#homeLegendText {
  * 翻译功能样式 (Translation Feature Styles)
  * ============================================================ */
 
+/* 在线资源详情页右下角悬浮翻译卡片（EN 原文 / 中 AI 翻译） */
+QWidget#contentTranslateCard {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 18px;
+}
+
+QLabel#contentTranslateStatus {
+    background-color: transparent;
+    color: @TEXT_TERTIARY@;
+    border: none;
+    font-size: 11px;
+    padding: 0 6px;
+}
+
+QPushButton#contentTranslateEnBtn,
+QPushButton#contentTranslateZhBtn {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    border: none;
+    border-radius: 14px;
+    min-width: 36px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QPushButton#contentTranslateEnBtn:hover,
+QPushButton#contentTranslateZhBtn:hover {
+    background-color: @BG_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#contentTranslateEnBtn:checked,
+QPushButton#contentTranslateZhBtn:checked {
+    background-color: @PRIMARY@;
+    color: @TEXT_ON_PRIMARY@;
+}
+
+QPushButton#contentTranslateZhBtn:checked:disabled {
+    background-color: @PRIMARY_MEDIUM@;
+    color: @TEXT_ON_PRIMARY@;
+}
+
 /* 详情页翻译按钮 */
 QPushButton#modDetailTranslateBtn {
     background-color: @PRIMARY_RGBA_12@;
@@ -13508,6 +13548,7 @@ QListWidget#worldMapPopupList::item {
     height: 48px;
 }
 
+/* —— 选项行：整行细分隔线 + 悬停浅底 —— */
 QWidget#worldMapPopupRow {
     background: transparent;
     border: none;
@@ -13518,12 +13559,13 @@ QWidget#worldMapPopupRow:hover {
     background-color: @BG_HOVER@;
 }
 
+/* —— 选项条目（图标 + 名称）：未勾选为通透文字，勾选为主色淡底胶囊 ——
+   三种状态边框/内边距保持一致，切换时不发生位移 */
 QPushButton#worldMapPopupToggle {
     background-color: transparent;
     border: 1px solid transparent;
-    border-left: 3px solid transparent;
-    border-radius: 8px;
-    padding: 6px 10px;
+    border-radius: 9px;
+    padding: 6px 12px;
     color: @TEXT_PRIMARY@;
     font-size: 14px;
     font-weight: 400;
@@ -13531,23 +13573,38 @@ QPushButton#worldMapPopupToggle {
 }
 
 QPushButton#worldMapPopupToggle:hover {
-    background-color: @BG_HOVER@;
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER_LIGHT@;
+}
+
+QPushButton#worldMapPopupToggle:pressed {
+    background-color: @BG_PRESSED@;
+    border: 1px solid @BORDER@;
 }
 
 QPushButton#worldMapPopupToggle:checked {
-    background-color: @BG_HOVER@;
-    border: 1px solid @BORDER@;
-    border-left: 3px solid @PRIMARY@;
-    color: @TEXT_PRIMARY@;
-    padding: 6px 10px;
+    background-color: @PRIMARY_RGBA_12@;
+    border: 1px solid @PRIMARY_RGBA_38@;
+    color: @TEXT_ACCENT@;
+    font-weight: 600;
+}
+
+QPushButton#worldMapPopupToggle:checked:hover {
+    background-color: @PRIMARY_RGBA_20@;
+    border: 1px solid @PRIMARY@;
 }
 
 QPushButton#worldMapPopupToggle:disabled {
-    color: @TEXT_DISABLED@;
     background-color: transparent;
     border: 1px solid transparent;
-    border-left: 3px solid transparent;
-    padding: 6px 10px;
+    color: @TEXT_DISABLED@;
+    font-weight: 400;
+}
+
+QPushButton#worldMapPopupToggle:checked:disabled {
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: @TEXT_DISABLED@;
 }
 
 QPushButton#worldMapPopupHighlight {
@@ -13557,8 +13614,8 @@ QPushButton#worldMapPopupHighlight {
 }
 
 QPushButton#worldMapPopupHighlight:hover {
-    background-color: @PRIMARY_BG@;
-    border: 1px solid @PRIMARY_MEDIUM@;
+    background-color: @PRIMARY_RGBA_12@;
+    border: 1px solid @PRIMARY_RGBA_38@;
 }
 
 QPushButton#worldMapPopupHighlight:pressed {

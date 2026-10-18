@@ -7,9 +7,64 @@
 #include <QJsonObject>
 #include <QNetworkDiskCache>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrlQuery>
+
+namespace {
+
+// CurseForge 的 gameVersions 数组把加载器、运行环境与游戏版本混在一起
+// （例如 Sodium 最新文件的 gameVersions 是 ["Client", "Fabric", "26.3"]，
+//   有的模组还会出现 "Beta 1.7.3"、"Risugami's ModLoader"）。
+// 版本筛选与版本标签只应出现真正的游戏版本，这里剔除已知的非版本项。
+bool isGameVersionEntry(const QString &value)
+{
+    // 运行环境等：整体等于才算（"Server" 是环境名，"Beta 1.7.3" 是真版本）
+    static const QStringList kNonVersionExact = {
+        QStringLiteral("client"), QStringLiteral("server"),
+        QStringLiteral("minecraft"), QStringLiteral("java edition")
+    };
+    // 加载器 / 服务端平台：写法多样（如 "Risugami's ModLoader"），按包含判断
+    static const QStringList kNonVersionKeywords = {
+        QStringLiteral("forge"), QStringLiteral("fabric"),
+        QStringLiteral("quilt"), QStringLiteral("liteloader"),
+        QStringLiteral("modloader"), QStringLiteral("rift"),
+        QStringLiteral("babric"), QStringLiteral("ornit"),
+        QStringLiteral("optifine"), QStringLiteral("bukkit"),
+        QStringLiteral("spigot"), QStringLiteral("paper"),
+        QStringLiteral("purpur"), QStringLiteral("sponge"),
+        QStringLiteral("velocity"), QStringLiteral("waterfall"),
+        QStringLiteral("bungeecord"), QStringLiteral("folia"),
+        QStringLiteral("arclight"), QStringLiteral("magma"),
+        QStringLiteral("mohist"), QStringLiteral("canvas")
+    };
+    // 运行环境要求，例如 "Java 21"
+    static const QRegularExpression kJavaRuntime(QStringLiteral("^java\\s*\\d+$"));
+
+    const QString lower = value.trimmed().toLower();
+    if (lower.isEmpty() || kNonVersionExact.contains(lower))
+        return false;
+    if (kJavaRuntime.match(lower).hasMatch())
+        return false;
+    for (const QString &keyword : kNonVersionKeywords) {
+        if (lower.contains(keyword))
+            return false;
+    }
+    return true;
+}
+
+// 追加真正的游戏版本（去重、保持原顺序）
+void appendGameVersions(const QJsonArray &array, QStringList &out)
+{
+    for (const QJsonValue &v : array) {
+        const QString entry = v.toString();
+        if (isGameVersionEntry(entry) && !out.contains(entry))
+            out.append(entry);
+    }
+}
+
+} // namespace
 
 CurseForgeAPI::CurseForgeAPI(QObject *parent)
     : QObject(parent)
@@ -20,6 +75,7 @@ CurseForgeAPI::CurseForgeAPI(QObject *parent)
     , m_currentSearchReply(nullptr)
     , m_currentCategoriesReply(nullptr)
     , m_currentDetailReply(nullptr)
+    , m_currentModsReply(nullptr)
     , m_currentFingerprintReply(nullptr)
 {
     m_networkManager->setTransferTimeout(10000);
@@ -260,6 +316,76 @@ void CurseForgeAPI::fetchModDetail(const QString &modId)
     connect(m_currentDetailReply, &QNetworkReply::finished, this, &CurseForgeAPI::onDetailReplyFinished);
 }
 
+void CurseForgeAPI::fetchModsByIds(const QStringList &modIds)
+{
+    QJsonArray idArray;
+    for (const QString &id : modIds) {
+        bool ok = false;
+        const int numericId = id.trimmed().toInt(&ok);
+        if (ok && numericId > 0)
+            idArray.append(numericId);
+    }
+
+    if (idArray.isEmpty()) {
+        QTimer::singleShot(0, this, [this]() { emit modsResolved(QList<ModInfo>()); });
+        return;
+    }
+
+    if (effectiveApiKey().isEmpty() && !usingMirror()) {
+        QTimer::singleShot(0, this, [this]() {
+            emit modsResolveFailed(tr("未配置 CurseForge API Key，请在设置中填入或启用 MCIM 镜像加速"));
+        });
+        return;
+    }
+
+    QJsonObject body;
+    body["modIds"] = idArray;
+
+    QUrl url(m_baseUrl + "/v1/mods");
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("Content-Type", "application/json");
+    const QString apiKey = effectiveApiKey();
+    if (!apiKey.isEmpty())
+        request.setRawHeader("X-API-KEY", apiKey.toUtf8());
+
+    abortReply(m_currentModsReply);
+    m_currentModsReply = m_networkManager->post(
+        request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(m_currentModsReply, &QNetworkReply::finished, this, &CurseForgeAPI::onModsReplyFinished);
+}
+
+void CurseForgeAPI::onModsReplyFinished()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+    reply->deleteLater();
+    if (reply != m_currentModsReply) return;
+    m_currentModsReply = nullptr;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        emit modsResolveFailed(reply->errorString());
+        return;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+    if (doc.isNull()) {
+        emit modsResolveFailed(tr("Invalid JSON response from server"));
+        return;
+    }
+
+    QList<ModInfo> mods;
+    const QJsonArray dataArr = doc.object()["data"].toArray();
+    for (const QJsonValue &val : dataArr) {
+        ModInfo info;
+        parseAddon(val.toObject(), info);
+        if (!info.id.isEmpty())
+            mods.append(info);
+    }
+
+    emit modsResolved(mods);
+}
+
 void CurseForgeAPI::fingerprintMod(quint32 fingerprint)
 {
     if (effectiveApiKey().isEmpty() && !usingMirror()) {
@@ -339,8 +465,7 @@ void CurseForgeAPI::onDetailReplyFinished()
     info.coverUrl = logo["url"].toString();
 
     QJsonArray gameVersions = obj["gameVersions"].toArray();
-    for (const QJsonValue &v : gameVersions)
-        info.gameVersions.append(v.toString());
+    appendGameVersions(gameVersions, info.gameVersions);
 
     QJsonArray categoriesArr = obj["categories"].toArray();
     for (const QJsonValue &v : categoriesArr)
@@ -363,8 +488,7 @@ void CurseForgeAPI::onDetailReplyFinished()
             vf.loaders.append(v.toString());
 
         QJsonArray fileGameVersions = file["gameVersions"].toArray();
-        for (const QJsonValue &v : fileGameVersions)
-            vf.gameVersions.append(v.toString());
+        appendGameVersions(fileGameVersions, vf.gameVersions);
 
         QString fileDate = file["fileDate"].toString();
         if (!fileDate.isEmpty())
@@ -495,8 +619,7 @@ void CurseForgeAPI::parseAddon(const QJsonObject &obj, ModInfo &info)
     info.coverUrl = logo["url"].toString();
 
     QJsonArray gameVersions = obj["gameVersions"].toArray();
-    for (const QJsonValue &v : gameVersions)
-        info.gameVersions.append(v.toString());
+    appendGameVersions(gameVersions, info.gameVersions);
 
     QJsonArray categories = obj["categories"].toArray();
     for (const QJsonValue &v : categories)
@@ -509,13 +632,10 @@ void CurseForgeAPI::parseAddon(const QJsonObject &obj, ModInfo &info)
         QJsonArray modLoaders = latestFile["modLoaders"].toArray();
         for (const QJsonValue &v : modLoaders)
             info.loaders.append(v.toString());
-        QJsonArray fileGameVersions = latestFile["gameVersions"].toArray();
-        if (!fileGameVersions.isEmpty()) {
-            QStringList versions;
-            for (const QVariant &v : fileGameVersions.toVariantList())
-                versions.append(v.toString());
-            info.gameVersions = versions;
-        }
+        QStringList fileVersions;
+        appendGameVersions(latestFile["gameVersions"].toArray(), fileVersions);
+        if (!fileVersions.isEmpty())
+            info.gameVersions = fileVersions;
     }
 
     QString dateStr = obj["dateModified"].toString();

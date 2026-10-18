@@ -36,6 +36,13 @@ public:
     void fetchModDetail(const QString &modId);
 
     /**
+     * @brief 批量按模组 ID 取基础信息（供详情页展示前置资源用）
+     * POST /v1/mods，body: {"modIds":[...]}
+     * @param modIds 模组 ID 列表（非数字 ID 会被忽略）
+     */
+    void fetchModsByIds(const QStringList &modIds);
+
+    /**
      * @brief 通过 MurmurHash2 指纹匹配本地模组（单次单个指纹）
      * @param fingerprint MurmurHash2 指纹
      * POST /v1/fingerprints/432
@@ -53,6 +60,10 @@ signals:
     void modDetailReceived(const ModInfo &detail);
     void modDetailFailed(const QString &error);
 
+    /** 批量模组查询完成（只含基础信息，不带版本列表） */
+    void modsResolved(const QList<ModInfo> &mods);
+    void modsResolveFailed(const QString &error);
+
     /** 指纹匹配完成 */
     void fingerprintCompleted(quint32 fingerprint, const QString &modId, const QString &pageUrl);
     /** 指纹匹配失败（未找到匹配或无 API Key） */
@@ -62,6 +73,7 @@ private slots:
     void onSearchReplyFinished();
     void onCategoriesReplyFinished();
     void onDetailReplyFinished();
+    void onModsReplyFinished();
     void onFingerprintReplyFinished();
 
 private:
@@ -81,6 +93,7 @@ private:
     QNetworkReply *m_currentSearchReply;
     QNetworkReply *m_currentCategoriesReply;
     QNetworkReply *m_currentDetailReply;
+    QNetworkReply *m_currentModsReply;
     QNetworkReply *m_currentFingerprintReply;
     quint32 m_pendingFingerprint = 0;
 };

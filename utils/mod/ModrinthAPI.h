@@ -28,6 +28,13 @@ public:
     void fetchModDetail(const QString &modId);
 
     /**
+     * @brief 批量按项目 ID 取项目基础信息（供详情页展示前置资源用）
+     * GET /v2/projects?ids=["a","b"]
+     * @param ids 项目 ID 列表（即依赖项里记录的 project_id）
+     */
+    void fetchProjectsByIds(const QStringList &ids);
+
+    /**
      * @brief 通过 SHA-1 哈希匹配本地模组文件
      * @param sha1 SHA-1 哈希值（十六进制小写）
      * GET /v2/version_file/{sha1}?algorithm=sha1
@@ -64,6 +71,10 @@ signals:
     void modDetailReceived(const ModInfo &detail);
     void modDetailFailed(const QString &error);
 
+    /** 批量项目查询完成（只含项目基础信息，不带版本列表） */
+    void projectsResolved(const QList<ModInfo> &projects);
+    void projectsResolveFailed(const QString &error);
+
     /** SHA-1 哈希匹配完成，返回匹配到的版本信息和项目 ID */
     void hashMatched(const QString &sha1, const QString &projectId, const ModVersionFile &version);
     void hashMatchFailed(const QString &sha1, const QString &error);
@@ -84,6 +95,8 @@ private slots:
 private:
     void abortReply(QNetworkReply *&reply);
     void fetchModVersions(const QString &modId);
+    /** 解析项目对象（/v2/project/{id} 与 /v2/projects 返回的结构一致） */
+    void parseProjectObject(const QJsonObject &obj, ModInfo &info);
     ModVersionFile parseVersionObject(const QJsonObject &obj);
     QNetworkAccessManager *m_networkManager;
     QString m_baseUrl;
@@ -92,10 +105,12 @@ private:
     QNetworkReply *m_currentCategoriesReply;
     QNetworkReply *m_currentDetailReply;
     QNetworkReply *m_currentVersionsReply;
+    QNetworkReply *m_currentProjectsReply;
     ModInfo m_pendingDetailInfo;
 
 private slots:
     void onVersionsReplyFinished();
+    void onProjectsReplyFinished();
     void onHashMatchReplyFinished();
     void onHashBatchReplyFinished();
     void onUpdateCheckReplyFinished();

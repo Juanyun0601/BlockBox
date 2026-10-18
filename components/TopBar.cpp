@@ -21,7 +21,6 @@ TopBar::TopBar(QWidget *parent)
     , m_backButton(nullptr)
     , m_scrollToTopBtn(nullptr)
     , m_refreshBtn(nullptr)
-    , m_translateBtn(nullptr)
     , m_titleContainer(nullptr)
     , m_searchIcon(nullptr)
     , m_titleLabel(nullptr)
@@ -89,14 +88,6 @@ void TopBar::initUI()
     m_refreshBtn->setIconSize(QSize(18, 18));
     m_refreshBtn->setFixedSize(28, 28);
     m_refreshBtn->setToolTip(tr("刷新页面"));
-
-    m_translateBtn = new QPushButton();
-    m_translateBtn->setObjectName("topBarTranslateBtn");
-    m_translateBtn->setIcon(ResourceManager::instance()->loadThemedIcon(ResourceManager::IconType::Translate));
-    m_translateBtn->setIconSize(QSize(18, 18));
-    m_translateBtn->setFixedSize(28, 28);
-    m_translateBtn->setToolTip(tr("翻译"));
-    m_translateBtn->hide();
 
     // ---- Leftmost section: app logo ----
     m_logoLabel = new QLabel(this);
@@ -178,7 +169,6 @@ void TopBar::initUI()
 
     // Connect signals
     connect(m_backButton, &QPushButton::clicked, this, &TopBar::backClicked);
-    connect(m_translateBtn, &QPushButton::clicked, this, &TopBar::translateClicked);
     connect(m_scrollToTopBtn, &QPushButton::clicked, this, &TopBar::scrollToTopClicked);
     connect(m_refreshBtn, &QPushButton::clicked, this, &TopBar::refreshClicked);
     connect(m_instanceSelectBtn, &QPushButton::clicked, this, &TopBar::instanceSelectClicked);
@@ -205,7 +195,6 @@ void TopBar::initUI()
         m_backButton->setIcon(themedBack);
         m_scrollToTopBtn->setIcon(themedScroll);
         m_refreshBtn->setIcon(themedRefresh);
-        m_translateBtn->setIcon(ResourceManager::instance()->loadThemedIcon(ResourceManager::IconType::Translate));
         updateEditionCard();
         m_instanceSelectBtn->setIcon(themedSelect);
         m_instanceSettingsBtn->setIcon(themedSettings);
@@ -258,7 +247,6 @@ QWidget* TopBar::createFuncCard()
     layout->setSpacing(2);
 
     layout->addWidget(m_backButton);
-    layout->addWidget(m_translateBtn);
     layout->addWidget(m_scrollToTopBtn);
     layout->addWidget(m_refreshBtn);
 
@@ -771,7 +759,6 @@ void TopBar::setMainTitle()
     if (m_titleRotateTimer) m_titleRotateTimer->start();
     updateTitleElision();
     m_backButton->hide();
-    m_translateBtn->hide();
 }
 
 void TopBar::setSettingsTitle()
@@ -1041,9 +1028,4 @@ void TopBar::setAccountSelected(bool selected)
         m_accountCard->style()->unpolish(m_accountCard);
         m_accountCard->style()->polish(m_accountCard);
     }
-}
-
-void TopBar::setTranslateButtonVisible(bool visible)
-{
-    if (m_translateBtn) m_translateBtn->setVisible(visible);
 }

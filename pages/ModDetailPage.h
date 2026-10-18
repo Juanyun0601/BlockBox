@@ -78,6 +78,8 @@ private:
     void stopCarousel();
     void onScreenshotInteraction();
     void applyDownloadFilter();
+    /** 在版本下拉里选中指定版本（不存在时补入），用于列表页带入的实例筛选 */
+    void selectVersionFilter(const QString &gameVersion);
 
     QWidget *createChip(const QString &text, const QColor &bgColor = QColor("#e8e8e8"));
     void addSectionShadow(QWidget *section);

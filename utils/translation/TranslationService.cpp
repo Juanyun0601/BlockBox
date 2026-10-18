@@ -53,7 +53,7 @@ void TranslationService::translate(const QString &text, const TranslationConfig 
 
     switch (config.source) {
     case TranslationSource::AI:
-        translateByAI(text, config);
+        translateByAI(text, config, false);
         break;
     case TranslationSource::DeepL:
         translateByDeepL(text, config);
@@ -68,6 +68,21 @@ void TranslationService::translate(const QString &text, const TranslationConfig 
         translateByCustomAPI(text, config);
         break;
     }
+}
+
+void TranslationService::translateList(const QString &payload, const TranslationConfig &config)
+{
+    if (m_translating)
+        cancelCurrentRequest();
+
+    if (payload.trimmed().isEmpty()) {
+        emit translationError(tr("没有可翻译的文本"));
+        return;
+    }
+
+    m_translating = true;
+    // 列表批量翻译必须让模型按 [#n#] 格式逐条输出，只有 AI 来源能遵守这个约定
+    translateByAI(payload, config, true);
 }
 
 void TranslationService::cancelCurrentRequest()
@@ -95,7 +110,8 @@ QString TranslationService::sourceDisplayName(TranslationSource source)
 // ---------------------------------------------------------------------------
 // AI 翻译（通过 SSE 流式调用，同步等待结果）
 // ---------------------------------------------------------------------------
-void TranslationService::translateByAI(const QString &text, const TranslationConfig &config)
+void TranslationService::translateByAI(const QString &text, const TranslationConfig &config,
+                                       bool listMode)
 {
     // 构建翻译请求体
     QJsonArray messages;
@@ -103,13 +119,15 @@ void TranslationService::translateByAI(const QString &text, const TranslationCon
     // System prompt
     QJsonObject sysMsg;
     sysMsg["role"] = "system";
-    sysMsg["content"] = buildAITranslationPrompt(text, config.targetLanguage);
+    sysMsg["content"] = listMode ? buildAIListTranslationPrompt()
+                                 : buildAITranslationPrompt(text, config.targetLanguage);
     messages.append(sysMsg);
 
     // User message
     QJsonObject userMsg;
     userMsg["role"] = "user";
-    userMsg["content"] = buildAITranslationUserMessage(text);
+    userMsg["content"] = listMode ? buildAIListTranslationUserMessage(text)
+                                  : buildAITranslationUserMessage(text);
     messages.append(userMsg);
 
     // 从设置中读取 AI 模型配置（使用用户默认的 AI 模型）
@@ -162,7 +180,7 @@ void TranslationService::translateByAI(const QString &text, const TranslationCon
     QByteArray body = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);
     m_currentReply = m_networkManager->post(request, body);
 
-    connect(m_currentReply, &QNetworkReply::finished, this, [this]() {
+    connect(m_currentReply, &QNetworkReply::finished, this, [this, listMode]() {
         QNetworkReply *reply = m_currentReply;
         if (!reply) return;
 
@@ -212,7 +230,10 @@ void TranslationService::translateByAI(const QString &text, const TranslationCon
         }
         content = content.trimmed();
 
-        emit translationFinished(content);
+        if (listMode)
+            emit listTranslationFinished(content);
+        else
+            emit translationFinished(content);
     });
 }
 
@@ -594,4 +615,39 @@ QString TranslationService::buildAITranslationPrompt(const QString &text, const 
 QString TranslationService::buildAITranslationUserMessage(const QString &text)
 {
     return QStringLiteral("请翻译以下模组描述：\n\n%1").arg(text);
+}
+
+// ---------------------------------------------------------------------------
+// 列表批量翻译提示词（每条「[#序号#] 名称 ||| 简介」）
+// ---------------------------------------------------------------------------
+QString TranslationService::buildAIListTranslationPrompt()
+{
+    QFile file(QStringLiteral(":/resources/ai_system_prompts.json"));
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QJsonParseError parseError;
+        QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+        file.close();
+        if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+            const QString prompt =
+                doc.object().value(QStringLiteral("translation_list")).toString();
+            if (!prompt.isEmpty())
+                return prompt;
+        }
+    }
+
+    return QStringLiteral(
+        "你是 Minecraft 资源本地化译者。下面每行是一条资源，格式为「[#序号#] 名称 ||| 简介」。\n"
+        "请把每一条翻译成简体中文，并严格保持格式：\n"
+        "1. 每行以原样的 [#序号#] 开头，序号、条目数量与顺序都不能改；\n"
+        "2. 名称与简介之间必须保留 ||| 分隔符；\n"
+        "3. 名称为空的就保持空，简介为空的也保持空；\n"
+        "4. 名称译成符合中文习惯的标题（例如 Complementary Shaders → 互补光影，"
+        "Fresh Animations → 鲜活动画）；\n"
+        "5. 简介译得简洁自然，不要补充原文没有的信息；\n"
+        "6. 只输出翻译后的各行，不要字段名、不要解释、不要 Markdown、不要代码块。");
+}
+
+QString TranslationService::buildAIListTranslationUserMessage(const QString &payload)
+{
+    return QStringLiteral("请逐行翻译下面的资源列表：\n\n%1").arg(payload);
 }

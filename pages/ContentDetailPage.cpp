@@ -3,11 +3,15 @@
 #include "utils/McimHelper.h"
 #include "utils/ThemeManager.h"
 #include "utils/FavoritesManager.h"
+#include "utils/SettingsManager.h"
+#include "utils/mod/CurseForgeAPI.h"
+#include "utils/mod/ModrinthAPI.h"
 #include "components/NotificationManager.h"
 #include "components/ScreenshotViewer.h"
 #include "components/SourceSwitchBar.h"
 #include <QDesktopServices>
 #include <QEvent>
+#include <QGraphicsDropShadowEffect>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QNetworkReply>
@@ -94,13 +98,130 @@ ContentDetailPage::ContentDetailPage(ContentType contentType, QWidget *parent)
     , m_downloadPrevBtn(nullptr)
     , m_downloadNextBtn(nullptr)
     , m_downloadPageLabel(nullptr)
+    , m_downloadEmptyHint(nullptr)
     , m_loadingOverlay(nullptr)
 {
+    initAPI();
     initUI();
 }
 
 ContentDetailPage::~ContentDetailPage()
 {
+}
+
+void ContentDetailPage::initAPI()
+{
+    // 详情页自行按 id/source 拉取完整信息（版本列表、前置资源都随详情返回）
+    m_curseforgeAPI = new CurseForgeAPI(this);
+    const QString cfKey = SettingsManager::instance()->property("curseforge_api_key").toString();
+    if (!cfKey.isEmpty())
+        m_curseforgeAPI->setApiKey(cfKey);
+    m_curseforgeAPI->setClassId(ContentTypeConfig::getConfig(m_contentType).cfClassId);
+
+    m_modrinthAPI = new ModrinthAPI(this);
+    m_modrinthAPI->setProjectType(ContentTypeConfig::getConfig(m_contentType).mrProjectType);
+
+    applyMCIMSetting();
+
+    // 只接收「当前正在等待的那次拉取」的结果：换源后旧来源的响应到达时直接丢弃，
+    // 否则旧来源的版本/前置会盖到新来源的页面上
+    connect(m_curseforgeAPI, &CurseForgeAPI::modDetailReceived,
+            this, [this](const ModInfo &detail) {
+        if (m_pendingDetailSource != QStringLiteral("curseforge"))
+            return;
+        m_pendingDetailSource.clear();
+        receiveDetail(detail);
+    });
+    connect(m_curseforgeAPI, &CurseForgeAPI::modDetailFailed,
+            this, [this](const QString &error) {
+        if (m_pendingDetailSource != QStringLiteral("curseforge"))
+            return;
+        m_pendingDetailSource.clear();
+        onDetailFailed(error);
+    });
+    connect(m_modrinthAPI, &ModrinthAPI::modDetailReceived,
+            this, [this](const ModInfo &detail) {
+        if (m_pendingDetailSource != QStringLiteral("modrinth"))
+            return;
+        m_pendingDetailSource.clear();
+        receiveDetail(detail);
+    });
+    connect(m_modrinthAPI, &ModrinthAPI::modDetailFailed,
+            this, [this](const QString &error) {
+        if (m_pendingDetailSource != QStringLiteral("modrinth"))
+            return;
+        m_pendingDetailSource.clear();
+        onDetailFailed(error);
+    });
+
+    // 前置资源只知道 id：批量取一次名称与图标，卡片才有的显示、点击才跳得过去
+    connect(m_curseforgeAPI, &CurseForgeAPI::modsResolved,
+            this, &ContentDetailPage::onDependencyInfosResolved);
+    connect(m_modrinthAPI, &ModrinthAPI::projectsResolved,
+            this, &ContentDetailPage::onDependencyInfosResolved);
+    connect(m_curseforgeAPI, &CurseForgeAPI::modsResolveFailed,
+            this, [this](const QString &) { m_depResolvingIds.clear(); });
+    connect(m_modrinthAPI, &ModrinthAPI::projectsResolveFailed,
+            this, [this](const QString &) { m_depResolvingIds.clear(); });
+}
+
+void ContentDetailPage::applyMCIMSetting()
+{
+    const QVariant mcimValue = SettingsManager::instance()->property("use_mcim");
+    const bool useMcim = mcimValue.isValid() ? mcimValue.toBool() : true;
+
+    if (m_curseforgeAPI) {
+        m_curseforgeAPI->setBaseUrl(useMcim
+            ? QStringLiteral("https://mod.mcimirror.top/curseforge")
+            : QStringLiteral("https://api.curseforge.com"));
+    }
+    if (m_modrinthAPI) {
+        m_modrinthAPI->setBaseUrl(useMcim
+            ? QStringLiteral("https://mod.mcimirror.top/modrinth")
+            : QStringLiteral("https://api.modrinth.com"));
+    }
+}
+
+void ContentDetailPage::fetchDetail()
+{
+    if (!m_curseforgeAPI || !m_modrinthAPI)
+        return;
+
+    const QString source = m_currentSource.isEmpty() ? m_modInfo.source : m_currentSource;
+    const QString id = m_modInfo.id;
+    const bool knownSource = (source == QStringLiteral("curseforge")
+                              || source == QStringLiteral("modrinth"));
+
+    if (id.isEmpty() || !knownSource) {
+        // 本地/无来源条目没有远端详情可拉
+        hideLoading();
+        return;
+    }
+
+    const QString key = source + ":" + id;
+    if (key == m_detailFetchedKey) {
+        hideLoading();
+        return;
+    }
+
+    // 已经带着完整详情进来的（例如从模组详情页跳转）不必重复请求
+    if (!m_modInfo.versionFiles.isEmpty() || !m_modInfo.dependencies.isEmpty()) {
+        m_detailFetchedKey = key;
+        hideLoading();
+        return;
+    }
+
+    m_detailFetchedKey = key;
+    m_depResolved.clear();
+    m_depResolvingIds.clear();
+
+    // 记录本次等待的来源：换源后旧来源的响应会被丢弃
+    m_pendingDetailSource = source;
+
+    if (source == QStringLiteral("curseforge"))
+        m_curseforgeAPI->fetchModDetail(id);
+    else
+        m_modrinthAPI->fetchModDetail(id);
 }
 
 void ContentDetailPage::initUI()
@@ -126,6 +247,11 @@ void ContentDetailPage::initUI()
 
     m_scrollArea->setWidget(m_contentWidget);
     mainLayout->addWidget(m_scrollArea);
+
+    // 右下角悬浮翻译切换卡片（先于加载遮罩创建，让遮罩始终盖在卡片之上）
+    m_translateSwitch = new TranslateSwitchCard(this);
+    connect(m_translateSwitch, &TranslateSwitchCard::modeChangeRequested,
+            this, &ContentDetailPage::onTranslateModeChanged);
 
     m_loadingOverlay = new BlurLoadingOverlay(this);
     m_loadingOverlay->hide();
@@ -213,6 +339,7 @@ void ContentDetailPage::clearContent()
     m_versionTypeCombo = nullptr;
     m_dependenciesContainer = nullptr;
     m_dependenciesLayout = nullptr;
+    m_dependenciesSection = nullptr;
     m_downloadContainer = nullptr;
     m_downloadListLayout = nullptr;
     m_linksContainer = nullptr;
@@ -226,6 +353,7 @@ void ContentDetailPage::clearContent()
     m_downloadPrevBtn = nullptr;
     m_downloadNextBtn = nullptr;
     m_downloadPageLabel = nullptr;
+    m_downloadEmptyHint = nullptr;
     m_instanceGameVersion.clear();
     m_instanceLoaderType.clear();
     m_screenshotSection = nullptr;
@@ -247,6 +375,7 @@ void ContentDetailPage::clearContent()
 void ContentDetailPage::setModInfo(const ModInfo &info)
 {
     m_modInfo = info;
+    resetTranslation();
 
     if (m_sourceSwitchBar) {
         m_sourceSwitchBar->setVisible(info.isCrossSourceMerged());
@@ -273,6 +402,9 @@ void ContentDetailPage::setModInfo(const ModInfo &info)
     buildLeftSidebar();
     buildRightMain();
     loadIcon();
+
+    // 左侧「前置资源」等内容来自远端详情，随页面数据一起拉取
+    fetchDetail();
 }
 
 void ContentDetailPage::setInstanceFilter(const QString &gameVersion, const QString &loaderType)
@@ -294,8 +426,12 @@ void ContentDetailPage::setInstanceFilter(const QString &gameVersion, const QStr
                 }
             }
         }
-        if (idx >= 0)
-            m_versionCombo->setCurrentIndex(idx);
+        // 资源本身没列出该版本时也补进下拉，保证筛选真实生效（结果为无匹配版本）
+        if (idx < 0) {
+            m_versionCombo->addItem(gameVersion);
+            idx = m_versionCombo->count() - 1;
+        }
+        m_versionCombo->setCurrentIndex(idx);
     }
     if (m_loaderCombo && !loaderType.isEmpty()) {
         QString lower = loaderType.toLower();
@@ -309,6 +445,12 @@ void ContentDetailPage::setInstanceFilter(const QString &gameVersion, const QStr
 
     if (m_versionCombo) m_versionCombo->blockSignals(false);
     if (m_loaderCombo) m_loaderCombo->blockSignals(false);
+
+    // 立即按带入的实例筛选刷新下载列表
+    if (!gameVersion.isEmpty() || !loaderType.isEmpty()) {
+        m_downloadCurrentPage = 0;
+        applyDownloadFilter();
+    }
 }
 
 void ContentDetailPage::setCurrentSource(const QString &source)
@@ -580,16 +722,14 @@ void ContentDetailPage::buildFilterBlock(QVBoxLayout *parentLayout)
 
 void ContentDetailPage::buildDependenciesBlock(QVBoxLayout *parentLayout)
 {
-    if (m_modInfo.dependencies.isEmpty())
-        return;
+    auto config = ContentTypeConfig::getConfig(m_contentType);
 
-    QWidget *section = new QWidget();
-    section->setObjectName("modDetailSection");
-    QVBoxLayout *sectionLayout = new QVBoxLayout(section);
+    m_dependenciesSection = new QWidget();
+    m_dependenciesSection->setObjectName("modDetailSection");
+    QVBoxLayout *sectionLayout = new QVBoxLayout(m_dependenciesSection);
     sectionLayout->setContentsMargins(12, 12, 12, 12);
     sectionLayout->setSpacing(8);
 
-    auto config = ContentTypeConfig::getConfig(m_contentType);
     QLabel *title = new QLabel(tr("前置%1").arg(config.displayName));
     title->setObjectName("modDetailSectionTitle");
     sectionLayout->addWidget(title);
@@ -598,28 +738,180 @@ void ContentDetailPage::buildDependenciesBlock(QVBoxLayout *parentLayout)
     m_dependenciesLayout = new QVBoxLayout(m_dependenciesContainer);
     m_dependenciesLayout->setContentsMargins(0, 0, 0, 0);
     m_dependenciesLayout->setSpacing(6);
+    sectionLayout->addWidget(m_dependenciesContainer);
+
+    parentLayout->addWidget(m_dependenciesSection);
+
+    // 详情还没回来时整块隐藏（详情返回后由 refreshDependencies() 决定显示与否）
+    refreshDependencies();
+}
+
+void ContentDetailPage::refreshDependencies()
+{
+    if (!m_dependenciesSection || !m_dependenciesLayout)
+        return;
+
+    while (QLayoutItem *item = m_dependenciesLayout->takeAt(0)) {
+        if (item->widget())
+            item->widget()->deleteLater();
+        delete item;
+    }
+
+    if (m_modInfo.dependencies.isEmpty()) {
+        m_dependenciesSection->setVisible(false);
+        return;
+    }
 
     for (const ModDependency &dep : m_modInfo.dependencies) {
+        const bool resolved = m_depResolved.contains(dep.name);
+        const ModInfo depInfo = resolved ? m_depResolved.value(dep.name) : ModInfo();
+        const bool clickable = resolved
+                               && !depInfo.id.isEmpty()
+                               && !depInfo.source.isEmpty();
+        const QString displayName = (resolved && !depInfo.name.isEmpty())
+                                        ? depInfo.name
+                                        : dep.name;
+
         QWidget *depCard = new QWidget();
         depCard->setObjectName("modDetailDepCard");
         depCard->setProperty("depRequired", dep.isRequired);
+        depCard->setAttribute(Qt::WA_StyledBackground);
+        if (clickable) {
+            // 点击卡片跳转到该前置资源的详情页
+            depCard->setCursor(Qt::PointingHandCursor);
+            depCard->setToolTip(tr("点击查看「%1」详情").arg(displayName));
+            depCard->setProperty("depName", dep.name);
+            depCard->installEventFilter(this);
+        }
+
         QHBoxLayout *depLayout = new QHBoxLayout(depCard);
         depLayout->setContentsMargins(8, 6, 8, 6);
         depLayout->setSpacing(8);
 
-        QLabel *nameLabel = new QLabel(dep.name);
+        QLabel *iconLabel = new QLabel();
+        iconLabel->setObjectName("modDetailDepIcon");
+        iconLabel->setFixedSize(28, 28);
+        iconLabel->setAlignment(Qt::AlignCenter);
+        depLayout->addWidget(iconLabel);
+
+        QVBoxLayout *textLayout = new QVBoxLayout();
+        textLayout->setContentsMargins(0, 0, 0, 0);
+        textLayout->setSpacing(2);
+
+        QLabel *nameLabel = new QLabel(displayName);
         nameLabel->setObjectName("modDetailDepName");
-        depLayout->addWidget(nameLabel, 1);
+        nameLabel->setToolTip(displayName);
+        nameLabel->setWordWrap(true);
+        textLayout->addWidget(nameLabel);
+
+        if (resolved && !depInfo.source.isEmpty()) {
+            QLabel *sourceLabel = new QLabel(depInfo.source == QStringLiteral("curseforge")
+                                                 ? QStringLiteral("CurseForge")
+                                                 : QStringLiteral("Modrinth"));
+            sourceLabel->setObjectName("modDetailDepSource");
+            textLayout->addWidget(sourceLabel);
+        }
+
+        depLayout->addLayout(textLayout, 1);
 
         QLabel *tagLabel = new QLabel(dep.isRequired ? tr("必备") : tr("可选"));
         tagLabel->setObjectName("modDetailDepTag");
-        depLayout->addWidget(tagLabel);
+        depLayout->addWidget(tagLabel, 0, Qt::AlignTop);
+
+        if (resolved)
+            loadDepIcon(iconLabel, depInfo.iconUrl);
 
         m_dependenciesLayout->addWidget(depCard);
     }
 
-    sectionLayout->addWidget(m_dependenciesContainer);
-    parentLayout->addWidget(section);
+    m_dependenciesSection->setVisible(true);
+}
+
+void ContentDetailPage::loadDepIcon(QLabel *iconLabel, const QString &iconUrl)
+{
+    if (!iconLabel)
+        return;
+
+    if (iconUrl.isEmpty()) {
+        // 没图标就画一个圆角占位块，保持卡片左侧对齐
+        QPixmap placeholder(28, 28);
+        placeholder.fill(Qt::transparent);
+        QPainter painter(&placeholder);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 0, 0, 22));
+        painter.drawRoundedRect(placeholder.rect(), 8, 8);
+        painter.end();
+        iconLabel->setPixmap(placeholder);
+        return;
+    }
+
+    const QString cacheKey = QString("dep_icon:%1").arg(iconUrl);
+    QPixmap cached;
+    if (QPixmapCache::find(cacheKey, &cached)) {
+        iconLabel->setPixmap(cached);
+        return;
+    }
+
+    QUrl url(McimHelper::rewriteImageUrl(iconUrl));
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
+    QNetworkReply *reply = sharedDetailNAM()->get(request);
+    connect(reply, &QNetworkReply::finished, this, [iconLabel, reply, cacheKey]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError)
+            return;
+        QPixmap pixmap;
+        pixmap.loadFromData(reply->readAll());
+        if (pixmap.isNull())
+            return;
+        QPixmap scaled = pixmap.scaled(28, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        QPixmapCache::insert(cacheKey, scaled);
+        // 卡片可能在图片回来前已被重建
+        if (iconLabel)
+            iconLabel->setPixmap(scaled);
+    });
+}
+
+void ContentDetailPage::resolveDependencyInfos()
+{
+    if (!m_curseforgeAPI || !m_modrinthAPI || m_modInfo.dependencies.isEmpty())
+        return;
+
+    const QString source = m_currentSource.isEmpty() ? m_modInfo.source : m_currentSource;
+    const bool knownSource = (source == QStringLiteral("curseforge")
+                              || source == QStringLiteral("modrinth"));
+    if (!knownSource)
+        return;
+
+    QStringList ids;
+    for (const ModDependency &dep : m_modInfo.dependencies) {
+        if (dep.name.isEmpty() || m_depResolved.contains(dep.name)
+            || m_depResolvingIds.contains(dep.name))
+            continue;
+        ids.append(dep.name);
+    }
+    if (ids.isEmpty())
+        return;
+
+    m_depResolvingIds = ids;
+    if (source == QStringLiteral("curseforge"))
+        m_curseforgeAPI->fetchModsByIds(ids);
+    else
+        m_modrinthAPI->fetchProjectsByIds(ids);
+}
+
+void ContentDetailPage::onDependencyInfosResolved(const QList<ModInfo> &infos)
+{
+    m_depResolvingIds.clear();
+    if (infos.isEmpty())
+        return;
+
+    for (const ModInfo &info : infos) {
+        if (!info.id.isEmpty())
+            m_depResolved.insert(info.id, info);
+    }
+    refreshDependencies();
 }
 
 void ContentDetailPage::buildDownloadListBlock(QVBoxLayout *parentLayout)
@@ -668,6 +960,12 @@ void ContentDetailPage::buildDownloadListBlock(QVBoxLayout *parentLayout)
     }
 
     sectionLayout->addWidget(m_downloadContainer);
+
+    m_downloadEmptyHint = new QLabel(tr("没有符合当前筛选条件的版本"));
+    m_downloadEmptyHint->setObjectName("modDetailEmptyHint");
+    m_downloadEmptyHint->setWordWrap(true);
+    m_downloadEmptyHint->hide();
+    sectionLayout->addWidget(m_downloadEmptyHint);
 
     // 分页控制栏（微透明玻璃态卡片，与资源列表页底部翻页栏一致）
     m_downloadPaginationBar = new QWidget();
@@ -834,6 +1132,9 @@ void ContentDetailPage::applyDownloadFilter()
     for (int i = 0; i < m_downloadCards.size(); ++i) {
         m_downloadCards[i].widget->setVisible(visibleSet.contains(i));
     }
+
+    if (m_downloadEmptyHint)
+        m_downloadEmptyHint->setVisible(matchedIndices.isEmpty());
 
     updateDownloadPagination();
 }
@@ -1491,6 +1792,8 @@ void ContentDetailPage::onScreenshotInteraction()
 
 void ContentDetailPage::receiveDetail(const ModInfo &detail)
 {
+    resetTranslation();
+
     // 同步远端返回的 source（CurseForge / Modrinth）以更新收藏状态
     if (!detail.source.isEmpty() && m_currentSource != detail.source)
     {
@@ -1502,6 +1805,33 @@ void ContentDetailPage::receiveDetail(const ModInfo &detail)
         m_modInfo.id = detail.id;
     }
     updateFavoriteButtonIcon();
+
+    // 搜索接口可能没带游戏版本，详情到手后补齐「筛选选项」下拉（保留已选中的版本）
+    if (!detail.gameVersions.isEmpty() && m_modInfo.gameVersions.isEmpty()) {
+        m_modInfo.gameVersions = detail.gameVersions;
+        if (m_versionCombo) {
+            const QString currentVersion = m_versionCombo->currentText();
+            m_versionCombo->blockSignals(true);
+            m_versionCombo->clear();
+            m_versionCombo->addItem(tr("全部版本"));
+            for (const QString &v : detail.gameVersions)
+                m_versionCombo->addItem(v);
+            const int idx = m_versionCombo->findText(currentVersion);
+            m_versionCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+            m_versionCombo->blockSignals(false);
+        }
+    }
+
+    if (!detail.versionFiles.isEmpty()) {
+        m_modInfo.versionFiles = detail.versionFiles;
+    }
+
+    // 左侧「前置资源」：详情返回的依赖项只有 id/名称，取一次名称与图标后重建卡片
+    if (!detail.dependencies.isEmpty()) {
+        m_modInfo.dependencies = detail.dependencies;
+        resolveDependencyInfos();
+        refreshDependencies();
+    }
 
     if (!detail.versionFiles.isEmpty() && m_downloadListLayout) {
         while (QLayoutItem *item = m_downloadListLayout->takeAt(0)) {
@@ -1582,6 +1912,13 @@ void ContentDetailPage::hideLoading()
         m_loadingOverlay->hideOverlay();
 }
 
+void ContentDetailPage::onDetailFailed(const QString &error)
+{
+    hideLoading();
+    if (!error.isEmpty())
+        NotificationManager::showError(this, tr("获取详情失败：%1").arg(error));
+}
+
 void ContentDetailPage::setMcmodUrl(const QString &url)
 {
     if (url.isEmpty())
@@ -1658,6 +1995,19 @@ bool ContentDetailPage::eventFilter(QObject *watched, QEvent *event)
         return false;
     }
 
+    if (event->type() == QEvent::MouseButtonRelease) {
+        // 点击左侧「前置资源」卡片 → 跳转到该资源的详情页
+        QWidget *depCard = qobject_cast<QWidget*>(watched);
+        if (depCard && depCard->objectName() == "modDetailDepCard"
+            && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+            const ModInfo depInfo = m_depResolved.value(depCard->property("depName").toString());
+            if (!depInfo.id.isEmpty() && !depInfo.source.isEmpty()) {
+                emit contentClicked(depInfo);
+                return true;
+            }
+        }
+    }
+
     if (event->type() == QEvent::MouseButtonPress) {
         // Click on main screenshot → open viewer
         if (watched == m_screenshotLabel && !m_screenshotPixmaps.isEmpty()) {
@@ -1680,4 +2030,201 @@ bool ContentDetailPage::eventFilter(QObject *watched, QEvent *event)
         }
     }
     return QWidget::eventFilter(watched, event);
+}
+
+// ===========================================================================
+// 右下角悬浮翻译卡片（EN 原文 / 中 AI 翻译当前页）
+// ===========================================================================
+
+namespace {
+
+/// 文本里是否已含中文（含中文就不再送去翻译，避免重复请求）
+bool containsChineseText(const QString &text)
+{
+    for (const QChar &ch : text) {
+        if (ch.script() == QChar::Script_Han)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+void ContentDetailPage::onTranslateModeChanged(bool chinese)
+{
+    if (!m_translateSwitch)
+        return;
+
+    if (chinese) {
+        m_translateSwitch->setChineseMode(true);
+        if (m_translating)
+            return;
+        if (m_translated) {
+            applyTranslatedTexts();
+            return;
+        }
+        startPageTranslation();
+        return;
+    }
+
+    // 切回 EN：取消进行中的翻译并还原原文
+    if (m_translating) {
+        if (m_translator)
+            m_translator->cancelCurrentRequest();
+        m_translating = false;
+        setTranslateBusy(false);
+    }
+    m_translateSwitch->setChineseMode(false);
+    restoreOriginalTexts();
+}
+
+void ContentDetailPage::startPageTranslation()
+{
+    if (!m_translator) {
+        m_translator = new TranslationService(this);
+        connect(m_translator, &TranslationService::translationFinished, this,
+                [this](const QString &text) { onTranslateChunkFinished(text); });
+        connect(m_translator, &TranslationService::translationError, this,
+                [this](const QString &error) {
+            m_translating = false;
+            setTranslateBusy(false);
+            if (m_translateSwitch)
+                m_translateSwitch->setChineseMode(false);
+            restoreOriginalTexts();
+            NotificationManager::showError(this, tr("翻译失败：%1").arg(error));
+        });
+    }
+
+    // 记录原文，供切回 EN 时还原
+    m_origSummary = m_descriptionLabel ? m_descriptionLabel->text() : QString();
+    m_origDetailHtml = m_modInfo.detailedDescription.isEmpty()
+        ? m_modInfo.description
+        : m_modInfo.detailedDescription;
+
+    m_translateTexts.clear();
+    m_translateKinds.clear();
+
+    const bool summaryNeedsTranslation = !m_origSummary.isEmpty()
+        && !containsChineseText(m_origSummary);
+    const bool detailNeedsTranslation = !m_origDetailHtml.isEmpty()
+        && !containsChineseText(m_origDetailHtml);
+
+    if (summaryNeedsTranslation && detailNeedsTranslation
+        && m_origSummary == m_origDetailHtml) {
+        m_translateTexts << m_origSummary;
+        m_translateKinds << TranslateSummaryAndDetail;
+    } else {
+        if (summaryNeedsTranslation) {
+            m_translateTexts << m_origSummary;
+            m_translateKinds << TranslateSummary;
+        }
+        if (detailNeedsTranslation) {
+            m_translateTexts << m_origDetailHtml;
+            m_translateKinds << TranslateDetail;
+        }
+    }
+
+    if (m_translateTexts.isEmpty()) {
+        NotificationManager::showInfo(this, tr("当前页面没有需要翻译的英文内容"));
+        if (m_translateSwitch)
+            m_translateSwitch->setChineseMode(false);
+        return;
+    }
+
+    m_zhSummary.clear();
+    m_zhDetailHtml.clear();
+    m_translateChunkIndex = 0;
+    m_translating = true;
+    setTranslateBusy(true);
+    translateNextChunk();
+}
+
+void ContentDetailPage::translateNextChunk()
+{
+    if (!m_translator || m_translateChunkIndex >= m_translateTexts.size())
+        return;
+
+    const TranslationConfig config = SettingsManager::instance()->getTranslationConfig();
+    m_translator->translate(m_translateTexts.at(m_translateChunkIndex), config);
+}
+
+void ContentDetailPage::onTranslateChunkFinished(const QString &text)
+{
+    if (!m_translating || m_translateChunkIndex >= m_translateTexts.size())
+        return;
+
+    if (text.trimmed().isEmpty()) {
+        m_translating = false;
+        setTranslateBusy(false);
+        if (m_translateSwitch)
+            m_translateSwitch->setChineseMode(false);
+        restoreOriginalTexts();
+        NotificationManager::showError(this, tr("翻译失败：AI 返回了空结果"));
+        return;
+    }
+
+    switch (m_translateKinds.at(m_translateChunkIndex)) {
+    case TranslateSummary:
+        m_zhSummary = text;
+        break;
+    case TranslateDetail:
+        m_zhDetailHtml = text;
+        break;
+    case TranslateSummaryAndDetail:
+        m_zhSummary = text;
+        m_zhDetailHtml = text;
+        break;
+    }
+
+    ++m_translateChunkIndex;
+    if (m_translateChunkIndex < m_translateTexts.size()) {
+        translateNextChunk();
+        return;
+    }
+
+    m_translating = false;
+    m_translated = true;
+    setTranslateBusy(false);
+    applyTranslatedTexts();
+}
+
+void ContentDetailPage::applyTranslatedTexts()
+{
+    if (!m_zhSummary.isEmpty() && m_descriptionLabel)
+        m_descriptionLabel->setText(m_zhSummary);
+    if (!m_zhDetailHtml.isEmpty() && m_descriptionBrowser)
+        m_descriptionBrowser->setHtml(m_zhDetailHtml);
+}
+
+void ContentDetailPage::restoreOriginalTexts()
+{
+    if (!m_origSummary.isEmpty() && m_descriptionLabel)
+        m_descriptionLabel->setText(m_origSummary);
+    if (!m_origDetailHtml.isEmpty() && m_descriptionBrowser)
+        m_descriptionBrowser->setHtml(m_origDetailHtml);
+}
+
+void ContentDetailPage::setTranslateBusy(bool busy)
+{
+    if (m_translateSwitch)
+        m_translateSwitch->setBusy(busy);
+}
+
+void ContentDetailPage::resetTranslation()
+{
+    if (m_translating && m_translator)
+        m_translator->cancelCurrentRequest();
+
+    m_translating = false;
+    m_translated = false;
+    m_translateChunkIndex = 0;
+    m_translateTexts.clear();
+    m_translateKinds.clear();
+    m_origSummary.clear();
+    m_origDetailHtml.clear();
+    m_zhSummary.clear();
+    m_zhDetailHtml.clear();
+    if (m_translateSwitch)
+        m_translateSwitch->setChineseMode(false);
+    setTranslateBusy(false);
 }

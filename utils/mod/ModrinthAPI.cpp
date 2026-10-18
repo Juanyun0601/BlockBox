@@ -21,6 +21,7 @@ ModrinthAPI::ModrinthAPI(QObject *parent)
     , m_currentCategoriesReply(nullptr)
     , m_currentDetailReply(nullptr)
     , m_currentVersionsReply(nullptr)
+    , m_currentProjectsReply(nullptr)
     , m_currentHashMatchReply(nullptr)
     , m_currentHashBatchReply(nullptr)
     , m_currentUpdateCheckReply(nullptr)
@@ -223,6 +224,15 @@ void ModrinthAPI::onDetailReplyFinished()
     QJsonObject obj = doc.object();
 
     ModInfo info;
+    parseProjectObject(obj, info);
+
+    // Save partial info and fetch version files
+    m_pendingDetailInfo = info;
+    fetchModVersions(info.id);
+}
+
+void ModrinthAPI::parseProjectObject(const QJsonObject &obj, ModInfo &info)
+{
     info.id = obj["id"].toString();
     info.name = obj["title"].toString();
     info.description = obj["description"].toString();
@@ -245,8 +255,10 @@ void ModrinthAPI::onDetailReplyFinished()
     for (const QJsonValue &v : categories)
         info.categories.append(v.toString());
 
-    QJsonArray versions = obj["versions"].toArray();
-    for (const QJsonValue &v : versions)
+    // 项目接口的 versions 是「版本记录 ID」（如 yaoBL9D9），
+    // 支持的 MC 版本在 game_versions 里；用错字段会让详情页版本筛选显示成一串字母
+    QJsonArray gameVersions = obj["game_versions"].toArray();
+    for (const QJsonValue &v : gameVersions)
         info.gameVersions.append(v.toString());
 
     QJsonArray loaders = obj["loaders"].toArray();
@@ -274,10 +286,69 @@ void ModrinthAPI::onDetailReplyFinished()
     info.coverUrl = info.screenshots.isEmpty()
                         ? obj["icon_url"].toString()
                         : info.screenshots.first().url;
+}
 
-    // Save partial info and fetch version files
-    m_pendingDetailInfo = info;
-    fetchModVersions(info.id);
+void ModrinthAPI::fetchProjectsByIds(const QStringList &ids)
+{
+    QStringList cleanIds;
+    for (const QString &id : ids) {
+        const QString trimmed = id.trimmed();
+        if (!trimmed.isEmpty() && !cleanIds.contains(trimmed))
+            cleanIds.append(trimmed);
+    }
+
+    if (cleanIds.isEmpty()) {
+        QTimer::singleShot(0, this, [this]() { emit projectsResolved(QList<ModInfo>()); });
+        return;
+    }
+
+    QJsonArray idArray;
+    for (const QString &id : cleanIds)
+        idArray.append(id);
+
+    QUrl url(m_baseUrl + "/v2/projects");
+    QUrlQuery query;
+    query.addQueryItem("ids", QString::fromUtf8(QJsonDocument(idArray).toJson(QJsonDocument::Compact)));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("User-Agent", "BlockBox/1.0");
+
+    abortReply(m_currentProjectsReply);
+    m_currentProjectsReply = m_networkManager->get(request);
+    connect(m_currentProjectsReply, &QNetworkReply::finished, this, &ModrinthAPI::onProjectsReplyFinished);
+}
+
+void ModrinthAPI::onProjectsReplyFinished()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+    reply->deleteLater();
+    if (reply != m_currentProjectsReply) return;
+    m_currentProjectsReply = nullptr;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        emit projectsResolveFailed(reply->errorString());
+        return;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+    if (!doc.isArray()) {
+        emit projectsResolveFailed(tr("Invalid JSON response from server"));
+        return;
+    }
+
+    QList<ModInfo> projects;
+    const QJsonArray arr = doc.array();
+    for (const QJsonValue &val : arr) {
+        ModInfo info;
+        parseProjectObject(val.toObject(), info);
+        if (!info.id.isEmpty())
+            projects.append(info);
+    }
+
+    emit projectsResolved(projects);
 }
 
 void ModrinthAPI::fetchModVersions(const QString &modId)

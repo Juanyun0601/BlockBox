@@ -15,7 +15,9 @@
 #include "../utils/mod/ModrinthAPI.h"
 #include "../components/ContentViewSwitch.h"
 #include "../components/MasonryContentCard.h"
+#include "../components/TranslateSwitchCard.h"
 #include "../utils/content/ContentData.h"
+#include "../utils/translation/TranslationService.h"
 
 class BlurLoadingOverlay;
 class MCModAPI;
@@ -158,6 +160,32 @@ private:
 
     ContentType m_contentType;
     ContentTypeConfig m_config;
+
+    // ── 右下角悬浮翻译卡片（EN 原文 / 中 AI 翻译） ──
+    void onListTranslateModeChanged(bool chinese);
+    void startListTranslation();
+    void onListTranslationFinished(const QString &text);
+    void applyListTranslation();
+    void restoreListTranslation();
+    void syncTranslateStateWithCards();
+
+    /* 一条待翻译内容：cardIndex 指回 m_originalCardInfos，marker 为请求里的 [#n#] 序号 */
+    struct ListTranslateItem {
+        int cardIndex = -1;
+        int marker = -1;
+        bool wantName = false;
+        bool wantDesc = false;
+    };
+
+    TranslateSwitchCard *m_translateSwitch = nullptr;
+    TranslationService *m_listTranslator = nullptr;
+    QList<ModInfo> m_originalCardInfos;        // 切到「中」之前的英文原文快照
+    QList<ListTranslateItem> m_listTranslateItems;
+    QList<QPair<QString, QString>> m_listTranslated;  // 与 marker 对齐：名称 / 简介
+    bool m_listTranslating = false;
+    bool m_listTranslatedReady = false;
+    bool m_listApplied = false;
+    bool m_applyingListTranslation = false;
 };
 
 #endif

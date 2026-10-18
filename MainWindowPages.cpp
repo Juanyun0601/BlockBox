@@ -272,7 +272,8 @@ void MainWindow::initEssentialPages()
     m_localModDetailPage = new LocalModDetailPage(this);
     connect(m_localModDetailPage, &LocalModDetailPage::backRequested, this, [this]() {
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceManagePage));
-        setSideBarVisible(true);
+        // 返回"实例管理>模组"：恢复侧边栏同时恢复实例管理子导航
+        restoreSideBarWithSubNav(4, 9);
         m_topBar->setTitle(tr("实例管理"));
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -282,7 +283,7 @@ void MainWindow::initEssentialPages()
     connect(m_localModDetailPage, &LocalModDetailPage::remoteDetailRequested,
             this, [this](const ModInfo &info) {
         // 跳转到内置在线详情页
-        showModDetailPage(info);
+        showModDetailPage(info, m_currentInstanceVersion, m_currentInstanceLoader);
         // 重设返回按钮：从本地详情跳转来的，应返回实例管理页
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, [this]() {
@@ -292,7 +293,8 @@ void MainWindow::initEssentialPages()
             disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
             connect(m_topBar, &TopBar::backClicked, this, [this]() {
                 m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceManagePage));
-                setSideBarVisible(false);
+                // 返回"实例管理>模组"：恢复侧边栏同时恢复实例管理子导航
+                restoreSideBarWithSubNav(4, 9);
                 m_topBar->setTitle(tr("实例管理"));
                 disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
                 connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -414,7 +416,8 @@ void MainWindow::initModDownloadPage()
         QString loader = m_modDownloadPage->selectedLoader();
         if (!loader.isEmpty())
             m_currentInstanceLoader = loader;
-        showModDetailPage(info);
+        // 把列表页当前的实例筛选原样带到详情页（选“任意”时为空即不筛选）
+        showModDetailPage(info, m_modDownloadPage->selectedGameVersion(), loader);
     });
     connect(m_modDownloadPage, &ModDownloadPage::instanceSelectionChanged,
             this, &MainWindow::applyInstanceContext);
@@ -438,7 +441,8 @@ void MainWindow::initInstanceSelectPage()
             this, qOverload<const QString&>(&MainWindow::onLaunchGameClicked));
     connect(m_instanceSelectPage, &InstanceSelectPage::installNewInstanceRequested, this, [this]() {
         ensurePageInitialized(PageIndex::InstallInstancePage);
-        setSideBarVisible(true);
+        // 从实例页进入"安装新实例"时同样需要恢复资源子导航
+        restoreSideBarWithSubNav(1, 0);
         m_topBar->setTitle(tr("资源>安装新实例"));
         animatedSwitchToPage(PageIndex::InstallInstancePage);
     });
@@ -668,7 +672,8 @@ void MainWindow::initModDetailPage()
     PerformanceMonitor::instance()->endMeasurement("Mod Detail Page Initialization");
 }
 
-void MainWindow::showModDetailPage(const ModInfo &modInfo)
+void MainWindow::showModDetailPage(const ModInfo &modInfo, const QString &filterGameVersion,
+                                   const QString &filterLoader)
 {
     // ModDetailPage 初始化依赖 m_modDownloadPage，必须先初始化
     ensurePageInitialized(PageIndex::ModDownloadPage);
@@ -680,14 +685,15 @@ void MainWindow::showModDetailPage(const ModInfo &modInfo)
     else
         title += QString(">%1").arg(modInfo.name);
     m_topBar->setTitle(title);
-    m_topBar->setTranslateButtonVisible(true);
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, [this]() {
         showModDownloadPage();
     });
     if (m_modDetailPage) {
         m_modDetailPage->setModInfo(modInfo);
-        m_modDetailPage->setInstanceFilter(m_currentInstanceVersion, m_currentInstanceLoader);
+        // 列表页选中的实例版本/加载器带入详情页左侧筛选
+        if (!filterGameVersion.isEmpty() || !filterLoader.isEmpty())
+            m_modDetailPage->setInstanceFilter(filterGameVersion, filterLoader);
         // Pass already-resolved MC百科 URL if available
         QString lookupKey = modInfo.source + ":" + modInfo.id;
         QString mcmodUrl = m_modDownloadPage->mcmodUrlForMod(lookupKey);
@@ -722,7 +728,8 @@ void MainWindow::showLocalModDetailPage(const ModInfo &modInfo)
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, [this]() {
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceManagePage));
-        setSideBarVisible(true);
+        // 返回"实例管理>模组"：恢复侧边栏同时恢复实例管理子导航
+        restoreSideBarWithSubNav(4, 9);
         m_topBar->setTitle(tr("实例管理"));
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -749,9 +756,9 @@ void MainWindow::openAiChatWithReference(const ResourceReference &ref)
 void MainWindow::showModDownloadPage()
 {
     ensurePageInitialized(PageIndex::ModDownloadPage);
-    setSideBarVisible(true);
+    // 恢复"资源>模组"的子导航：从模组详情返回时子导航此前会整条消失
+    restoreSideBarWithSubNav(1, 3);
     m_topBar->setTitle(tr("资源>模组"));
-    m_topBar->setTranslateButtonVisible(true);
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
     if (m_modDownloadPage) {
@@ -861,7 +868,8 @@ void MainWindow::initModpackImportPage()
 void MainWindow::showModpackImportPage()
 {
     ensurePageInitialized(PageIndex::ModpackImportPage);
-    setSideBarVisible(true);
+    // 恢复"资源>导入整合包"的子导航（从实例页等入口进入时子导航此前会缺失）
+    restoreSideBarWithSubNav(1, 2);
     m_topBar->setTitle(tr("资源>导入整合包"));
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -988,7 +996,8 @@ void MainWindow::initModpackExportPage()
 void MainWindow::showModpackExportPage(const QString& instancePath)
 {
     ensurePageInitialized(PageIndex::ModpackExportPageIndex);
-    setSideBarVisible(true);
+    // 恢复"实例管理>导出整合包"的子导航
+    restoreSideBarWithSubNav(4, 3);
     m_topBar->setTitle(tr("实例>导出整合包"));
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -1031,7 +1040,8 @@ void MainWindow::initJavaDownloadPage()
     {
         ensurePageInitialized(PageIndex::SettingsPage);
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::SettingsPage));
-        setSideBarVisible(true);
+        // 返回"设置>Java管理"：恢复设置的子导航
+        restoreSideBarWithSubNav(2, 4);
         m_topBar->setTitle(tr("设置"));
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -1049,7 +1059,8 @@ void MainWindow::showJavaDownloadPage()
     {
         ensurePageInitialized(PageIndex::SettingsPage);
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::SettingsPage));
-        setSideBarVisible(true);
+        // 返回"设置>Java管理"：恢复设置的子导航
+        restoreSideBarWithSubNav(2, 4);
         m_topBar->setTitle(tr("设置"));
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);

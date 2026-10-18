@@ -253,6 +253,14 @@ private:
     void initGameLauncher();
     void updateBackgroundWidget();
     void setSideBarVisible(bool visible);
+    /**
+     * 显示侧边栏并恢复该页所属分组的子导航面板。
+     * 详情页会整体隐藏侧边栏（同时收起子导航），返回上一页时只调用 setSideBarVisible(true)
+     * 会漏掉子导航，故统一走本方法。
+     * @param parentIndex 目标页所属主导航项（<0 表示仅显示侧边栏，不展开子导航）
+     * @param childIndex  需要选中的子项（<0 表示不选中）
+     */
+    void restoreSideBarWithSubNav(int parentIndex, int childIndex);
 
 #ifdef Q_OS_ANDROID
     /** 安卓游戏内：弹出/收起右侧实例助手侧栏（由 GameFloatingIcon 点击触发） */
@@ -315,7 +323,9 @@ private:
     void showTaskListPage();
     void showTaskDetailPage(const QString &taskId);
     void showModDownloadPage();
-    void showModDetailPage(const ModInfo &modInfo);
+    void showModDetailPage(const ModInfo &modInfo,
+                           const QString &filterGameVersion = QString(),
+                           const QString &filterLoader = QString());
     void showLocalModDetailPage(const ModInfo &modInfo);
     void showModpackImportPage();
     void showModpackExportPage(const QString& instancePath = QString());
@@ -329,7 +339,9 @@ private:
     /** 带额外 gameArgs 启动游戏（用于存档/服务器快捷启动） */
     void launchGameWithExtraArgs(const QStringList &extraGameArgs);
     void showContentDownloadPage(ContentType type);
-    void showContentDetailPage(const ModInfo &info, ContentType type);
+    void showContentDetailPage(const ModInfo &info, ContentType type,
+                               const QString &filterGameVersion = QString(),
+                               const QString &filterLoader = QString());
     void showContentListPage(ContentType type);
     void updateCurrentInstance(const QString &instancePath);
     /**

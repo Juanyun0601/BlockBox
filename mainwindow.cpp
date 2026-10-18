@@ -495,6 +495,29 @@ void MainWindow::setSideBarVisible(bool visible)
     }
 }
 
+void MainWindow::restoreSideBarWithSubNav(int parentIndex, int childIndex)
+{
+    setSideBarVisible(true);
+
+    if (!m_sideBar || !m_subNavPanel || parentIndex < 0)
+        return;
+
+    const QVector<NavItem> &parents = m_sideBar->parentItems();
+    if (parentIndex >= parents.size())
+        return;
+
+    // "实例管理"等不在侧边栏渲染的分组保持无选中高亮，避免出现指向空处的选中态
+    if (parents[parentIndex].hideInSidebar)
+        m_sideBar->clearSelection();
+    else
+        m_sideBar->setSelectedIndex(parentIndex);
+    m_lastSidebarIndex = parentIndex;
+
+    m_subNavPanel->showForParent(parentIndex, false);
+    if (childIndex >= 0)
+        m_subNavPanel->setSelectedChild(childIndex);
+}
+
 void MainWindow::onSideBarItemClicked(int parentIndex)
 {
     // Reset back button to main
@@ -2122,7 +2145,12 @@ void MainWindow::onBackToInstallPage()
     
     ensurePageInitialized(PageIndex::InstallInstancePage);
     
-    setSideBarVisible(true);
+    // 从版本详情页返回时补回子导航：该页可由"资源>安装新实例"进入，
+    // 也可由"实例管理>修改"进入，按当前是否为修改模式恢复对应分组
+    if (m_loaderDetailPage && m_loaderDetailPage->modifyMode())
+        restoreSideBarWithSubNav(4, 2);
+    else
+        restoreSideBarWithSubNav(1, 0);
     m_topBar->setResourcesTitle();
     animatedSwitchToPage(PageIndex::InstallInstancePage);
     
@@ -2300,6 +2328,21 @@ void MainWindow::initContentListPage(ContentType type)
     m_pageInitialized[PageIndex::ContentListPage] = true;
 }
 
+/** 资源分组子项索引：0安装新实例/1下载整合包/2导入整合包/3模组/4数据包/5资源包/6光影包/7世界/8新建收藏夹/9+收藏夹 */
+static int resourcesChildIndexForContentType(ContentType type)
+{
+    switch (type)
+    {
+    case ContentType::Modpack:      return 1;
+    case ContentType::Mod:          return 3;
+    case ContentType::DataPack:     return 4;
+    case ContentType::ResourcePack: return 5;
+    case ContentType::ShaderPack:   return 6;
+    case ContentType::World:        return 7;
+    }
+    return -1;
+}
+
 void MainWindow::showContentDownloadPage(ContentType type)
 {
     ContentTypeConfig config = ContentTypeConfig::getConfig(type);
@@ -2319,9 +2362,9 @@ void MainWindow::showContentDownloadPage(ContentType type)
     else
         m_stackedWidget->setCurrentWidget(m_contentDownloadPage);
 
-    setSideBarVisible(true);
+    // 恢复资源子导航并选中对应的内容类型（从搜索页/实例页等入口进入时子导航此前会缺失）
+    restoreSideBarWithSubNav(1, resourcesChildIndexForContentType(type));
     m_topBar->setTitle(tr("资源>%1").arg(config.displayName));
-    m_topBar->setTranslateButtonVisible(true);
 
     m_contentDownloadPage->setCurrentInstancePath(m_currentInstancePath);
     m_contentDownloadPage->loadInstances();
@@ -2329,7 +2372,10 @@ void MainWindow::showContentDownloadPage(ContentType type)
 
     connect(m_contentDownloadPage, &ContentDownloadPage::contentClicked, this, [this, type](const ModInfo &info)
     {
-        showContentDetailPage(info, type);
+        // 列表页选中的实例版本/加载器带入详情页左侧筛选，保证详情页结果与列表一致
+        showContentDetailPage(info, type,
+                              m_contentDownloadPage ? m_contentDownloadPage->selectedGameVersion() : QString(),
+                              m_contentDownloadPage ? m_contentDownloadPage->selectedLoader() : QString());
     });
 
     // 页面内"下载实例"下拉：切换后资源（含前置）应下载到该实例，
@@ -2343,7 +2389,8 @@ void MainWindow::showContentDownloadPage(ContentType type)
     });
 }
 
-void MainWindow::showContentDetailPage(const ModInfo &info, ContentType type)
+void MainWindow::showContentDetailPage(const ModInfo &info, ContentType type,
+                                       const QString &filterGameVersion, const QString &filterLoader)
 {
     ContentTypeConfig config = ContentTypeConfig::getConfig(type);
 
@@ -2358,11 +2405,18 @@ void MainWindow::showContentDetailPage(const ModInfo &info, ContentType type)
     m_stackedWidget->addWidget(m_contentDetailPage);
     m_stackedWidget->setCurrentWidget(m_contentDetailPage);
 
-    setSideBarVisible(true);
+    // 从搜索页等入口进入详情页时补回资源子导航；若已展开收藏夹等其他分组则原样保留
+    if (m_subNavPanel->currentParentIndex() < 0)
+        restoreSideBarWithSubNav(1, resourcesChildIndexForContentType(type));
+    else
+        setSideBarVisible(true);
     m_topBar->setTitle(tr("资源>%1>%2").arg(config.displayName, info.name));
-    m_topBar->setTranslateButtonVisible(true);
 
     m_contentDetailPage->setModInfo(info);
+
+    // 按列表页带入的实例筛选左侧版本/加载器并刷新可下载版本
+    if (!filterGameVersion.isEmpty() || !filterLoader.isEmpty())
+        m_contentDetailPage->setInstanceFilter(filterGameVersion, filterLoader);
 
     connect(m_contentDetailPage, &ContentDetailPage::downloadRequested, this, [this, type](const ModInfo &modInfo, const ModVersionFile &versionFile)
     {
@@ -2376,7 +2430,10 @@ void MainWindow::showContentDetailPage(const ModInfo &info, ContentType type)
 
     connect(m_contentDetailPage, &ContentDetailPage::contentClicked, this, [this, type](const ModInfo &modInfo)
     {
-        showContentDetailPage(modInfo, type);
+        // 详情页内继续跳转其他资源时，沿用当前的实例筛选
+        showContentDetailPage(modInfo, type,
+                              m_contentDetailPage ? m_contentDetailPage->instanceGameVersion() : QString(),
+                              m_contentDetailPage ? m_contentDetailPage->instanceLoaderType() : QString());
     });
 
     // 问问AI：跳转 AI 助手并引用当前网络资源
@@ -2420,7 +2477,8 @@ void MainWindow::showContentListPage(ContentType type)
     m_stackedWidget->addWidget(m_contentListPage);
     m_stackedWidget->setCurrentWidget(m_contentListPage);
 
-    setSideBarVisible(true);
+    // 恢复资源子导航并选中对应的内容类型
+    restoreSideBarWithSubNav(1, resourcesChildIndexForContentType(type));
     m_topBar->setTitle(tr("资源>%1>本地管理").arg(config.displayName));
 
     m_contentListPage->loadInstances();
@@ -2925,7 +2983,7 @@ void MainWindow::onClipboardLinkDetected(const ClipboardLinkInfo &info)
 
         if (info.contentType == ContentType::Mod)
         {
-            showModDetailPage(modInfo);
+            showModDetailPage(modInfo, m_currentInstanceVersion, m_currentInstanceLoader);
         }
         else
         {
@@ -3058,7 +3116,7 @@ void MainWindow::reloadShortcuts()
     {
       connect(sc, &QShortcut::activated, this, [this]() {
         ensurePageInitialized(PageIndex::InstallInstancePage);
-        setSideBarVisible(true);
+        restoreSideBarWithSubNav(1, 0);
         m_topBar->setTitle(tr("资源>安装新实例"));
         animatedSwitchToPage(PageIndex::InstallInstancePage);
       });
