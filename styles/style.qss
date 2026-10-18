@@ -13541,70 +13541,80 @@ QListWidget#worldMapPopupList {
     background-color: @BG_BASE@;
     border: 1px solid @BORDER@;
     border-radius: 10px;
+    padding: 2px;
     outline: none;
 }
 
-QListWidget#worldMapPopupList::item {
+/* 列表项只负责行高，内边距清零：胶囊才能贴住行边界，悬停底色也交给行内胶囊 */
+QListWidget#worldMapPopupList::item,
+QListWidget#worldMapPopupList::item:hover,
+QListWidget#worldMapPopupList::item:selected {
     height: 48px;
+    padding: 0;
+    margin: 0;
+    background-color: transparent;
 }
 
-/* —— 选项行：整行细分隔线 + 悬停浅底 —— */
+/* —— 选项行：只画行间分隔线，底色交给行内胶囊 —— */
 QWidget#worldMapPopupRow {
     background: transparent;
     border: none;
     border-bottom: 1px solid @BORDER_LIGHT@;
 }
 
-QWidget#worldMapPopupRow:hover {
-    background-color: @BG_HOVER@;
-}
-
-/* —— 选项条目（图标 + 名称）：未勾选为通透文字，勾选为主色淡底胶囊 ——
-   三种状态边框/内边距保持一致，切换时不发生位移 */
-QPushButton#worldMapPopupToggle {
+/* —— 行内胶囊：把图标、名称和右侧定位按钮一起包住；与行边界只留很小距离 —— */
+QWidget#worldMapPopupRowBox {
     background-color: transparent;
     border: 1px solid transparent;
     border-radius: 9px;
-    padding: 6px 12px;
+}
+
+QWidget#worldMapPopupRowBox:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER@;
+}
+
+QWidget#worldMapPopupRowBox[checked="true"] {
+    background-color: @PRIMARY_RGBA_12@;
+    border: 1px solid @PRIMARY_RGBA_38@;
+}
+
+QWidget#worldMapPopupRowBox[checked="true"]:hover {
+    background-color: @PRIMARY_RGBA_20@;
+    border: 1px solid @PRIMARY@;
+}
+
+/* 暂不支持定位的结构条目：不显示勾选底色，保持通透 */
+QWidget#worldMapPopupRowBox[checked="true"][supported="false"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+
+/* —— 条目名称：只有文字随勾选变色加粗，底色由外层胶囊承担 —— */
+QPushButton#worldMapPopupToggle {
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 8px;
     color: @TEXT_PRIMARY@;
     font-size: 14px;
     font-weight: 400;
     text-align: left;
 }
 
-QPushButton#worldMapPopupToggle:hover {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER_LIGHT@;
-}
-
-QPushButton#worldMapPopupToggle:pressed {
-    background-color: @BG_PRESSED@;
-    border: 1px solid @BORDER@;
-}
-
 QPushButton#worldMapPopupToggle:checked {
-    background-color: @PRIMARY_RGBA_12@;
-    border: 1px solid @PRIMARY_RGBA_38@;
     color: @TEXT_ACCENT@;
     font-weight: 600;
 }
 
-QPushButton#worldMapPopupToggle:checked:hover {
-    background-color: @PRIMARY_RGBA_20@;
-    border: 1px solid @PRIMARY@;
-}
-
 QPushButton#worldMapPopupToggle:disabled {
-    background-color: transparent;
-    border: 1px solid transparent;
     color: @TEXT_DISABLED@;
     font-weight: 400;
 }
 
 QPushButton#worldMapPopupToggle:checked:disabled {
-    background-color: transparent;
-    border: 1px solid transparent;
     color: @TEXT_DISABLED@;
+    font-weight: 400;
 }
 
 QPushButton#worldMapPopupHighlight {
@@ -13614,12 +13624,12 @@ QPushButton#worldMapPopupHighlight {
 }
 
 QPushButton#worldMapPopupHighlight:hover {
-    background-color: @PRIMARY_RGBA_12@;
+    background-color: @PRIMARY_RGBA_20@;
     border: 1px solid @PRIMARY_RGBA_38@;
 }
 
 QPushButton#worldMapPopupHighlight:pressed {
-    background-color: @PRIMARY_LIGHT@;
+    background-color: @PRIMARY_RGBA_38@;
     border: 1px solid @PRIMARY@;
 }
 

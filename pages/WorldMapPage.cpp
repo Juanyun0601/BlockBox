@@ -3433,7 +3433,8 @@ namespace {
 /** 弹窗列表行：左侧图标 + 名称 + 右侧「高亮跳转」小按钮 */
 struct PopupRow
 {
-    QWidget *row = nullptr;
+    QWidget *row = nullptr;   ///< 行容器：只负责行间分隔线
+    QWidget *box = nullptr;   ///< 选中胶囊：同时包住名称与右侧定位按钮
     QPushButton *toggle = nullptr;  ///< 图标 + 名称，可勾选（决定是否在地图上显示）
     QPushButton *highlight = nullptr; ///< 高亮并跳转到最近一处
 };
@@ -3449,14 +3450,26 @@ PopupRow makePopupRow(QWidget *parent, const QPixmap &icon, const QString &name,
     PopupRow r;
     r.row = new QWidget(parent);
     r.row->setObjectName(QStringLiteral("worldMapPopupRow"));
-    // QSS 的 :hover / border-bottom 要生效：开样式背景 + 悬停事件
+    // QSS 的 border-bottom 要生效：开样式背景
     r.row->setAttribute(Qt::WA_StyledBackground, true);
-    r.row->setAttribute(Qt::WA_Hover, true);
-    auto *lay = new QHBoxLayout(r.row);
-    lay->setContentsMargins(10, 5, 10, 5);
-    lay->setSpacing(8);
+    auto *rowLay = new QHBoxLayout(r.row);
+    // 选中胶囊与行边界只留很小距离，让勾选态看着占满整行
+    rowLay->setContentsMargins(3, 3, 3, 3);
+    rowLay->setSpacing(0);
 
-    r.toggle = new QPushButton(r.row);
+    // 选中胶囊：勾选 / 悬停底色画在这一层，右侧定位按钮也被它包住
+    r.box = new QWidget(r.row);
+    r.box->setObjectName(QStringLiteral("worldMapPopupRowBox"));
+    r.box->setAttribute(Qt::WA_StyledBackground, true);
+    r.box->setAttribute(Qt::WA_Hover, true);
+    r.box->setProperty("checked", checked);
+    r.box->setProperty("supported", enabled);
+    auto *lay = new QHBoxLayout(r.box);
+    lay->setContentsMargins(6, 0, 4, 0);
+    lay->setSpacing(6);
+    rowLay->addWidget(r.box);
+
+    r.toggle = new QPushButton(r.box);
     r.toggle->setObjectName(QStringLiteral("worldMapPopupToggle"));
     r.toggle->setCheckable(true);
     r.toggle->setChecked(checked);
@@ -3468,7 +3481,7 @@ PopupRow makePopupRow(QWidget *parent, const QPixmap &icon, const QString &name,
     r.toggle->setToolTip(name);
     lay->addWidget(r.toggle, 1);
 
-    r.highlight = new QPushButton(r.row);
+    r.highlight = new QPushButton(r.box);
     r.highlight->setObjectName(QStringLiteral("worldMapPopupHighlight"));
     r.highlight->setFixedSize(28, 28);
     r.highlight->setCursor(Qt::PointingHandCursor);
@@ -3479,6 +3492,15 @@ PopupRow makePopupRow(QWidget *parent, const QPixmap &icon, const QString &name,
         ThemeManager::instance()->currentThemeColor(), 14));
     r.highlight->setIconSize(QSize(14, 14));
     lay->addWidget(r.highlight);
+
+    // 勾选态由行内胶囊承载：切换时刷新动态属性，样式表据此换底色
+    QObject::connect(r.toggle, &QPushButton::toggled, r.box,
+                     [box = r.box](bool on) {
+                         box->setProperty("checked", on);
+                         box->style()->unpolish(box);
+                         box->style()->polish(box);
+                         box->update();
+                     });
 
     return r;
 }
