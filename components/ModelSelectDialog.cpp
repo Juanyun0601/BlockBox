@@ -823,8 +823,9 @@ void ModelSelectDialog::rebuildProviderSections()
         allProviderGroups[key].append(model);
     }
 
-    // 从设置页读取服务商配置并应用到模型（清单见 utils/AiProviderPresets.h）
-    QSettings settings;
+    // 从设置页读取服务商配置并应用到模型（清单见 utils/AiProviderPresets.h；
+    // 必须与 SettingsManager 同库，不能用默认 QSettings）
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
     QList<AiProviderPreset> presets = aiProviderPresets();
     QMap<QString, QPair<QString, QString>> providerConfigs;   // key → (url, apiKey)
     QMap<QString, QString> providerUrlHint;                   // key → url 特征

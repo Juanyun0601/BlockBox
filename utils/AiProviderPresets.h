@@ -16,7 +16,15 @@
 #ifndef AIPROVIDERPRESETS_H
 #define AIPROVIDERPRESETS_H
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QList>
+#include <QMap>
+#include <QPair>
+#include <QSet>
+#include <QSettings>
 #include <QString>
 
 struct AiProviderPreset
@@ -189,6 +197,125 @@ inline AiProviderPreset aiProviderPresetByKey(const QString &key)
             return p;
     }
     return {};
+}
+
+/// 已配置的真实模型（自定义模型 / 已选 Key 服务商的选中模型）
+struct AiConfiguredModel
+{
+    QString id;          ///< 模型 ID（发给 API 的名称）
+    QString displayName; ///< 展示名
+    QString apiUrl;      ///< API 端点（自定义模型自带；服务商取已保存 url 或预设默认）
+    QString apiKey;      ///< 密钥（自定义模型自带；服务商取已保存 key）
+};
+
+/// 将服务商配置（url/key）套用到模型字段（按 urlHint 匹配 apiUrl，回退显示名首词）；返回是否命中
+inline bool aiApplyProviderConfigToModel(const QString &modelApiUrl, const QString &displayName,
+                                         QString &apiUrl, QString &apiKey)
+{
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+    QMap<QString, QPair<QString, QString>> providerConfigs; // key → (url, apiKey)
+    QMap<QString, QString> providerUrlHint;                 // key → url 特征
+    for (const AiProviderPreset &p : aiProviderPresets()) {
+        providerUrlHint[p.key] = p.urlHint;
+        const QString url = settings.value(p.configKey + "/url", "").toString();
+        const QString key = settings.value(p.configKey + "/key", "").toString();
+        if (!url.isEmpty() || !key.isEmpty()) {
+            providerConfigs[p.key] = qMakePair(url, key);
+        }
+    }
+
+    QString matchedKey;
+    for (auto it = providerUrlHint.constBegin(); it != providerUrlHint.constEnd(); ++it) {
+        if (!it.value().isEmpty() && modelApiUrl.contains(it.value())) {
+            matchedKey = it.key();
+            break;
+        }
+    }
+    if (matchedKey.isEmpty()) {
+        QString name = displayName;
+        if (name.contains(" ")) {
+            name = name.section(" ", 0, 0);
+        }
+        if (name.contains("(")) {
+            name = name.section("(", 0, 0).trimmed();
+        }
+        if (providerConfigs.contains(name)) {
+            matchedKey = name;
+        }
+    }
+    if (matchedKey.isEmpty() || !providerConfigs.contains(matchedKey)) {
+        return false;
+    }
+    const auto &config = providerConfigs[matchedKey];
+    if (!config.first.isEmpty()) {
+        apiUrl = config.first;
+    }
+    if (!config.second.isEmpty()) {
+        apiKey = config.second;
+    }
+    return true;
+}
+
+/// 收集已配置的真实模型：自定义模型（ai/customModels）+ 已配 Key 服务商的选中模型
+/// （设置页「默认模型」下拉、翻译设置模型下拉共用同一数据源）
+inline QList<AiConfiguredModel> aiConfiguredModels()
+{
+    QList<AiConfiguredModel> result;
+    QSet<QString> seen;
+
+    auto appendModel = [&result, &seen](const QString &id, const QString &name,
+                                        const QString &url, const QString &key) {
+        if (id.isEmpty() || seen.contains(id)) {
+            return;
+        }
+        seen.insert(id);
+        AiConfiguredModel m;
+        m.id = id;
+        m.displayName = name.isEmpty() ? id : name;
+        m.apiUrl = url;
+        m.apiKey = key;
+        result.append(m);
+    };
+
+    // 1) 自定义模型（扁平表 ai/customModels，含自定义供应商展开写入的条目）
+    {
+        QSettings store(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+        const QString json = store.value(QStringLiteral("ai/customModels")).toString();
+        if (!json.isEmpty()) {
+            QJsonParseError pe;
+            const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &pe);
+            if (pe.error == QJsonParseError::NoError && doc.isArray()) {
+                for (const QJsonValue &v : doc.array()) {
+                    const QJsonObject o = v.toObject();
+                    appendModel(o[QStringLiteral("id")].toString(),
+                                o[QStringLiteral("displayName")].toString(),
+                                o[QStringLiteral("apiUrl")].toString(),
+                                o[QStringLiteral("apiKey")].toString());
+                }
+            }
+        }
+    }
+
+    // 2) 已配置 Key 的内置服务商的选中模型
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+    for (const AiProviderPreset &p : aiProviderPresets()) {
+        if (settings.value(p.configKey + "/key", "").toString().isEmpty()) {
+            continue;
+        }
+        const QString selId = settings.value(p.configKey + "/selectedModel", "").toString();
+        if (selId.isEmpty()) {
+            continue;
+        }
+        const QString selName = settings.value(p.configKey + "/selectedModelName", "").toString();
+        QString url = settings.value(p.configKey + "/url", "").toString();
+        if (url.isEmpty()) {
+            url = p.defaultUrl;
+        }
+        const QString key = settings.value(p.configKey + "/key", "").toString();
+        appendModel(selId, selName, url, key);
+    }
+
+    return result;
 }
 
 #endif // AIPROVIDERPRESETS_H

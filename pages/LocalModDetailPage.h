@@ -15,6 +15,7 @@
 #include <QPointer>
 #include <QTimer>
 #include "../utils/mod/ModData.h"
+#include "../utils/content/ContentData.h"
 
 class ModLinkResolver;
 
@@ -32,6 +33,8 @@ signals:
     void backRequested();
     /** 请求跳转到远程在线详情页（ModDetailPage） */
     void remoteDetailRequested(const ModInfo &info);
+    /** 点击「问问AI」：请求跳转 AI 助手并引用当前本地模组 */
+    void askAiRequested(const ResourceReference &ref);
 
 private:
     void initUI();

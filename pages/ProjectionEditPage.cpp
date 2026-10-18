@@ -9,6 +9,7 @@
 
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFile>
 #include "components/AppFileDialog.h"
 #include <QFileInfo>
@@ -20,13 +21,19 @@
 #include "components/AppMessageBox.h"
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSize>
 #include <QTextEdit>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 
 #include "utils/Schematic/LitematicEditor.h"
+#include "utils/Schematic/InstanceBlockNames.h"
+#include "utils/Schematic/InstanceTextureLoader.h"
 #include "components/CollapsibleSectionCard.h"
+
+#include <QIcon>
+#include <QPixmap>
 
 ProjectionEditPage::ProjectionEditPage(QWidget *parent)
     : QWidget(parent)
@@ -153,6 +160,7 @@ void ProjectionEditPage::initUI()
     m_materialTree->setHeaderLabels({ tr("方块"), tr("数量") });
     m_materialTree->setRootIsDecorated(false);
     m_materialTree->setAlternatingRowColors(true);
+    m_materialTree->setIconSize(QSize(20, 20));
     m_materialTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_materialTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_materialTree->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -287,6 +295,22 @@ void ProjectionEditPage::setCurrentProjection(const QString &filePath)
     m_filePath = filePath;
     m_loaded = false;
     loadProjection();
+}
+
+void ProjectionEditPage::setInstancePath(const QString &instancePath)
+{
+    const QString norm = instancePath.isEmpty()
+                             ? QString()
+                             : QFileInfo(instancePath).absoluteFilePath();
+    if (m_instancePath == norm)
+        return;
+    m_instancePath = norm;
+    loadBlockChineseNames();
+    m_texLoader = m_instancePath.isEmpty()
+                      ? nullptr
+                      : InstanceTextureLoader::sharedForInstance(m_instancePath);
+    if (m_loaded)
+        populateMaterials();
 }
 
 void ProjectionEditPage::reset()
@@ -492,14 +516,40 @@ void ProjectionEditPage::resizeTreeToContent(QTreeWidget *tree)
     tree->setFixedHeight(target);
 }
 
+void ProjectionEditPage::loadBlockChineseNames()
+{
+    m_blockCnMap = InstanceBlockNames::loadChineseMap(m_instancePath);
+}
+
+QString ProjectionEditPage::materialDisplayName(const QString &blockId) const
+{
+    const QString baseId = InstanceBlockNames::baseBlockId(blockId);
+    const QString cn = InstanceBlockNames::lookup(m_blockCnMap, blockId);
+    if (cn.isEmpty())
+        return blockId;
+    // 去掉 minecraft: 前缀后拼接，便于阅读
+    QString shortId = baseId;
+    const int slash = shortId.indexOf(QLatin1Char(':'));
+    if (slash >= 0)
+        shortId = shortId.mid(slash + 1);
+    return QStringLiteral("%1 (%2)").arg(cn, shortId);
+}
+
 void ProjectionEditPage::populateMaterials()
 {
     m_materialTree->clear();
     for (const LitematicBlockCount &entry : m_info.materialList)
     {
         auto *item = new QTreeWidgetItem();
-        item->setText(0, entry.blockId);
+        item->setText(0, materialDisplayName(entry.blockId));
+        item->setToolTip(0, entry.blockId);
         item->setText(1, QString::number(entry.count));
+        if (m_texLoader)
+        {
+            const QIcon icon = m_texLoader->blockIcon(entry.blockId, 20);
+            if (!icon.isNull())
+                item->setIcon(0, icon);
+        }
         m_materialTree->addTopLevelItem(item);
     }
     if (m_materialTree->topLevelItemCount() == 0)

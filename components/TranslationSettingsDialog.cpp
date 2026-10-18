@@ -6,17 +6,20 @@
  */
 
 #include "TranslationSettingsDialog.h"
+#include "utils/AiProviderPresets.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/translation/TranslationService.h"
 
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -173,10 +176,22 @@ QWidget *TranslationSettingsDialog::createAISettingsPage()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(10);
 
-    QLabel *desc = new QLabel(tr("使用已配置的 AI 模型进行翻译。请在下方填写 AI 服务端点信息。"));
+    QLabel *desc = new QLabel(tr("使用已配置的 AI 模型进行翻译。从下拉选择已添加的模型会自动填好端点和密钥。"));
     desc->setObjectName("translationDesc");
     desc->setWordWrap(true);
     layout->addWidget(desc);
+
+    QLabel *modelLabel = new QLabel(tr("模型"));
+    modelLabel->setObjectName("translationFieldLabel");
+    layout->addWidget(modelLabel);
+
+    m_aiModelCombo = new QComboBox();
+    m_aiModelCombo->setObjectName("translationInput");
+    m_aiModelCombo->setEditable(true);
+    m_aiModelCombo->setInsertPolicy(QComboBox::NoInsert);
+    m_aiModelCombo->setPlaceholderText(tr("选择已配置的模型，或手动输入模型 ID"));
+    populateModelCombo(m_aiModelCombo);
+    layout->addWidget(m_aiModelCombo);
 
     QLabel *urlLabel = new QLabel(tr("API 端点"));
     urlLabel->setObjectName("translationFieldLabel");
@@ -197,14 +212,20 @@ QWidget *TranslationSettingsDialog::createAISettingsPage()
     m_aiApiKeyEdit->setEchoMode(QLineEdit::Password);
     layout->addWidget(m_aiApiKeyEdit);
 
-    QLabel *modelLabel = new QLabel(tr("模型名称"));
-    modelLabel->setObjectName("translationFieldLabel");
-    layout->addWidget(modelLabel);
-
-    m_aiModelEdit = new QLineEdit();
-    m_aiModelEdit->setObjectName("translationInput");
-    m_aiModelEdit->setPlaceholderText("deepseek-chat");
-    layout->addWidget(m_aiModelEdit);
+    // 从列表选中模型时自动填端点和密钥（保留用户手输内容不覆盖非空字段以外的情况：仅在字段为空时填入）
+    connect(m_aiModelCombo, QOverload<int>::of(&QComboBox::activated), this,
+        [this](int index) {
+            const QString id = m_aiModelCombo->itemData(index).toString();
+            for (const AiConfiguredModel &m : aiConfiguredModels()) {
+                if (m.id != id)
+                    continue;
+                if (m_aiApiUrlEdit->text().trimmed().isEmpty() && !m.apiUrl.isEmpty())
+                    m_aiApiUrlEdit->setText(m.apiUrl);
+                if (m_aiApiKeyEdit->text().trimmed().isEmpty() && !m.apiKey.isEmpty())
+                    m_aiApiKeyEdit->setText(m.apiKey);
+                break;
+            }
+        });
 
     layout->addStretch();
     return page;
@@ -335,10 +356,22 @@ QWidget *TranslationSettingsDialog::createCustomSettingsPage()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(10);
 
-    QLabel *desc = new QLabel(tr("配置自定义的 OpenAI 兼容翻译 API 端点。支持任意 OpenAI 格式的 API 服务。"));
+    QLabel *desc = new QLabel(tr("配置自定义的 OpenAI 兼容翻译 API 端点。从下拉选择已配置的模型会自动填好端点和密钥。"));
     desc->setObjectName("translationDesc");
     desc->setWordWrap(true);
     layout->addWidget(desc);
+
+    QLabel *modelLabel = new QLabel(tr("模型"));
+    modelLabel->setObjectName("translationFieldLabel");
+    layout->addWidget(modelLabel);
+
+    m_customModelCombo = new QComboBox();
+    m_customModelCombo->setObjectName("translationInput");
+    m_customModelCombo->setEditable(true);
+    m_customModelCombo->setInsertPolicy(QComboBox::NoInsert);
+    m_customModelCombo->setPlaceholderText(tr("选择已配置的模型，或手动输入模型 ID"));
+    populateModelCombo(m_customModelCombo);
+    layout->addWidget(m_customModelCombo);
 
     QLabel *urlLabel = new QLabel(tr("API 端点"));
     urlLabel->setObjectName("translationFieldLabel");
@@ -359,17 +392,48 @@ QWidget *TranslationSettingsDialog::createCustomSettingsPage()
     m_customKeyEdit->setEchoMode(QLineEdit::Password);
     layout->addWidget(m_customKeyEdit);
 
-    QLabel *modelLabel = new QLabel(tr("模型名称"));
-    modelLabel->setObjectName("translationFieldLabel");
-    layout->addWidget(modelLabel);
-
-    m_customModelEdit = new QLineEdit();
-    m_customModelEdit->setObjectName("translationInput");
-    m_customModelEdit->setPlaceholderText("gpt-3.5-turbo");
-    layout->addWidget(m_customModelEdit);
+    connect(m_customModelCombo, QOverload<int>::of(&QComboBox::activated), this,
+        [this](int index) {
+            const QString id = m_customModelCombo->itemData(index).toString();
+            for (const AiConfiguredModel &m : aiConfiguredModels()) {
+                if (m.id != id)
+                    continue;
+                if (m_customUrlEdit->text().trimmed().isEmpty() && !m.apiUrl.isEmpty())
+                    m_customUrlEdit->setText(m.apiUrl);
+                if (m_customKeyEdit->text().trimmed().isEmpty() && !m.apiKey.isEmpty())
+                    m_customKeyEdit->setText(m.apiKey);
+                break;
+            }
+        });
 
     layout->addStretch();
     return page;
+}
+
+void TranslationSettingsDialog::populateModelCombo(QComboBox *combo)
+{
+    if (!combo)
+        return;
+
+    const QSignalBlocker blocker(combo);
+    combo->clear();
+    for (const AiConfiguredModel &m : aiConfiguredModels()) {
+        const QString label = QStringLiteral("%1 (%2)").arg(m.displayName, m.id);
+        combo->addItem(label, m.id);
+    }
+}
+
+QString TranslationSettingsDialog::comboModelId(QComboBox *combo) const
+{
+    if (!combo)
+        return QString();
+    const int idx = combo->currentIndex();
+    if (idx >= 0) {
+        const QVariant data = combo->itemData(idx);
+        if (data.isValid() && combo->currentText() == combo->itemText(idx))
+            return data.toString();
+    }
+    return combo->currentText().trimmed();
 }
 
 void TranslationSettingsDialog::loadCurrentConfig()
@@ -381,7 +445,14 @@ void TranslationSettingsDialog::loadCurrentConfig()
     // AI
     m_aiApiUrlEdit->setText(m_config.customApiUrl);
     m_aiApiKeyEdit->setText(m_config.customApiKey);
-    m_aiModelEdit->setText(m_config.customModel);
+    {
+        const QSignalBlocker blocker(m_aiModelCombo);
+        int idx = m_aiModelCombo->findData(m_config.customModel);
+        if (idx >= 0)
+            m_aiModelCombo->setCurrentIndex(idx);
+        else
+            m_aiModelCombo->setEditText(m_config.customModel);
+    }
 
     // DeepL
     m_deeplKeyEdit->setText(m_config.deeplApiKey);
@@ -401,7 +472,14 @@ void TranslationSettingsDialog::loadCurrentConfig()
     // 自定义
     m_customUrlEdit->setText(m_config.customApiUrl);
     m_customKeyEdit->setText(m_config.customApiKey);
-    m_customModelEdit->setText(m_config.customModel);
+    {
+        const QSignalBlocker blocker(m_customModelCombo);
+        int idx = m_customModelCombo->findData(m_config.customModel);
+        if (idx >= 0)
+            m_customModelCombo->setCurrentIndex(idx);
+        else
+            m_customModelCombo->setEditText(m_config.customModel);
+    }
 }
 
 void TranslationSettingsDialog::onSourceChanged(int index)
@@ -418,7 +496,7 @@ void TranslationSettingsDialog::onSave()
     case TranslationSource::AI:
         m_config.customApiUrl = m_aiApiUrlEdit->text().trimmed();
         m_config.customApiKey = m_aiApiKeyEdit->text().trimmed();
-        m_config.customModel = m_aiModelEdit->text().trimmed();
+        m_config.customModel = comboModelId(m_aiModelCombo);
         break;
     case TranslationSource::DeepL:
         m_config.deeplApiKey = m_deeplKeyEdit->text().trimmed();
@@ -434,7 +512,7 @@ void TranslationSettingsDialog::onSave()
     case TranslationSource::CustomAPI:
         m_config.customApiUrl = m_customUrlEdit->text().trimmed();
         m_config.customApiKey = m_customKeyEdit->text().trimmed();
-        m_config.customModel = m_customModelEdit->text().trimmed();
+        m_config.customModel = comboModelId(m_customModelCombo);
         break;
     }
 

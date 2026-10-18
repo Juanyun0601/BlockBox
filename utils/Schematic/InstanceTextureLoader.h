@@ -22,6 +22,7 @@
  */
 #pragma once
 
+#include <QIcon>
 #include <QImage>
 #include <QMap>
 #include <QString>
@@ -88,6 +89,14 @@ public:
      * @return true 表示有对应贴图；false 表示回退到颜色
      */
     bool tileForKey(const QString &modelKey, int &tile) const;
+
+    /**
+     * @brief 取方块图标（从图集裁一块并缩放到 size）
+     * @param blockName 方块状态名
+     * @param size      图标边长像素（默认 16；列表/树可用 20~24）
+     * @return 无贴图时返回空 QIcon
+     */
+    QIcon blockIcon(const QString &blockName, int size = 16) const;
 
 private:
     // 方块名规范化：去 "minecraft:" 前缀与属性 [..]

@@ -23,6 +23,7 @@
 #include <QMap>
 
 #include "utils/mod/ModData.h"
+#include "utils/content/ContentData.h"
 #include "../components/ContentViewSwitch.h"
 
 class BlurLoadingOverlay;
@@ -74,6 +75,8 @@ signals:
     void saveConvertRequested(const QString &saveName);
     /** 请求打开指定光影包的光影设置页（仅 ShaderPack 类型触发） */
     void shaderSettingsRequested(const QString &packPath);
+    /** 卡片点击「问问AI」：请求跳转 AI 助手并引用该本地资源 */
+    void askAiRequested(const ResourceReference &ref);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

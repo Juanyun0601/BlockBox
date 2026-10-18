@@ -24,6 +24,7 @@
 #include <QLabel>
 #include "../utils/mod/ModScanner.h"
 #include "../utils/mod/ModData.h"
+#include "../utils/content/ContentData.h"
 
 class BlurLoadingOverlay;
 class ModNameFetcher;
@@ -51,6 +52,8 @@ public:
 signals:
     /** 点击模组卡片，请求打开详情页 */
     void modDetailRequested(const ModInfo &info);
+    /** 卡片点击「问问AI」：请求跳转 AI 助手并引用该本地模组 */
+    void askAiRequested(const ResourceReference &ref);
     /** 搜索无结果时，请求前往下载页搜索 */
     void modDownloadSearchRequested(const QString &keyword);
 

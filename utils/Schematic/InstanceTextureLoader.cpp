@@ -17,6 +17,8 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPainter>
+#include <QPixmap>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QHash>
 #include <QtMath>
@@ -26,7 +28,7 @@
 namespace {
 
 const char kTexPrefix[] = "assets/minecraft/textures/block/";
-const int  kCacheFormatVersion = 1;
+const int  kCacheFormatVersion = 2;
 
 // 常见派生方块后缀：优先尝试去掉这些后缀后找基础贴图
 const char *kDerivedSuffixes[] = {
@@ -179,7 +181,11 @@ bool InstanceTextureLoader::tryLoadDiskCache(const QString &jarPath)
     QMap<QString, int> nameToTile;
     in >> nameToTile;
     if (in.status() != QDataStream::Ok || atlas.isNull() || count <= 0
-        || tilesPerRow <= 0 || nameToTile.isEmpty())
+        || tilesPerRow <= 0 || atlasSize < tilesPerRow * 16
+        || nameToTile.isEmpty() || count > tilesPerRow * tilesPerRow)
+        return false;
+    // 迟到文件截断/损坏时直接丢弃缓存，走 jar 重建
+    if (atlas.width() != atlasSize || atlas.height() != atlasSize)
         return false;
 
     m_atlas = atlas;
@@ -196,8 +202,8 @@ bool InstanceTextureLoader::saveDiskCache(const QString &jarPath) const
     if (m_atlas.isNull() || m_textureCount <= 0)
         return false;
 
-    const QString path = diskCachePath(jarPath);
-    QFile f(path);
+    // QSaveFile 原子替换：避免写到一半崩溃/杀进程留下半截缓存导致下次打开闪退
+    QSaveFile f(diskCachePath(jarPath));
     if (!f.open(QIODevice::WriteOnly))
         return false;
 
@@ -206,7 +212,12 @@ bool InstanceTextureLoader::saveDiskCache(const QString &jarPath) const
     out << quint32(0x42424154u) << quint32(kCacheFormatVersion);
     out << m_atlas << m_tilesPerRow << m_atlasSize << m_textureCount;
     out << m_nameToTile;
-    return out.status() == QDataStream::Ok;
+    if (out.status() != QDataStream::Ok)
+    {
+        f.cancelWriting();
+        return false;
+    }
+    return f.commit();
 }
 
 bool InstanceTextureLoader::loadFromJar(const QString &jarPath, QString *errorOut)
@@ -263,8 +274,8 @@ void InstanceTextureLoader::buildAtlas(const QMap<QString, QImage> &textures)
 {
     const int tile = 16; // 每格 16×16
     const int count = textures.size();
-    // 正方形图集：每行格数与行数一致，避免非方形时 v 向 UV 计算错误
-    m_tilesPerRow = qMax(1, qMin(32, (int)qCeil(qSqrt((double)count))));
+    // 正方形图集：每行格数与行数一致；上限 48 覆盖 1.21 全量方块贴图（~1100+）
+    m_tilesPerRow = qMax(1, qMin(48, (int)qCeil(qSqrt((double)count))));
     const int rows = m_tilesPerRow;
     const int atlasSide = m_tilesPerRow * tile;
 
@@ -274,29 +285,46 @@ void InstanceTextureLoader::buildAtlas(const QMap<QString, QImage> &textures)
     int idx = 0;
     for (auto it = textures.constBegin(); it != textures.constEnd(); ++it)
     {
+        if (idx >= m_tilesPerRow * m_tilesPerRow)
+            break;
         const int col = idx % m_tilesPerRow;
         const int row = idx / m_tilesPerRow;
         QImage tex = it.value();
+        if (tex.isNull())
+            continue;
         if (tex.width() != tile || tex.height() != tile)
             tex = tex.scaled(tile, tile, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-        // 16×16 直接 memcpy 进图集，比逐次 QPainter 快
+        // 缩放/格式转换失败时跳过，避免对空图 memcpy 崩溃
+        if (tex.isNull())
+            continue;
         if (tex.format() != QImage::Format_RGBA8888)
             tex = tex.convertToFormat(QImage::Format_RGBA8888);
+        if (tex.isNull() || tex.width() < tile || tex.height() < tile)
+            continue;
+        // 16×16 直接 memcpy 进图集，比逐次 QPainter 快
         const int dstX = col * tile;
         const int dstY = row * tile;
+        bool copied = true;
         for (int y = 0; y < tile; ++y)
         {
             uchar *dst = atlas.scanLine(dstY + y) + dstX * 4;
             const uchar *src = tex.constScanLine(y);
+            if (!src)
+            {
+                copied = false;
+                break;
+            }
             memcpy(dst, src, size_t(tile) * 4);
         }
+        if (!copied)
+            continue;
         m_nameToTile.insert(it.key(), idx);
         ++idx;
     }
 
     m_atlas = atlas;
     m_atlasSize = atlasSide;
-    m_textureCount = count;
+    m_textureCount = idx;
 }
 
 bool InstanceTextureLoader::resolveByName(const QString &base, int &tile) const
@@ -386,4 +414,26 @@ void InstanceTextureLoader::tileUv(int tile, float &u0, float &v0, float &u1, fl
     v0 = row * per;
     u1 = u0 + per;
     v1 = v0 + per;
+}
+
+QIcon InstanceTextureLoader::blockIcon(const QString &blockName, int size) const
+{
+    int tile = -1;
+    if (!textureFor(blockName, tile) || m_atlas.isNull() || m_tilesPerRow <= 0 || tile < 0)
+        return QIcon();
+    // 图集中每格固定 16×16（buildAtlas 统一缩放到 tile=16）
+    const int col = tile % m_tilesPerRow;
+    const int row = tile / m_tilesPerRow;
+    const int x = col * 16;
+    const int y = row * 16;
+    if (x + 16 > m_atlas.width() || y + 16 > m_atlas.height())
+        return QIcon();
+    QImage img = m_atlas.copy(x, y, 16, 16);
+    if (img.isNull())
+        return QIcon();
+    if (size > 0 && size != 16)
+        img = img.scaled(size, size, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    if (img.isNull())
+        return QIcon();
+    return QIcon(QPixmap::fromImage(img));
 }

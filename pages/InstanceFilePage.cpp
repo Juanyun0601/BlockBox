@@ -823,6 +823,29 @@ QWidget *InstanceFilePage::createFileCard(const QString &filePath, const QString
     });
     btnLayout->addWidget(detailBtn);
 
+    // 问问AI 按钮：跳转 AI 助手并引用该本地资源
+    {
+        QPushButton *askAiBtn = createBtn(":/Images/Icons/nav_ai.svg", tr("问问AI"));
+        FileType fileType = m_fileType;
+        connect(askAiBtn, &QPushButton::clicked, this, [this, capturedPath, capturedName, fileSize, fileType]() {
+            QString category;
+            switch (fileType) {
+            case ResourcePack: category = tr("本地资源包"); break;
+            case ShaderPack: category = tr("本地光影包"); break;
+            case Save: category = tr("本地存档"); break;
+            case Screenshot: category = tr("文件"); break;
+            default: category = tr("本地文件"); break;
+            }
+            ResourceReference ref;
+            ref.category = category;
+            ref.name = capturedName;
+            ref.path = capturedPath;
+            ref.size = fileSize;
+            emit askAiRequested(ref);
+        });
+        btnLayout->addWidget(askAiBtn);
+    }
+
     // 截图查看按钮（仅截图类型显示）
     if (m_fileType == Screenshot)
     {
@@ -1150,6 +1173,29 @@ QWidget *InstanceFilePage::createMasonryCard(const FileEntry &entry)
                     .arg(entry.lastModified.toString("yyyy-MM-dd hh:mm:ss"));
                 AppMessageBox::information(this, tr("文件详情"), info);
             });
+
+    // 问问AI 按钮：跳转 AI 助手并引用该本地资源
+    {
+        FileType fileType = m_fileType;
+        const qint64 entrySize = entry.fileSize;
+        connect(createBtn(":/Images/Icons/nav_ai.svg", tr("问问AI")), &QPushButton::clicked, this,
+                [this, capturedPath, capturedName, entrySize, fileType]() {
+                    QString category;
+                    switch (fileType) {
+                    case ResourcePack: category = tr("本地资源包"); break;
+                    case ShaderPack: category = tr("本地光影包"); break;
+                    case Save: category = tr("本地存档"); break;
+                    case Screenshot: category = tr("文件"); break;
+                    default: category = tr("本地文件"); break;
+                    }
+                    ResourceReference ref;
+                    ref.category = category;
+                    ref.name = capturedName;
+                    ref.path = capturedPath;
+                    ref.size = entrySize;
+                    emit askAiRequested(ref);
+                });
+    }
 
     // 截图查看按钮（仅截图类型显示）
     if (m_fileType == Screenshot)

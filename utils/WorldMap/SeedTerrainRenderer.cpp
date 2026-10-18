@@ -273,7 +273,8 @@ bool supported(int mc, WorldMapRenderer::Dimension dim)
 QImage renderRegionTile(int regionX, int regionZ,
                         WorldMapRenderer::Dimension dim,
                         WorldMapRenderer::ShadeMode mode,
-                        quint64 seed, int mc, int outSize)
+                        quint64 seed, int mc, int outSize,
+                        int maxSurfaceY)
 {
     if (mc == MC_UNDEF || outSize < 4 || outSize > 512)
         return QImage();
@@ -343,21 +344,28 @@ QImage renderRegionTile(int regionX, int regionZ,
         }
         else
         {
-            // 概览：跨步采样气候噪声（与 mapApproxHeight 的 1.18 分支同公式），
-            // 样本数 N²、覆盖整个 region
-            for (int j = 0; j < grid; ++j)
+            // 概览：与 1.17- 同路径 —— mapApproxHeight 整段 128×128 采完再
+            // 跨步抽稀到 grid。此前逐点 sampleBiomeNoise 在 radius 20 画布
+            // （~1700 region）上会卡到拖不动；同一公式但整图一次算完快得多
+            QVector<int> fullIds(128 * 128, 0);
+            QVector<float> fullYs(128 * 128, 64.0f);
+            if (mapApproxHeight(fullYs.data(), fullIds.data(), g, sn,
+                                rx4, rz4, 128, 128) != 0)
+                return QImage();
+            if (grid < 128)
             {
-                const int cz = rz4 + j * 128 / grid;
-                for (int i = 0; i < grid; ++i)
-                {
-                    const int cx = rx4 + i * 128 / grid;
-                    int64_t np[6];
-                    const int id = sampleBiomeNoise(&g->bn, np, cx, 0, cz,
-                                                     nullptr, 0);
-                    const int k = j * grid + i;
-                    ids[k] = id;
-                    ys[k] = float(np[NP_DEPTH] / 76.0);
-                }
+                for (int j = 0; j < grid; ++j)
+                    for (int i = 0; i < grid; ++i)
+                    {
+                        const int src = (j * 128 / grid) * 128 + i * 128 / grid;
+                        ids[j * grid + i] = fullIds[src];
+                        ys[j * grid + i] = fullYs[src];
+                    }
+            }
+            else
+            {
+                ids = fullIds;
+                ys = fullYs;
             }
         }
     }
@@ -496,6 +504,15 @@ QImage renderRegionTile(int regionX, int regionZ,
     // 采样步长（方块）：坡度系数按步长折算，跨分辨率观感一致
     const qreal stepBlocks = 512.0 / grid;
     const qreal kSlope = 0.010 / stepBlocks;
+    // 高度限制：截断面之上的预测地表削掉，与真实地表同一套语义
+    const bool yLimited = (maxSurfaceY >= 0);
+    // 切进水柱时可见水面下沉到截断 Y；未限制或截断在海平面之上则仍是海平面
+    const int waterTop =
+        yLimited ? std::min(seaLevel, maxSurfaceY) : seaLevel;
+    // 预测只有近似地表高度、没有方块柱：截断落入固体内部时按材质兜底
+    const QString cutSolid = (cdim == DIM_NETHER) ? QStringLiteral("netherrack")
+                           : (cdim == DIM_END)    ? QStringLiteral("end_stone")
+                                                  : QStringLiteral("stone");
 
     // ┌─ 采样栅格上着色（基础色 + 高度明暗 + 坡度阴影 / 地形图）──
     QVector<QRgb> cell(grid * grid, 0);
@@ -504,28 +521,44 @@ QImage renderRegionTile(int regionX, int regionZ,
         for (int c = 0; c < grid; ++c)
         {
             const int i = r * grid + c;
-            const QColor base = biomeBaseColor(ids[i]);
+            QColor base = biomeBaseColor(ids[i]);
             if (!base.isValid())
                 continue; // 虚空保持透明
 
-            const int h = int(std::lround(ys[i]));
+            const float yRaw = ys[i];
+            // 邻居高度也按上限截断：截断平台上山体阴影变平，边缘才有小台阶
+            const auto clampY = [yLimited, maxSurfaceY](float y) {
+                return (yLimited && y > float(maxSurfaceY)) ? float(maxSurfaceY)
+                                                            : y;
+            };
+            const int h = int(std::lround(clampY(yRaw)));
+
+            // 预测地表高于设定 Y：截断落入固体内部（含海床），按材质兜底；
+            // 水底低于截断面时走 waterTop，水面同样下沉到截断 Y
+            bool solidCut = false;
+            if (yLimited && yRaw > float(maxSurfaceY))
+            {
+                solidCut = true;
+                base = WorldMapRenderer::blockColor(cutSolid);
+            }
+            const bool waterPix = !solidCut && (cdim == DIM_OVERWORLD)
+                && isOceanic(ids[i]) && yRaw < float(seaLevel)
+                && h < seaLevel;
 
             // ── 地形图：分层设色 + 山体阴影（与真实地表同一套公式）──
             if (mode == WorldMapRenderer::ShadeMode::Terrain)
             {
-                const qreal hl = (c > 0) ? ys[i - 1] : ys[i];
-                const qreal hrr = (c + 1 < grid) ? ys[i + 1] : ys[i];
-                const qreal hu = (r > 0) ? ys[i - grid] : ys[i];
-                const qreal hdn = (r + 1 < grid) ? ys[i + grid] : ys[i];
+                const qreal hl = (c > 0) ? clampY(ys[i - 1]) : yRaw;
+                const qreal hrr = (c + 1 < grid) ? clampY(ys[i + 1]) : yRaw;
+                const qreal hu = (r > 0) ? clampY(ys[i - grid]) : yRaw;
+                const qreal hdn = (r + 1 < grid) ? clampY(ys[i + grid]) : yRaw;
                 const qreal hs = WorldMapRenderer::terrainHillshade(
                     (hrr - hl) * 0.5 / stepBlocks, (hdn - hu) * 0.5 / stepBlocks);
 
                 // 水面保持水色不叠阴影；雪冰保持本色；其余按海拔分层设色
-                const bool waterPix = (cdim == DIM_OVERWORLD && isOceanic(ids[i])
-                                        && h < seaLevel);
                 QColor col = base;
                 if (waterPix)
-                    col = deepenWater(col, seaLevel - h);
+                    col = deepenWater(col, waterTop - h);
                 else if (!WorldMapRenderer::terrainKeepsBase(col.rgb()))
                     col = QColor::fromRgb(
                         WorldMapRenderer::terrainTint(h, minY, maxY));
@@ -542,8 +575,8 @@ QImage renderRegionTile(int regionX, int regionZ,
             }
 
             qint16 hr = qint16(h), hd = qint16(h);
-            if (c + 1 < grid) hr = qint16(int(std::lround(ys[i + 1])));
-            if (r + 1 < grid) hd = qint16(int(std::lround(ys[i + grid])));
+            if (c + 1 < grid) hr = qint16(int(std::lround(clampY(ys[i + 1]))));
+            if (r + 1 < grid) hd = qint16(int(std::lround(clampY(ys[i + grid]))));
             const qreal slope = std::clamp(
                 1.0 + kSlope * ((qreal(h) - hr) + (qreal(h) - hd)), 0.55, 1.45);
 
@@ -558,8 +591,8 @@ QImage renderRegionTile(int regionX, int regionZ,
 
             QColor col = base;
             // 海洋按近似深度调暗，海沟/浅滩层次与真实地图接近
-            if (cdim == DIM_OVERWORLD && isOceanic(ids[i]) && h < seaLevel)
-                col = deepenWater(col, seaLevel - h);
+            if (waterPix)
+                col = deepenWater(col, waterTop - h);
 
             const qreal f = heightFactor(h, minY, maxY) * slope;
             cell[i] = qRgba(std::clamp(int(col.red() * f), 0, 255),

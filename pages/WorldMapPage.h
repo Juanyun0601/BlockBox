@@ -4,7 +4,9 @@
  * @author BlockBox Team
  * @date   2026-10-08
  *
- * 顶部为地图操作区（维度 / 着色 / 网格 / 缩放 / 坐标跳转 / 导出 / 刷新），
+ * 顶部为地图操作区（维度 / 着色 / 网格 / 缩放 / 导出，
+ * 坐标跳转位于「展开」内容弹窗搜索框右侧；
+ * 刷新复用主窗口顶栏刷新按钮），
  * 下方是可拖拽缩放的画布，渲染由 WorldMapRenderer 在工作线程完成。
  *
  * 区域文件解析与俯视渲染思路参考开源项目
@@ -26,12 +28,16 @@
 #include <atomic>
 #include <memory>
 
+#include "utils/WorldMap/BiomeName.h"
 #include "utils/WorldMap/WorldMapRenderer.h"
+#include "utils/WorldMap/BiomeCatalog.h"
 
 class QComboBox;
 class QKeyEvent;
 class QLabel;
 class QLineEdit;
+class QListWidget;
+class QListWidgetItem;
 class QProgressBar;
 class QPushButton;
 class QScrollArea;
@@ -49,10 +55,15 @@ public:
 
     /** 载入指定存档（路径指向存档目录）并开始渲染 */
     void setCurrentSave(const QString &saveFolderPath, const QString &saveName);
+    /**
+     * 设置当前实例（versions/<id> 目录）：从它的客户端 JAR 读群系中文名，
+     * 供底部「当前群系」显示使用。实例切换时调用（可在 setCurrentSave 前后）。
+     */
+    void setInstancePath(const QString &instancePath);
     /** 清空（切换实例时调用，避免残留上一个存档的地图） */
     void reset();
 
-    /** 顶栏刷新按钮 / F5：重新渲染当前维度 */
+    /** 顶栏刷新按钮 / F5 / R：重新渲染当前维度 */
     Q_INVOKABLE void refresh();
 
     /** 后台是否正在渲染（探针/外部用于等待渐进渲染结束） */
@@ -101,6 +112,21 @@ public:
     /** 该结构是否已标记完成 */
     bool isStructureDone(int type, qint64 x, qint64 z) const;
 
+    // ── 内容浏览弹窗（第二行右侧「展开」）：探针断言用 ──
+    /** 打开/关闭内容浏览弹窗；返回操作后是否处于打开状态 */
+    Q_INVOKABLE bool toggleContentPopup();
+    /** 弹窗是否打开 */
+    bool isContentPopupOpen() const { return m_contentPopup && m_contentPopup->isVisible(); }
+    /** 弹窗群系列表行数（= 当前维度可选群系数） */
+    int biomeRowCount() const;
+    /** 第 i 行群系是否勾选（默认全不选） */
+    bool biomeChecked(int i) const;
+    /** 触发「高亮并跳转到最近的该内容」——探针用来验证跳转行为 */
+    Q_INVOKABLE bool highlightStructureType(int idx);
+    Q_INVOKABLE bool highlightBiome(int idx);
+    /** 当前画布上的群系叠加层格子数（有选中群系且算完采样后才有值） */
+    int biomeOverlayCellCount() const;
+
 protected:
     /**
      * 地图快捷键统一入口。
@@ -125,6 +151,12 @@ private slots:
     /** 把结构命中应用到画布 */
     void applyStructHits(const QVector<QPair<int, int>> &coords,
                          const QVector<int> &types);
+    /** 后台解析当前实例的群系中文名表（lang 文件） */
+    void loadBiomeNamesAsync();
+    /** 后台采样视口中心的当前群系（去重：任务在途则标记待刷新） */
+    void scheduleBiomeRefresh();
+    /** 收取当前群系查询结果并刷新底部群系标签 */
+    void drainBiomeResult();
     /** 远程图标就位后刷新第二行按钮图标 */
     void refreshStructIcons();
     void onGridToggled(bool on);
@@ -138,12 +170,31 @@ private slots:
     void onZoomToOneOne();
     void onGotoClicked();
     void onExportClicked();
-    void onRefreshClicked();
     void onPollProgress();
     /** 视口去抖到期：挑选需要补的 1:1 细节 region */
     void scheduleTiles();
     /** 队列还有就接着渲，空了就补下一批（由中心向四周扩散） */
     void continueTiling();
+    /** 第二行右侧「展开」按钮：切换内容浏览弹窗 */
+    void onExpandToggled(bool on);
+    /** 关闭内容弹窗（关闭按钮 / Esc / 点弹窗外） */
+    void closeContentPopup();
+    /** 结构列「全选 / 清空」（弹窗内按钮与第二行按钮共用） */
+    void setAllStructures(bool on);
+    /** 群系列「全选 / 清空」（作用于当前列表可见行） */
+    void setAllBiomes(bool on);
+    /** 弹窗搜索框：过滤结构 / 群系两列列表 */
+    void onPopupSearchChanged(const QString &text);
+    /** 弹窗结构行勾选变化（与第二行开关双向同步） */
+    void onPopupStructToggled(int idx, bool on);
+    /** 弹窗群系行勾选变化（驱动群系叠加层） */
+    void onPopupBiomeToggled(int idx, bool on);
+    /** 高亮定位任务完成：跳转视角并高亮 */
+    void drainLocateResult();
+    /** 依据选中群系 + 最新采样网格重建叠加层并刷新画布 */
+    void rebuildBiomeOverlay();
+    /** 按搜索词 / 维度重建弹窗两列列表 */
+    void rebuildPopupLists();
 
 private:
     struct RenderJob
@@ -159,6 +210,34 @@ private:
         std::atomic<bool> done{ false };
         QVector<QPair<int, int>> coords;   ///< (x, z) 方块坐标
         QVector<int> types;                ///< 结构下标，与 coords 对齐
+        BiomeCatalog::SampleGrid biomeGrid;///< 群系采样网格（叠加层数据源）
+    };
+
+    /** 高亮定位任务：找离视口中心最近的该内容并输出坐标 */
+    struct LocateJob
+    {
+        std::atomic<bool> done{ false };
+        bool isBiome = false;
+        int idx = -1;      ///< 结构 / 群系下标
+        bool found = false;
+        qint64 x = 0;
+        qint64 z = 0;
+    };
+
+    /** 当前群系查询任务：采样视口中心单点群系（后台执行，UI 轮询收取） */
+    struct BiomeJob
+    {
+        std::atomic<bool> done{ false };
+        int biomeId = -1;  ///< 基础群系 id；-1 = 算不出来
+        qint64 x = 0;      ///< 采样点方块坐标
+        qint64 z = 0;
+    };
+
+    /** 实例群系中文名表解析任务（后台读 jar lang，UI 轮询收取） */
+    struct BiomeNameJob
+    {
+        std::atomic<bool> done{ false };
+        BiomeName::InstanceNames names;
     };
 
     /** 单区域 1:1 瓦片的渲染结果（跨线程传回 UI） */
@@ -188,6 +267,8 @@ private:
     void applyLiveLayout();
     /** 把 sink 里的区域图块贴到画布（定时器里调用） */
     void drainPendingTiles();
+    /** 把上一张同 bpp 画布的重叠 region 搬进新 live 画布（种子重定心用） */
+    void primeLiveFromPrior();
     void setBusy(bool busy);
     void updateZoomLabel();
     /** 拼状态栏文本：指针坐标 + 选中区块 + 渲染统计（cursor 为空则保留上次指针） */
@@ -227,6 +308,16 @@ private:
     /** 重定心重渲期间保留视角中心（避免画布重建时跳回出生点） */
     QPoint m_pendingRestoreBlock;
     bool m_pendingRestoreBlockSet = false;
+    /** 上一张 live 画布：种子重定心时把重叠 region 搬进新画布，避免闪白 */
+    QImage m_priorLiveImage;
+    int m_priorMinChunkX = 0;
+    int m_priorMinChunkZ = 0;
+    int m_priorBpp = 0;
+    bool m_priorLiveValid = false;
+    /** 当前 live 画布的布局（重定心搬像素用） */
+    int m_liveMinChunkX = 0;
+    int m_liveMinChunkZ = 0;
+    int m_liveBpp = 1;
     /** 视角离开画布窗口后的去抖定时器（停手 600ms 才重渲，拖动中不打断） */
     QTimer *m_seedRecenterTimer = nullptr;
     /** 第二行结构开关：默认全选 */
@@ -243,6 +334,40 @@ private:
     /** 打开中的结构信息弹窗（Qt::Popup，点外部自动关） */
     QPointer<QWidget> m_structPopup;
 
+    // ── 内容浏览弹窗（结构 + 群系列表 / 搜索 / 高亮跳转） ──
+    /** 第二行右侧「展开」按钮 */
+    QPushButton *m_expandBtn = nullptr;
+    /** 居中内容弹窗（非模态，跟随页面生命周期） */
+    QWidget *m_contentPopup = nullptr;
+    QLineEdit *m_popupSearch = nullptr;
+    QListWidget *m_structList = nullptr;
+    QListWidget *m_biomeList = nullptr;
+    /** 群系勾选状态（与 BiomeCatalog::allBiomes() 对齐，默认全不选） */
+    QVector<bool> m_biomeEnabled;
+    /** 当前行维度下的群系列表下标（列表行 → allBiomes 下标） */
+    QVector<int> m_biomeVisible;
+    /** 群系采样网格（最近一次结构查询带回） */
+    BiomeCatalog::SampleGrid m_biomeGrid;
+    /** 选中群系的叠加层（一格一像素，与网格对齐；空图 = 关闭） */
+    QImage m_biomeOverlay;
+    /** 高亮定位任务（与 m_structPool 共用，轮询收取） */
+    std::shared_ptr<LocateJob> m_locateJob;
+    /** 待应用的高亮（定位完成后跳转 + 画布高亮） */
+    bool m_pendingHighlightIsBiome = false;
+    int m_pendingHighlightIdx = -1;
+
+    // ── 底部「当前群系」显示（中文名来自当前实例 lang 文件） ──
+    /** 当前实例路径（versions/<id> 目录；群系中文名来源） */
+    QString m_instancePath;
+    /** 从实例客户端 JAR 解析出的 biome.* 翻译表（后台加载） */
+    BiomeName::InstanceNames m_biomeNames;
+    /** 当前群系查询任务（后台执行，onPollProgress 轮询收取） */
+    std::shared_ptr<BiomeJob> m_biomeJob;
+    /** 查询任务进行中又改了视口 / 维度 → 完成后再算一轮 */
+    bool m_biomeDirty = false;
+    /** 实例群系中文名表解析任务（后台读 lang，onPollProgress 轮询收取） */
+    std::shared_ptr<BiomeNameJob> m_biomeNameJob;
+
     WorldMapView *m_view;
     QStackedWidget *m_stack;
     QLabel *m_titleIcon;
@@ -250,6 +375,7 @@ private:
     QLabel *m_subtitleLabel;
     QLabel *m_emptyLabel;
     QLabel *m_statusLabel;
+    QLabel *m_biomeLabel;
     QLabel *m_zoomLabel;
     QProgressBar *m_progress;
     QString m_statSuffix;   ///< 状态栏右侧的渲染统计
@@ -267,7 +393,6 @@ private:
     QPushButton *m_oneOneBtn;
     QPushButton *m_gotoBtn;
     QPushButton *m_exportBtn;
-    QPushButton *m_refreshBtn;
     QLineEdit *m_gotoX;
     QLineEdit *m_gotoZ;
 

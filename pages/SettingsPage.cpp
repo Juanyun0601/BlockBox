@@ -142,6 +142,8 @@ void SettingsPage::onRestoreDefaults()
         SettingsManager::instance()->setProperty("ai/customSystemPrompt/chat", QString());
         SettingsManager::instance()->setProperty("ai/customSystemPrompt/work", QString());
         SettingsManager::instance()->setProperty("ai/systemPromptLibrary", QString());
+        SettingsManager::instance()->setProperty("ai/defaultModelId", QString());
+        refreshAiDefaultModelCombo();
         break;
         default: break;
         }
@@ -166,6 +168,8 @@ void SettingsPage::onRestoreDefaults()
         SettingsManager::instance()->setProperty("ai/customSystemPrompt/chat", QString());
         SettingsManager::instance()->setProperty("ai/customSystemPrompt/work", QString());
         SettingsManager::instance()->setProperty("ai/systemPromptLibrary", QString());
+        SettingsManager::instance()->setProperty("ai/defaultModelId", QString());
+        refreshAiDefaultModelCombo();
         break;
     case 10:
         qDebug() << "[SettingsPage]" << "恢复投影编辑器设置默认值";
@@ -197,6 +201,10 @@ void SettingsPage::setCurrentSettingsTab(int index)
     if (index >= 0 && index < m_contentStack->count()) {
         m_contentStack->setCurrentIndex(index);
         m_currentIndex = index;
+        // 切到 AI 助手子页时刷新默认模型下拉（模型可能在别处增删）
+        if (m_contentStack->currentWidget() == m_aiAssistantSettings) {
+            refreshAiDefaultModelCombo();
+        }
     }
     // 切换设置子页时重置外层滚动位置，避免新页面停留在上一子页的滚动位置
     resetSettingsScroll();

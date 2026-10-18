@@ -27,6 +27,8 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QMap>
+#include <QPair>
 #include "components/AppInputDialog.h"
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -65,6 +67,7 @@
 #include "components/NotificationManager.h"
 #include "components/SkillManagerDialog.h"
 #include "layouts/FlowLayout.h"
+#include "utils/AiProviderPresets.h"
 #include "utils/AiService.h"
 #include "utils/DownloadTaskManager.h"
 #include "utils/IconHelper.h"
@@ -443,22 +446,25 @@ AiChatPage::AiChatPage(QWidget *parent)
     m_saveDebounceTimer->setInterval(500);
     connect(m_saveDebounceTimer, &QTimer::timeout, this, &AiChatPage::doSaveConversations);
 
-    // 设置默认当前模型：优先 DeepSeek Chat，否则取第一个
+    // 设置默认当前模型：优先使用设置页配置的默认模型；否则优先 DeepSeek Chat，再取第一个
     if (!m_models.isEmpty())
     {
-        bool found = false;
-        for (const AiModel &model : m_models)
+        if (!applyDefaultModelSetting())
         {
-            if (model.id == QStringLiteral("deepseek-chat"))
+            bool found = false;
+            for (const AiModel &model : m_models)
             {
-                m_currentModel = model;
-                found = true;
-                break;
+                if (model.id == QStringLiteral("deepseek-chat"))
+                {
+                    m_currentModel = model;
+                    found = true;
+                    break;
+                }
             }
-        }
-        if (!found)
-        {
-            m_currentModel = m_models.first();
+            if (!found)
+            {
+                m_currentModel = m_models.first();
+            }
         }
         updateModelBtnText();
     }
@@ -1384,6 +1390,12 @@ void AiChatPage::onNewConversation()
     if (m_convTitleLabel)
     {
         m_convTitleLabel->setText(tr("新对话"));
+    }
+
+    // 新对话回到设置页配置的默认模型；未配置时保持当前模型
+    if (applyDefaultModelSetting())
+    {
+        updateModelBtnText();
     }
 
     m_inputEdit->setFocus();
@@ -3947,10 +3959,56 @@ QString AiChatPage::modelsFilePath() const
     return dir.filePath("ai_models.json");
 }
 
+bool AiChatPage::applyDefaultModelSetting()
+{
+    const QString defaultId =
+        SettingsManager::instance()->getProperty("ai/defaultModelId", QString()).toString();
+    if (defaultId.isEmpty() || m_models.isEmpty())
+    {
+        return false;
+    }
+
+    // 在已加载模型中按 ID 查找（同一 ID 可能有多条，优先选已带 Key 的那条）
+    int foundIndex = -1;
+    for (int i = 0; i < m_models.size(); ++i)
+    {
+        if (m_models[i].id != defaultId)
+        {
+            continue;
+        }
+        if (!m_models[i].apiKey.isEmpty())
+        {
+            foundIndex = i;
+            break;
+        }
+        if (foundIndex < 0)
+        {
+            foundIndex = i;
+        }
+    }
+    if (foundIndex < 0)
+    {
+        return false;
+    }
+
+    AiModel model = m_models[foundIndex];
+
+    // 套用服务商配置的 URL/Key（与 ModelSelectDialog 同一套匹配规则；
+    // 注意必须用 QSettings("BlockBox","BlockBox")——与 SettingsManager 同库）
+    QString modelUrl = model.apiUrl;
+    QString modelKey = model.apiKey;
+    aiApplyProviderConfigToModel(modelUrl, model.displayName, modelUrl, modelKey);
+    model.apiUrl = modelUrl;
+    model.apiKey = modelKey;
+
+    m_currentModel = model;
+    return true;
+}
+
 void AiChatPage::saveModelSettings()
 {
-    // 保存到 QSettings（向后兼容）
-    QSettings settings;
+    // 保存到 QSettings（向后兼容；必须与 SettingsManager 同库）
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
     QJsonArray qsArray;
     for (const AiModel &model : m_models)
     {
@@ -4031,8 +4089,8 @@ void AiChatPage::loadModelSettings()
         }
     }
 
-    // 回退：从 QSettings 加载（向后兼容）
-    QSettings settings;
+    // 回退：从 QSettings 加载（向后兼容；必须与 SettingsManager 同库）
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
     QString jsonStr = settings.value("ai/customModels").toString();
     if (jsonStr.isEmpty())
     {
@@ -5684,6 +5742,17 @@ void AiChatPage::setInstanceContext(const QString &path, const QString &version,
     m_instancePath = path;
     m_instanceVersion = version;
     m_instanceLoader = loader;
+}
+
+void AiChatPage::addExternalReference(const ResourceReference &ref)
+{
+    if (ref.path.isEmpty() && ref.extra.isEmpty() && ref.name.isEmpty())
+        return;
+    if (!m_pendingReferences.contains(ref))
+    {
+        m_pendingReferences.append(ref);
+        rebuildReferenceChips();
+    }
 }
 
 void AiChatPage::onReferenceClicked()

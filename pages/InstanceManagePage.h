@@ -67,6 +67,8 @@ signals:
     void projectionEditOpened();
     /** 实例名称或图标被修改（displayName 为空表示使用文件夹名） */
     void instanceInfoChanged(const QString &displayName, const QString &iconPath);
+    /** 本地资源卡片点击「问问AI」：请求跳转 AI 助手并引用该资源 */
+    void askAiRequested(const ResourceReference &ref);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;

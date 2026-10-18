@@ -12,6 +12,8 @@
 #include "AppInputDialog.h"
 #include "AppFileDialog.h"
 #include "utils/Schematic/ProjectionEditorSettings.h"
+#include "utils/Schematic/InstanceBlockNames.h"
+#include "utils/Schematic/InstanceTextureLoader.h"
 #include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
 
@@ -21,13 +23,16 @@
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSet>
+#include <QSize>
 #include <QSlider>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -52,61 +57,24 @@ QString friendlyBlockName(const QString &full)
 
 QString lookupChineseName(const QHash<QString, QString> &cnMap, const QString &fullId)
 {
-    QString baseId = fullId;
-    const int bracket = baseId.indexOf(QLatin1Char('['));
-    if (bracket >= 0)
-        baseId = baseId.left(bracket);
-    return cnMap.value(baseId.toLower());
+    return InstanceBlockNames::lookup(cnMap, fullId);
+}
+
+/** 与投影编辑页材料清单一致：优先「中文名 (英文ID)」，无中文时仅英文 ID */
+QString materialStyleLabel(const QHash<QString, QString> &cnMap, const QString &blockId)
+{
+    const QString baseId = InstanceBlockNames::baseBlockId(blockId);
+    const QString cn = InstanceBlockNames::lookup(cnMap, blockId);
+    if (cn.isEmpty())
+        return friendlyBlockName(blockId);
+    return QStringLiteral("%1 (%2)").arg(cn, friendlyBlockName(baseId));
 }
 
 QString friendlyBlockStateLabel(const SchematicBlockState &state,
                                 const QHash<QString, QString> &cnMap)
 {
-    const QString cnName = lookupChineseName(cnMap, state.name);
-    const QString engName = friendlyBlockName(state.name);
-    if (state.properties.isEmpty())
-    {
-        if (cnName.isEmpty())
-            return engName;
-        return QStringLiteral("%1 (%2)").arg(cnName, engName);
-    }
-    QStringList parts;
-    static const QMap<QString, QString> kKeyLabels = {
-        {QStringLiteral("facing"),    QObject::tr("朝向")},
-        {QStringLiteral("axis"),      QObject::tr("轴")},
-        {QStringLiteral("half"),      QObject::tr("半砖")},
-        {QStringLiteral("open"),      QObject::tr("开启")},
-        {QStringLiteral("type"),      QObject::tr("类型")},
-        {QStringLiteral("shape"),     QObject::tr("形状")},
-        {QStringLiteral("waterlogged"), QObject::tr("含水")},
-        {QStringLiteral("hinge"),     QObject::tr("铰链")},
-        {QStringLiteral("part"),      QObject::tr("部件")},
-        {QStringLiteral("delay"),     QObject::tr("延迟")},
-        {QStringLiteral("lit"),       QObject::tr("点亮")},
-        {QStringLiteral("powered"),   QObject::tr("通电")},
-        {QStringLiteral("mode"),      QObject::tr("模式")},
-        {QStringLiteral("age"),       QObject::tr("生长")},
-        {QStringLiteral("level"),     QObject::tr("等级")},
-        {QStringLiteral("layers"),    QObject::tr("层数")},
-        {QStringLiteral("snowy"),     QObject::tr("积雪")},
-        {QStringLiteral("down"),      QObject::tr("向下")},
-        {QStringLiteral("up"),        QObject::tr("向上")},
-        {QStringLiteral("north"),     QObject::tr("北")},
-        {QStringLiteral("south"),     QObject::tr("南")},
-        {QStringLiteral("east"),      QObject::tr("东")},
-        {QStringLiteral("west"),      QObject::tr("西")},
-        {QStringLiteral("rotation"),  QObject::tr("旋转")},
-        {QStringLiteral("conditional"), QObject::tr("条件")},
-    };
-    for (auto it = state.properties.constBegin(); it != state.properties.constEnd(); ++it)
-    {
-        const QString label = kKeyLabels.value(it.key(), it.key());
-        parts.append(QStringLiteral("%1=%2").arg(label, it.value()));
-    }
-    const QString propStr = QStringLiteral("[%1]").arg(parts.join(QLatin1String(", ")));
-    if (cnName.isEmpty())
-        return QStringLiteral("%1 %2").arg(engName, propStr);
-    return QStringLiteral("%1 %2 (%3)").arg(cnName, propStr, engName);
+    // 列表主文案与材料清单一致；方块属性放 tooltip，避免行文字过长
+    return materialStyleLabel(cnMap, state.name);
 }
 
 QString blockStateTooltip(const SchematicBlockState &state)
@@ -285,6 +253,8 @@ void ProjectionBlockEditorDialog::initUI()
     m_paletteList->setMaximumWidth(300);
     m_paletteList->setMinimumWidth(250);
     m_paletteList->setUniformItemSizes(true);
+    m_paletteList->setAlternatingRowColors(true);
+    m_paletteList->setIconSize(QSize(20, 20));
     side->addWidget(m_paletteList, 1);
 
     auto *batchCaption = new QLabel(tr("批量操作"), sideCard);
@@ -625,7 +595,12 @@ void ProjectionBlockEditorDialog::populatePalette()
         if (!cn.isEmpty())
             item->setData(Qt::UserRole + 2, cn);
         item->setToolTip(blockStateTooltip(state));
-        item->setForeground(VoxelViewWidget::blockColorOf(state.name));
+        if (m_texLoader)
+        {
+            const QIcon icon = m_texLoader->blockIcon(state.name, 20);
+            if (!icon.isNull())
+                item->setIcon(icon);
+        }
         m_paletteList->addItem(item);
     }
 
@@ -689,7 +664,12 @@ void ProjectionBlockEditorDialog::populatePalette()
         if (!cn.isEmpty())
             item->setData(Qt::UserRole + 2, cn);
         item->setToolTip(blockStateTooltip(st));
-        item->setForeground(VoxelViewWidget::blockColorOf(st.name));
+        if (m_texLoader)
+        {
+            const QIcon icon = m_texLoader->blockIcon(st.name, 20);
+            if (!icon.isNull())
+                item->setIcon(icon);
+        }
         m_paletteList->addItem(item);
     }
     if (m_paletteFilter)
@@ -839,45 +819,7 @@ void ProjectionBlockEditorDialog::rebuildView()
 
 void ProjectionBlockEditorDialog::loadBlockRegistry()
 {
-    m_blockCnMap.clear();
-    m_gameRegistry.clear();
-    if (m_instancePath.isEmpty())
-        return;
-    QDir dir(m_instancePath);
-    if (!dir.exists())
-        return;
-    const QString base = QFileInfo(m_instancePath).fileName();
-    QString bestJar;
-    qint64 bestSize = -1;
-    const QFileInfoList jars = dir.entryInfoList(QStringList() << QStringLiteral("*.jar"),
-                                                  QDir::Files, QDir::Name);
-    for (const QFileInfo &fi : jars)
-    {
-        if (fi.completeBaseName() == base)
-        {
-            m_gameRegistry.extractFromJar(fi.absoluteFilePath());
-            for (const BlockInfo &b : m_gameRegistry.blocks())
-            {
-                if (!b.chinese.isEmpty())
-                    m_blockCnMap.insert(b.english.toLower(), b.chinese.first());
-            }
-            return;
-        }
-        if (fi.size() > bestSize)
-        {
-            bestSize = fi.size();
-            bestJar = fi.absoluteFilePath();
-        }
-    }
-    if (!bestJar.isEmpty())
-    {
-        m_gameRegistry.extractFromJar(bestJar);
-        for (const BlockInfo &b : m_gameRegistry.blocks())
-        {
-            if (!b.chinese.isEmpty())
-                m_blockCnMap.insert(b.english.toLower(), b.chinese.first());
-        }
-    }
+    m_blockCnMap = InstanceBlockNames::loadChineseMap(m_instancePath);
 }
 
 void ProjectionBlockEditorDialog::applyEditorSettings()

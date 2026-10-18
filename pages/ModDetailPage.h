@@ -18,6 +18,7 @@
 #include <QVector>
 #include "../components/BlurLoadingOverlay.h"
 #include "../utils/mod/ModData.h"
+#include "../utils/content/ContentData.h"
 
 class QParallelAnimationGroup;
 class SourceSwitchBar;
@@ -44,6 +45,8 @@ signals:
     void downloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile);
     /** 用户点击顶部来源切换，请求拉取另一来源的详情（source: "modrinth"/"curseforge"） */
     void sourceSwitchRequested(const QString &source);
+    /** 点击「问问AI」：请求跳转 AI 助手并引用当前网络模组 */
+    void askAiRequested(const ResourceReference &ref);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -112,6 +115,17 @@ private:
     QWidget *m_downloadContainer;
     QVBoxLayout *m_downloadListLayout;
     QList<DownloadCardEntry> m_downloadCards;
+
+    // 分页相关
+    static const int kDownloadPageSize = 30;
+    int m_downloadCurrentPage;
+    QWidget *m_downloadPaginationBar;
+    QPushButton *m_downloadPrevBtn;
+    QPushButton *m_downloadNextBtn;
+    QLabel *m_downloadPageLabel;
+    void updateDownloadPagination();
+    void onDownloadPrevPage();
+    void onDownloadNextPage();
 
     // Right main
     QWidget *m_linksContainer;

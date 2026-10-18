@@ -259,10 +259,13 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/CommandAssistant/LevelDatReader.cpp \
     utils/CommandAssistant/LitematicReader.cpp \
     utils/Saves/LevelDatEditor.cpp \
+    utils/ServersDatIO.cpp \
     utils/WorldMap/WorldMapRenderer.cpp \
     utils/WorldMap/SeedTerrainRenderer.cpp \
     utils/WorldMap/StructureFinder.cpp \
     utils/WorldMap/StructureIcons.cpp \
+    utils/WorldMap/BiomeCatalog.cpp \
+    utils/WorldMap/BiomeName.cpp \
     utils/WorldConvert/WorldConverter.cpp \
     utils/Schematic/NbtCodec.cpp \
     utils/Schematic/LitematicEditor.cpp \
@@ -271,6 +274,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/Schematic/ProjectionEditorSettings.cpp \
     utils/Schematic/InstanceTextureLoader.cpp \
     utils/Schematic/BlockShapeLoader.cpp \
+    utils/Schematic/InstanceBlockNames.cpp \
     utils/CommandAssistant/CommandDatabase.cpp \
     utils/CommandAssistant/CommandTranslator.cpp \
     utils/CommandAssistant/CommandCompleter.cpp \
@@ -509,11 +513,15 @@ pages/ProjectionManagePage.h \
     utils/Schematic/ProjectionEditorSettings.h \
     utils/Schematic/InstanceTextureLoader.h \
     utils/Schematic/BlockShapeLoader.h \
+    utils/Schematic/InstanceBlockNames.h \
     utils/Saves/LevelDatEditor.h \
+    utils/ServersDatIO.h \
     utils/WorldMap/WorldMapRenderer.h \
     utils/WorldMap/SeedTerrainRenderer.h \
     utils/WorldMap/StructureFinder.h \
     utils/WorldMap/StructureIcons.h \
+    utils/WorldMap/BiomeCatalog.h \
+    utils/WorldMap/BiomeName.h \
     utils/WorldConvert/WorldConverter.h \
     utils/CommandAssistant/CommandTranslator.h \
     utils/CommandAssistant/CommandCompleter.h \

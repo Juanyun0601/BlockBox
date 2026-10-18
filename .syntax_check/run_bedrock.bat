@@ -1,0 +1,5 @@
+@echo off
+set PATH=D:\APP\Qt\Tools\mingw1310_64\bin;%PATH%
+cd /d D:\BlockBox\C-BlockBox
+D:\APP\Qt\Tools\mingw1310_64\bin\g++.exe -c pages\BedrockContentDetailPage.cpp -o .syntax_check\BedrockContentDetailPage.o -fno-keep-inline-dllexport -O2 -Wall -Wextra -fexceptions -mthreads -DUNICODE -D_UNICODE -DWIN32 -DMINGW_HAS_SECURE_API=1 -DQT_DEPRECATED_WARNINGS -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -DWINDOWS_OS -DQT_NO_DEBUG -DQT_SVG_LIB -DQT_OPENGLWIDGETS_LIB -DQT_OPENGL_LIB -DQT_WIDGETS_LIB -DQT_GUI_LIB -DQT_NETWORK_LIB -DQT_CONCURRENT_LIB -DQT_CORE_LIB -DQT_NEEDS_QMAIN -I. -Istyles -ID:\APP\Qt\6.11.1\mingw_64\include -ID:\APP\Qt\6.11.1\mingw_64\include\QtSvg -ID:\APP\Qt\6.11.1\mingw_64\include\QtOpenGLWidgets -ID:\APP\Qt\6.11.1\mingw_64\include\QtOpenGL -ID:\APP\Qt\6.11.1\mingw_64\include\QtWidgets -ID:\APP\Qt\6.11.1\mingw_64\include\QtGui -ID:\APP\Qt\6.11.1\mingw_64\include\QtNetwork -ID:\APP\Qt\6.11.1\mingw_64\include\QtConcurrent -ID:\APP\Qt\6.11.1\mingw_64\include\QtCore -ID:\APP\Qt\6.11.1\mingw_64\mkspecs\win32-g++ > .syntax_check\bedrock_err.txt 2>&1
+echo EXIT=%ERRORLEVEL% >> .syntax_check\bedrock_err.txt

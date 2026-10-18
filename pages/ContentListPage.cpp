@@ -631,6 +631,35 @@ QWidget *ContentListPage::createListCard(const ModInfo &info)
     });
     btnLayout->addWidget(toggleBtn);
 
+    // 问问AI 按钮：跳转 AI 助手并引用该本地资源
+    {
+        QPushButton *askAiBtn = createBtn(":/Images/Icons/nav_ai.svg", tr("问问AI"));
+        ContentType type = m_contentType;
+        connect(askAiBtn, &QPushButton::clicked, this, [this, capturedInfo, type]() {
+            QString category;
+            switch (type) {
+            case ContentType::Mod: category = tr("本地模组"); break;
+            case ContentType::ResourcePack: category = tr("本地资源包"); break;
+            case ContentType::ShaderPack: category = tr("本地光影包"); break;
+            case ContentType::World: category = tr("本地存档"); break;
+            case ContentType::DataPack: category = tr("本地数据包"); break;
+            default: category = tr("本地文件"); break;
+            }
+            QString displayName = capturedInfo.chineseName.isEmpty()
+                ? (capturedInfo.englishName.isEmpty() ? capturedInfo.name : capturedInfo.englishName)
+                : capturedInfo.chineseName;
+            if (displayName.isEmpty())
+                displayName = capturedInfo.fileName;
+            ResourceReference ref;
+            ref.category = category;
+            ref.name = displayName;
+            ref.path = capturedInfo.filePath;
+            ref.size = capturedInfo.fileSize;
+            emit askAiRequested(ref);
+        });
+        btnLayout->addWidget(askAiBtn);
+    }
+
     QPushButton *deleteBtn = createBtn(":/Images/Icons/delete.svg", tr("删除"));
     deleteBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/delete.svg", QColor("#F44336"), 18));
     connect(deleteBtn, &QPushButton::clicked, this, [this, capturedInfo]() {
@@ -659,6 +688,33 @@ QWidget *ContentListPage::createMasonryCard(const ModInfo &info)
     actions.append({ QStringLiteral(":/Images/Icons/install.svg"),
                      info.enabled ? tr("禁用") : tr("启用"), QColor(),
                      [this, capturedInfo]() { onToggleMod(capturedInfo); } });
+
+    {
+        ContentType type = m_contentType;
+        actions.append({ QStringLiteral(":/Images/Icons/nav_ai.svg"), tr("问问AI"), QColor(),
+                         [this, capturedInfo, type]() {
+                             QString category;
+                             switch (type) {
+                             case ContentType::Mod: category = tr("本地模组"); break;
+                             case ContentType::ResourcePack: category = tr("本地资源包"); break;
+                             case ContentType::ShaderPack: category = tr("本地光影包"); break;
+                             case ContentType::World: category = tr("本地存档"); break;
+                             case ContentType::DataPack: category = tr("本地数据包"); break;
+                             default: category = tr("本地文件"); break;
+                             }
+                             QString displayName = capturedInfo.chineseName.isEmpty()
+                                 ? (capturedInfo.englishName.isEmpty() ? capturedInfo.name : capturedInfo.englishName)
+                                 : capturedInfo.chineseName;
+                             if (displayName.isEmpty())
+                                 displayName = capturedInfo.fileName;
+                             ResourceReference ref;
+                             ref.category = category;
+                             ref.name = displayName;
+                             ref.path = capturedInfo.filePath;
+                             ref.size = capturedInfo.fileSize;
+                             emit askAiRequested(ref);
+                         } });
+    }
 
     actions.append({ QStringLiteral(":/Images/Icons/folder.svg"), tr("打开文件位置"), QColor(),
                      [capturedInfo]() {

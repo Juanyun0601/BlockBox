@@ -1,0 +1,12 @@
+In file included from pages\ContentDetailPage.cpp:1:
+pages\ContentDetailPage.h: In constructor 'ContentDetailPage::ContentDetailPage(ContentType, QWidget*)':
+pages\ContentDetailPage.h:167:28: warning: 'ContentDetailPage::m_networkManager' will be initialized after [-Wreorder]
+  167 |     QNetworkAccessManager *m_networkManager;
+      |                            ^~~~~~~~~~~~~~~~
+pages\ContentDetailPage.h:99:9: warning:   'int ContentDetailPage::m_downloadCurrentPage' [-Wreorder]
+   99 |     int m_downloadCurrentPage;
+      |         ^~~~~~~~~~~~~~~~~~~~~
+pages\ContentDetailPage.cpp:50:1: warning:   when initialized here [-Wreorder]
+   50 | ContentDetailPage::ContentDetailPage(ContentType contentType, QWidget *parent)
+      | ^~~~~~~~~~~~~~~~~
+EXIT=0 

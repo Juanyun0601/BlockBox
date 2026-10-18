@@ -422,11 +422,12 @@ void ContentDetailPage::showFavoriteMenu()
 
 void ContentDetailPage::buildHeader()
 {
+    // 顶部信息区（大图标＋名称＋简介＋收藏按钮）包进卡片，内边距由布局给出
     m_headerWidget = new QWidget();
     m_headerWidget->setObjectName("modDetailHeader");
     QHBoxLayout *headerLayout = new QHBoxLayout(m_headerWidget);
-    headerLayout->setContentsMargins(0, 0, 0, 16);
-    headerLayout->setSpacing(16);
+    headerLayout->setContentsMargins(20, 20, 20, 20);
+    headerLayout->setSpacing(20);
 
     m_iconLabel = new QLabel();
     m_iconLabel->setObjectName("modDetailIcon");
@@ -526,8 +527,8 @@ void ContentDetailPage::buildRightMain()
     bodyLayout->setContentsMargins(0, 0, 0, 0);
     bodyLayout->setSpacing(16);
 
-    bodyLayout->addWidget(m_leftPanel, 2);
-    bodyLayout->addWidget(rightPanel, 3);
+    bodyLayout->addWidget(m_leftPanel, 3);
+    bodyLayout->addWidget(rightPanel, 7);
 
     m_contentLayout->addWidget(mainBody, 1);
 }
@@ -953,7 +954,7 @@ void ContentDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
         {tr("Modrinth"), QString(), false},
         {tr("必应搜索"), QString("https://www.bing.com/search?q=%1").arg(m_modInfo.name), true},
         {tr("百度搜索"), QString("https://www.baidu.com/s?wd=%1").arg(m_modInfo.name), true},
-        {tr("AI介绍"), QString(), true}
+        {tr("问问AI"), QString(), true}
     };
 
     if (m_modInfo.source == "curseforge" || m_modInfo.pageUrl.contains("curseforge"))
@@ -968,7 +969,36 @@ void ContentDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
         QPushButton *btn = new QPushButton(link.label);
         btn->setObjectName("modDetailLinkBtn");
         btn->setCursor(Qt::PointingHandCursor);
-        if (!link.url.isEmpty()) {
+        if (link.label == tr("问问AI")) {
+            // 问问AI：跳转 AI 助手并引用当前网络资源
+            ContentType type = m_contentType;
+            ModInfo info = m_modInfo;
+            connect(btn, &QPushButton::clicked, this, [this, type, info]() {
+                QString category;
+                switch (type) {
+                case ContentType::Mod: category = tr("网络模组"); break;
+                case ContentType::ResourcePack: category = tr("网络资源包"); break;
+                case ContentType::ShaderPack: category = tr("网络光影包"); break;
+                case ContentType::DataPack: category = tr("网络数据包"); break;
+                case ContentType::World: category = tr("网络存档"); break;
+                case ContentType::Modpack: category = tr("网络整合包"); break;
+                default: category = tr("网络资源"); break;
+                }
+                ResourceReference ref;
+                ref.category = category;
+                ref.name = info.name;
+                ref.path = info.pageUrl;
+                if (ref.path.isEmpty() && !info.id.isEmpty()) {
+                    if (info.source == "modrinth" || info.source.isEmpty())
+                        ref.path = QStringLiteral("https://modrinth.com/project/%1").arg(info.id);
+                    else if (info.source == "curseforge")
+                        ref.path = QStringLiteral("https://www.curseforge.com/minecraft/mc-mods/%1").arg(info.id);
+                }
+                if (!info.source.isEmpty())
+                    ref.extra = tr("来源: %1").arg(info.source);
+                emit askAiRequested(ref);
+            });
+        } else if (!link.url.isEmpty()) {
             connect(btn, &QPushButton::clicked, this, [link]() {
                 QDesktopServices::openUrl(QUrl(link.url));
             });

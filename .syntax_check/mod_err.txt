@@ -1,0 +1,12 @@
+In file included from pages\ModDetailPage.cpp:1:
+pages\ModDetailPage.h: In constructor 'ModDetailPage::ModDetailPage(QWidget*)':
+pages\ModDetailPage.h:127:18: warning: 'ModDetailPage::m_downloadListLayout' will be initialized after [-Wreorder]
+  127 |     QVBoxLayout *m_downloadListLayout;
+      |                  ^~~~~~~~~~~~~~~~~~~~
+pages\ModDetailPage.h:94:9: warning:   'int ModDetailPage::m_downloadCurrentPage' [-Wreorder]
+   94 |     int m_downloadCurrentPage;
+      |         ^~~~~~~~~~~~~~~~~~~~~
+pages\ModDetailPage.cpp:49:1: warning:   when initialized here [-Wreorder]
+   49 | ModDetailPage::ModDetailPage(QWidget *parent)
+      | ^~~~~~~~~~~~~
+EXIT=0 

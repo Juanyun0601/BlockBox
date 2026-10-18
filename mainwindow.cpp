@@ -2379,6 +2379,10 @@ void MainWindow::showContentDetailPage(const ModInfo &info, ContentType type)
         showContentDetailPage(modInfo, type);
     });
 
+    // 问问AI：跳转 AI 助手并引用当前网络资源
+    connect(m_contentDetailPage, &ContentDetailPage::askAiRequested,
+            this, &MainWindow::openAiChatWithReference);
+
     // 用户在详情页点击“新建收藏夹...”时，弹出对话框并直接将当前资源收藏到新分组
     connect(m_contentDetailPage, &ContentDetailPage::addToFavoritesRequested,
             this, [this](const ModInfo &modInfo, ContentType type, const QString &source)
@@ -2425,6 +2429,10 @@ void MainWindow::showContentListPage(ContentType type)
     {
         showContentDetailPage(info, type);
     });
+
+    // 问问AI：跳转 AI 助手并引用当前本地资源
+    connect(m_contentListPage, &ContentListPage::askAiRequested,
+            this, &MainWindow::openAiChatWithReference);
 }
 
 void MainWindow::showFavoritesPage(const QString &folderId)

@@ -2,17 +2,22 @@
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
+#include "utils/ServersDatIO.h"
 #include "components/LocalCategoryDialog.h"
 #include "components/FavoriteFolderDialog.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFormLayout>
+#include <QGraphicsOpacityEffect>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -22,6 +27,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPropertyAnimation>
 #include <QScrollBar>
 #include <QSpacerItem>
 #include <QUrl>
@@ -39,6 +45,7 @@ ServerManagePage::ServerManagePage(QWidget *parent)
     , m_bottomBar(nullptr)
     , m_addServerBtn(nullptr)
     , m_deleteServerBtn(nullptr)
+    , m_selectAllBtn(nullptr)
     , m_categoryManager(nullptr)
     , m_categoryCombo(nullptr)
     , m_categoryManageBtn(nullptr)
@@ -179,7 +186,15 @@ void ServerManagePage::initUI()
         ":/Images/Icons/delete.svg", QColor("#F44336"), 18));
     m_deleteServerBtn->setIconSize(QSize(18, 18));
 
+    m_selectAllBtn = new QPushButton(tr("全选"));
+    m_selectAllBtn->setObjectName("bottomActionBtn");
+    m_selectAllBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/check.svg", themeColor, 18));
+    m_selectAllBtn->setIconSize(QSize(18, 18));
+    m_selectAllBtn->setCursor(Qt::PointingHandCursor);
+
     bottomLayout->addWidget(m_addServerBtn);
+    bottomLayout->addWidget(m_selectAllBtn);
     bottomLayout->addWidget(m_deleteServerBtn);
     bottomLayout->addStretch();
     mainLayout->addWidget(m_bottomBar);
@@ -200,6 +215,8 @@ void ServerManagePage::initUI()
             this, &ServerManagePage::onAddServerClicked);
     connect(m_deleteServerBtn, &QPushButton::clicked,
             this, &ServerManagePage::onDeleteServerClicked);
+    connect(m_selectAllBtn, &QPushButton::clicked,
+            this, &ServerManagePage::onSelectAllClicked);
 }
 
 QString ServerManagePage::serversFilePath() const
@@ -209,36 +226,73 @@ QString ServerManagePage::serversFilePath() const
     return m_instancePath + "/servers.json";
 }
 
+QString ServerManagePage::serversDatPath() const
+{
+    if (m_instancePath.isEmpty())
+        return QString();
+    return m_instancePath + "/servers.dat";
+}
+
 void ServerManagePage::loadServers()
 {
     m_servers.clear();
-    QString path = serversFilePath();
-    if (path.isEmpty() || !QFile::exists(path))
-        return;
+    QHash<QString, int> indexByKey;
 
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
-        return;
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    QJsonArray arr = doc.array();
-    for (const QJsonValue &val : arr)
+    // 1) 启动器自有列表（含描述等扩展字段）
+    const QString jsonPath = serversFilePath();
+    if (!jsonPath.isEmpty() && QFile::exists(jsonPath))
     {
-        QJsonObject obj = val.toObject();
+        QFile file(jsonPath);
+        if (file.open(QIODevice::ReadOnly))
+        {
+            QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+            file.close();
+
+            QJsonArray arr = doc.array();
+            for (const QJsonValue &val : arr)
+            {
+                QJsonObject obj = val.toObject();
+                ServerEntry entry;
+                entry.name = obj["name"].toString();
+                entry.address = obj["address"].toString();
+                entry.port = static_cast<quint16>(obj["port"].toInt(25565));
+                entry.description = obj["description"].toString();
+                if (entry.address.trimmed().isEmpty())
+                    continue;
+                indexByKey.insert(ServersDatIO::addressKey(entry.address, entry.port),
+                                  m_servers.size());
+                m_servers.append(entry);
+            }
+        }
+    }
+
+    // 2) 游戏内多人列表 servers.dat（合并进来，避免「游戏里加的服务器页上看不见」）
+    const QString datPath = serversDatPath();
+    const QList<ServersDatIO::Entry> gameServers = ServersDatIO::read(datPath);
+    for (const ServersDatIO::Entry &game : gameServers)
+    {
+        const QString key = ServersDatIO::addressKey(game.host, game.port);
+        if (indexByKey.contains(key))
+        {
+            // 已有同地址条目：以游戏内名称为准（游戏是显示名的权威来源）
+            ServerEntry &entry = m_servers[indexByKey.value(key)];
+            if (!game.name.trimmed().isEmpty())
+                entry.name = game.name;
+            continue;
+        }
         ServerEntry entry;
-        entry.name = obj["name"].toString();
-        entry.address = obj["address"].toString();
-        entry.port = static_cast<quint16>(obj["port"].toInt(25565));
-        entry.description = obj["description"].toString();
+        entry.name = game.name;
+        entry.address = game.host;
+        entry.port = game.port;
+        indexByKey.insert(key, m_servers.size());
         m_servers.append(entry);
     }
 }
 
 void ServerManagePage::saveServers()
 {
-    QString path = serversFilePath();
+    // 仅写启动器 JSON（描述等扩展字段）；游戏列表由 servers.dat 同步
+    const QString path = serversFilePath();
     if (path.isEmpty())
         return;
 
@@ -261,6 +315,26 @@ void ServerManagePage::saveServers()
     }
 }
 
+void ServerManagePage::upsertGameServer(const ServerEntry &entry)
+{
+    const QString datPath = serversDatPath();
+    if (datPath.isEmpty() || entry.address.trimmed().isEmpty())
+        return;
+    ServersDatIO::Entry game;
+    game.name = entry.name;
+    game.host = entry.address;
+    game.port = entry.port;
+    ServersDatIO::upsert(datPath, game);
+}
+
+void ServerManagePage::removeGameServer(const ServerEntry &entry)
+{
+    const QString datPath = serversDatPath();
+    if (datPath.isEmpty() || entry.address.trimmed().isEmpty())
+        return;
+    ServersDatIO::remove(datPath, entry.address, entry.port);
+}
+
 void ServerManagePage::clearCards()
 {
     QLayoutItem *item;
@@ -273,6 +347,20 @@ void ServerManagePage::clearCards()
         }
         delete item;
     }
+
+    m_cardWidgets.clear();
+    m_selectedCardIndices.clear();
+    m_allSelected = false;
+    m_dragSelectActive = false;
+    m_dragMoved = false;
+    m_dragAnchorIdx = -1;
+    m_dragLastHoverIdx = -1;
+    // 遮罩随卡片销毁，动画由本页持有，需显式释放
+    m_selectionOverlays.clear();
+    m_selectionEffects.clear();
+    for (QPropertyAnimation *anim : m_selectionAnims)
+        anim->deleteLater();
+    m_selectionAnims.clear();
 }
 
 void ServerManagePage::placeCards()
@@ -283,7 +371,7 @@ void ServerManagePage::placeCards()
     {
         m_emptyLabel->setText(tr("暂无服务器，点击底部「添加服务器」按钮添加"));
         showEmptyHint(true);
-        m_statsLabel->setText(tr("共 0 个服务器"));
+        updateSelectionBar();
         return;
     }
     showEmptyHint(false);
@@ -328,6 +416,9 @@ void ServerManagePage::placeCards()
         card->setObjectName("resourceCard");
         card->setFixedHeight(80);
         card->setCursor(Qt::PointingHandCursor);
+        card->setProperty("serverKey",
+            ServersDatIO::addressKey(entry.address, entry.port));
+        card->installEventFilter(this);
         card->setContextMenuPolicy(Qt::CustomContextMenu);
         const QString catKey = entry.address;
         connect(card, &QWidget::customContextMenuRequested, this,
@@ -446,6 +537,8 @@ void ServerManagePage::placeCards()
         cardLayout->addWidget(editBtn);
 
         m_cardGridLayout->addWidget(card, row, col, 1, 1);
+        m_cardWidgets.append(card);
+        createSelectionOverlay(card);
         col++;
         if (col >= 1)
         {
@@ -459,8 +552,6 @@ void ServerManagePage::placeCards()
     m_cardGridLayout->addItem(spacer, row + 1, 0);
 
     // 统计：筛选/搜索激活时显示「显示 N (共 M)」；筛空给提示（不引导下载）
-    const bool anyFilterActive = !m_currentSearch.isEmpty()
-        || !m_currentCategoryId.isEmpty();
     if (visibleCount == 0)
     {
         m_emptyLabel->setText(tr("没有符合筛选条件的服务器"));
@@ -470,15 +561,7 @@ void ServerManagePage::placeCards()
     {
         showEmptyHint(false);
     }
-    if (anyFilterActive)
-    {
-        m_statsLabel->setText(tr("显示 %1 个服务器 (共 %2 个)")
-            .arg(visibleCount).arg(m_servers.size()));
-    }
-    else
-    {
-        m_statsLabel->setText(tr("共 %1 个服务器").arg(m_servers.size()));
-    }
+    updateSelectionBar();
 }
 
 void ServerManagePage::showEmptyHint(bool show)
@@ -549,6 +632,7 @@ void ServerManagePage::onAddServerClicked()
         entry.description = descEdit->text().trimmed();
         m_servers.append(entry);
         saveServers();
+        upsertGameServer(entry);
         placeCards();
     }
 }
@@ -609,11 +693,16 @@ void ServerManagePage::onEditServerClicked(const QString &name)
 
     if (dialog.exec() == QDialog::Accepted)
     {
+        const QString oldKey = ServersDatIO::addressKey(old.address, old.port);
         m_servers[idx].name = nameEdit->text().trimmed();
         m_servers[idx].address = addrEdit->text().trimmed();
         m_servers[idx].port = static_cast<quint16>(portEdit->text().toUShort());
         m_servers[idx].description = descEdit->text().trimmed();
         saveServers();
+        const QString newKey = ServersDatIO::addressKey(m_servers[idx].address, m_servers[idx].port);
+        if (oldKey != newKey)
+            removeGameServer(old);
+        upsertGameServer(m_servers[idx]);
         placeCards();
     }
 }
@@ -623,6 +712,55 @@ void ServerManagePage::onDeleteServerClicked()
     if (m_servers.isEmpty())
         return;
 
+    // 已在列表上勾选了卡片：批量删除选中的服务器
+    if (!m_selectedCardIndices.isEmpty())
+    {
+        QList<ServerEntry> toRemove;
+        for (int idx : m_selectedCardIndices)
+        {
+            if (idx >= 0 && idx < m_cardWidgets.size())
+            {
+                const QString key =
+                    m_cardWidgets[idx]->property("serverKey").toString();
+                for (const ServerEntry &e : m_servers)
+                {
+                    if (ServersDatIO::addressKey(e.address, e.port) == key)
+                    {
+                        toRemove.append(e);
+                        break;
+                    }
+                }
+            }
+        }
+        if (toRemove.isEmpty())
+            return;
+
+        AppMessageBox::StandardButton reply = AppMessageBox::question(
+            this,
+            tr("删除服务器"),
+            tr("确定要删除选中的 %1 个服务器吗？此操作不可撤销。").arg(toRemove.size()),
+            AppMessageBox::Yes | AppMessageBox::No,
+            AppMessageBox::No);
+        if (reply != AppMessageBox::Yes)
+            return;
+
+        for (const ServerEntry &e : toRemove)
+        {
+            removeGameServer(e);
+            const QString key = ServersDatIO::addressKey(e.address, e.port);
+            for (int i = m_servers.size() - 1; i >= 0; --i)
+            {
+                if (ServersDatIO::addressKey(m_servers[i].address,
+                                             m_servers[i].port) == key)
+                    m_servers.removeAt(i);
+            }
+        }
+        saveServers();
+        placeCards();
+        return;
+    }
+
+    // 未勾选卡片：弹出勾选列表逐个选择删除（原交互保留）
     QDialog dialog(this);
     dialog.setWindowTitle(tr("删除服务器"));
     dialog.setFixedSize(350, 300);
@@ -673,7 +811,10 @@ void ServerManagePage::onDeleteServerClicked()
         for (int i = m_servers.size() - 1; i >= 0; --i)
         {
             if (checks[i]->isChecked())
+            {
+                removeGameServer(m_servers[i]);
                 m_servers.removeAt(i);
+            }
         }
         saveServers();
         placeCards();
@@ -809,4 +950,279 @@ void ServerManagePage::appendCategoryMenu(QMenu *menu, const QString &key)
             const QString newId = m_categoryManager->addCategory(name);
             m_categoryManager->assignCategory(key, newId);
         });
+}
+
+// ─────────────── 卡片多选 ───────────────
+
+void ServerManagePage::onSelectAllClicked()
+{
+    m_allSelected = !m_allSelected;
+
+    if (m_allSelected)
+    {
+        for (int i = 0; i < m_cardWidgets.size(); ++i)
+        {
+            m_selectedCardIndices.insert(i);
+            animateCardHighlight(i, true);
+        }
+    }
+    else
+    {
+        for (int i = 0; i < m_cardWidgets.size(); ++i)
+            animateCardHighlight(i, false);
+        m_selectedCardIndices.clear();
+    }
+
+    updateSelectionBar();
+}
+
+void ServerManagePage::toggleCardSelection(int cardIdx)
+{
+    if (cardIdx < 0 || cardIdx >= m_cardWidgets.size())
+        return;
+
+    if (m_selectedCardIndices.contains(cardIdx))
+    {
+        m_selectedCardIndices.remove(cardIdx);
+        animateCardHighlight(cardIdx, false);
+    }
+    else
+    {
+        m_selectedCardIndices.insert(cardIdx);
+        animateCardHighlight(cardIdx, true);
+    }
+
+    updateSelectionBar();
+}
+
+void ServerManagePage::deselectAllCards()
+{
+    for (int idx : m_selectedCardIndices)
+        animateCardHighlight(idx, false);
+    m_selectedCardIndices.clear();
+    updateSelectionBar();
+}
+
+int ServerManagePage::cardIndexAtGlobal(const QPoint &globalPos) const
+{
+    QWidget *w = QApplication::widgetAt(globalPos);
+    while (w)
+    {
+        for (int i = 0; i < m_cardWidgets.size(); ++i)
+        {
+            if (m_cardWidgets[i] == w)
+                return i;
+        }
+        w = w->parentWidget();
+    }
+    return -1;
+}
+
+void ServerManagePage::selectCardDuringDrag(int cardIdx)
+{
+    if (cardIdx < 0 || cardIdx >= m_cardWidgets.size())
+        return;
+    if (m_selectedCardIndices.contains(cardIdx))
+        return;
+
+    m_selectedCardIndices.insert(cardIdx);
+    animateCardHighlight(cardIdx, true);
+    updateSelectionBar();
+}
+
+void ServerManagePage::deselectCardDuringDrag(int cardIdx)
+{
+    if (cardIdx < 0 || cardIdx >= m_cardWidgets.size())
+        return;
+    if (!m_selectedCardIndices.contains(cardIdx))
+        return;
+
+    m_selectedCardIndices.remove(cardIdx);
+    animateCardHighlight(cardIdx, false);
+    updateSelectionBar();
+}
+
+QWidget *ServerManagePage::createSelectionOverlay(QWidget *card)
+{
+    QWidget *overlay = new QWidget(card);
+    overlay->setObjectName("cardSelectionOverlay");
+    overlay->setGeometry(card->rect());
+    overlay->setStyleSheet(selectionOverlayStyle());
+    overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+    overlay->raise();
+    overlay->hide();
+
+    QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(overlay);
+    effect->setOpacity(0.0);
+    overlay->setGraphicsEffect(effect);
+
+    QPropertyAnimation *anim = new QPropertyAnimation(effect, "opacity", this);
+    anim->setDuration(180);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    // 淡出结束后隐藏遮罩（overlay 销毁时自动断开，避免悬空指针）
+    connect(anim, &QPropertyAnimation::finished, overlay, [overlay, effect]() {
+        if (effect->opacity() <= 0.01)
+            overlay->hide();
+    });
+
+    m_selectionOverlays.append(overlay);
+    m_selectionEffects.append(effect);
+    m_selectionAnims.append(anim);
+    return overlay;
+}
+
+void ServerManagePage::animateCardHighlight(int idx, bool selected)
+{
+    if (idx < 0 || idx >= m_selectionOverlays.size())
+        return;
+
+    QWidget *overlay = m_selectionOverlays[idx];
+    QGraphicsOpacityEffect *effect = m_selectionEffects[idx];
+    QPropertyAnimation *anim = m_selectionAnims[idx];
+
+    anim->stop();
+    anim->setStartValue(effect->opacity());
+    anim->setEndValue(selected ? 1.0 : 0.0);
+    if (selected)
+        overlay->show();
+    anim->start();
+}
+
+QString ServerManagePage::selectionOverlayStyle() const
+{
+    QColor c = ThemeManager::instance()->currentThemeColor();
+    return QString("#cardSelectionOverlay { background-color: rgba(%1, %2, %3, 40); "
+                   "border: 2px solid %4; border-radius: 6px; }")
+        .arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.name());
+}
+
+void ServerManagePage::updateSelectionBar()
+{
+    const int total = m_cardWidgets.size();
+    const int selected = m_selectedCardIndices.size();
+    const int all = m_servers.size();
+    const bool anyFilterActive = !m_currentSearch.isEmpty()
+        || !m_currentCategoryId.isEmpty();
+
+    if (selected == 0)
+    {
+        if (anyFilterActive)
+            m_statsLabel->setText(tr("显示 %1 个服务器 (共 %2 个)").arg(total).arg(all));
+        else
+            m_statsLabel->setText(tr("共 %1 个服务器").arg(all));
+    }
+    else
+    {
+        if (anyFilterActive)
+            m_statsLabel->setText(tr("显示 %1 个服务器 (共 %2 个，已选 %3 个)")
+                .arg(total).arg(all).arg(selected));
+        else
+            m_statsLabel->setText(tr("共 %1 个服务器（已选 %2 个）").arg(all).arg(selected));
+    }
+
+    // 全选按钮文案：所有可见卡片都被选中时显示「取消全选」
+    m_allSelected = !m_cardWidgets.isEmpty() && selected == total;
+    if (m_selectAllBtn)
+        m_selectAllBtn->setText(m_allSelected ? tr("取消全选") : tr("全选"));
+
+    // 删除按钮文案：有选中时提示可批量删除
+    if (m_deleteServerBtn)
+    {
+        if (selected == 0)
+            m_deleteServerBtn->setText(tr("删除服务器"));
+        else
+            m_deleteServerBtn->setText(tr("删除选中 (%1)").arg(selected));
+    }
+}
+
+bool ServerManagePage::eventFilter(QObject *watched, QEvent *event)
+{
+    QWidget *card = qobject_cast<QWidget *>(watched);
+    if (!card || !card->property("serverKey").isValid())
+        return QWidget::eventFilter(watched, event);
+
+    const int idx = m_cardWidgets.indexOf(card);
+    if (idx < 0)
+        return QWidget::eventFilter(watched, event);
+
+    if (event->type() == QEvent::MouseButtonPress)
+    {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton)
+        {
+            // 按下左键开始滑动多选：抓取鼠标，拖拽经过的卡片将被快速勾选
+            m_dragSelectActive = true;
+            m_dragMoved = false;
+            m_dragPressPos = mouseEvent->globalPos();
+            m_dragAnchorIdx = idx;
+            m_dragLastHoverIdx = idx;
+            card->grabMouse();
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseMove)
+    {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (m_dragSelectActive && (mouseEvent->buttons() & Qt::LeftButton))
+        {
+            // 超过拖拽阈值才视为滑动多选，避免与单击冲突
+            if (!m_dragMoved &&
+                (mouseEvent->globalPos() - m_dragPressPos).manhattanLength()
+                    >= QApplication::startDragDistance())
+            {
+                m_dragMoved = true;
+                selectCardDuringDrag(m_dragAnchorIdx);
+            }
+
+            if (m_dragMoved)
+            {
+                int hoverIdx = cardIndexAtGlobal(mouseEvent->globalPos());
+                if (hoverIdx >= 0 && hoverIdx != m_dragLastHoverIdx)
+                {
+                    if (hoverIdx > m_dragLastHoverIdx)
+                    {
+                        // 正向滑动：勾选滑过的可见卡片
+                        for (int i = m_dragLastHoverIdx + 1; i <= hoverIdx; ++i)
+                            selectCardDuringDrag(i);
+                    }
+                    else
+                    {
+                        // 反向滑动：取消勾选滑过的可见卡片
+                        for (int i = m_dragLastHoverIdx - 1; i >= hoverIdx; --i)
+                            deselectCardDuringDrag(i);
+                    }
+                    m_dragLastHoverIdx = hoverIdx;
+                }
+            }
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseButtonRelease)
+    {
+        QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (m_dragSelectActive && mouseEvent->button() == Qt::LeftButton)
+        {
+            m_dragSelectActive = false;
+            card->releaseMouse();
+            if (!m_dragMoved)
+            {
+                // 未发生拖拽：视为单击，切换该卡片的选中状态
+                toggleCardSelection(m_dragAnchorIdx);
+            }
+            m_dragMoved = false;
+            m_dragAnchorIdx = -1;
+            m_dragLastHoverIdx = -1;
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::Resize)
+    {
+        if (idx < m_selectionOverlays.size())
+            m_selectionOverlays[idx]->setGeometry(card->rect());
+    }
+
+    return QWidget::eventFilter(watched, event);
 }

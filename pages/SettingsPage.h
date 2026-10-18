@@ -86,6 +86,8 @@ private:
     void initProjectionEditorSettings();
     /** 将存储的投影编辑器设置同步到设置页控件（初始化 / 恢复默认后调用） */
     void refreshProjectionEditorSettingsControls();
+    /** 刷新 AI 助手设置页「默认模型」下拉：列出已配置/已添加的真实模型 */
+    void refreshAiDefaultModelCombo();
 
     // Help tooltip — inserts a help button after the label, click to show description
     void addHelpTooltip(QBoxLayout *layout, QLabel *label, const QString &text);
@@ -137,6 +139,9 @@ private:
     QWidget *m_aiAssistantSettings;
     QWidget *m_aboutSettings;
     QWidget *m_projectionEditorSettings = nullptr;
+
+    // AI 助手设置页：默认模型下拉（列出真实已配置模型）
+    QComboBox       *m_aiDefaultModelCombo = nullptr;
 
     // 投影编辑器内置设置控件
     QComboBox       *m_projToolCombo = nullptr;

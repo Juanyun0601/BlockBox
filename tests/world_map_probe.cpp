@@ -659,6 +659,59 @@ int main(int argc, char *argv[])
             sT.save(QStringLiteral("D:/BlockBox/_out/world_map_seed_terrain.png"));
         }
 
+        // 高度限制：种子预测同样按 Y 截断（与真实地表同一套语义）
+        {
+            using WorldMapRenderer::ShadeMode;
+            const QImage sAll = SeedTerrainRenderer::renderRegionTile(
+                5, -3, Dimension::Overworld, ShadeMode::Terrain, seedVal, mc,
+                128, -1);
+            const QImage sY64 = SeedTerrainRenderer::renderRegionTile(
+                5, -3, Dimension::Overworld, ShadeMode::Terrain, seedVal, mc,
+                128, 64);
+            check(!sAll.isNull() && !sY64.isNull()
+                  && sAll.size() == sY64.size(),
+                  "seed tile with height limit renders same size");
+            check(std::memcmp(sAll.constBits(), sY64.constBits(),
+                              size_t(sAll.sizeInBytes())) != 0,
+                  "height limit changes seed tile (mountains truncated)");
+            // 默认 -1 与显式不限制一致（向后兼容）
+            const QImage sDef = SeedTerrainRenderer::renderRegionTile(
+                5, -3, Dimension::Overworld, ShadeMode::Terrain, seedVal, mc,
+                128);
+            check(std::memcmp(sAll.constBits(), sDef.constBits(),
+                              size_t(sAll.sizeInBytes())) == 0,
+                  "default maxSurfaceY == unlimited");
+            // 全图截断后高度着色整体变暗（截断面低于原地表）
+            const QImage hAll = SeedTerrainRenderer::renderRegionTile(
+                5, -3, Dimension::Overworld, ShadeMode::Height, seedVal, mc,
+                64, -1);
+            const QImage hY50 = SeedTerrainRenderer::renderRegionTile(
+                5, -3, Dimension::Overworld, ShadeMode::Height, seedVal, mc,
+                64, 50);
+            long long sumAll = 0, sumY50 = 0;
+            int nAll = 0, nY50 = 0;
+            for (int y = 0; y < hAll.height(); ++y)
+            {
+                const QRgb *la = reinterpret_cast<const QRgb *>(hAll.constScanLine(y));
+                const QRgb *lb = reinterpret_cast<const QRgb *>(hY50.constScanLine(y));
+                for (int x = 0; x < hAll.width(); ++x)
+                {
+                    if (qAlpha(la[x]) == 255) { sumAll += qRed(la[x]); ++nAll; }
+                    if (qAlpha(lb[x]) == 255) { sumY50 += qRed(lb[x]); ++nY50; }
+                }
+            }
+            check(nAll > 0 && nY50 > 0, "height-limited tiles have opaque pixels");
+            if (nAll > 0 && nY50 > 0)
+            {
+                std::printf("  height-limit avg gray: all=%.1f y50=%.1f\n",
+                            double(sumAll) / nAll, double(sumY50) / nY50);
+                check(sumY50 * nAll <= sumAll * nY50,
+                      "Y=50 cut darker than unlimited height shading");
+            }
+            QDir().mkpath(QStringLiteral("D:/BlockBox/_out"));
+            sY64.save(QStringLiteral("D:/BlockBox/_out/world_map_seed_y64.png"));
+        }
+
         // 空维度 + 种子预测：不再报错，围绕中心渲染出预览图
         SeedPreview sp;
         sp.enabled = true;

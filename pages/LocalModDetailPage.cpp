@@ -313,10 +313,26 @@ void LocalModDetailPage::rebuildLinksSection(const ModInfo &info)
         addLink(tr("百度搜索"), QString("https://www.baidu.com/s?wd=%1+minecraft+mod").arg(QString(QUrl::toPercentEncoding(searchName))));
     }
 
-    // 问问AI
+    // 问问AI：跳转 AI 助手并引用当前本地模组
     {
-        QString searchName = info.chineseName.isEmpty() ? (info.englishName.isEmpty() ? info.name : info.englishName) : info.chineseName;
-        addLink(tr("问问AI"), QString("https://www.bing.com/search?q=%1+minecraft+mod+介绍").arg(QString(QUrl::toPercentEncoding(searchName))));
+        QPushButton *askAiBtn = new QPushButton(tr("问问AI"));
+        askAiBtn->setObjectName("modDetailLinkBtn");
+        askAiBtn->setFixedWidth(100);
+        askAiBtn->setCursor(Qt::PointingHandCursor);
+        connect(askAiBtn, &QPushButton::clicked, this, [this, info]() {
+            QString searchName = info.chineseName.isEmpty()
+                ? (info.englishName.isEmpty() ? info.name : info.englishName)
+                : info.chineseName;
+            if (searchName.isEmpty())
+                searchName = info.fileName;
+            ResourceReference ref;
+            ref.category = tr("本地模组");
+            ref.name = searchName;
+            ref.path = info.filePath;
+            ref.size = info.fileSize;
+            emit askAiRequested(ref);
+        });
+        linksRowLayout->addWidget(askAiBtn);
     }
 
     linksRowLayout->addStretch();

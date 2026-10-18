@@ -26,6 +26,7 @@
 #include <QWidget>
 
 #include "utils/mod/ModData.h"
+#include "utils/content/ContentData.h"
 
 class BlurLoadingOverlay;
 class LocalCategoryManager;
@@ -67,6 +68,8 @@ signals:
     void modDetailRequested(const ModInfo &info);
     /** 请求快捷启动游戏并进入指定存档（仅存档类型触发） */
     void quickLaunchSaveRequested(const QString &saveName);
+    /** 卡片点击「问问AI」：请求跳转 AI 助手并引用该本地资源 */
+    void askAiRequested(const ResourceReference &ref);
 
 private slots:
     void onTabChanged(int index);

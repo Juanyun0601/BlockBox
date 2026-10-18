@@ -17,6 +17,9 @@ SOURCES += world_map_page_probe.cpp \
            ../../utils/WorldMap/SeedTerrainRenderer.cpp \
            ../../utils/WorldMap/StructureFinder.cpp \
            ../../utils/WorldMap/StructureIcons.cpp \
+           ../../utils/WorldMap/BiomeCatalog.cpp \
+           ../../utils/WorldMap/BiomeName.cpp \
+           ../../utils/JarUtils.cpp \
            ../../utils/Schematic/NbtCodec.cpp \
            ../../utils/Saves/LevelDatEditor.cpp \
            ../../utils/IconHelper.cpp \
@@ -35,6 +38,9 @@ HEADERS += ../../pages/WorldMapPage.h \
            ../../utils/WorldMap/SeedTerrainRenderer.h \
            ../../utils/WorldMap/StructureFinder.h \
            ../../utils/WorldMap/StructureIcons.h \
+           ../../utils/WorldMap/BiomeCatalog.h \
+           ../../utils/WorldMap/BiomeName.h \
+           ../../utils/JarUtils.h \
            ../../utils/Schematic/NbtCodec.h \
            ../../utils/Saves/LevelDatEditor.h \
            fake/utils/ThemeManager.h \

@@ -823,6 +823,23 @@ void InstanceModsPage::addListCard(const ModInfo &info)
     });
     btnLayout->addWidget(detailBtn);
 
+    // 问问AI 按钮：跳转 AI 助手并引用该本地模组
+    QPushButton *askAiBtn = createBtn(":/Images/Icons/nav_ai.svg", tr("问问AI"));
+    connect(askAiBtn, &QPushButton::clicked, this, [this, capturedInfo]() {
+        QString displayName = capturedInfo.chineseName.isEmpty()
+            ? (capturedInfo.englishName.isEmpty() ? capturedInfo.name : capturedInfo.englishName)
+            : capturedInfo.chineseName;
+        if (displayName.isEmpty())
+            displayName = capturedInfo.fileName;
+        ResourceReference ref;
+        ref.category = tr("本地模组");
+        ref.name = displayName;
+        ref.path = capturedInfo.filePath;
+        ref.size = capturedInfo.fileSize;
+        emit askAiRequested(ref);
+    });
+    btnLayout->addWidget(askAiBtn);
+
     // 开关按钮 — 以不同图标和颜色区分启用/禁用状态
     QPushButton *toggleBtn = createBtn(
         info.enabled ? ":/Images/Icons/toggle_on.svg" : ":/Images/Icons/toggle_off.svg",
@@ -881,6 +898,21 @@ QWidget *InstanceModsPage::createMasonryCardWidget(const ModInfo &info, QWidget 
 
     actions.append({ QStringLiteral(":/Images/Icons/list.svg"), tr("查看详情"), QColor(),
                      [this, capturedInfo]() { emit modDetailRequested(capturedInfo); } });
+
+    actions.append({ QStringLiteral(":/Images/Icons/nav_ai.svg"), tr("问问AI"), QColor(),
+                     [this, capturedInfo]() {
+                         QString displayName = capturedInfo.chineseName.isEmpty()
+                             ? (capturedInfo.englishName.isEmpty() ? capturedInfo.name : capturedInfo.englishName)
+                             : capturedInfo.chineseName;
+                         if (displayName.isEmpty())
+                             displayName = capturedInfo.fileName;
+                         ResourceReference ref;
+                         ref.category = tr("本地模组");
+                         ref.name = displayName;
+                         ref.path = capturedInfo.filePath;
+                         ref.size = capturedInfo.fileSize;
+                         emit askAiRequested(ref);
+                     } });
 
     actions.append({ info.enabled ? QStringLiteral(":/Images/Icons/toggle_on.svg")
                                   : QStringLiteral(":/Images/Icons/toggle_off.svg"),

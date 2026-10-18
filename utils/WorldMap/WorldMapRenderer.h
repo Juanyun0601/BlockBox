@@ -75,6 +75,7 @@ struct RenderResult
     int regionCount = 0;      ///< 需渲染的区域总数（文件区域 + 种子预测区域）
     int renderedRegions = 0;  ///< 实际渲染成功的区域数（含种子预测）
     int seedRegions = 0;      ///< 其中按种子预测渲染的区域数
+    int reusedRegions = 0;    ///< 从上一张画布直接搬像素、未重渲的区域数
     int failedRegions = 0;    ///< 读取失败的区域数
     int elapsedMs = 0;        ///< 渲染耗时（毫秒）
     int key = -1;             ///< 调用方打的标记（如 维度×着色），用于丢弃过期渲染结果
@@ -116,6 +117,24 @@ struct ProgressiveSink
 
 using ProgressiveSinkPtr = std::shared_ptr<ProgressiveSink>;
 
+/**
+ * @brief 上一张同设置画布：种子重定心时把重叠 region 原样搬过来
+ *
+ * 视角离开种子窗口后只需补新露出来的环，不必整图重读 .mca / 重算群系。
+ * bpp 必须与本次渲染一致，否则像素对不齐。
+ */
+struct PriorCanvas
+{
+    QImage image;
+    int minChunkX = 0;
+    int minChunkZ = 0;
+    int blockPerPixel = 0; ///< ≤0 = 不可用
+    bool valid() const
+    {
+        return !image.isNull() && blockPerPixel > 0;
+    }
+};
+
 /** 维度对应的 region 目录（绝对路径），存档目录为空时返回空串 */
 QString regionDir(const QString &savePath, Dimension dim);
 
@@ -149,6 +168,7 @@ QImage renderRegionTile(const QString &savePath, Dimension dim,
  * @param sink        渐进渲染上下文；非空时先写布局再逐区域推图块
  * @param maxThreads  并行区域数上限；<=0 用 QThreadPool 默认线程数，1 = 单线程
  * @param seed        种子预测：无文件的区域按种子渲染近似地形（enabled=false 时行为不变）
+ * @param prior       上一张画布（可选）：bpp 一致时重叠 region 直接搬像素，跳过重渲
  */
 RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     const std::function<bool()> &cancelled,
@@ -156,7 +176,8 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     const ProgressiveSinkPtr &sink = nullptr,
                     int maxThreads = 0,
                     int maxSurfaceY = -1,
-                    const SeedPreview &seed = SeedPreview());
+                    const SeedPreview &seed = SeedPreview(),
+                    const PriorCanvas &prior = PriorCanvas());
 
 /** 方块 ID（含或不含 minecraft: 前缀）→ 地表颜色 */
 QColor blockColor(const QString &blockName);

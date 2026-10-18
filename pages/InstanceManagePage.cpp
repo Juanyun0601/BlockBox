@@ -78,13 +78,19 @@ void InstanceManagePage::setCurrentInstancePath(const QString &instancePath)
         m_saveSettingsPage->reset();
     // 地图页可能残留上个实例的地表地图
     if (m_worldMapPage)
+    {
         m_worldMapPage->reset();
+        m_worldMapPage->setInstancePath(instancePath);
+    }
     // 光影设置页可能残留上个实例的信息，切换实例时重置
     if (m_shaderSettingsPage)
         m_shaderSettingsPage->reset();
     // 投影编辑页可能残留上个实例的信息，切换实例时重置
     if (m_projectionEditPage)
+    {
+        m_projectionEditPage->setInstancePath(instancePath);
         m_projectionEditPage->reset();
+    }
 
     // 立即加载可见的概览页，让用户尽快看到内容
     if (m_overviewPage)
@@ -211,6 +217,8 @@ void InstanceManagePage::initUI()
             this, &InstanceManagePage::modDetailRequested);
     connect(m_modsPage, &InstanceModsPage::modDownloadSearchRequested,
             this, &InstanceManagePage::modDownloadSearchRequested);
+    connect(m_modsPage, &InstanceModsPage::askAiRequested,
+            this, &InstanceManagePage::askAiRequested);
 
     // 4: 存档
     m_savesPage = new InstanceFilePage(InstanceFilePage::Save, this);
@@ -221,10 +229,14 @@ void InstanceManagePage::initUI()
             this, [this](const QString &keyword) {
         emit fileSearchRequested(ContentType::World, keyword);
     });
+    connect(m_savesPage, &InstanceFilePage::askAiRequested,
+            this, &InstanceManagePage::askAiRequested);
 
     // 5: 截图
     m_screenshotsPage = new InstanceFilePage(InstanceFilePage::Screenshot, this);
     m_contentStack->addWidget(m_screenshotsPage); // index 5
+    connect(m_screenshotsPage, &InstanceFilePage::askAiRequested,
+            this, &InstanceManagePage::askAiRequested);
 
     // 6: 资源包
     m_resourcePacksPage = new InstanceFilePage(InstanceFilePage::ResourcePack, this);
@@ -233,6 +245,8 @@ void InstanceManagePage::initUI()
             this, [this](const QString &keyword) {
         emit fileSearchRequested(ContentType::ResourcePack, keyword);
     });
+    connect(m_resourcePacksPage, &InstanceFilePage::askAiRequested,
+            this, &InstanceManagePage::askAiRequested);
 
     // 7: 光影包
     m_shaderPacksPage = new InstanceFilePage(InstanceFilePage::ShaderPack, this);
@@ -241,6 +255,8 @@ void InstanceManagePage::initUI()
             this, [this](const QString &keyword) {
         emit fileSearchRequested(ContentType::ShaderPack, keyword);
     });
+    connect(m_shaderPacksPage, &InstanceFilePage::askAiRequested,
+            this, &InstanceManagePage::askAiRequested);
 
     // 8: 服务器管理
     m_serverPage = new ServerManagePage(this);
@@ -257,6 +273,8 @@ void InstanceManagePage::initUI()
         {
             // 先切换到投影编辑页，再加载文件，避免在隐藏页上执行耗时解析
             m_contentStack->setCurrentWidget(m_projectionEditPage);
+            // 材料清单中文名依赖当前实例
+            m_projectionEditPage->setInstancePath(m_currentInstancePath);
             m_projectionEditPage->setCurrentProjection(filePath);
             // 通知主窗口更新 TopBar 返回按钮与标题
             emit projectionEditOpened();

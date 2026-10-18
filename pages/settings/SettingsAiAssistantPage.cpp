@@ -9,6 +9,7 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QDialog>
+#include <QDir>
 #include <QFile>
 #include <QFormLayout>
 #include <QJsonArray>
@@ -18,6 +19,9 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSet>
+#include <QSignalBlocker>
+#include <QStandardPaths>
 #include <QTextEdit>
 #include <QUuid>
 #include <QVBoxLayout>
@@ -43,23 +47,27 @@ void SettingsPage::initAiAssistantSettings()
 
     SettingsManager *settings = SettingsManager::instance();
 
-    // ── 默认模型设置 ──
+    // ── 默认模型设置（列出已配置/已添加的真实模型）──
     QVBoxLayout *defaultModelCard = createSettingsCard(layout, tr("默认模型"));
 
     QComboBox *defaultModelCombo = new QComboBox();
-    defaultModelCombo->addItems({tr("DeepSeek Chat"), tr("DeepSeek Reasoner"), tr("GPT-4o"), tr("GPT-4o-mini"), tr("Claude 3.5 Sonnet"), tr("自定义")});
+    m_aiDefaultModelCombo = defaultModelCombo;
     disableWheelEffect(defaultModelCombo);
 
-    int savedModelIndex = settings->getProperty("ai/defaultModelIndex", 0).toInt();
-    defaultModelCombo->setCurrentIndex(savedModelIndex);
+    // 用真实模型填充下拉框（自定义模型 + 已配置服务商的选中模型）
+    refreshAiDefaultModelCombo();
 
-    connect(defaultModelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int index) {
-        settings->setProperty("ai/defaultModelIndex", index);
+    connect(defaultModelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (!m_aiDefaultModelCombo)
+            return;
+        // itemData 存模型 ID；空串 = 自动（沿用内置默认逻辑）
+        SettingsManager::instance()->setProperty(
+            "ai/defaultModelId", m_aiDefaultModelCombo->itemData(index).toString());
     });
 
     QHBoxLayout *defaultModelRow = appendSettingRow(defaultModelCard,
-        tr("默认模型"), tr("选择 AI 助手默认使用的模型。"),
-        tr("不同模型在能力、速度和价格上有差异，请根据需求选择。"));
+        tr("默认模型"), tr("选择 AI 助手默认使用的模型，列表仅显示已配置或已添加的模型。"),
+        tr("选择「自动」时由启动器按内置优先级挑选；配置服务商或添加自定义模型后列表会自动更新。"));
     defaultModelRow->addWidget(defaultModelCombo);
 
     // ── 服务商配置 ──
@@ -97,7 +105,7 @@ void SettingsPage::initAiAssistantSettings()
     providerList->setMaximumHeight(280);
 
     // 自定义服务商（排在最前面）
-    QSettings customSettings;
+    QSettings customSettings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
     QString customJsonStr = customSettings.value("ai/customModels", "").toString();
     int customCount = 0;
     if (!customJsonStr.isEmpty()) {
@@ -167,7 +175,7 @@ void SettingsPage::initAiAssistantSettings()
             // 加载函数
             auto loadModels = [&modelList]() {
                 modelList->clear();
-                QSettings s;
+                QSettings s(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
                 QString json = s.value("ai/customModels", "").toString();
                 if (json.isEmpty()) return;
                 QJsonParseError pe;
@@ -248,7 +256,7 @@ void SettingsPage::initAiAssistantSettings()
                     QString key = keyEdit->text().trimmed();
                     if (name.isEmpty() || id.isEmpty() || url.isEmpty()) return;
 
-                    QSettings s;
+                    QSettings s(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
                     QString json = s.value("ai/customModels", "").toString();
                     QJsonArray arr;
                     if (!json.isEmpty()) {
@@ -264,8 +272,9 @@ void SettingsPage::initAiAssistantSettings()
                     arr.append(obj);
                     s.setValue("ai/customModels", QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
                     loadModels();
+                    refreshAiDefaultModelCombo();
                     // 更新外部列表项计数
-                    QSettings cs;
+                    QSettings cs(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
                     QString cj = cs.value("ai/customModels", "").toString();
                     QJsonParseError cpe;
                     QJsonDocument cd = QJsonDocument::fromJson(cj.toUtf8(), &cpe);
@@ -315,7 +324,7 @@ void SettingsPage::initAiAssistantSettings()
                     QString key = keyEdit->text().trimmed();
                     if (name.isEmpty() || id.isEmpty() || url.isEmpty()) return;
 
-                    QSettings s;
+                    QSettings s(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
                     QString json = s.value("ai/customModels", "").toString();
                     QJsonArray arr;
                     if (!json.isEmpty()) {
@@ -337,6 +346,7 @@ void SettingsPage::initAiAssistantSettings()
                     }
                     s.setValue("ai/customModels", QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
                     loadModels();
+                    refreshAiDefaultModelCombo();
                 }
             });
 
@@ -346,7 +356,7 @@ void SettingsPage::initAiAssistantSettings()
                 if (!sel) return;
                 QJsonObject obj = sel->data(Qt::UserRole).toJsonObject();
 
-                QSettings s;
+                QSettings s(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
                 QString json = s.value("ai/customModels", "").toString();
                 QJsonArray arr;
                 if (!json.isEmpty()) {
@@ -361,6 +371,7 @@ void SettingsPage::initAiAssistantSettings()
                 }
                 s.setValue("ai/customModels", QString::fromUtf8(QJsonDocument(newArr).toJson(QJsonDocument::Compact)));
                 loadModels();
+                refreshAiDefaultModelCombo();
                 // 更新外部列表项计数
                 QString cj = s.value("ai/customModels", "").toString();
                 QJsonParseError cpe;
@@ -386,7 +397,7 @@ void SettingsPage::initAiAssistantSettings()
                 QJsonDocument doc = QJsonDocument::fromJson(data, &pe);
                 if (pe.error != QJsonParseError::NoError || !doc.isArray()) return;
 
-                QSettings s;
+                QSettings s(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
                 QString json = s.value("ai/customModels", "").toString();
                 QJsonArray arr;
                 if (!json.isEmpty()) {
@@ -407,6 +418,7 @@ void SettingsPage::initAiAssistantSettings()
                 }
                 s.setValue("ai/customModels", QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
                 loadModels();
+                refreshAiDefaultModelCombo();
                 QString cj = s.value("ai/customModels", "").toString();
                 QJsonParseError cpe;
                 QJsonDocument cd = QJsonDocument::fromJson(cj.toUtf8(), &cpe);
@@ -418,7 +430,7 @@ void SettingsPage::initAiAssistantSettings()
 
             // 导出
             connect(exportBtn, &QPushButton::clicked, &dlg, [&]() {
-                QSettings s;
+                QSettings s(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
                 QString json = s.value("ai/customModels", "").toString();
                 if (json.isEmpty()) return;
                 QString filePath = AppFileDialog::getSaveFileName(&dlg, tr("导出模型配置"), QString(),
@@ -575,6 +587,7 @@ void SettingsPage::initAiAssistantSettings()
                 displayText += "  " + tr("(已配置)");
             }
             item->setText(displayText);
+            refreshAiDefaultModelCombo();
         }
     });
 
@@ -1087,4 +1100,36 @@ void SettingsPage::initAiAssistantSettings()
 
     // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
+}
+
+void SettingsPage::refreshAiDefaultModelCombo()
+{
+    if (!m_aiDefaultModelCombo)
+        return;
+
+    SettingsManager *settings = SettingsManager::instance();
+    const QString savedId = settings->getProperty("ai/defaultModelId", QString()).toString();
+
+    const QSignalBlocker blocker(m_aiDefaultModelCombo);
+    m_aiDefaultModelCombo->clear();
+
+    // 第一项：自动（空 ID，由 AiChatPage 按内置优先级挑选）
+    m_aiDefaultModelCombo->addItem(tr("自动"), QString());
+
+    // 真实模型列表：自定义模型 + 已配 Key 服务商的选中模型（与翻译设置共用 aiConfiguredModels）
+    for (const AiConfiguredModel &m : aiConfiguredModels()) {
+        const QString label = QStringLiteral("%1 (%2)").arg(m.displayName, m.id);
+        m_aiDefaultModelCombo->addItem(label, m.id);
+    }
+
+    // 恢复选中项；已保存的 ID 不在列表中时补一项，避免静默丢失用户选择
+    int index = 0;
+    if (!savedId.isEmpty()) {
+        index = m_aiDefaultModelCombo->findData(savedId);
+        if (index < 0) {
+            m_aiDefaultModelCombo->addItem(tr("已移除的模型 (%1)").arg(savedId), savedId);
+            index = m_aiDefaultModelCombo->count() - 1;
+        }
+    }
+    m_aiDefaultModelCombo->setCurrentIndex(index);
 }

@@ -41,12 +41,17 @@ bool supported(int mc, WorldMapRenderer::Dimension dim);
  * @param outSize 输出边长（像素）。概览降采样时传 512/bpp（内部采样封顶 128）；
  *                1:1 细节瓦片传 512 → 自动升到方块级（scale=1 群系 + 连续高度），
  *                精确到单个方块。采样恒定铺满整个 region，绝不只采一角再拉伸
+ * @param maxSurfaceY 高度上限（-1 = 不限制）。设定后与真实地表同语义：预测
+ *                地表高于该 Y 时截断成固体（石头 / 下界岩 / 末地石）；海洋
+ *                水底低于截断面时仍显示水色，水面下沉到截断 Y 并按剩余水深
+ *                调暗
  * @return outSize×outSize 的 ARGB 图；不支持的组合返回空图
  */
 QImage renderRegionTile(int regionX, int regionZ,
                         WorldMapRenderer::Dimension dim,
                         WorldMapRenderer::ShadeMode mode,
-                        quint64 seed, int mc, int outSize = 512);
+                        quint64 seed, int mc, int outSize = 512,
+                        int maxSurfaceY = -1);
 
 } // namespace SeedTerrainRenderer
 

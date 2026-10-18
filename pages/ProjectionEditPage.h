@@ -20,9 +20,11 @@
 
 #include <QWidget>
 #include <QString>
+#include <QHash>
 
 #include "utils/CommandAssistant/LitematicReader.h"
 
+class InstanceTextureLoader;
 class QHBoxLayout;
 class QLabel;
 class QLineEdit;
@@ -49,6 +51,11 @@ public:
      */
     void setCurrentProjection(const QString &filePath);
 
+    /**
+     * @brief 设置当前实例路径（用于从实例客户端 JAR 读取方块中文名）
+     */
+    void setInstancePath(const QString &instancePath);
+
     /** 重置为未加载状态（实例切换时调用） */
     void reset();
 
@@ -69,6 +76,8 @@ private:
     void loadProjection();
     void populateRegions();
     void populateMaterials();
+    void loadBlockChineseNames();
+    QString materialDisplayName(const QString &blockId) const;
     void resizeTreeToContent(QTreeWidget *tree);
     QString formatFileSize(qint64 size) const;
     QString formatTimestamp(qint64 msecs) const;
@@ -83,8 +92,11 @@ private:
                                   bool isLast = false);
 
     QString m_filePath;         ///< 投影文件绝对路径
+    QString m_instancePath;     ///< 当前实例路径（中文名/图标来源）
     bool m_loaded = false;      ///< 是否成功解析
     LitematicInfo m_info;       ///< 已读取的投影信息
+    QHash<QString, QString> m_blockCnMap;   ///< 方块 ID（小写）-> 中文名
+    InstanceTextureLoader *m_texLoader = nullptr;  ///< 实例贴图图集（不拥有）
 
     // 顶部
     QLabel *m_titleLabel;

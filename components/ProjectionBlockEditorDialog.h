@@ -23,7 +23,6 @@
 #include "utils/Schematic/SchematicDocument.h"
 #include "utils/Schematic/InstanceTextureLoader.h"
 #include "utils/Schematic/BlockShapeLoader.h"
-#include "utils/CommandAssistant/GameRegistry.h"
 
 class VoxelViewWidget;
 class QComboBox;
@@ -123,7 +122,6 @@ private:
     SchematicDocument m_doc;
     InstanceTextureLoader *m_texLoader = nullptr;   // 进程内共享图集（不拥有）
     BlockShapeLoader *m_shapeLoader = nullptr;      // 进程内共享形状加载器（不拥有）
-    GameRegistry m_gameRegistry;         // 游戏注册表（方块中英文名映射）
     QHash<QString, QString> m_blockCnMap; // 方块ID(小写) -> 中文名
 
     QString displayName() const;

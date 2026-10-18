@@ -220,6 +220,11 @@ void BedrockContentDetailPage::clearContent()
     m_screenshotSection = nullptr;
     m_screenshotStrip = nullptr;
     m_downloadCards.clear();
+    m_downloadCurrentPage = 0;
+    m_downloadPaginationBar = nullptr;
+    m_downloadPrevBtn = nullptr;
+    m_downloadNextBtn = nullptr;
+    m_downloadPageLabel = nullptr;
     m_progressBar->hide();
     m_progressLabel->hide();
     m_openFolderBtn->hide();
@@ -229,11 +234,12 @@ void BedrockContentDetailPage::clearContent()
 
 void BedrockContentDetailPage::buildHeader()
 {
+    // 顶部信息区（大图标＋名称＋简介＋收藏按钮）包进卡片，内边距由布局给出
     m_headerWidget = new QWidget();
     m_headerWidget->setObjectName("modDetailHeader");
     QHBoxLayout *headerLayout = new QHBoxLayout(m_headerWidget);
-    headerLayout->setContentsMargins(0, 0, 0, 16);
-    headerLayout->setSpacing(16);
+    headerLayout->setContentsMargins(20, 20, 20, 20);
+    headerLayout->setSpacing(20);
 
     m_iconLabel = new QLabel();
     m_iconLabel->setObjectName("modDetailIcon");
@@ -404,12 +410,60 @@ void BedrockContentDetailPage::buildDownloadBlock()
         vf.version = m_modInfo.latestVersion;
         vf.gameVersions = m_modInfo.gameVersions;
         vf.downloadUrl = m_modInfo.downloadUrl;
-        m_downloadListLayout->addWidget(createDownloadCard(vf));
+        QWidget *card = createDownloadCard(vf);
+        m_downloadListLayout->addWidget(card);
+        m_downloadCards.append(card);
     } else {
-        for (const ModVersionFile &vf : m_versionFiles)
-            m_downloadListLayout->addWidget(createDownloadCard(vf));
+        for (const ModVersionFile &vf : m_versionFiles) {
+            QWidget *card = createDownloadCard(vf);
+            m_downloadListLayout->addWidget(card);
+            m_downloadCards.append(card);
+        }
     }
     sectionLayout->addWidget(m_downloadContainer);
+
+    // 分页控制栏
+    m_downloadPaginationBar = new QWidget();
+    m_downloadPaginationBar->setObjectName("modPaginationBar");
+    QHBoxLayout *paginationLayout = new QHBoxLayout(m_downloadPaginationBar);
+    paginationLayout->setContentsMargins(14, 8, 14, 8);
+    paginationLayout->setSpacing(6);
+
+    m_downloadPrevBtn = new QPushButton();
+    m_downloadPrevBtn->setObjectName("modDetailPageBtn");
+    m_downloadPrevBtn->setFixedSize(28, 28);
+    m_downloadPrevBtn->setCursor(Qt::PointingHandCursor);
+    m_downloadPrevBtn->setEnabled(false);
+    connect(m_downloadPrevBtn, &QPushButton::clicked, this, [this]() {
+        if (m_downloadCurrentPage > 0) {
+            m_downloadCurrentPage--;
+            updateDownloadPagination();
+        }
+    });
+
+    m_downloadPageLabel = new QLabel();
+    m_downloadPageLabel->setObjectName("modDetailPageLabel");
+    m_downloadPageLabel->setAlignment(Qt::AlignCenter);
+
+    m_downloadNextBtn = new QPushButton();
+    m_downloadNextBtn->setObjectName("modDetailPageBtn");
+    m_downloadNextBtn->setFixedSize(28, 28);
+    m_downloadNextBtn->setCursor(Qt::PointingHandCursor);
+    m_downloadNextBtn->setEnabled(false);
+    connect(m_downloadNextBtn, &QPushButton::clicked, this, [this]() {
+        m_downloadCurrentPage++;
+        updateDownloadPagination();
+    });
+
+    paginationLayout->addStretch();
+    paginationLayout->addWidget(m_downloadPrevBtn);
+    paginationLayout->addWidget(m_downloadPageLabel);
+    paginationLayout->addWidget(m_downloadNextBtn);
+    paginationLayout->addStretch();
+
+    m_downloadPaginationBar->hide();
+    sectionLayout->addWidget(m_downloadPaginationBar);
+
     m_leftLayout->addWidget(section);
     m_leftLayout->addStretch();
 
@@ -426,9 +480,58 @@ void BedrockContentDetailPage::buildDownloadBlock()
     m_rightLayout->setSpacing(16);
     m_rightLayout->addStretch();
 
-    bodyLayout->addWidget(m_leftPanel, 2);
-    bodyLayout->addWidget(m_rightPanel, 3);
+    bodyLayout->addWidget(m_leftPanel, 3);
+    bodyLayout->addWidget(m_rightPanel, 7);
     m_contentLayout->addWidget(mainBody, 1);
+
+    updateDownloadPagination();
+}
+
+void BedrockContentDetailPage::updateDownloadPagination()
+{
+    const int total = m_downloadCards.size();
+    const int totalPages = (total + kDownloadPageSize - 1) / kDownloadPageSize;
+    const int pageTotal = totalPages > 0 ? totalPages : 1;
+    if (m_downloadCurrentPage >= pageTotal)
+        m_downloadCurrentPage = pageTotal - 1;
+    if (m_downloadCurrentPage < 0)
+        m_downloadCurrentPage = 0;
+
+    const int startIdx = m_downloadCurrentPage * kDownloadPageSize;
+    const int endIdx = qMin(startIdx + kDownloadPageSize, total);
+    for (int i = 0; i < total; ++i)
+        m_downloadCards[i]->setVisible(i >= startIdx && i < endIdx);
+
+    const bool needPagination = pageTotal > 1;
+    if (m_downloadPaginationBar)
+        m_downloadPaginationBar->setVisible(needPagination);
+    if (!needPagination)
+        return;
+
+    if (m_downloadPageLabel)
+        m_downloadPageLabel->setText(tr("第 %1 / %2 页").arg(m_downloadCurrentPage + 1).arg(pageTotal));
+    if (m_downloadPrevBtn)
+        m_downloadPrevBtn->setEnabled(m_downloadCurrentPage > 0);
+    if (m_downloadNextBtn)
+        m_downloadNextBtn->setEnabled(m_downloadCurrentPage < pageTotal - 1);
+
+    QColor themeColor(ThemeManager::instance()->currentThemeColor());
+    if (m_downloadPrevBtn) {
+        m_downloadPrevBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/chevron_left.svg", themeColor, 14));
+        m_downloadPrevBtn->setIconSize(QSize(14, 14));
+        m_downloadPrevBtn->setStyleSheet(
+            "QPushButton { border: none; border-radius: 14px; background: #f0f0f0; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { background: #f8f8f8; }");
+    }
+    if (m_downloadNextBtn) {
+        m_downloadNextBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/chevron_right.svg", themeColor, 14));
+        m_downloadNextBtn->setIconSize(QSize(14, 14));
+        m_downloadNextBtn->setStyleSheet(
+            "QPushButton { border: none; border-radius: 14px; background: #f0f0f0; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { background: #f8f8f8; }");
+    }
 }
 
 QWidget *BedrockContentDetailPage::createDownloadCard(const ModVersionFile &vf)
@@ -754,16 +857,23 @@ void BedrockContentDetailPage::onDetailReceived(const ModInfo &detail)
             delete item;
         }
         m_downloadCards.clear();
+        m_downloadCurrentPage = 0;
         if (m_versionFiles.isEmpty()) {
             ModVersionFile vf;
             vf.version = detail.latestVersion;
             vf.gameVersions = detail.gameVersions;
             vf.downloadUrl = detail.downloadUrl;
-            m_downloadListLayout->addWidget(createDownloadCard(vf));
+            QWidget *card = createDownloadCard(vf);
+            m_downloadListLayout->addWidget(card);
+            m_downloadCards.append(card);
         } else {
-            for (const ModVersionFile &vf : m_versionFiles)
-                m_downloadListLayout->addWidget(createDownloadCard(vf));
+            for (const ModVersionFile &vf : m_versionFiles) {
+                QWidget *card = createDownloadCard(vf);
+                m_downloadListLayout->addWidget(card);
+                m_downloadCards.append(card);
+            }
         }
+        updateDownloadPagination();
     }
 
     if (m_descLabel && !detail.description.isEmpty())

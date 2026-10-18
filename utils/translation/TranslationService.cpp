@@ -7,12 +7,15 @@
 
 #include "TranslationService.h"
 
+#include "utils/AiProviderPresets.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSettings>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QCryptographicHash>
@@ -115,21 +118,45 @@ void TranslationService::translateByAI(const QString &text, const TranslationCon
     // 但更好的方式是让 ContentDetailPage 自己调用 AiService
     // 这里提供一个简化实现：通过网络直接调用
 
-    // 使用自定义 API 端点来调用 AI
+    // 使用自定义 API 端点来调用 AI。
+    // 未手动填写时回退到 AI 助手设置的默认模型（ai/defaultModelId），端点/密钥一并套用服务商配置。
+    QString modelId = config.customModel;
+    QString apiBaseUrl = config.customApiUrl;
+    QString apiKey = config.customApiKey;
+    if (modelId.isEmpty() || apiBaseUrl.isEmpty() || apiKey.isEmpty()) {
+        QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+        const QString defaultId = settings.value(QStringLiteral("ai/defaultModelId")).toString();
+        if (!defaultId.isEmpty()) {
+            for (const AiConfiguredModel &m : aiConfiguredModels()) {
+                if (m.id != defaultId)
+                    continue;
+                if (modelId.isEmpty())
+                    modelId = m.id;
+                if (apiBaseUrl.isEmpty() && !m.apiUrl.isEmpty())
+                    apiBaseUrl = m.apiUrl;
+                if (apiKey.isEmpty() && !m.apiKey.isEmpty())
+                    apiKey = m.apiKey;
+                break;
+            }
+        }
+    }
+    if (modelId.isEmpty())
+        modelId = QStringLiteral("deepseek-chat");
+
     QJsonObject requestBody;
-    requestBody["model"] = config.customModel.isEmpty() ? "deepseek-chat" : config.customModel;
+    requestBody["model"] = modelId;
     requestBody["messages"] = messages;
     requestBody["stream"] = false;
 
-    QUrl apiUrl(config.customApiUrl.isEmpty()
-        ? "https://api.deepseek.com/v1/chat/completions"
-        : config.customApiUrl + "/v1/chat/completions");
+    QUrl apiUrl(apiBaseUrl.isEmpty()
+        ? QStringLiteral("https://api.deepseek.com/v1/chat/completions")
+        : apiBaseUrl + QStringLiteral("/v1/chat/completions"));
 
     QNetworkRequest request(apiUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    if (!config.customApiKey.isEmpty()) {
+    if (!apiKey.isEmpty()) {
         request.setRawHeader("Authorization",
-            ("Bearer " + config.customApiKey).toUtf8());
+            ("Bearer " + apiKey).toUtf8());
     }
 
     QByteArray body = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);

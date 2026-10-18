@@ -260,6 +260,9 @@ void MainWindow::initEssentialPages()
         if (m_instanceSelectPage)
             m_instanceSelectPage->updateInstanceList();
     });
+    // 本地资源卡片「问问AI」：跳转 AI 助手并引用当前资源
+    connect(m_instanceManagePage, &InstanceManagePage::askAiRequested,
+            this, &MainWindow::openAiChatWithReference);
 
     // 整合包导出页面占位
     QWidget *placeholderModpackExport = new QWidget(this);
@@ -274,6 +277,8 @@ void MainWindow::initEssentialPages()
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
     });
+    connect(m_localModDetailPage, &LocalModDetailPage::askAiRequested,
+            this, &MainWindow::openAiChatWithReference);
     connect(m_localModDetailPage, &LocalModDetailPage::remoteDetailRequested,
             this, [this](const ModInfo &info) {
         // 跳转到内置在线详情页
@@ -656,6 +661,9 @@ void MainWindow::initModDetailPage()
             m_modDetailPage->setMcmodUrl(url);
         }
     });
+    // 问问AI：跳转 AI 助手并引用当前网络模组
+    connect(m_modDetailPage, &ModDetailPage::askAiRequested,
+            this, &MainWindow::openAiChatWithReference);
     m_pageInitialized[PageIndex::ModDetailPage] = true;
     PerformanceMonitor::instance()->endMeasurement("Mod Detail Page Initialization");
 }
@@ -723,6 +731,19 @@ void MainWindow::showLocalModDetailPage(const ModInfo &modInfo)
         m_localModDetailPage->setModInfo(modInfo);
     }
     m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::LocalModDetailPageIndex));
+}
+
+void MainWindow::openAiChatWithReference(const ResourceReference &ref)
+{
+    ensurePageInitialized(PageIndex::AiChatPage);
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("AI 助手"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    if (m_aiChatPage) {
+        m_aiChatPage->addExternalReference(ref);
+    }
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::AiChatPage));
 }
 
 void MainWindow::showModDownloadPage()

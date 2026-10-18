@@ -1310,15 +1310,18 @@ void dimensionHeightRange(Dimension dim, int *minY, int *maxY)
  * 用种子预测地形垫住真实图里的透明洞（半生成 region）。
  * 真实像素画在上层、种子只填空缺 —— 已加载与未加载之间不再露出空缺。
  * @param seedRes 种子渲染边长：细节瓦片传 512（方块级），概览传 512/bpp。
+ * @param maxSurfaceY 高度上限（-1 = 不限制），与真实地表截断同语义
  */
 QImage seedUnderlay(QImage &real, int regionX, int regionZ, Dimension dim,
-                    ShadeMode mode, const SeedPreview &seed, int seedRes)
+                    ShadeMode mode, const SeedPreview &seed, int seedRes,
+                    int maxSurfaceY)
 {
     if (!seed.enabled || !SeedTerrainRenderer::supported(seed.mc, dim))
         return real;
     QImage under = SeedTerrainRenderer::renderRegionTile(regionX, regionZ, dim,
                                                          mode, seed.seed,
-                                                         seed.mc, seedRes);
+                                                         seed.mc, seedRes,
+                                                         maxSurfaceY);
     if (under.isNull())
         return real;
     if (under.size() != real.size())
@@ -1532,7 +1535,8 @@ QImage renderRegionTile(const QString &savePath, Dimension dim,
             img = renderRegionFile(path, mode, minY, maxY, &failedChunks,
                                    maxSurfaceY, &holes);
             if (!img.isNull() && holes)
-                img = seedUnderlay(img, regionX, regionZ, dim, mode, seed, 512);
+                img = seedUnderlay(img, regionX, regionZ, dim, mode, seed, 512,
+                                   maxSurfaceY);
         }
     }
 
@@ -1541,7 +1545,8 @@ QImage renderRegionTile(const QString &savePath, Dimension dim,
         && SeedTerrainRenderer::supported(seed.mc, dim))
     {
         img = SeedTerrainRenderer::renderRegionTile(regionX, regionZ, dim, mode,
-                                                    seed.seed, seed.mc, 512);
+                                                    seed.seed, seed.mc, 512,
+                                                    maxSurfaceY);
     }
     return img;
 }
@@ -1632,6 +1637,79 @@ QImage boxDownscale(const QImage &src, int factor)
     return dst;
 }
 
+/**
+ * 概览种子 tile 缓存：radius 20 重定心时大量 region 与上一张画布重叠，
+ * 命中后直接搬像素，不再逐格重算 cubiomes。键含 outSize —— 不同 bpp 不串。
+ * 只缓存 outSize≤128 的概览小图（细节 512 瓦片由页面 LRU 管）。
+ */
+struct SeedTileKey
+{
+    int rx = 0, rz = 0;
+    int dim = 0, mode = 0, mc = 0, outSize = 0, maxSurfaceY = 0;
+    quint64 seed = 0;
+    bool operator==(const SeedTileKey &o) const
+    {
+        return rx == o.rx && rz == o.rz && dim == o.dim && mode == o.mode
+            && mc == o.mc && outSize == o.outSize
+            && maxSurfaceY == o.maxSurfaceY && seed == o.seed;
+    }
+};
+
+inline size_t qHash(const SeedTileKey &k, size_t h = 0)
+{
+    auto mix = [&h](quint64 v) {
+        h ^= size_t(v) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    };
+    mix((quint64(uint(k.rx)) << 32) | uint(k.rz));
+    mix((quint64(uint(k.dim)) << 32) | uint(k.mode));
+    mix((quint64(uint(k.mc)) << 32) | uint(k.outSize));
+    mix(quint64(uint(k.maxSurfaceY)) << 32);
+    mix(k.seed);
+    return h;
+}
+
+QMutex g_seedTileMutex;
+QHash<SeedTileKey, QImage> g_seedTiles;
+QList<SeedTileKey> g_seedTileOrder;
+constexpr int kMaxSeedTileCache = 768; // 128×128×4B ≈ 64KB/张 → ~48MB 上限
+
+QImage cachedSeedTile(int rx, int rz, Dimension dim, ShadeMode mode,
+                      const SeedPreview &seed, int outSize, int maxSurfaceY)
+{
+    if (outSize > 128 || !seed.enabled
+        || !SeedTerrainRenderer::supported(seed.mc, dim))
+        return QImage();
+    SeedTileKey key;
+    key.rx = rx;
+    key.rz = rz;
+    key.dim = int(dim);
+    key.mode = int(mode);
+    key.mc = seed.mc;
+    key.outSize = outSize;
+    key.maxSurfaceY = maxSurfaceY;
+    key.seed = seed.seed;
+    {
+        QMutexLocker lock(&g_seedTileMutex);
+        const auto it = g_seedTiles.constFind(key);
+        if (it != g_seedTiles.constEnd())
+        {
+            g_seedTileOrder.removeAll(key);
+            g_seedTileOrder.append(key);
+            return it.value();
+        }
+    }
+    QImage img = SeedTerrainRenderer::renderRegionTile(
+        rx, rz, dim, mode, seed.seed, seed.mc, outSize, maxSurfaceY);
+    if (img.isNull())
+        return img;
+    QMutexLocker lock(&g_seedTileMutex);
+    g_seedTiles.insert(key, img);
+    g_seedTileOrder.append(key);
+    while (g_seedTileOrder.size() > kMaxSeedTileCache)
+        g_seedTiles.remove(g_seedTileOrder.takeFirst());
+    return img;
+}
+
 /** 工作线程里跑：解一个 region → 按 blockPerPixel 降采样；无文件时走种子预测 */
 TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
                                 int destX, int destY, int bpp,
@@ -1653,7 +1731,7 @@ TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
         // 已加载与未加载之间不再露出一条空缺
         if (!img.isNull() && holes)
             img = seedUnderlay(img, regionX, regionZ, dim, mode, seed,
-                               std::clamp(512 / bpp, 4, 128));
+                               std::clamp(512 / bpp, 4, 128), maxSurfaceY);
     }
     else if (seed.enabled && SeedTerrainRenderer::supported(seed.mc, dim))
     {
@@ -1661,9 +1739,13 @@ TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
         // 直接按输出尺寸渲染；概览封顶 128 采样（群系 1:4 粒度已够），
         // 方块级 512 采样只留给放大后的细节瓦片路径
         r.isSeed = true;
-        img = SeedTerrainRenderer::renderRegionTile(regionX, regionZ, dim, mode,
-                                                    seed.seed, seed.mc,
-                                                    std::clamp(512 / bpp, 4, 128));
+        const int seedOut = std::clamp(512 / bpp, 4, 128);
+        img = cachedSeedTile(regionX, regionZ, dim, mode, seed, seedOut,
+                             maxSurfaceY);
+        if (img.isNull())
+            img = SeedTerrainRenderer::renderRegionTile(
+                regionX, regionZ, dim, mode, seed.seed, seed.mc, seedOut,
+                maxSurfaceY);
     }
 
     if (img.isNull())
@@ -1687,7 +1769,8 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     const std::function<bool()> &cancelled,
                     const std::function<void(int, int)> &progress,
                     const ProgressiveSinkPtr &sink, int maxThreads,
-                    int maxSurfaceY, const SeedPreview &seed)
+                    int maxSurfaceY, const SeedPreview &seed,
+                    const PriorCanvas &prior)
 {
     QElapsedTimer timer;
     timer.start();
@@ -1886,6 +1969,43 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
     res.blockPerPixel = bpp;
     res.regionCount = paths.size();
 
+    // 种子重定心：上一张同 bpp 画布的重叠 region 直接搬像素，跳过重渲。
+    // 覆盖到的槽位从任务队列剔除，工作线程只补新露出来的环。
+    QVector<bool> reused(coords.size(), false);
+    int reuseCount = 0;
+    int reuseSeedCount = 0;
+    if (prior.valid() && prior.blockPerPixel == bpp && !prior.image.isNull())
+    {
+        const int tilePx = 512 / bpp;
+        const int priorMinRx = prior.minChunkX / 32;
+        const int priorMinRz = prior.minChunkZ / 32;
+        const int priorW = prior.image.width();
+        const int priorH = prior.image.height();
+        QPainter reusePainter(&master);
+        reusePainter.setCompositionMode(QPainter::CompositionMode_Source);
+        for (int i = 0; i < coords.size(); ++i)
+        {
+            const int rx = coords[i].first;
+            const int rz = coords[i].second;
+            const int srcX = (rx - priorMinRx) * tilePx;
+            const int srcY = (rz - priorMinRz) * tilePx;
+            if (srcX < 0 || srcY < 0
+                || srcX + tilePx > priorW || srcY + tilePx > priorH)
+                continue;
+            const int destX = (rx - minRx) * tilePx;
+            const int destY = (rz - minRz) * tilePx;
+            reusePainter.drawImage(QPoint(destX, destY), prior.image,
+                                   QRect(srcX, srcY, tilePx, tilePx));
+            reused[i] = true;
+            ++reuseCount;
+            if (paths[i].isEmpty())
+                ++reuseSeedCount;
+        }
+        reusePainter.end();
+    }
+    res.reusedRegions = reuseCount;
+    res.seedRegions = reuseSeedCount;
+
     // ① 先发布布局，UI 收到就能建画布开始"边渲染边显示"
     if (sink)
     {
@@ -1894,7 +2014,8 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
         sink->blockPerPixel = bpp;
         sink->minChunkX = res.minChunkX;
         sink->minChunkZ = res.minChunkZ;
-        sink->total.store(paths.size());
+        // 已搬过来的 region 不占进度条，否则重定心会先跳到"已完成大半"
+        sink->total.store(paths.size() - reuseCount);
         sink->layoutReady.store(true, std::memory_order_release);
     }
 
@@ -1915,11 +2036,12 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
     pool.setMaxThreadCount(threads);
 
     const int total = paths.size();
+    const int workTotal = total - reuseCount;
     std::atomic<int> nextIdx{ 0 };
     std::atomic<int> doneCount{ 0 };
     std::atomic<int> failedCount{ 0 };
-    std::atomic<int> renderedCount{ 0 };
-    std::atomic<int> seedCount{ 0 };
+    std::atomic<int> renderedCount{ reuseCount };
+    std::atomic<int> seedCount{ reuseSeedCount };
     QMutex blitMutex;
 
     // 主图写入：QPainter Source 合成（与 sink 贴图一致），互斥保证只一线程画
@@ -1944,6 +2066,11 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
             const int i = nextIdx.fetch_add(1, std::memory_order_relaxed);
             if (i >= total)
                 break;
+            if (reused.value(i))
+            {
+                // 重定心复用：像素已在 master 里，不占进度/计数
+                continue;
+            }
 
             const QString path = paths[i];
             const int regionX = coords[i].first;
@@ -1979,7 +2106,7 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
             if (sink)
                 sink->done.store(d);
             if (progress)
-                progress(d, total);
+                progress(d, workTotal);
         }
     };
 

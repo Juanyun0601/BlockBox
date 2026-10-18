@@ -29,6 +29,8 @@ public:
 
 signals:
     void contentClicked(const ModInfo &info);
+    /** 卡片点击「问问AI」：请求跳转 AI 助手并引用该本地资源 */
+    void askAiRequested(const ResourceReference &ref);
 
 private slots:
     void onInstanceChanged(int index);

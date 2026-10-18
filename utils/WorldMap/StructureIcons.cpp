@@ -129,7 +129,7 @@ void downloadImage(const QString &imageUrl, const QString &memKey,
 
 /** Overview 风格第一步：查 Wiki 条目的缩略图地址，再进入下载 */
 void fetchThumbUrl(const QString &key, const QString &title,
-                   const QString &memKey)
+                   const QString &memKey, Style st)
 {
     QUrl url(QStringLiteral("https://minecraft.wiki/api.php"));
     QUrlQuery q;
@@ -147,9 +147,11 @@ void fetchThumbUrl(const QString &key, const QString &title,
                   QStringLiteral("BlockBox/1.0 (structure icons)"));
     QNetworkReply *reply = nam()->get(req);
     QObject::connect(reply, &QNetworkReply::finished, reply,
-                     [reply, key, memKey, title]() {
+                     [reply, key, memKey, title, st]() {
         reply->deleteLater();
-        const QString disk = imagePath(key, Style::Overview);
+        // 落盘路径跟随调用时的风格：Icon 风格回退 pageimages 时也要存 .icon.png，
+        // 否则重启后磁盘缓存永远 miss、每次启动都重下一遍
+        const QString disk = imagePath(key, st);
         if (reply->error() != QNetworkReply::NoError)
         {
             g_inflight.remove(key);
@@ -243,7 +245,7 @@ QPixmap pixmap(int structIdx, const QString &key, const QString &firstChar,
             // Overview（或 Icon 缺失时回退）：查条目主图
             const QString title = itemTitle.isEmpty() ? wikiTitle : itemTitle;
             g_inflight.insert(key);
-            fetchThumbUrl(key, title, memKey);
+            fetchThumbUrl(key, title, memKey, st);
         }
     }
     if (onLoaded)

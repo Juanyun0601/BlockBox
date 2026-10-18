@@ -869,6 +869,41 @@ QWidget *InstanceResourcesPage::createModCard(const ModInfo &info)
         return btn;
     };
 
+    // 问问AI 按钮：跳转 AI 助手并引用该本地资源
+    {
+        QPushButton *askAiBtn = createBtn(":/Images/Icons/nav_ai.svg", tr("问问AI"), themeColor);
+        ResourceType resType = m_currentType;
+        connect(askAiBtn, &QPushButton::clicked, this, [this, key, resType]() {
+            int idx = m_modIndexMap.value(key, -1);
+            if (idx < 0 || idx >= m_modList.size())
+            {
+                return;
+            }
+            ModInfo info = m_modList.at(idx);
+            QString category;
+            switch (resType)
+            {
+            case TypeMods: category = tr("本地模组"); break;
+            case TypeResourcePack: category = tr("本地资源包"); break;
+            case TypeShaderPack: category = tr("本地光影包"); break;
+            case TypeSave: category = tr("本地存档"); break;
+            default: category = tr("本地文件"); break;
+            }
+            QString displayName = info.chineseName.isEmpty()
+                ? (info.englishName.isEmpty() ? info.name : info.englishName)
+                : info.chineseName;
+            if (displayName.isEmpty())
+                displayName = info.fileName;
+            ResourceReference ref;
+            ref.category = category;
+            ref.name = displayName;
+            ref.path = info.filePath;
+            ref.size = info.fileSize;
+            emit askAiRequested(ref);
+        });
+        cardLayout->addWidget(askAiBtn);
+    }
+
     // 启用/禁用切换按钮
     QPushButton *toggleBtn = createBtn(
         info.enabled ? ":/Images/Icons/toggle_on.svg" : ":/Images/Icons/toggle_off.svg",
@@ -1104,6 +1139,30 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
             emit quickLaunchSaveRequested(entry.fileName);
         });
         cardLayout->addWidget(quickLaunchBtn);
+    }
+
+    // 问问AI 按钮：跳转 AI 助手并引用该本地资源
+    {
+        QPushButton *askAiBtn = createBtn(":/Images/Icons/nav_ai.svg", tr("问问AI"), themeColor);
+        ResourceType resType = m_currentType;
+        connect(askAiBtn, &QPushButton::clicked, this, [this, entry, resType]() {
+            QString category;
+            switch (resType)
+            {
+            case TypeMods: category = tr("本地模组"); break;
+            case TypeResourcePack: category = tr("本地资源包"); break;
+            case TypeShaderPack: category = tr("本地光影包"); break;
+            case TypeSave: category = tr("本地存档"); break;
+            default: category = tr("文件"); break;
+            }
+            ResourceReference ref;
+            ref.category = category;
+            ref.name = entry.fileName;
+            ref.path = entry.filePath;
+            ref.size = entry.fileSize;
+            emit askAiRequested(ref);
+        });
+        cardLayout->addWidget(askAiBtn);
     }
 
     // 截图查看按钮（仅截图）：用系统默认程序打开图片

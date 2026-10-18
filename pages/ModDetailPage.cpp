@@ -27,6 +27,7 @@
 #include <QParallelAnimationGroup>
 #include <QPropertyAnimation>
 #include <QEasingCurve>
+#include <QSet>
 
 static QNetworkAccessManager *s_detailNAM = nullptr;
 static QNetworkDiskCache *s_detailDiskCache = nullptr;
@@ -59,10 +60,16 @@ ModDetailPage::ModDetailPage(QWidget *parent)
     , m_leftPanel(nullptr)
     , m_versionCombo(nullptr)
     , m_loaderCombo(nullptr)
+    , m_versionTypeCombo(nullptr)
     , m_dependenciesContainer(nullptr)
     , m_dependenciesLayout(nullptr)
     , m_downloadContainer(nullptr)
     , m_downloadListLayout(nullptr)
+    , m_downloadCurrentPage(0)
+    , m_downloadPaginationBar(nullptr)
+    , m_downloadPrevBtn(nullptr)
+    , m_downloadNextBtn(nullptr)
+    , m_downloadPageLabel(nullptr)
     , m_linksContainer(nullptr)
     , m_linksLayout(nullptr)
     , m_tagsContainer(nullptr)
@@ -205,6 +212,11 @@ void ModDetailPage::clearContent()
     m_descriptionContainer = nullptr;
     m_descriptionBrowser = nullptr;
     m_downloadCards.clear();
+    m_downloadCurrentPage = 0;
+    m_downloadPaginationBar = nullptr;
+    m_downloadPrevBtn = nullptr;
+    m_downloadNextBtn = nullptr;
+    m_downloadPageLabel = nullptr;
     m_instanceGameVersion.clear();
     m_instanceLoaderType.clear();
     m_screenshotSection = nullptr;
@@ -280,12 +292,13 @@ void ModDetailPage::setInstanceFilter(const QString &gameVersion, const QString 
 
 void ModDetailPage::buildHeader()
 {
+    // 顶部信息区（大图标＋名称＋简介）包进卡片，内边距由布局给出
     m_headerWidget = new QWidget();
     m_headerWidget->setObjectName("modDetailHeader");
     addSectionShadow(m_headerWidget);
     QHBoxLayout *headerLayout = new QHBoxLayout(m_headerWidget);
-    headerLayout->setContentsMargins(0, 0, 0, 16);
-    headerLayout->setSpacing(16);
+    headerLayout->setContentsMargins(20, 20, 20, 20);
+    headerLayout->setSpacing(20);
 
     m_iconLabel = new QLabel();
     m_iconLabel->setObjectName("modDetailIcon");
@@ -369,8 +382,8 @@ void ModDetailPage::buildRightMain()
     bodyLayout->setContentsMargins(0, 0, 0, 0);
     bodyLayout->setSpacing(16);
 
-    bodyLayout->addWidget(m_leftPanel, 2);
-    bodyLayout->addWidget(rightPanel, 3);
+    bodyLayout->addWidget(m_leftPanel, 3);
+    bodyLayout->addWidget(rightPanel, 7);
 
     m_contentLayout->addWidget(mainBody, 1);
 }
@@ -520,6 +533,41 @@ void ModDetailPage::buildDownloadListBlock(QVBoxLayout *parentLayout)
     }
 
     sectionLayout->addWidget(m_downloadContainer);
+
+    // 分页控制栏（微透明玻璃态卡片，与资源列表页底部翻页栏一致）
+    m_downloadPaginationBar = new QWidget();
+    m_downloadPaginationBar->setObjectName("modPaginationBar");
+    QHBoxLayout *paginationLayout = new QHBoxLayout(m_downloadPaginationBar);
+    paginationLayout->setContentsMargins(14, 8, 14, 8);
+    paginationLayout->setSpacing(6);
+
+    m_downloadPrevBtn = new QPushButton();
+    m_downloadPrevBtn->setObjectName("modDetailPageBtn");
+    m_downloadPrevBtn->setFixedSize(28, 28);
+    m_downloadPrevBtn->setCursor(Qt::PointingHandCursor);
+    m_downloadPrevBtn->setEnabled(false);
+    connect(m_downloadPrevBtn, &QPushButton::clicked, this, &ModDetailPage::onDownloadPrevPage);
+
+    m_downloadPageLabel = new QLabel();
+    m_downloadPageLabel->setObjectName("modDetailPageLabel");
+    m_downloadPageLabel->setAlignment(Qt::AlignCenter);
+
+    m_downloadNextBtn = new QPushButton();
+    m_downloadNextBtn->setObjectName("modDetailPageBtn");
+    m_downloadNextBtn->setFixedSize(28, 28);
+    m_downloadNextBtn->setCursor(Qt::PointingHandCursor);
+    m_downloadNextBtn->setEnabled(false);
+    connect(m_downloadNextBtn, &QPushButton::clicked, this, &ModDetailPage::onDownloadNextPage);
+
+    paginationLayout->addStretch();
+    paginationLayout->addWidget(m_downloadPrevBtn);
+    paginationLayout->addWidget(m_downloadPageLabel);
+    paginationLayout->addWidget(m_downloadNextBtn);
+    paginationLayout->addStretch();
+
+    m_downloadPaginationBar->hide();
+    sectionLayout->addWidget(m_downloadPaginationBar);
+
     parentLayout->addWidget(section);
 }
 
@@ -604,7 +652,10 @@ void ModDetailPage::applyDownloadFilter()
             selectedType = "alpha";
     }
 
-    for (const DownloadCardEntry &entry : m_downloadCards) {
+    // 先计算匹配的索引列表
+    QList<int> matchedIndices;
+    for (int i = 0; i < m_downloadCards.size(); ++i) {
+        const DownloadCardEntry &entry = m_downloadCards[i];
         bool versionMatch = selectedVersion.isEmpty();
         if (!versionMatch) {
             for (const QString &gv : entry.gameVersions) {
@@ -624,8 +675,117 @@ void ModDetailPage::applyDownloadFilter()
             }
         }
         bool typeMatch = selectedType.isEmpty() || entry.releaseType == selectedType;
-        entry.widget->setVisible(versionMatch && loaderMatch && typeMatch);
+        if (versionMatch && loaderMatch && typeMatch)
+            matchedIndices.append(i);
     }
+
+    // 分页：计算总页数并限制当前页
+    int totalPages = (matchedIndices.size() + kDownloadPageSize - 1) / kDownloadPageSize;
+    if (totalPages <= 0) totalPages = 1;
+    if (m_downloadCurrentPage >= totalPages)
+        m_downloadCurrentPage = totalPages - 1;
+    if (m_downloadCurrentPage < 0)
+        m_downloadCurrentPage = 0;
+
+    int startIdx = m_downloadCurrentPage * kDownloadPageSize;
+    int endIdx = qMin(startIdx + kDownloadPageSize, matchedIndices.size());
+
+    // 构建当前页应显示的索引集合
+    QSet<int> visibleSet;
+    for (int i = startIdx; i < endIdx; ++i)
+        visibleSet.insert(matchedIndices[i]);
+
+    for (int i = 0; i < m_downloadCards.size(); ++i) {
+        m_downloadCards[i].widget->setVisible(visibleSet.contains(i));
+    }
+
+    updateDownloadPagination();
+}
+
+void ModDetailPage::updateDownloadPagination()
+{
+    // 统计当前筛选后总条数
+    QString selectedVersion;
+    QString selectedLoader;
+    QString selectedType;
+    if (m_versionCombo && m_versionCombo->currentIndex() > 0)
+        selectedVersion = m_versionCombo->currentText();
+    if (m_loaderCombo && m_loaderCombo->currentIndex() > 0)
+        selectedLoader = m_loaderCombo->currentText();
+    if (m_versionTypeCombo) {
+        int typeIdx = m_versionTypeCombo->currentIndex();
+        if (typeIdx == 1) selectedType = "release";
+        else if (typeIdx == 2) selectedType = "beta";
+        else if (typeIdx == 3) selectedType = "alpha";
+    }
+
+    int totalMatched = 0;
+    for (const DownloadCardEntry &entry : m_downloadCards) {
+        bool vm = selectedVersion.isEmpty();
+        if (!vm) {
+            for (const QString &gv : entry.gameVersions) {
+                if (gv.contains(selectedVersion, Qt::CaseInsensitive)) { vm = true; break; }
+            }
+        }
+        bool lm = selectedLoader.isEmpty();
+        if (!lm) {
+            for (const QString &l : entry.loaders) {
+                if (l.contains(selectedLoader, Qt::CaseInsensitive)) { lm = true; break; }
+            }
+        }
+        bool tm = selectedType.isEmpty() || entry.releaseType == selectedType;
+        if (vm && lm && tm) totalMatched++;
+    }
+
+    int totalPages = (totalMatched + kDownloadPageSize - 1) / kDownloadPageSize;
+    if (totalPages <= 0) totalPages = 1;
+
+    bool needPagination = totalPages > 1;
+    if (m_downloadPaginationBar)
+        m_downloadPaginationBar->setVisible(needPagination);
+
+    if (!needPagination)
+        return;
+
+    if (m_downloadPageLabel)
+        m_downloadPageLabel->setText(tr("第 %1 / %2 页").arg(m_downloadCurrentPage + 1).arg(totalPages));
+    if (m_downloadPrevBtn)
+        m_downloadPrevBtn->setEnabled(m_downloadCurrentPage > 0);
+    if (m_downloadNextBtn)
+        m_downloadNextBtn->setEnabled(m_downloadCurrentPage < totalPages - 1);
+
+    // 更新上/下箭头图标
+    QColor themeColor(ThemeManager::instance()->currentThemeColor());
+    if (m_downloadPrevBtn) {
+        m_downloadPrevBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/chevron_left.svg", themeColor, 14));
+        m_downloadPrevBtn->setIconSize(QSize(14, 14));
+        m_downloadPrevBtn->setStyleSheet(
+            "QPushButton { border: none; border-radius: 14px; background: #f0f0f0; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { background: #f8f8f8; }");
+    }
+    if (m_downloadNextBtn) {
+        m_downloadNextBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/chevron_right.svg", themeColor, 14));
+        m_downloadNextBtn->setIconSize(QSize(14, 14));
+        m_downloadNextBtn->setStyleSheet(
+            "QPushButton { border: none; border-radius: 14px; background: #f0f0f0; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { background: #f8f8f8; }");
+    }
+}
+
+void ModDetailPage::onDownloadPrevPage()
+{
+    if (m_downloadCurrentPage > 0) {
+        m_downloadCurrentPage--;
+        applyDownloadFilter();
+    }
+}
+
+void ModDetailPage::onDownloadNextPage()
+{
+    m_downloadCurrentPage++;
+    applyDownloadFilter();
 }
 
 void ModDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
@@ -659,7 +819,7 @@ void ModDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
         {tr("Modrinth"), QString(), false},
         {tr("必应搜索"), QString("https://www.bing.com/search?q=%1").arg(m_modInfo.name), true},
         {tr("百度搜索"), QString("https://www.baidu.com/s?wd=%1").arg(m_modInfo.name), true},
-        {tr("AI介绍"), QString(), true}
+        {tr("问问AI"), QString(), true}
     };
 
     if (m_modInfo.source == "curseforge" || m_modInfo.pageUrl.contains("curseforge"))
@@ -674,7 +834,25 @@ void ModDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
         QPushButton *btn = new QPushButton(link.label);
         btn->setObjectName("modDetailLinkBtn");
         btn->setCursor(Qt::PointingHandCursor);
-        if (!link.url.isEmpty()) {
+        if (link.label == tr("问问AI")) {
+            // 问问AI：跳转 AI 助手并引用当前网络模组
+            ModInfo info = m_modInfo;
+            connect(btn, &QPushButton::clicked, this, [this, info]() {
+                ResourceReference ref;
+                ref.category = tr("网络模组");
+                ref.name = info.name;
+                ref.path = info.pageUrl;
+                if (ref.path.isEmpty() && !info.id.isEmpty()) {
+                    if (info.source == "curseforge")
+                        ref.path = QStringLiteral("https://www.curseforge.com/minecraft/mc-mods/%1").arg(info.id);
+                    else
+                        ref.path = QStringLiteral("https://modrinth.com/project/%1").arg(info.id);
+                }
+                if (!info.source.isEmpty())
+                    ref.extra = tr("来源: %1").arg(info.source);
+                emit askAiRequested(ref);
+            });
+        } else if (!link.url.isEmpty()) {
             connect(btn, &QPushButton::clicked, this, [link]() {
                 QDesktopServices::openUrl(QUrl(link.url));
             });
@@ -1294,6 +1472,7 @@ void ModDetailPage::receiveDetail(const ModInfo &detail)
             delete item;
         }
         m_downloadCards.clear();
+        m_downloadCurrentPage = 0;
 
         for (const ModVersionFile &vf : detail.versionFiles) {
             QWidget *fileCard = createDownloadCard(vf);
@@ -1301,6 +1480,7 @@ void ModDetailPage::receiveDetail(const ModInfo &detail)
             DownloadCardEntry entry;
             entry.gameVersions = vf.gameVersions;
             entry.loaders = vf.loaders;
+            entry.releaseType = vf.releaseType;
             entry.widget = fileCard;
             m_downloadCards.append(entry);
         }

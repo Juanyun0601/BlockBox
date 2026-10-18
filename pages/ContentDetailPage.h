@@ -46,6 +46,8 @@ signals:
     void contentClicked(const ModInfo &info);
     void addToFavoritesRequested(const ModInfo &modInfo, ContentType type, const QString &source);
     void backToFavoriteFolderRequested(const QString &folderId);
+    /** 点击「问问AI」：请求跳转 AI 助手并引用当前网络资源 */
+    void askAiRequested(const ResourceReference &ref);
 
 public slots:
     void refreshFavoriteState();

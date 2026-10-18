@@ -16,15 +16,19 @@
 #include <QFrame>
 #include <QFuture>
 #include <QFutureWatcher>
+#include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QIntValidator>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QMutexLocker>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
@@ -42,12 +46,16 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <limits>
+#include <utility>
 
 #include "components/AppFileDialog.h"
 #include "components/NotificationManager.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
+#include "utils/WorldMap/BiomeCatalog.h"
+#include "utils/WorldMap/BiomeName.h"
 #include "utils/WorldMap/StructureFinder.h"
 #include "utils/WorldMap/StructureIcons.h"
 #include "utils/Saves/LevelDatEditor.h"
@@ -66,6 +74,34 @@ const QColor kRegionGrid(255, 255, 255, 78);
 constexpr int kMaxConcurrentTiles = 3;
 /** 每方块低于此屏幕像素数时不加载细节 —— 方块太小，只看概览就够 */
 constexpr double kDetailMinBlockPx = 0.5;
+/** 中间地图卡片圆角（与顶部工具栏 14px 对齐） */
+constexpr qreal kMapCardRadius = 14.0;
+
+/** 地图卡片底色（@BG_BASE@；不透，自定义背景不会从地图区透出） */
+QColor mapCardBackgroundColor()
+{
+    if (!ThemeManager::instance())
+        return QColor(0xf5, 0xf5, 0xf5);
+    switch (ThemeManager::instance()->currentTheme())
+    {
+    case ThemeManager::LightTheme: return QColor(0xf5, 0xf5, 0xf5);
+    case ThemeManager::DarkTheme:  return QColor(0x1a, 0x1a, 0x1a);
+    default:                       return QColor(0x2a, 0x2a, 0x2a);
+    }
+}
+
+/** 地图卡片描边（@BORDER@，与 QSS 卡片描边同值） */
+QColor mapCardBorderColor()
+{
+    if (!ThemeManager::instance())
+        return QColor(0xe8, 0xea, 0xed);
+    switch (ThemeManager::instance()->currentTheme())
+    {
+    case ThemeManager::LightTheme: return QColor(0xe8, 0xea, 0xed);
+    case ThemeManager::DarkTheme:  return QColor(0x3a, 0x3a, 0x3a);
+    default:                       return QColor(0x40, 0x40, 0x40);
+    }
+}
 
 } // namespace
 
@@ -100,6 +136,64 @@ public:
     {
         m_markers = markers;
         update();
+    }
+
+    /**
+     * 群系叠加层：一张与采样网格对齐的小图（一格一像素），
+     * 由页面按「选中群系 → 上色 / 未选中 → 透明」重建。
+     * 传空图关闭叠加。坐标为方块级网格原点 + 格边长。
+     */
+    void setBiomeOverlay(const QImage *image, qint64 minBlockX,
+                         qint64 minBlockZ, int cellSize)
+    {
+        m_bioOverlay = image;
+        m_bioMinX = minBlockX;
+        m_bioMinZ = minBlockZ;
+        m_bioCell = qMax(1, cellSize);
+        update();
+    }
+
+    /**
+     * 高亮圈：在指定方块位置画一圈主题色脉冲光环（「跳转并高亮」用）。
+     * 传 false 清除。
+     */
+    void setHighlight(qint64 x, qint64 z, bool on)
+    {
+        if (m_hlOn == on && m_hlX == x && m_hlZ == z)
+            return;
+        m_hlOn = on;
+        m_hlX = x;
+        m_hlZ = z;
+        if (on && !m_hlTimer)
+        {
+            m_hlTimer = new QTimer(this);
+            m_hlTimer->setInterval(50);
+            connect(m_hlTimer, &QTimer::timeout, this,
+                    [this]() { update(); });
+        }
+        if (m_hlTimer)
+        {
+            if (on)
+            {
+                m_hlPhase.start();
+                m_hlTimer->start();
+            }
+            else
+            {
+                m_hlTimer->stop();
+            }
+        }
+        update();
+    }
+
+    /** 当前高亮位置（探针断言用；未高亮返回 false） */
+    bool highlightPos(qint64 *x, qint64 *z) const
+    {
+        if (!m_hlOn)
+            return false;
+        if (x) *x = m_hlX;
+        if (z) *z = m_hlZ;
+        return true;
     }
 
     /** 当前标记数（探针断言用） */
@@ -490,13 +584,25 @@ protected:
     void paintEvent(QPaintEvent *) override
     {
         QPainter p(this);
-        p.fillRect(rect(), palette().color(QPalette::Window));
+        p.setRenderHint(QPainter::Antialiasing);
+
+        // 中间地图区：圆角不透卡片 —— 底色固定主题底色，自定义背景（壁纸/纯色）
+        // 不会从地图区透出；四角圆角外仍透出页面背景，形成悬浮卡片观感
+        const QRectF outer = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        QPainterPath clip;
+        clip.addRoundedRect(outer, kMapCardRadius, kMapCardRadius);
+        p.fillPath(clip, mapCardBackgroundColor());
+        p.setClipPath(clip);
 
         if (!valid())
         {
             p.setPen(palette().color(QPalette::Mid));
             p.drawText(rect(), Qt::AlignCenter,
                        QStringLiteral("还没有可显示的地图"));
+            p.setClipping(false);
+            p.setPen(QPen(mapCardBorderColor(), 1));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(outer, kMapCardRadius, kMapCardRadius);
             return;
         }
 
@@ -508,11 +614,13 @@ protected:
         // 底层：概览（先大致） → 上层：已加载的 1:1 瓦片（再精细）
         drawOverview(p, target);
         drawTiles(p);
+        drawBiomeOverlay(p);
 
         if (m_grid)
             drawGrid(p, target);
 
         drawMarkers(p);
+        drawHighlight(p);
 
         if (m_hasSelection)
             drawSelection(p, target);
@@ -521,6 +629,11 @@ protected:
         p.setBrush(Qt::NoBrush);
         p.setPen(QColor(255, 255, 255, 32));
         p.drawRect(target);
+
+        p.setClipping(false);
+        p.setPen(QPen(mapCardBorderColor(), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(outer, kMapCardRadius, kMapCardRadius);
     }
 
     void resizeEvent(QResizeEvent *event) override
@@ -907,6 +1020,51 @@ private:
         return -1;
     }
 
+    /**
+     * 群系叠加层：选中群系的采样格子按代表色半透明铺在地图上
+     * （一格一像素的 QImage 最近邻拉伸 —— 边界呈方块状，与地图像素感一致）
+     */
+    void drawBiomeOverlay(QPainter &p)
+    {
+        if (!m_bioOverlay || m_bioOverlay->isNull() || !valid())
+            return;
+        const double ox = double(m_minChunkX) * 16.0;
+        const double oz = double(m_minChunkZ) * 16.0;
+        const double x0 = (double(m_bioMinX) - ox) / m_bpp;
+        const double z0 = (double(m_bioMinZ) - oz) / m_bpp;
+        const double sz = double(m_bioCell) / m_bpp;
+        const QRectF target(m_offset.x() + x0 * m_scale,
+                            m_offset.y() + z0 * m_scale,
+                            sz * m_bioOverlay->width() * m_scale,
+                            sz * m_bioOverlay->height() * m_scale);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+        p.setOpacity(0.55);
+        p.drawImage(target, *m_bioOverlay);
+        p.setOpacity(1.0);
+    }
+
+    /** 高亮圈：主题色脉冲光环（sin 相位缩放），标记「刚跳转过来的内容」 */
+    void drawHighlight(QPainter &p)
+    {
+        if (!m_hlOn || !valid())
+            return;
+        const QPointF c = screenPos(m_hlX, m_hlZ);
+        if (!QRectF(-80, -80, width() + 160, height() + 160).contains(c))
+            return;
+        const double t = double(m_hlPhase.elapsed() % 1200) / 1200.0;
+        const double pulse = 1.0 + 0.35 * std::sin(t * 2.0 * 3.14159265358979323846);
+        const double r = 22.0 * pulse;
+        const QColor accent(ThemeManager::instance()->currentThemeColor());
+        // 外圈脉冲 + 内圈实线，保证静态截图也能看出高亮
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 70));
+        p.drawEllipse(c, r + 8.0, r + 8.0);
+        QPen pen(accent, 2.5);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(c, r, r);
+    }
+
     /** 选中区块高亮：主色半透明填充 + 描边（很小时保证可见的最小尺寸） */
     void drawSelection(QPainter &p, const QRectF &target)
     {
@@ -1059,6 +1217,17 @@ private:
     QVector<Marker> m_markers;
     /** 已标记完成的结构（key = type_x_z），绘制时半透明 */
     QSet<QString> m_doneKeys;
+    /** 群系叠加层（页面维护像素，这里只负责拉伸绘制） */
+    const QImage *m_bioOverlay = nullptr;
+    qint64 m_bioMinX = 0;
+    qint64 m_bioMinZ = 0;
+    int m_bioCell = 64;
+    /** 高亮圈状态 */
+    bool m_hlOn = false;
+    qint64 m_hlX = 0;
+    qint64 m_hlZ = 0;
+    QElapsedTimer m_hlPhase;
+    QTimer *m_hlTimer = nullptr;
 };
 
 // ═══════════════════════ 页面 ═══════════════════════
@@ -1080,7 +1249,6 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     , m_fitBtn(nullptr)
     , m_gotoBtn(nullptr)
     , m_exportBtn(nullptr)
-    , m_refreshBtn(nullptr)
     , m_gotoX(nullptr)
     , m_gotoZ(nullptr)
     , m_watcher(nullptr)
@@ -1272,31 +1440,6 @@ WorldMapPage::WorldMapPage(QWidget *parent)
 
     barLay->addWidget(viewGroup);
 
-    // —— 定位组：坐标跳转 ——
-    auto *gotoGroup = makeGroup();
-    auto *ggLay = qobject_cast<QHBoxLayout *>(gotoGroup->layout());
-
-    m_gotoX = new QLineEdit(gotoGroup);
-    m_gotoX->setObjectName("worldMapCoordEdit");
-    m_gotoX->setPlaceholderText(tr("X"));
-    m_gotoX->setToolTip(tr("要跳转到的方块坐标"));
-    m_gotoX->setValidator(new QIntValidator(-30000000, 30000000, m_gotoX));
-    m_gotoX->setFixedSize(52, 26);
-    ggLay->addWidget(m_gotoX);
-
-    m_gotoZ = new QLineEdit(gotoGroup);
-    m_gotoZ->setObjectName("worldMapCoordEdit");
-    m_gotoZ->setPlaceholderText(tr("Z"));
-    m_gotoZ->setToolTip(tr("要跳转到的方块坐标"));
-    m_gotoZ->setValidator(new QIntValidator(-30000000, 30000000, m_gotoZ));
-    m_gotoZ->setFixedSize(52, 26);
-    ggLay->addWidget(m_gotoZ);
-
-    m_gotoBtn = makeBtn(tr("跳转"), tr("把视图中心移动到该坐标（回车）"));
-    ggLay->addWidget(m_gotoBtn);
-
-    barLay->addWidget(gotoGroup);
-
     barLay->addStretch(1);
 
     // —— 右侧输出动作：带框按钮，与组内扁平控件区分 ——
@@ -1304,11 +1447,6 @@ WorldMapPage::WorldMapPage(QWidget *parent)
                           QStringLiteral(":/Images/Icons/export.svg"),
                           "worldMapActionBtn");
     barLay->addWidget(m_exportBtn);
-
-    m_refreshBtn = makeBtn(tr("刷新"), tr("重新解析并渲染当前维度（R）"),
-                           QStringLiteral(":/Images/Icons/refresh.svg"),
-                           "worldMapActionBtn");
-    barLay->addWidget(m_refreshBtn);
 
     updateSubtitle();
 
@@ -1365,6 +1503,8 @@ WorldMapPage::WorldMapPage(QWidget *parent)
 
     const auto &defs = StructureFinder::allStructures();
     m_structEnabled = QVector<bool>(defs.size(), true);
+    // 群系默认全不选（叠加层默认关闭，需要时在弹窗里勾选 / 全选）
+    m_biomeEnabled = QVector<bool>(BiomeCatalog::allBiomes().size(), false);
     m_structBtns.reserve(defs.size());
     for (int i = 0; i < defs.size(); ++i)
     {
@@ -1399,6 +1539,27 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         connect(b, &QPushButton::toggled, this, [this, idx](bool on) {
             if (idx < m_structEnabled.size())
                 m_structEnabled[idx] = on;
+            // 弹窗打开时同步对应行的勾选（阻断信号避免回环触发重算）
+            if (m_contentPopup && m_contentPopup->isVisible() && m_structList)
+            {
+                for (int r = 0; r < m_structList->count(); ++r)
+                {
+                    auto *item = m_structList->item(r);
+                    if (item->data(Qt::UserRole).toInt() != idx)
+                        continue;
+                    auto *w = m_structList->itemWidget(item);
+                    if (!w)
+                        continue;
+                    auto *btn = w->findChild<QPushButton *>(
+                        QStringLiteral("worldMapPopupToggle"));
+                    if (btn)
+                    {
+                        const QSignalBlocker blocker(btn);
+                        btn->setChecked(on);
+                    }
+                    break;
+                }
+            }
             startStructRefresh();
         });
     }
@@ -1410,14 +1571,7 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     selectAll->setCursor(Qt::PointingHandCursor);
     selectAll->setToolTip(tr("显示全部结构标记"));
     connect(selectAll, &QPushButton::clicked, this, [this]() {
-        for (int i = 0; i < m_structBtns.size(); ++i)
-        {
-            const QSignalBlocker b(m_structBtns[i]); // 阻止逐个 toggled 反复重算
-            m_structBtns[i]->setChecked(true);
-            if (i < m_structEnabled.size())
-                m_structEnabled[i] = true;
-        }
-        startStructRefresh();
+        setAllStructures(true);
     });
     bar2Lay->addWidget(selectAll);
 
@@ -1426,16 +1580,23 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     clearAll->setCursor(Qt::PointingHandCursor);
     clearAll->setToolTip(tr("隐藏全部结构标记"));
     connect(clearAll, &QPushButton::clicked, this, [this]() {
-        for (int i = 0; i < m_structBtns.size(); ++i)
-        {
-            const QSignalBlocker b(m_structBtns[i]);
-            m_structBtns[i]->setChecked(false);
-            if (i < m_structEnabled.size())
-                m_structEnabled[i] = false;
-        }
-        startStructRefresh();
+        setAllStructures(false);
     });
     bar2Lay->addWidget(clearAll);
+
+    // —— 右侧「展开」：打开内容浏览弹窗（搜索 + 结构/群系列表 + 高亮跳转） ——
+    m_expandBtn = new QPushButton(tr("展开"), bar2);
+    m_expandBtn->setObjectName(QStringLiteral("worldMapExpandBtn"));
+    m_expandBtn->setCheckable(true);
+    m_expandBtn->setCursor(Qt::PointingHandCursor);
+    m_expandBtn->setToolTip(tr("展开内容列表：按名称搜索结构与群系，"
+                               "勾选决定是否在地图上显示，右侧按钮可高亮并跳转到最近的一处"));
+    m_expandBtn->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/expand.svg"), themeColor, 14));
+    m_expandBtn->setIconSize(QSize(14, 14));
+    bar2Lay->addWidget(m_expandBtn);
+    connect(m_expandBtn, &QPushButton::toggled,
+            this, &WorldMapPage::onExpandToggled);
 
     root->addWidget(bar2);
 
@@ -1444,6 +1605,8 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     m_stack->setObjectName("worldMapStack");
 
     auto *emptyPage = new QWidget(m_stack);
+    emptyPage->setObjectName("worldMapEmptyPage");
+    emptyPage->setAttribute(Qt::WA_StyledBackground, true);
     auto *emptyLay = new QVBoxLayout(emptyPage);
     emptyLay->addStretch(1);
     m_emptyLabel = new QLabel(emptyPage);
@@ -1472,6 +1635,12 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     m_statusLabel->setObjectName("worldMapStatus");
     m_statusLabel->setText(tr("尚未加载地图"));
     statusLay->addWidget(m_statusLabel, 1);
+
+    // 底部「当前群系」：中文名来自当前实例 lang（后台加载），采样视口中心
+    m_biomeLabel = new QLabel(statusBar);
+    m_biomeLabel->setObjectName("worldMapBiome");
+    m_biomeLabel->setText(tr("当前群系：—"));
+    statusLay->addWidget(m_biomeLabel);
 
     m_progress = new QProgressBar(statusBar);
     m_progress->setObjectName("worldMapProgress");
@@ -1540,11 +1709,7 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     connect(m_zoomOutBtn, &QPushButton::clicked, this, &WorldMapPage::onZoomOut);
     connect(m_fitBtn, &QPushButton::clicked, this, &WorldMapPage::onFitClicked);
     connect(m_oneOneBtn, &QPushButton::clicked, this, &WorldMapPage::onZoomToOneOne);
-    connect(m_gotoBtn, &QPushButton::clicked, this, &WorldMapPage::onGotoClicked);
     connect(m_exportBtn, &QPushButton::clicked, this, &WorldMapPage::onExportClicked);
-    connect(m_refreshBtn, &QPushButton::clicked, this, &WorldMapPage::onRefreshClicked);
-    connect(m_gotoX, &QLineEdit::returnPressed, this, &WorldMapPage::onGotoClicked);
-    connect(m_gotoZ, &QLineEdit::returnPressed, this, &WorldMapPage::onGotoClicked);
 
     m_view->onZoomChanged = [this](double) { updateZoomLabel(); };
     m_view->onCursorMoved = [this](qint64 bx, qint64 bz) {
@@ -1570,6 +1735,7 @@ WorldMapPage::WorldMapPage(QWidget *parent)
             m_tileTimer->start();   // 细节瓦片：等概览渲染完再排
         maybeScheduleSeedRecenter(); // 种子画布：视角离开窗口 → 去抖重定心
         startStructRefresh();       // 结构标记与渲染进度无关，立即重算（内部去重）
+        scheduleBiomeRefresh();     // 底部「当前群系」跟随视角中心
     };
 
     setBusy(false);
@@ -1580,6 +1746,9 @@ WorldMapPage::~WorldMapPage()
 {
     // 先解绑全局图标回调：否则 Wiki 图标下载完成后会回调到已销毁的页面
     StructureIcons::setUpdatedHandler(nullptr);
+    // 内容弹窗创建过的话挂过应用级事件过滤（点弹窗外关闭），析构前摘掉
+    if (m_contentPopup)
+        QApplication::instance()->removeEventFilter(this);
     // 再撤信号与取消标志，最后由 m_renderPool 析构等在途任务收尾
     if (m_pollTimer)
         m_pollTimer->stop();
@@ -1620,7 +1789,17 @@ void WorldMapPage::setCurrentSave(const QString &saveFolderPath, const QString &
         m_seedBtn->setChecked(usable && m_seedPreviewOn);
     }
     loadStructDone(); // 上次存档的完成标记（弹窗半透明显示用）
+    // 换存档：丢掉上一个存档的群系采样 / 叠加层 / 高亮圈
+    m_biomeGrid = BiomeCatalog::SampleGrid();
+    m_biomeOverlay = QImage();
+    if (m_view)
+    {
+        m_view->setBiomeOverlay(nullptr, 0, 0, 64);
+        m_view->setHighlight(0, 0, false);
+    }
     startStructRefresh();
+    // 画布中心（出生点 / 恢复点）确定后即可报一次当前群系
+    scheduleBiomeRefresh();
 
     if (changed)
     {
@@ -1628,6 +1807,8 @@ void WorldMapPage::setCurrentSave(const QString &saveFolderPath, const QString &
             m_job->cancel = true;
         m_cache.clear();
         m_cacheOrder.clear();
+        m_priorLiveValid = false;
+        m_priorLiveImage = QImage();
         m_view->clearImage();
         clearSelection();       // 换存档时丢掉上一个存档的选中区块
         m_cursorText.clear();
@@ -1646,6 +1827,8 @@ void WorldMapPage::reset()
 {
     if (m_job)
         m_job->cancel = true;
+    m_priorLiveValid = false;
+    m_priorLiveImage = QImage();
     m_savePath.clear();
     m_saveName.clear();
     m_cache.clear();
@@ -1742,6 +1925,15 @@ void WorldMapPage::onSeedRecenterTimeout()
     const QPoint centerBlock = m_view->centerBlock();
     m_pendingRestoreBlock = centerBlock;
     m_pendingRestoreBlockSet = true;
+    // 留下当前 live 画布：重定心时重叠 region 直接搬过去，不闪白、不重算
+    if (!m_liveImage.isNull())
+    {
+        m_priorLiveImage = m_liveImage; // 隐式共享，不拷贝像素
+        m_priorMinChunkX = m_liveMinChunkX;
+        m_priorMinChunkZ = m_liveMinChunkZ;
+        m_priorBpp = m_liveBpp;
+        m_priorLiveValid = true;
+    }
     startRender(); // 新画布以视角中心为圆心；完成后 applyResult 恢复视口
 }
 
@@ -1784,12 +1976,34 @@ void WorldMapPage::startRender()
     m_sink.reset();
     m_layoutApplied = false;
     // 旧概览还在跑时，细节瓦片调度停住；已发出的在途瓦片一并作废，
-    // 免得它们占着并发位，新画布就绪后左右两侧补不上
-    clearTileState(true);
+    // 免得它们占着并发位，新画布就绪后左右两侧补不上。
+    // 种子重定心且 bpp 未变：1:1 瓦片按 region 键仍有效，只作废在途、不拆画布
+    if (m_priorLiveValid && m_priorBpp > 0 && m_priorBpp == m_liveBpp
+        && !m_priorLiveImage.isNull())
+    {
+        ++m_tileSeq;
+        for (QFutureWatcher<TileResult> *w : m_tileWatchers)
+        {
+            if (!w)
+                continue;
+            w->disconnect(this);
+            w->deleteLater();
+        }
+        m_tileWatchers.clear();
+        m_tileInFlightKeys.clear();
+        m_tileInFlight = 0;
+        m_tilesPending.clear();
+    }
+    else
+    {
+        clearTileState(true);
+    }
 
     WorldMapRenderer::RenderResult cached;
     if (takeCached(key, &cached))
     {
+        m_priorLiveValid = false;
+        m_priorLiveImage = QImage();
         applyResult(cached);
         return;
     }
@@ -1821,9 +2035,21 @@ void WorldMapPage::startRender()
 
     const int maxSurfaceY = m_maxSurfaceY;
 
+    // 种子重定心：把上一张 live 画布交给渲染器，重叠 region 原样搬过去。
+    // 这里只拷一份给 worker，prior 本体留给 applyLiveLayout 贴到新画布并判断
+    // 是否保留 1:1 瓦片（applyLiveFromPrior 消费）。
+    WorldMapRenderer::PriorCanvas prior;
+    if (m_priorLiveValid && !m_priorLiveImage.isNull())
+    {
+        prior.image = m_priorLiveImage;
+        prior.minChunkX = m_priorMinChunkX;
+        prior.minChunkZ = m_priorMinChunkZ;
+        prior.blockPerPixel = m_priorBpp;
+    }
+
     // 区域之间并行解码；每完成一个就通过 sink 推给 UI 贴图，实现边渲染边显示
     auto future = QtConcurrent::run(&m_renderPool,
-        [path, dim, mode, job, sink, seq, maxSurfaceY, seedPrev]() {
+        [path, dim, mode, job, sink, seq, maxSurfaceY, seedPrev, prior]() {
             WorldMapRenderer::RenderResult result = WorldMapRenderer::render(
                 path, dim, mode,
                 [job]() { return job->cancel.load(); },
@@ -1831,7 +2057,7 @@ void WorldMapPage::startRender()
                     job->done.store(done);
                     job->total.store(total);
                 },
-                sink, 0, maxSurfaceY, seedPrev);
+                sink, 0, maxSurfaceY, seedPrev, prior);
             result.key = seq;
             return result;
         });
@@ -1861,13 +2087,22 @@ void WorldMapPage::onRenderFinished()
 
 void WorldMapPage::onPollProgress()
 {
-    // 结构查询结果先收（与渲染进度无关）
+    // 后台任务结果先收（与渲染进度无关）
     drainStructResult();
+    drainLocateResult();
+    drainBiomeResult();
+    if (m_biomeNameJob && m_biomeNameJob->done.load(std::memory_order_acquire))
+    {
+        const auto job = m_biomeNameJob;
+        m_biomeNameJob.reset();
+        m_biomeNames = job->names;
+    }
 
     if (!m_busy || !m_sink)
     {
-        if (!m_structJob && m_pollTimer)
-            m_pollTimer->stop(); // 渲染与结构都收完了：停表
+        if (!m_structJob && !m_locateJob && !m_biomeJob && !m_biomeNameJob
+            && m_pollTimer)
+            m_pollTimer->stop(); // 渲染与后台任务都收完了：停表
         return;
     }
 
@@ -1941,10 +2176,13 @@ void WorldMapPage::startStructRefresh()
     const quint64 seed = m_seed;
     const int mc = m_mcVersion;
     const QVector<bool> enabled = m_structEnabled;
+    // 群系叠加：有任一勾选才采样（默认不选；全清空时跳过省算力）
+    const bool anyBiome = std::any_of(m_biomeEnabled.cbegin(), m_biomeEnabled.cend(),
+                                      [](bool b) { return b; });
 
     // 独立线程池：结构计算与地图渲染各跑各的，谁也不堵谁
     QtConcurrent::run(&m_structPool, [seed, mc, cdim, minX, minZ, maxX, maxZ,
-                                      enabled, job]() {
+                                      enabled, anyBiome, job]() {
         const auto hits = StructureFinder::find(seed, mc, cdim,
                                                 minX, minZ, maxX, maxZ, enabled);
         job->coords.reserve(hits.size());
@@ -1953,6 +2191,11 @@ void WorldMapPage::startStructRefresh()
         {
             job->coords.append(qMakePair(h.x, h.z));
             job->types.append(h.structIdx);
+        }
+        if (anyBiome)
+        {
+            job->biomeGrid = BiomeCatalog::sampleGrid(seed, mc, cdim,
+                                                      minX, minZ, maxX, maxZ);
         }
         job->done.store(true, std::memory_order_release);
     });
@@ -1971,6 +2214,10 @@ void WorldMapPage::drainStructResult()
     const auto job = m_structJob;
     m_structJob.reset();
     applyStructHits(job->coords, job->types);
+
+    // 群系采样网格随结构查询一起回来：保存并按当前勾选重建叠加层
+    m_biomeGrid = job->biomeGrid;
+    rebuildBiomeOverlay();
 
     if (m_structDirty)
     {
@@ -2009,6 +2256,9 @@ void WorldMapPage::refreshStructIcons()
             QLatin1String(d.wikiTitle), QLatin1String(d.itemTitle),
             QLatin1String(d.envSprite), 18));
     }
+    // 弹窗打开时，两列列表的图标也跟着远程下载完成刷新
+    if (m_contentPopup && m_contentPopup->isVisible())
+        rebuildPopupLists();
 }
 
 /** 渲染线程发布布局后，在 UI 线程建画布并切到地图视图 */
@@ -2030,12 +2280,20 @@ void WorldMapPage::applyLiveLayout()
     const QString key = QStringLiteral("%1x%2:%3:%4:%5")
                             .arg(w).arg(h).arg(minX).arg(minZ).arg(bpp);
     const bool sameCanvas = (m_liveKey == key && !m_liveImage.isNull());
+    // 种子重定心：prior bpp 与新画布一致 → 搬重叠像素，并保留 1:1 瓦片
+    const bool seedReuse = m_priorLiveValid && m_priorBpp == bpp
+        && !m_priorLiveImage.isNull();
     if (!sameCanvas)
     {
         m_liveImage = QImage(w, h, QImage::Format_ARGB32);
         m_liveImage.fill(qRgba(0, 0, 0, 0));
+        // 种子重定心：先把上一张画布的重叠 region 搬进来，不闪白
+        primeLiveFromPrior();
         m_liveKey = key;
     }
+    m_liveMinChunkX = minX;
+    m_liveMinChunkZ = minZ;
+    m_liveBpp = bpp;
 
     // 先切画布再绑定，布局 pass 才会把真实几何交给视图
     m_stack->setCurrentIndex(1);
@@ -2049,8 +2307,10 @@ void WorldMapPage::applyLiveLayout()
                               m_pendingRestoreBlock.y());
     }
     m_layoutApplied = true;
-    // 画布换了/着色变了：上一批 1:1 瓦片全部作废
-    clearTileState(true);
+    // 画布换了/着色变了：上一批 1:1 瓦片全部作废；
+    // 种子重定心且 bpp 未变时瓦片键仍有效，保留以免放大后又从零加载
+    if (!sameCanvas && !seedReuse)
+        clearTileState(true);
 }
 
 /** 把渲染线程推来的区域图块贴到画布（写入只发生在 UI 线程） */
@@ -2073,6 +2333,45 @@ void WorldMapPage::drainPendingTiles()
     painter.end();
 
     m_view->refreshImage();
+}
+
+void WorldMapPage::primeLiveFromPrior()
+{
+    if (!m_priorLiveValid || m_priorLiveImage.isNull() || m_liveImage.isNull())
+        return;
+    if (m_priorBpp <= 0 || m_priorBpp != m_liveBpp)
+    {
+        m_priorLiveValid = false;
+        m_priorLiveImage = QImage();
+        return;
+    }
+    const int tilePx = 512 / m_liveBpp;
+    const int priorMinRx = m_priorMinChunkX / 32;
+    const int priorMinRz = m_priorMinChunkZ / 32;
+    const int liveMinRx = m_liveMinChunkX / 32;
+    const int liveMinRz = m_liveMinChunkZ / 32;
+    const int priorW = m_priorLiveImage.width();
+    const int priorH = m_priorLiveImage.height();
+    QPainter p(&m_liveImage);
+    p.setCompositionMode(QPainter::CompositionMode_Source);
+    for (int rz = liveMinRz; rz * tilePx < m_liveImage.height(); ++rz)
+    {
+        for (int rx = liveMinRx; rx * tilePx < m_liveImage.width(); ++rx)
+        {
+            const int srcX = (rx - priorMinRx) * tilePx;
+            const int srcY = (rz - priorMinRz) * tilePx;
+            if (srcX < 0 || srcY < 0
+                || srcX + tilePx > priorW || srcY + tilePx > priorH)
+                continue;
+            p.drawImage(QPoint((rx - liveMinRx) * tilePx,
+                               (rz - liveMinRz) * tilePx),
+                        m_priorLiveImage,
+                        QRect(srcX, srcY, tilePx, tilePx));
+        }
+    }
+    p.end();
+    m_priorLiveValid = false;
+    m_priorLiveImage = QImage();
 }
 
 void WorldMapPage::applyResult(const WorldMapRenderer::RenderResult &result)
@@ -2103,6 +2402,9 @@ void WorldMapPage::applyResult(const WorldMapRenderer::RenderResult &result)
                     .arg(result.image.width()).arg(result.image.height())
                     .arg(result.minChunkX).arg(result.minChunkZ)
                     .arg(result.blockPerPixel);
+    m_liveMinChunkX = result.minChunkX;
+    m_liveMinChunkZ = result.minChunkZ;
+    m_liveBpp = result.blockPerPixel;
     m_layoutApplied = true;
 
     const bool wasVisible = m_view && m_view->isVisible();
@@ -2127,6 +2429,8 @@ void WorldMapPage::applyResult(const WorldMapRenderer::RenderResult &result)
                        .arg(result.blockPerPixel);
     if (result.seedRegions > 0)
         m_statSuffix += tr(" · 种子预测 %1").arg(result.seedRegions);
+    if (result.reusedRegions > 0)
+        m_statSuffix += tr(" · 复用 %1").arg(result.reusedRegions);
     if (result.failedRegions > 0)
         m_statSuffix += tr(" · 失败 %1").arg(result.failedRegions);
     if (result.elapsedMs > 0)
@@ -2421,8 +2725,6 @@ void WorldMapPage::setBusy(bool busy)
         m_progress->setVisible(busy);
     if (m_exportBtn)
         m_exportBtn->setEnabled(!busy);
-    if (m_refreshBtn)
-        m_refreshBtn->setEnabled(!busy);
     if (m_gotoBtn)
         m_gotoBtn->setEnabled(!busy);
     // 概览结束后立刻开始"视野补洞"；渲染中停掉，避免和 m_busy 门闩打架
@@ -2683,9 +2985,14 @@ void WorldMapPage::showMapContextMenu(const QPoint &globalPos, qint64 blockX,
             m_view->centerOnBlock(blockX, blockZ);
     });
     menu->addAction(tr("填入跳转坐标"), this, [this, blockX, blockZ]() {
-        m_gotoX->setText(QString::number(blockX));
-        m_gotoZ->setText(QString::number(blockZ));
-        m_gotoX->setFocus();
+        if (m_expandBtn && !m_expandBtn->isChecked())
+            m_expandBtn->setChecked(true);
+        if (m_gotoX && m_gotoZ)
+        {
+            m_gotoX->setText(QString::number(blockX));
+            m_gotoZ->setText(QString::number(blockZ));
+            m_gotoX->setFocus();
+        }
     });
 
     if (m_view && m_view->hasSelection())
@@ -2699,6 +3006,37 @@ void WorldMapPage::showMapContextMenu(const QPoint &globalPos, qint64 blockX,
 
 bool WorldMapPage::eventFilter(QObject *watched, QEvent *event)
 {
+    // 内容弹窗打开时：Esc 关闭；点弹窗外任意处关闭
+    //（点「展开」按钮本身留给按钮 toggle 处理，避免"关了又开"）
+    if (m_contentPopup && m_contentPopup->isVisible())
+    {
+        if (event->type() == QEvent::KeyPress)
+        {
+            const auto *key = static_cast<QKeyEvent *>(event);
+            if (key->key() == Qt::Key_Escape)
+            {
+                closeContentPopup();
+                return true;
+            }
+        }
+        else if (event->type() == QEvent::MouseButtonPress)
+        {
+            const auto *mouse = static_cast<QMouseEvent *>(event);
+            const QPoint gp = mouse->globalPosition().toPoint();
+            if (!m_contentPopup->rect().contains(
+                    m_contentPopup->mapFromGlobal(gp)))
+            {
+                const bool onExpand = m_expandBtn
+                    && m_expandBtn->rect().contains(
+                           m_expandBtn->mapFromGlobal(gp));
+                if (!onExpand)
+                {
+                    closeContentPopup();
+                    return true; // 吞掉这次按下：只关弹窗，不误触地图
+                }
+            }
+        }
+    }
     // 结构条横向滚动：滚轮纵向转横滚（QScrollArea 纵向无行程时滚轮不生效）
     if (event->type() == QEvent::Wheel && m_structScroll
         && watched == m_structScroll->viewport())
@@ -2858,12 +3196,20 @@ void WorldMapPage::updateSubtitle()
 void WorldMapPage::onDimensionChanged(int)
 {
     updateSubtitle();
+    // 群系列按维度过滤：切维度后弹窗里的群系列表要换一批
+    if (m_contentPopup && m_contentPopup->isVisible())
+        rebuildPopupLists();
+    m_priorLiveValid = false;
+    m_priorLiveImage = QImage();
     startRender();
     startStructRefresh(); // 换维度要重算（结构的维度过滤不同）
+    scheduleBiomeRefresh(); // 当前群系跟随维度
 }
 
 void WorldMapPage::onShadeChanged(int)
 {
+    m_priorLiveValid = false;
+    m_priorLiveImage = QImage();
     startRender();
 }
 
@@ -2873,6 +3219,8 @@ void WorldMapPage::onSeedToggled(bool on)
     QSettings settings;
     settings.setValue(QStringLiteral("worldMap/seedPreview"), on);
     // 开关影响渲染结果与缓存 key，直接重渲（同 key 有缓存则秒切）
+    m_priorLiveValid = false;
+    m_priorLiveImage = QImage();
     startRender();
 }
 
@@ -2884,6 +3232,8 @@ void WorldMapPage::onHeightChanged()
     if (y == m_maxSurfaceY)
         return; // 下拉项与 editingFinished 可能连发，值没变就不重渲
     m_maxSurfaceY = y;
+    m_priorLiveValid = false;
+    m_priorLiveImage = QImage();
     startRender();
 }
 
@@ -2968,7 +3318,811 @@ void WorldMapPage::onExportClicked()
         m_statusLabel->setText(tr("导出失败：%1").arg(path));
 }
 
-void WorldMapPage::onRefreshClicked()
+// ═══════════════ 底部「当前群系」（中文名 + 视口中心采样） ═══════════════
+
+void WorldMapPage::setInstancePath(const QString &instancePath)
 {
-    refresh();
+    if (m_instancePath == instancePath)
+        return;
+    m_instancePath = instancePath;
+    // 换实例：丢弃上个实例的中文群系表，后台重新解析当前实例 lang
+    m_biomeNames.zh.clear();
+    m_biomeNames.en.clear();
+    loadBiomeNamesAsync();
+}
+
+/** 后台解析当前实例的群系中文名表（读客户端 JAR lang，IO 密集） */
+void WorldMapPage::loadBiomeNamesAsync()
+{
+    const QString instance = m_instancePath;
+    if (instance.isEmpty())
+    {
+        if (m_biomeLabel)
+            m_biomeLabel->setText(tr("当前群系：—"));
+        return;
+    }
+    auto job = std::make_shared<BiomeNameJob>();
+    m_biomeNameJob = job;
+    QtConcurrent::run(&m_structPool, [instance, job]() {
+        job->names = BiomeName::loadFromInstance(instance);
+        job->done.store(true, std::memory_order_release);
+    });
+    if (m_pollTimer && !m_pollTimer->isActive())
+        m_pollTimer->start();
+}
+
+/** 后台采样视口中心的当前群系（去重：任务在途则标记待刷新） */
+void WorldMapPage::scheduleBiomeRefresh()
+{
+    // 读不出种子 / 版本的存档无法按种子采样群系 → 显示占位
+    if (!m_hasSeed || m_mcVersion == 0 || !m_view)
+    {
+        if (m_biomeLabel)
+            m_biomeLabel->setText(tr("当前群系：—"));
+        return;
+    }
+    if (m_biomeJob)
+    {
+        m_biomeDirty = true; // 正在算：这轮完成后按最新视口再来一轮
+        return;
+    }
+
+    const QPoint c = m_view->centerBlock();
+    auto job = std::make_shared<BiomeJob>();
+    m_biomeJob = job;
+    const quint64 seed = m_seed;
+    const int mc = m_mcVersion;
+    const auto dim = static_cast<WorldMapRenderer::Dimension>(
+        m_dimCombo ? m_dimCombo->currentIndex() : 0);
+    const int cdim = (dim == WorldMapRenderer::Dimension::Nether) ? -1
+                   : (dim == WorldMapRenderer::Dimension::End)    ? 1
+                                                                  : 0;
+    QtConcurrent::run(&m_structPool, [seed, mc, cdim, c, job]() {
+        // 与叠加层采样同一入口：单点网格（step=16 取中心）
+        const auto grid = BiomeCatalog::sampleGrid(
+            seed, mc, cdim, c.x() - 8, c.y() - 8, c.x() + 8, c.y() + 8, 16);
+        if (!grid.ids.isEmpty())
+        {
+            job->biomeId = grid.ids[grid.ids.size() / 2];
+            job->x = c.x();
+            job->z = c.y();
+        }
+        job->done.store(true, std::memory_order_release);
+    });
+    if (m_pollTimer && !m_pollTimer->isActive())
+        m_pollTimer->start();
+}
+
+/** 收取当前群系查询结果并刷新底部群系标签 */
+void WorldMapPage::drainBiomeResult()
+{
+    if (!m_biomeJob)
+        return;
+    if (!m_biomeJob->done.load(std::memory_order_acquire))
+        return;
+    const auto job = m_biomeJob;
+    m_biomeJob.reset();
+
+    if (m_biomeLabel)
+    {
+        if (job->biomeId < 0)
+        {
+            m_biomeLabel->setText(tr("当前群系：—"));
+        }
+        else
+        {
+            const QString name = BiomeName::nameForId(
+                m_mcVersion, job->biomeId, m_biomeNames);
+            m_biomeLabel->setText(tr("当前群系：%1")
+                                      .arg(name.isEmpty()
+                                               ? QString::number(job->biomeId)
+                                               : name));
+        }
+    }
+    if (m_biomeDirty)
+    {
+        m_biomeDirty = false;
+        scheduleBiomeRefresh(); // 拿最新视口再算一轮
+    }
+}
+
+// ═══════════════ 内容浏览弹窗（结构 + 群系列表 / 搜索 / 高亮跳转） ═══════════════
+
+namespace {
+
+/** 弹窗列表行：左侧图标 + 名称 + 右侧「高亮跳转」小按钮 */
+struct PopupRow
+{
+    QWidget *row = nullptr;
+    QPushButton *toggle = nullptr;  ///< 图标 + 名称，可勾选（决定是否在地图上显示）
+    QPushButton *highlight = nullptr; ///< 高亮并跳转到最近一处
+};
+
+/**
+ * 造一行内容条目。icon 点击 / 名称点击 = 勾选切换；右侧高亮按钮独立。
+ * parent 为列表容器（ QListWidget 的 viewport 或 itemWidget 宿主）。
+ */
+PopupRow makePopupRow(QWidget *parent, const QPixmap &icon, const QString &name,
+                      bool checked, bool enabled,
+                      const QString &highlightTip)
+{
+    PopupRow r;
+    r.row = new QWidget(parent);
+    r.row->setObjectName(QStringLiteral("worldMapPopupRow"));
+    // QSS 的 :hover / border-bottom 要生效：开样式背景 + 悬停事件
+    r.row->setAttribute(Qt::WA_StyledBackground, true);
+    r.row->setAttribute(Qt::WA_Hover, true);
+    auto *lay = new QHBoxLayout(r.row);
+    lay->setContentsMargins(10, 5, 10, 5);
+    lay->setSpacing(8);
+
+    r.toggle = new QPushButton(r.row);
+    r.toggle->setObjectName(QStringLiteral("worldMapPopupToggle"));
+    r.toggle->setCheckable(true);
+    r.toggle->setChecked(checked);
+    r.toggle->setEnabled(enabled);
+    r.toggle->setCursor(Qt::PointingHandCursor);
+    r.toggle->setIcon(icon);
+    r.toggle->setIconSize(QSize(18, 18));
+    r.toggle->setText(name);
+    r.toggle->setToolTip(name);
+    lay->addWidget(r.toggle, 1);
+
+    r.highlight = new QPushButton(r.row);
+    r.highlight->setObjectName(QStringLiteral("worldMapPopupHighlight"));
+    r.highlight->setFixedSize(28, 28);
+    r.highlight->setCursor(Qt::PointingHandCursor);
+    r.highlight->setEnabled(enabled);
+    r.highlight->setToolTip(highlightTip);
+    r.highlight->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/pin_filled.svg"),
+        ThemeManager::instance()->currentThemeColor(), 14));
+    r.highlight->setIconSize(QSize(14, 14));
+    lay->addWidget(r.highlight);
+
+    return r;
+}
+
+} // namespace
+
+void WorldMapPage::onExpandToggled(bool on)
+{
+    if (!on)
+    {
+        if (m_contentPopup)
+            m_contentPopup->hide();
+        return;
+    }
+    if (!m_contentPopup)
+    {
+        // 居中弹窗：跟随页面生命周期，非模态（点地图仍可拖拽 / 缩放）
+        m_contentPopup = new QWidget(this);
+        m_contentPopup->setObjectName(QStringLiteral("worldMapContentPopup"));
+        m_contentPopup->setAttribute(Qt::WA_StyledBackground, true);
+        m_contentPopup->setMinimumSize(560, 480);
+        m_contentPopup->resize(680, 560);
+        // 柔和投影：让弹窗浮在地图上方，层次一眼可辨
+        auto *shadow = new QGraphicsDropShadowEffect(m_contentPopup);
+        shadow->setBlurRadius(36);
+        shadow->setOffset(0, 10);
+        const bool darkPopup = ThemeManager::instance()
+            && ThemeManager::instance()->currentTheme() != ThemeManager::LightTheme;
+        shadow->setColor(QColor(0, 0, 0, darkPopup ? 140 : 55));
+        m_contentPopup->setGraphicsEffect(shadow);
+
+        // 点弹窗外关闭：过滤应用级鼠标按下事件（弹窗可见时才生效）
+        QApplication::instance()->installEventFilter(this);
+
+        auto *lay = new QVBoxLayout(m_contentPopup);
+        lay->setContentsMargins(18, 16, 18, 16);
+        lay->setSpacing(12);
+
+        // —— 顶行：搜索框 + 坐标跳转 + 关闭按钮 ——
+        auto *topRow = new QHBoxLayout;
+        topRow->setSpacing(6);
+        m_popupSearch = new QLineEdit(m_contentPopup);
+        m_popupSearch->setObjectName(QStringLiteral("worldMapPopupSearch"));
+        m_popupSearch->setPlaceholderText(tr("搜索结构或群系…"));
+        m_popupSearch->setClearButtonEnabled(true);
+        // 左侧放大镜图标
+        m_popupSearch->addAction(IconHelper::loadColoredIcon(
+                                     QStringLiteral(":/Images/Icons/search.svg"),
+                                     ThemeManager::instance()->currentThemeColor(),
+                                     14),
+                                 QLineEdit::LeadingPosition);
+        topRow->addWidget(m_popupSearch, 1);
+        connect(m_popupSearch, &QLineEdit::textChanged,
+                this, &WorldMapPage::onPopupSearchChanged);
+
+        // —— 坐标跳转（原顶部工具栏定位组，已移至搜索框右侧） ——
+        auto *gotoLabel = new QLabel(tr("坐标跳转"), m_contentPopup);
+        gotoLabel->setObjectName(QStringLiteral("worldMapPopupColTitle"));
+        topRow->addWidget(gotoLabel);
+
+        m_gotoX = new QLineEdit(m_contentPopup);
+        m_gotoX->setObjectName("worldMapCoordEdit");
+        m_gotoX->setPlaceholderText(tr("X"));
+        m_gotoX->setToolTip(tr("要跳转到的方块坐标"));
+        m_gotoX->setValidator(new QIntValidator(-30000000, 30000000, m_gotoX));
+        m_gotoX->setFixedSize(52, 26);
+        topRow->addWidget(m_gotoX);
+
+        m_gotoZ = new QLineEdit(m_contentPopup);
+        m_gotoZ->setObjectName("worldMapCoordEdit");
+        m_gotoZ->setPlaceholderText(tr("Z"));
+        m_gotoZ->setToolTip(tr("要跳转到的方块坐标"));
+        m_gotoZ->setValidator(new QIntValidator(-30000000, 30000000, m_gotoZ));
+        m_gotoZ->setFixedSize(52, 26);
+        topRow->addWidget(m_gotoZ);
+
+        m_gotoBtn = new QPushButton(tr("跳转"), m_contentPopup);
+        m_gotoBtn->setObjectName(QStringLiteral("worldMapGroupBtn"));
+        m_gotoBtn->setCursor(Qt::PointingHandCursor);
+        m_gotoBtn->setFixedHeight(26);
+        m_gotoBtn->setToolTip(tr("把视图中心移动到该坐标（回车）"));
+        topRow->addWidget(m_gotoBtn);
+
+        connect(m_gotoBtn, &QPushButton::clicked, this, &WorldMapPage::onGotoClicked);
+        connect(m_gotoX, &QLineEdit::returnPressed, this, &WorldMapPage::onGotoClicked);
+        connect(m_gotoZ, &QLineEdit::returnPressed, this, &WorldMapPage::onGotoClicked);
+
+        auto *closeBtn = new QPushButton(QStringLiteral("×"), m_contentPopup);
+        closeBtn->setObjectName(QStringLiteral("worldMapPopupClose"));
+        closeBtn->setFixedSize(28, 28);
+        closeBtn->setCursor(Qt::PointingHandCursor);
+        closeBtn->setToolTip(tr("关闭（Esc）"));
+        connect(closeBtn, &QPushButton::clicked,
+                this, &WorldMapPage::closeContentPopup);
+        topRow->addWidget(closeBtn);
+        lay->addLayout(topRow);
+
+        // —— 下方双列：左结构、右群系（各带全选 / 清空） ——
+        auto *cols = new QHBoxLayout;
+        cols->setSpacing(12);
+
+        auto makeListColumn = [&](const QString &title, QListWidget **listOut,
+                                  const char *allName, const char *clearName,
+                                  const QString &allTip,
+                                  const QString &clearTip,
+                                  std::function<void(bool)> bulk) {
+            auto *col = new QWidget(m_contentPopup);
+            auto *colLay = new QVBoxLayout(col);
+            colLay->setContentsMargins(0, 0, 0, 0);
+            colLay->setSpacing(6);
+            auto *label = new QLabel(title, col);
+            label->setObjectName(QStringLiteral("worldMapPopupColTitle"));
+            colLay->addWidget(label);
+            auto *list = new QListWidget(col);
+            list->setObjectName(QStringLiteral("worldMapPopupList"));
+            list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            list->setSelectionMode(QListWidget::NoSelection);
+            list->setFocusPolicy(Qt::NoFocus);
+            colLay->addWidget(list, 1);
+            *listOut = list;
+
+            // 列表下方：全选 / 清空
+            auto *btnRow = new QHBoxLayout;
+            btnRow->setSpacing(6);
+            auto *allBtn = new QPushButton(tr("全选"), col);
+            allBtn->setObjectName(QString::fromLatin1(allName));
+            allBtn->setCursor(Qt::PointingHandCursor);
+            allBtn->setToolTip(allTip);
+            connect(allBtn, &QPushButton::clicked, this, [bulk]() {
+                bulk(true);
+            });
+            btnRow->addWidget(allBtn);
+            auto *clrBtn = new QPushButton(tr("清空"), col);
+            clrBtn->setObjectName(QString::fromLatin1(clearName));
+            clrBtn->setCursor(Qt::PointingHandCursor);
+            clrBtn->setToolTip(clearTip);
+            connect(clrBtn, &QPushButton::clicked, this, [bulk]() {
+                bulk(false);
+            });
+            btnRow->addWidget(clrBtn);
+            btnRow->addStretch(1);
+            colLay->addLayout(btnRow);
+
+            return col;
+        };
+
+        QWidget *structCol = makeListColumn(
+            tr("结构"), &m_structList,
+            "worldMapPopupStructAll", "worldMapPopupStructClear",
+            tr("勾选全部结构（与第二行开关同步）"),
+            tr("取消勾选全部结构"),
+            [this](bool on2) { setAllStructures(on2); });
+        cols->addWidget(structCol, 1);
+        QWidget *biomeCol = makeListColumn(
+            tr("群系"), &m_biomeList,
+            "worldMapPopupBiomeAll", "worldMapPopupBiomeClear",
+            tr("勾选当前列表中的全部群系"),
+            tr("取消勾选全部群系"),
+            [this](bool on2) { setAllBiomes(on2); });
+        cols->addWidget(biomeCol, 1);
+        lay->addLayout(cols, 1);
+
+        auto *hint = new QLabel(
+            tr("勾选 = 在地图上显示（群系默认不显示）；右侧按钮 = 高亮并跳转到离视角最近的一处"),
+            m_contentPopup);
+        hint->setObjectName(QStringLiteral("worldMapPopupHint"));
+        lay->addWidget(hint);
+    }
+
+    rebuildPopupLists();
+
+    // 居中于地图画布（不是整个窗口 —— 顶部工具栏不遮挡弹窗）
+    if (m_stack)
+    {
+        const QPoint center = m_stack->mapTo(this, m_stack->rect().center());
+        m_contentPopup->move(center - QPoint(m_contentPopup->width() / 2,
+                                             m_contentPopup->height() / 2));
+    }
+    m_contentPopup->show();
+    m_contentPopup->raise();
+    m_popupSearch->setFocus();
+}
+
+void WorldMapPage::closeContentPopup()
+{
+    if (m_contentPopup)
+        m_contentPopup->hide();
+    if (m_expandBtn && m_expandBtn->isChecked())
+    {
+        const QSignalBlocker blocker(m_expandBtn);
+        m_expandBtn->setChecked(false);
+    }
+}
+
+void WorldMapPage::setAllStructures(bool on)
+{
+    for (int i = 0; i < m_structBtns.size(); ++i)
+    {
+        const QSignalBlocker b(m_structBtns[i]); // 阻止逐个 toggled 反复重算
+        m_structBtns[i]->setChecked(on);
+        if (i < m_structEnabled.size())
+            m_structEnabled[i] = on;
+    }
+    if (m_contentPopup && m_contentPopup->isVisible())
+        rebuildPopupLists();
+    startStructRefresh();
+}
+
+void WorldMapPage::setAllBiomes(bool on)
+{
+    // 作用于弹窗当前列表的可见行（按维度过滤后的群系）
+    for (int idx : std::as_const(m_biomeVisible))
+    {
+        if (idx >= 0 && idx < m_biomeEnabled.size())
+            m_biomeEnabled[idx] = on;
+    }
+    if (m_contentPopup && m_contentPopup->isVisible())
+        rebuildPopupLists();
+    // 与 onPopupBiomeToggled 收尾逻辑一致
+    if (!std::any_of(m_biomeEnabled.cbegin(), m_biomeEnabled.cend(),
+                     [](bool b) { return b; }))
+    {
+        m_biomeGrid = BiomeCatalog::SampleGrid();
+        m_biomeOverlay = QImage();
+        if (m_view)
+            m_view->setBiomeOverlay(nullptr, 0, 0, 64);
+    }
+    else if (m_biomeGrid.ids.isEmpty())
+    {
+        startStructRefresh(); // 从全清空重新勾选：需要重采网格
+    }
+    else
+    {
+        rebuildBiomeOverlay();
+    }
+}
+
+void WorldMapPage::rebuildPopupLists()
+{
+    if (!m_structList || !m_biomeList)
+        return;
+    const QString filter = m_popupSearch ? m_popupSearch->text().trimmed()
+                                         : QString();
+
+    // —— 结构列 ——
+    const auto &sdefs = StructureFinder::allStructures();
+    m_structList->clear();
+    for (int i = 0; i < sdefs.size(); ++i)
+    {
+        const auto &d = sdefs[i];
+        const QString name = QString::fromUtf8(d.displayName);
+        if (!filter.isEmpty()
+            && !name.contains(filter, Qt::CaseInsensitive)
+            && !QLatin1String(d.key).contains(filter, Qt::CaseInsensitive))
+            continue;
+        const bool supported = d.type != StructureFinder::kUnsupportedType;
+        const bool checked = i < m_structEnabled.size() && m_structEnabled[i];
+        auto *item = new QListWidgetItem(m_structList);
+        item->setData(Qt::UserRole, i);
+        item->setSizeHint(QSize(0, 48));
+        PopupRow row = makePopupRow(
+            m_structList->viewport(),
+            StructureIcons::pixmap(
+                i, QLatin1String(d.key),
+                QString(QChar::fromLatin1(d.displayName[0])),
+                QLatin1String(d.wikiTitle), QLatin1String(d.itemTitle),
+                QLatin1String(d.envSprite), 16),
+            name, checked, supported,
+            supported ? tr("高亮并跳转到离视角最近的%1").arg(name)
+                      : tr("%1 暂不支持定位").arg(name));
+        m_structList->setItemWidget(item, row.row);
+        connect(row.toggle, &QPushButton::toggled, this, [this, i](bool on) {
+            onPopupStructToggled(i, on);
+        });
+        connect(row.highlight, &QPushButton::clicked, this, [this, i]() {
+            highlightStructureType(i);
+        });
+    }
+
+    // —— 群系列（按当前维度过滤） ——
+    const auto dim = static_cast<WorldMapRenderer::Dimension>(
+        m_dimCombo ? m_dimCombo->currentIndex() : 0);
+    const int cdim = (dim == WorldMapRenderer::Dimension::Nether) ? -1
+                   : (dim == WorldMapRenderer::Dimension::End)    ? 1
+                                                                  : 0;
+    const auto &bdefs = BiomeCatalog::allBiomes();
+    m_biomeVisible.clear();
+    m_biomeList->clear();
+    for (int i = 0; i < bdefs.size(); ++i)
+    {
+        const auto &d = bdefs[i];
+        if (d.dim != cdim)
+            continue;
+        const QString name = QString::fromUtf8(d.displayName);
+        if (!filter.isEmpty()
+            && !name.contains(filter, Qt::CaseInsensitive)
+            && !QLatin1String(d.key).contains(filter, Qt::CaseInsensitive))
+            continue;
+        m_biomeVisible.append(i);
+        auto *item = new QListWidgetItem(m_biomeList);
+        item->setData(Qt::UserRole, m_biomeVisible.size() - 1);
+        item->setSizeHint(QSize(0, 48));
+        // 群系图标：Wiki pageimages 主图（key 前缀 biome_ 与结构缓存隔离）
+        const bool checked = i < m_biomeEnabled.size() && m_biomeEnabled[i];
+        PopupRow row = makePopupRow(
+            m_biomeList->viewport(),
+            StructureIcons::pixmap(
+                2000 + i, QStringLiteral("biome_") + QLatin1String(d.key),
+                QString(QChar::fromLatin1(d.displayName[0])),
+                QLatin1String(d.wikiTitle), QString(), QString(), 16),
+            name, checked, true,
+            tr("高亮并跳转到离视角最近的%1").arg(name));
+        m_biomeList->setItemWidget(item, row.row);
+        const int biomeIdx = i;
+        connect(row.toggle, &QPushButton::toggled, this,
+                [this, biomeIdx](bool on) { onPopupBiomeToggled(biomeIdx, on); });
+        connect(row.highlight, &QPushButton::clicked, this, [this, biomeIdx]() {
+            highlightBiome(biomeIdx);
+        });
+    }
+}
+
+void WorldMapPage::onPopupSearchChanged(const QString &)
+{
+    rebuildPopupLists();
+}
+
+void WorldMapPage::onPopupStructToggled(int idx, bool on)
+{
+    if (idx < 0 || idx >= m_structEnabled.size())
+        return;
+    if (m_structEnabled[idx] == on)
+        return;
+    m_structEnabled[idx] = on;
+    // 与第二行开关按钮双向同步（阻断信号避免回环）
+    if (idx < m_structBtns.size())
+    {
+        const QSignalBlocker blocker(m_structBtns[idx]);
+        m_structBtns[idx]->setChecked(on);
+    }
+    startStructRefresh();
+}
+
+void WorldMapPage::onPopupBiomeToggled(int idx, bool on)
+{
+    if (idx < 0 || idx >= m_biomeEnabled.size())
+        return;
+    if (m_biomeEnabled[idx] == on)
+        return;
+    m_biomeEnabled[idx] = on;
+    // 勾选变化只需按已采样的网格重建叠加层（不用重算群系）
+    rebuildBiomeOverlay();
+    // 一个都没选时顺手把网格丢掉，下次全选再采
+    if (!std::any_of(m_biomeEnabled.cbegin(), m_biomeEnabled.cend(),
+                     [](bool b) { return b; }))
+    {
+        m_biomeGrid = BiomeCatalog::SampleGrid();
+        m_biomeOverlay = QImage();
+        if (m_view)
+            m_view->setBiomeOverlay(nullptr, 0, 0, 64);
+    }
+    else if (m_biomeGrid.ids.isEmpty())
+    {
+        startStructRefresh(); // 从全清空重新勾选：需要重采网格
+    }
+}
+
+void WorldMapPage::rebuildBiomeOverlay()
+{
+    if (!m_view)
+        return;
+    if (m_biomeGrid.ids.isEmpty() || m_biomeGrid.nx <= 0 || m_biomeGrid.nz <= 0)
+    {
+        m_biomeOverlay = QImage();
+        m_view->setBiomeOverlay(nullptr, 0, 0, 64);
+        return;
+    }
+
+    const auto &bdefs = BiomeCatalog::allBiomes();
+    // id → 颜色 / 是否选中 的快速查表
+    QHash<int, QColor> colorOf;
+    for (int i = 0; i < bdefs.size() && i < m_biomeEnabled.size(); ++i)
+    {
+        if (!m_biomeEnabled[i])
+            continue;
+        colorOf.insert(bdefs[i].id, bdefs[i].color);
+    }
+
+    QImage img(m_biomeGrid.nx, m_biomeGrid.nz, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    for (int j = 0; j < m_biomeGrid.nz; ++j)
+    {
+        for (int i = 0; i < m_biomeGrid.nx; ++i)
+        {
+            const int id = m_biomeGrid.ids[j * m_biomeGrid.nx + i];
+            const auto it = colorOf.constFind(id);
+            if (it == colorOf.constEnd())
+                continue;
+            QColor c = it.value();
+            c.setAlpha(160);
+            img.setPixelColor(i, j, c);
+        }
+    }
+    m_biomeOverlay = img;
+    m_view->setBiomeOverlay(&m_biomeOverlay, m_biomeGrid.minX,
+                            m_biomeGrid.minZ, m_biomeGrid.step);
+}
+
+int WorldMapPage::biomeRowCount() const
+{
+    return m_biomeVisible.size();
+}
+
+bool WorldMapPage::biomeChecked(int i) const
+{
+    if (i < 0 || i >= m_biomeVisible.size())
+        return false;
+    const int idx = m_biomeVisible[i];
+    return idx >= 0 && idx < m_biomeEnabled.size() && m_biomeEnabled[idx];
+}
+
+int WorldMapPage::biomeOverlayCellCount() const
+{
+    if (m_biomeOverlay.isNull())
+        return 0;
+    int n = 0;
+    for (int y = 0; y < m_biomeOverlay.height(); ++y)
+        for (int x = 0; x < m_biomeOverlay.width(); ++x)
+            if (qAlpha(m_biomeOverlay.pixel(x, y)) > 0)
+                ++n;
+    return n;
+}
+
+bool WorldMapPage::toggleContentPopup()
+{
+    if (!m_expandBtn)
+        return false;
+    m_expandBtn->toggle(); // toggled 信号统一走 onExpandToggled
+    return isContentPopupOpen();
+}
+
+bool WorldMapPage::highlightStructureType(int idx)
+{
+    if (idx < 0 || idx >= m_structEnabled.size())
+        return false;
+    if (!m_hasSeed || m_mcVersion == 0 || !m_view)
+        return false;
+    const auto &defs = StructureFinder::allStructures();
+    if (idx >= defs.size() || defs[idx].type == StructureFinder::kUnsupportedType)
+        return false;
+
+    // 确保它在地图上显示（未勾选则代为勾选）
+    if (!m_structEnabled[idx])
+    {
+        m_structEnabled[idx] = true;
+        if (idx < m_structBtns.size())
+        {
+            const QSignalBlocker blocker(m_structBtns[idx]);
+            m_structBtns[idx]->setChecked(true);
+        }
+        startStructRefresh();
+    }
+
+    // 先在当前视口的标记里找最近的；找不到再后台扩范围搜
+    const QPoint center = m_view->centerBlock();
+    qint64 best = 0;
+    qint64 bx = 0, bz = 0;
+    bool found = false;
+    const int n = m_view->markerCount();
+    for (int i = 0; i < n; ++i)
+    {
+        if (m_view->markerType(i) != idx)
+            continue;
+        const QPoint p = m_view->markerBlockPos(i);
+        const qint64 d = qint64(p.x() - center.x()) * (p.x() - center.x())
+                       + qint64(p.y() - center.y()) * (p.y() - center.y());
+        if (!found || d < best)
+        {
+            found = true;
+            best = d;
+            bx = p.x();
+            bz = p.y();
+        }
+    }
+    if (found)
+    {
+        m_view->centerOnBlock(bx, bz);
+        m_view->setHighlight(bx, bz, true);
+        updateStatusLabel(tr("已高亮：%1（X %2  Z %3）")
+                              .arg(QString::fromUtf8(defs[idx].displayName))
+                              .arg(bx).arg(bz));
+        return true;
+    }
+
+    // 视口内没有 → 后台在更大范围里找最近的一处
+    if (m_locateJob && m_locateJob->done.load(std::memory_order_acquire))
+        m_locateJob.reset();
+    if (m_locateJob)
+        return false; // 已有一个定位在跑：不叠加
+
+    auto job = std::make_shared<LocateJob>();
+    job->isBiome = false;
+    job->idx = idx;
+    m_locateJob = job;
+    const quint64 seed = m_seed;
+    const int mc = m_mcVersion;
+    const auto dim = static_cast<WorldMapRenderer::Dimension>(
+        m_dimCombo ? m_dimCombo->currentIndex() : 0);
+    const int cdim = (dim == WorldMapRenderer::Dimension::Nether) ? -1
+                   : (dim == WorldMapRenderer::Dimension::End)    ? 1
+                                                                  : 0;
+    QtConcurrent::run(&m_structPool, [seed, mc, cdim, center, idx, job]() {
+        // 从视口中心向外扩一倍范围搜索（结构网格间距有限，一定能覆盖最近的一处）
+        constexpr qint64 kR = 16384;
+        QVector<bool> only(idx, false);
+        only.append(true);
+        const auto hits = StructureFinder::find(
+            seed, mc, cdim, center.x() - kR, center.y() - kR,
+            center.x() + kR, center.y() + kR, only);
+        qint64 bestD = 0;
+        for (const auto &h : hits)
+        {
+            const qint64 d = qint64(h.x - center.x()) * (h.x - center.x())
+                           + qint64(h.z - center.y()) * (h.z - center.y());
+            if (!job->found || d < bestD)
+            {
+                job->found = true;
+                bestD = d;
+                job->x = h.x;
+                job->z = h.z;
+            }
+        }
+        job->done.store(true, std::memory_order_release);
+    });
+    if (m_pollTimer && !m_pollTimer->isActive())
+        m_pollTimer->start();
+    return true;
+}
+
+bool WorldMapPage::highlightBiome(int idx)
+{
+    if (idx < 0 || idx >= m_biomeEnabled.size())
+        return false;
+    if (!m_hasSeed || m_mcVersion == 0 || !m_view)
+        return false;
+
+    // 确保它在叠加层里显示
+    if (!m_biomeEnabled[idx])
+    {
+        m_biomeEnabled[idx] = true;
+        if (m_contentPopup && m_contentPopup->isVisible())
+            rebuildPopupLists();
+        rebuildBiomeOverlay();
+    }
+
+    const auto &d = BiomeCatalog::allBiomes()[idx];
+    const QPoint center = m_view->centerBlock();
+
+    // 先在当前采样网格里找最近的该群系格子
+    qint64 bx = 0, bz = 0;
+    bool found = false;
+    qint64 best = 0;
+    if (!m_biomeGrid.ids.isEmpty())
+    {
+        for (int j = 0; j < m_biomeGrid.nz; ++j)
+        {
+            for (int i = 0; i < m_biomeGrid.nx; ++i)
+            {
+                if (m_biomeGrid.ids[j * m_biomeGrid.nx + i] != d.id)
+                    continue;
+                const qint64 x = m_biomeGrid.minX
+                               + qint64(i) * m_biomeGrid.step
+                               + m_biomeGrid.step / 2;
+                const qint64 z = m_biomeGrid.minZ
+                               + qint64(j) * m_biomeGrid.step
+                               + m_biomeGrid.step / 2;
+                const qint64 dist = qint64(x - center.x()) * (x - center.x())
+                                  + qint64(z - center.y()) * (z - center.y());
+                if (!found || dist < best)
+                {
+                    found = true;
+                    best = dist;
+                    bx = x;
+                    bz = z;
+                }
+            }
+        }
+    }
+    if (found)
+    {
+        m_view->centerOnBlock(bx, bz);
+        m_view->setHighlight(bx, bz, true);
+        updateStatusLabel(tr("已高亮：%1（X %2  Z %3）")
+                              .arg(QString::fromUtf8(d.displayName))
+                              .arg(bx).arg(bz));
+        return true;
+    }
+
+    // 网格里没有（该群系不在当前采样范围）→ 后台环形搜索
+    if (m_locateJob && m_locateJob->done.load(std::memory_order_acquire))
+        m_locateJob.reset();
+    if (m_locateJob)
+        return false;
+
+    auto job = std::make_shared<LocateJob>();
+    job->isBiome = true;
+    job->idx = idx;
+    m_locateJob = job;
+    const quint64 seed = m_seed;
+    const int mc = m_mcVersion;
+    const auto dim = static_cast<WorldMapRenderer::Dimension>(
+        m_dimCombo ? m_dimCombo->currentIndex() : 0);
+    const int cdim = (dim == WorldMapRenderer::Dimension::Nether) ? -1
+                   : (dim == WorldMapRenderer::Dimension::End)    ? 1
+                                                                  : 0;
+    QtConcurrent::run(&m_structPool, [seed, mc, cdim, center, idx, job]() {
+        qint64 x = 0, z = 0;
+        job->found = BiomeCatalog::findNearest(
+            seed, mc, cdim, idx, center.x(), center.y(), 16384, &x, &z);
+        job->x = x;
+        job->z = z;
+        job->done.store(true, std::memory_order_release);
+    });
+    if (m_pollTimer && !m_pollTimer->isActive())
+        m_pollTimer->start();
+    return true;
+}
+
+void WorldMapPage::drainLocateResult()
+{
+    if (!m_locateJob)
+        return;
+    if (!m_locateJob->done.load(std::memory_order_acquire))
+        return;
+    const auto job = m_locateJob;
+    m_locateJob.reset();
+    if (!job->found || !m_view)
+        return;
+
+    m_view->centerOnBlock(job->x, job->z);
+    m_view->setHighlight(job->x, job->z, true);
+    const auto &name = job->isBiome
+        ? QString::fromUtf8(BiomeCatalog::allBiomes()[job->idx].displayName)
+        : QString::fromUtf8(StructureFinder::allStructures()[job->idx].displayName);
+    updateStatusLabel(tr("已高亮：%1（X %2  Z %3）")
+                          .arg(name).arg(job->x).arg(job->z));
 }

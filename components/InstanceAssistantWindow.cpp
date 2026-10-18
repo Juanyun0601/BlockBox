@@ -683,6 +683,14 @@ void InstanceAssistantWindow::buildResourcesPage(QWidget *page)
             this, [this](const ModInfo &info) {
         emit resourceDetailForReplaceRequested(info, m_instancePath, info);
     });
+
+    // 问问AI：切换到本窗口的 AI 助手页并引用当前资源
+    connect(m_resourcesPage, &InstanceResourcesPage::askAiRequested,
+            this, [this](const ResourceReference &ref) {
+        switchToTab(1);
+        if (m_aiChatPage)
+            m_aiChatPage->addExternalReference(ref);
+    });
 }
 
 // ============================

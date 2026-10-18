@@ -12,6 +12,9 @@ class ThemeManager : public QObject
 {
     Q_OBJECT
 public:
+    enum Theme { LightTheme = 0, DarkTheme = 1, SystemTheme = 2 };
+    Q_ENUM(Theme)
+
     static ThemeManager *instance()
     {
         static ThemeManager m;
@@ -25,6 +28,7 @@ public:
 
 signals:
     void textBorderColorChanged(const QString &color);
+    void themeChanged();
 };
 
 #endif // THEMEMANAGER_H

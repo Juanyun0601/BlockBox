@@ -320,6 +320,11 @@ private:
     void showModpackImportPage();
     void showModpackExportPage(const QString& instancePath = QString());
     void showSearchPage();
+    /**
+     * @brief 跳转到 AI 助手页并注入一条资源引用（问问AI 入口）
+     * @param ref 资源引用（本地文件路径或网络 URL）
+     */
+    void openAiChatWithReference(const ResourceReference &ref);
 
     /** 带额外 gameArgs 启动游戏（用于存档/服务器快捷启动） */
     void launchGameWithExtraArgs(const QStringList &extraGameArgs);

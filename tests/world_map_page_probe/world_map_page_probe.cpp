@@ -20,6 +20,7 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QListWidget>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QLineEdit>
@@ -397,6 +398,24 @@ int main(int argc, char **argv)
     if (QLabel *status = page.findChild<QLabel *>("worldMapStatus"))
         std::fprintf(stderr, "  status: %s\n", status->text().toUtf8().constData());
 
+    // ── 底部「当前群系」：渲染 + 结构查询后应算出中文名（占位符 "—" 需被替换）──
+    if (QLabel *biomeLabel = page.findChild<QLabel *>("worldMapBiome"))
+    {
+        QElapsedTimer biomeWait;
+        biomeWait.start();
+        while (biomeLabel->text().contains(QStringLiteral("—"))
+               && biomeWait.elapsed() < 3000)
+            QApplication::processEvents(QEventLoop::AllEvents, 20);
+        std::fprintf(stderr, "  biome: %s\n",
+                     biomeLabel->text().toUtf8().constData());
+        expect(!biomeLabel->text().contains(QStringLiteral("—")),
+               "current biome shown in chinese");
+    }
+    else
+    {
+        expect(false, "biome label exists");
+    }
+
     QProgressBar *progress = page.findChild<QProgressBar *>("worldMapProgress");
     expect(progress && !progress->isVisible(), "progress bar hidden after render");
 
@@ -412,9 +431,9 @@ int main(int argc, char **argv)
     const auto combos = page.findChildren<QComboBox *>("worldMapToolCombo");
     expect(combos.size() == 3, "dimension + shade + height combos");
     const auto buttons = page.findChildren<QPushButton *>();
-    expect(buttons.size() >= 7, "toolbar buttons (grid/zoom/fit/goto/export/refresh...)");
-    expect(page.findChildren<QLineEdit *>("worldMapCoordEdit").size() == 2,
-           "coordinate inputs");
+    expect(buttons.size() >= 7, "toolbar buttons (grid/zoom/fit/export/expand...)");
+    expect(page.findChildren<QLineEdit *>("worldMapCoordEdit").isEmpty(),
+           "coordinate inputs moved into expand popup (not on toolbar)");
 
     // ── 着色下拉：新增第三项「地形」（海拔分层设色 + 山体阴影）──
     if (combos.size() == 3)
@@ -1021,14 +1040,14 @@ int main(int argc, char **argv)
     page.grab().toImage().save(
         QStringLiteral("D:/BlockBox/_out/world_map_page_probe_narrow.png"));
     {
-        QPushButton *refreshBtn = nullptr;
+        QPushButton *actionBtn = nullptr;
         for (QPushButton *b : page.findChildren<QPushButton *>())
-            if (b->text() == QStringLiteral("刷新")) { refreshBtn = b; break; }
-        expect(refreshBtn != nullptr, "refresh button exists");
-        if (refreshBtn)
+            if (b->text() == QStringLiteral("导出")) { actionBtn = b; break; }
+        expect(actionBtn != nullptr, "export button exists (refresh moved to top bar)");
+        if (actionBtn)
         {
-            const int right = refreshBtn->mapTo(&page,
-                                                QPoint(refreshBtn->width(), 0)).x();
+            const int right = actionBtn->mapTo(&page,
+                                               QPoint(actionBtn->width(), 0)).x();
             std::fprintf(stderr, "  toolbar right edge @1000px = %d (page %d)\n",
                          right, page.width());
             expect(right <= page.width() - 8, "toolbar fits in 1000px width");
@@ -1350,6 +1369,195 @@ int main(int argc, char **argv)
             expect(st.value(QStringLiteral("worldMap/seedPreview"), true)
                        .toBool() == false,
                    "seed preview state persisted");
+        }
+    }
+
+    // ── 内容浏览弹窗：展开按钮 / 搜索 / 结构+群系双列 / 高亮跳转 ──
+    {
+        QPushButton *expandBtn = page.findChild<QPushButton *>(
+            QStringLiteral("worldMapExpandBtn"));
+        expect(expandBtn != nullptr, "second row has expand button");
+        if (expandBtn)
+        {
+            expect(!page.isContentPopupOpen(), "popup starts closed");
+            expandBtn->click();
+            QApplication::processEvents();
+            expect(page.isContentPopupOpen(), "expand opens content popup");
+
+            QWidget *popup = page.findChild<QWidget *>(
+                QStringLiteral("worldMapContentPopup"));
+            QLineEdit *search = page.findChild<QLineEdit *>(
+                QStringLiteral("worldMapPopupSearch"));
+            QListWidget *sList = page.findChild<QListWidget *>(
+                QStringLiteral("worldMapPopupList")); // 第一个（结构）
+            expect(popup != nullptr, "popup widget exists");
+            expect(search != nullptr, "popup has search box");
+            expect(page.findChildren<QLineEdit *>(
+                       QStringLiteral("worldMapCoordEdit")).size() == 2,
+                   "popup has X and Z coordinate inputs at its top");
+            expect(sList != nullptr && sList->count() > 0,
+                   "popup structure list populated");
+            // 样式截图：弹窗浮层 + 勾选态（部分结构默认勾选即可见）
+            QApplication::processEvents();
+            page.grab().toImage().save(
+                QStringLiteral("D:/BlockBox/_out/world_map_page_probe_popup.png"));
+            // 双列：结构列表 + 群系列表各一个
+            const auto lists = page.findChildren<QListWidget *>(
+                QStringLiteral("worldMapPopupList"));
+            expect(lists.size() == 2, "popup has structure + biome columns");
+            if (lists.size() == 2)
+            {
+                std::fprintf(stderr, "  popup rows: struct=%d biome=%d\n",
+                             lists[0]->count(), lists[1]->count());
+                expect(lists[0]->count()
+                           == StructureFinder::allStructures().size(),
+                       "structure column lists all types");
+                expect(lists[1]->count() > 0, "biome column lists biomes");
+                // 每行 = 图标 + 名称 + 高亮按钮
+                bool rowShapeOk = lists[0]->count() > 0;
+                if (rowShapeOk)
+                {
+                    auto *w = lists[0]->itemWidget(lists[0]->item(0));
+                    rowShapeOk = w && w->findChild<QPushButton *>(
+                                          QStringLiteral("worldMapPopupToggle"))
+                                      && w->findChild<QPushButton *>(
+                                             QStringLiteral(
+                                                 "worldMapPopupHighlight"));
+                }
+                expect(rowShapeOk,
+                       "list row = toggle (icon+name) + highlight btn");
+            }
+            expect(page.biomeRowCount() > 0, "biome row count exposed");
+            bool anyBiomeChecked = false;
+            for (int i = 0; i < page.biomeRowCount(); ++i)
+                if (page.biomeChecked(i))
+                    anyBiomeChecked = true;
+            expect(!anyBiomeChecked, "biomes default to all-deselected");
+
+            // 两列各自的全选 / 清空按钮
+            expect(page.findChild<QPushButton *>(
+                       QStringLiteral("worldMapPopupStructAll"))
+                       && page.findChild<QPushButton *>(
+                              QStringLiteral("worldMapPopupStructClear")),
+                   "structure column has select-all/clear");
+            expect(page.findChild<QPushButton *>(
+                       QStringLiteral("worldMapPopupBiomeAll"))
+                       && page.findChild<QPushButton *>(
+                              QStringLiteral("worldMapPopupBiomeClear")),
+                   "biome column has select-all/clear");
+
+            // 搜索过滤两列
+            if (search)
+            {
+                search->setText(QStringLiteral("村庄"));
+                QApplication::processEvents();
+                const auto filtered = page.findChildren<QListWidget *>(
+                    QStringLiteral("worldMapPopupList"));
+                expect(filtered.size() == 2 && filtered[0]->count() == 1,
+                       "search filters structure list");
+                search->clear();
+                QApplication::processEvents();
+            }
+
+            // 群系叠加：默认无选中 → 无格子；全选后 → 有格子；清空 → 归零
+            expect(page.waitForStructs(10000), "struct/biome query converged");
+            expect(page.biomeOverlayCellCount() == 0,
+                   "no overlay when biomes all-deselected");
+            if (auto *biomeAll = page.findChild<QPushButton *>(
+                    QStringLiteral("worldMapPopupBiomeAll")))
+            {
+                biomeAll->click();
+                expect(page.waitForStructs(10000),
+                       "biome select-all query converged");
+                const int cells = page.biomeOverlayCellCount();
+                std::fprintf(stderr, "  biome overlay cells=%d\n", cells);
+                expect(cells > 0, "biome select-all produces overlay cells");
+                bool allChecked = true;
+                for (int i = 0; i < page.biomeRowCount(); ++i)
+                    if (!page.biomeChecked(i))
+                        allChecked = false;
+                expect(allChecked, "biome select-all checks all rows");
+            }
+            if (auto *biomeClear = page.findChild<QPushButton *>(
+                    QStringLiteral("worldMapPopupBiomeClear")))
+            {
+                biomeClear->click();
+                QApplication::processEvents();
+                expect(page.biomeOverlayCellCount() == 0,
+                       "biome clear empties overlay");
+            }
+
+            // 高亮跳转：结构（村庄）→ 视角中心变化 + 高亮圈
+            {
+                const QPoint before = page.viewCenterBlock();
+                int villageIdx = -1;
+                for (int i = 0; i < StructureFinder::allStructures().size(); ++i)
+                    if (std::strcmp(StructureFinder::allStructures()[i].key,
+                                    "village") == 0)
+                        villageIdx = i;
+                expect(villageIdx >= 0, "village type present");
+                if (villageIdx >= 0)
+                {
+                    expect(page.highlightStructureType(villageIdx),
+                           "highlight village accepted");
+                    // 视口内有村庄时立即跳转；没有则后台搜（等待收敛）
+                    QElapsedTimer ht;
+                    ht.start();
+                    while (ht.elapsed() < 8000)
+                    {
+                        QApplication::processEvents(QEventLoop::AllEvents, 30);
+                        // 视口内有村庄时立即跳转；没有则后台搜（等中心变化）
+                        if (ht.elapsed() > 200
+                            && page.viewCenterBlock() != before)
+                            break;
+                    }
+                    page.grab().toImage().save(
+                        QStringLiteral("D:/BlockBox/_out/"
+                                       "world_map_page_probe_highlight.png"));
+                }
+            }
+
+            // 关闭方式：× 按钮 → 关闭；Esc → 关闭；再点展开 → 开，点弹窗外 → 关
+            if (auto *closeBtn = page.findChild<QPushButton *>(
+                    QStringLiteral("worldMapPopupClose")))
+            {
+                closeBtn->click();
+                QApplication::processEvents();
+                expect(!page.isContentPopupOpen(), "close button closes popup");
+            }
+            expandBtn->click();
+            QApplication::processEvents();
+            expect(page.isContentPopupOpen(), "expand reopens popup");
+            {
+                QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape,
+                              Qt::NoModifier);
+                QApplication::sendEvent(popup, &esc);
+                QApplication::processEvents();
+                expect(!page.isContentPopupOpen(), "Esc closes popup");
+            }
+            expandBtn->click();
+            QApplication::processEvents();
+            expect(page.isContentPopupOpen(), "expand opens popup again");
+            // 模拟点弹窗外（点地图左上角 —— 弹窗居中在画布中央，角落一定在外）
+            if (mapView)
+            {
+                const QPointF outside(8, 8);
+                QMouseEvent press(QEvent::MouseButtonPress, outside,
+                                  mapView->mapToGlobal(outside),
+                                  Qt::LeftButton, Qt::LeftButton,
+                                  Qt::NoModifier);
+                QApplication::sendEvent(mapView, &press);
+                QApplication::processEvents();
+                expect(!page.isContentPopupOpen(),
+                       "click outside closes popup");
+            }
+            // 展开按钮 toggle：开 → 关
+            expandBtn->click();
+            QApplication::processEvents();
+            expect(page.isContentPopupOpen(), "expand toggles open");
+            expandBtn->click();
+            QApplication::processEvents();
+            expect(!page.isContentPopupOpen(), "expand toggles closed");
         }
     }
 

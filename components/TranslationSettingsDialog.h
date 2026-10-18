@@ -48,6 +48,10 @@ private:
     QWidget *createBaiduSettingsPage();
     QWidget *createGoogleSettingsPage();
     QWidget *createCustomSettingsPage();
+    /// 用已配置的真实模型填充可编辑下拉（列表来自 aiConfiguredModels）
+    void populateModelCombo(QComboBox *combo);
+    /// 从下拉取当前模型 ID：列表项取 itemData，手输取文本
+    QString comboModelId(QComboBox *combo) const;
 
     QWidget *m_card;
 
@@ -65,7 +69,7 @@ private:
     // AI settings
     QLineEdit *m_aiApiUrlEdit;
     QLineEdit *m_aiApiKeyEdit;
-    QLineEdit *m_aiModelEdit;
+    QComboBox *m_aiModelCombo;
 
     // DeepL settings
     QLineEdit *m_deeplKeyEdit;
@@ -82,7 +86,7 @@ private:
     // Custom API settings
     QLineEdit *m_customUrlEdit;
     QLineEdit *m_customKeyEdit;
-    QLineEdit *m_customModelEdit;
+    QComboBox *m_customModelCombo;
 
     // Test
     QLineEdit *m_testTextEdit;

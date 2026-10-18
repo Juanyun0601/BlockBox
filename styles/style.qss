@@ -4373,10 +4373,9 @@ QWidget#modDetailContent {
 
 /* 详情页头�?*/
 QWidget#modDetailHeader {
-    background-color: transparent;
-    border-bottom: 1px solid @BORDER_LIGHT@;
-    padding-bottom: 20px;
-    margin-bottom: 24px;
+    background-color: @BG_GLASS@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
 }
 
 /* 详情页大图标 �?72px（原�?hero 风格�?*/
@@ -12924,6 +12923,39 @@ QLineEdit#translationInput::placeholder {
     color: @TEXT_TERTIARY@;
 }
 
+/* 翻译设置里的模型下拉（可编辑，与输入框同观感） */
+QComboBox#translationInput {
+    background-color: @BG_SECONDARY@;
+    color: @TEXT_PRIMARY@;
+    border: 1px solid @BORDER_DEFAULT@;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    selection-background-color: @PRIMARY_RGBA_40@;
+}
+QComboBox#translationInput:focus {
+    border-color: @PRIMARY@;
+}
+QComboBox#translationInput::drop-down {
+    border: none;
+    width: 28px;
+    background: transparent;
+}
+QComboBox#translationInput::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid @TEXT_TERTIARY@;
+    margin-right: 8px;
+}
+QComboBox#translationInput QAbstractItemView {
+    background-color: @BG_SECONDARY@;
+    color: @TEXT_PRIMARY@;
+    border: 1px solid @BORDER_DEFAULT@;
+    selection-background-color: @PRIMARY_RGBA_40@;
+    outline: none;
+}
+
 /* DeepL 类型选择按钮 */
 QPushButton#translationTypeBtn {
     background-color: @BG_SECONDARY@;
@@ -13374,6 +13406,193 @@ QPushButton#worldMapStructAction:pressed {
 }
 
 
+/* —— 内容浏览弹窗（第二行「展开」） —— */
+QWidget#worldMapContentPopup {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 16px;
+}
+
+QLineEdit#worldMapPopupSearch {
+    background-color: @BG_BASE@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    padding: 7px 12px;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    selection-background-color: @PRIMARY@;
+    selection-color: @TEXT_ON_PRIMARY@;
+}
+
+QLineEdit#worldMapPopupSearch:focus {
+    border: 1px solid @PRIMARY@;
+    background-color: @BG_CARD@;
+}
+
+QLabel#worldMapPopupColTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+    border-left: 3px solid @PRIMARY@;
+    border-radius: 1px;
+    padding: 1px 0 1px 8px;
+}
+
+QLabel#worldMapPopupHint {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+    border-top: 1px solid @BORDER_LIGHT@;
+    padding-top: 7px;
+}
+
+QPushButton#worldMapPopupClose {
+    background-color: transparent;
+    border: none;
+    border-radius: 14px;
+    color: @TEXT_SECONDARY@;
+    font-size: 16px;
+    padding: 0;
+}
+
+QPushButton#worldMapPopupClose:hover {
+    background-color: @DANGER_BG@;
+    color: @DANGER_TEXT@;
+}
+
+QPushButton#worldMapPopupClose:pressed {
+    background-color: @DANGER_BORDER@;
+    color: @DANGER_TEXT@;
+}
+
+QPushButton#worldMapPopupStructAll,
+QPushButton#worldMapPopupStructClear,
+QPushButton#worldMapPopupBiomeAll,
+QPushButton#worldMapPopupBiomeClear {
+    background-color: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 3px 11px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QPushButton#worldMapPopupStructAll:hover,
+QPushButton#worldMapPopupStructClear:hover,
+QPushButton#worldMapPopupBiomeAll:hover,
+QPushButton#worldMapPopupBiomeClear:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#worldMapPopupStructAll:pressed,
+QPushButton#worldMapPopupStructClear:pressed,
+QPushButton#worldMapPopupBiomeAll:pressed,
+QPushButton#worldMapPopupBiomeClear:pressed {
+    background-color: @BG_PRESSED@;
+    border: 1px solid @BORDER_HOVER@;
+}
+
+QListWidget#worldMapPopupList {
+    background-color: @BG_BASE@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    outline: none;
+}
+
+QListWidget#worldMapPopupList::item {
+    height: 48px;
+}
+
+QWidget#worldMapPopupRow {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid @BORDER_LIGHT@;
+}
+
+QWidget#worldMapPopupRow:hover {
+    background-color: @BG_HOVER@;
+}
+
+QPushButton#worldMapPopupToggle {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-left: 3px solid transparent;
+    border-radius: 8px;
+    padding: 6px 10px;
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 400;
+    text-align: left;
+}
+
+QPushButton#worldMapPopupToggle:hover {
+    background-color: @BG_HOVER@;
+}
+
+QPushButton#worldMapPopupToggle:checked {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER@;
+    border-left: 3px solid @PRIMARY@;
+    color: @TEXT_PRIMARY@;
+    padding: 6px 10px;
+}
+
+QPushButton#worldMapPopupToggle:disabled {
+    color: @TEXT_DISABLED@;
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-left: 3px solid transparent;
+    padding: 6px 10px;
+}
+
+QPushButton#worldMapPopupHighlight {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 13px;
+}
+
+QPushButton#worldMapPopupHighlight:hover {
+    background-color: @PRIMARY_BG@;
+    border: 1px solid @PRIMARY_MEDIUM@;
+}
+
+QPushButton#worldMapPopupHighlight:pressed {
+    background-color: @PRIMARY_LIGHT@;
+    border: 1px solid @PRIMARY@;
+}
+
+QPushButton#worldMapPopupHighlight:disabled {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+
+QPushButton#worldMapExpandBtn {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 7px;
+    padding: 4px 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QPushButton#worldMapExpandBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_STRONG@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#worldMapExpandBtn:checked {
+    background-color: @PRIMARY@;
+    border: 1px solid @PRIMARY@;
+    color: @TEXT_ON_PRIMARY@;
+}
+
+
 
 /* —— 组内坐标输入（focus 主色描边，边框盒不位移） —— */
 QLineEdit#worldMapCoordEdit {
@@ -13393,10 +13612,19 @@ QLineEdit#worldMapCoordEdit:focus {
     background-color: @BG_CARD@;
     border: 1px solid @PRIMARY@;
 }
+/* —— 中间地图空态：与地图视图同款圆角不透卡片 —— */
+QWidget#worldMapEmptyPage {
+    background-color: @BG_BASE@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
 QLabel#worldMapEmpty {
     color: @TEXT_TERTIARY@;
     font-size: 13px;
     padding: 24px;
+    background: transparent;
+    border: none;
 }
 
 QWidget#worldMapStatusBar {
@@ -13408,6 +13636,15 @@ QWidget#worldMapStatusBar {
 QLabel#worldMapStatus {
     color: @TEXT_SECONDARY@;
     font-size: 12px;
+}
+
+QLabel#worldMapBiome {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 3px 10px;
 }
 
 QProgressBar#worldMapProgress {

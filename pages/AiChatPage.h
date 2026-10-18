@@ -94,6 +94,15 @@ public:
      */
     void setCompactMode(bool compact);
 
+    /**
+     * @brief 从外部注入一条资源引用（问问AI 入口）
+     * @param ref 资源引用（本地文件路径或网络 URL）
+     *
+     * 合并到待发送引用列表（按 path/category/extra 去重）并刷新标签条。
+     * 本地资源卡片、详情页「问问AI」按钮点击后由主窗口调用。
+     */
+    void addExternalReference(const ResourceReference &ref);
+
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -292,6 +301,14 @@ private:
      * 服务未运行时静默跳过（保留 m_models 现状，不删除旧条目）。
      */
     void refreshLocalModels();
+    /**
+     * @brief 将设置页配置的默认模型（ai/defaultModelId）应用为当前模型
+     *
+     * 从 m_models 中按 ID 查找；命中后套用服务商 URL/Key 配置并切换。
+     * 未配置或未命中时保持现有 m_currentModel 不变。
+     * @return 是否成功切换到设置的默认模型
+     */
+    bool applyDefaultModelSetting();
     void saveThinkingEffort(); ///< 保存思考强度选择
     void loadThinkingEffort(); ///< 加载思考强度选择
     void savePermissionMode(); ///< 保存操作权限选择

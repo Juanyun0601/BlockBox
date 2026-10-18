@@ -73,6 +73,7 @@ private:
     void buildDescriptionBlock();
     void buildScreenshotBlock();
     void updateFavoriteButtonIcon();
+    void updateDownloadPagination();
 
     QWidget *createDownloadCard(const ModVersionFile &vf);
     QLabel *createChip(const QString &text);
@@ -98,6 +99,14 @@ protected:
     QVBoxLayout *m_leftLayout = nullptr;
     QWidget *m_downloadContainer = nullptr;
     QVBoxLayout *m_downloadListLayout = nullptr;
+
+    // 版本列表分页
+    static constexpr int kDownloadPageSize = 30;
+    int m_downloadCurrentPage = 0;
+    QWidget *m_downloadPaginationBar = nullptr;
+    QPushButton *m_downloadPrevBtn = nullptr;
+    QPushButton *m_downloadNextBtn = nullptr;
+    QLabel *m_downloadPageLabel = nullptr;
 
     QWidget *m_rightPanel = nullptr;
     QVBoxLayout *m_rightLayout = nullptr;

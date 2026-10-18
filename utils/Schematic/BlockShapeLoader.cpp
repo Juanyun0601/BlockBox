@@ -513,7 +513,8 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
 
     if (!ensureModel(norm))
         return;
-    const ModelJson &model = m_models[norm];
+    // 按值拷贝：ensureModel 会往 QMap 插入，持有引用会因再平衡而悬空导致闪退
+    const ModelJson model = m_models.value(norm);
 
     // ---- 合并纹理链：子模型纹理优先级最高，覆盖父模型同名变量 ----
     QMap<QString, QString> mergedTex;
@@ -527,7 +528,7 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
         const QString pn = normalizeModelKey(model.parent);
         if (ensureModel(pn))
         {
-            const ModelJson &parent = m_models[pn];
+            const ModelJson parent = m_models.value(pn);
             for (auto mit = parent.textures.constBegin();
                  mit != parent.textures.constEnd(); ++mit)
                 if (!mergedTex.contains(mit.key()))
