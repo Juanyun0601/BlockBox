@@ -15,9 +15,12 @@
 #include "../utils/mod/ModrinthAPI.h"
 #include "../components/ContentViewSwitch.h"
 #include "../components/MasonryContentCard.h"
+#include "../components/TranslateSwitchCard.h"
+#include "../components/CardListTranslator.h"
 
 class BlurLoadingOverlay;
 class MCModAPI;
+class SearchQueryResolver;
 class FlowLayout;
 
 struct InstanceFilterData {
@@ -69,11 +72,16 @@ private slots:
     void onCategoriesLoaded(const QList<ModCategory> &categories);
     void onChineseNameResolved(const QString &modId, const QString &chineseName, const QString &mcmodUrl);
     void onCardContextMenu(const QPoint &pos);
+    /** 中文关键词解析完成，按解析出的关键词发起搜索 */
+    void onQueryResolved(quint64 requestId, const QString &original,
+                         const QString &keyword, const QString &matchedName);
 
 private:
     void initUI();
     void initAPI();
     void performSearch(bool append = false);
+    /** 关键词可能已由中文解析成英文，这里才真正请求下载源 */
+    void issueSearchRequests(const QString &keyword);
     /** 全部来源模式：两源结果齐后按名称合并同名资源并刷出卡片 */
     void flushAllSourceResults();
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -127,6 +135,10 @@ private:
     CurseForgeAPI *m_curseforgeAPI;
     ModrinthAPI *m_modrinthAPI;
     MCModAPI *m_mcmodAPI;
+    SearchQueryResolver *m_queryResolver;
+    QLabel *m_searchHint;
+    quint64 m_queryToken;          // 中文解析请求序号，用于丢弃过期结果
+    QString m_effectiveQuery;      // 实际发给下载源的关键词（中文解析之后）
     int m_currentSource;
     int m_currentPage;
     QString m_currentQuery;
@@ -146,6 +158,16 @@ private:
     QMap<QString, QString> m_mcmodUrls;
     QMap<QString, InstanceFilterData> m_instanceDataMap;
     QString m_currentInstancePath;
+
+    // ── 右下角悬浮翻译卡片（EN 原文 / 中 AI 翻译） ──
+    void onListTranslateModeChanged(bool chinese);
+    void applyListTranslation();
+    void restoreListTranslation();
+    void syncTranslateStateWithCards();
+
+    TranslateSwitchCard *m_translateSwitch = nullptr;
+    CardListTranslator *m_translator = nullptr;
+    bool m_applyingListTranslation = false;   // rebuildCards() 期间不重算翻译状态
 };
 
 #endif

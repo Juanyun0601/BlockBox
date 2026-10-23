@@ -16,6 +16,8 @@
 #include <QUuid>
 #include <QMutex>
 #include <QMutexLocker>
+
+#include "Safety.h"
 #ifdef Q_OS_WIN
 #include <QtZlib/zlib.h>
 #else
@@ -121,6 +123,13 @@ namespace JarUtils {
 
 bool extractFromJar(const QString &jarPath, const QString &entryPath, const QString &destPath)
 {
+    // 条目名来自压缩包内部，恶意 JAR 可用 "../" 让解压写到目标目录之外
+    if (!Safety::isSafeEntryName(entryPath))
+    {
+        qWarning() << "[JarUtils]" << "Unsafe entry path rejected:" << entryPath;
+        return false;
+    }
+
     if (tryExtractWithJarTool(jarPath, entryPath, destPath))
     {
         return true;
@@ -292,6 +301,28 @@ QStringList listEntriesInJar(const QString &jarPath, const QString &prefix)
 
 bool extractJarDirectory(const QString &jarPath, const QString &dirPath, const QString &destDir)
 {
+    if (!Safety::isSafeEntryName(dirPath))
+    {
+        qWarning() << "[JarUtils]" << "Unsafe directory path rejected:" << dirPath;
+        return false;
+    }
+
+    // 解压前先扫描目标子目录下的所有条目，任何条目想跳出目标目录都直接拒绝
+    const QStringList unsafeCandidates = listEntriesInJar(jarPath, dirPath);
+    for (const QString &entry : unsafeCandidates)
+    {
+        if (!Safety::isSafeEntryName(entry))
+        {
+            qWarning() << "[JarUtils]" << "Unsafe entry in jar rejected:" << entry;
+            return false;
+        }
+    }
+
+    if (!destDir.isEmpty())
+    {
+        QDir().mkpath(destDir);
+    }
+
     QString jarToolPath = getJarToolPath();
     if (!jarToolPath.isEmpty())
     {
@@ -386,7 +417,7 @@ bool tryExtractWithPowerShell(const QString &jarPath, const QString &entryPath, 
         "$fs.Close();"
         "$stream.Close();"
         "$zip.Dispose();"
-    ).arg(jarPath, entryPath, destPath);
+    ).arg(Safety::psQuote(jarPath), Safety::psQuote(entryPath), Safety::psQuote(destPath));
 
     QProcess process;
     process.start("powershell", QStringList() << "-NoProfile" << "-Command" << script);
@@ -410,20 +441,20 @@ bool tryExtractWithPython(const QString &jarPath, const QString &entryPath, cons
 
     for (const QString &pythonCmd : pythonCommands)
     {
-        QString script = QString(
+        // 路径通过 argv 传入，避免把含引号的文件名拼进脚本造成注入
+        const QString script = QStringLiteral(
             "import zipfile, sys, os\n"
-            "os.makedirs(os.path.dirname(r'%3'), exist_ok=True)\n"
-            "with zipfile.ZipFile(r'%1') as z:\n"
-            "    z.extract(r'%2', os.path.dirname(r'%3'))\n"
-            "src = os.path.join(os.path.dirname(r'%3'), r'%2')\n"
-            "if src != r'%3':\n"
-            "    os.replace(src, r'%3')\n"
-        ).arg(jarPath, entryPath, destPath);
-
-        script.replace("\\", "\\\\");
+            "src_zip, entry, dest = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+            "dest_dir = os.path.dirname(dest) or '.'\n"
+            "os.makedirs(dest_dir, exist_ok=True)\n"
+            "with zipfile.ZipFile(src_zip) as z:\n"
+            "    z.extract(entry, dest_dir)\n"
+            "tmp = os.path.join(dest_dir, entry)\n"
+            "if os.path.abspath(tmp) != os.path.abspath(dest):\n"
+            "    os.replace(tmp, dest)\n");
 
         QProcess process;
-        process.start(pythonCmd, QStringList() << "-c" << script);
+        process.start(pythonCmd, QStringList() << "-c" << script << jarPath << entryPath << destPath);
 
         if (!process.waitForFinished(15000))
         {
@@ -653,10 +684,12 @@ bool tryExtractJarDirectoryWithPowerShell(const QString &jarPath, const QString 
         "$zip = [System.IO.Compression.ZipFile]::OpenRead('%1');"
         "$prefix = '%2';"
         "$dest = '%3';"
+        "$root = [System.IO.Path]::GetFullPath($dest);"
         "foreach ($entry in $zip.Entries) {"
         "    if ($entry.FullName.StartsWith($prefix) -and $entry.Name.Length -gt 0) {"
         "        $relPath = $entry.FullName.Substring($prefix.Length);"
-        "        $targetPath = Join-Path $dest $relPath;"
+        "        $targetPath = [System.IO.Path]::GetFullPath((Join-Path $dest $relPath));"
+        "        if (-not $targetPath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { continue; }"
         "        $targetDir = Split-Path $targetPath -Parent;"
         "        if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null; }"
         "        $fs = [System.IO.File]::Create($targetPath);"
@@ -665,7 +698,7 @@ bool tryExtractJarDirectoryWithPowerShell(const QString &jarPath, const QString 
         "    }"
         "}"
         "$zip.Dispose();"
-    ).arg(jarPath, normalizedDirPath, destDir);
+    ).arg(Safety::psQuote(jarPath), Safety::psQuote(normalizedDirPath), Safety::psQuote(destDir));
 
     QProcess process;
     process.start("powershell", QStringList() << "-NoProfile" << "-Command" << script);
@@ -686,20 +719,24 @@ bool tryExtractJarDirectoryWithPython(const QString &jarPath, const QString &dir
     {
         QString script = QString(
             "import zipfile, os, sys\n"
-            "os.makedirs(r'%3', exist_ok=True)\n"
-            "with zipfile.ZipFile(r'%1') as z:\n"
+            "src_zip, prefix, dest = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+            "root = os.path.abspath(dest)\n"
+            "os.makedirs(root, exist_ok=True)\n"
+            "with zipfile.ZipFile(src_zip) as z:\n"
             "    for info in z.infolist():\n"
-            "        if info.filename.startswith('%2') and not info.is_dir():\n"
-            "            rel = info.filename[len('%2'):]\n"
-            "            if rel.startswith('/'): rel = rel[1:]\n"
-            "            target = os.path.join(r'%3', rel)\n"
-            "            os.makedirs(os.path.dirname(target), exist_ok=True)\n"
-            "            with z.open(info) as src, open(target, 'wb') as dst:\n"
-            "                dst.write(src.read())\n"
-        ).arg(jarPath, dirPath, destDir);
+            "        name = info.filename.replace('\\\\', '/')\n"
+            "        if not name.startswith(prefix) or info.is_dir():\n"
+            "            continue\n"
+            "        rel = name[len(prefix):].lstrip('/')\n"
+            "        target = os.path.abspath(os.path.join(root, rel))\n"
+            "        if target != root and not target.startswith(root + os.sep):\n"
+            "            continue\n"
+            "        os.makedirs(os.path.dirname(target), exist_ok=True)\n"
+            "        with z.open(info) as src, open(target, 'wb') as dst:\n"
+            "            dst.write(src.read())\n");
 
         QProcess process;
-        process.start(pythonCmd, QStringList() << "-c" << script);
+        process.start(pythonCmd, QStringList() << "-c" << script << jarPath << dirPath << destDir);
 
         if (!process.waitForFinished(30000))
         {
@@ -821,6 +858,11 @@ bool tryExtractJarDirectoryManual(const QString &jarPath, const QString &dirPath
 
         jarFile.seek(localHeaderOffset);
         QByteArray localHeader = jarFile.read(30);
+        if (localHeader.size() < 30)
+        {
+            jarFile.seek(savedPos);
+            continue;
+        }
         quint16 localFileNameLength = (quint8)localHeader[26] | ((quint8)localHeader[27] << 8);
         quint16 localExtraLength = (quint8)localHeader[28] | ((quint8)localHeader[29] << 8);
         jarFile.read(localFileNameLength + localExtraLength);
@@ -849,7 +891,18 @@ bool tryExtractJarDirectoryManual(const QString &jarPath, const QString &dirPath
         }
 
         QString relPath = entryName.mid(normalizedDirPath.length());
+        if (!Safety::isSafeEntryName(relPath))
+        {
+            jarFile.seek(savedPos);
+            continue;
+        }
+
         QString targetPath = destDir + "/" + relPath;
+        if (!Safety::isPathInside(destDir, targetPath))
+        {
+            jarFile.seek(savedPos);
+            continue;
+        }
 
         QDir targetParentDir = QFileInfo(targetPath).absoluteDir();
         if (!targetParentDir.exists())
@@ -1200,6 +1253,19 @@ QByteArray decompressRawDeflate(const QByteArray &compressedData, quint32 uncomp
     {
         qWarning() << "[JarUtils]" << "inflateInit2 failed:" << ret;
         return result;
+    }
+
+    // 声明大小来自压缩包自身，恶意条目可谎称 2-4GB 让这里直接申请失败
+    const quint32 kMaxEntrySize = 512u * 1024u * 1024u;
+    if (uncompressedSize > kMaxEntrySize
+        || (uncompressedSize > 0
+            && static_cast<quint64>(uncompressedSize)
+                   > static_cast<quint64>(compressedData.size()) * 200u + 65536u))
+    {
+        qWarning() << "[JarUtils]" << "Suspicious uncompressed size:" << uncompressedSize
+                   << "compressed:" << compressedData.size();
+        inflateEnd(&strm);
+        return QByteArray();
     }
 
     // 预留空间，若 uncompressedSize 为 0 则动态增长

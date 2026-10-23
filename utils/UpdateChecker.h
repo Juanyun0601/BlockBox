@@ -51,6 +51,7 @@ public:
         // 应用内更新资产（无匹配资产时为空，仅弹"前往下载"）
         QString assetUrl;     // 资产下载地址（github.com）
         QString assetName;    // 资产文件名，如 BlockBox-1.0.0-win64-setup.exe
+        QString assetDigest;  // 资产指纹（GitHub 返回的 "sha256:..."，无则为空）
         bool isValid() const { return !version.isEmpty(); }
     };
 
@@ -147,6 +148,20 @@ private:
 
     void showUpdateDialog(const ReleaseCandidate &release);
 
+    /**
+     * @brief 安卓端：把启动器更新与运行依赖更新合并到同一个窗口展示
+     *
+     * 启动器检查结束后接着检查运行依赖，两边都结束后统一弹窗，
+     * 避免先后弹出两个窗口。桌面端不进入该流程。
+     */
+    void beginCombinedUpdateFlow(bool launcherHasUpdate, bool checkFailed, const QString &errorText);
+    /** 运行依赖检查结束回调 */
+    void onRuntimeDependenciesChecked(bool success, const QString &error);
+    /** 运行依赖下载/安装结束回调 */
+    void onRuntimeDependenciesInstalled(bool allSucceeded);
+    /** 弹出一个同时列出启动器更新与运行依赖更新的窗口 */
+    void showCombinedUpdateDialog(const QString &launcherError);
+
     /** 确认后按路径执行平台安装（installDownloadedUpdate / installExternalPackage 共用） */
     void installPackageAtPath(QWidget *parent, const QString &packagePath);
 
@@ -158,6 +173,13 @@ private:
     int m_attempt = 0;
 
     ReleaseCandidate m_lastCandidate;
+
+    // 安卓端合并更新窗口的上下文
+    bool m_combinedFlowActive = false;
+    bool m_launcherHasUpdate = false;
+    bool m_launcherCheckFailed = false;
+    QString m_launcherErrorText;
+    bool m_depsCheckPending = false;
 
     DownloadState m_downloadState = DownloadIdle;
     QString m_downloadPath;   // 更新包落盘路径

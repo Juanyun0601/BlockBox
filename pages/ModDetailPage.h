@@ -15,13 +15,18 @@
 #include <QNetworkAccessManager>
 #include <QNetworkDiskCache>
 #include <QEvent>
+#include <QHash>
 #include <QVector>
 #include "../components/BlurLoadingOverlay.h"
+#include "../components/TranslateSwitchCard.h"
 #include "../utils/mod/ModData.h"
 #include "../utils/content/ContentData.h"
+#include "../utils/translation/TranslationService.h"
 
 class QParallelAnimationGroup;
 class SourceSwitchBar;
+class CurseForgeAPI;
+class ModrinthAPI;
 
 class ModDetailPage : public QWidget
 {
@@ -34,6 +39,8 @@ public:
     void setModInfo(const ModInfo &info);
     void setInstanceFilter(const QString &gameVersion, const QString &loaderType);
     ModInfo currentModInfo() const { return m_modInfo; }
+    QString instanceGameVersion() const { return m_instanceGameVersion; }
+    QString instanceLoaderType() const { return m_instanceLoaderType; }
 
 public slots:
     void receiveDetail(const ModInfo &detail);
@@ -47,6 +54,8 @@ signals:
     void sourceSwitchRequested(const QString &source);
     /** 点击「问问AI」：请求跳转 AI 助手并引用当前网络模组 */
     void askAiRequested(const ResourceReference &ref);
+    /** 点击左侧「前置模组」里的条目：请求跳转到该前置资源自己的详情页 */
+    void contentClicked(const ModInfo &modInfo);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -62,6 +71,14 @@ private:
     void buildFilterBlock(QVBoxLayout *parentLayout);
     void buildDependenciesBlock(QVBoxLayout *parentLayout);
     void buildDownloadListBlock(QVBoxLayout *parentLayout);
+
+    // ── 前置模组：详情返回后重建，并按 id 批量取名称与图标 ──
+    void initAPI();
+    void applyMCIMSetting();
+    void refreshDependencies();
+    void resolveDependencyInfos();
+    void onDependencyInfosResolved(const QList<ModInfo> &infos);
+    void loadDepIcon(QLabel *iconLabel, const QString &iconUrl);
     void buildLinksBlock(QVBoxLayout *parentLayout);
     void buildTagsBlock(QVBoxLayout *parentLayout);
     void buildDescriptionBlock(QVBoxLayout *parentLayout);
@@ -114,6 +131,11 @@ private:
     QComboBox *m_versionTypeCombo;
     QWidget *m_dependenciesContainer;
     QVBoxLayout *m_dependenciesLayout;
+    QWidget *m_dependenciesSection;          // 「前置模组」整块（无前置时隐藏）
+    CurseForgeAPI *m_curseforgeAPI;          // 批量查询前置资源用
+    ModrinthAPI *m_modrinthAPI;
+    QHash<QString, ModInfo> m_depResolved;   // 前置资源 id → 基础信息
+    QStringList m_depResolvingIds;           // 正在批量查询的前置 id
     QWidget *m_downloadContainer;
     QVBoxLayout *m_downloadListLayout;
     QList<DownloadCardEntry> m_downloadCards;
@@ -159,6 +181,35 @@ private:
     QNetworkAccessManager *m_networkManager;
 
     BlurLoadingOverlay *m_loadingOverlay;
+
+    // ── 右下角悬浮翻译卡片（EN 原文 / 中 AI 翻译当前页）──
+    void onTranslateModeChanged(bool chinese);
+    void startPageTranslation();
+    void translateNextChunk();
+    void onTranslateChunkFinished(const QString &text);
+    void applyTranslatedTexts();
+    void restoreOriginalTexts();
+    void setTranslateBusy(bool busy);
+    void resetTranslation();
+
+    /// 翻译任务种类：简介与详细描述可能只翻其中一处
+    enum TranslateChunkKind {
+        TranslateSummary = 0,          // 只翻译顶部简介
+        TranslateDetail = 1,           // 只翻译详细信息
+        TranslateSummaryAndDetail = 2  // 简介与详细信息同源，一次翻译两处共用
+    };
+
+    TranslateSwitchCard *m_translateSwitch = nullptr;
+    TranslationService *m_translator = nullptr;
+    QStringList m_translateTexts;
+    QVector<int> m_translateKinds;
+    int m_translateChunkIndex = 0;
+    bool m_translating = false;
+    bool m_translated = false;
+    QString m_origSummary;
+    QString m_origDetailHtml;
+    QString m_zhSummary;
+    QString m_zhDetailHtml;
 };
 
 #endif

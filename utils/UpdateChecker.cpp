@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
@@ -32,6 +33,8 @@
 #include "utils/GithubAccelerator.h"
 #include "utils/HarmonyBridge.h"
 #include "utils/SettingsManager.h"
+#include "utils/Safety.h"
+#include "utils/RuntimeDependencyManager.h"
 
 namespace {
 
@@ -63,7 +66,7 @@ QUrl requestUrlFor(int attempt, const QString &url)
 // 支持的格式：
 //   正式版     X.Y.Z       -> {X, Y, Z}，非测试版
 //   测试版     X.Y.Z-betaN -> {X, Y, Z}，beta 第 N 期
-//   公测遗留   betaN       -> {0, 0, 0}，beta 第 N 期（当前发布的 beta4 即此格式）
+//   公测遗留   betaN       -> {0, 0, 0}，beta 第 N 期（当前发布的 beta5 即此格式）
 // 宽容处理：可带 v/V 前缀；beta 与数字间允许其他字符（如 beta.15）。
 
 struct SemanticVersion
@@ -199,7 +202,7 @@ QString normalizeNotes(const QString &notes)
 //   BlockBox-<版本>-win64|winarm64-{setup.exe|portable.zip}
 //   BlockBox-<版本>-android-{arm64-v8a|x86_64|...}.apk
 //   BlockBox-<版本>-linux-{x64|arm64}{.deb|.tar.gz}
-//   BlockBox-<版本>-harmony-arm64-v8a.hap（HAP 无法在应用内自装，不参与应用内更新）
+//   BlockBox-<版本>-harmony-arm64-v8a.hap（通过 HarmonyBridge 拉起系统安装）
 QString platformAssetSuffix()
 {
 #if defined(Q_OS_WIN)
@@ -422,6 +425,8 @@ void UpdateChecker::pickAssetForPlatform(ReleaseCandidate &candidate,
             continue;
         candidate.assetName = assetName;
         candidate.assetUrl = asset.value(QStringLiteral("browser_download_url")).toString();
+        // GitHub 会给出 "sha256:<hex>" 形式的资产指纹，用于校验下载到的更新包
+        candidate.assetDigest = asset.value(QStringLiteral("digest")).toString();
         break;
     }
 }
@@ -463,6 +468,12 @@ void UpdateChecker::handleReply(QNetworkReply *reply)
     // 父窗口已销毁（应用正在退出）时不再弹窗
     if (!m_parent)
         return;
+
+    // 移动端（安卓/鸿蒙）：启动器更新与运行依赖更新合并到同一个窗口
+    if (RuntimeDependencyManager::isSupportedPlatform()) {
+        beginCombinedUpdateFlow(hasUpdate, failed, errorText);
+        return;
+    }
 
     if (hasUpdate) {
         showUpdateDialog(chosen);
@@ -528,6 +539,162 @@ void UpdateChecker::showUpdateDialog(const ReleaseCandidate &release)
     }
 }
 
+// ───────────────────────────── 移动端合并更新窗口 ─────────────────────────────
+
+void UpdateChecker::beginCombinedUpdateFlow(bool launcherHasUpdate, bool checkFailed,
+                                            const QString &errorText)
+{
+    m_launcherHasUpdate = launcherHasUpdate;
+    m_launcherCheckFailed = checkFailed;
+    m_launcherErrorText = errorText;
+    m_combinedFlowActive = true;
+    m_depsCheckPending = true;
+
+    RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
+    connect(deps, &RuntimeDependencyManager::checkFinished, this,
+            &UpdateChecker::onRuntimeDependenciesChecked, Qt::UniqueConnection);
+    connect(deps, &RuntimeDependencyManager::allInstallsFinished, this,
+            &UpdateChecker::onRuntimeDependenciesInstalled, Qt::UniqueConnection);
+
+    // 依赖检查始终静默：失败时在合并窗口里如实说明，不再单独弹一次
+    deps->checkForUpdates(m_parent, true);
+}
+
+void UpdateChecker::onRuntimeDependenciesChecked(bool success, const QString &error)
+{
+    Q_UNUSED(success)
+    // 只处理本次合并流程触发的检查结果
+    if (!m_depsCheckPending)
+        return;
+    m_depsCheckPending = false;
+
+    if (!m_combinedFlowActive || !m_parent)
+        return;
+
+    showCombinedUpdateDialog(error);
+}
+
+void UpdateChecker::onRuntimeDependenciesInstalled(bool allSucceeded)
+{
+    Q_UNUSED(allSucceeded)
+    // 依赖装完后提醒用户启动器本身还有更新
+    if (!m_parent || !m_launcherHasUpdate || !m_lastCandidate.isValid())
+        return;
+    if (m_downloadState == DownloadRunning || m_downloadState == DownloadCompleted)
+        return;
+    showUpdateDialog(m_lastCandidate);
+}
+
+void UpdateChecker::showCombinedUpdateDialog(const QString &launcherError)
+{
+    RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
+    const QList<RuntimeDependency> pending = deps->pendingDependencies();
+
+    const bool hasLauncher = m_launcherHasUpdate && m_lastCandidate.isValid();
+    const bool hasDeps = !pending.isEmpty();
+
+    if (!hasLauncher && !hasDeps) {
+        m_combinedFlowActive = false;
+        if (m_silent)
+            return;
+        if (m_launcherCheckFailed) {
+            AppMessageBox::warning(m_parent, tr("检查更新"),
+                                   tr("检查更新失败，请检查网络后重试。\n\n%1").arg(launcherError));
+        } else {
+            AppMessageBox::information(m_parent, tr("检查更新"),
+                                       tr("当前已是最新版本（%1），运行依赖也是最新的。")
+                                           .arg(AppVersion::current()));
+        }
+        return;
+    }
+
+    QStringList lines;
+    if (hasLauncher) {
+        const QString versionLabel = m_lastCandidate.isBeta
+            ? tr("%1（测试版）").arg(m_lastCandidate.version)
+            : m_lastCandidate.version;
+        lines << tr("启动器有新版本 %1，当前版本为 %2。").arg(versionLabel, AppVersion::current());
+    }
+    if (hasDeps)
+        lines << tr("有 %1 项运行依赖需要安装或更新。").arg(pending.size());
+    if (!hasLauncher && m_launcherCheckFailed && !launcherError.isEmpty())
+        lines << tr("启动器检查更新失败：%1").arg(launcherError);
+
+    QString markdown;
+    if (hasLauncher) {
+        const QString notes = normalizeNotes(m_lastCandidate.notes);
+        if (!notes.isEmpty()) {
+            markdown += QStringLiteral("## %1\n\n%2\n\n")
+                            .arg(tr("启动器更新说明"), notes);
+        }
+    }
+    if (hasDeps) {
+        markdown += QStringLiteral("## %1\n\n").arg(tr("运行依赖"));
+        for (const RuntimeDependency &dependency : pending) {
+            QString line = QStringLiteral("- **%1** %2").arg(dependency.name, dependency.version);
+            if (!dependency.installed)
+                line += tr("（未安装）");
+            else if (dependency.needsUpdate())
+                line += tr("（已安装 %1，可更新）").arg(dependency.installedVersion);
+            else
+                line += tr("（已安装）");
+            const QString size = dependency.downloadSizeText();
+            if (!size.isEmpty())
+                line += tr("，%1").arg(size);
+            if (!dependency.description.isEmpty())
+                line += QStringLiteral("\n  ") + dependency.description;
+            markdown += line + QLatin1Char('\n');
+        }
+    }
+
+    AppMessageBox box(m_parent);
+    box.setIcon(AppMessageBox::Information);
+    box.setWindowTitle(hasLauncher && hasDeps ? tr("发现更新")
+                                              : (hasLauncher ? tr("发现新版本") : tr("运行依赖更新")));
+    box.setText(lines.join(QLatin1Char('\n')));
+    if (!markdown.isEmpty())
+        box.setInformativeMarkdown(markdown);
+
+    QPushButton *launcherBtn = nullptr;
+    if (hasLauncher) {
+        if (!m_lastCandidate.assetUrl.isEmpty()) {
+            const bool alreadyDownloaded = m_downloadState == DownloadCompleted
+                && QFile::exists(m_downloadPath);
+            launcherBtn = box.addButton(alreadyDownloaded ? tr("重启安装启动器")
+                                                         : tr("下载启动器更新"),
+                                        AppMessageBox::AcceptRole);
+        } else {
+            launcherBtn = box.addButton(tr("前往浏览器下载"), AppMessageBox::ActionRole);
+        }
+    }
+    QPushButton *depsBtn = hasDeps ? box.addButton(tr("一键安装运行依赖"), AppMessageBox::ActionRole)
+                                   : nullptr;
+    box.addButton(tr("以后再说"), AppMessageBox::RejectRole);
+    box.exec();
+
+    m_combinedFlowActive = false;
+    QPushButton *clicked = box.clickedButton();
+
+    if (launcherBtn && clicked == launcherBtn) {
+        if (m_lastCandidate.assetUrl.isEmpty()) {
+            QUrl url = m_lastCandidate.pageUrl;
+            if (!url.isValid() || url.isEmpty())
+                url = QUrl(AppVersion::releasePageUrl());
+            QDesktopServices::openUrl(url);
+        } else if (m_downloadState == DownloadCompleted && QFile::exists(m_downloadPath)) {
+            installDownloadedUpdate();
+        } else {
+            startDownload();
+        }
+        return;
+    }
+
+    if (depsBtn && clicked == depsBtn) {
+        deps->installAll();
+        return;
+    }
+}
+
 // ───────────────────────────── 应用内下载与安装 ─────────────────────────────
 
 void UpdateChecker::startDownload()
@@ -541,7 +708,10 @@ void UpdateChecker::startDownload()
     if (!updateDir.exists())
         QDir().mkpath(updateDir.absolutePath());
 
-    m_downloadPath = updateDir.filePath(m_lastCandidate.assetName);
+    // 资产名来自远程 JSON，先清洗成安全的单层文件名，避免 "../" 写到更新目录之外
+    const QString safeAssetName = Safety::safeFileName(m_lastCandidate.assetName,
+                                                       QStringLiteral("BlockBox-update"));
+    m_downloadPath = QDir::cleanPath(updateDir.filePath(safeAssetName));
     m_downloadAttempt = 0;
     m_downloadState = DownloadRunning;
     emit downloadStarted();
@@ -591,27 +761,65 @@ void UpdateChecker::issueDownloadRequest()
     m_progressThrottle.start();
 }
 
+namespace {
+
+/**
+ * 校验文件 SHA-256 是否与给定指纹一致。
+ * @param path        文件路径
+ * @param digestText  形如 "sha256:<hex>" 或纯 16 进制串
+ */
+bool verifyFileDigest(const QString &path, const QString &digestText)
+{
+    QString expected = digestText.trimmed();
+    const int colon = expected.indexOf(QLatin1Char(':'));
+    if (colon >= 0)
+        expected = expected.mid(colon + 1).trimmed();
+    if (expected.isEmpty())
+        return true;
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file))
+        return false;
+
+    return hash.result().toHex().compare(expected.toLatin1(), Qt::CaseInsensitive) == 0;
+}
+
+} // namespace
+
 void UpdateChecker::handleDownloadReply(QNetworkReply *reply)
 {
     reply->deleteLater();
 
     QFile *file = m_downloadFile;
     m_downloadFile = nullptr;
-    const bool ok = reply->error() == QNetworkReply::NoError;
+    bool ok = reply->error() == QNetworkReply::NoError;
     const qint64 total = reply->header(QNetworkRequest::ContentLengthHeader).toLongLong();
+    QString failureReason = reply->errorString();
 
     // 成功判定：有数据写入，且（内容长度未知或与已收字节数一致）
     if (ok && file && m_received > 0 && (total <= 0 || m_received == total)) {
         file->close();
-        file->deleteLater();
-        m_downloadState = DownloadCompleted;
-        emit downloadProgress(m_received, m_received);
-        emit downloadFinished();
-        return;
+        // 指纹校验：发布信息带 digest 时必须一致。
+        // 更新包可能经第三方加速地址/镜像下载，不校验就等于信任中间人。
+        if (m_lastCandidate.assetDigest.isEmpty()
+            || verifyFileDigest(m_downloadPath, m_lastCandidate.assetDigest)) {
+            file->deleteLater();
+            m_downloadState = DownloadCompleted;
+            emit downloadProgress(m_received, m_received);
+            emit downloadFinished();
+            return;
+        }
+        ok = false;
+        failureReason = tr("更新包校验失败，可能已被篡改，已阻止安装");
+        file->remove();
     }
 
     // 下载失败：删除半截文件，按 直连 -> 加速节点 -> 镜像 重试
-    const QString error = reply->errorString();
+    const QString error = failureReason;
     if (file) {
         file->close();
         file->remove();

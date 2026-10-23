@@ -19,6 +19,7 @@ class QPushButton;
 class QScrollArea;
 class QWidget;
 class CurseForgeAPI;
+class SearchQueryResolver;
 class BlurLoadingOverlay;
 class FlowLayout;
 
@@ -60,6 +61,9 @@ private slots:
     void onLastPage();
     void onSearchCompleted(const ModSearchResult &result);
     void onSearchFailed(const QString &error);
+    /** 中文关键词解析完成，按解析出的关键词发起搜索 */
+    void onQueryResolved(quint64 requestId, const QString &original,
+                         const QString &keyword, const QString &matchedName);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -70,6 +74,8 @@ private:
     void setupConnections();
     void applyMCIMSetting();
     void performSearch(bool append);
+    /** 关键词可能已由中文解析成英文，这里才真正请求下载源 */
+    void issueSearchRequests(const QString &keyword);
     void loadInitialContent();
 
     void addCard(const ModInfo &info);
@@ -107,6 +113,10 @@ private:
     QPushButton *m_lastPageBtn = nullptr;
 
     CurseForgeAPI *m_curseforgeAPI = nullptr;
+    SearchQueryResolver *m_queryResolver = nullptr;
+    QLabel *m_searchHint = nullptr;
+    quint64 m_queryToken = 0;      // 中文解析请求序号，用于丢弃过期结果
+    QString m_effectiveQuery;      // 实际发给下载源的关键词（中文解析之后）
 
     QList<QWidget*> m_cardWidgets;
     QList<ModInfo> m_cardInfos;

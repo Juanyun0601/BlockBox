@@ -166,4 +166,6 @@ private:
   QString m_currentSavePath;
   QString m_currentExtractDir;
   QString m_currentArchivePath;
+  QString m_currentChecksum;      // 待校验的 sha256（来自官方 API，可能为空）
+  QString m_currentChecksumType;  // 校验算法，目前为 "sha256"
 };

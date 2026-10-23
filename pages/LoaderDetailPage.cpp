@@ -29,8 +29,83 @@
 #include <QNetworkRequest>
 #include <QPropertyAnimation>
 #include <QtConcurrent>
+#include <QDateTime>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QVersionNumber>
+
+namespace {
+
+// 把用户可编辑的实例名规范成可用的文件夹名（Windows 不允许 : * ? " < > | 等字符）
+QString sanitizeInstanceFolderName(const QString &name, const QString &fallback)
+{
+    QString result = name.trimmed();
+    static const QRegularExpression invalidChars(QStringLiteral("[\\\\/:*?\"<>|\\x00-\\x1F]"));
+    result.replace(invalidChars, QStringLiteral("-"));
+    while (result.endsWith('.') || result.endsWith(' '))
+        result.chop(1);
+    if (result.isEmpty() || result == "." || result == "..")
+        result = fallback;
+    return result;
+}
+
+// 实例目录布局为 <游戏根>/versions/<实例名>，据此反推游戏根目录
+QString gameRootFromInstancePath(const QString &instancePath)
+{
+    if (instancePath.isEmpty())
+        return QString();
+    return QDir::cleanPath(instancePath + "/../..");
+}
+
+QStringList versionDirNames(const QString &gameRoot)
+{
+    QDir versionsDir(gameRoot + "/versions");
+    return versionsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+}
+
+// 在安装结束后比对 versions/ 目录，找出本次真正新装出来的实例目录；
+// 找不到时回退到原版基准目录（<游戏根>/versions/<mcVersion>）
+QString resolveInstalledInstanceDir(const QString &gameRoot, const QStringList &versionsBefore,
+                                   const QString &baseVersion)
+{
+    QDir versionsDir(gameRoot + "/versions");
+    const QStringList versionsAfter = versionsDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    // 加载器会新建自己的版本目录，而原版基准目录 <root>/versions/<mc> 也是本次新增的，
+    // 所以优先在「非基准目录」里挑最新写入的那个
+    QString bestLoaderDir;
+    QDateTime bestLoaderTime;
+    QString bestAnyDir;
+    QDateTime bestAnyTime;
+    for (const QString &dirName : versionsAfter) {
+        if (versionsBefore.contains(dirName))
+            continue;
+        const QFileInfo jsonInfo(versionsDir.absoluteFilePath(dirName) + "/" + dirName + ".json");
+        if (!jsonInfo.exists())
+            continue;
+        const QString dirPath = versionsDir.absoluteFilePath(dirName);
+        if (bestAnyDir.isEmpty() || jsonInfo.lastModified() > bestAnyTime) {
+            bestAnyDir = dirPath;
+            bestAnyTime = jsonInfo.lastModified();
+        }
+        if (dirName == baseVersion)
+            continue;
+        if (bestLoaderDir.isEmpty() || jsonInfo.lastModified() > bestLoaderTime) {
+            bestLoaderDir = dirPath;
+            bestLoaderTime = jsonInfo.lastModified();
+        }
+    }
+    if (!bestLoaderDir.isEmpty())
+        return bestLoaderDir;
+    if (!bestAnyDir.isEmpty())
+        return bestAnyDir;
+
+    const QString baseDir = versionsDir.absoluteFilePath(baseVersion);
+    if (QFile::exists(baseDir + "/" + baseVersion + ".json"))
+        return baseDir;
+    return QString();
+}
+
+} // namespace
 
 LoaderDetailPage::LoaderDetailPage(QWidget *parent)
     : QWidget(parent)
@@ -222,8 +297,17 @@ void LoaderDetailPage::initUI()
                 VersionDownloader::DownloadSource downloadSource =
                     (source == "bmcl") ? VersionDownloader::BMCL : VersionDownloader::Official;
                 VersionDownloader::instance()->setDownloadSource(downloadSource);
-                QString targetPath = m_modifyMode ? m_modifyInstancePath
-                                                   : m_pathComboBox->currentData().toString();
+                // 游戏根目录：新实例取用户选择的实例文件夹，修改实例则由实例目录反推；
+                // 版本文件必须落到 <游戏根>/versions/<实例名>，否则实例列表/启动器都找不到它
+                QString gameRoot = m_modifyMode ? gameRootFromInstancePath(m_modifyInstancePath)
+                                                : m_pathComboBox->currentData().toString();
+                if (gameRoot.trimmed().isEmpty())
+                    gameRoot = SettingsManager::instance()->getDefaultInstancePath();
+                const QString instanceFolderName =
+                    sanitizeInstanceFolderName(instanceName, m_currentVersion);
+                const QString targetPath = m_modifyMode
+                    ? m_modifyInstancePath
+                    : gameRoot + "/versions/" + instanceFolderName;
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted, this, nullptr);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadFailed, this, nullptr);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCancelled, this, nullptr);
@@ -238,7 +322,8 @@ void LoaderDetailPage::initUI()
                         if (m_modifyMode)
                             emit instanceModified(m_modifyInstancePath);
                         else
-                            emit installRequested(instanceName, m_currentVersion, m_selectedLoaders);
+                            emit installRequested(actualVersionPath, instanceName, m_currentVersion,
+                                                  m_selectedLoaders);
                     });
                 connect(VersionDownloader::instance(), &VersionDownloader::downloadFailed,
                     this, [this](const QString &error) {
@@ -256,15 +341,28 @@ void LoaderDetailPage::initUI()
                 if (m_isInstalling) return;
                 m_isInstalling = true;
                 m_installButton->setEnabled(false);
+                // 加载器安装器大多以「游戏根目录」为参数（内部自行拼 versions/），
+                // 只有 Forge 需要 <游戏根>/versions/<版本> 形式的实例目录；
+                // 原版基准版本必须先落到 <游戏根>/versions/<mcVersion>，加载器才能继承它
+                QString gameRoot = m_modifyMode ? gameRootFromInstancePath(m_modifyInstancePath)
+                                                : m_pathComboBox->currentData().toString();
+                if (gameRoot.trimmed().isEmpty())
+                    gameRoot = SettingsManager::instance()->getDefaultInstancePath();
+                const QString baseVersionDir = gameRoot + "/versions/" + m_currentVersion;
+                const QStringList versionsBefore = versionDirNames(gameRoot);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted, this, nullptr);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadFailed, this, nullptr);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCancelled, this, nullptr);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::statusChanged, this, nullptr);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadProgressUpdated, this, nullptr);
                 connect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted,
-                    this, [this, instanceName](const QString &, const QString &actualVersionPath) {
+                    this, [this, instanceName, gameRoot, versionsBefore](const QString &, const QString &actualVersionPath) {
                         QString mcVer = m_currentVersion;
-                        QString instPath = actualVersionPath;
+                        // 原版基准版本目录（<游戏根>/versions/<mcVer>），Forge 安装器需要它
+                        QString instPath = actualVersionPath.isEmpty()
+                                               ? gameRoot + "/versions/" + mcVer
+                                               : actualVersionPath;
+                        QString rootPath = gameRoot;
                         QMap<QString, SelectedLoader> ldrs = m_selectedLoaders;
                         QString instName = instanceName;
                         auto finishModify = [this]() {
@@ -280,7 +378,7 @@ void LoaderDetailPage::initUI()
                             if (m_modifyMode)
                                 finishModify();
                             else
-                                emit installRequested(instName, mcVer, m_selectedLoaders);
+                                emit installRequested(instPath, instName, mcVer, m_selectedLoaders);
                             return;
                         }
                         int pendingCount = 0;
@@ -294,22 +392,28 @@ void LoaderDetailPage::initUI()
                         LiteLoaderInstaller::instance()->setCurrentTaskId(mainTaskId);
                         CleanroomInstaller::instance()->setCurrentTaskId(mainTaskId);
                         OptiFabricInstaller::instance()->setCurrentTaskId(mainTaskId);
-                        auto checkAllComplete = [this, &pendingCount, &failedLoaders, mcVer, instPath, instName]() {
+                        auto checkAllComplete = [this, &pendingCount, &failedLoaders, mcVer, rootPath, versionsBefore, instName]() {
                             if (pendingCount <= 0) {
                                 m_isInstalling = false;
                                 m_installButton->setEnabled(true);
+                                const QString installedDir =
+                                    resolveInstalledInstanceDir(rootPath, versionsBefore, mcVer);
+                                const QString shownPath = installedDir.isEmpty() ? rootPath : installedDir;
                                 if (failedLoaders.isEmpty()) {
                                     NotificationManager::showSuccess(this,
-                                        tr("Minecraft %1 与 mod 加载器已成功安装到\r\n%2").arg(mcVer).arg(instPath));
+                                        tr("Minecraft %1 与 mod 加载器已成功安装到\r\n%2").arg(mcVer).arg(shownPath));
                                 } else {
                                     NotificationManager::showError(this,
                                         tr("Minecraft %1 安装成功，但以下加载器安装失败：\r\n%2")
                                             .arg(mcVer).arg(failedLoaders.join("\r\n")));
                                 }
-                                if (m_modifyMode)
-                                    emit instanceModified(m_modifyInstancePath);
-                                else
-                                    emit installRequested(instName, mcVer, m_selectedLoaders);
+                                if (m_modifyMode) {
+                                    emit instanceModified(installedDir.isEmpty() ? m_modifyInstancePath
+                                                                                 : installedDir);
+                                } else {
+                                    emit installRequested(installedDir.isEmpty() ? rootPath : installedDir,
+                                                          instName, mcVer, m_selectedLoaders);
+                                }
                             }
                         };
                         bool hasOptiFine = ldrs.contains("OptiFine");
@@ -335,7 +439,7 @@ void LoaderDetailPage::initUI()
                                         &cleanupGuard, onFailed);
                                 ForgeInstaller::instance()->setVersionIsolationEnabled(
                                     SettingsManager::instance()->isVersionIsolationEnabled());
-                                ForgeInstaller::instance()->downloadForgeInstaller(mcVer, loader.version, instPath, instName);
+                                ForgeInstaller::instance()->downloadForgeInstaller(mcVer, loader.version, rootPath, instName);
                             } else if (lowerName == "neoforge") {
                                 auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
                                     pendingCount--;
@@ -352,7 +456,7 @@ void LoaderDetailPage::initUI()
                                         &cleanupGuard, onSuccess);
                                 connect(NeoForgeInstaller::instance(), &NeoForgeInstaller::installFailed,
                                         &cleanupGuard, onFailed);
-                                NeoForgeInstaller::instance()->downloadNeoForgeInstaller(mcVer, loader.version, instPath, instName);
+                                NeoForgeInstaller::instance()->downloadNeoForgeInstaller(mcVer, loader.version, rootPath, instName);
                             } else if (lowerName == "fabric" || lowerName == "quilt" || lowerName == "legacyfabric") {
                                 auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
                                     pendingCount--;
@@ -367,7 +471,7 @@ void LoaderDetailPage::initUI()
                                         &cleanupGuard, onSuccess);
                                 connect(FabricInstaller::instance(), &FabricInstaller::installFailed,
                                         &cleanupGuard, onFailed);
-                                FabricInstaller::instance()->downloadFabricInstaller(mcVer, loader.version, instPath);
+                                FabricInstaller::instance()->downloadFabricInstaller(mcVer, loader.version, rootPath);
                             } else if (lowerName == "liteloader") {
                                 auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
                                     pendingCount--;
@@ -382,7 +486,7 @@ void LoaderDetailPage::initUI()
                                         &cleanupGuard, onSuccess);
                                 connect(LiteLoaderInstaller::instance(), &LiteLoaderInstaller::installFailed,
                                         &cleanupGuard, onFailed);
-                                LiteLoaderInstaller::instance()->downloadLiteLoader(mcVer, loader.version, instPath);
+                                LiteLoaderInstaller::instance()->downloadLiteLoader(mcVer, loader.version, rootPath);
                             } else if (lowerName == "cleanroom") {
                                 auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
                                     pendingCount--;
@@ -397,7 +501,7 @@ void LoaderDetailPage::initUI()
                                         &cleanupGuard, onSuccess);
                                 connect(CleanroomInstaller::instance(), &CleanroomInstaller::installFailed,
                                         &cleanupGuard, onFailed);
-                                CleanroomInstaller::instance()->downloadCleanroom(mcVer, loader.version, loader.fileName, instPath);
+                                CleanroomInstaller::instance()->downloadCleanroom(mcVer, loader.version, loader.fileName, rootPath);
                             } else if (lowerName == "optifabric") {
                                 auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
                                     pendingCount--;
@@ -412,7 +516,7 @@ void LoaderDetailPage::initUI()
                                         &cleanupGuard, onSuccess);
                                 connect(OptiFabricInstaller::instance(), &OptiFabricInstaller::installFailed,
                                         &cleanupGuard, onFailed);
-                                OptiFabricInstaller::instance()->downloadOptiFabric(mcVer, loader.version, loader.fileName, instPath);
+                                OptiFabricInstaller::instance()->downloadOptiFabric(mcVer, loader.version, loader.fileName, rootPath);
                             }
                         }
                         if (hasOptiFine) {
@@ -433,7 +537,7 @@ void LoaderDetailPage::initUI()
                                     &cleanupGuard, onSuccess);
                             connect(OptiFineInstaller::instance(), &OptiFineInstaller::installFailed,
                                     &cleanupGuard, onFailed);
-                            OptiFineInstaller::instance()->downloadOptiFineInstaller(mcVer, optiFineLoader.version, optiFineLoader.fileName, instPath);
+                            OptiFineInstaller::instance()->downloadOptiFineInstaller(mcVer, optiFineLoader.version, optiFineLoader.fileName, rootPath);
                         }
                         if (pendingCount == 0) {
                             checkAllComplete();
@@ -450,14 +554,15 @@ void LoaderDetailPage::initUI()
                         m_isInstalling = false;
                         m_installButton->setEnabled(true);
                     });
-                QString instPath = m_modifyMode ? m_modifyInstancePath
-                                                 : m_pathComboBox->currentData().toString();
                 QString instName = instanceName;
                 QStringList loaderList;
                 for (auto it = m_selectedLoaders.constBegin(); it != m_selectedLoaders.constEnd(); ++it) {
                     loaderList << QString("%1 %2").arg(it.value().name, it.value().version);
                 }
-                VersionDownloader::instance()->downloadVanillaTo(m_currentVersion, instPath, instName, loaderList);
+                // 原版基准版本下载到 <游戏根>/versions/<mcVersion>，
+                // 加载器安装器会在此基础上创建各自的版本目录
+                VersionDownloader::instance()->downloadVanillaTo(m_currentVersion, baseVersionDir,
+                                                                instName, loaderList);
             }
         }
     });

@@ -15,8 +15,11 @@
 
 #include "components/CustomCheckBox.h"
 #include "components/NotificationHistoryDialog.h"
+#include "components/NotificationManager.h"
 #include "components/OutlinedLabel.h"
+#include "components/QuizDialog.h"
 #include "pages/OnboardingWizard.h"
+#include "utils/QuizBank.h"
 #include "utils/SettingsManager.h"
 #include "utils/UpdateChecker.h"
 #include "utils/WorldMap/StructureIcons.h"
@@ -341,6 +344,28 @@ void SettingsPage::initGeneralSettings()
     QHBoxLayout *onboardingRow = appendSettingRow(onboardingCard,
         tr("新手引导"), tr("重新打开首次启动时的配置向导，可重新设置语言、下载源、账户、Java 与实例文件夹等。"), QString(), true);
     onboardingRow->addWidget(openGuideBtn);
+
+    // ── 入站答题 ──
+    QVBoxLayout *quizCard = createSettingsCard(layout, tr("入站答题"));
+
+    QPushButton *startQuizBtn = new QPushButton(
+        QuizBank::hasPassed() ? tr("再答一次") : tr("开始答题"));
+    startQuizBtn->setObjectName("historyBtn");
+    startQuizBtn->setCursor(Qt::PointingHandCursor);
+    connect(startQuizBtn, &QPushButton::clicked, this, [this, startQuizBtn]() {
+        QWidget *host = window();
+        QuizDialog dialog(host);
+        if (dialog.exec() == QDialog::Accepted) {
+            startQuizBtn->setText(tr("再答一次"));
+            if (host)
+                NotificationManager::showSuccess(
+                    host, tr("已通过入站答题，分数 %1 分。").arg(QuizBank::lastScore()), 6000);
+        }
+    });
+
+    QHBoxLayout *quizRow = appendSettingRow(quizCard,
+        tr("入站答题"), tr("从题库随机抽 50 题，每题 2 分，达到 80 分即通过；答错会显示正确答案与解析。"), QString(), true);
+    quizRow->addWidget(startQuizBtn);
 
     // ── 提示信息 ──
     QVBoxLayout *notificationCard = createSettingsCard(layout, tr("提示信息"));

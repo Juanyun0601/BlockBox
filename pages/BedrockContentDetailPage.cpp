@@ -1,5 +1,6 @@
 #include "BedrockContentDetailPage.h"
 #include "../utils/McimHelper.h"
+#include "../utils/Safety.h"
 
 #include <QApplication>
 #include <QAction>
@@ -30,6 +31,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include "components/AutoHeightTextBrowser.h"
 #include "components/BlurLoadingOverlay.h"
 #include "components/NotificationManager.h"
 #include "components/ScreenshotViewer.h"
@@ -717,11 +719,11 @@ void BedrockContentDetailPage::buildDescriptionBlock()
     title->setObjectName("modDetailSectionTitle");
     sectionLayout->addWidget(title);
 
-    m_descriptionBrowser = new QTextBrowser();
+    // 描述区不再限制高度：文字按完整内容向下排版，由页面整体滚动
+    m_descriptionBrowser = new AutoHeightTextBrowser();
     m_descriptionBrowser->setObjectName("modDetailDescBrowser");
     m_descriptionBrowser->setOpenExternalLinks(true);
     m_descriptionBrowser->setReadOnly(true);
-    m_descriptionBrowser->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_descriptionBrowser->setHtml(desc);
     sectionLayout->addWidget(m_descriptionBrowser);
 
@@ -930,8 +932,9 @@ void BedrockContentDetailPage::startDownloadAndInstall(const ModVersionFile &vf)
     }
     if (fileName.isEmpty())
         fileName = QStringLiteral("bedrock_pack.mcpack");
-    fileName.replace(QChar(' '), QChar('_'));
-    const QString savePath = dir + QLatin1Char('/') + fileName;
+    // 文件名来自接口返回，可能带 "../" 之类，先清洗成安全的单层文件名
+    fileName = Safety::safeFileName(fileName, QStringLiteral("bedrock_pack.mcpack"));
+    const QString savePath = QDir::cleanPath(dir + QLatin1Char('/') + fileName);
 
     DownloadTaskManager *mgr = DownloadTaskManager::instance();
     m_activeTaskId = mgr->addTask(fileName, dir, m_modInfo.name,

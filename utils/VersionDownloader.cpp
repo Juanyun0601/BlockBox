@@ -95,6 +95,8 @@ void VersionDownloader::downloadVanillaTo(const QString &versionId, const QStrin
 {
     if (m_isDownloading)
     {
+        // 之前这里静默返回，用户点了安装没有任何反应，看起来像“装不上”
+        emit downloadFailed(tr("已有下载任务正在进行，请等待完成或取消后再试"));
         return;
     }
 
@@ -1337,7 +1339,9 @@ void VersionDownloader::fetchAssetIndex()
     if (!rootObj.isEmpty() && rootObj.contains("objects")
         && !rootObj["objects"].toObject().isEmpty())
     {
-        startAssetsFromIndex(rootObj["objects"].toObject(), assetId);
+        // 缓存命中也要把索引写到 assets/indexes/，否则启动器在启动时还会再下载一次
+        startAssetsFromIndex(rootObj["objects"].toObject(), assetId,
+                             QJsonDocument(rootObj).toJson(QJsonDocument::Compact));
         return;
     }
 

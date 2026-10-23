@@ -160,9 +160,10 @@ static void rotateBoxPoint(float &x, float &y, float &z,
     }
 }
 
-// 把 blockstate 级的 x/y 旋转施加到 boxes[start..] 上：
-// 按 8 角点（含元素自身旋转）旋转后重新求轴向包围盒。
-// MC 的 blockstate 旋转恒为 90° 整数倍，对轴向盒旋转结果仍是精确轴向盒。
+// 把 blockstate 级的 x/y 旋转施加到 boxes[start..] 上。
+// y 旋转保留为「渲染期绕格心的旋转」(ShapeBox::yaw)：这样零厚度平面（十字植物）
+// 与自带 45° 旋转的元素不会被打包成错误的大方块；x 旋转（楼梯/台阶的上下翻转）
+// 仍烘焙进轴向包围盒——它对 AABB 是精确的。
 static void applyBlockRotation(QList<ShapeBox> &boxes, int start, float rotX, float rotY)
 {
     if (qFuzzyIsNull(rotX) && qFuzzyIsNull(rotY))
@@ -171,6 +172,17 @@ static void applyBlockRotation(QList<ShapeBox> &boxes, int start, float rotX, fl
     for (int i = start; i < boxes.size(); ++i)
     {
         ShapeBox &b = boxes[i];
+        if (!qFuzzyIsNull(rotY))
+        {
+            int y = b.yaw + int(qRound(rotY));
+            y %= 360;
+            if (y < 0)
+                y += 360;
+            b.yaw = y;
+        }
+        if (qFuzzyIsNull(rotX))
+            continue;
+
         float mn[3] = {1e9f, 1e9f, 1e9f}, mx[3] = {-1e9f, -1e9f, -1e9f};
         for (int bit = 0; bit < 8; ++bit)
         {
@@ -180,8 +192,9 @@ static void applyBlockRotation(QList<ShapeBox> &boxes, int start, float rotX, fl
             if (b.rotated)
                 rotateBoxPoint(px, py, pz, b.rotOrigin[0], b.rotOrigin[1], b.rotOrigin[2],
                                b.rotAngle, b.rotAxis);
+            if (b.yaw)
+                rotateBoxPoint(px, py, pz, cx, cy, cz, -float(b.yaw), 1);
             rotateBoxPoint(px, py, pz, cx, cy, cz, rotX, 0);
-            rotateBoxPoint(px, py, pz, cx, cy, cz, rotY, 1);
             mn[0] = qMin(mn[0], px); mn[1] = qMin(mn[1], py); mn[2] = qMin(mn[2], pz);
             mx[0] = qMax(mx[0], px); mx[1] = qMax(mx[1], py); mx[2] = qMax(mx[2], pz);
         }
@@ -192,6 +205,7 @@ static void applyBlockRotation(QList<ShapeBox> &boxes, int start, float rotX, fl
         }
         b.rotated = false;      // 已合入轴向包围盒
         b.rotAngle = 0.0f;
+        b.yaw = 0;
     }
 }
 
@@ -491,6 +505,7 @@ bool BlockShapeLoader::ensureModel(const QString &key) const
         m.textures.insert(it.key(), it.value().toString());
     m.hasElements = obj.contains(QStringLiteral("elements"))
         && obj.value(QStringLiteral("elements")).isArray();
+    m.ambientOcclusion = obj.value(QStringLiteral("ambientocclusion")).toBool(true);
     if (m.hasElements)
         m.elemObj = obj;
     m_models.insert(key, m);
@@ -557,8 +572,15 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
             };
             readVec("from", sb.from, 0.0f);
             readVec("to",   sb.to,   1.0f);
+            // 允许 from > to（少数模型/模组会这么写），统一成有序 AABB
+            for (int a = 0; a < 3; ++a)
+            {
+                if (sb.from[a] > sb.to[a])
+                    qSwap(sb.from[a], sb.to[a]);
+            }
 
             const QJsonObject rot = eo.value(QStringLiteral("rotation")).toObject();
+            bool rescale = false;
             if (!rot.isEmpty() && !rot.value(QStringLiteral("angle")).isUndefined())
             {
                 sb.rotated = true;
@@ -566,7 +588,7 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
                 if (axis == QLatin1String("x")) sb.rotAxis = 0;
                 else if (axis == QLatin1String("z")) sb.rotAxis = 2;
                 else sb.rotAxis = 1;
-                sb.rotAngle = rot.value(QStringLiteral("angle")).toDouble();
+                sb.rotAngle = float(rot.value(QStringLiteral("angle")).toDouble());
                 sb.rotOrigin[0]=0.5f; sb.rotOrigin[1]=0.5f; sb.rotOrigin[2]=0.5f;
                 const QJsonArray org = rot.value(QStringLiteral("origin")).toArray();
                 if (org.size() >= 3) {
@@ -574,7 +596,29 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
                     sb.rotOrigin[1]=float(org.at(1).toDouble()/16.0);
                     sb.rotOrigin[2]=float(org.at(2).toDouble()/16.0);
                 }
+                rescale = rot.value(QStringLiteral("rescale")).toBool(false);
             }
+            // rescale：旋转后在旋转平面内放大，让元素仍撑满方块（十字植物 45° 就是靠它铺满对角线）
+            if (rescale && sb.rotated && !qFuzzyIsNull(sb.rotAngle))
+            {
+                const float ang = qDegreesToRadians(sb.rotAngle);
+                const float m = qMax(qAbs(qFastCos(ang)), qAbs(qFastSin(ang)));
+                if (m > 1e-3f)
+                {
+                    const float k = 1.0f / m;
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        if (a == sb.rotAxis)
+                            continue;
+                        sb.from[a] = sb.rotOrigin[a] + (sb.from[a] - sb.rotOrigin[a]) * k;
+                        sb.to[a]   = sb.rotOrigin[a] + (sb.to[a]   - sb.rotOrigin[a]) * k;
+                    }
+                }
+            }
+
+            // 元素级 shade（火把/植物/梯子等给 false：不受方向光影响，保持材质原色）
+            const bool elemShade = eo.value(QStringLiteral("shade")).toBool(true);
+            const bool modelAo = model.ambientOcclusion;
 
             const QJsonObject faces = eo.value(QStringLiteral("faces")).toObject();
             for (auto fit = faces.constBegin(); fit != faces.constEnd(); ++fit)
@@ -582,6 +626,11 @@ void BlockShapeLoader::collectElements(const QString &modelKey,
                 const QJsonObject fo = fit.value().toObject();
                 ShapeFace sf;
                 sf.dir = fit.key();
+                sf.shaded = elemShade;
+                sf.aoOn = modelAo && fo.value(QStringLiteral("ambientocclusion")).toBool(true);
+                sf.canCull = !fo.value(QStringLiteral("cullface")).toString().isEmpty();
+                sf.tintIndex = fo.contains(QStringLiteral("tintindex"))
+                                 ? fo.value(QStringLiteral("tintindex")).toInt(-1) : -1;
                 const QString texVar = fo.value(QStringLiteral("texture")).toString();
                 QString resolved;
                 if (!texVar.isEmpty() && resolveTexture(texVar, mergedTex, resolved))
@@ -645,7 +694,6 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
     const QJsonObject bsobj = m_blockstates[type];
 
     bool gotAny = false;
-    QStringList visited;
 
     // ---- variants ----
     const QJsonValue varsVal = bsobj.value(QStringLiteral("variants"));
@@ -686,6 +734,9 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
                 if (r.model.isEmpty())
                     continue;
                 const int before = out.boxes.size();
+                // 每个模型引用各自一份 visited：同一个模型可能被多个 variant/part
+                // 用不同旋转重复引用（玻璃板、墙、栅栏），共享一份会漏掉后几次
+                QStringList visited;
                 collectElements(normalizeModelKey(r.model), nullptr, out.boxes, visited);
                 applyBlockRotation(out.boxes, before,
                                    float(r.rotX), float(r.rotY));
@@ -763,6 +814,7 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
                     if (r.model.isEmpty())
                         continue;
                     const int before = out.boxes.size();
+                    QStringList visited;
                     collectElements(normalizeModelKey(r.model), nullptr, out.boxes, visited);
                     applyBlockRotation(out.boxes, before,
                                        float(r.rotX), float(r.rotY));

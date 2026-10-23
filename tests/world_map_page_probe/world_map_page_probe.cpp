@@ -49,6 +49,7 @@
 #include "utils/Saves/LevelDatEditor.h"
 #include "utils/WorldMap/StructureFinder.h"
 #include "utils/WorldMap/StructureIcons.h"
+#include "utils/WorldMap/SeedTerrainRenderer.h"
 
 namespace {
 
@@ -129,16 +130,17 @@ QList<qint64> packStates(const QVector<int> &indices, int bits)
 
 NbtTag makePalette()
 {
-    const char *names[17] = {
+    // 最后一项是矿石：给"矿物列 + 扫描"用例埋一粒钻石（palette 18 项仍需 5 bit）
+    const char *names[18] = {
         "minecraft:air", "minecraft:grass_block", "minecraft:water",
         "minecraft:sand", "minecraft:stone", "minecraft:dirt",
         "minecraft:cobblestone", "minecraft:gravel", "minecraft:oak_planks",
         "minecraft:oak_log", "minecraft:oak_leaves", "minecraft:andesite",
         "minecraft:diorite", "minecraft:granite", "minecraft:deepslate",
-        "minecraft:bedrock", "minecraft:snow_block"
+        "minecraft:bedrock", "minecraft:snow_block", "minecraft:diamond_ore"
     };
     QList<NbtTag> items;
-    for (int i = 0; i < 17; ++i)
+    for (int i = 0; i < 18; ++i)
     {
         NbtTag item = NbtCodec::makeCompound();
         item.children.append(NbtCodec::makeString(QStringLiteral("Name"),
@@ -176,6 +178,10 @@ QVector<int> buildIndices(int cx, int cz)
                 int v = 0;
                 if (yy < surf)      v = 5;          // 地下 dirt
                 else if (yy == surf) v = top;
+                // 出生点旁边埋 32×32 粒钻石矿（世界 y=65，地表以下，不影响地表配色）：
+                // 供矿物扫描用例在 1:1 下扫出点
+                if (yy == 1 && wx >= 288 && wx < 320 && wz >= 192 && wz < 224)
+                    v = 17;
                 indices[yy * 256 + lz * 16 + lx] = v;
             }
         }
@@ -341,6 +347,186 @@ int main(int argc, char **argv)
         bootSettings.setValue(QStringLiteral("worldMap/seedPreview"), false);
     }
 
+    // ── 诊断入口：直接打开真实存档（PROBE_SAVE_DIR=存档目录，PROBE_SAVE_SEED=1 打开种子预测） ──
+    const QString realSave = qEnvironmentVariable("PROBE_SAVE_DIR");
+    if (!realSave.isEmpty())
+    {
+        if (qEnvironmentVariableIsSet("PROBE_SAVE_SEED"))
+        {
+            QSettings st;
+            st.setValue(QStringLiteral("worldMap/seedPreview"), true);
+        }
+        WorldMapPage p;
+        p.resize(1240, 720);
+        p.show();
+        QApplication::processEvents();
+        p.setCurrentSave(realSave, QStringLiteral("RealSave"));
+        expect(waitRenderDone(p,
+                              p.findChild<QStackedWidget *>(QStringLiteral("worldMapStack")),
+                              nullptr, 180000),
+               "real save render finished");
+        const QImage img = p.mapImage();
+        const int bpp = p.liveBpp();
+        const QPoint org = p.liveOriginRegion();
+        const QList<QPoint> order = p.tileArrivalOrder();
+        const QPoint vc = p.viewCenterBlock();
+        const QPoint pri = p.renderPriorityRegion();
+        std::fprintf(stderr,
+                     "  real save: img=%dx%d bpp=%d origin=%d,%d tiles=%d priority=%d,%d viewCenter=%lld,%lld\n",
+                     img.width(), img.height(), bpp, org.x(), org.y(),
+                     int(order.size()), pri.x(), pri.y(),
+                     (long long)vc.x(), (long long)vc.y());
+        QStringList head;
+        for (int i = 0; i < order.size() && i < 12; ++i)
+            head.append(QStringLiteral("%1,%2").arg(order[i].x()).arg(order[i].y()));
+        std::fprintf(stderr, "  arrival: [%s]\n", head.join(' ').toUtf8().constData());
+        if (!img.isNull() && bpp > 0)
+        {
+            const int tile = 512 / bpp;
+            const int cols = img.width() / tile;
+            const int rows = img.height() / tile;
+            auto opaqueIn = [&](int col, int row) {
+                if (col < 0 || row < 0 || col >= cols || row >= rows)
+                    return -1;
+                int n = 0;
+                for (int y = 0; y < tile; ++y)
+                    for (int x = 0; x < tile; ++x)
+                        if (qAlpha(img.pixel(col * tile + x, row * tile + y)) != 0)
+                            ++n;
+                return n;
+            };
+            const int cCol = pri.x() - org.x();
+            const int cRow = pri.y() - org.y();
+            int empty = 0;
+            for (int r = 0; r < rows; ++r)
+                for (int c = 0; c < cols; ++c)
+                    if (opaqueIn(c, r) == 0)
+                        ++empty;
+            std::fprintf(stderr,
+                         "  tiles=%dx%d empty=%d | priority tile opaque=%d, up=%d down=%d left=%d right=%d\n",
+                         cols, rows, empty, opaqueIn(cCol, cRow),
+                         opaqueIn(cCol, cRow - 1), opaqueIn(cCol, cRow + 1),
+                         opaqueIn(cCol - 1, cRow), opaqueIn(cCol + 1, cRow));
+        }
+        p.grab().save(QStringLiteral("D:/BlockBox/_out/real_save.png"));
+
+        // 可选的"跳到指定方块再看一眼"：PROBE_SAVE_JUMP=x,z
+        const QString jump = qEnvironmentVariable("PROBE_SAVE_JUMP");
+        if (!jump.isEmpty())
+        {
+            const QStringList parts = jump.split(QLatin1Char(','));
+            if (parts.size() == 2)
+            {
+                p.toggleContentPopup();
+                QApplication::processEvents();
+                const QList<QLineEdit *> edits =
+                    p.findChildren<QLineEdit *>(QStringLiteral("worldMapCoordEdit"));
+                if (edits.size() == 2)
+                {
+                    edits[0]->setText(parts[0].trimmed());
+                    edits[1]->setText(parts[1].trimmed());
+                }
+                for (QPushButton *b : p.findChildren<QPushButton *>())
+                {
+                    if (b->text() != QStringLiteral("跳转") || !b->parentWidget())
+                        continue;
+                    if (b->parentWidget()->objectName()
+                        != QStringLiteral("worldMapContentPopup"))
+                        continue;
+                    b->click();
+                    break;
+                }
+                QApplication::processEvents();
+                p.toggleContentPopup();
+                QElapsedTimer jt;
+                jt.start();
+                while (jt.elapsed() < 4000)
+                {
+                    QApplication::processEvents(QEventLoop::AllEvents, 20);
+                    QThread::msleep(15);
+                }
+                const QPoint jc = p.viewCenterBlock();
+                std::fprintf(stderr, "  jumped: viewCenter=%lld,%lld\n",
+                             (long long)jc.x(), (long long)jc.y());
+                p.grab().save(QStringLiteral("D:/BlockBox/_out/real_save_jump.png"));
+                const QImage jimg = p.mapImage();
+                jimg.save(QStringLiteral("D:/BlockBox/_out/real_save_jump_map.png"));
+            }
+        }
+
+        // 缩到整图（scale<1）再刷新：抓三帧看渐进贴图在屏幕上是否真的刷新出来
+        QPushButton *fitBtn = nullptr;
+        for (QPushButton *b : p.findChildren<QPushButton *>())
+        {
+            if (b->text() == QStringLiteral("适应"))
+            {
+                fitBtn = b;
+                break;
+            }
+        }
+        if (fitBtn)
+        {
+            fitBtn->click();
+            QApplication::processEvents();
+            p.refresh();
+            for (int i = 0; i < 3; ++i)
+            {
+                QElapsedTimer ft;
+                ft.start();
+                while (ft.elapsed() < 500)
+                {
+                    QApplication::processEvents(QEventLoop::AllEvents, 20);
+                    QThread::msleep(15);
+                }
+                const QImage shot = p.grab().toImage();
+                shot.save(QStringLiteral("D:/BlockBox/_out/fit_growth_%1.png").arg(i));
+                p.mapImage().save(QStringLiteral("D:/BlockBox/_out/fit_map_%1.png").arg(i));
+                // 屏幕上画布区域里"有内容"的像素数（排除背景色），看渐进刷新
+                int lit = 0;
+                for (int y = 160; y < shot.height() - 40; y += 4)
+                    for (int x = 20; x < shot.width() - 20; x += 4)
+                    {
+                        const QRgb c = shot.pixel(x, y);
+                        const int r = qRed(c), g = qGreen(c), b2 = qBlue(c);
+                        if (qAbs(r - g) > 6 || qAbs(g - b2) > 6)
+                            ++lit;
+                    }
+                std::fprintf(stderr, "  fit frame %d: lit=%d tiles=%d\n", i, lit,
+                             int(p.tileArrivalOrder().size()));
+            }
+        }
+        // 诊断：直接导出若干 region 的种子预测贴图（PROBE_SEED_SNAP=1），
+        // 用来判断"麻点"是概览采样（64）还是方块级（512）本身的问题
+        if (qEnvironmentVariableIsSet("PROBE_SEED_SNAP"))
+        {
+            const quint64 snapSeed = 4562377579810721523ULL;
+            const int snapMc = StructureFinder::versionToInt(QStringLiteral("1.21.11"));
+            for (int rz = 0; rz < 2; ++rz)
+                for (int rx = 0; rx < 2; ++rx)
+                {
+                    QElapsedTimer clock;
+                    clock.start();
+                    const QImage lo = SeedTerrainRenderer::renderRegionTile(
+                        rx, rz, WorldMapRenderer::Dimension::Overworld,
+                        WorldMapRenderer::ShadeMode::BlockColor, snapSeed, snapMc, 64);
+                    const qint64 loMs = clock.elapsed();
+                    clock.restart();
+                    const QImage hi = SeedTerrainRenderer::renderRegionTile(
+                        rx, rz, WorldMapRenderer::Dimension::Overworld,
+                        WorldMapRenderer::ShadeMode::BlockColor, snapSeed, snapMc, 512);
+                    const qint64 hiMs = clock.elapsed();
+                    lo.save(QStringLiteral("D:/BlockBox/_out/seed_%1_%2_lo.png").arg(rx).arg(rz));
+                    hi.save(QStringLiteral("D:/BlockBox/_out/seed_%1_%2_hi.png").arg(rx).arg(rz));
+                    std::fprintf(stderr, "  seed snap %d,%d lo=%dx%d hi=%dx%d (%lld ms / %lld ms)\n",
+                                 rx, rz, lo.width(), lo.height(), hi.width(), hi.height(),
+                                 (long long)loMs, (long long)hiMs);
+                }
+        }
+
+        std::fprintf(stderr, "failures: %d\n", g_fail);
+        return g_fail == 0 ? 0 : 1;
+    }
+
     QTemporaryDir tmp;
     const QString savePath = tmp.path() + QStringLiteral("/saves/ProbeWorld");
     expect(writeRegionFile(savePath + "/region/r.0.0.mca", 0, 0, true), "write r.0.0 (full)");
@@ -381,6 +567,92 @@ int main(int argc, char **argv)
             lf.write(NbtCodec::gzipCompress(NbtCodec::serialize(root)));
             lf.close();
         }
+    }
+
+    // ── 渲染器层复现：多 region 世界的渐进顺序 + 中心是否留洞 ──
+    {
+        const QString bigSave = tmp.path() + QStringLiteral("/saves/RenderProbe");
+        for (int rz = -4; rz <= 4; ++rz)
+            for (int rx = -4; rx <= 4; ++rx)
+                writeRegionFile(bigSave + QStringLiteral("/region/r.%1.%2.mca")
+                                              .arg(rx).arg(rz),
+                                rx, rz, false);
+        auto rsink = std::make_shared<WorldMapRenderer::ProgressiveSink>();
+        rsink->hasPriorityRegion = true;
+        rsink->priorityRegion = QPoint(4, 4);
+        const WorldMapRenderer::RenderResult rres = WorldMapRenderer::render(
+            bigSave, WorldMapRenderer::Dimension::Overworld,
+            WorldMapRenderer::ShadeMode::BlockColor, {}, {}, rsink, 4, -1,
+            WorldMapRenderer::SeedPreview(), WorldMapRenderer::PriorCanvas());
+        const int minRx = rres.minChunkX / 32;
+        const int minRz = rres.minChunkZ / 32;
+        const int rbpp = rres.blockPerPixel;
+        const int tilePx = 512 / rbpp;
+        const QPoint centerDest((4 - minRx) * tilePx, (4 - minRz) * tilePx);
+        std::fprintf(stderr,
+                     "  render: regions=%d failed=%d bpp=%d img=%dx%d tiles=%d\n",
+                     rres.regionCount, rres.failedRegions, rbpp,
+                     rres.image.width(), rres.image.height(),
+                     int(rsink->pendingTiles.size()));
+        expect(!rsink->pendingTiles.isEmpty(), "progressive sink got tiles");
+        // 4 个渲染线程并发：只保证优先级 region 排在最前、落在首批完成里
+        int centerTileIdx = -1;
+        for (int i = 0; i < rsink->pendingTiles.size() && i < 8; ++i)
+            if (rsink->pendingTiles.at(i).first == centerDest)
+                centerTileIdx = i;
+        std::fprintf(stderr, "  first tile dest=%d,%d center dest=%d,%d center idx=%d\n",
+                     rsink->pendingTiles.first().first.x(),
+                     rsink->pendingTiles.first().first.y(),
+                     centerDest.x(), centerDest.y(), centerTileIdx);
+        expect(centerTileIdx >= 0, "priority region is in the first batch of tiles");
+        // 每 region 的 2×2 区块补丁落在 region 左上角；取补丁内一点看是否真有像素
+        const int off = 16 / rbpp;
+        const QRgb cc = rres.image.pixel(centerDest.x() + off,
+                                         centerDest.y() + off);
+        std::fprintf(stderr, "  center pixel a=%d rgb=%d,%d,%d\n",
+                     qAlpha(cc), qRed(cc), qGreen(cc), qBlue(cc));
+        expect(qAlpha(cc) == 255, "center region rendered (no hole)");
+
+        // 同样的世界，但打开种子预测（应用里的常态）：走 merge 分支
+        auto ssink = std::make_shared<WorldMapRenderer::ProgressiveSink>();
+        ssink->hasPriorityRegion = true;
+        ssink->priorityRegion = QPoint(4, 4);
+        WorldMapRenderer::SeedPreview sp;
+        sp.enabled = true;
+        sp.seed = 4562377579810721523ULL;
+        sp.mc = StructureFinder::versionToInt(QStringLiteral("1.21.11"));
+        sp.hasCenter = true;
+        sp.centerRegionX = 4;
+        sp.centerRegionZ = 4;
+        sp.radiusRegions = 20;
+        const WorldMapRenderer::RenderResult sres = WorldMapRenderer::render(
+            bigSave, WorldMapRenderer::Dimension::Overworld,
+            WorldMapRenderer::ShadeMode::BlockColor, {}, {}, ssink, 4, -1, sp,
+            WorldMapRenderer::PriorCanvas());
+        const int sminRx = sres.minChunkX / 32;
+        const int sminRz = sres.minChunkZ / 32;
+        const int stile = 512 / sres.blockPerPixel;
+        const QPoint sCenter((4 - sminRx) * stile, (4 - sminRz) * stile);
+        const QPoint sFirst = ssink->pendingTiles.isEmpty()
+            ? QPoint(-1, -1) : ssink->pendingTiles.first().first;
+        std::fprintf(stderr,
+                     "  seed render: regions=%d bpp=%d tiles=%d first=%d,%d center=%d,%d\n",
+                     sres.regionCount, sres.blockPerPixel,
+                     int(ssink->pendingTiles.size()),
+                     sFirst.x(), sFirst.y(), sCenter.x(), sCenter.y());
+        int sCenterIdx = -1;
+        for (int i = 0; i < ssink->pendingTiles.size() && i < 8; ++i)
+            if (ssink->pendingTiles[i].first == sCenter)
+            {
+                sCenterIdx = i;
+                break;
+            }
+        expect(sCenterIdx >= 0, "seed branch: priority region is in the first batch");
+        const int soff = 16 / sres.blockPerPixel;
+        const QRgb sc = sres.image.pixel(sCenter.x() + soff, sCenter.y() + soff);
+        std::fprintf(stderr, "  seed center pixel a=%d rgb=%d,%d,%d\n",
+                     qAlpha(sc), qRed(sc), qGreen(sc), qBlue(sc));
+        expect(qAlpha(sc) == 255, "seed branch: center region rendered (no hole)");
     }
 
     WorldMapPage page;
@@ -1401,18 +1673,19 @@ int main(int argc, char **argv)
             QApplication::processEvents();
             page.grab().toImage().save(
                 QStringLiteral("D:/BlockBox/_out/world_map_page_probe_popup.png"));
-            // 双列：结构列表 + 群系列表各一个
+            // 三列：结构列表 + 群系列表 + 矿物列表各一个
             const auto lists = page.findChildren<QListWidget *>(
                 QStringLiteral("worldMapPopupList"));
-            expect(lists.size() == 2, "popup has structure + biome columns");
-            if (lists.size() == 2)
+            expect(lists.size() == 3, "popup has structure + biome + ore columns");
+            if (lists.size() == 3)
             {
-                std::fprintf(stderr, "  popup rows: struct=%d biome=%d\n",
-                             lists[0]->count(), lists[1]->count());
+                std::fprintf(stderr, "  popup rows: struct=%d biome=%d ore=%d\n",
+                             lists[0]->count(), lists[1]->count(), lists[2]->count());
                 expect(lists[0]->count()
                            == StructureFinder::allStructures().size(),
                        "structure column lists all types");
                 expect(lists[1]->count() > 0, "biome column lists biomes");
+                expect(lists[2]->count() > 0, "ore column lists ores");
                 // 每行 = 图标 + 名称 + 高亮按钮
                 bool rowShapeOk = lists[0]->count() > 0;
                 if (rowShapeOk)
@@ -1445,15 +1718,20 @@ int main(int argc, char **argv)
                        && page.findChild<QPushButton *>(
                               QStringLiteral("worldMapPopupBiomeClear")),
                    "biome column has select-all/clear");
+            expect(page.findChild<QPushButton *>(
+                       QStringLiteral("worldMapPopupOreAll"))
+                       && page.findChild<QPushButton *>(
+                              QStringLiteral("worldMapPopupOreClear")),
+                   "ore column has select-all/clear");
 
-            // 搜索过滤两列
+            // 搜索过滤三列
             if (search)
             {
                 search->setText(QStringLiteral("村庄"));
                 QApplication::processEvents();
                 const auto filtered = page.findChildren<QListWidget *>(
                     QStringLiteral("worldMapPopupList"));
-                expect(filtered.size() == 2 && filtered[0]->count() == 1,
+                expect(filtered.size() == 3 && filtered[0]->count() == 1,
                        "search filters structure list");
                 search->clear();
                 QApplication::processEvents();
@@ -1485,6 +1763,207 @@ int main(int argc, char **argv)
                 QApplication::processEvents();
                 expect(page.biomeOverlayCellCount() == 0,
                        "biome clear empties overlay");
+            }
+
+            // ── 矿物列 + 扫描：缩得不够大只提示"要放大"，1:1 才真扫出矿物点 ──
+            {
+                QPushButton *oneOne = nullptr;
+                QPushButton *zoomOut = nullptr;
+                for (QPushButton *b : page.findChildren<QPushButton *>())
+                {
+                    if (b->text() == QStringLiteral("1:1"))
+                        oneOne = b;
+                    else if (b->text() == QString(QChar(0x2212))) // "−" 缩小
+                        zoomOut = b;
+                }
+                expect(oneOne && zoomOut, "zoom controls found for ore scan");
+
+                expect(page.oreRowCount() > 0, "ore row count exposed");
+                bool anyOreChecked = false;
+                for (int i = 0; i < page.oreRowCount(); ++i)
+                    if (page.oreChecked(i))
+                        anyOreChecked = true;
+                expect(!anyOreChecked, "ores default to all-deselected");
+                expect(page.oreMarkerCount() == 0, "no ore dots before selection");
+
+                // 先回到 1:1 再退两档 → 每方块不到 1 像素
+                if (oneOne)
+                    oneOne->click();
+                if (zoomOut)
+                {
+                    zoomOut->click();
+                    QApplication::processEvents();
+                    zoomOut->click();
+                }
+                QApplication::processEvents();
+
+                // 主世界矿物列第 6 行 = 钻石（coal,iron,copper,gold,redstone,lapis,diamond,emerald）
+                const int diamondRow = 6;
+                expect(page.toggleOre(diamondRow), "click diamond ore row");
+                expect(page.oreChecked(diamondRow), "ore row becomes checked");
+                // 勾选后 320ms 去抖才调度；缩放不够时应当不扫、只提示
+                QElapsedTimer smallTimer;
+                smallTimer.start();
+                while (smallTimer.elapsed() < 1200)
+                    QApplication::processEvents(QEventLoop::AllEvents, 30);
+                std::fprintf(stderr, "  ore prompt (zoomed out): %s\n",
+                             page.orePromptText().toUtf8().constData());
+                expect(page.oreMarkerCount() == 0, "no ore dots while zoomed out");
+                expect(page.orePromptText().contains(QStringLiteral("放大")),
+                       "prompt asks to zoom in before scanning");
+                page.grab().toImage().save(
+                    QStringLiteral("D:/BlockBox/_out/world_map_page_probe_ore_prompt.png"));
+
+                // 放大回 1:1 → 扫描当前视野的 region，命中就在画布上打点
+                // （先收起弹窗，让截图能看见地图上的矿物点）
+                expandBtn->click();
+                QApplication::processEvents();
+                expect(!page.isContentPopupOpen(), "popup closed for ore dot screenshot");
+                if (oneOne)
+                    oneOne->click();
+                QApplication::processEvents();
+                QElapsedTimer scanTimer;
+                scanTimer.start();
+                while (scanTimer.elapsed() < 30000 && page.oreMarkerCount() == 0)
+                    QApplication::processEvents(QEventLoop::AllEvents, 50);
+                std::fprintf(stderr, "  ore dots=%d prompt=%s\n",
+                             page.oreMarkerCount(),
+                             page.orePromptText().toUtf8().constData());
+                expect(page.oreMarkerCount() > 0, "1:1 scan marks ore dots");
+                page.grab().toImage().save(
+                    QStringLiteral("D:/BlockBox/_out/world_map_page_probe_ore_dots.png"));
+
+                // 区块扫描要能收敛：扫完当前视野的区块后状态栏不再是"扫描中"
+                QElapsedTimer idleTimer;
+                idleTimer.start();
+                while (idleTimer.elapsed() < 20000 && !page.oreScanIdle())
+                    QApplication::processEvents(QEventLoop::AllEvents, 50);
+                std::fprintf(stderr, "  ore scan idle=%d chunks=%d (%lld ms)\n",
+                             int(page.oreScanIdle()), page.oreScannedChunkCount(),
+                             static_cast<long long>(idleTimer.elapsed()));
+                expect(page.oreScanIdle(), "ore scan finishes over visible chunks");
+                const QByteArray chunkMsg =
+                    QStringLiteral("chunk-level cache populated (%1 chunks)")
+                        .arg(page.oreScannedChunkCount()).toUtf8();
+                expect(page.oreScannedChunkCount() > 1, chunkMsg.constData());
+                expect(!page.orePromptText().contains(QStringLiteral("扫描中")),
+                       "status stops saying scanning after finishing");
+                expandBtn->click(); // 弹窗打开着继续后面的用例
+                QApplication::processEvents();
+                expect(page.isContentPopupOpen(), "popup reopened after ore scan");
+
+                // 点矿物点 → 与结构一致的信息窗（名称 / 坐标带 Y / 百科 / 完成标记）
+                {
+                    QWidget *mv = page.findChild<QWidget *>(
+                        QStringLiteral("worldMapView"));
+                    expect(mv != nullptr, "map view found for ore click");
+                    // 找一个视野内的矿物点（密集矿脉里挑第一个）
+                    int target = -1;
+                    for (int i = 0; i < page.oreMarkerCount() && target < 0; ++i)
+                        if (!page.oreMarkerScreenPos(i).isNull())
+                            target = i;
+                    expect(target >= 0, "found a visible ore dot");
+                    if (mv && target >= 0)
+                    {
+                        const QPoint local = page.oreMarkerScreenPos(target);
+                        const QPoint blk = page.oreMarkerBlockPos(target);
+                        const int by = page.oreMarkerBlockY(target);
+                        const int otype = page.oreMarkerType(target);
+                        const QPointF lf(local.x(), local.y());
+                        const QPointF gf = mv->mapToGlobal(local);
+                        QMouseEvent press(QEvent::MouseButtonPress, lf, gf,
+                                          Qt::LeftButton, Qt::LeftButton,
+                                          Qt::NoModifier);
+                        QApplication::sendEvent(mv, &press);
+                        QMouseEvent release(QEvent::MouseButtonRelease, lf, gf,
+                                            Qt::LeftButton, Qt::LeftButton,
+                                            Qt::NoModifier);
+                        QApplication::sendEvent(mv, &release);
+                        QApplication::processEvents();
+
+                        QWidget *popup = page.findChild<QWidget *>(
+                            QStringLiteral("worldMapStructPopup"));
+                        expect(popup != nullptr && popup->isVisible(),
+                               "clicking ore dot opens info popup");
+                        if (popup)
+                        {
+                            const auto &odef = OreFinder::allOres()[otype];
+                            QLabel *title = popup->findChild<QLabel *>(
+                                QStringLiteral("worldMapStructTitle"));
+                            QLabel *coord = popup->findChild<QLabel *>(
+                                QStringLiteral("worldMapStructCoord"));
+                            const QString coordText = coord ? coord->text() : QString();
+                            std::fprintf(stderr,
+                                         "  ore popup: title=%s coord=%s\n",
+                                         title ? title->text().toUtf8().constData() : "",
+                                         coordText.toUtf8().constData());
+                            expect(title && title->text()
+                                       == QString::fromUtf8(odef.displayName),
+                                   "ore popup shows ore name");
+                            expect(coordText.contains(QStringLiteral("Y"))
+                                       && coordText.contains(QString::number(by)),
+                                   "ore popup shows ore Y coordinate");
+                            expect(coordText.contains(QString::number(blk.x()))
+                                       && coordText.contains(QString::number(blk.y())),
+                                   "ore popup shows ore X/Z");
+                            QPushButton *wikiBtn = nullptr;
+                            QPushButton *copyBtn = nullptr;
+                            QPushButton *doneBtn = nullptr;
+                            for (QPushButton *b : popup->findChildren<QPushButton *>())
+                            {
+                                if (b->text() == QStringLiteral("复制坐标"))
+                                    copyBtn = b;
+                                else if (b->text() == QStringLiteral("查看百科"))
+                                    wikiBtn = b;
+                                else if (b->text().contains(QStringLiteral("完成")))
+                                    doneBtn = b;
+                            }
+                            expect(copyBtn && wikiBtn && doneBtn,
+                                   "ore popup has copy/wiki/done buttons");
+                            if (wikiBtn)
+                            {
+                                const QUrl u = wikiBtn->property("wikiUrl").toUrl();
+                                expect(u.isValid()
+                                           && u.host() == QStringLiteral("zh.minecraft.wiki"),
+                                       "ore wiki url points to zh.minecraft.wiki");
+                            }
+                            if (copyBtn)
+                            {
+                                copyBtn->click();
+                                expect(QApplication::clipboard()->text()
+                                           == QStringLiteral("%1, %2, %3")
+                                                  .arg(blk.x()).arg(by).arg(blk.y()),
+                                       "ore copy writes x,y,z");
+                            }
+                            if (doneBtn)
+                            {
+                                const int doneBefore = page.structureDoneCount();
+                                doneBtn->click();
+                                expect(page.structureDoneCount() == doneBefore + 1,
+                                       "ore done button records a mark");
+                                expect(doneBtn->text() == QStringLiteral("取消完成标记"),
+                                       "ore done button text toggles");
+                                doneBtn->click(); // 复原，免得影响后面的结构用例
+                                expect(page.structureDoneCount() == doneBefore,
+                                       "ore done toggle undone");
+                            }
+                            popup->grab().toImage().save(
+                                QStringLiteral("D:/BlockBox/_out/"
+                                               "world_map_page_probe_ore_popup.png"));
+                            popup->close();
+                            QApplication::processEvents();
+                        }
+                    }
+                }
+
+                // 清空 → 点全消失
+                if (auto *oreClear = page.findChild<QPushButton *>(
+                        QStringLiteral("worldMapPopupOreClear")))
+                {
+                    oreClear->click();
+                    QApplication::processEvents();
+                    expect(page.oreMarkerCount() == 0, "ore clear removes dots");
+                }
             }
 
             // 高亮跳转：结构（村庄）→ 视角中心变化 + 高亮圈
@@ -1558,6 +2037,121 @@ int main(int argc, char **argv)
             expandBtn->click();
             QApplication::processEvents();
             expect(!page.isContentPopupOpen(), "expand toggles closed");
+        }
+    }
+
+    // ── 概览重渲的渐进起步点 = 视野中心所在 region（不是出生点） ──
+    {
+        const QList<QLineEdit *> coords =
+            page.findChildren<QLineEdit *>(QStringLiteral("worldMapCoordEdit"));
+        expect(coords.size() == 2, "goto coord edits exist");
+        QPushButton *gotoBtn = nullptr;
+        const QList<QPushButton *> allBtns = page.findChildren<QPushButton *>();
+        for (QPushButton *b : allBtns)
+        {
+            if (b->text() == QStringLiteral("跳转") && b->parentWidget()
+                && b->parentWidget()->objectName() == QStringLiteral("worldMapContentPopup"))
+            {
+                gotoBtn = b;
+                break;
+            }
+        }
+        expect(gotoBtn != nullptr, "goto button found in content popup");
+        if (gotoBtn && coords.size() == 2)
+        {
+            // 出生点 (300,200) 在 region (0,0)；跳到 (700,700) 即 region (1,1)
+            coords[0]->setText(QStringLiteral("700"));
+            coords[1]->setText(QStringLiteral("700"));
+            gotoBtn->click();
+            QApplication::processEvents();
+            const QPoint c = page.viewCenterBlock();
+            expect(std::abs(c.x() - 700) <= 64 && std::abs(c.y() - 700) <= 64,
+                   "goto moved view center to (700,700)");
+
+            page.refresh();
+            const QPoint pri = page.renderPriorityRegion();
+            expect(pri == QPoint(1, 1),
+                   qPrintable(QStringLiteral("re-render starts from view center region, got %1,%2")
+                                  .arg(pri.x()).arg(pri.y())));
+            expect(waitRenderDone(page,
+                                  page.findChild<QStackedWidget *>(QStringLiteral("worldMapStack")),
+                                  nullptr, 20000),
+                   "re-render from view center finished");
+
+            // 收尾：回到出生点附近，后面的用例不受影响
+            coords[0]->setText(QStringLiteral("300"));
+            coords[1]->setText(QStringLiteral("200"));
+            gotoBtn->click();
+            QApplication::processEvents();
+        }
+    }
+
+    // ── 页面层复现：开着种子预测重渲时，中心 region 到底有没有先显示 ──
+    {
+        const QString bigSave = tmp.path() + QStringLiteral("/saves/RenderProbe");
+        QFile::copy(savePath + QStringLiteral("/level.dat"),
+                    bigSave + QStringLiteral("/level.dat"));
+        QPushButton *seedBtn = page.findChild<QPushButton *>(QStringLiteral("worldMapSeedBtn"));
+        expect(seedBtn != nullptr, "seed preview button found");
+        // 先落在一张 9×9 region 的画布上（种子关），再打开种子预测触发重渲
+        page.reset();
+        page.setCurrentSave(bigSave, QStringLiteral("RenderProbe"));
+        expect(waitRenderDone(page,
+                              page.findChild<QStackedWidget *>(QStringLiteral("worldMapStack")),
+                              nullptr, 20000),
+               "big world rendered before seed toggle");
+        if (seedBtn)
+        {
+            const QPoint viewCenter = page.viewCenterBlock();
+            const QPoint expectPri(int(std::floor(double(viewCenter.x()) / 512.0)),
+                                   int(std::floor(double(viewCenter.y()) / 512.0)));
+            seedBtn->click(); // 打开种子预测 → 以视野中心重渲
+            // 抓一张生长途中的截图，再等渲染完成直接读图块到达顺序
+            QElapsedTimer shotTimer;
+            shotTimer.start();
+            while (shotTimer.elapsed() < 800)
+            {
+                QApplication::processEvents(QEventLoop::AllEvents, 20);
+                QThread::msleep(20);
+            }
+            page.grab().save(QStringLiteral("D:/BlockBox/_out/probe_center_growth.png"));
+            expect(waitRenderDone(page,
+                                  page.findChild<QStackedWidget *>(QStringLiteral("worldMapStack")),
+                                  nullptr, 30000),
+                   "seed re-render finished");
+            const QList<QPoint> order = page.tileArrivalOrder();
+            std::fprintf(stderr, "  seed-on: view center region=%d,%d tiles=%d\n",
+                         expectPri.x(), expectPri.y(), int(order.size()));
+            QStringList head;
+            for (int i = 0; i < order.size() && i < 12; ++i)
+                head.append(QStringLiteral("%1,%2").arg(order[i].x()).arg(order[i].y()));
+            std::fprintf(stderr, "  growth order: [%s]\n",
+                         head.join(QStringLiteral(" ")).toUtf8().constData());
+            expect(!order.isEmpty(), "progressive growth observed");
+            // 16 个渲染线程并发 + 机器负载，完成顺序只保证"靠前"：
+            // 排序正确性由渲染器层用例断言，这里只要求中心没被排到队尾。
+            const int centerIdx = order.indexOf(expectPri);
+            const int batch = qMax(16, order.size() / 4);
+            std::fprintf(stderr, "  center tile arrival index=%d (batch %d)\n",
+                         centerIdx, batch);
+            expect(centerIdx >= 0 && centerIdx < batch,
+                   qPrintable(QStringLiteral("view center region %1,%2 arrives early, index=%3")
+                                  .arg(expectPri.x()).arg(expectPri.y()).arg(centerIdx)));
+            const QImage finalImg = page.mapImage();
+            const int fbpp = page.liveBpp();
+            if (!finalImg.isNull() && fbpp > 0)
+            {
+                const QPoint org = page.liveOriginRegion();
+                const int tile = 512 / fbpp;
+                const int off = qMax(1, 16 / fbpp);
+                const int px = (expectPri.x() - org.x()) * tile + off;
+                const int py = (expectPri.y() - org.y()) * tile + off;
+                const QRgb fc = finalImg.pixel(px, py);
+                std::fprintf(stderr, "  final center pixel a=%d\n", qAlpha(fc));
+                expect(qAlpha(fc) == 255, "center region present in final image");
+            }
+            seedBtn->click(); // 关回种子预测
+            QApplication::processEvents();
         }
     }
 

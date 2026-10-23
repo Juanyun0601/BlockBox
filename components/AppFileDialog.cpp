@@ -2273,7 +2273,8 @@ void AppFileDialog::populateResTypes()
             { tr("光影包"), QStringLiteral("6552"),  QStringLiteral("shader"),       QColor("#F59E0B") },
             { tr("数据包"), QStringLiteral("4546"),  QStringLiteral("datapack"),     QColor("#06B6D4") },
             { tr("整合包"), QStringLiteral("4471"),  QStringLiteral("modpack"),      QColor("#6366F1") },
-            { tr("世界"),   QStringLiteral("17"),    QStringLiteral("mod"),          QColor("#8B5CF6") },
+            // Modrinth 没有「世界存档」分类，这里留空；选了 Modrinth 时这一项不会出现
+            { tr("世界"),   QStringLiteral("17"),    QString(),                     QColor("#8B5CF6") },
         };
     } else {
         defs = {
@@ -2286,6 +2287,10 @@ void AppFileDialog::populateResTypes()
     }
 
     for (const TypeDef &d : defs) {
+        // Modrinth 没有的分类（例如世界存档）在 Modrinth 下载源下直接不显示，
+        // 避免点进去搜出一堆模组
+        if (m_resPlatform == QStringLiteral("modrinth") && d.mr.isEmpty())
+            continue;
         QListWidgetItem *item = new QListWidgetItem(m_resTypeList);
         item->setSizeHint(QSize(0, 62));
         QFrame *card = new QFrame;
@@ -2327,6 +2332,17 @@ void AppFileDialog::performResSearch(int page)
 {
     if (m_resLoading)
         return;
+    if (m_resPlatform == QStringLiteral("modrinth") && m_resTypeMr.isEmpty()) {
+        // Modrinth 没有这个分类，别把无关内容当成搜索结果
+        m_resLoading = false;
+        m_resStatusLabel->setText(
+            tr("Modrinth 没有「%1」这个分类，请返回上一步把下载源换成 CurseForge").arg(m_resTypeLabel));
+        m_resStatusLabel->setProperty("state", QStringLiteral("bad"));
+        m_resStatusLabel->style()->unpolish(m_resStatusLabel);
+        m_resStatusLabel->style()->polish(m_resStatusLabel);
+        m_resStatusLabel->show();
+        return;
+    }
     m_resPage = page;
     m_resQuery = m_resSearchEdit ? m_resSearchEdit->text().trimmed() : QString();
     m_resLoading = true;

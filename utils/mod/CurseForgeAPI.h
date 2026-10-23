@@ -81,6 +81,8 @@ private:
     void abortReply(QNetworkReply *&reply);
     /** 当前 baseUrl 是否指向 MCIM 镜像（镜像端免 API Key） */
     bool usingMirror() const;
+    /** 镜像加速不可用（503/超时）时退回官方接口，返回是否真的切换了 */
+    bool switchOffMirror();
     /** 实际生效的 key：setApiKey 传入值优先，其次本地密钥文件兜底 */
     QString effectiveApiKey() const;
 
@@ -96,6 +98,8 @@ private:
     QNetworkReply *m_currentModsReply;
     QNetworkReply *m_currentFingerprintReply;
     quint32 m_pendingFingerprint = 0;
+    QString m_currentDetailId;      // 当前详情请求的模组 id（镜像回退后重试用）
+    bool m_detailFallbackTried = false;
 };
 
 #endif

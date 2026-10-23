@@ -22,6 +22,7 @@ ModrinthAPI::ModrinthAPI(QObject *parent)
     , m_currentDetailReply(nullptr)
     , m_currentVersionsReply(nullptr)
     , m_currentProjectsReply(nullptr)
+    , m_detailFallbackTried(false)
     , m_currentHashMatchReply(nullptr)
     , m_currentHashBatchReply(nullptr)
     , m_currentUpdateCheckReply(nullptr)
@@ -196,10 +197,21 @@ void ModrinthAPI::fetchModDetail(const QString &modId)
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("User-Agent", "BlockBox/1.0");
 
+    m_currentDetailId = modId;
+    m_detailFallbackTried = false;
+
     abortReply(m_currentDetailReply);
     abortReply(m_currentVersionsReply);
     m_currentDetailReply = m_networkManager->get(request);
     connect(m_currentDetailReply, &QNetworkReply::finished, this, &ModrinthAPI::onDetailReplyFinished);
+}
+
+bool ModrinthAPI::switchOffMirror()
+{
+    if (!m_baseUrl.contains(QStringLiteral("mcimirror.top")))
+        return false;
+    m_baseUrl = QStringLiteral("https://api.modrinth.com");
+    return true;
 }
 
 void ModrinthAPI::onDetailReplyFinished()
@@ -211,6 +223,12 @@ void ModrinthAPI::onDetailReplyFinished()
     m_currentDetailReply = nullptr;
 
     if (reply->error() != QNetworkReply::NoError) {
+        // 镜像加速挂了（常见是 503）：退回官方接口再试一次，别让详情页整片空着
+        if (!m_detailFallbackTried && switchOffMirror()) {
+            m_detailFallbackTried = true;
+            fetchModDetail(m_currentDetailId);
+            return;
+        }
         emit modDetailFailed(reply->errorString());
         return;
     }
@@ -353,6 +371,7 @@ void ModrinthAPI::onProjectsReplyFinished()
 
 void ModrinthAPI::fetchModVersions(const QString &modId)
 {
+    m_currentDetailId = modId;
     QUrl url(m_baseUrl + "/v2/project/" + modId + "/version");
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/json");
@@ -372,6 +391,13 @@ void ModrinthAPI::onVersionsReplyFinished()
     m_currentVersionsReply = nullptr;
 
     if (reply->error() != QNetworkReply::NoError) {
+        // 项目详情拿到了但版本列表挂了（镜像半通）：换官方接口补一次，
+        // 否则下载列表和「前置资源」都会是空的
+        if (!m_detailFallbackTried && switchOffMirror()) {
+            m_detailFallbackTried = true;
+            fetchModVersions(m_currentDetailId);
+            return;
+        }
         // Emit partial info even if versions fail
         emit modDetailReceived(m_pendingDetailInfo);
         m_pendingDetailInfo = ModInfo();

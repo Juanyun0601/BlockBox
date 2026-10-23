@@ -161,7 +161,8 @@ struct Cursor
     qint64 offsetFrom(const uchar *base) const { return qint64(p - base); }
 };
 
-/** 各 NBT 类型的载荷宽度；-1 表示变长（String / List / Compound） */
+/** 各 NBT 类型的固定载荷宽度；-1 表示变长（String / List / Compound / 数组）。
+ *  数组（11/12）在 List 里同样带各自的长度前缀，不能按固定宽度跳过 */
 constexpr int payloadWidth(quint8 type)
 {
     switch (type)
@@ -170,8 +171,6 @@ constexpr int payloadWidth(quint8 type)
     case 2:  return 2;
     case 3: case 5: return 4;
     case 4: case 6: return 8;
-    case 11: return 4;
-    case 12: return 8;
     case 0:  return 0;
     default: return -1;
     }
@@ -1318,15 +1317,19 @@ QImage seedUnderlay(QImage &real, int regionX, int regionZ, Dimension dim,
 {
     if (!seed.enabled || !SeedTerrainRenderer::supported(seed.mc, dim))
         return real;
+    // 概览贴图只有 512/bpp 那么大的时候，先在高一级栅格上采样再平滑放大：
+    // 逐点抽稀会把细河、窄沙滩抽成雪花点，垫在真实地形旁边很割裂
+    const int hiRes = (seedRes >= 128) ? seedRes
+                                       : std::min(128, seedRes * 2);
     QImage under = SeedTerrainRenderer::renderRegionTile(regionX, regionZ, dim,
                                                          mode, seed.seed,
-                                                         seed.mc, seedRes,
+                                                         seed.mc, hiRes,
                                                          maxSurfaceY);
     if (under.isNull())
         return real;
     if (under.size() != real.size())
         under = under.scaled(real.size(), Qt::IgnoreAspectRatio,
-                             Qt::FastTransformation);
+                             Qt::SmoothTransformation);
     QPainter p(&under);
     p.drawImage(0, 0, real);
     p.end();
@@ -1553,6 +1556,315 @@ QImage renderRegionTile(const QString &savePath, Dimension dim,
 
 namespace {
 
+/** 单次扫描命中上限：异常/超大存档也不至于把内存吃爆 */
+constexpr int kMaxScanHits = 200000;
+
+/** 调色板方块名 → 扫描比对键（去前缀、小写、忽略状态属性） */
+QString scanKey(const QString &raw)
+{
+    QString name = strippedName(raw);
+    const int bracket = name.indexOf(QLatin1Char('['));
+    if (bracket >= 0)
+        name.truncate(bracket);
+    return name;
+}
+
+/** 旧格式数字 ID → 目标方块下标（ID 可到 4095，用定长表查） */
+QVector<int> legacyOreTable(const QStringList &keys, const QVector<int> &legacyIds,
+                            bool *hasTarget)
+{
+    QVector<int> table;
+    *hasTarget = false;
+    for (int i = 0; i < legacyIds.size() && i < keys.size(); ++i)
+    {
+        if (legacyIds.at(i) < 0)
+            continue;
+        if (table.isEmpty())
+            table.fill(-1, 4096);
+        const int id = legacyIds.at(i);
+        if (id < table.size() && table.at(id) < 0)
+        {
+            table[id] = i;
+            *hasTarget = true;
+        }
+    }
+    return table;
+}
+
+/** 读出 region 里指定槽位的区块并解析（槽位 = (localZ<<5) | localX） */
+bool readChunkSlot(const RegionData &region, int slot, QByteArray &chunk, ChunkInfo &info)
+{
+    if (slot < 0 || slot >= 1024)
+        return false;
+    const uchar *data = region.data;
+    const qint64 size = region.size;
+    const quint32 off = (quint32(data[slot * 4]) << 16)
+                      | (quint32(data[slot * 4 + 1]) << 8)
+                      |  quint32(data[slot * 4 + 2]);
+    if (off == 0)
+        return false;
+    const qint64 pos = qint64(off) * 4096;
+    if (pos < 8192 || pos + 5 > size)
+        return false;
+    const quint32 len = be32(data + pos);
+    if (len <= 1 || pos + 4 + qint64(len) > size)
+        return false;
+    if (!inflatePayload(data + pos + 5, int(len - 1), int(data[pos + 4]), chunk))
+        return false;
+    info = parseChunk(reinterpret_cast<const uchar *>(chunk.constData()), chunk.size());
+    return info.ok;
+}
+
+/**
+ * 扫一个已解析区块的全部 section，把命中方块的坐标追加进 out。
+ * 每个 section 先看调色板里有没有目标方块，没有就整层跳过（省掉 4096 项位解包），
+ * 有才解码方块数组逐格比对。
+ */
+void scanChunkSections(const ChunkInfo &info, const uchar *cdata, qint64 chunkLen,
+                       int baseX, int baseZ, const QStringList &keys,
+                       const QVector<int> &legacyOre, bool hasLegacyTarget,
+                       QVector<BlockHit> &out)
+{
+    for (const SectionRef &s : info.sections)
+    {
+            QVector<quint32> indices;
+            QVector<int> palOre; // 调色板下标 → keys 下标
+
+            if (s.hasLegacy())
+            {
+                if (!hasLegacyTarget || s.blocksOff < 0
+                    || s.blocksOff + s.blocksCount > chunkLen)
+                    continue;
+                Cursor c(cdata + s.blocksOff, s.blocksCount);
+                indices.resize(4096);
+                for (int k = 0; k < 4096 && !c.bad; ++k)
+                    indices[k] = quint32(c.u8());
+                if (c.bad)
+                    continue;
+                // Data 半字节（旧版每格高 4 位，与 renderChunk 同款布局）
+                if (s.addOff >= 0 && s.addCount > 0 && s.addOff + s.addCount <= chunkLen)
+                {
+                    Cursor add(cdata + s.addOff, s.addCount);
+                    for (int k = 0; k < 2048 && !add.bad; ++k)
+                    {
+                        const int b = add.u8();
+                        const quint32 hi = quint32(b & 0x0F) << 8;
+                        const quint32 lo = quint32(b >> 4);
+                        if (k * 2 < 4096)     indices[k * 2]     |= lo << 8;
+                        if (k * 2 + 1 < 4096) indices[k * 2 + 1] |= hi;
+                    }
+                }
+                palOre = legacyOre;
+            }
+            else
+            {
+                const QStringList palette = readPalette(cdata, chunkLen, s);
+                // 单一方块层（空气 / 整层石头…）不可能含矿物
+                if (palette.size() < 2)
+                    continue;
+                palOre.fill(-1, palette.size());
+                bool any = false;
+                for (int p = 0; p < palette.size(); ++p)
+                {
+                    const QString key = scanKey(palette.at(p));
+                    for (int k = 0; k < keys.size(); ++k)
+                    {
+                        if (keys.at(k) == key)
+                        {
+                            palOre[p] = k;
+                            any = true;
+                            break;
+                        }
+                    }
+                }
+                if (!any)
+                    continue; // 该层没有目标方块 → 不必解包 4096 格
+                if (!decodeStates(cdata, chunkLen, s, palette.size(),
+                                  info.dataVersion >= 2566, indices))
+                    continue;
+                if (indices.size() < 4096)
+                    continue;
+            }
+
+            for (int idx = 0; idx < 4096; ++idx)
+            {
+                const quint32 pi = indices.at(idx);
+                if (pi >= quint32(palOre.size()))
+                    continue;
+                const int ore = palOre.at(int(pi));
+                if (ore < 0)
+                    continue;
+                // 位打包布局与 renderChunk 一致：index = (y<<8) | (z<<4) | x
+                BlockHit hit;
+                hit.x = baseX + (idx & 15);
+                hit.z = baseZ + ((idx >> 4) & 15);
+                hit.y = s.y * 16 + (idx >> 8);
+                hit.index = ore;
+                out.append(hit);
+                if (out.size() >= kMaxScanHits)
+                    break;
+            }
+            if (out.size() >= kMaxScanHits)
+                return;
+    }
+}
+
+/**
+ * 扫描单个 region 文件里目标方块的出现坐标（逐槽位复用 readChunkSlot）。
+ */
+void scanRegionFile(const QString &path, int regionX, int regionZ,
+                    const QStringList &keys, const QVector<int> &legacyIds,
+                    QVector<BlockHit> &out,
+                    const std::function<bool()> &cancelled)
+{
+    RegionData region;
+    if (!region.load(path))
+        return;
+    if (region.size < 8192)
+        return; // 空文件 / 截断残件：没有可扫的内容
+
+    bool hasLegacyTarget = false;
+    const QVector<int> legacyOre = legacyOreTable(keys, legacyIds, &hasLegacyTarget);
+
+    for (int i = 0; i < 1024; ++i)
+    {
+        if (cancelled && cancelled())
+            return;
+        if (out.size() >= kMaxScanHits)
+            return;
+
+        QByteArray chunk;
+        ChunkInfo info;
+        if (!readChunkSlot(region, i, chunk, info))
+            continue;
+
+        // 位置表索引即权威槽位：x = i & 31, z = i >> 5
+        const int baseX = (regionX * 32 + (i & 31)) * 16;
+        const int baseZ = (regionZ * 32 + (i >> 5)) * 16;
+        scanChunkSections(info, reinterpret_cast<const uchar *>(chunk.constData()),
+                          chunk.size(), baseX, baseZ, keys, legacyOre,
+                          hasLegacyTarget, out);
+    }
+}
+
+/** 方块名列表 → 扫描键列表（空名直接丢弃） */
+QStringList scanKeysOf(const QStringList &blockNames)
+{
+    QStringList keys;
+    keys.reserve(blockNames.size());
+    for (const QString &name : blockNames)
+    {
+        const QString key = scanKey(name);
+        if (!key.isEmpty())
+            keys << key;
+    }
+    return keys;
+}
+
+} // namespace
+
+QVector<BlockHit> scanRegionBlocks(const QString &savePath, Dimension dim,
+                                   int regionX, int regionZ,
+                                   const QStringList &blockNames,
+                                   const QVector<int> &legacyIds,
+                                   const std::function<bool()> &cancelled)
+{
+    QVector<BlockHit> hits;
+    const QString dir = regionDir(savePath, dim);
+    if (dir.isEmpty() || blockNames.isEmpty())
+        return hits;
+
+    const QStringList keys = scanKeysOf(blockNames);
+    if (keys.isEmpty())
+        return hits;
+
+    const QString path = dir + QStringLiteral("/r.%1.%2.mca")
+                                       .arg(regionX).arg(regionZ);
+    if (QFileInfo::exists(path))
+        scanRegionFile(path, regionX, regionZ, keys, legacyIds, hits, cancelled);
+    return hits;
+}
+
+QVector<BlockHit> scanChunksBlocks(const QString &savePath, Dimension dim,
+                                   const QVector<QPoint> &chunks,
+                                   const QStringList &blockNames,
+                                   const QVector<int> &legacyIds,
+                                   const std::function<bool()> &cancelled)
+{
+    QVector<BlockHit> hits;
+    if (chunks.isEmpty())
+        return hits;
+    const QString dir = regionDir(savePath, dim);
+    if (dir.isEmpty() || blockNames.isEmpty())
+        return hits;
+
+    const QStringList keys = scanKeysOf(blockNames);
+    if (keys.isEmpty())
+        return hits;
+
+    // 按 region 分组：同一张贴图里相邻的区块共用一个 .mca，不重复读盘
+    QHash<QPoint, QVector<int>> slotsByRegion;
+    for (const QPoint &ch : chunks)
+    {
+        const int rx = int(std::floor(double(ch.x()) / 32.0));
+        const int rz = int(std::floor(double(ch.y()) / 32.0));
+        const int lx = ch.x() - rx * 32;
+        const int lz = ch.y() - rz * 32;
+        slotsByRegion[QPoint(rx, rz)].append((lz << 5) | lx);
+    }
+
+    bool hasLegacyTarget = false;
+    const QVector<int> legacyOre = legacyOreTable(keys, legacyIds, &hasLegacyTarget);
+
+    for (auto it = slotsByRegion.cbegin(); it != slotsByRegion.cend(); ++it)
+    {
+        if (cancelled && cancelled())
+            return hits;
+        const int regionX = it.key().x();
+        const int regionZ = it.key().y();
+        const QString path = dir + QStringLiteral("/r.%1.%2.mca")
+                                           .arg(regionX).arg(regionZ);
+        if (!QFileInfo::exists(path))
+            continue;
+
+        RegionData region;
+        if (!region.load(path) || region.size < 8192)
+            continue;
+
+        for (int slot : it.value())
+        {
+            if (cancelled && cancelled())
+                return hits;
+            if (hits.size() >= kMaxScanHits)
+                return hits;
+
+            QByteArray chunk;
+            ChunkInfo info;
+            if (!readChunkSlot(region, slot, chunk, info))
+                continue;
+
+            const int baseX = (regionX * 32 + (slot & 31)) * 16;
+            const int baseZ = (regionZ * 32 + (slot >> 5)) * 16;
+            scanChunkSections(info, reinterpret_cast<const uchar *>(chunk.constData()),
+                              chunk.size(), baseX, baseZ, keys, legacyOre,
+                              hasLegacyTarget, hits);
+        }
+    }
+    return hits;
+}
+
+QVector<BlockHit> scanChunkBlocks(const QString &savePath, Dimension dim,
+                                  int chunkX, int chunkZ,
+                                  const QStringList &blockNames,
+                                  const QVector<int> &legacyIds,
+                                  const std::function<bool()> &cancelled)
+{
+    return scanChunksBlocks(savePath, dim, {QPoint(chunkX, chunkZ)},
+                            blockNames, legacyIds, cancelled);
+}
+
+namespace {
+
 /** 扫描出 r.<x>.<z>.mca 对应的区域坐标 */
 void scanRegionFiles(const QString &dir, QVector<QPair<int, int>> *coords,
                      QStringList *paths)
@@ -1710,6 +2022,32 @@ QImage cachedSeedTile(int rx, int rz, Dimension dim, ShadeMode mode,
     return img;
 }
 
+/**
+ * 种子预测 tile（概览用）：按目标尺寸的 2 倍栅格采样再盒式平均。
+ * 直接逐点抽稀到 512/bpp（bpp=8 时 8 格一采）会把细河、窄沙滩抽成
+ * 雪花噪点；真实 region 走盒式降采样，两者并排时观感必须一致。
+ * 目标尺寸大于 128（bpp=1 的 512 概览槽位）时先采 128 再平滑放大。
+ */
+QImage seedTileSmooth(int rx, int rz, Dimension dim, ShadeMode mode,
+                      const SeedPreview &seed, int outSize, int maxSurfaceY)
+{
+    const int hi = std::clamp(outSize * 2, 4, 128);
+    QImage img = cachedSeedTile(rx, rz, dim, mode, seed, hi, maxSurfaceY);
+    if (img.isNull())
+        img = SeedTerrainRenderer::renderRegionTile(rx, rz, dim, mode,
+                                                    seed.seed, seed.mc, hi,
+                                                    maxSurfaceY);
+    if (img.isNull() || img.width() <= 0 || outSize <= 0)
+        return img;
+    if (img.width() == outSize)
+        return img;
+    if (img.width() > outSize && img.width() % outSize == 0)
+        return boxDownscale(img, img.width() / outSize);
+    return img.scaled(outSize, outSize, Qt::IgnoreAspectRatio,
+                      img.width() > outSize ? Qt::SmoothTransformation
+                                            : Qt::FastTransformation);
+}
+
 /** 工作线程里跑：解一个 region → 按 blockPerPixel 降采样；无文件时走种子预测 */
 TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
                                 int destX, int destY, int bpp,
@@ -1736,16 +2074,12 @@ TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
     else if (seed.enabled && SeedTerrainRenderer::supported(seed.mc, dim))
     {
         // 无 region 文件（已探索范围的空洞 / 边界外扩）→ 种子预测近似地形。
-        // 直接按输出尺寸渲染；概览封顶 128 采样（群系 1:4 粒度已够），
-        // 方块级 512 采样只留给放大后的细节瓦片路径
+        // 目标尺寸 = 该 region 在图上的边长 512/bpp；先高一级栅格采样再平均，
+        // 别按 bpp 逐点抽稀（细河会被抽成噪点）
         r.isSeed = true;
-        const int seedOut = std::clamp(512 / bpp, 4, 128);
-        img = cachedSeedTile(regionX, regionZ, dim, mode, seed, seedOut,
+        const int tilePx = std::max(1, 512 / bpp);
+        img = seedTileSmooth(regionX, regionZ, dim, mode, seed, tilePx,
                              maxSurfaceY);
-        if (img.isNull())
-            img = SeedTerrainRenderer::renderRegionTile(
-                regionX, regionZ, dim, mode, seed.seed, seed.mc, seedOut,
-                maxSurfaceY);
     }
 
     if (img.isNull())

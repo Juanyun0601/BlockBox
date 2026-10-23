@@ -1,11 +1,13 @@
 #include "ContentDetailPage.h"
 #include "utils/IconHelper.h"
 #include "utils/McimHelper.h"
+#include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
 #include "utils/FavoritesManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/mod/CurseForgeAPI.h"
 #include "utils/mod/ModrinthAPI.h"
+#include "components/AutoHeightTextBrowser.h"
 #include "components/NotificationManager.h"
 #include "components/ScreenshotViewer.h"
 #include "components/SourceSwitchBar.h"
@@ -33,6 +35,8 @@
 #include <QParallelAnimationGroup>
 #include <QPropertyAnimation>
 #include <QEasingCurve>
+#include <QPointer>
+#include <QSet>
 
 static QNetworkAccessManager *s_detailNAM = nullptr;
 static QNetworkDiskCache *s_detailDiskCache = nullptr;
@@ -67,8 +71,10 @@ ContentDetailPage::ContentDetailPage(ContentType contentType, QWidget *parent)
     , m_leftPanel(nullptr)
     , m_versionCombo(nullptr)
     , m_loaderCombo(nullptr)
+    , m_versionTypeCombo(nullptr)
     , m_dependenciesContainer(nullptr)
     , m_dependenciesLayout(nullptr)
+    , m_dependenciesSection(nullptr)
     , m_downloadContainer(nullptr)
     , m_downloadListLayout(nullptr)
     , m_linksContainer(nullptr)
@@ -257,7 +263,12 @@ void ContentDetailPage::initUI()
     m_loadingOverlay->hide();
 
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
-            this, [this]() { updateScreenshotNavStyle(); });
+            this, [this]() {
+        updateScreenshotNavStyle();
+        // 一键安装按钮用的是内联样式，切换主题后需重新套用一次
+        if (m_installBtn)
+            m_installBtn->setStyleSheet(StyleKit::primaryButton());
+    });
 
     // Carousel: advance every 5 seconds
     m_carouselTimer->setInterval(5000);
@@ -321,12 +332,14 @@ void ContentDetailPage::switchToSource(const QString &source)
 
 void ContentDetailPage::clearContent()
 {
-    while (QLayoutItem *item = m_contentLayout->takeAt(0)) {
-        if (item->widget()) {
-            item->widget()->setVisible(false);
-            item->widget()->deleteLater();
+    if (m_contentLayout) {
+        while (QLayoutItem *item = m_contentLayout->takeAt(0)) {
+            if (item->widget()) {
+                item->widget()->setVisible(false);
+                item->widget()->deleteLater();
+            }
+            delete item;
         }
-        delete item;
     }
     m_headerWidget = nullptr;
     m_iconLabel = nullptr;
@@ -334,6 +347,7 @@ void ContentDetailPage::clearContent()
     m_englishNameLabel = nullptr;
     m_descriptionLabel = nullptr;
     m_leftPanel = nullptr;
+    m_installBtn = nullptr;
     m_versionCombo = nullptr;
     m_loaderCombo = nullptr;
     m_versionTypeCombo = nullptr;
@@ -392,16 +406,18 @@ void ContentDetailPage::setModInfo(const ModInfo &info)
         m_currentItemId = m_currentSource + ":" + m_modInfo.id;
     }
 
-    if (m_loadingOverlay) {
-        auto config = ContentTypeConfig::getConfig(m_contentType);
-        m_loadingOverlay->showOverlay(tr("正在获取%1详情...").arg(config.displayName));
-    }
-
     clearContent();
     buildHeader();
     buildLeftSidebar();
     buildRightMain();
     loadIcon();
+
+    // 先把界面建完再显示加载遮罩：遮罩会截取主窗口画面，
+    // 若在半成品 UI 上 grab 容易触发重入绘制导致闪退
+    if (m_loadingOverlay) {
+        auto config = ContentTypeConfig::getConfig(m_contentType);
+        m_loadingOverlay->showOverlay(tr("正在获取%1详情...").arg(config.displayName));
+    }
 
     // 左侧「前置资源」等内容来自远端详情，随页面数据一起拉取
     fetchDetail();
@@ -643,10 +659,54 @@ void ContentDetailPage::buildLeftSidebar()
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(16);
 
+    // 一键安装放在筛选、版本列表之上：进详情页第一眼就能完成"装好能用"的操作
+    buildInstallBlock(leftLayout);
     buildFilterBlock(leftLayout);
     buildDependenciesBlock(leftLayout);
     buildDownloadListBlock(leftLayout);
     leftLayout->addStretch();
+}
+
+void ContentDetailPage::buildInstallBlock(QVBoxLayout *parentLayout)
+{
+    auto config = ContentTypeConfig::getConfig(m_contentType);
+
+    QWidget *section = new QWidget();
+    section->setObjectName("modDetailSection");
+    QVBoxLayout *sectionLayout = new QVBoxLayout(section);
+    sectionLayout->setContentsMargins(12, 12, 12, 12);
+    sectionLayout->setSpacing(10);
+
+    QLabel *title = new QLabel(tr("快捷安装"));
+    title->setObjectName("modDetailSectionTitle");
+    sectionLayout->addWidget(title);
+
+    m_installBtn = new QPushButton(tr("一键安装最新正式版"));
+    m_installBtn->setObjectName("modDetailInstallBtn");
+    m_installBtn->setCursor(Qt::PointingHandCursor);
+    m_installBtn->setMinimumHeight(42);
+    m_installBtn->setStyleSheet(StyleKit::primaryButton());
+    m_installBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/download.svg", QColor("#ffffff"), 18));
+    m_installBtn->setIconSize(QSize(18, 18));
+    m_installBtn->setToolTip(tr("安装与当前实例匹配的最新正式版，并自动安装它必需的%1")
+                                 .arg(config.displayName));
+    connect(m_installBtn, &QPushButton::clicked, this, [this]() {
+        // 短时间内避免连点造成两套安装流程并行
+        m_installBtn->setEnabled(false);
+        QPushButton *btn = m_installBtn;
+        QTimer::singleShot(2500, btn, [btn]() { btn->setEnabled(true); });
+        emit installLatestRequested(m_modInfo);
+    });
+    sectionLayout->addWidget(m_installBtn);
+
+    QLabel *hint = new QLabel(tr("自动安装最新正式版及它必需的%1到当前实例")
+                                  .arg(config.displayName));
+    hint->setWordWrap(true);
+    hint->setStyleSheet(StyleKit::mutedLabel());
+    sectionLayout->addWidget(hint);
+
+    parentLayout->addWidget(section);
 }
 
 void ContentDetailPage::buildRightMain()
@@ -752,8 +812,10 @@ void ContentDetailPage::refreshDependencies()
         return;
 
     while (QLayoutItem *item = m_dependenciesLayout->takeAt(0)) {
-        if (item->widget())
-            item->widget()->deleteLater();
+        if (QWidget *w = item->widget()) {
+            w->setVisible(false);
+            w->deleteLater();
+        }
         delete item;
     }
 
@@ -832,8 +894,18 @@ void ContentDetailPage::loadDepIcon(QLabel *iconLabel, const QString &iconUrl)
     if (!iconLabel)
         return;
 
-    if (iconUrl.isEmpty()) {
-        // 没图标就画一个圆角占位块，保持卡片左侧对齐
+    const QString cacheKey = QString("dep_icon:%1").arg(iconUrl);
+    QPixmap cached;
+    if (!iconUrl.isEmpty() && QPixmapCache::find(cacheKey, &cached)) {
+        iconLabel->setPixmap(cached);
+        return;
+    }
+
+    // 统一走 McimHelper::loadImage：镜像把图片请求返回成网页时会自动换原始地址重试，
+    // 实在拿不到（或本来就没有图标）才画一个圆角占位块
+    McimHelper::loadImage(sharedDetailNAM(), iconLabel, iconUrl, QSize(28, 28),
+                          iconUrl.isEmpty() ? QString() : cacheKey,
+                          [](QLabel *label) {
         QPixmap placeholder(28, 28);
         placeholder.fill(Qt::transparent);
         QPainter painter(&placeholder);
@@ -842,37 +914,9 @@ void ContentDetailPage::loadDepIcon(QLabel *iconLabel, const QString &iconUrl)
         painter.setBrush(QColor(0, 0, 0, 22));
         painter.drawRoundedRect(placeholder.rect(), 8, 8);
         painter.end();
-        iconLabel->setPixmap(placeholder);
-        return;
-    }
-
-    const QString cacheKey = QString("dep_icon:%1").arg(iconUrl);
-    QPixmap cached;
-    if (QPixmapCache::find(cacheKey, &cached)) {
-        iconLabel->setPixmap(cached);
-        return;
-    }
-
-    QUrl url(McimHelper::rewriteImageUrl(iconUrl));
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    QNetworkReply *reply = sharedDetailNAM()->get(request);
-    connect(reply, &QNetworkReply::finished, this, [iconLabel, reply, cacheKey]() {
-        reply->deleteLater();
-        if (reply->error() != QNetworkReply::NoError)
-            return;
-        QPixmap pixmap;
-        pixmap.loadFromData(reply->readAll());
-        if (pixmap.isNull())
-            return;
-        QPixmap scaled = pixmap.scaled(28, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        QPixmapCache::insert(cacheKey, scaled);
-        // 卡片可能在图片回来前已被重建
-        if (iconLabel)
-            iconLabel->setPixmap(scaled);
+        label->setPixmap(placeholder);
     });
 }
-
 void ContentDetailPage::resolveDependencyInfos()
 {
     if (!m_curseforgeAPI || !m_modrinthAPI || m_modInfo.dependencies.isEmpty())
@@ -1130,7 +1174,8 @@ void ContentDetailPage::applyDownloadFilter()
         visibleSet.insert(matchedIndices[i]);
 
     for (int i = 0; i < m_downloadCards.size(); ++i) {
-        m_downloadCards[i].widget->setVisible(visibleSet.contains(i));
+        if (m_downloadCards[i].widget)
+            m_downloadCards[i].widget->setVisible(visibleSet.contains(i));
     }
 
     if (m_downloadEmptyHint)
@@ -1393,11 +1438,11 @@ void ContentDetailPage::buildDescriptionBlock(QVBoxLayout *parentLayout)
     title->setObjectName("modDetailSectionTitle");
     sectionLayout->addWidget(title);
 
-    m_descriptionBrowser = new QTextBrowser();
+    // 描述区不再限制高度：文字按完整内容向下排版，由页面整体滚动
+    m_descriptionBrowser = new AutoHeightTextBrowser();
     m_descriptionBrowser->setObjectName("modDetailDescBrowser");
     m_descriptionBrowser->setOpenExternalLinks(true);
     m_descriptionBrowser->setReadOnly(true);
-    m_descriptionBrowser->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_descriptionBrowser->setHtml(desc);
     sectionLayout->addWidget(m_descriptionBrowser);
 
@@ -1518,7 +1563,9 @@ void ContentDetailPage::buildScreenshotBlock(QVBoxLayout *parentLayout)
     m_thumbScrollArea->setFrameShape(QFrame::NoFrame);
     m_thumbScrollArea->setWidget(m_thumbnailStrip);
     // Pin strip width so viewport can scroll it horizontally
-    m_thumbnailStrip->setFixedWidth(urls.size() * 124 - 4);
+    // 无截图时不能传负数，否则布局可能异常甚至崩溃
+    const int stripW = urls.isEmpty() ? 0 : urls.size() * 124 - 4;
+    m_thumbnailStrip->setFixedWidth(qMax(0, stripW));
 
     // Scroll buttons
     QColor themeColor(ThemeManager::instance()->currentThemeColor());
@@ -1637,6 +1684,8 @@ void ContentDetailPage::showScreenshot(int index)
         return;
     if (m_screenshotPixmaps[index].isNull())
         return;
+    if (!m_screenshotLabel)
+        return;
 
     m_currentScreenshotIndex = index;
     QPixmap px = m_screenshotPixmaps[index];
@@ -1658,6 +1707,9 @@ void ContentDetailPage::showScreenshot(int index)
         updateThumbnailHighlight();
         return;
     }
+
+    if (!m_screenshotOverlay)
+        return;
 
     if (m_screenshotAnimGroup) {
         m_screenshotAnimGroup->stop();
@@ -1692,10 +1744,14 @@ void ContentDetailPage::showScreenshot(int index)
 
     QObject::connect(group, &QParallelAnimationGroup::finished, this,
       [this, px, base]() {
-        m_screenshotOverlay->hide();
-        m_screenshotOverlay->setGeometry(base);
-        m_screenshotLabel->setPixmap(px);
-        m_screenshotLabel->setGeometry(base);
+        if (m_screenshotOverlay) {
+            m_screenshotOverlay->hide();
+            m_screenshotOverlay->setGeometry(base);
+        }
+        if (m_screenshotLabel) {
+            m_screenshotLabel->setPixmap(px);
+            m_screenshotLabel->setGeometry(base);
+        }
         m_screenshotAnimating = false;
         if (m_screenshotAnimGroup) {
             m_screenshotAnimGroup->deleteLater();
@@ -1858,7 +1914,7 @@ void ContentDetailPage::receiveDetail(const ModInfo &detail)
     // Update screenshots if API provides more
     if (!detail.screenshots.isEmpty()) {
         m_modInfo.screenshots = detail.screenshots;
-        if (m_screenshotSection) {
+        if (m_screenshotSection && m_thumbnailStrip && m_thumbnailStrip->layout()) {
             // Rebuild thumbnail strip
             QLayoutItem *child;
             while ((child = m_thumbnailStrip->layout()->takeAt(0)) != nullptr) {
@@ -1882,7 +1938,7 @@ void ContentDetailPage::receiveDetail(const ModInfo &detail)
             }
             static_cast<QHBoxLayout*>(m_thumbnailStrip->layout())->addStretch();
             int totalW = detail.screenshots.size() * 124 - 4;
-            m_thumbnailStrip->setFixedWidth(totalW);
+            m_thumbnailStrip->setFixedWidth(qMax(0, totalW));
             if (m_thumbScrollArea) {
                 m_thumbScrollArea->horizontalScrollBar()->setValue(0);
             }
@@ -1924,6 +1980,8 @@ void ContentDetailPage::setMcmodUrl(const QString &url)
     if (url.isEmpty())
         return;
     m_modInfo.mcmodUrl = url;
+    if (!m_linksContainer)
+        return;
     QList<QPushButton*> btns = m_linksContainer->findChildren<QPushButton*>();
     for (QPushButton *btn : btns) {
         if (btn->text() == tr("MC百科")) {
@@ -1949,24 +2007,10 @@ void ContentDetailPage::loadIcon()
         return;
     }
 
-    QUrl url(McimHelper::rewriteImageUrl(m_modInfo.iconUrl));
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    QNetworkReply *reply = sharedDetailNAM()->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, cacheKey]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QPixmap pixmap;
-            pixmap.loadFromData(reply->readAll());
-            if (!pixmap.isNull()) {
-                QPixmap scaled = pixmap.scaled(60, 60, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                QPixmapCache::insert(cacheKey, scaled);
-                m_iconLabel->setPixmap(scaled);
-            }
-        }
-        reply->deleteLater();
-    });
+    // 镜像图片不可用时会自动改用原始地址，不会因为镜像返回网页而一直空着
+    McimHelper::loadImage(sharedDetailNAM(), m_iconLabel, m_modInfo.iconUrl,
+                          QSize(60, 60), cacheKey);
 }
-
 QWidget *ContentDetailPage::createChip(const QString &text, const QColor &bgColor)
 {
     Q_UNUSED(bgColor);
@@ -1987,7 +2031,7 @@ bool ContentDetailPage::eventFilter(QObject *watched, QEvent *event)
     }
 
     if (event->type() == QEvent::Resize && watched == m_screenshotStack) {
-        if (!m_screenshotAnimating) {
+        if (!m_screenshotAnimating && m_screenshotLabel) {
             m_screenshotLabel->setGeometry(m_screenshotStack->rect());
             if (m_screenshotOverlay)
                 m_screenshotOverlay->setGeometry(m_screenshotStack->rect());

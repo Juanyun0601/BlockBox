@@ -8,13 +8,16 @@
 #include "TranslationService.h"
 
 #include "utils/AiProviderPresets.h"
+#include "utils/AiEndpointUrl.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QRegularExpression>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSet>
 #include <QSettings>
 #include <QUrl>
 #include <QUrlQuery>
@@ -24,6 +27,39 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QDebug>
+
+namespace {
+
+/// 把网络错误整理成一句能看懂的话：HTTP 状态 + 服务端给出的原因（过长截断）
+QString briefReplyError(QNetworkReply *reply, const QByteArray &body)
+{
+    QString message;
+    const QJsonDocument doc = QJsonDocument::fromJson(body);
+    if (doc.isObject()) {
+        const QJsonObject obj = doc.object();
+        message = obj.value(QStringLiteral("error")).toObject()
+                     .value(QStringLiteral("message")).toString();
+        if (message.isEmpty())
+            message = obj.value(QStringLiteral("message")).toString();
+    }
+    if (message.isEmpty()) {
+        message = QString::fromUtf8(body).simplified();
+        if (message.size() > 160)
+            message = message.left(160) + QStringLiteral("…");
+    }
+
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QString head = status > 0 ? QStringLiteral("HTTP %1").arg(status) : reply->errorString();
+    if (status == 401 || status == 403)
+        head += QStringLiteral("，API Key 无效或没有权限，请检查「设置 → AI 助手」");
+    else if (status == 404)
+        head += QStringLiteral("，接口地址不对，请检查服务商端点");
+    else if (status == 429)
+        head += QStringLiteral("，请求太频繁或额度用完了");
+    return message.isEmpty() ? head : QStringLiteral("%1：%2").arg(head, message);
+}
+
+} // namespace
 
 TranslationService::TranslationService(QObject *parent)
     : QObject(parent)
@@ -108,133 +144,255 @@ QString TranslationService::sourceDisplayName(TranslationSource source)
 }
 
 // ---------------------------------------------------------------------------
-// AI 翻译（通过 SSE 流式调用，同步等待结果）
+// AI 翻译（OpenAI 兼容 /chat/completions）
 // ---------------------------------------------------------------------------
+
+namespace {
+
+/// 明显不是对话模型的 ID（安全审核、向量、重排、分类器…）：翻译交给它们必然拿不到译文
+bool looksLikeNonChatModel(const QString &modelId)
+{
+    static const QRegularExpression re(
+        QStringLiteral("(safety|moderation|guard|embedding|embed|rerank|classifier|classify)"),
+        QRegularExpression::CaseInsensitiveOption);
+    return re.match(modelId).hasMatch();
+}
+
+/// 文本里是否已含汉字
+bool containsHanText(const QString &text)
+{
+    for (const QChar &ch : text) {
+        if (ch.script() == QChar::Script_Han)
+            return true;
+    }
+    return false;
+}
+
+/// 文本里是否有拉丁字母（全是符号/数字的段不需要翻译）
+bool containsLatinLetters(const QString &text)
+{
+    for (const QChar &ch : text) {
+        const ushort u = ch.unicode();
+        if ((u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z'))
+            return true;
+    }
+    return false;
+}
+
+/// 上一次真正翻译成功的模型：本轮优先用它，避免每次都先撞一鼻子灰
+QString s_preferredTranslationModel;
+
+} // namespace
+
 void TranslationService::translateByAI(const QString &text, const TranslationConfig &config,
                                        bool listMode)
 {
-    // 构建翻译请求体
-    QJsonArray messages;
+    m_aiCandidates.clear();
+    m_aiCandidateIndex = 0;
+    m_aiFailures.clear();
+    m_aiText = text;
+    m_aiTargetLanguage = config.targetLanguage;
+    m_aiListMode = listMode;
 
-    // System prompt
-    QJsonObject sysMsg;
-    sysMsg["role"] = "system";
-    sysMsg["content"] = listMode ? buildAIListTranslationPrompt()
-                                 : buildAITranslationPrompt(text, config.targetLanguage);
-    messages.append(sysMsg);
-
-    // User message
-    QJsonObject userMsg;
-    userMsg["role"] = "user";
-    userMsg["content"] = listMode ? buildAIListTranslationUserMessage(text)
-                                  : buildAITranslationUserMessage(text);
-    messages.append(userMsg);
-
-    // 从设置中读取 AI 模型配置（使用用户默认的 AI 模型）
-    // 这里直接调用 AiService 的同步接口
-    // 由于 AiService 是异步 SSE，我们用一个 QEventLoop 等待结果
-    // 但更好的方式是让 ContentDetailPage 自己调用 AiService
-    // 这里提供一个简化实现：通过网络直接调用
-
-    // 使用自定义 API 端点来调用 AI。
-    // 未手动填写时回退到 AI 助手设置的默认模型（ai/defaultModelId），端点/密钥一并套用服务商配置。
-    QString modelId = config.customModel;
-    QString apiBaseUrl = config.customApiUrl;
-    QString apiKey = config.customApiKey;
-    if (modelId.isEmpty() || apiBaseUrl.isEmpty() || apiKey.isEmpty()) {
+    const bool customComplete = !config.customApiUrl.isEmpty()
+        && !config.customApiKey.isEmpty() && !config.customModel.isEmpty();
+    if (customComplete) {
+        // 用户手填了自定义端点：照他填的来，不做替换
+        m_aiCandidates.append({config.customModel, config.customApiUrl, config.customApiKey});
+    } else {
         QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
         const QString defaultId = settings.value(QStringLiteral("ai/defaultModelId")).toString();
-        if (!defaultId.isEmpty()) {
-            for (const AiConfiguredModel &m : aiConfiguredModels()) {
-                if (m.id != defaultId)
-                    continue;
-                if (modelId.isEmpty())
-                    modelId = m.id;
-                if (apiBaseUrl.isEmpty() && !m.apiUrl.isEmpty())
-                    apiBaseUrl = m.apiUrl;
-                if (apiKey.isEmpty() && !m.apiKey.isEmpty())
-                    apiKey = m.apiKey;
-                break;
+        const QList<AiConfiguredModel> configured = aiConfiguredModels();
+
+        QSet<QString> seen;
+        auto addCandidate = [this, &seen](const QString &id, const QString &url, const QString &key) {
+            if (id.isEmpty() || seen.contains(id))
+                return;
+            if (url.isEmpty() && key.isEmpty())
+                return;   // 没端点也没密钥，发出去只会 401
+            seen.insert(id);
+            m_aiCandidates.append({id, url, key});
+        };
+
+        auto findConfigured = [&configured](const QString &id) -> const AiConfiguredModel * {
+            for (const AiConfiguredModel &m : configured) {
+                if (m.id == id)
+                    return &m;
             }
+            return nullptr;
+        };
+
+        const bool defaultUsable = !defaultId.isEmpty() && !looksLikeNonChatModel(defaultId);
+
+        // 1) 上次翻译成功的模型；其次是用户选的默认模型（只要它像个对话模型）
+        if (!s_preferredTranslationModel.isEmpty()) {
+            if (const AiConfiguredModel *m = findConfigured(s_preferredTranslationModel))
+                addCandidate(m->id, m->apiUrl, m->apiKey);
         }
+        if (defaultUsable) {
+            if (const AiConfiguredModel *m = findConfigured(defaultId))
+                addCandidate(m->id, m->apiUrl, m->apiKey);
+        }
+        // 2) 其它看起来能翻译的模型（跳过安全审核 / 向量 / 分类器）
+        for (const AiConfiguredModel &m : configured) {
+            if (!looksLikeNonChatModel(m.id))
+                addCandidate(m.id, m.apiUrl, m.apiKey);
+        }
+        // 3) 兜底：默认模型不适合、又没有别的候选时，才把它放进来试一次
+        if (!defaultUsable) {
+            if (const AiConfiguredModel *m = findConfigured(defaultId))
+                addCandidate(m->id, m->apiUrl, m->apiKey);
+        }
+        for (const AiConfiguredModel &m : configured)
+            addCandidate(m.id, m.apiUrl, m.apiKey);
     }
-    if (modelId.isEmpty())
-        modelId = QStringLiteral("deepseek-chat");
+
+    if (m_aiCandidates.isEmpty()) {
+        m_translating = false;
+        emit translationError(tr("还没有配置 AI 模型：请先到「设置 → AI 助手」里添加服务商密钥并选好默认模型，再回来翻译"));
+        return;
+    }
+
+    sendAiCandidate();
+}
+
+void TranslationService::sendAiCandidate()
+{
+    if (m_aiCandidateIndex >= m_aiCandidates.size()) {
+        m_translating = false;
+        const QString detail = m_aiFailures.isEmpty()
+            ? tr("AI 没有返回可用的译文")
+            : m_aiFailures.first();
+        m_aiCandidates.clear();
+        emit translationError(tr("翻译失败：%1。请到「设置 → AI 助手」里换一个通用对话模型再试")
+                                  .arg(detail));
+        return;
+    }
+
+    const AiCandidate candidate = m_aiCandidates.at(m_aiCandidateIndex);
+
+    QJsonArray messages;
+
+    QJsonObject sysMsg;
+    sysMsg["role"] = "system";
+    sysMsg["content"] = m_aiListMode ? buildAIListTranslationPrompt()
+                                     : buildAITranslationPrompt(m_aiText, m_aiTargetLanguage);
+    messages.append(sysMsg);
+
+    QJsonObject userMsg;
+    userMsg["role"] = "user";
+    userMsg["content"] = m_aiListMode ? buildAIListTranslationUserMessage(m_aiText)
+                                      : buildAITranslationUserMessage(m_aiText);
+    messages.append(userMsg);
 
     QJsonObject requestBody;
-    requestBody["model"] = modelId;
+    requestBody["model"] = candidate.modelId;
     requestBody["messages"] = messages;
     requestBody["stream"] = false;
 
-    QUrl apiUrl(apiBaseUrl.isEmpty()
+    const QUrl apiUrl(candidate.apiUrl.isEmpty()
         ? QStringLiteral("https://api.deepseek.com/v1/chat/completions")
-        : apiBaseUrl + QStringLiteral("/v1/chat/completions"));
+        : AiEndpointUrl::buildChatCompletionsUrl(candidate.apiUrl));
 
     QNetworkRequest request(apiUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    if (!apiKey.isEmpty()) {
-        request.setRawHeader("Authorization",
-            ("Bearer " + apiKey).toUtf8());
+    if (!candidate.apiKey.isEmpty()) {
+        request.setRawHeader("Authorization", ("Bearer " + candidate.apiKey).toUtf8());
     }
 
-    QByteArray body = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);
+    const QByteArray body = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);
     m_currentReply = m_networkManager->post(request, body);
+    connect(m_currentReply, &QNetworkReply::finished, this, [this]() { handleAiReply(); });
+}
 
-    connect(m_currentReply, &QNetworkReply::finished, this, [this, listMode]() {
-        QNetworkReply *reply = m_currentReply;
-        if (!reply) return;
+void TranslationService::handleAiReply()
+{
+    QNetworkReply *reply = m_currentReply;
+    if (!reply)
+        return;
+    m_currentReply = nullptr;
 
-        m_currentReply = nullptr;
-        m_translating = false;
-
-        if (reply->error() == QNetworkReply::OperationCanceledError) {
-            reply->deleteLater();
-            return;
-        }
-
-        if (reply->error() != QNetworkReply::NoError) {
-            emit translationError(tr("AI 翻译请求失败: %1").arg(reply->errorString()));
-            reply->deleteLater();
-            return;
-        }
-
-        QByteArray data = reply->readAll();
+    const QNetworkReply::NetworkError networkError = reply->error();
+    if (networkError == QNetworkReply::OperationCanceledError) {
         reply->deleteLater();
+        m_translating = false;
+        m_aiCandidates.clear();
+        return;
+    }
 
+    QString failure;
+    QString content;
+
+    if (networkError != QNetworkReply::NoError) {
+        failure = briefReplyError(reply, reply->readAll());
+    } else {
+        const QByteArray data = reply->readAll();
         QJsonParseError parseError;
-        QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+        const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
         if (parseError.error != QJsonParseError::NoError) {
-            emit translationError(tr("AI 翻译响应解析失败"));
-            return;
-        }
+            failure = tr("返回内容解析失败");
+        } else {
+            const QJsonObject obj = doc.object();
+            const QJsonArray choices = obj.value(QStringLiteral("choices")).toArray();
+            if (choices.isEmpty()) {
+                const QString apiMessage = obj.value(QStringLiteral("error")).toObject()
+                                              .value(QStringLiteral("message")).toString();
+                failure = apiMessage.isEmpty() ? tr("返回空结果") : apiMessage;
+            } else {
+                content = choices.at(0).toObject()
+                              .value(QStringLiteral("message")).toObject()
+                              .value(QStringLiteral("content")).toString();
+                // 去掉模型爱加的 markdown 代码块包裹
+                if (content.startsWith(QStringLiteral("```html"))) {
+                    content = content.mid(7);
+                } else if (content.startsWith(QStringLiteral("```"))) {
+                    content = content.mid(3);
+                }
+                if (content.endsWith(QStringLiteral("```")))
+                    content.chop(3);
+                content = content.trimmed();
 
-        QJsonObject obj = doc.object();
-        QJsonArray choices = obj.value("choices").toArray();
-        if (choices.isEmpty()) {
-            emit translationError(tr("AI 翻译返回空结果"));
-            return;
+                if (content.isEmpty())
+                    failure = tr("返回空结果");
+                else if (!aiContentLooksTranslated(content))
+                    failure = m_aiListMode
+                        ? tr("返回的内容不是翻译结果（这个模型可能不是对话模型）")
+                        : tr("返回的内容不是译文（这个模型可能不是对话模型）");
+            }
         }
+    }
+    reply->deleteLater();
 
-        QString content = choices[0].toObject()
-            .value("message").toObject()
-            .value("content").toString();
-
-        // 去除可能的 markdown 代码块包裹
-        if (content.startsWith("```html")) {
-            content = content.mid(7);
-        } else if (content.startsWith("```")) {
-            content = content.mid(3);
-        }
-        if (content.endsWith("```")) {
-            content.chop(3);
-        }
-        content = content.trimmed();
-
-        if (listMode)
+    if (failure.isEmpty()) {
+        s_preferredTranslationModel = m_aiCandidates.at(m_aiCandidateIndex).modelId;
+        m_translating = false;
+        m_aiCandidates.clear();
+        m_aiFailures.clear();
+        if (m_aiListMode)
             emit listTranslationFinished(content);
         else
             emit translationFinished(content);
-    });
+        return;
+    }
+
+    // 这个模型不行：记下原因，换下一个候选
+    m_aiFailures << QStringLiteral("%1：%2")
+                        .arg(m_aiCandidates.at(m_aiCandidateIndex).modelId, failure);
+    ++m_aiCandidateIndex;
+    sendAiCandidate();
+}
+
+bool TranslationService::aiContentLooksTranslated(const QString &content) const
+{
+    if (m_aiListMode)
+        return content.contains(QStringLiteral("[#"));
+
+    // 译成中文时，结果里必须出现汉字；否则说明模型只是把原文/审核结论丢了回来
+    const bool targetIsChinese =
+        m_aiTargetLanguage.startsWith(QStringLiteral("zh"), Qt::CaseInsensitive);
+    if (targetIsChinese && containsLatinLetters(m_aiText) && !containsHanText(content))
+        return false;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -505,10 +663,8 @@ void TranslationService::translateByCustomAPI(const QString &text, const Transla
     requestBody["messages"] = messages;
     requestBody["stream"] = false;
 
-    QUrl apiUrl(config.customApiUrl);
-    if (!config.customApiUrl.endsWith("/v1/chat/completions")) {
-        apiUrl = QUrl(config.customApiUrl + "/v1/chat/completions");
-    }
+    // 端点补全规则与 AI 助手一致：自带 /v1 的地址不会被拼成 /v1/v1
+    const QUrl apiUrl(AiEndpointUrl::buildChatCompletionsUrl(config.customApiUrl));
 
     QNetworkRequest request(apiUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -533,8 +689,10 @@ void TranslationService::translateByCustomAPI(const QString &text, const Transla
         }
 
         if (reply->error() != QNetworkReply::NoError) {
-            emit translationError(tr("自定义 API 翻译失败: %1").arg(reply->errorString()));
+            const QByteArray body = reply->readAll();
+            const QString detail = briefReplyError(reply, body);
             reply->deleteLater();
+            emit translationError(tr("自定义 API 翻译失败（%1）").arg(detail));
             return;
         }
 

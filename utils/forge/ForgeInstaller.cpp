@@ -16,8 +16,28 @@
 
 #include "../SettingsManager.h"
 #include "../DownloadTaskManager.h"
+#include "../Safety.h"
 
 ForgeInstaller *ForgeInstaller::m_instance = nullptr;
+
+// 兼容两种调用方传入的路径：<root>/versions/<versionId> 形式的版本目录，
+// 或者直接是包含 versions/、libraries/ 的游戏根目录
+static QString resolveMinecraftRoot(const QString &instancePath)
+{
+    const QString path = QDir::cleanPath(QDir::fromNativeSeparators(instancePath));
+    if (path.isEmpty())
+        return path;
+
+    const QFileInfo info(path);
+    // 版本目录：上一级就是 versions
+    if (info.absoluteDir().dirName().compare(QStringLiteral("versions"), Qt::CaseInsensitive) == 0)
+        return QDir::cleanPath(info.absolutePath() + QStringLiteral("/.."));
+    // 传进来的就是 versions 目录
+    if (info.fileName().compare(QStringLiteral("versions"), Qt::CaseInsensitive) == 0)
+        return info.absolutePath();
+    // 否则认为已经是游戏根目录
+    return path;
+}
 
 ForgeInstaller* ForgeInstaller::instance()
 {
@@ -223,19 +243,7 @@ void ForgeInstaller::runInstallerDirectly()
     }
 
     // Forge installer expects the Minecraft directory (containing versions/ and libraries/)
-    QString minecraftDir;
-    if (m_versionIsolationEnabled)
-    {
-        // 版本隔离开启时 m_instancePath = <root>/versions/<versionId>
-        // 需要回到包含 versions/ 和 libraries/ 的版本目录
-        minecraftDir = QDir::cleanPath(QFileInfo(m_instancePath).dir().absolutePath() + "/../..");
-    }
-    else
-    {
-        // 非隔离模式：m_instancePath = <root>/versions/<versionId>
-        // 需要回到根目录以使用共享的 libraries/ 和 assets/
-        minecraftDir = QDir::cleanPath(m_instancePath + "/../..");
-    }
+    QString minecraftDir = resolveMinecraftRoot(m_instancePath);
 
     // 验证 Minecraft 目录结构
     QDir versionsDir(minecraftDir + "/versions");
@@ -480,6 +488,12 @@ QByteArray ForgeInstaller::decompressRawDeflate(const QByteArray &compressedData
 bool ForgeInstaller::extractEntryFromJar(const QString &jarPath, const QString &entryPath,
                                          const QString &destPath)
 {
+    if (!Safety::isSafeEntryName(entryPath))
+    {
+        qWarning() << "[ForgeInstaller]" << "Unsafe entry path rejected:" << entryPath;
+        return false;
+    }
+
     if (tryExtractWithJarTool(jarPath, entryPath, destPath))
     {
         return true;
@@ -571,7 +585,7 @@ bool ForgeInstaller::tryExtractWithPowerShell(const QString &jarPath, const QStr
         "$fs.Close();"
         "$stream.Close();"
         "$zip.Dispose();"
-    ).arg(jarPath, entryPath, destPath);
+    ).arg(Safety::psQuote(jarPath), Safety::psQuote(entryPath), Safety::psQuote(destPath));
 
     QProcess process;
     process.start("powershell", QStringList() << "-NoProfile" << "-Command" << script);
@@ -604,18 +618,20 @@ bool ForgeInstaller::tryExtractWithPython(const QString &jarPath, const QString 
 
     for (const QString &pythonCmd : pythonCommands)
     {
-        QString script = QString(
+        // 路径走 argv 传入，避免含引号的文件名被拼进脚本造成命令注入
+        const QString script = QStringLiteral(
             "import zipfile, sys, os\n"
-            "os.makedirs(os.path.dirname(r'%3'), exist_ok=True)\n"
-            "with zipfile.ZipFile(r'%1') as z:\n"
-            "    z.extract(r'%2', os.path.dirname(r'%3'))\n"
-            "src = os.path.join(os.path.dirname(r'%3'), r'%2')\n"
-            "if src != r'%3':\n"
-            "    os.replace(src, r'%3')\n"
-        ).arg(jarPath, entryPath, destPath);
+            "src_zip, entry, dest = sys.argv[1], sys.argv[2], sys.argv[3]\n"
+            "dest_dir = os.path.dirname(dest) or '.'\n"
+            "os.makedirs(dest_dir, exist_ok=True)\n"
+            "with zipfile.ZipFile(src_zip) as z:\n"
+            "    z.extract(entry, dest_dir)\n"
+            "tmp = os.path.join(dest_dir, entry)\n"
+            "if os.path.abspath(tmp) != os.path.abspath(dest):\n"
+            "    os.replace(tmp, dest)\n");
 
         QProcess process;
-        process.start(pythonCmd, QStringList() << "-c" << script);
+        process.start(pythonCmd, QStringList() << "-c" << script << jarPath << entryPath << destPath);
 
         if (!process.waitForFinished(15000))
         {

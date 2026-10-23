@@ -98,7 +98,9 @@ struct ContentTypeConfig
                 QStringLiteral("saves"),
                 { "*.zip" },
                 QStringLiteral("17"),
-                QStringLiteral("mod"),  // Modrinth has no world project type, use mod
+                // Modrinth 没有「世界存档」这个项目类型。以前借用 "mod" 去查，结果整页模组被当成存档列出来，
+                // 所以这里留空表示该分类不支持 Modrinth，世界页只查 CurseForge。
+                QString(),
                 QStringLiteral("搜索世界存档..."),
                 QStringLiteral("世界下载"),
                 QStringLiteral("世界"),

@@ -18,6 +18,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QNetworkAccessManager>
+#include <QRegularExpression>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
@@ -682,14 +683,24 @@ QString SkillManager::executeScriptTool(const SkillInfo &info, const SkillTool &
     }
 
     // 工具参数作为命令行参数传入（-Key Value）
+    // cmd 会把整条命令行重新解析，值里带 & | < > ^ " % 或换行时可能拼出额外命令，
+    // 这类值只通过 SKILL_ARGS 环境变量传递，不进命令行
+    const bool isCmdScript = (type == QLatin1String("bat"));
     for (auto it = args.constBegin(); it != args.constEnd(); ++it)
     {
         procArgs << QStringLiteral("-%1").arg(it.key());
         QString val = it.value().isString() ? it.value().toString()
                                             : QString::fromUtf8(
                                                   QJsonDocument(it.value().toObject()).toJson(QJsonDocument::Compact));
-        if (!val.isEmpty())
-            procArgs << val;
+        if (val.isEmpty())
+            continue;
+        if (isCmdScript && val.contains(QRegularExpression(QStringLiteral("[&|<>^%\"\\r\\n]"))))
+        {
+            qWarning() << "[SkillManager] Argument contains cmd metacharacters, passed via SKILL_ARGS only:"
+                       << it.key();
+            continue;
+        }
+        procArgs << val;
     }
 
     QProcess proc;

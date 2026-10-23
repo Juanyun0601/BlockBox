@@ -576,28 +576,9 @@ void FavoritesPage::loadCardIcon(QLabel *iconLabel, const QString &iconUrl)
     }
 
     // 使用 QPointer 守护 iconLabel 生命周期：卡片可能在网络回复到达前被 clearCards() 删除
-    QPointer<QLabel> labelGuard(iconLabel);
-    QPointer<FavoritesPage> pageGuard(this);
-
     QNetworkAccessManager *nam = sharedFavIconNAM();
-    QUrl url(McimHelper::rewriteImageUrl(iconUrl));
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    QNetworkReply *reply = nam->get(request);
-    connect(reply, &QNetworkReply::finished, this, [reply, labelGuard, pageGuard, cacheKey]() {
-        if (reply->error() == QNetworkReply::NoError)
-        {
-            QPixmap pixmap;
-            pixmap.loadFromData(reply->readAll());
-            if (!pixmap.isNull() && labelGuard && pageGuard)
-            {
-                QPixmap scaled = pixmap.scaled(44, 44, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                QPixmapCache::insert(cacheKey, scaled);
-                labelGuard->setPixmap(scaled);
-            }
-        }
-        reply->deleteLater();
-    });
+    // 镜像把图片请求返回成网页时会自动改用原始地址重试，不会一直空白
+    McimHelper::loadImage(nam, iconLabel, iconUrl, QSize(44, 44), cacheKey);
 }
 
 bool FavoritesPage::eventFilter(QObject *watched, QEvent *event)

@@ -557,3 +557,22 @@ bool SchematicDocument::saveCopy(const QString &outputPath, QString *error)
     }
     return true;
 }
+
+// ====================================================================== 撤销支持
+bool SchematicDocument::setPaletteIndexAt(int cell, int paletteIndex)
+{
+    if (!m_loaded || cell < 0 || cell >= m_indices.size())
+        return false;
+    if (paletteIndex < 0 || paletteIndex >= m_palette.size())
+        return false;
+    m_indices[cell] = paletteIndex;
+    return true;
+}
+
+bool SchematicDocument::restoreIndices(const QList<int> &indices)
+{
+    if (!m_loaded || indices.size() != volume())
+        return false;
+    m_indices = indices;
+    return true;
+}

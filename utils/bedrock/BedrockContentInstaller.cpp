@@ -18,7 +18,30 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 
+#include "../Safety.h"
+
 namespace {
+
+/**
+ * @brief 校验 manifest 里的 uuid 能否安全地当作目录名
+ *
+ * 附加包的 uuid 只应该是十六进制与短横线；出现路径分隔符、"."、".." 时
+ * 说明这个包在试图把文件写到 packs 目录之外（甚至触发整目录删除）。
+ */
+QString safePackId(const QString &rawId)
+{
+    const QString trimmed = rawId.trimmed();
+    if (trimmed.isEmpty())
+        return QString();
+    for (const QChar ch : trimmed) {
+        const ushort u = ch.unicode();
+        const bool ok = (u >= '0' && u <= '9') || (u >= 'a' && u <= 'f')
+                        || (u >= 'A' && u <= 'F') || u == '-' || u == '_';
+        if (!ok)
+            return QString();
+    }
+    return trimmed;
+}
 
 QString tempRoot()
 {
@@ -27,7 +50,7 @@ QString tempRoot()
 }
 
 // ── zip 解压（依次尝试 PowerShell Expand-Archive / unzip / 7z） ──────────────
-// 使用 startDetached 异步执行，避免阻塞 UI 线程
+// 必须同步执行：调用方解压后立刻读取目录里的 manifest.json，异步会读到半成品
 bool extractZip(const QString &zipFile, const QString &destDir, QString *err)
 {
     if (!QDir().mkpath(destDir)) {
@@ -38,24 +61,36 @@ bool extractZip(const QString &zipFile, const QString &destDir, QString *err)
     const QString dst = QDir::toNativeSeparators(destDir);
 
 #ifdef Q_OS_WIN
-    // PowerShell Expand-Archive（异步，不阻塞 UI）
-    if (QProcess::startDetached(QStringLiteral("powershell.exe"),
-            QStringList() << QStringLiteral("-NoProfile")
-                          << QStringLiteral("-Command")
-                          << QStringLiteral("Expand-Archive -Path '%1' -DestinationPath '%2' -Force").arg(src, dst)))
-        return true;
+    // PowerShell Expand-Archive；路径来自下载文件名，必须转义单引号
+    {
+        QProcess process;
+        process.start(QStringLiteral("powershell.exe"),
+                      QStringList() << QStringLiteral("-NoProfile")
+                                    << QStringLiteral("-Command")
+                                    << QStringLiteral("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
+                                           .arg(Safety::psQuote(src), Safety::psQuote(dst)));
+        if (process.waitForFinished(180000) && process.exitCode() == 0)
+            return true;
+    }
 #endif
 
-    // unzip（异步）
-    if (QProcess::startDetached(QStringLiteral("unzip"),
-            QStringList() << QStringLiteral("-o") << zipFile << QStringLiteral("-d") << destDir))
-        return true;
+    {
+        QProcess process;
+        process.start(QStringLiteral("unzip"),
+                      QStringList() << QStringLiteral("-o") << zipFile
+                                    << QStringLiteral("-d") << destDir);
+        if (process.waitForFinished(180000) && process.exitCode() == 0)
+            return true;
+    }
 
-    // 7z（异步）
-    if (QProcess::startDetached(QStringLiteral("7z"),
-            QStringList() << QStringLiteral("x") << QStringLiteral("-o") + destDir
-                          << QStringLiteral("-y") << zipFile))
-        return true;
+    {
+        QProcess process;
+        process.start(QStringLiteral("7z"),
+                      QStringList() << QStringLiteral("x") << QStringLiteral("-o") + destDir
+                                    << QStringLiteral("-y") << zipFile);
+        if (process.waitForFinished(180000) && process.exitCode() == 0)
+            return true;
+    }
 
     if (err) *err = QStringLiteral("解压附加包失败（已尝试 Expand-Archive / unzip / 7z）");
     return false;
@@ -191,10 +226,17 @@ bool installSinglePack(const QString &packDir, const QString &comMojangDir, QStr
 
     const QJsonObject manifest = doc.object();
     const QJsonObject header = manifest.value(QStringLiteral("header")).toObject();
-    const QString packId = header.value(QStringLiteral("uuid")).toString();
+    const QString rawPackId = header.value(QStringLiteral("uuid")).toString();
     const QJsonArray version = versionToArray(header.value(QStringLiteral("version")));
-    if (packId.isEmpty()) {
+    if (rawPackId.isEmpty()) {
         if (err) *err = QStringLiteral("manifest.json 缺少 header.uuid: %1").arg(packDir);
+        return false;
+    }
+
+    // uuid 会被直接当作目录名使用，必须先确认它不会跳出附加包目录
+    const QString packId = safePackId(rawPackId);
+    if (packId.isEmpty()) {
+        if (err) *err = QStringLiteral("附加包的 uuid 非法: %1").arg(rawPackId);
         return false;
     }
 
@@ -223,6 +265,10 @@ bool installSinglePack(const QString &packDir, const QString &comMojangDir, QStr
             return false;
         }
         QString target = worldsDir + QLatin1Char('/') + worldFolder;
+        if (!Safety::isPathInside(worldsDir, target)) {
+            if (err) *err = QStringLiteral("世界模板目录名非法: %1").arg(worldFolder);
+            return false;
+        }
         QDir targetDir(target);
         if (targetDir.exists())
             targetDir.removeRecursively();
@@ -242,6 +288,10 @@ bool installSinglePack(const QString &packDir, const QString &comMojangDir, QStr
         }
         // 以 uuid 作为文件夹名，保证唯一且便于游戏识别
         const QString target = packsDir + QLatin1Char('/') + packId;
+        if (!Safety::isPathInside(packsDir, target)) {
+            if (err) *err = QStringLiteral("附加包目录名非法: %1").arg(packId);
+            return false;
+        }
         QDir targetDir(target);
         if (targetDir.exists())
             targetDir.removeRecursively();
@@ -259,6 +309,10 @@ bool installSinglePack(const QString &packDir, const QString &comMojangDir, QStr
             return false;
         }
         const QString target = skinsDir + QLatin1Char('/') + packId;
+        if (!Safety::isPathInside(skinsDir, target)) {
+            if (err) *err = QStringLiteral("皮肤包目录名非法: %1").arg(packId);
+            return false;
+        }
         QDir targetDir(target);
         if (targetDir.exists())
             targetDir.removeRecursively();

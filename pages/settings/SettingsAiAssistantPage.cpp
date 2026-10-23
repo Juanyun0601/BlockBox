@@ -26,6 +26,7 @@
 #include <QUuid>
 #include <QVBoxLayout>
 
+#include "components/AiModelFetchRow.h"
 #include "components/AppFileDialog.h"
 #include "components/CustomCheckBox.h"
 #include "components/OutlinedLabel.h"
@@ -229,10 +230,6 @@ void SettingsPage::initAiAssistantSettings()
                 nameEdit->setPlaceholderText(tr("显示名称"));
                 fl->addRow(tr("名称:"), nameEdit);
 
-                QLineEdit *idEdit = new QLineEdit();
-                idEdit->setPlaceholderText(tr("模型 ID"));
-                fl->addRow(tr("模型ID:"), idEdit);
-
                 QLineEdit *urlEdit = new QLineEdit();
                 urlEdit->setPlaceholderText(tr("API 地址"));
                 fl->addRow(tr("API地址:"), urlEdit);
@@ -241,6 +238,27 @@ void SettingsPage::initAiAssistantSettings()
                 keyEdit->setEchoMode(QLineEdit::Password);
                 keyEdit->setPlaceholderText(tr("输入 API Key"));
                 fl->addRow(tr("API Key:"), keyEdit);
+
+                // 模型 ID 可手动输入，也可点下方「获取模型列表」从服务商拉取后挑选
+                QComboBox *idCombo = new QComboBox();
+                idCombo->setEditable(true);
+                idCombo->setInsertPolicy(QComboBox::NoInsert);
+                if (idCombo->lineEdit())
+                    idCombo->lineEdit()->setPlaceholderText(tr("模型 ID，可手动输入"));
+                fl->addRow(tr("模型ID:"), idCombo);
+
+                AiModelFetchRow *fetchRow = new AiModelFetchRow();
+                fetchRow->setSourceProviders([urlEdit]() { return urlEdit->text(); },
+                                             [keyEdit]() { return keyEdit->text(); });
+                connect(fetchRow, &AiModelFetchRow::modelsReady, idCombo, [idCombo](const QStringList &ids) {
+                    for (const QString &id : ids) {
+                        if (idCombo->findText(id) < 0)
+                            idCombo->addItem(id);
+                    }
+                    if (idCombo->currentText().trimmed().isEmpty() && idCombo->count() > 0)
+                        idCombo->setCurrentIndex(0);
+                });
+                fl->addRow(tr("获取模型:"), fetchRow);
 
                 QCheckBox *thinkingCheck = new QCheckBox(tr("推理模型"));
                 fl->addRow(QString(), thinkingCheck);
@@ -251,7 +269,7 @@ void SettingsPage::initAiAssistantSettings()
 
                 if (addDlg.exec() == QDialog::Accepted) {
                     QString name = nameEdit->text().trimmed();
-                    QString id = idEdit->text().trimmed();
+                    QString id = idCombo->currentText().trimmed();
                     QString url = urlEdit->text().trimmed();
                     QString key = keyEdit->text().trimmed();
                     if (name.isEmpty() || id.isEmpty() || url.isEmpty()) return;
@@ -299,15 +317,31 @@ void SettingsPage::initAiAssistantSettings()
                 QLineEdit *nameEdit = new QLineEdit(obj["displayName"].toString());
                 fl->addRow(tr("名称:"), nameEdit);
 
-                QLineEdit *idEdit = new QLineEdit(obj["id"].toString());
-                fl->addRow(tr("模型ID:"), idEdit);
-
                 QLineEdit *urlEdit = new QLineEdit(obj["apiUrl"].toString());
                 fl->addRow(tr("API地址:"), urlEdit);
 
                 QLineEdit *keyEdit = new QLineEdit(obj["apiKey"].toString());
                 keyEdit->setEchoMode(QLineEdit::Password);
                 fl->addRow(tr("API Key:"), keyEdit);
+
+                // 模型 ID 可手动输入，也可点下方「获取模型列表」重新拉取后挑选
+                QComboBox *idCombo = new QComboBox();
+                idCombo->setEditable(true);
+                idCombo->setInsertPolicy(QComboBox::NoInsert);
+                idCombo->addItem(obj["id"].toString());
+                idCombo->setCurrentIndex(0);
+                fl->addRow(tr("模型ID:"), idCombo);
+
+                AiModelFetchRow *fetchRow = new AiModelFetchRow();
+                fetchRow->setSourceProviders([urlEdit]() { return urlEdit->text(); },
+                                             [keyEdit]() { return keyEdit->text(); });
+                connect(fetchRow, &AiModelFetchRow::modelsReady, idCombo, [idCombo](const QStringList &ids) {
+                    for (const QString &id : ids) {
+                        if (idCombo->findText(id) < 0)
+                            idCombo->addItem(id);
+                    }
+                });
+                fl->addRow(tr("获取模型:"), fetchRow);
 
                 QCheckBox *thinkingCheck = new QCheckBox(tr("推理模型"));
                 thinkingCheck->setChecked(obj["supportsThinking"].toBool());
@@ -319,7 +353,7 @@ void SettingsPage::initAiAssistantSettings()
 
                 if (editDlg.exec() == QDialog::Accepted) {
                     QString name = nameEdit->text().trimmed();
-                    QString id = idEdit->text().trimmed();
+                    QString id = idCombo->currentText().trimmed();
                     QString url = urlEdit->text().trimmed();
                     QString key = keyEdit->text().trimmed();
                     if (name.isEmpty() || id.isEmpty() || url.isEmpty()) return;
@@ -460,10 +494,35 @@ void SettingsPage::initAiAssistantSettings()
         dlgMainLayout->setContentsMargins(16, 16, 16, 16);
         dlgMainLayout->setSpacing(12);
 
+        // API Key 输入（获取模型列表与后续调用都需要）
+        QFormLayout *keyForm = new QFormLayout();
+        keyForm->setSpacing(8);
+        keyForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+        QLineEdit *keyEdit = new QLineEdit();
+        keyEdit->setPlaceholderText(tr("API Key（可选）"));
+        keyEdit->setEchoMode(QLineEdit::Password);
+        keyEdit->setText(settings->getProperty(configKey + "/key", "").toString());
+        keyForm->addRow(tr("API Key:"), keyEdit);
+        dlgMainLayout->addLayout(keyForm);
+
+        // 一键获取服务商当前可用的模型列表（使用上方 Key；优先用已保存的接口地址）
+        QString savedUrl = settings->getProperty(configKey + "/url", "").toString().trimmed();
+        if (savedUrl.isEmpty())
+            savedUrl = defaultUrl;
+        AiModelFetchRow *fetchRow = new AiModelFetchRow(&dialog);
+        fetchRow->setSourceProviders([savedUrl]() { return savedUrl; },
+                                     [keyEdit]() { return keyEdit->text(); });
+        dlgMainLayout->addWidget(fetchRow);
+
         // 该服务商的模型列表
+        QLabel *modelLabel = new QLabel(tr("选择模型:"));
+        dlgMainLayout->addWidget(modelLabel);
+
         QListWidget *modelList = new QListWidget();
         modelList->setObjectName("providerModelList");
         modelList->setMinimumHeight(150);
+        dlgMainLayout->addWidget(modelList);
 
         QFile modelsFile(QStringLiteral(":/resources/ai_models.json"));
         if (modelsFile.open(QIODevice::ReadOnly)) {
@@ -491,10 +550,6 @@ void SettingsPage::initAiAssistantSettings()
             }
         }
 
-        QLabel *modelLabel = new QLabel(tr("选择模型:"));
-        dlgMainLayout->addWidget(modelLabel);
-        dlgMainLayout->addWidget(modelList);
-
         // 自定义模型输入行
         QHBoxLayout *customRow = new QHBoxLayout();
         customRow->setSpacing(6);
@@ -509,19 +564,6 @@ void SettingsPage::initAiAssistantSettings()
 
         dlgMainLayout->addLayout(customRow);
 
-        // API Key 输入
-        QFormLayout *keyForm = new QFormLayout();
-        keyForm->setSpacing(8);
-        keyForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-
-        QLineEdit *keyEdit = new QLineEdit();
-        keyEdit->setPlaceholderText(tr("API Key（可选）"));
-        keyEdit->setEchoMode(QLineEdit::Password);
-        QString savedKey = settings->getProperty(configKey + "/key", "").toString();
-        keyEdit->setText(savedKey);
-        keyForm->addRow(tr("API Key:"), keyEdit);
-        dlgMainLayout->addLayout(keyForm);
-
         // 当前选中的模型信息
         QString selectedModelId;
         QString selectedModelUrl;
@@ -532,6 +574,27 @@ void SettingsPage::initAiAssistantSettings()
             selectedModelUrl = modelUrl;
             selectedModelName = modelName;
         };
+
+        // 回填已保存的选中模型：直接保存时不会把原配置清空
+        selectedModelId = settings->getProperty(configKey + "/selectedModel", "").toString();
+        selectedModelName = settings->getProperty(configKey + "/selectedModelName", "").toString();
+        selectedModelUrl = savedUrl;
+        if (selectedModelUrl.isEmpty())
+            selectedModelUrl = defaultUrl;
+        if (selectedModelName.isEmpty())
+            selectedModelName = selectedModelId;
+        if (!selectedModelId.isEmpty()) {
+            for (int i = 0; i < modelList->count(); ++i) {
+                QListWidgetItem *li = modelList->item(i);
+                if (li->data(Qt::UserRole).toString() != selectedModelId)
+                    continue;
+                modelList->setCurrentItem(li);
+                updateSelectedModel(li->data(Qt::UserRole).toString(),
+                                    li->data(Qt::UserRole + 2).toString(),
+                                    li->data(Qt::UserRole + 1).toString());
+                break;
+            }
+        }
 
         // 点击列表项选中模型
         connect(modelList, &QListWidget::itemClicked, &dialog, [&](QListWidgetItem *li) {
@@ -548,6 +611,42 @@ void SettingsPage::initAiAssistantSettings()
                 li->data(Qt::UserRole + 2).toString(),
                 li->data(Qt::UserRole + 1).toString());
             dialog.accept();
+        });
+
+        // 在线获取到的模型：插入列表顶部，与预设项一样可直接点选
+        connect(fetchRow, &AiModelFetchRow::modelsReady, &dialog, [&](const QStringList &ids) {
+            int added = 0;
+            for (const QString &id : ids) {
+                bool exists = false;
+                for (int i = 0; i < modelList->count(); ++i) {
+                    if (modelList->item(i)->data(Qt::UserRole).toString() == id) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists)
+                    continue;
+
+                QListWidgetItem *li = new QListWidgetItem(id);
+                li->setData(Qt::UserRole, id);
+                li->setData(Qt::UserRole + 1, providerName + " " + id);
+                li->setData(Qt::UserRole + 2, savedUrl);
+                li->setData(Qt::UserRole + 3, QStringLiteral("online"));
+                li->setToolTip(tr("%1（服务商在线模型列表）").arg(id));
+                modelList->insertItem(added, li);
+                ++added;
+            }
+            if (added == 0)
+                return;
+
+            // 已经选中的模型被拉取到时保持高亮
+            for (int i = 0; i < modelList->count(); ++i) {
+                QListWidgetItem *li = modelList->item(i);
+                if (!selectedModelId.isEmpty() && li->data(Qt::UserRole).toString() == selectedModelId) {
+                    modelList->setCurrentItem(li);
+                    break;
+                }
+            }
         });
 
         // 自定义模型按钮

@@ -344,29 +344,42 @@ QImage renderRegionTile(int regionX, int regionZ,
         }
         else
         {
-            // 概览：与 1.17- 同路径 —— mapApproxHeight 整段 128×128 采完再
-            // 跨步抽稀到 grid。此前逐点 sampleBiomeNoise 在 radius 20 画布
-            // （~1700 region）上会卡到拖不动；同一公式但整图一次算完快得多
-            QVector<int> fullIds(128 * 128, 0);
-            QVector<float> fullYs(128 * 128, 64.0f);
-            if (mapApproxHeight(fullYs.data(), fullIds.data(), g, sn,
-                                rx4, rz4, 128, 128) != 0)
+            // 概览：群系走 scale=16（32×32，16 格一采），高度按输出像素逐点采
+            // 气候噪声（grid ≤ 128，比 mapApproxHeight 固定整段 128×128 更省）。
+            // 1.18+ 的 voronoi 群系查询很贵（scale=4 整 region 要 ~270ms/tile，
+            // 一张 41×41 画布会卡到几十秒），16 格分辨率在缩略图上已经够用；
+            // 此前概览群系也取自 mapApproxHeight 里的 sampleBiomeNoise 近似
+            // （1.18+ 只是气候拟合），会把海陆与山地判错，出现大片假海/假石山，
+            // 跟真实地形完全割裂
+            Range r;
+            r.scale = 16;
+            r.x = rx16;
+            r.z = rz16;
+            r.sx = 32;
+            r.sz = 32;
+            r.y = 64; // 地表附近采 3D 群系
+            r.sy = 1;
+            int *cache = allocCache(g, r);
+            if (!cache)
                 return QImage();
-            if (grid < 128)
+            const int rc = genBiomes(g, cache, r);
+            if (rc == 0)
             {
                 for (int j = 0; j < grid; ++j)
+                {
+                    const double z4 = (rz1 + (j + 0.5) * 512.0 / grid) / 4.0;
                     for (int i = 0; i < grid; ++i)
                     {
-                        const int src = (j * 128 / grid) * 128 + i * 128 / grid;
-                        ids[j * grid + i] = fullIds[src];
-                        ys[j * grid + i] = fullYs[src];
+                        const double x4 = (rx1 + (i + 0.5) * 512.0 / grid) / 4.0;
+                        const int k = j * grid + i;
+                        ids[k] = cache[(j * 32 / grid) * 32 + i * 32 / grid];
+                        ys[k] = sampleHeight118(g, x4, z4);
                     }
+                }
             }
-            else
-            {
-                ids = fullIds;
-                ys = fullYs;
-            }
+            free(cache);
+            if (rc != 0)
+                return QImage();
         }
     }
     else if (cdim == DIM_OVERWORLD)

@@ -1,0 +1,142 @@
+// ====================================================================== 撤销 / 重做
+// 上一版把快照写进 QTemporaryDir 里的临时文件，目录一析构文件就没了，
+// 于是撤销/重做永远失效。现在改为内存差异快照：单格编辑只记「哪一格 + 旧新下标」，
+// 批量操作才整表备份，既正确又快得多。
+void ProjectionBlockEditorDialog::recordCellEdit(int cell, int beforeIndex, int afterIndex,
+                                                 const QString &label)
+{
+    if (cell < 0 || beforeIndex < 0 || afterIndex < 0 || beforeIndex == afterIndex)
+        return;
+
+    UndoStep step;
+    step.label = label;
+    step.cells.append(cell);
+    step.beforeIndices.append(beforeIndex);
+    step.afterIndices.append(afterIndex);
+    m_undoStack.append(step);
+    trimUndoStack();
+    m_redoStack.clear();
+    updateUndoRedo();
+}
+
+void ProjectionBlockEditorDialog::recordBulkEdit(const QList<int> &beforeIndices,
+                                                 const QString &label)
+{
+    if (!m_doc.isLoaded())
+        return;
+    const QList<int> afterIndices = m_doc.indices();
+    if (beforeIndices.size() != afterIndices.size() || beforeIndices == afterIndices)
+        return; // 没有实际变化就不占撤销位
+
+    UndoStep step;
+    step.label = label;
+    step.bulk = true;
+    step.beforeAll = beforeIndices;
+    step.afterAll = afterIndices;
+    m_undoStack.append(step);
+    trimUndoStack();
+    m_redoStack.clear();
+    updateUndoRedo();
+}
+
+void ProjectionBlockEditorDialog::trimUndoStack()
+{
+    constexpr int kMaxSteps = 80;   // 单格记录很轻，可以多留
+    constexpr int kMaxBulk = 10;    // 整表快照较重，单独设上限
+
+    while (m_undoStack.size() > kMaxSteps)
+        m_undoStack.removeFirst();
+
+    int bulkCount = 0;
+    for (int i = m_undoStack.size() - 1; i >= 0; --i)
+    {
+        if (!m_undoStack.at(i).bulk)
+            continue;
+        if (++bulkCount > kMaxBulk)
+        {
+            m_undoStack.removeAt(i);
+            break;
+        }
+    }
+}
+
+bool ProjectionBlockEditorDialog::applyUndoStep(const UndoStep &step, bool useBefore)
+{
+    if (!m_doc.isLoaded())
+        return false;
+
+    if (step.bulk)
+        return m_doc.restoreIndices(useBefore ? step.beforeAll : step.afterAll);
+
+    const QVector<int> &values = useBefore ? step.beforeIndices : step.afterIndices;
+    bool ok = true;
+    const int count = qMin(step.cells.size(), values.size());
+    for (int i = 0; i < count; ++i)
+    {
+        if (!m_doc.setPaletteIndexAt(step.cells.at(i), values.at(i)))
+            ok = false;
+    }
+    return ok;
+}
+
+void ProjectionBlockEditorDialog::onUndo()
+{
+    if (m_undoStack.isEmpty() || !m_doc.isLoaded())
+        return;
+
+    UndoStep step = m_undoStack.takeLast();
+    if (!applyUndoStep(step, true))
+    {
+        m_undoStack.append(step);
+        return;
+    }
+    m_redoStack.append(step);
+
+    m_dirty = true;
+    updateTitle();
+    rebuildView();
+    clearSelection();
+    onRefreshStats();
+    updateUndoRedo();
+}
+
+void ProjectionBlockEditorDialog::onRedo()
+{
+    if (m_redoStack.isEmpty() || !m_doc.isLoaded())
+        return;
+
+    UndoStep step = m_redoStack.takeLast();
+    if (!applyUndoStep(step, false))
+    {
+        m_redoStack.append(step);
+        return;
+    }
+    m_undoStack.append(step);
+
+    m_dirty = true;
+    updateTitle();
+    rebuildView();
+    clearSelection();
+    onRefreshStats();
+    updateUndoRedo();
+}
+
+void ProjectionBlockEditorDialog::updateUndoRedo()
+{
+    if (m_undoBtn)
+    {
+        const bool canUndo = !m_undoStack.isEmpty();
+        m_undoBtn->setEnabled(canUndo);
+        m_undoBtn->setToolTip(canUndo
+            ? tr("撤销：%1（Ctrl+Z）").arg(m_undoStack.last().label)
+            : tr("没有可撤销的操作"));
+    }
+    if (m_redoBtn)
+    {
+        const bool canRedo = !m_redoStack.isEmpty();
+        m_redoBtn->setEnabled(canRedo);
+        m_redoBtn->setToolTip(canRedo
+            ? tr("重做：%1（Ctrl+Y）").arg(m_redoStack.last().label)
+            : tr("没有可重做的操作"));
+    }
+}

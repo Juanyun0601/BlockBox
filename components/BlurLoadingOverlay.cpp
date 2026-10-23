@@ -6,6 +6,8 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QStyle>
+#include <QTimer>
+#include <QPointer>
 
 #include "utils/ThemeManager.h"
 
@@ -218,32 +220,41 @@ void BlurLoadingOverlay::captureBlurBackground()
     if (!p)
         return;
 
+    // 延后一拍再截图：show 事件里同步 grab 会强制重入绘制，
+    // 父页面若正在重建控件树（如详情页 setModInfo）容易直接闪退
     m_isCapturing = true;
+    QTimer::singleShot(0, this, [this]() {
+        QWidget *parent = parentWidget();
+        if (!parent) {
+            m_isCapturing = false;
+            return;
+        }
 
-    adjustGeometryToFullArea();
+        QWidget *w = window();
+        if (!w || w == this || !isVisible()) {
+            m_isCapturing = false;
+            return;
+        }
 
-    QWidget *w = window();
-    if (!w || w == this)
-    {
+        adjustGeometryToFullArea();
+
+        QRect captureRect(mapTo(w, QPoint()), size());
+        QPixmap original = w->grab(captureRect);
+        if (original.isNull()) {
+            m_isCapturing = false;
+            return;
+        }
+
+        QSize smallSize(original.width() / 6, original.height() / 6);
+        if (smallSize.width() < 1) smallSize.setWidth(1);
+        if (smallSize.height() < 1) smallSize.setHeight(1);
+
+        m_blurredBackground = original.scaled(smallSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+            .scaled(original.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        update();
+
         m_isCapturing = false;
-        return;
-    }
-
-    QRect captureRect(mapTo(w, QPoint()), size());
-    QPixmap original = w->grab(captureRect);
-    if (original.isNull()) {
-        m_isCapturing = false;
-        return;
-    }
-
-    QSize smallSize(original.width() / 6, original.height() / 6);
-    if (smallSize.width() < 1) smallSize.setWidth(1);
-    if (smallSize.height() < 1) smallSize.setHeight(1);
-
-    m_blurredBackground = original.scaled(smallSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
-        .scaled(original.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-
-    m_isCapturing = false;
+    });
 }
 
 void BlurLoadingOverlay::paintEvent(QPaintEvent *event)
@@ -262,14 +273,19 @@ void BlurLoadingOverlay::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     adjustGeometryToFullArea();
-    captureBlurBackground();
+    // 截图放到事件循环下一拍，避免在 show 路径里同步重绘
+    QTimer::singleShot(0, this, [this]() {
+        if (isVisible())
+            captureBlurBackground();
+    });
 }
 
 void BlurLoadingOverlay::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    if (isVisible() && parentWidget() && !m_isCapturing) {
-        captureBlurBackground();
+    // 避免 resize 里同步 grab（可能与布局/绘制重入）；改为请求重绘
+    if (isVisible()) {
+        update();
     }
 }
 

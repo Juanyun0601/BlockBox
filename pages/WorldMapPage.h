@@ -26,9 +26,11 @@
 #include <QThreadPool>
 #include <QWidget>
 #include <atomic>
+#include <limits>
 #include <memory>
 
 #include "utils/WorldMap/BiomeName.h"
+#include "utils/WorldMap/OreFinder.h"
 #include "utils/WorldMap/WorldMapRenderer.h"
 #include "utils/WorldMap/BiomeCatalog.h"
 
@@ -37,6 +39,7 @@ class QKeyEvent;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QPixmap;
 class QListWidgetItem;
 class QProgressBar;
 class QPushButton;
@@ -87,6 +90,22 @@ public:
     /** 已加载细节瓦片的顺序（LRU 序 = 加载序，探针用来验证"由中心向外"） */
     QList<QPoint> loadedTileOrder() const;
 
+    /**
+     * 最近一次概览渲染选定的渐进起步 region（探针用来验证"从视野中心开始渲染"）。
+     * 有画布时 = 视野中心所在 region；首次打开存档 = 出生点所在 region；
+     * 两者都没有时返回 QPoint(INT_MIN, INT_MIN)。
+     */
+    QPoint renderPriorityRegion() const { return m_renderPriorityRegion; }
+
+    /** 当前 live 画布左上角所在 region（探针把像素换算成区域坐标用） */
+    QPoint liveOriginRegion() const { return QPoint(m_liveMinChunkX / 32, m_liveMinChunkZ / 32); }
+
+    /** 当前 live 画布的每像素方块数（0 = 还没有画布） */
+    int liveBpp() const { return m_liveBpp; }
+
+    /** 本次渲染中图块到达画布的顺序（region 坐标，探针验证「中心优先」） */
+    QList<QPoint> tileArrivalOrder() const { return m_tileArrivalOrder; }
+
     /** 取消当前选中的区块（右键菜单也会调用） */
     Q_INVOKABLE void clearSelection();
 
@@ -126,6 +145,30 @@ public:
     Q_INVOKABLE bool highlightBiome(int idx);
     /** 当前画布上的群系叠加层格子数（有选中群系且算完采样后才有值） */
     int biomeOverlayCellCount() const;
+
+    // ── 内容浏览弹窗·矿物列（扫描按 region 后台进行）：探针断言用 ──
+    /** 弹窗矿物列表行数（= 当前维度可选矿物数） */
+    int oreRowCount() const;
+    /** 第 i 行矿物是否勾选（默认全不选） */
+    bool oreChecked(int i) const;
+    /** 画布上的矿物点数（放大到扫描门槛并扫完可见区域后才有值） */
+    int oreMarkerCount() const;
+    /** 勾选 / 取消第 i 行矿物；返回操作后该行是否勾选 */
+    Q_INVOKABLE bool toggleOre(int i);
+    /** 当前矿物提示文案（「需放大到 100% 以上才会扫描」等；无提示返回空串） */
+    QString orePromptText() const { return m_oreText; }
+    /** 可见区块是否都扫完了（false = 还在扫，状态栏显示「扫描中」） */
+    bool oreScanIdle() const { return !m_oreBusy; }
+    /** 已扫过的区块数（按区块缓存，扫过的不会重复读盘） */
+    int oreScannedChunkCount() const { return m_oreScanned.size(); }
+    /** 第 i 个矿物点的屏幕中心（视口外 / 无效返回 QPoint()） */
+    QPoint oreMarkerScreenPos(int i) const;
+    /** 第 i 个矿物点的方块坐标（打包 QPoint(x, z)） */
+    QPoint oreMarkerBlockPos(int i) const;
+    /** 第 i 个矿物点的 Y */
+    int oreMarkerBlockY(int i) const;
+    /** 第 i 个矿物点的矿物下标（OreFinder::allOres() 下标；无效 -1） */
+    int oreMarkerType(int i) const;
 
 protected:
     /**
@@ -189,6 +232,18 @@ private slots:
     void onPopupStructToggled(int idx, bool on);
     /** 弹窗群系行勾选变化（驱动群系叠加层） */
     void onPopupBiomeToggled(int idx, bool on);
+    /** 弹窗矿物行勾选变化（驱动矿物扫描调度） */
+    void onPopupOreToggled(int idx, bool on);
+    /** 矿物列「全选 / 清空」（作用于当前维度可见行） */
+    void setAllOres(bool on);
+    /** 视口 / 缩放去抖到期：安排可见区域里还没扫过的 region */
+    void scheduleOreScan();
+    /** 收取已完成的 region 扫描结果并刷新画布上的矿物点 */
+    void drainOreScan();
+    /** 按当前勾选与缓存重建画布矿物点（顺带刷新状态栏提示） */
+    void rebuildOreMarkers();
+    /** 换存档 / 换维度 / 复位：清空矿物扫描缓存与画布点位 */
+    void clearOreState();
     /** 高亮定位任务完成：跳转视角并高亮 */
     void drainLocateResult();
     /** 依据选中群系 + 最新采样网格重建叠加层并刷新画布 */
@@ -240,6 +295,14 @@ private:
         BiomeName::InstanceNames names;
     };
 
+    /** 矿物扫描任务：一批区块（同一 region 内），worker 写入命中后置 done，UI 轮询收取 */
+    struct OreScanJob
+    {
+        std::atomic<bool> done{ false };
+        QVector<QPoint> chunks;       ///< 该任务扫的区块坐标
+        QVector<OreFinder::Hit> hits; ///< 命中的矿物方块坐标
+    };
+
     /** 单区域 1:1 瓦片的渲染结果（跨线程传回 UI） */
     struct TileResult
     {
@@ -278,6 +341,15 @@ private:
     /** 点击地图结构图标：弹信息窗（名称 / 坐标 / 百科 / 完成标记） */
     void showStructurePopup(const QPoint &globalPos, int structIdx,
                             qint64 x, qint64 z);
+    /** 点击地图矿物点：弹同一个信息窗（多带一个 Y，矿物类型不同） */
+    void showOrePopup(const QPoint &globalPos, int ore, qint64 x, qint64 y, qint64 z);
+    /**
+     * 地图信息小窗（结构与矿物共用）：图标 + 名称 + 坐标 + 复制 / 百科 / 完成标记。
+     * @param y 为 kNoY（INT_MIN）时坐标只显示 X / Z（结构不知道具体高度）
+     */
+    void showMapPointPopup(const QPoint &globalPos, const QPixmap &icon,
+                           const QString &title, qint64 x, qint64 y, qint64 z,
+                           const QString &wikiTitle, const QString &doneKey);
     /** 完成标记写入 QSettings（按存档路径分桶） */
     void persistStructDone() const;
     /** 读当前存档的完成标记到内存并同步到画布 */
@@ -356,6 +428,31 @@ private:
     bool m_pendingHighlightIsBiome = false;
     int m_pendingHighlightIdx = -1;
 
+    // ── 内容浏览弹窗·矿物列（列表 + 扫描调度 + 命中缓存） ──
+    /** 弹窗矿物列表 */
+    QListWidget *m_oreList = nullptr;
+    /** 矿物列下方提示（「需放大到 100% 以上才会扫描」） */
+    QLabel *m_oreHint = nullptr;
+    /** 矿物勾选状态（与 OreFinder::allOres() 对齐，默认全不选） */
+    QVector<bool> m_oreEnabled;
+    /** 当前维度下的矿物列表下标（列表行 → allOres 下标） */
+    QVector<int> m_oreVisible;
+    /** 已扫描区块的命中缓存（key = 区块坐标；空结果也记在 m_oreScanned） */
+    QHash<QPoint, QVector<OreFinder::Hit>> m_oreHits;
+    /** 命中缓存的 LRU 顺序（超上限先丢最旧的区块） */
+    QList<QPoint> m_oreHitOrder;
+    /** 已扫过的区块（含无命中），避免反复读盘 */
+    QSet<QPoint> m_oreScanned;
+    /** 在途的区块扫描任务（同一时刻只跑一批，读盘不抢渲染线程） */
+    std::shared_ptr<OreScanJob> m_oreJob;
+    /** 扫描线程池（与结构查询分开：要读 region 文件，别堵结构刷新） */
+    QThreadPool m_orePool;
+    /** 视口 / 缩放去抖定时器（停手后才扫，拖图中不读盘） */
+    QTimer *m_oreTimer = nullptr;
+    /** 状态栏矿物片段（提示或命中数；空则不占位） */
+    QString m_oreText;
+    /** 还有区块没扫完（状态栏显示「扫描中」，扫完自动转成结果数） */
+    bool m_oreBusy = false;
     // ── 底部「当前群系」显示（中文名来自当前实例 lang 文件） ──
     /** 当前实例路径（versions/<id> 目录；群系中文名来源） */
     QString m_instancePath;
@@ -418,6 +515,11 @@ private:
     std::shared_ptr<RenderJob> m_job;
     /** 每次启动渲染自增；finished 时对不上说明是过期任务的结果，直接丢弃 */
     int m_renderSeq = 0;
+    /** 最近一次渲染选定的渐进起步 region（无则 INT_MIN） */
+    QPoint m_renderPriorityRegion{std::numeric_limits<int>::min(),
+                                  std::numeric_limits<int>::min()};
+    /** 本次渲染图块到达顺序（探针验证中心优先；每次 startRender 清空） */
+    QList<QPoint> m_tileArrivalOrder;
     /** 细节瓦片批次号：换存档 / 换维度时递增，过期的瓦片结果直接丢弃 */
     int m_tileSeq = 0;
     /** 排队 + 在途的 region（在途也在里面，避免重复排队） */

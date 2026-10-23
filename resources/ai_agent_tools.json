@@ -118,7 +118,7 @@
     },
     {
       "name": "search_resources",
-      "description": "搜索 CurseForge/Modrinth 上的 Minecraft 资源（模组/资源包/光影包/数据包/整合包），返回前 20 条匹配结果，含项目名/作者/简介/下载量/加载器/链接",
+      "description": "搜索 CurseForge/Modrinth 上的 Minecraft 资源（模组/资源包/光影包/数据包/整合包/世界存档），返回前 20 条匹配结果，含项目名/作者/简介/下载量/加载器/链接。世界存档只有 CurseForge 提供",
       "parameters": {
         "type": "object",
         "properties": {
@@ -128,8 +128,8 @@
           },
           "content_type": {
             "type": "string",
-            "description": "资源类型",
-            "enum": ["mod", "resourcepack", "shaderpack", "datapack", "modpack"]
+            "description": "资源类型（world 仅 CurseForge 支持）",
+            "enum": ["mod", "resourcepack", "shaderpack", "datapack", "modpack", "world"]
           },
           "game_version": {
             "type": "string",
@@ -234,7 +234,7 @@
           },
           "content_type": {
             "type": "string",
-            "description": "内容类型，决定落地子目录（默认 mod）"
+            "description": "内容类型，决定落地子目录（mod/resourcepack/shaderpack/datapack/modpack/world，默认 mod）"
           },
           "game_version": {
             "type": "string",

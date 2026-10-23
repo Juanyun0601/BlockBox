@@ -14,6 +14,8 @@ TARGET   = translate_switch_card_probe
 INCLUDEPATH += $$PWD/../..
 
 SOURCES += translate_switch_card_probe.cpp \
-           $$PWD/../../components/TranslateSwitchCard.cpp
+           $$PWD/../../components/TranslateSwitchCard.cpp \
+           $$PWD/../../components/TranslatePayloadCodec.cpp
 
-HEADERS += $$PWD/../../components/TranslateSwitchCard.h
+HEADERS += $$PWD/../../components/TranslateSwitchCard.h \
+           $$PWD/../../components/TranslatePayloadCodec.h

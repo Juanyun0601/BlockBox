@@ -31,6 +31,7 @@
 #include <QWidget>
 
 #include "components/TranslateSwitchCard.h"
+#include "components/TranslatePayloadCodec.h"
 
 #include <cstdio>
 
@@ -101,45 +102,11 @@ QMap<QString, QString> parseTokens(const QString &themeManagerSource)
     return tokens;
 }
 
-/* ── 与 pages/ContentDownloadPage.cpp::onListTranslationFinished() 相同的解析规则 ── */
+/* ── 列表页整页翻译的响应解析：直接链接真实实现（components/TranslatePayloadCodec） ── */
 QMap<int, QPair<QString, QString>> parseListTranslation(const QString &text)
 {
-    QMap<int, QPair<QString, QString>> parsed;
-    QRegularExpression markerReg(
-        QStringLiteral("\\[#(\\d+)#\\]([\\s\\S]*?)(?=\\[#\\d+#\\]|$)"));
-    QRegularExpressionMatchIterator matchIt = markerReg.globalMatch(text);
-    while (matchIt.hasNext()) {
-        const QRegularExpressionMatch match = matchIt.next();
-        const int marker = match.captured(1).toInt();
-        QString body = match.captured(2).trimmed();
-        body.remove(QRegularExpression(QStringLiteral("<[^>]*>")));
-        body.remove(QRegularExpression(QStringLiteral("```[a-zA-Z]*")));
-        body.remove(QRegularExpression(QStringLiteral("```")));
-
-        // 模型偶尔会省掉 ||| 分隔符，退一步按「简介：」标记切分
-        QString name;
-        QString desc;
-        const int sep = body.indexOf(QStringLiteral("|||"));
-        if (sep >= 0) {
-            name = body.left(sep).trimmed();
-            desc = body.mid(sep + 3).trimmed();
-        } else {
-            const QRegularExpression descLabel(QStringLiteral("(?:简介|描述)\\s*[:：]"));
-            const QRegularExpressionMatch descMatch = descLabel.match(body);
-            if (descMatch.hasMatch()) {
-                name = body.left(descMatch.capturedStart()).trimmed();
-                desc = body.mid(descMatch.capturedEnd()).trimmed();
-            } else {
-                desc = body.trimmed();
-            }
-        }
-        name.remove(QRegularExpression(QStringLiteral("^名称\\s*[:：]\\s*")));
-        desc.remove(QRegularExpression(QStringLiteral("^简介\\s*[:：]\\s*")));
-        parsed.insert(marker, qMakePair(name, desc));
-    }
-    return parsed;
+    return TranslatePayloadCodec::parse(text);
 }
-
 } // namespace
 
 int main(int argc, char **argv)

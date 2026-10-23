@@ -55,9 +55,11 @@ QNetworkAccessManager *cardImageNAM()
 
 // 异步加载图片并应用（QPointer 守护卡片生命周期，QPixmapCache 内存缓存）
 // onResult：true = 图已应用，false = 加载/解码失败（封面失败时徽标要挪回复中位）
+// allowFallback：镜像拿到非图片内容时是否换原始地址重试一次
 void loadImageInto(QLabel *label, const QString &url, int w, int h,
                    std::function<QPixmap(const QPixmap &)> transform,
-                   std::function<void(bool)> onResult = nullptr)
+                   std::function<void(bool)> onResult = nullptr,
+                   bool allowFallback = true)
 {
     if (url.isEmpty() || !label) {
         if (onResult)
@@ -83,18 +85,20 @@ void loadImageInto(QLabel *label, const QString &url, int w, int h,
     request.setRawHeader("User-Agent", "BlockBox/1.0 (Minecraft version covers)");
     QNetworkReply *reply = cardImageNAM()->get(request);
     QObject::connect(reply, &QNetworkReply::finished, reply,
-                     [reply, guard, cacheKey, transform, onResult]() {
+                     [reply, guard, cacheKey, transform, onResult, label, url, w, h, allowFallback]() {
         reply->deleteLater();
         if (!guard)
             return;
-        if (reply->error() != QNetworkReply::NoError) {
-            if (onResult)
-                onResult(false);
-            return;
-        }
         QPixmap pm;
-        pm.loadFromData(reply->readAll());
+        if (reply->error() == QNetworkReply::NoError)
+            pm.loadFromData(reply->readAll());
         if (pm.isNull()) {
+            // 镜像图片域名会返回网页（HTTP 200 + text/html）：记住并改用原始地址再试一次
+            if (allowFallback && McimHelper::rewriteImageUrl(url) != url) {
+                McimHelper::reportImageHostBroken();
+                loadImageInto(label, url, w, h, transform, onResult, false);
+                return;
+            }
             if (onResult)
                 onResult(false);
             return;

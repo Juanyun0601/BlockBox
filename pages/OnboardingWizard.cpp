@@ -54,6 +54,7 @@
 #include "utils/JavaScanWorker.h"
 #include "utils/LauncherImporter.h"
 #include "utils/LanguageManager.h"
+#include "utils/RuntimeDependencyManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
 
@@ -2316,7 +2317,9 @@ void OnboardingWizard::refreshJavaList()
     const QList<QPair<QString, QString>> javas = SettingsManager::instance()->getJavaInstallations();
     if (javas.isEmpty()) {
         QLabel *empty = new QLabel(
-            tr("\u5C1A\u672A\u53D1\u73B0 Java\uFF0C\u70B9\u51FB\u300C\u626B\u63CF\u672C\u673A Java\u300D\u6216\u4E0B\u65B9\u4E0B\u8F7D\u3002"), m_javaListWidget);
+            RuntimeDependencyManager::isSupportedPlatform()
+                ? tr("尚未发现 Java，可到「设置 → 关于 → 运行依赖」一键安装运行环境。")
+                : tr("尚未发现 Java，点击「扫描本机 Java」或下方下载。"), m_javaListWidget);
         empty->setObjectName(QStringLiteral("obwEmptyText"));
         empty->setAlignment(Qt::AlignCenter);
         listLay->addWidget(empty);

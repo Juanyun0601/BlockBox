@@ -7,6 +7,8 @@
 
 #include "ContentDownloader.h"
 
+#include "../Safety.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -74,6 +76,10 @@ void ContentDownloader::downloadToInstance(const QString &downloadUrl, const QSt
         }
     }
 
+    // 文件名可能来自远程接口或调用方，先压成安全的单层文件名，
+    // 防止 “../../xxx” 之类把内容写到实例目录之外
+    finalName = Safety::safeFileName(finalName, QStringLiteral("download"));
+
     // Create a temp file to download into
     // 若上次下载尚未完成（或已失败但对象仍存在），先释放旧 tempFile，避免泄漏
     if (d->tempFile)
@@ -134,7 +140,22 @@ void ContentDownloader::downloadToInstance(const QString &downloadUrl, const QSt
         if (d->contentType == ContentType::World)
         {
             // For worlds: extract zip into saves/{filename_without_ext}/
-            QString worldDir = targetDir + "/" + QFileInfo(finalName).completeBaseName();
+            QString worldName = QFileInfo(finalName).completeBaseName();
+            if (worldName.isEmpty() || worldName == QLatin1String(".")
+                || worldName == QLatin1String(".."))
+            {
+                worldName = QStringLiteral("world");
+            }
+            worldName = Safety::safeFileName(worldName, QStringLiteral("world"));
+
+            QString worldDir = QDir::cleanPath(targetDir + "/" + worldName);
+            // 防止 "../" 之类让 worldDir 变成 saves 目录本身（会删光所有存档）
+            if (!Safety::isPathInside(targetDir, worldDir)
+                || QDir::cleanPath(worldDir) == QDir::cleanPath(targetDir))
+            {
+                emit downloadFailed(tr("存档名称非法: %1").arg(finalName));
+                return;
+            }
 
             // Remove existing world folder if present
             QDir worldDirObj(worldDir);
@@ -150,25 +171,30 @@ void ContentDownloader::downloadToInstance(const QString &downloadUrl, const QSt
             connect(extractProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                 this, [this, extractProcess, worldDir, zipPath](int exitCode, QProcess::ExitStatus) {
                     extractProcess->deleteLater();
-                    QFile::remove(zipPath);
                     if (exitCode != 0) {
-                        // Fallback: try 7z
+                        // Fallback: try 7z（此时还不能删压缩包）
                         QProcess *fallback = new QProcess(this);
                         connect(fallback, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                            this, [this, fallback, worldDir](int, QProcess::ExitStatus) {
+                            this, [this, fallback, worldDir, zipPath](int fallbackExit, QProcess::ExitStatus) {
                                 fallback->deleteLater();
-                                emit downloadFinished(worldDir);
+                                QFile::remove(zipPath);
+                                if (fallbackExit == 0)
+                                    emit downloadFinished(worldDir);
+                                else
+                                    emit downloadFailed(tr("解压存档失败"));
                             });
                         fallback->start("7z", QStringList() << "x" << "-o" + worldDir << "-y" << zipPath);
                     } else {
+                        QFile::remove(zipPath);
                         emit downloadFinished(worldDir);
                     }
                 });
 #ifdef Q_OS_WIN
             extractProcess->start("powershell", QStringList()
+                << "-NoProfile"
                 << "-Command"
-                << QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                   .arg(zipPath, worldDir));
+                << QString("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
+                   .arg(Safety::psQuote(zipPath), Safety::psQuote(worldDir)));
 #else
             extractProcess->start("unzip", QStringList() << "-o" << zipPath << "-d" << worldDir);
 #endif
@@ -178,7 +204,12 @@ void ContentDownloader::downloadToInstance(const QString &downloadUrl, const QSt
             // For modpacks: save to temp location, signal modpackReady for import
             QString modpackDir = d->instancePath + "/" + config.folderName;
             QDir().mkpath(modpackDir);
-            QString destPath = modpackDir + "/" + finalName;
+            QString destPath = QDir::cleanPath(modpackDir + "/" + finalName);
+            if (!Safety::isPathInside(modpackDir, destPath))
+            {
+                emit downloadFailed(tr("文件名非法: %1").arg(finalName));
+                return;
+            }
 
             // Copy from temp to dest
             if (QFile::exists(destPath))
@@ -193,7 +224,12 @@ void ContentDownloader::downloadToInstance(const QString &downloadUrl, const QSt
         else
         {
             // For Mod, DataPack, ResourcePack, ShaderPack: simply copy to target folder
-            QString destPath = targetDir + "/" + finalName;
+            QString destPath = QDir::cleanPath(targetDir + "/" + finalName);
+            if (!Safety::isPathInside(targetDir, destPath))
+            {
+                emit downloadFailed(tr("文件名非法: %1").arg(finalName));
+                return;
+            }
 
             if (QFile::exists(destPath))
             {

@@ -20,6 +20,7 @@
 #include "utils/ErrorAnalyzer.h"
 #include "utils/SettingsManager.h"
 #include "utils/MemoryAllocator.h"
+#include "utils/RuntimeDependencyManager.h"
 #include "utils/fabric/FabricInstaller.h"
 
 GameLauncher* GameLauncher::m_instance = nullptr;
@@ -167,7 +168,9 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
                 emit launchDetailAdded(QString("检测到Java版本: %1").arg(basicJavaInfo.version));
                 emit launchDetailAdded(QString("Java路径: %1").arg(basicJavaInfo.path));
             } else {
-                m_errorMessage = "无法自动检测到Java，请在设置中手动指定Java路径";
+                m_errorMessage = RuntimeDependencyManager::isSupportedPlatform()
+                    ? QStringLiteral("未检测到 Java 运行环境，请到「设置 → 关于 → 运行依赖」一键安装后重试")
+                    : QStringLiteral("无法自动检测到Java，请在设置中手动指定Java路径");
                 m_status = Failed;
                 emit launchStatusChanged(m_status);
                 emit gameCrashed(m_errorMessage);
@@ -183,7 +186,9 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     emit launchDetailAdded("验证Java路径...");
     JavaInfo javaInfo;
     if (!validateJavaPath(javaPath, javaInfo)) {
-        m_errorMessage = "无效的Java路径，请检查设置";
+        m_errorMessage = RuntimeDependencyManager::isSupportedPlatform()
+            ? QStringLiteral("Java 运行环境不可用，请到「设置 → 关于 → 运行依赖」重新安装后再试")
+            : QStringLiteral("无效的Java路径，请检查设置");
         m_status = Failed;
         emit launchStatusChanged(m_status);
         emit gameCrashed(m_errorMessage);

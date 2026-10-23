@@ -56,6 +56,7 @@
 #include "utils/SettingsManager.h"
 #include "utils/WorldMap/BiomeCatalog.h"
 #include "utils/WorldMap/BiomeName.h"
+#include "utils/WorldMap/OreFinder.h"
 #include "utils/WorldMap/StructureFinder.h"
 #include "utils/WorldMap/StructureIcons.h"
 #include "utils/Saves/LevelDatEditor.h"
@@ -74,6 +75,43 @@ const QColor kRegionGrid(255, 255, 255, 78);
 constexpr int kMaxConcurrentTiles = 3;
 /** 每方块低于此屏幕像素数时不加载细节 —— 方块太小，只看概览就够 */
 constexpr double kDetailMinBlockPx = 0.5;
+/**
+ * 矿物扫描的缩放下限（每方块屏幕像素数）：到了 1:1（1 像素 = 1 方块）才扫。
+ * 缩得比这更小时一个矿物点画出来还不到 1 像素，扫了也没法看，白读盘。
+ */
+constexpr double kOreMinBlockPx = 1.0;
+/** 已扫区块的命中缓存上限（超出先丢最旧的） */
+constexpr int kOreCacheChunks = 8192;
+/** 单次矿物扫描任务覆盖的区块数：同一 region 内凑一批，减少重复读盘 */
+constexpr int kOreChunksPerJob = 64;
+
+/** 是否勾选了至少一种矿物（矿物默认全不选：扫描要读盘，用户要了才扫） */
+bool anyOreChecked(const QVector<bool> &flags)
+{
+    return std::any_of(flags.cbegin(), flags.cend(), [](bool b) { return b; });
+}
+
+/** 向下取整的整数除法（方块 → 区块 / 区块 → region，负坐标不能用 int 除法） */
+inline int floorDiv(int a, int b)
+{
+    return int(std::floor(double(a) / double(b)));
+}
+
+/** 结构这类不知道 Y 的信息点：坐标只显示 X / Z（矿物点会带上 Y） */
+constexpr int kNoY = std::numeric_limits<int>::min();
+
+/** 矿物图标：与结构图标同一套 wiki + 磁盘缓存，key 用 ore_ 前缀隔离 */
+QPixmap oreIconPixmap(int ore, int size)
+{
+    const QVector<OreFinder::OreDef> &defs = OreFinder::allOres();
+    if (ore < 0 || ore >= defs.size())
+        return QPixmap();
+    const auto &d = defs.at(ore);
+    return StructureIcons::pixmap(
+        3000 + ore, QStringLiteral("ore_") + QLatin1String(d.key),
+        QString(QChar::fromLatin1(d.displayName[0])),
+        QLatin1String(d.wikiTitle), QString(), QString(), size);
+}
 /** 中间地图卡片圆角（与顶部工具栏 14px 对齐） */
 constexpr qreal kMapCardRadius = 14.0;
 
@@ -245,11 +283,84 @@ public:
         return m_markers[idx].type;
     }
 
+    /** 一个已扫描出的矿物点（画布只负责画，扫描与缓存由页面负责） */
+    struct OreMarker
+    {
+        qint64 x = 0;  ///< 方块坐标
+        qint64 z = 0;
+        int y = 0;     ///< 矿石所在高度（信息窗要显示）
+        int ore = -1;  ///< OreFinder::allOres() 下标
+    };
+
+    /** 替换画布上的矿物点（页面按矿物下标升序传入，同色可合并批次） */
+    void setOreMarkers(const QVector<OreMarker> &markers)
+    {
+        m_oreMarkers = markers;
+        update();
+    }
+
+    /** 清空矿物点（缩得太小 / 取消勾选 / 换存档时） */
+    void clearOreMarkers()
+    {
+        if (m_oreMarkers.isEmpty())
+            return;
+        m_oreMarkers.clear();
+        update();
+    }
+
+    /** 当前矿物点数（探针断言用） */
+    int oreMarkerCount() const { return m_oreMarkers.size(); }
+
+    /** 第 idx 个矿物点的屏幕中心（视口外 / 无效返回 QPoint()；探针用） */
+    QPoint oreMarkerScreenPos(int idx) const
+    {
+        if (idx < 0 || idx >= m_oreMarkers.size() || !valid())
+            return QPoint();
+        const OreMarker &m = m_oreMarkers[idx];
+        const QPointF c = screenPos(m.x, m.z);
+        if (!QRectF(0, 0, width(), height()).contains(c))
+            return QPoint();
+        return c.toPoint();
+    }
+
+    /** 第 idx 个矿物点的方块坐标（打包 QPoint(x, z)；探针用） */
+    QPoint oreMarkerBlockPos(int idx) const
+    {
+        if (idx < 0 || idx >= m_oreMarkers.size())
+            return QPoint();
+        return QPoint(int(m_oreMarkers[idx].x), int(m_oreMarkers[idx].z));
+    }
+
+    /** 第 idx 个矿物点的 y（探针用） */
+    int oreMarkerBlockY(int idx) const
+    {
+        if (idx < 0 || idx >= m_oreMarkers.size())
+            return 0;
+        return m_oreMarkers[idx].y;
+    }
+
+    /** 第 idx 个矿物点的矿物下标（探针用） */
+    int oreMarkerType(int idx) const
+    {
+        if (idx < 0 || idx >= m_oreMarkers.size())
+            return -1;
+        return m_oreMarkers[idx].ore;
+    }
+
+    /** 点击矿物点（与结构图标同一套信息窗） */
+    std::function<void(const QPoint &globalPos, int ore, qint64 x, int y, qint64 z)>
+        onOreClicked;
+
     /** 点击结构图标（未命中图标时走区块选中） */
     std::function<void(const QPoint &globalPos, int structIdx, qint64 x, qint64 z)>
         onStructureClicked;
 
-    /** 完成标记的稳定 key（类型 + 坐标，与存档无关——存档维度由页面分文件保存） */
+    /**
+     * 完成标记的稳定 key（类型 + 坐标，与存档无关——存档维度由页面分文件保存）。
+     * 矿物点复用同一份完成标记集合，类型用 kOreDoneTypeBase + 矿物下标，
+     * 与结构（0..N-1）不会撞 key。
+     */
+    static constexpr int kOreDoneTypeBase = 100000;
     static QString doneKey(int type, qint64 x, qint64 z)
     {
         return QString::number(type) + QLatin1Char('_')
@@ -294,6 +405,8 @@ public:
         m_minChunkX = minChunkX;
         m_minChunkZ = minChunkZ;
         m_bpp = std::max(1, bpp);
+        // 换了画布/新画布内容：缩放缓存作废（缩小时否则会继续画旧画面）
+        m_overviewDirty = true;
 
         if (geometryChanged || forceFit)
         {
@@ -333,6 +446,9 @@ public:
     /** 画布内容变化（渐进渲染贴了新图块）后刷新显示 */
     void refreshImage()
     {
+        // 缩小时画的是 m_overviewPix 这张缩放缓存，它只在 scale 变化时重建；
+        // 渐进贴入的新图块必须把标记打脏，否则缩小状态下画面会停在第一帧。
+        m_overviewDirty = true;
         if (valid())
             update();
     }
@@ -580,6 +696,49 @@ public:
                       int(std::floor(double(bz) / 512.0)));
     }
 
+    /** 当前视口覆盖的方块闭区间（矿物按区块扫描时用它换算区块范围） */
+    QRect visibleBlockRange() const
+    {
+        if (!valid() || width() <= 0 || height() <= 0)
+            return QRect();
+        const double imgL = (0.0 - m_offset.x()) / m_scale;
+        const double imgR = (double(width()) - m_offset.x()) / m_scale;
+        const double imgT = (0.0 - m_offset.y()) / m_scale;
+        const double imgB = (double(height()) - m_offset.y()) / m_scale;
+        const double ox = double(m_minChunkX) * 16.0;
+        const double oz = double(m_minChunkZ) * 16.0;
+        // 右/下是开区间，先减一个极小量再取整，避免贴边多算一格
+        const double eps = 1e-6;
+        return QRect(QPoint(int(std::floor(ox + imgL * m_bpp)),
+                            int(std::floor(oz + imgT * m_bpp))),
+                     QPoint(int(std::floor(ox + imgR * m_bpp - eps)),
+                            int(std::floor(oz + imgB * m_bpp - eps))));
+    }
+
+    /** 画布图像覆盖的方块闭区间（区块扫描裁剪在画布内） */
+    QRect imageBlockRange() const
+    {
+        if (!valid())
+            return QRect();
+        const double ox = double(m_minChunkX) * 16.0;
+        const double oz = double(m_minChunkZ) * 16.0;
+        const double eps = 1e-6;
+        return QRect(QPoint(int(std::floor(ox)), int(std::floor(oz))),
+                     QPoint(int(std::floor(ox + double(m_imageWidth) * m_bpp - eps)),
+                            int(std::floor(oz + double(m_imageHeight) * m_bpp - eps))));
+    }
+
+    /** 视口中心所在的区块（矿物扫描按到它的距离排序） */
+    QPoint centerChunk() const
+    {
+        if (!valid())
+            return QPoint();
+        qint64 bx = 0, bz = 0;
+        blockAt(rect().center(), &bx, &bz);
+        return QPoint(int(std::floor(double(bx) / 16.0)),
+                      int(std::floor(double(bz) / 16.0)));
+    }
+
 protected:
     void paintEvent(QPaintEvent *) override
     {
@@ -615,6 +774,7 @@ protected:
         drawOverview(p, target);
         drawTiles(p);
         drawBiomeOverlay(p);
+        drawOreMarkers(p);
 
         if (m_grid)
             drawGrid(p, target);
@@ -710,7 +870,7 @@ protected:
             m_panning = false;
             unsetCursor();
             // 没有拖动 → 视为点击：先看是否点在结构图标上（弹信息窗），
-            // 未命中才切换该区块的选中态
+            // 其次是矿物点（同一个信息窗），都没命中才切换该区块的选中态
             if (!m_moved && event->button() == Qt::LeftButton)
             {
                 const int hit = markerAt(event->pos());
@@ -722,7 +882,17 @@ protected:
                 }
                 else
                 {
-                    toggleSelectionAt(event->pos());
+                    const int ohit = oreMarkerAt(event->pos());
+                    if (ohit >= 0 && onOreClicked)
+                    {
+                        const OreMarker &m = m_oreMarkers[ohit];
+                        onOreClicked(event->globalPosition().toPoint(),
+                                     m.ore, m.x, m.y, m.z);
+                    }
+                    else
+                    {
+                        toggleSelectionAt(event->pos());
+                    }
                 }
             }
         }
@@ -806,17 +976,42 @@ private:
         {
             m_overviewPix = QPixmap();
             m_overviewPixScale = -1.0;
+            m_overviewDirty = false;
             return;
         }
-        if (!m_overviewPix.isNull()
-            && std::abs(m_overviewPixScale - m_scale) < 1e-6)
+        // 渐进渲染会把新图块贴进 m_image：dirty 时重建，但限速，
+        // 免得大世界每来一批图块就整图重采样一次（缩放本身就很贵）。
+        const bool sameScale = !m_overviewPix.isNull()
+            && std::abs(m_overviewPixScale - m_scale) < 1e-6;
+        if (!sameScale)
+        {
+            // 缩放变了 / 首次：立刻重建
+        }
+        else if (!m_overviewDirty)
+        {
             return;
+        }
+        else if (m_overviewRebuild.isValid() && m_overviewRebuild.elapsed() < 200)
+        {
+            // 限速中：稍后补一帧，免得最后一批图块卡在缓存里没人重画
+            if (!m_overviewRepaintQueued)
+            {
+                m_overviewRepaintQueued = true;
+                QTimer::singleShot(210, this, [this]() {
+                    m_overviewRepaintQueued = false;
+                    update();
+                });
+            }
+            return;
+        }
         const QSize want(qMax(1, int(std::lround(double(m_imageWidth) * m_scale))),
                          qMax(1, int(std::lround(double(m_imageHeight) * m_scale))));
-        m_overviewPix = QPixmap::fromImage(*m_image)
-                            .scaled(want, Qt::IgnoreAspectRatio,
-                                    Qt::SmoothTransformation);
+        // 先缩成小图再转 QPixmap：直接 fromImage(整图) 对大世界是几百 MB 的转换
+        m_overviewPix = QPixmap::fromImage(
+            m_image->scaled(want, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
         m_overviewPixScale = m_scale;
+        m_overviewDirty = false;
+        m_overviewRebuild.restart();
     }
 
     void notifySelection()
@@ -1043,6 +1238,92 @@ private:
         p.setOpacity(1.0);
     }
 
+    /**
+     * 矿物点：每个命中画一个小方块（矿物代表色，密集时不描边）。
+     * 页面只在放大到足够大（1 屏幕像素 ≈ 1 方块）时才给点，这里再按视野裁剪，
+     * 拖动画布时不必遍历视野外的点。
+     *
+     * 恰好 1:1 时相邻方块只隔 1 像素，若仍给每点描 1px 黑边，整片矿脉会被
+     * 描边糊成一张黑网（看着像阴影而不是矿）。所以每方块屏幕尺寸很小时不描边、
+     * 用略大于间距的实心块，让密集矿脉连成一片本色；放大后才回到"点"的形态。
+     */
+    void drawOreMarkers(QPainter &p)
+    {
+        if (m_oreMarkers.isEmpty() || !valid())
+            return;
+        const QVector<OreFinder::OreDef> &defs = OreFinder::allOres();
+        const double bpx = blockScreenSize();
+        const bool dense = bpx < 2.0;
+        const double sz = dense ? qBound(2.0, 1.6 * bpx, 3.0)
+                                : qBound(4.0, 1.2 * bpx, 10.0);
+        const QRectF cull = QRectF(rect()).adjusted(-sz, -sz, sz, sz);
+        const double half = sz / 2.0;
+
+        p.setPen(dense ? Qt::NoPen : QPen(QColor(0, 0, 0, 130), 1.0));
+        int lastOre = -2;
+        QColor color;
+        // 已标记完成的矿点压暗画（和结构一致：做过标记的会淡下去）。
+        // 没有完成标记时只跑一遍，别为几千个点白做 key 拼接与哈希。
+        const bool hasDone = !m_doneKeys.isEmpty();
+        const int passes = hasDone ? 2 : 1;
+        for (int pass = 0; pass < passes; ++pass)
+        {
+            p.setOpacity(pass == 0 ? 1.0 : 0.3);
+            for (const OreMarker &m : m_oreMarkers)
+            {
+                if (hasDone && isOreDone(m) != (pass == 1))
+                    continue;
+                if (m.ore != lastOre)
+                {
+                    lastOre = m.ore;
+                    color = (m.ore >= 0 && m.ore < defs.size())
+                                ? defs.at(m.ore).color : QColor(0x9e, 0x9e, 0x9e);
+                }
+                p.setBrush(color);
+                const QPointF c = screenPos(m.x, m.z);
+                if (!cull.contains(c))
+                    continue;
+                p.drawRect(QRectF(c.x() - half, c.y() - half, sz, sz));
+            }
+        }
+        p.setOpacity(1.0);
+        p.setBrush(Qt::NoBrush);
+    }
+
+    /** 该矿点是否已标记完成（与结构共用完成标记集合） */
+    bool isOreDone(const OreMarker &m) const
+    {
+        return m_doneKeys.contains(doneKey(kOreDoneTypeBase + m.ore, m.x, m.z));
+    }
+
+    /** 屏幕点命中的矿物点下标（取最近的一个；未命中 -1） */
+    int oreMarkerAt(const QPoint &pos) const
+    {
+        if (m_oreMarkers.isEmpty() || !valid())
+            return -1;
+        const double bpx = blockScreenSize();
+        const double sz = bpx < 2.0 ? qBound(2.0, 1.6 * bpx, 3.0)
+                                    : qBound(4.0, 1.2 * bpx, 10.0);
+        const double hit = qMax(sz / 2.0 + 2.0, 4.0);
+        int best = -1;
+        double bestD = hit * hit;
+        for (int i = 0; i < m_oreMarkers.size(); ++i)
+        {
+            const QPointF c = screenPos(m_oreMarkers[i].x, m_oreMarkers[i].z);
+            if (!QRectF(rect()).adjusted(-hit, -hit, hit, hit).contains(c))
+                continue;
+            const double dx = c.x() - pos.x();
+            const double dy = c.y() - pos.y();
+            const double d = dx * dx + dy * dy;
+            if (d <= bestD)
+            {
+                bestD = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
     /** 高亮圈：主题色脉冲光环（sin 相位缩放），标记「刚跳转过来的内容」 */
     void drawHighlight(QPainter &p)
     {
@@ -1206,6 +1487,12 @@ private:
     /** 概览缩放缓存（scale<1 时避免每帧重采样整图） */
     QPixmap m_overviewPix;
     qreal m_overviewPixScale = -1.0;
+    /** 缩放缓存需要重建（渐进贴图 / 换画布 / 换图） */
+    bool m_overviewDirty = false;
+    /** 已排了"限速期满后再刷一帧"，避免重复排 */
+    bool m_overviewRepaintQueued = false;
+    /** 上次重建缩放缓存的时刻（限速用） */
+    QElapsedTimer m_overviewRebuild;
     bool m_panning = false;
     bool m_moved = false;      ///< 按下后是否发生了足以算"拖拽"的移动
     QPoint m_pressPos;
@@ -1215,6 +1502,8 @@ private:
     qint64 m_selChunkZ = 0;
     /** 结构标记（按种子算出、按视口刷新） */
     QVector<Marker> m_markers;
+    /** 矿物点（已扫描 region 里命中当前勾选矿物的方块坐标） */
+    QVector<OreMarker> m_oreMarkers;
     /** 已标记完成的结构（key = type_x_z），绘制时半透明 */
     QSet<QString> m_doneKeys;
     /** 群系叠加层（页面维护像素，这里只负责拉伸绘制） */
@@ -1505,6 +1794,8 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     m_structEnabled = QVector<bool>(defs.size(), true);
     // 群系默认全不选（叠加层默认关闭，需要时在弹窗里勾选 / 全选）
     m_biomeEnabled = QVector<bool>(BiomeCatalog::allBiomes().size(), false);
+    // 矿物同样默认全不选：扫描要读 region 文件，得用户明确要才扫
+    m_oreEnabled = QVector<bool>(OreFinder::allOres().size(), false);
     m_structBtns.reserve(defs.size());
     for (int i = 0; i < defs.size(); ++i)
     {
@@ -1666,6 +1957,8 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     m_renderPool.setMaxThreadCount(kMaxConcurrentTiles);
     // 结构查询独立成池：算标记时不会被大世界渲染堵住
     m_structPool.setMaxThreadCount(1);
+    // 矿物扫描单独成池：要整读 region 文件，别和结构查询抢那一个线程
+    m_orePool.setMaxThreadCount(1);
 
     // 远程图标就位后刷新第二行按钮；页面析构前必须解绑（否则回调踩悬空指针）
     StructureIcons::setUpdatedHandler([this]() {
@@ -1700,6 +1993,12 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     connect(m_seedRecenterTimer, &QTimer::timeout,
             this, &WorldMapPage::onSeedRecenterTimeout);
 
+    // 矿物扫描去抖：拖图 / 连续缩放时不停，停手片刻才读盘
+    m_oreTimer = new QTimer(this);
+    m_oreTimer->setSingleShot(true);
+    m_oreTimer->setInterval(320);
+    connect(m_oreTimer, &QTimer::timeout, this, &WorldMapPage::scheduleOreScan);
+
     connect(m_dimCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &WorldMapPage::onDimensionChanged);
     connect(m_shadeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -1711,7 +2010,12 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     connect(m_oneOneBtn, &QPushButton::clicked, this, &WorldMapPage::onZoomToOneOne);
     connect(m_exportBtn, &QPushButton::clicked, this, &WorldMapPage::onExportClicked);
 
-    m_view->onZoomChanged = [this](double) { updateZoomLabel(); };
+    m_view->onZoomChanged = [this](double) {
+        updateZoomLabel();
+        // 缩放跨过矿物扫描门槛时要提示 / 补扫，去抖一下免得连滚时反复调度
+        if (m_oreTimer && m_view && m_view->hasImage())
+            m_oreTimer->start();
+    };
     m_view->onCursorMoved = [this](qint64 bx, qint64 bz) {
         updateStatusLabel(tr("指针 X %1  Z %2").arg(bx).arg(bz));
     };
@@ -1727,6 +2031,10 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         [this](const QPoint &globalPos, int type, qint64 x, qint64 z) {
             showStructurePopup(globalPos, type, x, z);
         };
+    m_view->onOreClicked =
+        [this](const QPoint &globalPos, int ore, qint64 x, int y, qint64 z) {
+            showOrePopup(globalPos, ore, x, y, z);
+        };
     // 视口一变就去抖调度细节瓦片（概览渲染期间由 m_busy 挡住，完成后统一补）
     m_view->onViewportChanged = [this]() {
         if (!m_tileTimer)
@@ -1736,6 +2044,8 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         maybeScheduleSeedRecenter(); // 种子画布：视角离开窗口 → 去抖重定心
         startStructRefresh();       // 结构标记与渲染进度无关，立即重算（内部去重）
         scheduleBiomeRefresh();     // 底部「当前群系」跟随视角中心
+        if (m_oreTimer)             // 矿物点：视口移动后按可见区域接着扫
+            m_oreTimer->start();
     };
 
     setBusy(false);
@@ -1789,7 +2099,8 @@ void WorldMapPage::setCurrentSave(const QString &saveFolderPath, const QString &
         m_seedBtn->setChecked(usable && m_seedPreviewOn);
     }
     loadStructDone(); // 上次存档的完成标记（弹窗半透明显示用）
-    // 换存档：丢掉上一个存档的群系采样 / 叠加层 / 高亮圈
+    // 换存档：丢掉上一个存档的群系采样 / 叠加层 / 高亮圈 / 矿物扫描
+    clearOreState();
     m_biomeGrid = BiomeCatalog::SampleGrid();
     m_biomeOverlay = QImage();
     if (m_view)
@@ -1837,6 +2148,7 @@ void WorldMapPage::reset()
     clearSelection();
     m_cursorText.clear();
     m_selectionText.clear();
+    clearOreState();
     clearTileState(true);
     m_renderKey = -1;
     if (m_view)
@@ -1974,6 +2286,7 @@ void WorldMapPage::startRender()
     if (m_sink)
         m_sink->cancel = true;
     m_sink.reset();
+    m_tileArrivalOrder.clear();
     m_layoutApplied = false;
     // 旧概览还在跑时，细节瓦片调度停住；已发出的在途瓦片一并作废，
     // 免得它们占着并发位，新画布就绪后左右两侧补不上。
@@ -2012,14 +2325,31 @@ void WorldMapPage::startRender()
     m_job = job;
     auto sink = std::make_shared<WorldMapRenderer::ProgressiveSink>();
     m_sink = sink;
-    // 概览的渐进渲染也从出生点所在 region 起步，往四周一圈圈长
-    if (m_hasSpawn)
+    // 概览的渐进渲染从「人正在看的地方」起步：有画布就用视野中心所在 region
+    // （和种子画布同一套中心口径），首次打开存档还没有画布时才退回出生点。
+    // 这样重渲（切维度 / 切着色 / 手动刷新）时画面从视野中心一圈圈长出来，
+    // 而不是从一个可能早已拖远的出生点铺过来。
+    QPoint priorityRegion;
+    bool hasPriority = false;
+    if (m_view && m_view->hasImage())
+    {
+        priorityRegion = m_view->centerRegion();
+        hasPriority = true;
+    }
+    else if (m_hasSpawn)
+    {
+        priorityRegion = QPoint(int(std::floor(double(m_spawnX) / 512.0)),
+                                int(std::floor(double(m_spawnZ) / 512.0)));
+        hasPriority = true;
+    }
+    if (hasPriority)
     {
         sink->hasPriorityRegion = true;
-        sink->priorityRegion = QPoint(
-            int(std::floor(double(m_spawnX) / 512.0)),
-            int(std::floor(double(m_spawnZ) / 512.0)));
+        sink->priorityRegion = priorityRegion;
     }
+    m_renderPriorityRegion = hasPriority
+        ? priorityRegion
+        : QPoint(std::numeric_limits<int>::min(), std::numeric_limits<int>::min());
     const int seq = ++m_renderSeq;
 
     const QString path = m_savePath;
@@ -2076,6 +2406,9 @@ void WorldMapPage::onRenderFinished()
         return;
 
     m_pollTimer->stop();
+    // 矿物扫描常与概览渲染并行：渲染收工时若矿物任务还在飞，轮询表要留着接力
+    if (m_oreJob)
+        m_pollTimer->start();
     if (m_job)
         m_job->cancel = true;
     if (m_sink)
@@ -2091,6 +2424,7 @@ void WorldMapPage::onPollProgress()
     drainStructResult();
     drainLocateResult();
     drainBiomeResult();
+    drainOreScan();
     if (m_biomeNameJob && m_biomeNameJob->done.load(std::memory_order_acquire))
     {
         const auto job = m_biomeNameJob;
@@ -2100,8 +2434,10 @@ void WorldMapPage::onPollProgress()
 
     if (!m_busy || !m_sink)
     {
+        // 矿物在途时不能停表：扫描链靠 drainOreScan → scheduleOreScan 逐块接力，
+        // 停表会断链，可见区域就无法按「先中心后四周」连续扫出来
         if (!m_structJob && !m_locateJob && !m_biomeJob && !m_biomeNameJob
-            && m_pollTimer)
+            && !m_oreJob && m_pollTimer)
             m_pollTimer->stop(); // 渲染与后台任务都收完了：停表
         return;
     }
@@ -2328,8 +2664,17 @@ void WorldMapPage::drainPendingTiles()
     }
 
     QPainter painter(&m_liveImage);
+    const int tilePx = m_liveBpp > 0 ? 512 / m_liveBpp : 512;
+    const QPoint orgRegion(m_liveMinChunkX / 32, m_liveMinChunkZ / 32);
     for (const auto &item : batch)
+    {
+        // 记录图块到达顺序：探针据此验证「从视野中心开始渲染」
+        if (tilePx > 0)
+            m_tileArrivalOrder.append(orgRegion
+                                      + QPoint(item.first.x() / tilePx,
+                                               item.first.y() / tilePx));
         painter.drawImage(item.first, item.second);
+    }
     painter.end();
 
     m_view->refreshImage();
@@ -2828,6 +3173,44 @@ void WorldMapPage::showStructurePopup(const QPoint &globalPos, int structIdx,
     if (structIdx < 0 || structIdx >= defs.size() || !m_view)
         return;
     const auto &d = defs[structIdx];
+    // 结构不知道具体 y，信息窗只显示 X / Z（矿物点会带上 Y）
+    showMapPointPopup(
+        globalPos,
+        StructureIcons::pixmap(
+            structIdx, QLatin1String(d.key),
+            QString(QChar::fromLatin1(d.displayName[0])),
+            QLatin1String(d.wikiTitle), QLatin1String(d.itemTitle),
+            QLatin1String(d.envSprite), 20),
+        QString::fromUtf8(d.displayName), x, kNoY, z,
+        QLatin1String(d.wikiTitle), WorldMapView::doneKey(structIdx, x, z));
+}
+
+void WorldMapPage::showOrePopup(const QPoint &globalPos, int ore, qint64 x, qint64 y,
+                                qint64 z)
+{
+    const QVector<OreFinder::OreDef> &defs = OreFinder::allOres();
+    if (ore < 0 || ore >= defs.size() || !m_view)
+        return;
+    const auto &d = defs.at(ore);
+    showMapPointPopup(globalPos, oreIconPixmap(ore, 20),
+                      QString::fromUtf8(d.displayName), x, y, z,
+                      QLatin1String(d.wikiTitle),
+                      WorldMapView::doneKey(WorldMapView::kOreDoneTypeBase + ore,
+                                            x, z));
+}
+
+/**
+ * 地图信息小窗：结构与矿物共用同一套内容（图标 + 名称 + 坐标 + 复制 / 百科 /
+ * 完成标记）。完成标记写的是同一个「已完成」集合，矿物用 kOreDoneTypeBase
+ * 偏移类型，标记过的矿点会和结构一样压暗。
+ */
+void WorldMapPage::showMapPointPopup(const QPoint &globalPos, const QPixmap &icon,
+                                     const QString &title, qint64 x, qint64 y,
+                                     qint64 z, const QString &wikiTitle,
+                                     const QString &doneKey)
+{
+    if (!m_view)
+        return;
 
     if (m_structPopup)
         m_structPopup->close(); // 同时只留一个信息窗
@@ -2842,24 +3225,23 @@ void WorldMapPage::showStructurePopup(const QPoint &globalPos, int structIdx,
     lay->setContentsMargins(14, 12, 14, 12);
     lay->setSpacing(8);
 
-    // 标题行：图标 + 结构名称
+    // 标题行：图标 + 名称
     auto *titleRow = new QHBoxLayout;
     titleRow->setSpacing(8);
     auto *iconLabel = new QLabel(pop);
-    iconLabel->setPixmap(StructureIcons::pixmap(
-        structIdx, QLatin1String(d.key),
-        QString(QChar::fromLatin1(d.displayName[0])),
-        QLatin1String(d.wikiTitle), QLatin1String(d.itemTitle),
-        QLatin1String(d.envSprite), 20));
+    iconLabel->setPixmap(icon);
     titleRow->addWidget(iconLabel);
-    auto *titleLabel = new QLabel(QString::fromUtf8(d.displayName), pop);
+    auto *titleLabel = new QLabel(title, pop);
     titleLabel->setObjectName(QStringLiteral("worldMapStructTitle"));
     titleRow->addWidget(titleLabel);
     titleRow->addStretch(1);
     lay->addLayout(titleRow);
 
-    // 坐标（只读展示，复制走按钮）
-    auto *coordLabel = new QLabel(tr("X %1   Z %2").arg(x).arg(z), pop);
+    // 坐标（只读展示，复制走按钮）：有 y 就连 Y 一起给
+    const bool hasY = y != kNoY;
+    auto *coordLabel = new QLabel(
+        hasY ? tr("X %1   Y %2   Z %3").arg(x).arg(y).arg(z)
+             : tr("X %1   Z %2").arg(x).arg(z), pop);
     coordLabel->setObjectName(QStringLiteral("worldMapStructCoord"));
     lay->addWidget(coordLabel);
 
@@ -2867,15 +3249,17 @@ void WorldMapPage::showStructurePopup(const QPoint &globalPos, int structIdx,
     auto *btnRow = new QHBoxLayout;
     btnRow->setSpacing(6);
 
+    const QString coordText = hasY
+        ? QStringLiteral("%1, %2, %3").arg(x).arg(y).arg(z)
+        : QStringLiteral("%1, %2").arg(x).arg(z);
     auto *copyBtn = new QPushButton(tr("复制坐标"), pop);
     copyBtn->setObjectName(QStringLiteral("worldMapStructAction"));
     copyBtn->setCursor(Qt::PointingHandCursor);
     QObject::connect(copyBtn, &QPushButton::clicked, copyBtn,
-                     [this, x, z]() {
-        QApplication::clipboard()->setText(
-            QStringLiteral("%1, %2").arg(x).arg(z));
+                     [this, coordText]() {
+        QApplication::clipboard()->setText(coordText);
         NotificationManager::showSuccess(
-            this, tr("已复制坐标：%1, %2").arg(x).arg(z));
+            this, tr("已复制坐标：%1").arg(coordText));
     });
     btnRow->addWidget(copyBtn);
 
@@ -2885,7 +3269,7 @@ void WorldMapPage::showStructurePopup(const QPoint &globalPos, int structIdx,
     const QUrl wikiUrl(
         QStringLiteral("https://zh.minecraft.wiki/w/")
         + QString::fromLatin1(
-              QUrl::toPercentEncoding(QLatin1String(d.wikiTitle))));
+              QUrl::toPercentEncoding(wikiTitle)));
     wikiBtn->setProperty("wikiUrl", wikiUrl); // 探针读取，不真开浏览器
     QObject::connect(wikiBtn, &QPushButton::clicked, wikiBtn,
                      [wikiUrl]() { QDesktopServices::openUrl(wikiUrl); });
@@ -2894,19 +3278,18 @@ void WorldMapPage::showStructurePopup(const QPoint &globalPos, int structIdx,
     auto *doneBtn = new QPushButton(pop);
     doneBtn->setObjectName(QStringLiteral("worldMapStructAction"));
     doneBtn->setCursor(Qt::PointingHandCursor);
-    const QString dkey = WorldMapView::doneKey(structIdx, x, z);
-    const auto syncText = [doneBtn, this, dkey]() {
-        doneBtn->setText(m_structDone.contains(dkey)
+    const auto syncText = [doneBtn, this, doneKey]() {
+        doneBtn->setText(m_structDone.contains(doneKey)
                              ? tr("取消完成标记")
                              : tr("标记为已完成"));
     };
     syncText();
     QObject::connect(doneBtn, &QPushButton::clicked, doneBtn,
-                     [this, dkey, syncText]() {
-        if (m_structDone.contains(dkey))
-            m_structDone.remove(dkey);
+                     [this, doneKey, syncText]() {
+        if (m_structDone.contains(doneKey))
+            m_structDone.remove(doneKey);
         else
-            m_structDone.insert(dkey);
+            m_structDone.insert(doneKey);
         persistStructDone();
         if (m_view)
         {
@@ -3201,9 +3584,12 @@ void WorldMapPage::onDimensionChanged(int)
         rebuildPopupLists();
     m_priorLiveValid = false;
     m_priorLiveImage = QImage();
+    clearOreState(); // 维度不同：上一个维度的矿物点位与缓存全部作废
     startRender();
     startStructRefresh(); // 换维度要重算（结构的维度过滤不同）
     scheduleBiomeRefresh(); // 当前群系跟随维度
+    if (m_oreTimer)       // 该维度若仍有勾选的矿物，接着重新扫
+        m_oreTimer->start();
 }
 
 void WorldMapPage::onShadeChanged(int)
@@ -3521,8 +3907,8 @@ void WorldMapPage::onExpandToggled(bool on)
         m_contentPopup = new QWidget(this);
         m_contentPopup->setObjectName(QStringLiteral("worldMapContentPopup"));
         m_contentPopup->setAttribute(Qt::WA_StyledBackground, true);
-        m_contentPopup->setMinimumSize(560, 480);
-        m_contentPopup->resize(680, 560);
+        m_contentPopup->setMinimumSize(560, 440);
+        m_contentPopup->resize(760, 560);
         // 柔和投影：让弹窗浮在地图上方，层次一眼可辨
         auto *shadow = new QGraphicsDropShadowEffect(m_contentPopup);
         shadow->setBlurRadius(36);
@@ -3544,7 +3930,7 @@ void WorldMapPage::onExpandToggled(bool on)
         topRow->setSpacing(6);
         m_popupSearch = new QLineEdit(m_contentPopup);
         m_popupSearch->setObjectName(QStringLiteral("worldMapPopupSearch"));
-        m_popupSearch->setPlaceholderText(tr("搜索结构或群系…"));
+        m_popupSearch->setPlaceholderText(tr("搜索结构、群系或矿物…"));
         m_popupSearch->setClearButtonEnabled(true);
         // 左侧放大镜图标
         m_popupSearch->addAction(IconHelper::loadColoredIcon(
@@ -3598,7 +3984,7 @@ void WorldMapPage::onExpandToggled(bool on)
         topRow->addWidget(closeBtn);
         lay->addLayout(topRow);
 
-        // —— 下方双列：左结构、右群系（各带全选 / 清空） ——
+        // —— 下方三列：左结构、中群系、右矿物（各带全选 / 清空） ——
         auto *cols = new QHBoxLayout;
         cols->setSpacing(12);
 
@@ -3661,13 +4047,37 @@ void WorldMapPage::onExpandToggled(bool on)
             tr("取消勾选全部群系"),
             [this](bool on2) { setAllBiomes(on2); });
         cols->addWidget(biomeCol, 1);
+
+        QWidget *oreCol = makeListColumn(
+            tr("矿物"), &m_oreList,
+            "worldMapPopupOreAll", "worldMapPopupOreClear",
+            tr("勾选当前列表中的全部矿物"),
+            tr("取消勾选全部矿物"),
+            [this](bool on2) { setAllOres(on2); });
+        // 矿物列多一行提示：扫描有缩放下限，勾选后先讲清楚要放大才有效果
+        m_oreHint = new QLabel(tr("选中后需放大到 100% 以上才会扫描"), oreCol);
+        m_oreHint->setObjectName(QStringLiteral("worldMapPopupOreHint"));
+        m_oreHint->setWordWrap(true);
+        oreCol->layout()->addWidget(m_oreHint);
+        cols->addWidget(oreCol, 1);
         lay->addLayout(cols, 1);
 
         auto *hint = new QLabel(
-            tr("勾选 = 在地图上显示（群系默认不显示）；右侧按钮 = 高亮并跳转到离视角最近的一处"),
+            tr("勾选 = 在地图上显示（群系 / 矿物默认不显示）；右侧按钮 = 高亮并跳转到离视角最近的一处"),
             m_contentPopup);
         hint->setObjectName(QStringLiteral("worldMapPopupHint"));
         lay->addWidget(hint);
+    }
+
+    // 三列（结构 / 群系 / 矿物）比两列占地方：宽裕时给到 960，
+    // 窗口/画布窄时按可用宽度收窄（下限 560，保证三列都还能看清名称）
+    {
+        const int availW = m_stack ? m_stack->width() - 28 : 960;
+        const int availH = m_stack ? m_stack->height() - 28 : 560;
+        const int popupW = qBound(560, qMin(960, availW), 1200);
+        const int popupH = qBound(420, availH, 620);
+        m_contentPopup->setMinimumSize(qMin(560, popupW), qMin(420, popupH));
+        m_contentPopup->resize(popupW, popupH);
     }
 
     rebuildPopupLists();
@@ -3740,7 +4150,7 @@ void WorldMapPage::setAllBiomes(bool on)
 
 void WorldMapPage::rebuildPopupLists()
 {
-    if (!m_structList || !m_biomeList)
+    if (!m_structList || !m_biomeList || !m_oreList)
         return;
     const QString filter = m_popupSearch ? m_popupSearch->text().trimmed()
                                          : QString();
@@ -3821,6 +4231,328 @@ void WorldMapPage::rebuildPopupLists()
             highlightBiome(biomeIdx);
         });
     }
+
+    // —— 矿物列（同样按当前维度过滤：下界只有下界矿物，末地没有） ——
+    const auto &odefs = OreFinder::allOres();
+    m_oreVisible.clear();
+    m_oreList->clear();
+    for (int i = 0; i < odefs.size(); ++i)
+    {
+        const auto &d = odefs[i];
+        if (d.dim != cdim)
+            continue;
+        const QString name = QString::fromUtf8(d.displayName);
+        if (!filter.isEmpty()
+            && !name.contains(filter, Qt::CaseInsensitive)
+            && !QLatin1String(d.key).contains(filter, Qt::CaseInsensitive))
+            continue;
+        m_oreVisible.append(i);
+        auto *item = new QListWidgetItem(m_oreList);
+        item->setData(Qt::UserRole, m_oreVisible.size() - 1);
+        item->setSizeHint(QSize(0, 48));
+        const bool checked = i < m_oreEnabled.size() && m_oreEnabled[i];
+        // 矿物图标：Wiki pageimages 主图（key 前缀 ore_ 与结构 / 群系缓存隔离）
+        PopupRow row = makePopupRow(
+            m_oreList->viewport(),
+            oreIconPixmap(i, 16),
+            name, checked, true,
+            tr("在地图上标出该矿物（需放大到 100% 以上才会扫描）"));
+        m_oreList->setItemWidget(item, row.row);
+        const int oreIdx = i;
+        connect(row.toggle, &QPushButton::toggled, this,
+                [this, oreIdx](bool on) { onPopupOreToggled(oreIdx, on); });
+        // 矿物没有「跳转定位」：点高亮按钮等于把这一行选中 / 取消，省得再找勾选框
+        connect(row.highlight, &QPushButton::clicked, this, [this, oreIdx, row]() {
+            const bool on = !(oreIdx < m_oreEnabled.size() && m_oreEnabled.at(oreIdx));
+            const QSignalBlocker blocker(row.toggle);
+            row.toggle->setChecked(on);
+            onPopupOreToggled(oreIdx, on);
+        });
+    }
+
+    // 矿物列提示：该维度没有矿物时直说，别让用户以为勾了没反应
+    if (m_oreHint)
+    {
+        if (m_oreVisible.isEmpty())
+            m_oreHint->setText(tr("该维度没有可扫描的矿物"));
+        else if (anyOreChecked(m_oreEnabled) && m_view && m_view->hasImage()
+                 && m_view->blockScreenSize() < kOreMinBlockPx)
+            m_oreHint->setText(tr("已选矿物：请放大到 100% 以上，放大后自动扫描"));
+        else
+            m_oreHint->setText(tr("选中后需放大到 100% 以上才会扫描"));
+    }
+}
+
+/* ─────────────── 矿物扫描（弹窗矿物列） ─────────────── */
+
+void WorldMapPage::onPopupOreToggled(int idx, bool on)
+{
+    if (idx < 0 || idx >= m_oreEnabled.size())
+        return;
+    if (m_oreEnabled[idx] == on)
+        return;
+    m_oreEnabled[idx] = on;
+
+    if (!anyOreChecked(m_oreEnabled))
+    {
+        // 全不选：收起点位并清掉提示
+        if (m_view)
+            m_view->clearOreMarkers();
+        m_oreText.clear();
+        if (m_oreHint)
+            m_oreHint->setText(tr("选中后需放大到 100% 以上才会扫描"));
+        updateStatusLabel();
+        return;
+    }
+
+    // 刚勾选就先把话说在前面：缩得不够大时扫了也看不见，这里直接提示
+    if (m_view && m_view->hasImage()
+        && m_view->blockScreenSize() < kOreMinBlockPx)
+    {
+        if (m_oreHint)
+            m_oreHint->setText(
+                tr("已选矿物：请放大到 100% 以上，放大后自动扫描并标出位置"));
+    }
+    else if (m_oreHint)
+    {
+        m_oreHint->setText(tr("正在扫描当前视野内的矿物…"));
+    }
+
+    if (m_oreTimer)
+        m_oreTimer->start();
+}
+
+void WorldMapPage::setAllOres(bool on)
+{
+    // 作用于弹窗当前列表的可见行（按维度过滤后的矿物）
+    for (int idx : std::as_const(m_oreVisible))
+    {
+        if (idx >= 0 && idx < m_oreEnabled.size())
+            m_oreEnabled[idx] = on;
+    }
+    if (m_contentPopup && m_contentPopup->isVisible())
+        rebuildPopupLists();
+    if (!on || !anyOreChecked(m_oreEnabled))
+    {
+        if (m_view)
+            m_view->clearOreMarkers();
+        m_oreText.clear();
+        if (m_oreHint)
+            m_oreHint->setText(tr("选中后需放大到 100% 以上才会扫描"));
+        updateStatusLabel();
+        return;
+    }
+    if (m_oreTimer)
+        m_oreTimer->start();
+}
+
+void WorldMapPage::scheduleOreScan()
+{
+    if (!m_view || !m_view->hasImage())
+        return;
+
+    if (!anyOreChecked(m_oreEnabled))
+    {
+        m_oreBusy = false;
+        m_view->clearOreMarkers();
+        m_oreText.clear();
+        updateStatusLabel();
+        return;
+    }
+
+    // 缩放下限：一个矿物点不到 1 像素时扫了也看不出位置，先请用户放大
+    if (m_view->blockScreenSize() < kOreMinBlockPx)
+    {
+        m_oreBusy = false;
+        m_view->clearOreMarkers();
+        m_oreText = tr("需放大到 100% 以上才会扫描矿物");
+        if (m_oreHint && m_contentPopup && m_contentPopup->isVisible())
+            m_oreHint->setText(tr("已选矿物：请放大到 100% 以上，放大后自动扫描"));
+        updateStatusLabel();
+        return;
+    }
+
+    // 在途任务先收：按区块记账，扫完一批就立刻把矿点并进去（边扫边显示）
+    if (m_oreJob && m_oreJob->done.load(std::memory_order_acquire))
+    {
+        const auto job = m_oreJob;
+        m_oreJob.reset();
+        QHash<QPoint, QVector<OreFinder::Hit>> byChunk;
+        for (const OreFinder::Hit &h : job->hits)
+        {
+            if (h.index < 0)
+                continue;
+            byChunk[QPoint(floorDiv(h.x, 16), floorDiv(h.z, 16))].append(h);
+        }
+        for (const QPoint &ch : job->chunks)
+        {
+            if (!m_oreScanned.contains(ch))
+                m_oreScanned.insert(ch);
+            auto it = byChunk.constFind(ch);
+            if (it != byChunk.cend())
+                m_oreHits.insert(ch, it.value());
+            m_oreHitOrder.removeAll(ch);
+            m_oreHitOrder.append(ch);
+        }
+        // LRU：缓存太大反而占内存，先丢最旧的区块
+        while (m_oreHitOrder.size() > kOreCacheChunks)
+        {
+            const QPoint old = m_oreHitOrder.takeFirst();
+            m_oreHits.remove(old);
+            m_oreScanned.remove(old);
+        }
+        rebuildOreMarkers();
+    }
+    if (m_oreJob)
+        return; // 还在扫一批：等它回来再继续
+
+    // 待扫区块 = 可见方块范围 ∩ 画布范围，按区块切分后由近及远排队
+    QRect cr = m_view->visibleBlockRange();
+    const QRect ir = m_view->imageBlockRange();
+    if (!ir.isNull())
+        cr &= ir;
+    if (cr.isNull() || cr.width() <= 0 || cr.height() <= 0)
+    {
+        m_oreBusy = false;
+        return;
+    }
+
+    const QPoint cc = m_view->centerChunk();
+    const int cx0 = floorDiv(cr.left(), 16);
+    const int cx1 = floorDiv(cr.right(), 16);
+    const int cz0 = floorDiv(cr.top(), 16);
+    const int cz1 = floorDiv(cr.bottom(), 16);
+
+    QList<QPoint> pending;
+    pending.reserve((cx1 - cx0 + 1) * (cz1 - cz0 + 1));
+    for (int cz = cz0; cz <= cz1; ++cz)
+        for (int cx = cx0; cx <= cx1; ++cx)
+        {
+            const QPoint key(cx, cz);
+            if (!m_oreScanned.contains(key))
+                pending.append(key);
+        }
+    if (pending.isEmpty())
+    {
+        // 可见区块都扫过了：刷新一遍点位（勾选集变化后也靠这里对齐）
+        m_oreBusy = false;
+        rebuildOreMarkers();
+        return;
+    }
+
+    // 先近后远：一屏内几千个区块按到视角中心的距离排队，每轮只交一批
+    std::sort(pending.begin(), pending.end(), [cc](const QPoint &a, const QPoint &b) {
+        const int da = qMax(qAbs(a.x() - cc.x()), qAbs(a.y() - cc.y()));
+        const int db = qMax(qAbs(b.x() - cc.x()), qAbs(b.y() - cc.y()));
+        if (da != db)
+            return da < db;
+        return a.y() != b.y() ? a.y() < b.y() : a.x() < b.x();
+    });
+
+    // 同一 region 内凑一批：一个 .mca 只打开一次，扫的是区块而不是整块 region
+    const QPoint reg(floorDiv(pending.first().x(), 32), floorDiv(pending.first().y(), 32));
+    QVector<QPoint> batch;
+    batch.reserve(kOreChunksPerJob);
+    for (const QPoint &p : pending)
+    {
+        if (floorDiv(p.x(), 32) != reg.x() || floorDiv(p.y(), 32) != reg.y())
+            continue;
+        batch.append(p);
+        if (batch.size() >= kOreChunksPerJob)
+            break;
+    }
+    if (batch.isEmpty())
+        return;
+
+    const auto dim = static_cast<WorldMapRenderer::Dimension>(
+        m_dimCombo ? m_dimCombo->currentIndex() : 0);
+    const QString savePath = m_savePath;
+    auto job = std::make_shared<OreScanJob>();
+    job->chunks = batch;
+    m_oreJob = job;
+    m_oreBusy = true;
+    QtConcurrent::run(&m_orePool, [savePath, dim, batch, job]() {
+        job->hits = OreFinder::scanChunks(savePath, dim, batch);
+        job->done.store(true, std::memory_order_release);
+    });
+
+    if (m_pollTimer && !m_pollTimer->isActive())
+        m_pollTimer->start();
+}
+
+void WorldMapPage::drainOreScan()
+{
+    if (m_oreJob && m_oreJob->done.load(std::memory_order_acquire))
+        scheduleOreScan(); // 统一在调度里收结果 + 接着排下一块
+}
+
+void WorldMapPage::rebuildOreMarkers()
+{
+    if (!m_view)
+        return;
+
+    QVector<WorldMapView::OreMarker> markers;
+    const bool anySelected = anyOreChecked(m_oreEnabled);
+    const bool zoomOk = m_view->hasImage()
+                     && m_view->blockScreenSize() >= kOreMinBlockPx;
+
+    if (anySelected && zoomOk)
+    {
+        for (auto it = m_oreHits.cbegin(); it != m_oreHits.cend(); ++it)
+        {
+            for (const OreFinder::Hit &h : it.value())
+            {
+                if (h.index < 0 || h.index >= m_oreEnabled.size())
+                    continue;
+                if (!m_oreEnabled.at(h.index))
+                    continue;
+                WorldMapView::OreMarker m;
+                m.x = h.x;
+                m.y = h.y;
+                m.z = h.z;
+                m.ore = h.index;
+                markers.append(m);
+            }
+        }
+        // 画布按 ore 升序合并同色绘制：排序一次，paintEvent 里少切上百次画刷
+        std::sort(markers.begin(), markers.end(),
+                  [](const WorldMapView::OreMarker &a,
+                     const WorldMapView::OreMarker &b) {
+                      return a.ore != b.ore ? a.ore < b.ore : a.x < b.x;
+                  });
+    }
+
+    m_view->setOreMarkers(markers);
+
+    if (!anySelected)
+        m_oreText.clear();
+    else if (!zoomOk)
+        m_oreText = tr("需放大到 100% 以上才会扫描矿物");
+    else if (m_oreBusy)
+        m_oreText = tr("矿物 %1 处 · 扫描中（已扫 %2 个区块）")
+                        .arg(markers.size()).arg(m_oreScanned.size());
+    else if (markers.isEmpty())
+        m_oreText = tr("当前视野内没扫到所选矿物");
+    else
+        m_oreText = tr("矿物 %1 处（放大后更准）").arg(markers.size());
+    updateStatusLabel();
+}
+
+/**
+ * 丢掉矿物扫描的一切状态（换存档 / 换维度 / 复位时调用）。
+ * 在途任务只作废结果不打断线程：等它 done 后由 drainOreScan 收走，
+ * 但 m_oreScanned 已清空，坐标不会再进缓存。
+ */
+void WorldMapPage::clearOreState()
+{
+    m_oreHits.clear();
+    m_oreHitOrder.clear();
+    m_oreScanned.clear();
+    m_oreJob.reset();
+    m_oreBusy = false;
+    m_oreText.clear();
+    if (m_view)
+        m_view->clearOreMarkers();
 }
 
 void WorldMapPage::onPopupSearchChanged(const QString &)
@@ -3940,6 +4672,64 @@ bool WorldMapPage::toggleContentPopup()
         return false;
     m_expandBtn->toggle(); // toggled 信号统一走 onExpandToggled
     return isContentPopupOpen();
+}
+
+int WorldMapPage::oreRowCount() const
+{
+    return m_oreList ? m_oreList->count() : 0;
+}
+
+bool WorldMapPage::oreChecked(int i) const
+{
+    if (!m_oreList || i < 0 || i >= m_oreList->count())
+        return false;
+    QListWidgetItem *item = m_oreList->item(i);
+    if (!item)
+        return false;
+    const int idx = item->data(Qt::UserRole).toInt();
+    return idx >= 0 && idx < m_oreEnabled.size() && m_oreEnabled.at(idx);
+}
+
+int WorldMapPage::oreMarkerCount() const
+{
+    return m_view ? m_view->oreMarkerCount() : 0;
+}
+
+bool WorldMapPage::toggleOre(int i)
+{
+    if (!m_oreList || i < 0 || i >= m_oreList->count())
+        return false;
+    QListWidgetItem *item = m_oreList->item(i);
+    if (!item)
+        return false;
+    const int idx = item->data(Qt::UserRole).toInt();
+    if (idx < 0 || idx >= m_oreEnabled.size())
+        return false;
+    const bool on = !m_oreEnabled.at(idx);
+    onPopupOreToggled(idx, on);
+    if (m_contentPopup && m_contentPopup->isVisible())
+        rebuildPopupLists(); // 同步列表行的勾选态
+    return on;
+}
+
+QPoint WorldMapPage::oreMarkerScreenPos(int i) const
+{
+    return m_view ? m_view->oreMarkerScreenPos(i) : QPoint();
+}
+
+QPoint WorldMapPage::oreMarkerBlockPos(int i) const
+{
+    return m_view ? m_view->oreMarkerBlockPos(i) : QPoint();
+}
+
+int WorldMapPage::oreMarkerBlockY(int i) const
+{
+    return m_view ? m_view->oreMarkerBlockY(i) : 0;
+}
+
+int WorldMapPage::oreMarkerType(int i) const
+{
+    return m_view ? m_view->oreMarkerType(i) : -1;
 }
 
 bool WorldMapPage::highlightStructureType(int idx)

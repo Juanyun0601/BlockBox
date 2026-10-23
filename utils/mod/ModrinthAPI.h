@@ -98,6 +98,8 @@ private:
     /** 解析项目对象（/v2/project/{id} 与 /v2/projects 返回的结构一致） */
     void parseProjectObject(const QJsonObject &obj, ModInfo &info);
     ModVersionFile parseVersionObject(const QJsonObject &obj);
+    /** 镜像加速不可用（503/超时）时退回官方接口，返回是否真的切换了 */
+    bool switchOffMirror();
     QNetworkAccessManager *m_networkManager;
     QString m_baseUrl;
     QString m_projectType;
@@ -107,6 +109,8 @@ private:
     QNetworkReply *m_currentVersionsReply;
     QNetworkReply *m_currentProjectsReply;
     ModInfo m_pendingDetailInfo;
+    QString m_currentDetailId;      // 当前详情/版本请求的项目 id（镜像回退后重试用）
+    bool m_detailFallbackTried;     // 本次详情请求是否已经做过镜像回退
 
 private slots:
     void onVersionsReplyFinished();

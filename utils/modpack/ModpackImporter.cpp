@@ -11,6 +11,7 @@
 #include "../forge/ForgeInstaller.h"
 #include "../fabric/FabricInstaller.h"
 #include "../NeoForgeInstaller.h"
+#include "../Safety.h"
 
 #include <QByteArray>
 #include <QDataStream>
@@ -576,9 +577,15 @@ void ModpackImporter::downloadNextMod()
           fileName += ".jar";
       }
 
-      QString filePath = modsDir + "/" + fileName;
+      // 文件名来自服务器响应/整合包清单，先压成安全的单层文件名
+      fileName = Safety::safeFileName(fileName, QStringLiteral("mod.jar"));
+      if (!fileName.endsWith(".jar", Qt::CaseInsensitive))
+        fileName += ".jar";
+
+      QDir().mkpath(modsDir);
+      QString filePath = QDir::cleanPath(modsDir + "/" + fileName);
       QFile file(filePath);
-      if (file.open(QIODevice::WriteOnly))
+      if (Safety::isPathInside(modsDir, filePath) && file.open(QIODevice::WriteOnly))
       {
         file.write(data);
         file.close();
@@ -702,7 +709,13 @@ void ModpackImporter::extractOverrides()
     if (relativePath.isEmpty())
       continue;
 
-    QString destPath = m_instancePath + "/" + relativePath;
+    // 条目名可能带 "../" 想写到实例目录之外，一律拒绝
+    if (!Safety::isSafeEntryName(relativePath))
+      continue;
+
+    QString destPath = QDir::cleanPath(m_instancePath + "/" + relativePath);
+    if (!Safety::isPathInside(m_instancePath, destPath))
+      continue;
 
     // Create parent directory
     QFileInfo fi(destPath);

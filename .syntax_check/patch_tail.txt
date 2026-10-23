@@ -1,0 +1,285 @@
+
+// ====================================================================== 新版界面细节
+void ProjectionBlockEditorDialog::applyEditorChromeExtras()
+{
+    // 在基础 chrome 之后追加新控件的样式，令牌统一走 StyleKit 解析
+    setStyleSheet(styleSheet() + StyleKit::resolve(QStringLiteral(
+        "QLabel#projTitle {"
+        "  color: @TEXT_PRIMARY@;"
+        "  font-size: 15px;"
+        "  font-weight: 700;"
+        "  background: transparent;"
+        "  border: none;"
+        "}"
+        "QLabel#projSubtitle {"
+        "  color: @TEXT_TERTIARY@;"
+        "  font-size: 12px;"
+        "  background: transparent;"
+        "  border: none;"
+        "}"
+        "QLabel#projChip {"
+        "  color: @TEXT_SECONDARY@;"
+        "  background-color: @BG_CONTENT@;"
+        "  border: 1px solid @BORDER@;"
+        "  border-radius: 9px;"
+        "  padding: 3px 9px;"
+        "  font-size: 11px;"
+        "}"
+        "QLabel#projStatusLabel {"
+        "  color: @TEXT_TERTIARY@;"
+        "  font-size: 12px;"
+        "  background: transparent;"
+        "  border: none;"
+        "}"
+        "QFrame#projVLine {"
+        "  background-color: @BORDER@;"
+        "  border: none;"
+        "  max-width: 1px;"
+        "}"
+        "QPushButton#projToolSegBtn {"
+        "  background-color: transparent;"
+        "  color: @TEXT_SECONDARY@;"
+        "  border: 1px solid transparent;"
+        "  border-radius: 8px;"
+        "  padding: 5px 12px;"
+        "  font-size: 12px;"
+        "}"
+        "QPushButton#projToolSegBtn:hover {"
+        "  background-color: @BG_HOVER@;"
+        "  color: @TEXT_PRIMARY@;"
+        "}"
+        "QPushButton#projToolSegBtn:checked {"
+        "  background-color: @PRIMARY_RGBA_20@;"
+        "  border-color: @PRIMARY@;"
+        "  color: @PRIMARY@;"
+        "  font-weight: 600;"
+        "}"
+        "QPushButton#projMiniBtn {"
+        "  background-color: @BG_CONTENT@;"
+        "  color: @TEXT_SECONDARY@;"
+        "  border: 1px solid @BORDER@;"
+        "  border-radius: 7px;"
+        "  padding: 4px 4px;"
+        "  font-size: 12px;"
+        "}"
+        "QPushButton#projMiniBtn:hover {"
+        "  background-color: @BG_HOVER@;"
+        "  border-color: @BORDER_STRONG@;"
+        "  color: @TEXT_PRIMARY@;"
+        "}"
+        "QPushButton#projMiniBtn:pressed {"
+        "  background-color: @BG_PRESSED@;"
+        "}"
+        "QPushButton#projStepBtn {"
+        "  background-color: transparent;"
+        "  color: @TEXT_SECONDARY@;"
+        "  border: 1px solid @BORDER@;"
+        "  border-radius: 6px;"
+        "  font-size: 10px;"
+        "  padding: 0;"
+        "}"
+        "QPushButton#projStepBtn:hover {"
+        "  background-color: @BG_HOVER@;"
+        "  color: @TEXT_PRIMARY@;"
+        "}"
+        "QSlider#projLayerSlider::groove:horizontal {"
+        "  height: 4px;"
+        "  background-color: @BG_CONTENT@;"
+        "  border-radius: 2px;"
+        "}"
+        "QSlider#projLayerSlider::sub-page:horizontal {"
+        "  background-color: @PRIMARY@;"
+        "  border-radius: 2px;"
+        "}"
+        "QSlider#projLayerSlider::handle:horizontal {"
+        "  width: 12px;"
+        "  margin: -5px 0;"
+        "  border-radius: 6px;"
+        "  background-color: @PRIMARY@;"
+        "}"
+    )));
+}
+
+void ProjectionBlockEditorDialog::refreshToolButtonIcons()
+{
+    // 图标跟随当前主题文字色，避免深/浅色主题下出现「黑图标压深底」
+    QColor tint = palette().color(QPalette::WindowText);
+    if (!tint.isValid())
+        tint = QColor(0x8a, 0x93, 0xa3);
+    if (tint.lightness() < 90)
+        tint = QColor(0xd8, 0xdd, 0xe6);
+
+    if (m_undoBtn)
+        m_undoBtn->setIcon(makeGlyphIcon(Glyph::Undo, tint, 15));
+    if (m_redoBtn)
+        m_redoBtn->setIcon(makeGlyphIcon(Glyph::Redo, tint, 15));
+    if (m_focusBtn)
+        m_focusBtn->setIcon(makeGlyphIcon(Glyph::Focus, tint, 14));
+    if (m_shotBtn)
+        m_shotBtn->setIcon(makeGlyphIcon(Glyph::Camera, tint, 14));
+
+    for (QPushButton *btn : m_toolButtons)
+    {
+        if (!btn)
+            continue;
+        const int glyphIndex = btn->property("glyphIndex").toInt();
+        btn->setIcon(makeGlyphIcon(static_cast<Glyph>(glyphIndex), tint, 16));
+    }
+}
+
+void ProjectionBlockEditorDialog::setupShortcuts()
+{
+    auto addShortcut = [this](const QKeySequence &sequence, const std::function<void()> &handler) {
+        auto *shortcut = new QShortcut(sequence, this);
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(shortcut, &QShortcut::activated, this, handler);
+    };
+
+    addShortcut(QKeySequence(QKeySequence::Undo), [this]() { onUndo(); });
+    addShortcut(QKeySequence(QKeySequence::Redo), [this]() { onRedo(); });
+    addShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z), [this]() { onRedo(); });
+    addShortcut(QKeySequence(Qt::Key_1), [this]() { m_toolCombo->setCurrentIndex(0); });
+    addShortcut(QKeySequence(Qt::Key_2), [this]() { m_toolCombo->setCurrentIndex(1); });
+    addShortcut(QKeySequence(Qt::Key_3), [this]() { m_toolCombo->setCurrentIndex(2); });
+    addShortcut(QKeySequence(Qt::Key_4), [this]() { m_toolCombo->setCurrentIndex(3); });
+    addShortcut(QKeySequence(Qt::Key_5), [this]() { m_toolCombo->setCurrentIndex(4); });
+    addShortcut(QKeySequence(Qt::Key_F), [this]() { onFocusView(); });
+    addShortcut(QKeySequence(Qt::Key_R), [this]() { if (m_view) m_view->resetView(); });
+    addShortcut(QKeySequence(QKeySequence::Save), [this]() { onSaveInPlace(); });
+    addShortcut(QKeySequence(QKeySequence::SaveAs), [this]() { onSaveAs(); });
+    addShortcut(QKeySequence(Qt::CTRL | Qt::Key_E), [this]() { onExportScreenshot(); });
+}
+
+void ProjectionBlockEditorDialog::onViewPreset(int presetValue)
+{
+    if (!m_view)
+        return;
+    m_view->applyViewPreset(static_cast<VoxelViewWidget::ViewPreset>(presetValue));
+    m_view->setFocus(Qt::OtherFocusReason);
+}
+
+void ProjectionBlockEditorDialog::onFocusView()
+{
+    if (!m_view || !m_doc.isLoaded())
+        return;
+
+    const QSet<int> selected = m_view->selectedCells();
+    if (!selected.isEmpty())
+        m_view->focusOnCells(selected);
+    else
+        m_view->focusAll();
+}
+
+void ProjectionBlockEditorDialog::onExportScreenshot()
+{
+    if (!m_view)
+        return;
+
+    const QImage shot = m_view->grabFramebuffer();
+    if (shot.isNull())
+    {
+        AppMessageBox::warning(this, tr("导出失败"),
+                               tr("视图还没有渲染出内容，请稍候片刻后重试。"));
+        return;
+    }
+
+    const QFileInfo info(m_filePath);
+    const QString base = info.completeBaseName().isEmpty()
+        ? QStringLiteral("projection") : info.completeBaseName();
+    const QString suggested = QDir(info.absolutePath()).filePath(
+        QStringLiteral("%1-%2.png").arg(base,
+            QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"))));
+
+    QString out = AppFileDialog::getSaveFileName(this, tr("导出视图截图"), suggested,
+                                                 tr("PNG 图片 (*.png)"));
+    if (out.isEmpty())
+        return;
+    if (!out.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+        out += QStringLiteral(".png");
+
+    if (!shot.save(out, "PNG"))
+    {
+        AppMessageBox::warning(this, tr("导出失败"), tr("无法写入图片：\n%1").arg(out));
+        return;
+    }
+    AppMessageBox::information(this, tr("已导出"), tr("截图已保存到：\n%1").arg(out));
+}
+
+void ProjectionBlockEditorDialog::onStepLayer(int delta)
+{
+    if (!m_layerSlider)
+        return;
+    // 0 = 全部，1..sizeY = 具体层；到头后回到「全部」，方便快速扫层
+    int value = m_layerSlider->value() + delta;
+    if (value < 0)
+        value = m_layerSlider->maximum();
+    else if (value > m_layerSlider->maximum())
+        value = 0;
+    m_layerSlider->setValue(value);
+}
+
+void ProjectionBlockEditorDialog::onPlaceAdjacentToggled(bool on)
+{
+    if (m_view)
+        m_view->setPlaceAdjacent(on);
+}
+
+void ProjectionBlockEditorDialog::onGeometryRebuilt(int quads, int elapsedMs)
+{
+    m_lastQuadCount = quads;
+    m_lastRebuildMs = elapsedMs;
+    if (m_chipFaces)
+        m_chipFaces->setText(tr("可见面 %1").arg(QLocale().toString(quads)));
+    if (m_chipPerf)
+        m_chipPerf->setText(elapsedMs >= 0 ? tr("重建 %1 ms").arg(elapsedMs)
+                                          : tr("重建 —"));
+}
+
+void ProjectionBlockEditorDialog::updateHoverLabel(int x, int y, int z)
+{
+    m_hoverX = x;
+    m_hoverY = y;
+    m_hoverZ = z;
+    if (!m_posLabel)
+        return;
+
+    if (x == INT_MIN)
+    {
+        m_posLabel->setText(tr("悬停：—"));
+        return;
+    }
+
+    const SchematicBlockState state = m_doc.block(x, y, z);
+    const QString cn = InstanceBlockNames::lookup(m_blockCnMap, state.name);
+    const QString name = cn.isEmpty()
+        ? friendlyBlockName(state.toString())
+        : QStringLiteral("%1 (%2)").arg(cn, friendlyBlockName(state.name));
+    m_posLabel->setText(tr("悬停：(%1, %2, %3) · %4").arg(x).arg(y).arg(z).arg(name));
+}
+
+void ProjectionBlockEditorDialog::refreshStatsChips()
+{
+    if (!m_doc.isLoaded())
+    {
+        if (m_chipSize) m_chipSize->setText(tr("尺寸 —"));
+        if (m_chipFaces) m_chipFaces->setText(tr("可见面 —"));
+        if (m_chipPerf) m_chipPerf->setText(tr("重建 —"));
+        return;
+    }
+    if (m_chipSize)
+        m_chipSize->setText(tr("%1 × %2 × %3")
+            .arg(m_doc.sizeX()).arg(m_doc.sizeY()).arg(m_doc.sizeZ()));
+}
+
+int ProjectionBlockEditorDialog::cellIndexAt(int x, int y, int z) const
+{
+    if (!m_doc.isLoaded())
+        return -1;
+    const int lx = x - m_doc.originX();
+    const int ly = y - m_doc.originY();
+    const int lz = z - m_doc.originZ();
+    if (lx < 0 || ly < 0 || lz < 0
+        || lx >= m_doc.sizeX() || ly >= m_doc.sizeY() || lz >= m_doc.sizeZ())
+        return -1;
+    return ly * m_doc.layerSize() + lz * m_doc.sizeX() + lx;
+}

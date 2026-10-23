@@ -1,9 +1,14 @@
 #include "ModDetailPage.h"
 #include "utils/IconHelper.h"
 #include "utils/McimHelper.h"
+#include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
+#include "utils/mod/CurseForgeAPI.h"
+#include "utils/mod/ModrinthAPI.h"
+#include "components/AutoHeightTextBrowser.h"
 #include "components/ScreenshotViewer.h"
 #include "components/SourceSwitchBar.h"
+#include "components/NotificationManager.h"
 #include <QDesktopServices>
 #include <QEvent>
 #include <QGraphicsDropShadowEffect>
@@ -25,6 +30,7 @@
 #include <QStandardPaths>
 #include <QPixmapCache>
 #include <QParallelAnimationGroup>
+#include <QPointer>
 #include <QPropertyAnimation>
 #include <QEasingCurve>
 #include <QSet>
@@ -63,6 +69,9 @@ ModDetailPage::ModDetailPage(QWidget *parent)
     , m_versionTypeCombo(nullptr)
     , m_dependenciesContainer(nullptr)
     , m_dependenciesLayout(nullptr)
+    , m_dependenciesSection(nullptr)
+    , m_curseforgeAPI(nullptr)
+    , m_modrinthAPI(nullptr)
     , m_downloadContainer(nullptr)
     , m_downloadListLayout(nullptr)
     , m_downloadCurrentPage(0)
@@ -94,6 +103,7 @@ ModDetailPage::ModDetailPage(QWidget *parent)
     , m_networkManager(new QNetworkAccessManager(this))
     , m_loadingOverlay(nullptr)
 {
+    initAPI();
     initUI();
 }
 
@@ -124,6 +134,11 @@ void ModDetailPage::initUI()
 
     m_scrollArea->setWidget(m_contentWidget);
     mainLayout->addWidget(m_scrollArea);
+
+    // 右下角悬浮翻译卡片：EN（默认，看原文）/「中」（AI 翻译当前页的简介与详细描述）
+    m_translateSwitch = new TranslateSwitchCard(this);
+    connect(m_translateSwitch, &TranslateSwitchCard::modeChangeRequested,
+            this, &ModDetailPage::onTranslateModeChanged);
 
     m_loadingOverlay = new BlurLoadingOverlay(this);
     m_loadingOverlay->hide();
@@ -204,6 +219,9 @@ void ModDetailPage::clearContent()
     m_versionTypeCombo = nullptr;
     m_dependenciesContainer = nullptr;
     m_dependenciesLayout = nullptr;
+    m_dependenciesSection = nullptr;
+    m_depResolved.clear();
+    m_depResolvingIds.clear();
     m_downloadContainer = nullptr;
     m_downloadListLayout = nullptr;
     m_linksContainer = nullptr;
@@ -238,6 +256,9 @@ void ModDetailPage::clearContent()
 void ModDetailPage::setModInfo(const ModInfo &info)
 {
     m_modInfo = info;
+
+    // 换了资源：上一页的译文与英文原文全部作废，回到 EN
+    resetTranslation();
 
     if (m_sourceSwitchBar) {
         m_sourceSwitchBar->setVisible(info.isCrossSourceMerged());
@@ -463,15 +484,56 @@ void ModDetailPage::buildFilterBlock(QVBoxLayout *parentLayout)
     parentLayout->addWidget(section);
 }
 
-void ModDetailPage::buildDependenciesBlock(QVBoxLayout *parentLayout)
+void ModDetailPage::initAPI()
 {
-    if (m_modInfo.dependencies.isEmpty())
+    // 详情本身由主窗口按模组来源拉取；这里的接口只用来把「前置模组」里的 id
+    // 批量换成名称和图标（CurseForge 依赖里只有数字 modId，Modrinth 只有 project_id）
+    m_curseforgeAPI = new CurseForgeAPI(this);
+    const QString apiKey = SettingsManager::instance()->property("curseforge_api_key").toString();
+    if (!apiKey.isEmpty())
+        m_curseforgeAPI->setApiKey(apiKey);
+    m_curseforgeAPI->setClassId(QStringLiteral("6"));
+
+    m_modrinthAPI = new ModrinthAPI(this);
+    m_modrinthAPI->setProjectType(QStringLiteral("mod"));
+
+    applyMCIMSetting();
+
+    connect(m_curseforgeAPI, &CurseForgeAPI::modsResolved,
+            this, &ModDetailPage::onDependencyInfosResolved);
+    connect(m_modrinthAPI, &ModrinthAPI::projectsResolved,
+            this, &ModDetailPage::onDependencyInfosResolved);
+    // 前置资源查不到不算错误：卡片退回显示原始 id，不打扰用户
+    connect(m_curseforgeAPI, &CurseForgeAPI::modsResolveFailed,
+            this, [this](const QString &) { m_depResolvingIds.clear(); });
+    connect(m_modrinthAPI, &ModrinthAPI::projectsResolveFailed,
+            this, [this](const QString &) { m_depResolvingIds.clear(); });
+}
+
+void ModDetailPage::applyMCIMSetting()
+{
+    if (!m_curseforgeAPI || !m_modrinthAPI)
         return;
 
-    QWidget *section = new QWidget();
-    section->setObjectName("modDetailSection");
-    addSectionShadow(section);
-    QVBoxLayout *sectionLayout = new QVBoxLayout(section);
+    QVariant useMcimValue = SettingsManager::instance()->property("use_mcim");
+    const bool useMcim = useMcimValue.isValid() ? useMcimValue.toBool() : true;
+
+    m_curseforgeAPI->setBaseUrl(useMcim
+        ? QStringLiteral("https://mod.mcimirror.top/curseforge")
+        : QStringLiteral("https://api.curseforge.com"));
+    m_modrinthAPI->setBaseUrl(useMcim
+        ? QStringLiteral("https://mod.mcimirror.top/modrinth")
+        : QStringLiteral("https://api.modrinth.com"));
+}
+
+void ModDetailPage::buildDependenciesBlock(QVBoxLayout *parentLayout)
+{
+    // 前置模组始终建块：从列表卡片进详情页时还没取到依赖，
+    // 等详情返回后由 refreshDependencies() 填内容并决定是否显示
+    m_dependenciesSection = new QWidget();
+    m_dependenciesSection->setObjectName("modDetailSection");
+    addSectionShadow(m_dependenciesSection);
+    QVBoxLayout *sectionLayout = new QVBoxLayout(m_dependenciesSection);
     sectionLayout->setContentsMargins(12, 12, 12, 12);
     sectionLayout->setSpacing(8);
 
@@ -483,28 +545,150 @@ void ModDetailPage::buildDependenciesBlock(QVBoxLayout *parentLayout)
     m_dependenciesLayout = new QVBoxLayout(m_dependenciesContainer);
     m_dependenciesLayout->setContentsMargins(0, 0, 0, 0);
     m_dependenciesLayout->setSpacing(6);
+    sectionLayout->addWidget(m_dependenciesContainer);
+
+    parentLayout->addWidget(m_dependenciesSection);
+
+    refreshDependencies();
+}
+
+void ModDetailPage::refreshDependencies()
+{
+    if (!m_dependenciesSection || !m_dependenciesLayout)
+        return;
+
+    while (QLayoutItem *item = m_dependenciesLayout->takeAt(0)) {
+        if (QWidget *w = item->widget()) {
+            w->setVisible(false);
+            w->deleteLater();
+        }
+        delete item;
+    }
+
+    if (m_modInfo.dependencies.isEmpty()) {
+        m_dependenciesSection->setVisible(false);
+        return;
+    }
 
     for (const ModDependency &dep : m_modInfo.dependencies) {
+        const ModInfo depInfo = m_depResolved.value(dep.name);
+        // 批量查询还没回来时先用原始 id 占位（CurseForge 是数字 modId）
+        const bool clickable = !depInfo.id.isEmpty() && !depInfo.source.isEmpty();
+        const QString displayName = (clickable && !depInfo.name.isEmpty()) ? depInfo.name : dep.name;
+
         QWidget *depCard = new QWidget();
         depCard->setObjectName("modDetailDepCard");
         depCard->setProperty("depRequired", dep.isRequired);
+        depCard->setAttribute(Qt::WA_StyledBackground);
+        if (clickable) {
+            depCard->setCursor(Qt::PointingHandCursor);
+            depCard->setToolTip(tr("点击查看「%1」详情").arg(displayName));
+        }
+        depCard->setProperty("depName", dep.name);
+        depCard->installEventFilter(this);
+
         QHBoxLayout *depLayout = new QHBoxLayout(depCard);
         depLayout->setContentsMargins(8, 6, 8, 6);
         depLayout->setSpacing(8);
 
-        QLabel *nameLabel = new QLabel(dep.name);
+        QLabel *iconLabel = new QLabel();
+        iconLabel->setObjectName("modDetailDepIcon");
+        iconLabel->setFixedSize(28, 28);
+        iconLabel->setAlignment(Qt::AlignCenter);
+        depLayout->addWidget(iconLabel);
+        loadDepIcon(iconLabel, depInfo.iconUrl);
+
+        QVBoxLayout *textLayout = new QVBoxLayout();
+        textLayout->setContentsMargins(0, 0, 0, 0);
+        textLayout->setSpacing(1);
+
+        QLabel *nameLabel = new QLabel(displayName);
         nameLabel->setObjectName("modDetailDepName");
-        depLayout->addWidget(nameLabel, 1);
+        nameLabel->setWordWrap(true);
+        nameLabel->setToolTip(displayName);
+        textLayout->addWidget(nameLabel);
+
+        if (!depInfo.source.isEmpty()) {
+            QLabel *sourceLabel = new QLabel(depInfo.source == QStringLiteral("curseforge")
+                                                 ? QStringLiteral("CurseForge")
+                                                 : QStringLiteral("Modrinth"));
+            sourceLabel->setObjectName("modDetailDepSource");
+            textLayout->addWidget(sourceLabel);
+        }
+
+        depLayout->addLayout(textLayout, 1);
 
         QLabel *tagLabel = new QLabel(dep.isRequired ? tr("必备") : tr("可选"));
         tagLabel->setObjectName("modDetailDepTag");
-        depLayout->addWidget(tagLabel);
+        depLayout->addWidget(tagLabel, 0, Qt::AlignTop);
 
         m_dependenciesLayout->addWidget(depCard);
     }
 
-    sectionLayout->addWidget(m_dependenciesContainer);
-    parentLayout->addWidget(section);
+    m_dependenciesSection->setVisible(true);
+}
+
+void ModDetailPage::loadDepIcon(QLabel *iconLabel, const QString &iconUrl)
+{
+    if (!iconLabel)
+        return;
+
+    const QString cacheKey = QStringLiteral("dep_icon:") + iconUrl;
+    QPixmap cached;
+    if (!iconUrl.isEmpty() && QPixmapCache::find(cacheKey, &cached)) {
+        iconLabel->setPixmap(cached);
+        return;
+    }
+
+    // 统一走 McimHelper::loadImage：镜像把图片请求返回成网页时会自动换原始地址重试，
+    // 实在拿不到（或本来就没有图标）才画一个圆角占位块
+    McimHelper::loadImage(sharedDetailNAM(), iconLabel, iconUrl, QSize(28, 28),
+                          iconUrl.isEmpty() ? QString() : cacheKey,
+                          [](QLabel *label) {
+        QPixmap placeholder(28, 28);
+        placeholder.fill(Qt::transparent);
+        QPainter painter(&placeholder);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 0, 0, 22));
+        painter.drawRoundedRect(placeholder.rect(), 8, 8);
+        label->setPixmap(placeholder);
+    });
+}
+
+void ModDetailPage::resolveDependencyInfos()
+{
+    if (!m_curseforgeAPI || !m_modrinthAPI || m_modInfo.dependencies.isEmpty())
+        return;
+
+    QStringList ids;
+    for (const ModDependency &dep : m_modInfo.dependencies) {
+        if (dep.name.isEmpty())
+            continue;
+        if (m_depResolved.contains(dep.name) || m_depResolvingIds.contains(dep.name))
+            continue;
+        ids.append(dep.name);
+    }
+    if (ids.isEmpty())
+        return;
+
+    m_depResolvingIds = ids;
+    if (m_modInfo.source == QStringLiteral("curseforge"))
+        m_curseforgeAPI->fetchModsByIds(ids);
+    else if (m_modInfo.source == QStringLiteral("modrinth"))
+        m_modrinthAPI->fetchProjectsByIds(ids);
+    else
+        m_depResolvingIds.clear();
+}
+
+void ModDetailPage::onDependencyInfosResolved(const QList<ModInfo> &infos)
+{
+    for (const ModInfo &info : infos) {
+        if (!info.id.isEmpty())
+            m_depResolved.insert(info.id, info);
+    }
+    m_depResolvingIds.clear();
+    refreshDependencies();
 }
 
 void ModDetailPage::buildDownloadListBlock(QVBoxLayout *parentLayout)
@@ -968,11 +1152,11 @@ void ModDetailPage::buildDescriptionBlock(QVBoxLayout *parentLayout)
     title->setObjectName("modDetailSectionTitle");
     sectionLayout->addWidget(title);
 
-    m_descriptionBrowser = new QTextBrowser();
+    // 描述区不再限制高度：文字按完整内容向下排版，由页面整体滚动
+    m_descriptionBrowser = new AutoHeightTextBrowser();
     m_descriptionBrowser->setObjectName("modDetailDescBrowser");
     m_descriptionBrowser->setOpenExternalLinks(true);
     m_descriptionBrowser->setReadOnly(true);
-    m_descriptionBrowser->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_descriptionBrowser->setHtml(desc);
     sectionLayout->addWidget(m_descriptionBrowser);
 
@@ -1373,6 +1557,9 @@ void ModDetailPage::onScreenshotInteraction()
 
 void ModDetailPage::receiveDetail(const ModInfo &detail)
 {
+    // 详情里的名称/简介/详细描述会整体替换页面文字，译文随之作废，回到 EN
+    resetTranslation();
+
     // 来源跟随详情返回值（来源切换后保证下载/收藏走对源）
     if (!detail.source.isEmpty())
         m_modInfo.source = detail.source;
@@ -1410,6 +1597,12 @@ void ModDetailPage::receiveDetail(const ModInfo &detail)
         m_modInfo.dependencies = detail.dependencies;
     if (!detail.pageUrl.isEmpty())
         m_modInfo.pageUrl = detail.pageUrl;
+
+    // 前置模组只在详情里才有：先建卡片（此时可能只有 id），再批量换成名称与图标
+    if (!detail.dependencies.isEmpty()) {
+        resolveDependencyInfos();
+        refreshDependencies();
+    }
 
     // 2. 更新头部文字
     if (m_chineseNameLabel) {
@@ -1608,22 +1801,9 @@ void ModDetailPage::loadIcon()
         return;
     }
 
-    QUrl url(McimHelper::rewriteImageUrl(m_modInfo.iconUrl));
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    QNetworkReply *reply = sharedDetailNAM()->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, cacheKey]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QPixmap pixmap;
-            pixmap.loadFromData(reply->readAll());
-            if (!pixmap.isNull()) {
-                QPixmap scaled = pixmap.scaled(60, 60, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                QPixmapCache::insert(cacheKey, scaled);
-                m_iconLabel->setPixmap(scaled);
-            }
-        }
-        reply->deleteLater();
-    });
+    // 镜像图片不可用时会自动改用原始地址，不会因为镜像返回网页而一直空着
+    McimHelper::loadImage(sharedDetailNAM(), m_iconLabel, m_modInfo.iconUrl,
+                          QSize(60, 60), cacheKey);
 }
 
 QWidget *ModDetailPage::createChip(const QString &text, const QColor &bgColor)
@@ -1676,5 +1856,219 @@ bool ModDetailPage::eventFilter(QObject *watched, QEvent *event)
             }
         }
     }
+
+    // 点击左侧「前置模组」卡片 → 跳到该前置资源自己的详情页
+    if (event->type() == QEvent::MouseButtonRelease) {
+        QWidget *depCard = qobject_cast<QWidget*>(watched);
+        if (depCard && depCard->objectName() == "modDetailDepCard") {
+            QMouseEvent *me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::LeftButton) {
+                const ModInfo depInfo = m_depResolved.value(depCard->property("depName").toString());
+                if (!depInfo.id.isEmpty() && !depInfo.source.isEmpty()) {
+                    // 延后一拍再跳：跳转会让本页重建，不能在卡片自己的事件里同步删掉它
+                    QTimer::singleShot(0, this, [this, depInfo]() { emit contentClicked(depInfo); });
+                    return true;
+                }
+            }
+        }
+    }
     return QWidget::eventFilter(watched, event);
+}
+
+// ===========================================================================
+// 右下角悬浮翻译卡片（EN 原文 / 中 AI 翻译当前页）
+// ===========================================================================
+
+namespace {
+
+/// 文本里是否已含中文（含中文就不再送去翻译，避免重复请求）
+bool containsChineseText(const QString &text)
+{
+    for (const QChar &ch : text) {
+        if (ch.script() == QChar::Script_Han)
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+void ModDetailPage::onTranslateModeChanged(bool chinese)
+{
+    if (!m_translateSwitch)
+        return;
+
+    if (chinese) {
+        m_translateSwitch->setChineseMode(true);
+        if (m_translating)
+            return;
+        if (m_translated) {
+            applyTranslatedTexts();
+            return;
+        }
+        startPageTranslation();
+        return;
+    }
+
+    // 切回 EN：取消进行中的翻译并还原原文
+    if (m_translating) {
+        if (m_translator)
+            m_translator->cancelCurrentRequest();
+        m_translating = false;
+        setTranslateBusy(false);
+    }
+    m_translateSwitch->setChineseMode(false);
+    restoreOriginalTexts();
+}
+
+void ModDetailPage::startPageTranslation()
+{
+    if (!m_translator) {
+        m_translator = new TranslationService(this);
+        connect(m_translator, &TranslationService::translationFinished, this,
+                [this](const QString &text) { onTranslateChunkFinished(text); });
+        connect(m_translator, &TranslationService::translationError, this,
+                [this](const QString &error) {
+            m_translating = false;
+            setTranslateBusy(false);
+            if (m_translateSwitch)
+                m_translateSwitch->setChineseMode(false);
+            restoreOriginalTexts();
+            NotificationManager::showError(this, tr("翻译失败：%1").arg(error));
+        });
+    }
+
+    // 记录原文，供切回 EN 时还原
+    m_origSummary = m_descriptionLabel ? m_descriptionLabel->text() : QString();
+    m_origDetailHtml = m_modInfo.detailedDescription.isEmpty()
+        ? m_modInfo.description
+        : m_modInfo.detailedDescription;
+
+    m_translateTexts.clear();
+    m_translateKinds.clear();
+
+    const bool summaryNeedsTranslation = !m_origSummary.isEmpty()
+        && !containsChineseText(m_origSummary);
+    // 详细描述区没建出来（资源没给详细介绍）时不翻，避免译文无处可写
+    const bool detailNeedsTranslation = m_descriptionBrowser && !m_origDetailHtml.isEmpty()
+        && !containsChineseText(m_origDetailHtml);
+
+    if (summaryNeedsTranslation && detailNeedsTranslation
+        && m_origSummary == m_origDetailHtml) {
+        m_translateTexts << m_origSummary;
+        m_translateKinds << TranslateSummaryAndDetail;
+    } else {
+        if (summaryNeedsTranslation) {
+            m_translateTexts << m_origSummary;
+            m_translateKinds << TranslateSummary;
+        }
+        if (detailNeedsTranslation) {
+            m_translateTexts << m_origDetailHtml;
+            m_translateKinds << TranslateDetail;
+        }
+    }
+
+    if (m_translateTexts.isEmpty()) {
+        NotificationManager::showInfo(this, tr("当前页面没有需要翻译的英文内容"));
+        if (m_translateSwitch)
+            m_translateSwitch->setChineseMode(false);
+        return;
+    }
+
+    m_zhSummary.clear();
+    m_zhDetailHtml.clear();
+    m_translateChunkIndex = 0;
+    m_translating = true;
+    setTranslateBusy(true);
+    translateNextChunk();
+}
+
+void ModDetailPage::translateNextChunk()
+{
+    if (!m_translator || m_translateChunkIndex >= m_translateTexts.size())
+        return;
+
+    const TranslationConfig config = SettingsManager::instance()->getTranslationConfig();
+    m_translator->translate(m_translateTexts.at(m_translateChunkIndex), config);
+}
+
+void ModDetailPage::onTranslateChunkFinished(const QString &text)
+{
+    if (!m_translating || m_translateChunkIndex >= m_translateTexts.size())
+        return;
+
+    if (text.trimmed().isEmpty()) {
+        m_translating = false;
+        setTranslateBusy(false);
+        if (m_translateSwitch)
+            m_translateSwitch->setChineseMode(false);
+        restoreOriginalTexts();
+        NotificationManager::showError(this, tr("翻译失败：AI 返回了空结果"));
+        return;
+    }
+
+    switch (m_translateKinds.at(m_translateChunkIndex)) {
+    case TranslateSummary:
+        m_zhSummary = text;
+        break;
+    case TranslateDetail:
+        m_zhDetailHtml = text;
+        break;
+    case TranslateSummaryAndDetail:
+        m_zhSummary = text;
+        m_zhDetailHtml = text;
+        break;
+    }
+
+    ++m_translateChunkIndex;
+    if (m_translateChunkIndex < m_translateTexts.size()) {
+        translateNextChunk();
+        return;
+    }
+
+    m_translating = false;
+    m_translated = true;
+    setTranslateBusy(false);
+    applyTranslatedTexts();
+}
+
+void ModDetailPage::applyTranslatedTexts()
+{
+    if (!m_zhSummary.isEmpty() && m_descriptionLabel)
+        m_descriptionLabel->setText(m_zhSummary);
+    if (!m_zhDetailHtml.isEmpty() && m_descriptionBrowser)
+        m_descriptionBrowser->setHtml(m_zhDetailHtml);
+}
+
+void ModDetailPage::restoreOriginalTexts()
+{
+    if (!m_origSummary.isEmpty() && m_descriptionLabel)
+        m_descriptionLabel->setText(m_origSummary);
+    if (!m_origDetailHtml.isEmpty() && m_descriptionBrowser)
+        m_descriptionBrowser->setHtml(m_origDetailHtml);
+}
+
+void ModDetailPage::setTranslateBusy(bool busy)
+{
+    if (m_translateSwitch)
+        m_translateSwitch->setBusy(busy);
+}
+
+void ModDetailPage::resetTranslation()
+{
+    if (m_translating && m_translator)
+        m_translator->cancelCurrentRequest();
+
+    m_translating = false;
+    m_translated = false;
+    m_translateChunkIndex = 0;
+    m_translateTexts.clear();
+    m_translateKinds.clear();
+    m_origSummary.clear();
+    m_origDetailHtml.clear();
+    m_zhSummary.clear();
+    m_zhDetailHtml.clear();
+    if (m_translateSwitch)
+        m_translateSwitch->setChineseMode(false);
+    setTranslateBusy(false);
 }

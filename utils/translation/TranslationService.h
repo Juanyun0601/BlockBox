@@ -113,6 +113,19 @@ private:
     void translateByGoogle(const QString &text, const TranslationConfig &config);
     void translateByCustomAPI(const QString &text, const TranslationConfig &config);
 
+    /// 一个可用的 AI 模型（端点/密钥已解析好）
+    struct AiCandidate {
+        QString modelId;
+        QString apiUrl;
+        QString apiKey;
+    };
+
+    /// 依次尝试候选模型：默认模型若返回的不是译文（例如被选成了安全审核模型），自动换下一个
+    void sendAiCandidate();
+    void handleAiReply();
+    /// 响应内容像不像译文（列表模式看 [#n#] 标记，单段看是否真译成了中文）
+    bool aiContentLooksTranslated(const QString &content) const;
+
     QString buildAITranslationPrompt(const QString &text, const QString &targetLang);
     QString buildAITranslationUserMessage(const QString &text);
     QString buildAIListTranslationPrompt();
@@ -121,5 +134,13 @@ private:
     QNetworkAccessManager *m_networkManager;
     QNetworkReply *m_currentReply;
     bool m_translating;
+
+    // 当前这一轮 AI 翻译的候选模型与失败记录（仅在 AI 路径使用）
+    QList<AiCandidate> m_aiCandidates;
+    int m_aiCandidateIndex = 0;
+    QStringList m_aiFailures;
+    QString m_aiText;
+    QString m_aiTargetLanguage;
+    bool m_aiListMode = false;
 };
 

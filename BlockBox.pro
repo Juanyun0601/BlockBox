@@ -70,6 +70,8 @@ components/CustomCheckBox.cpp \
      components/AppDialogBase.cpp \
      components/WorldConvertDialog.cpp \
      components/HighRiskConfirmDialog.cpp \
+     components/QuizDialog.cpp \
+     components/QuizReminder.cpp \
      components/AppInputDialog.cpp \
      components/AppColorDialog.cpp \
      components/AppFileDialog.cpp \
@@ -94,6 +96,9 @@ components/CustomCheckBox.cpp \
      components/SourceSwitchBar.cpp \
      components/MasonryContentCard.cpp \
      components/TranslateSwitchCard.cpp \
+     components/AutoHeightTextBrowser.cpp \
+     components/CardListTranslator.cpp \
+     components/TranslatePayloadCodec.cpp \
      components/OutlinedLabel.cpp \
      components/MarkdownOutlinedLabel.cpp \
      components/TextOutlineLayer.cpp \
@@ -155,10 +160,13 @@ pages/settings/SettingsAdvancedPage.cpp \
     pages/TaskListPage.cpp \
     pages/TaskDetailPage.cpp \
     utils/SettingsManager.cpp \
+    utils/QuizBank.cpp \
     utils/SkinDownloader.cpp \
     utils/SpeedCalculator.cpp \
     utils/SystemInfo.cpp \
     utils/UpdateChecker.cpp \
+    utils/RuntimeArchive.cpp \
+    utils/RuntimeDependencyManager.cpp \
     utils/HarmonyBridge.cpp \
     utils/LanguageManager.cpp \
     utils/LanTransfer.cpp \
@@ -237,6 +245,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/FavoritesManager.cpp \
     utils/LocalCategoryManager.cpp \
     utils/mod/MCModAPI.cpp \
+    utils/mod/SearchQueryResolver.cpp \
     utils/mod/ModScanner.cpp \
     utils/mod/ModNameFetcher.cpp \
     utils/mod/ModLinkResolver.cpp \
@@ -267,6 +276,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/WorldMap/StructureIcons.cpp \
     utils/WorldMap/BiomeCatalog.cpp \
     utils/WorldMap/BiomeName.cpp \
+    utils/WorldMap/OreFinder.cpp \
     utils/WorldConvert/WorldConverter.cpp \
     utils/Schematic/NbtCodec.cpp \
     utils/Schematic/LitematicEditor.cpp \
@@ -303,7 +313,9 @@ pages/settings/SettingsAdvancedPage.cpp \
     components/SkillManagerDialog.cpp \
     components/PluginRunnerDialog.cpp \
     utils/translation/TranslationService.cpp \
-    components/TranslationSettingsDialog.cpp
+    components/TranslationSettingsDialog.cpp \
+    utils/AiModelListFetcher.cpp \
+    components/AiModelFetchRow.cpp
 
 HEADERS += \
     platform.h \
@@ -330,6 +342,8 @@ components/CustomCheckBox.h \
        components/AppDialogBase.h \
        components/WorldConvertDialog.h \
        components/HighRiskConfirmDialog.h \
+       components/QuizDialog.h \
+       components/QuizReminder.h \
        components/AppInputDialog.h \
        components/AppColorDialog.h \
        components/AppFileDialog.h \
@@ -354,6 +368,9 @@ components/CustomCheckBox.h \
          components/SourceSwitchBar.h \
          components/MasonryContentCard.h \
          components/TranslateSwitchCard.h \
+         components/AutoHeightTextBrowser.h \
+         components/CardListTranslator.h \
+         components/TranslatePayloadCodec.h \
          components/OutlinedLabel.h \
          components/MarkdownOutlinedLabel.h \
          components/TextOutlineLayer.h \
@@ -386,11 +403,14 @@ components/ProjectionBlockEditorDialog.h \
     pages/TaskListPage.h \
     pages/TaskDetailPage.h \
     utils/SettingsManager.h \
+    utils/QuizBank.h \
     utils/McimHelper.h \
     utils/SkinDownloader.h \
     utils/SpeedCalculator.h \
     utils/SystemInfo.h \
     utils/UpdateChecker.h \
+    utils/RuntimeArchive.h \
+    utils/RuntimeDependencyManager.h \
     utils/HarmonyBridge.h \
     utils/LanguageManager.h \
     utils/LanTransfer.h \
@@ -484,6 +504,7 @@ pages/ProjectionManagePage.h \
     utils/CfApiKey.h \
     utils/mod/ModrinthAPI.h \
     utils/mod/MCModAPI.h \
+    utils/mod/SearchQueryResolver.h \
     utils/mod/ModScanner.h \
     utils/mod/ModNameFetcher.h \
     utils/mod/ModLinkResolver.h \
@@ -524,6 +545,7 @@ pages/ProjectionManagePage.h \
     utils/WorldMap/StructureIcons.h \
     utils/WorldMap/BiomeCatalog.h \
     utils/WorldMap/BiomeName.h \
+    utils/WorldMap/OreFinder.h \
     utils/WorldConvert/WorldConverter.h \
     utils/CommandAssistant/CommandTranslator.h \
     utils/CommandAssistant/CommandCompleter.h \
@@ -553,7 +575,9 @@ pages/ProjectionManagePage.h \
     components/SkillManagerDialog.h \
     components/PluginRunnerDialog.h \
     utils/translation/TranslationService.h \
-    components/TranslationSettingsDialog.h
+    components/TranslationSettingsDialog.h \
+    utils/AiModelListFetcher.h \
+    components/AiModelFetchRow.h
 
 FORMS += \
     mainwindow.ui

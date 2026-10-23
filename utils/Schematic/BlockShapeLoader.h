@@ -37,6 +37,10 @@ struct ShapeFace
     QString texture;    // 解析后的贴图 key，如 "block/stone"；空表示颜色回退
     float   uv[4] = {0.0f, 0.0f, 16.0f, 16.0f}; // 模型面在贴图上的子区域（0..16 像素，MC 约定）
     bool    hasUv = false;   // 模型是否显式给出 uv（否则整张贴图铺满该面）
+    bool    canCull = false; // 模型给了 cullface：只有这类面才可被邻居整方块剔除
+    bool    shaded = true;   // 元素 shade:false（火把/植物/梯子等不受方向光压暗）
+    bool    aoOn = true;     // 模型 ambientocclusion:false（不做角落阴影）
+    int     tintIndex = -1;  // tintindex >= 0：该面按方块种类的颜色（草/树叶/水）着色
 };
 
 /**
@@ -50,8 +54,17 @@ struct ShapeBox
     int   rotAxis  = 1;         // 0=x 1=y 2=z
     float rotAngle = 0.0f;      // 度
     float rotOrigin[3] = {0.5f,0.5f,0.5f};
+    int   yaw = 0;              // blockstate 的 y 旋转（90 的倍数，渲染时绕格心转）
     QList<ShapeFace> faces;     // 各面的贴图
-    bool isEmpty() const { return to[0]-from[0] <= 1e-4f || to[1]-from[1] <= 1e-4f || to[2]-from[2] <= 1e-4f; }
+    /**
+     * 十字植物/藤蔓/梯子这类元素在某个轴上厚度为 0，
+     * 它们是「平面」而不是「空盒」，必须保留（否则会退回整格立方体）。
+     */
+    bool isEmpty() const
+    {
+        const float dx = to[0] - from[0], dy = to[1] - from[1], dz = to[2] - from[2];
+        return dx * dx + dy * dy + dz * dz <= 1e-8f;   // 三轴同时退化为一个点才算空
+    }
 };
 
 /**
@@ -107,6 +120,7 @@ private:
         QString parent;
         QMap<QString, QString> textures;   // 纹理变量名 -> 引用(var 或直接贴图 key)
         bool hasElements = false;
+        bool ambientOcclusion = true;      // 模型级 ambientocclusion（十字植物等为 false）
         QJsonObject elemObj;               // 保留原始 elements 数组（延迟解析）
     };
 

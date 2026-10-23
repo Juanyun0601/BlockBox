@@ -151,6 +151,8 @@
         <file>resources/ai_system_prompts.json</file>
         <file>resources/ai_models.json</file>
         <file>resources/ai_agent_tools.json</file>
+        <!-- 入站答题题库 -->
+        <file>resources/quiz/quiz_bank.txt</file>
         <!-- Pictures for homepage carousel -->
         <file>Images/Pictures/pic1.jpg</file>
         <file>Images/Pictures/pic2.jpg</file>

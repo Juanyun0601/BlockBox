@@ -22,6 +22,7 @@
 #include <QImage>
 #include <QMutex>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <atomic>
@@ -153,6 +154,61 @@ QImage renderRegionTile(const QString &savePath, Dimension dim,
                         int regionX, int regionZ, ShadeMode mode,
                         int maxSurfaceY = -1,
                         const SeedPreview &seed = SeedPreview());
+
+/**
+ * @brief 一处方块命中（矿物扫描等按名查方块的用途）
+ *
+ * index 由调用方定义：scanRegionBlocks() 回传 blockNames 的下标。
+ * y 为方块世界高度，x/z 为方块水平坐标（region 内偏移已换算成世界坐标）。
+ */
+struct BlockHit
+{
+    int x = 0;
+    int y = 0;
+    int z = 0;
+    int index = -1; ///< blockNames 下标；<0 = 无效
+};
+
+/**
+ * @brief 扫描单个 region 里指定方块出现的方块坐标（须在工作线程调用）
+ *
+ * 与 renderRegionTile 共用同一套 Anvil / NBT 解析：逐区块读调色板，只有调色板里
+ * 出现过目标方块名的 section 才解码方块数组，因此"扫矿物"不会比渲染这张图更贵。
+ * 旧格式（1.12 及以前）按 legacyIds 里的数字 ID 匹配。
+ *
+ * @param blockNames 目标方块名（含或不含 minecraft: 前缀；状态属性会被忽略）
+ * @param legacyIds  与 blockNames 对齐的旧版数字 ID（-1 = 该方块无旧版 ID）
+ * @param cancelled  返回 true 时中止（已扫描部分仍会返回）
+ * @return 命中列表；单 region 命中数有上限保护（异常存档不会吃爆内存）
+ */
+QVector<BlockHit> scanRegionBlocks(const QString &savePath, Dimension dim,
+                                   int regionX, int regionZ,
+                                   const QStringList &blockNames,
+                                   const QVector<int> &legacyIds = QVector<int>(),
+                                   const std::function<bool()> &cancelled = {});
+
+/**
+ * @brief 以区块为单位扫描指定方块（须在工作线程调用）
+ *
+ * 只解压、解析被点名的区块，不碰同 region 里的其他区块 —— 放大看局部时
+ * 不必为一个区块去读整块 512×512 的地图数据。chunks 里的区块按 region 分组，
+ * 同一个 .mca 只打开一次，所以成批传入相邻区块不会额外读盘。
+ *
+ * @param chunks 区块坐标（chunkX/chunkZ，即方块坐标 >> 4）
+ * @return 命中列表；index 为 blockNames 下标
+ */
+QVector<BlockHit> scanChunksBlocks(const QString &savePath, Dimension dim,
+                                   const QVector<QPoint> &chunks,
+                                   const QStringList &blockNames,
+                                   const QVector<int> &legacyIds = QVector<int>(),
+                                   const std::function<bool()> &cancelled = {});
+
+/** @brief 单个区块的 scanChunksBlocks() 便捷重载 */
+QVector<BlockHit> scanChunkBlocks(const QString &savePath, Dimension dim,
+                                  int chunkX, int chunkZ,
+                                  const QStringList &blockNames,
+                                  const QVector<int> &legacyIds = QVector<int>(),
+                                  const std::function<bool()> &cancelled = {});
 
 /**
  * @brief 阻塞渲染整张地表地图（须在工作线程调用）

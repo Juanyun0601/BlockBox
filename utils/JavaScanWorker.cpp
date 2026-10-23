@@ -37,8 +37,9 @@ JavaScanWorker::JavaScanWorker(QObject* parent)
     , m_totalDriveMB(0)
     , m_lastPercent(0)
 {
-#ifdef Q_OS_ANDROID
-    // Android: scan specific directories
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
+    // 移动端：扫描系统与沙盒内的固定目录（鸿蒙同样是 musl/ohos 布局，
+    // 可执行文件名是 java 而不是 java.exe）
     m_drives << "/system/bin" << "/data/data" << "/storage/emulated/0";
     m_excludeLower.clear();
 #else
@@ -113,7 +114,7 @@ void JavaScanWorker::tryAddJava(const QString& dirPath, QList<QPair<QString, QSt
     if (isCancelled()) return;
     if (dirPath.isEmpty() || dirPath == "/" || dirPath == "\\") return;
 
-#ifdef Q_OS_ANDROID
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
     QString javaPath = QDir(dirPath).filePath("java");
     QString exePath;
     if (QFile::exists(javaPath))
@@ -153,7 +154,7 @@ void JavaScanWorker::tryAddJavaDetailed(const QString& dirPath, QList<JavaInstal
     if (isCancelled()) return;
     if (dirPath.isEmpty() || dirPath == "/" || dirPath == "\\") return;
 
-#ifdef Q_OS_ANDROID
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
     QString javaPath = QDir(dirPath).filePath("java");
     QString exePath;
     if (QFile::exists(javaPath))
@@ -264,7 +265,7 @@ void JavaScanWorker::scanEnvironmentVariables(QList<QPair<QString, QString>>& ou
     // ── 2. 检查 PATH ──
     QString pathEnv = QProcessEnvironment::systemEnvironment().value("PATH");
     if (!pathEnv.isEmpty()) {
-#ifdef Q_OS_ANDROID
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
         QStringList paths = pathEnv.split(':', Qt::SkipEmptyParts);
 #else
         QStringList paths = pathEnv.split(';', Qt::SkipEmptyParts);
@@ -358,8 +359,8 @@ void JavaScanWorker::scanRegistryKey(void* hKeyBase, const QString& keyName,
 
 void JavaScanWorker::scanRegistry(QList<QPair<QString, QString>>& outResults)
 {
-#ifdef Q_OS_ANDROID
-    // Android: no registry support, skip
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
+    // 移动端：没有注册表，直接跳过
     Q_UNUSED(outResults);
     return;
 #else
@@ -442,9 +443,9 @@ void JavaScanWorker::scanRegistry(QList<QPair<QString, QString>>& outResults)
 
 void JavaScanWorker::scanVendorDirectories(QList<QPair<QString, QString>>& outResults)
 {
-#ifdef Q_OS_ANDROID
-    // Android: scan common Java paths
-    const QStringList androidPaths = {
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
+    // 移动端：扫描常见 Java 路径（含启动器一键安装的运行依赖目录）
+    const QStringList mobilePaths = {
         "/system/bin",
         "/data/data/com.termux/files/usr/bin",
         "/storage/emulated/0/Android/data",
@@ -452,7 +453,7 @@ void JavaScanWorker::scanVendorDirectories(QList<QPair<QString, QString>>& outRe
         QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + "/java",
     };
 
-    for (const QString& path : androidPaths) {
+    for (const QString& path : mobilePaths) {
         if (isCancelled()) return;
         QDir dir(path);
         if (!dir.exists()) continue;

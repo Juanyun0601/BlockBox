@@ -128,8 +128,23 @@ public:
         return true;
     }
 
+    // 递归深度守卫：恶意构造的深层嵌套 NBT 会让 readTag/readPayload 递归到爆栈
+    struct DepthGuard
+    {
+        int &depth;
+        bool ok;
+        explicit DepthGuard(int &d) : depth(d), ok(++d <= 128) {}
+        ~DepthGuard() { --depth; }
+    };
+
     bool readTag(NbtTag &tag)
     {
+        DepthGuard guard(depth_);
+        if (!guard.ok)
+        {
+            qWarning() << "[NbtCodec] NBT 嵌套层级过深，已放弃解析";
+            return false;
+        }
         quint8 typeByte = 0;
         if (!readByte(typeByte))
         {
@@ -341,6 +356,7 @@ private:
 
     const QByteArray &data_;
     int pos_;
+    int depth_ = 0;
 };
 
 // ============================================================================
@@ -513,6 +529,7 @@ bool gzipDecompress(const QByteArray &compressed, QByteArray &out)
     }
 
     static constexpr int BUFFER_SIZE = 65536;
+    static constexpr int kMaxOutputSize = 256 * 1024 * 1024;
     char buffer[BUFFER_SIZE];
 
     do
@@ -520,13 +537,20 @@ bool gzipDecompress(const QByteArray &compressed, QByteArray &out)
         strm.next_out = reinterpret_cast<Bytef *>(buffer);
         strm.avail_out = BUFFER_SIZE;
         ret = inflate(&strm, Z_NO_FLUSH);
-        if (ret == Z_STREAM_ERROR || ret == Z_NEED_DICT ||
-            ret == Z_DATA_ERROR || ret == Z_MEM_ERROR)
+        // 只接受 Z_OK / Z_STREAM_END：截断或损坏的数据会返回 Z_BUF_ERROR，
+        // 若放行就会在这里无限循环，把调用线程（通常是 UI 线程）卡死
+        if (ret != Z_OK && ret != Z_STREAM_END)
         {
             inflateEnd(&strm);
             return false;
         }
         out.append(buffer, BUFFER_SIZE - static_cast<int>(strm.avail_out));
+        if (out.size() > kMaxOutputSize)
+        {
+            qWarning() << "[NbtCodec] gzip 解压结果异常巨大，已放弃";
+            inflateEnd(&strm);
+            return false;
+        }
     } while (ret != Z_STREAM_END);
 
     inflateEnd(&strm);

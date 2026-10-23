@@ -22,6 +22,7 @@
 #define OREFINDER_H
 
 #include <QColor>
+#include <QPoint>
 #include <QString>
 #include <QVector>
 
@@ -60,6 +61,19 @@ using Hit = WorldMapRenderer::BlockHit;
 QVector<Hit> scanRegion(const QString &savePath, WorldMapRenderer::Dimension dim,
                         int regionX, int regionZ,
                         const std::function<bool()> &cancelled = {});
+
+/**
+ * 以区块为单位扫描（只解压被点名的区块，放大看局部时不必读整块 region）。
+ * @param chunks 区块坐标列表；相邻区块会合并成一次读盘
+ */
+QVector<Hit> scanChunks(const QString &savePath, WorldMapRenderer::Dimension dim,
+                        const QVector<QPoint> &chunks,
+                        const std::function<bool()> &cancelled = {});
+
+/** 单个区块的 scanChunks() 便捷重载 */
+QVector<Hit> scanChunk(const QString &savePath, WorldMapRenderer::Dimension dim,
+                       int chunkX, int chunkZ,
+                       const std::function<bool()> &cancelled = {});
 
 } // namespace OreFinder
 

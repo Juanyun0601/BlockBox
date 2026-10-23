@@ -24,17 +24,50 @@
 #include <QTranslator>
 
 #include "platform.h"
+#include "components/QuizReminder.h"
 #include "pages/OnboardingWizard.h"
 #include "utils/AsyncInitializer.h"
 #include "utils/GameLauncher.h"
 #include "utils/LanguageManager.h"
 #include "utils/LowConfigMode.h"
 #include "utils/PerformanceMonitor.h"
+#include "utils/QuizBank.h"
 #include "utils/ResourceManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/StartupProgressWidget.h"
 #include "utils/ThemeManager.h"
 #include "utils/UpdateChecker.h"
+
+namespace {
+
+/**
+ * @brief 启动后在右下角显示入站答题提醒
+ *
+ * 答题不再是硬性门槛：尚未通过时每次启动都会在主窗口右下角弹一个小提醒，
+ * 用户可以选择「开始答题」，也可以「跳过」直接使用启动器。
+ * 提醒窗挂在主窗口上，随主窗口一起销毁；已通过答题则不再出现。
+ */
+void showQuizReminder(QWidget *parent)
+{
+    if (!parent || QuizBank::hasPassed())
+        return;
+
+    QuizReminder *reminder = new QuizReminder(parent);
+    reminder->showReminder();
+}
+
+/// 启动后按设置检查更新（静默模式：仅发现新版本时提示，失败不打扰）
+void maybeCheckUpdates(QWidget *parent)
+{
+    if (!SettingsManager::instance()->getProperty("auto_check_update", true).toBool())
+        return;
+
+    QTimer::singleShot(3000, [parent]() {
+        UpdateChecker::instance()->checkForUpdates(parent, true);
+    });
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -142,15 +175,15 @@ int main(int argc, char *argv[])
                         w.hide();
                         QProcess::startDetached(QCoreApplication::applicationFilePath(), QStringList());
                         QCoreApplication::quit();
+                        return;
                     }
+                    // 新手引导之后在右下角提醒入站答题（可直接跳过，不阻塞使用）
+                    showQuizReminder(&w);
+                    maybeCheckUpdates(&w);
                 });
-            } else if (SettingsManager::instance()
-                           ->getProperty("auto_check_update", true).toBool()) {
-                // 每次启动都检查更新：延迟数秒避开启动高峰；
-                // 静默模式下仅发现新版本时弹窗，失败不打扰用户。
-                QTimer::singleShot(3000, [&w]() {
-                    UpdateChecker::instance()->checkForUpdates(&w, true);
-                });
+            } else {
+                showQuizReminder(&w);
+                maybeCheckUpdates(&w);
             }
         });
 

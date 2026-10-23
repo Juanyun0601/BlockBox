@@ -55,6 +55,8 @@ struct SearchResultItem {
     QString taskId;
 };
 
+class SearchQueryResolver;
+
 class SearchPage : public QWidget
 {
     Q_OBJECT
@@ -133,6 +135,8 @@ private:
     ContentType m_pendingOnlineType;
     int m_onlineSearchPendingCount;
     QTimer *m_onlineSearchTimer;
+    SearchQueryResolver *m_queryResolver;
+    quint64 m_onlineQueryToken;    // 中文解析请求序号，用于丢弃过期结果
 
     QList<SearchResultItem> m_currentResults;
     int m_currentFilter;

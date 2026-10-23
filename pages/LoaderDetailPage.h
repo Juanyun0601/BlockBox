@@ -52,7 +52,7 @@ signals:
     void backToInstallPageRequested();
     void viewAllVersionsRequested(const QString &loaderName, const QString &minecraftVersion);
     void loaderCardClicked(const QString &loaderName, const QString &minecraftVersion);
-    void installRequested(const QString &instanceName, const QString &mcVersion, const QMap<QString, SelectedLoader> &loaders);
+    void installRequested(const QString &instancePath, const QString &instanceName, const QString &mcVersion, const QMap<QString, SelectedLoader> &loaders);
     void instanceModified(const QString &instancePath);
 
 protected:

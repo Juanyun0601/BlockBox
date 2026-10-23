@@ -359,14 +359,18 @@ private:
     void onModDownloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile);
     void onContentDownloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile, ContentType contentType);
     /**
-     * @brief 处理资源卡片"一键下载"按钮点击
+     * @brief 处理"一键安装/下载"请求（详情页按钮、列表卡片下载图标共用）
      * @param modInfo       资源信息（可能尚无 versionFiles，需拉取详情）
      * @param contentType   资源类型
      * @param depth         递归深度，0=用户直接点击的根资源，最大递归到 kMaxCardDownloadDepth
+     * @param gameVersion   目标游戏版本（空=使用当前实例版本），用于挑选兼容的最新正式版
+     * @param loader        目标加载器（空=使用当前实例加载器）
      *
-     * 流程：拉取最新版本 → 下载主资源 → 遍历该版本的必备前置 → 递归下载
+     * 流程：挑出兼容的最新正式版 → 下载主资源 → 遍历该版本的必备前置 → 递归下载
      */
-    void onCardDownloadRequested(const ModInfo &modInfo, ContentType contentType, int depth = 0);
+    void onCardDownloadRequested(const ModInfo &modInfo, ContentType contentType, int depth = 0,
+                                 const QString &gameVersion = QString(),
+                                 const QString &loader = QString());
     void onClipboardLinkDetected(const ClipboardLinkInfo &info);
 
     static constexpr int kMaxCardDownloadDepth = 3; ///< 一键下载递归前置的最大深度，防止循环依赖

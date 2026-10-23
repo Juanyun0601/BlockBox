@@ -2984,8 +2984,10 @@ QScrollArea#aiChatConvScrollArea QScrollBar::sub-page:vertical {
     background: transparent;
 }
 
+/* 消息主栏跟随页面底色：经典模式下若自带 @BG_MSG@ 底色，会与页面其余区域
+   （输入区、顶栏下的页面背景）形成色差，与其他页面也不一致。 */
 QScrollArea#aiChatMessageArea {
-    background: @BG_MSG@;
+    background: transparent;
     border: none;
 }
 
@@ -3763,6 +3765,13 @@ QPushButton#categoryManageBtn:pressed {
 QLabel#filterLabel {
     background-color: transparent;
     color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    border: none;
+}
+
+QLabel#searchHintLabel {
+    background-color: transparent;
+    color: @PRIMARY@;
     font-size: 12px;
     border: none;
 }
@@ -13489,6 +13498,15 @@ QLabel#worldMapPopupHint {
     padding-top: 7px;
 }
 
+/* 矿物列下方的扫描说明：比列标题更淡，不抢矿物名的视线 */
+QLabel#worldMapPopupOreHint {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
 QPushButton#worldMapPopupClose {
     background-color: transparent;
     border: none;
@@ -13511,7 +13529,9 @@ QPushButton#worldMapPopupClose:pressed {
 QPushButton#worldMapPopupStructAll,
 QPushButton#worldMapPopupStructClear,
 QPushButton#worldMapPopupBiomeAll,
-QPushButton#worldMapPopupBiomeClear {
+QPushButton#worldMapPopupBiomeClear,
+QPushButton#worldMapPopupOreAll,
+QPushButton#worldMapPopupOreClear {
     background-color: transparent;
     border: 1px solid @BORDER@;
     border-radius: 8px;
@@ -13523,7 +13543,9 @@ QPushButton#worldMapPopupBiomeClear {
 QPushButton#worldMapPopupStructAll:hover,
 QPushButton#worldMapPopupStructClear:hover,
 QPushButton#worldMapPopupBiomeAll:hover,
-QPushButton#worldMapPopupBiomeClear:hover {
+QPushButton#worldMapPopupBiomeClear:hover,
+QPushButton#worldMapPopupOreAll:hover,
+QPushButton#worldMapPopupOreClear:hover {
     background-color: @BG_HOVER@;
     border: 1px solid @BORDER_HOVER@;
     color: @TEXT_PRIMARY@;
@@ -13532,7 +13554,9 @@ QPushButton#worldMapPopupBiomeClear:hover {
 QPushButton#worldMapPopupStructAll:pressed,
 QPushButton#worldMapPopupStructClear:pressed,
 QPushButton#worldMapPopupBiomeAll:pressed,
-QPushButton#worldMapPopupBiomeClear:pressed {
+QPushButton#worldMapPopupBiomeClear:pressed,
+QPushButton#worldMapPopupOreAll:pressed,
+QPushButton#worldMapPopupOreClear:pressed {
     background-color: @BG_PRESSED@;
     border: 1px solid @BORDER_HOVER@;
 }

@@ -23,6 +23,7 @@
 #include "utils/ThemeManager.h"
 #include "utils/FavoritesManager.h"
 #include "utils/DownloadTaskManager.h"
+#include "utils/mod/SearchQueryResolver.h"
 
 static QString smartTruncate(const QString &text, int maxChars = 100)
 {
@@ -58,6 +59,21 @@ QString formatCount(qint64 n)
     if (n < 100000000)
         return QString::number(n / 10000.0, 'f', 1) + QStringLiteral(" 万");
     return QString::number(n / 100000000.0, 'f', 1) + QStringLiteral(" 亿");
+}
+
+// 该分类的 Modrinth 项目类型；为空说明 Modrinth 没有这个分类（如世界存档），
+// 此时只查 CurseForge，免得搜出驴唇不对马嘴的内容
+QString modrinthTypeOf(ContentType type)
+{
+    return ContentTypeConfig::getConfig(type).mrProjectType;
+}
+
+// 查询解析用的分类键：世界存档没有 Modrinth 类型，用 "world" 让分类词（存档/世界/地图）可识别
+QString onlineCategoryKey(ContentType type)
+{
+    if (modrinthTypeOf(type).isEmpty())
+        return type == ContentType::World ? QStringLiteral("world") : QString();
+    return modrinthTypeOf(type);
 }
 } // namespace
 
@@ -184,17 +200,32 @@ void SearchPage::initAPIs()
             m_onlineSearchPendingCount--;
     });
 
+    m_queryResolver = new SearchQueryResolver(this);
+    m_onlineQueryToken = 0;
+    connect(m_queryResolver, &SearchQueryResolver::resolved, this,
+            [this](quint64 requestId, const QString &, const QString &keyword, const QString &) {
+        if (requestId != m_onlineQueryToken)
+            return;
+        // 中文关键词已解析成英文名（可能为空 = 浏览全部），再向下载源发起搜索
+        ContentTypeConfig config = ContentTypeConfig::getConfig(m_pendingOnlineType);
+        m_curseforgeAPI->setClassId(config.cfClassId);
+        m_curseforgeAPI->searchMods(keyword);
+        if (!config.mrProjectType.isEmpty()) {
+            m_modrinthAPI->setProjectType(config.mrProjectType);
+            m_modrinthAPI->searchMods(keyword);
+        }
+    });
+
     m_onlineSearchTimer = new QTimer(this);
     m_onlineSearchTimer->setSingleShot(true);
     m_onlineSearchTimer->setInterval(300);
     connect(m_onlineSearchTimer, &QTimer::timeout, this, [this]() {
         if (!m_pendingOnlineKeyword.isEmpty() && m_onlineSearchPendingCount > 0)
         {
-            ContentTypeConfig config = ContentTypeConfig::getConfig(m_pendingOnlineType);
-            m_curseforgeAPI->setClassId(config.cfClassId);
-            m_modrinthAPI->setProjectType(config.mrProjectType);
-            m_curseforgeAPI->searchMods(m_pendingOnlineKeyword);
-            m_modrinthAPI->searchMods(m_pendingOnlineKeyword);
+            const quint64 token = ++m_onlineQueryToken;
+            m_queryResolver->resolve(
+                token, m_pendingOnlineKeyword,
+                onlineCategoryKey(m_pendingOnlineType));
         }
     });
 }
@@ -546,7 +577,8 @@ void SearchPage::performSearch(const QString &keyword)
     if (needsOnlineSearch)
     {
         m_pendingOnlineKeyword = keyword;
-        m_onlineSearchPendingCount = 2;
+        // 只有 CurseForge 有该分类时（如世界存档），不要等一个永远不会来的 Modrinth 回包
+        m_onlineSearchPendingCount = modrinthTypeOf(m_pendingOnlineType).isEmpty() ? 1 : 2;
         m_onlineSearchTimer->start();
     }
 }

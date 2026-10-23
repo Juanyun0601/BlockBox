@@ -6,6 +6,8 @@
 
 #include "BedrockInstanceManager.h"
 
+#include "../Safety.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -214,8 +216,14 @@ bool BedrockInstanceManager::removeInstance(const QString &id)
     m_instances.removeAt(idx);
     saveToDisk();
 
-    if (QDir(dir).exists() && !isJunction(dir))
+    // 只删除实例目录内的数据；外部目录（例如用户自选的数据位置）只解除登记，不动文件
+    const QString cleanDir = QDir::cleanPath(dir);
+    const bool canDelete = Safety::isPathInside(instancesDir(), cleanDir)
+                           && cleanDir != QDir::cleanPath(instancesDir());
+    if (canDelete && QDir(dir).exists() && !isJunction(dir))
         QDir(dir).removeRecursively();
+    else if (!canDelete && QDir(dir).exists())
+        qWarning() << "[BedrockInstanceManager] 实例数据目录不在实例根目录内，已保留未删除:" << dir;
     emit instancesChanged();
     return true;
 }
@@ -408,6 +416,18 @@ bool BedrockInstanceManager::loadFromDisk()
             continue;
         inst.name = o.value(QStringLiteral("name")).toString();
         inst.dataDir = o.value(QStringLiteral("dataDir")).toString();
+        // 数据目录来自可被改写的 instances.json，越界的值一律作废，
+        // 否则删除实例时会递归删掉任意目录
+        const QString cleanDir = QDir::cleanPath(inst.dataDir);
+        const bool okDir = !inst.dataDir.isEmpty()
+                          && (Safety::isPathInside(instancesDir(), cleanDir)
+                              || Safety::isPathInside(Platform::getDataDirectory(), cleanDir));
+        if (!okDir) {
+            qWarning() << "[BedrockInstanceManager] 忽略非法的实例数据目录:" << inst.dataDir;
+            inst.dataDir = instancesDir() + QLatin1Char('/') + inst.id;
+        } else {
+            inst.dataDir = cleanDir;
+        }
         inst.version = o.value(QStringLiteral("version")).toString();
         inst.createdAt = QDateTime::fromString(o.value(QStringLiteral("createdAt")).toString(), Qt::ISODate);
         inst.lastPlayed = QDateTime::fromString(o.value(QStringLiteral("lastPlayed")).toString(), Qt::ISODate);

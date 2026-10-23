@@ -7,7 +7,10 @@
 
 #include "JavaDownloader.h"
 
+#include "Safety.h"
+
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
@@ -494,6 +497,8 @@ void JavaDownloader::downloadJava(const JavaBinaryInfo &binaryInfo,
                                    const QString &savePath)
 {
   m_currentSavePath = savePath;
+  m_currentChecksum = binaryInfo.checksum;
+  m_currentChecksumType = binaryInfo.checksumType;
   setStatus(JavaDownloadStatus::Downloading);
   doDownload(binaryInfo.downloadUrl, savePath);
 }
@@ -590,6 +595,30 @@ void JavaDownloader::doDownload(const QString &url, const QString &savePath)
       file.close();
       qDebug() << "[JavaDownloader] Downloaded:" << savePath;
 
+      // 校验官方 API 给出的 sha256：下载可能经过镜像/加速节点，
+      // 而这份 Java 之后会用来启动游戏，内容不可信就等于交出执行权
+      if (!m_currentChecksum.isEmpty())
+      {
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        QFile check(savePath);
+        bool hashed = check.open(QIODevice::ReadOnly) && hash.addData(&check);
+        if (!hashed)
+        {
+          emit downloadFailed(tr("无法校验下载的 Java 运行时"));
+          setStatus(JavaDownloadStatus::Failed);
+          return;
+        }
+        if (hash.result().toHex().compare(m_currentChecksum.trimmed().toLatin1(),
+                                          Qt::CaseInsensitive) != 0)
+        {
+          check.close();
+          QFile::remove(savePath);
+          emit downloadFailed(tr("Java 运行时校验失败，下载内容可能已被篡改"));
+          setStatus(JavaDownloadStatus::Failed);
+          return;
+        }
+      }
+
       emit downloadCompleted(savePath);
 
       // 如果需要解压
@@ -628,9 +657,9 @@ void JavaDownloader::doExtract(const QString &archivePath, const QString &extrac
   QProcess *process = new QProcess(this);
   QStringList args;
   args << "-NoProfile" << "-Command"
-       << QString("Expand-Archive -Path '%1' -DestinationPath '%2' -Force")
-                .arg(QString(archivePath).replace("/", "\\"))
-                .arg(QString(extractDir).replace("/", "\\"));
+       << QString("Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force")
+                .arg(Safety::psQuote(QString(archivePath).replace("/", "\\")),
+                     Safety::psQuote(QString(extractDir).replace("/", "\\")));
 
   connect(process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
           this, [this, process, archivePath, extractDir](int exitCode, QProcess::ExitStatus)

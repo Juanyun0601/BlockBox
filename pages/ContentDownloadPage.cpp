@@ -14,6 +14,7 @@
 #include "utils/FavoritesManager.h"
 #include "utils/content/ContentListCache.h"
 #include "utils/mod/MCModAPI.h"
+#include "utils/mod/SearchQueryResolver.h"
 
 #include <QApplication>
 #include <QCursor>
@@ -42,6 +43,22 @@
 #include <QTimer>
 #include <QUrl>
 
+namespace {
+/** 内容类型 → 中文搜索解析用的分类标记（用于识别「光影」这类分类词） */
+QString categoryKeyForContent(ContentType type)
+{
+    switch (type) {
+    case ContentType::Mod:          return QStringLiteral("mod");
+    case ContentType::DataPack:     return QStringLiteral("datapack");
+    case ContentType::ResourcePack: return QStringLiteral("resourcepack");
+    case ContentType::ShaderPack:   return QStringLiteral("shader");
+    case ContentType::World:        return QStringLiteral("world");
+    case ContentType::Modpack:      return QStringLiteral("modpack");
+    }
+    return QStringLiteral("mod");
+}
+} // namespace
+
 ContentDownloadPage::ContentDownloadPage(ContentType contentType, QWidget *parent)
     : QWidget(parent)
     , m_searchEdit(nullptr)
@@ -68,6 +85,9 @@ ContentDownloadPage::ContentDownloadPage(ContentType contentType, QWidget *paren
     , m_curseforgeAPI(nullptr)
     , m_modrinthAPI(nullptr)
     , m_mcmodAPI(nullptr)
+    , m_queryResolver(nullptr)
+    , m_searchHint(nullptr)
+    , m_queryToken(0)
     , m_currentSource(AllSources)
     , m_currentPage(0)
     , m_hasMore(false)
@@ -123,6 +143,13 @@ void ContentDownloadPage::initUI()
 
     cardLayout->addLayout(searchLayout);
 
+    // 中文搜索提示：说明当前关键词被翻译成了哪个英文名
+    m_searchHint = new QLabel(filterCard);
+    m_searchHint->setObjectName("searchHintLabel");
+    m_searchHint->setWordWrap(true);
+    m_searchHint->hide();
+    cardLayout->addWidget(m_searchHint);
+
     FlowLayout *filterLayout = new FlowLayout(nullptr, 0, 10, 8);
 
     auto createCombo = [this]() -> QComboBox* {
@@ -136,9 +163,16 @@ void ContentDownloadPage::initUI()
     srcLabel->setObjectName("filterLabel");
     m_sourceCombo = createCombo();
     m_sourceCombo->setObjectName("sourceCombo");
-    m_sourceCombo->addItem(tr("全部来源"), AllSources);
-    m_sourceCombo->addItem(tr("CurseForge"), CurseForge);
-    m_sourceCombo->addItem(tr("Modrinth"), Modrinth);
+    if (m_config.mrProjectType.isEmpty()) {
+        // 该分类只有 CurseForge 提供（例如世界存档），不放一个点了也查不到内容的 Modrinth 来源
+        m_sourceCombo->addItem(tr("CurseForge"), CurseForge);
+        srcLabel->hide();
+        m_sourceCombo->hide();
+    } else {
+        m_sourceCombo->addItem(tr("全部来源"), AllSources);
+        m_sourceCombo->addItem(tr("CurseForge"), CurseForge);
+        m_sourceCombo->addItem(tr("Modrinth"), Modrinth);
+    }
     filterLayout->addWidget(srcLabel);
     filterLayout->addWidget(m_sourceCombo);
 
@@ -212,6 +246,20 @@ void ContentDownloadPage::initUI()
     connect(m_translateSwitch, &TranslateSwitchCard::modeChangeRequested,
             this, &ContentDownloadPage::onListTranslateModeChanged);
 
+    m_translator = new CardListTranslator(this);
+    connect(m_translator, &CardListTranslator::busyChanged,
+            m_translateSwitch, &TranslateSwitchCard::setBusy);
+    connect(m_translator, &CardListTranslator::finished,
+            this, &ContentDownloadPage::applyListTranslation);
+    connect(m_translator, &CardListTranslator::failed, this, [this](const QString &error) {
+        if (m_translateSwitch) {
+            m_translateSwitch->setBusy(false);
+            m_translateSwitch->setChineseMode(false);
+        }
+        restoreListTranslation();
+        NotificationManager::showError(this, tr("翻译失败：%1").arg(error));
+    });
+
     m_loadingOverlay = new BlurLoadingOverlay(this);
     m_loadingOverlay->hide();
 
@@ -269,6 +317,7 @@ void ContentDownloadPage::initAPI()
 
     m_modrinthAPI = new ModrinthAPI(this);
     m_mcmodAPI = new MCModAPI(this);
+    m_queryResolver = new SearchQueryResolver(this);
 
     applyMCIMSetting();
 }
@@ -313,6 +362,8 @@ void ContentDownloadPage::setupConnections()
     });
 
     connect(m_mcmodAPI, &MCModAPI::nameResolved, this, &ContentDownloadPage::onChineseNameResolved);
+    connect(m_queryResolver, &SearchQueryResolver::resolved,
+            this, &ContentDownloadPage::onQueryResolved);
 }
 
 void ContentDownloadPage::setCurrentInstancePath(const QString &path)
@@ -691,6 +742,7 @@ void ContentDownloadPage::loadInitialMods()
 {
     applyMCIMSetting();
     m_currentQuery.clear();
+    m_effectiveQuery.clear();
     m_currentPage = 0;
     m_allMods.clear();
     clearCards();
@@ -741,10 +793,63 @@ void ContentDownloadPage::performSearch(bool append)
     m_isLoading = true;
     m_paginationBar->hide();
 
+    if (m_searchHint)
+        m_searchHint->hide();
+
+    // 中文关键词先解析成下载源能识别的英文名，解析完成后再发请求
+    const quint64 token = ++m_queryToken;
+    m_queryResolver->resolve(token, m_currentQuery, categoryKeyForContent(m_contentType));
+}
+
+void ContentDownloadPage::onQueryResolved(quint64 requestId, const QString &original,
+                                          const QString &keyword, const QString &matchedName)
+{
+    if (requestId != m_queryToken)
+        return;
+
+    if (m_searchHint) {
+        if (original.isEmpty()) {
+            m_searchHint->hide();
+        } else if (keyword.isEmpty()) {
+            m_searchHint->setText(tr("「%1」是分类词，已为你浏览全部内容").arg(original));
+            m_searchHint->show();
+        } else if (keyword.compare(original, Qt::CaseInsensitive) != 0) {
+            m_searchHint->setText(tr("已按中文名「%1」搜索：%2")
+                                      .arg(matchedName.isEmpty() ? original : matchedName, keyword));
+            m_searchHint->show();
+        } else if (SearchQueryResolver::containsChinese(original)) {
+            m_searchHint->setText(tr("没找到「%1」对应的英文名，已按原关键词搜索").arg(original));
+            m_searchHint->show();
+        } else {
+            m_searchHint->hide();
+        }
+    }
+
+    issueSearchRequests(keyword);
+}
+
+void ContentDownloadPage::issueSearchRequests(const QString &keyword)
+{
+    m_effectiveQuery = keyword;
+
     m_currentSource = m_sourceCombo->currentData().toInt();
+
+    // Modrinth 没有世界存档这种项目类型：这类分类只查 CurseForge，
+    // 否则 Modrinth 会按 "mod" 返回一堆模组，被当成存档列出来
+    const bool modrinthSupported = !m_config.mrProjectType.isEmpty();
+    if (!modrinthSupported)
+        m_currentSource = CurseForge;
+
+    const bool allSources = (m_currentSource == AllSources);
+    const bool useCurseForge = allSources || m_currentSource == CurseForge;
+    const bool useModrinth = modrinthSupported && (allSources || m_currentSource == Modrinth);
+
     QString gameVersion = selectedGameVersion();
 
-    if (m_currentSource == AllSources) {
+    QString cfSort = m_sortCombo->currentData().toString();
+    QString mrSort = m_sortCombo->currentData().toString();
+
+    if (allSources) {
         QString universalSort = m_sortCombo->currentData().toString();
 
         QMap<QString, QString> cfSortMap;
@@ -765,26 +870,23 @@ void ContentDownloadPage::performSearch(bool append)
         modrinthSortMap["date_created"]    = "date_created";
         modrinthSortMap["author"]          = "name";
 
-        m_pendingCount = 2;
+        cfSort = cfSortMap.value(universalSort, "popularity");
+        mrSort = modrinthSortMap.value(universalSort, "relevance");
+    }
+
+    m_pendingCount = (useCurseForge ? 1 : 0) + (useModrinth ? 1 : 0);
+    if (m_pendingCount == 0)
+        m_pendingCount = 1; // 兜底：不至于让页面永远停在加载中
+
+    if (useCurseForge) {
         m_curseforgeAPI->setClassId(m_config.cfClassId);
-        m_curseforgeAPI->searchMods(m_currentQuery, gameVersion, QString(),
-                                     m_currentPage, 20,
-                                     cfSortMap.value(universalSort, "popularity"));
+        m_curseforgeAPI->searchMods(keyword, gameVersion, QString(),
+                                     m_currentPage, 20, cfSort);
+    }
+    if (useModrinth) {
         m_modrinthAPI->setProjectType(m_config.mrProjectType);
-        m_modrinthAPI->searchMods(m_currentQuery, gameVersion, QString(),
-                                   m_currentPage, 20,
-                                   modrinthSortMap.value(universalSort, "relevance"));
-    } else {
-        QString sortField = m_sortCombo->currentData().toString();
-        if (m_currentSource == CurseForge) {
-            m_curseforgeAPI->setClassId(m_config.cfClassId);
-            m_curseforgeAPI->searchMods(m_currentQuery, gameVersion, QString(),
-                                         m_currentPage, 20, sortField);
-        } else {
-            m_modrinthAPI->setProjectType(m_config.mrProjectType);
-            m_modrinthAPI->searchMods(m_currentQuery, gameVersion, QString(),
-                                       m_currentPage, 20, sortField);
-        }
+        m_modrinthAPI->searchMods(keyword, gameVersion, QString(),
+                                   m_currentPage, 20, mrSort);
     }
 }
 
@@ -821,7 +923,7 @@ void ContentDownloadPage::onSearchCompleted(const ModSearchResult &result)
     m_loadingOverlay->clearError();
 
     // 缓存第一页列表（仅当查询为空时，即各资源默认列表）
-    if (m_currentPage == 0 && m_currentQuery.isEmpty()) {
+    if (m_currentPage == 0 && m_effectiveQuery.isEmpty()) {
         ModSearchResult firstPage;
         firstPage.mods = m_allMods;
         firstPage.totalHits = m_totalHits;
@@ -853,7 +955,7 @@ void ContentDownloadPage::flushAllSourceResults()
     m_loadingOverlay->clearError();
 
     // 缓存合并后的第一页列表（仅当查询为空时）
-    if (m_currentPage == 0 && m_currentQuery.isEmpty()) {
+    if (m_currentPage == 0 && m_effectiveQuery.isEmpty()) {
         ModSearchResult firstPage;
         firstPage.mods = m_allMods;
         firstPage.totalHits = m_totalHits;
@@ -869,6 +971,13 @@ void ContentDownloadPage::flushAllSourceResults()
 
 void ContentDownloadPage::onSearchFailed(const QString &error)
 {
+    // 这类内容只有 CurseForge 提供（如世界存档），失败时把来源说清楚，
+    // 免得用户以为加载出来的是别的东西
+    const QString message = m_config.mrProjectType.isEmpty()
+        ? tr("%1内容只来自 CurseForge，Modrinth 没有这个分类。\n%2")
+              .arg(m_config.displayName, error)
+        : error;
+
     if (m_currentSource == AllSources) {
         m_pendingCount--;
         if (m_pendingCount > 0)
@@ -880,14 +989,14 @@ void ContentDownloadPage::onSearchFailed(const QString &error)
         }
         m_isLoading = false;
         showLoading(false);
-        m_loadingOverlay->showError(error);
+        m_loadingOverlay->showError(message);
         updatePaginationControls();
         return;
     }
 
     m_isLoading = false;
     showLoading(false);
-    m_loadingOverlay->showError(error);
+    m_loadingOverlay->showError(message);
     updatePaginationControls();
 }
 
@@ -1228,22 +1337,9 @@ void ContentDownloadPage::rebuildCards()
  * 右下角翻译卡片：EN 原文 / 中 AI 翻译（名称 + 简介）
  * ============================================================ */
 
-namespace {
-
-bool containsHanText(const QString &text)
-{
-    for (const QChar &ch : text) {
-        if (ch.script() == QChar::Script_Han)
-            return true;
-    }
-    return false;
-}
-
-} // namespace
-
 void ContentDownloadPage::onListTranslateModeChanged(bool chinese)
 {
-    if (!m_translateSwitch)
+    if (!m_translateSwitch || !m_translator)
         return;
 
     if (chinese) {
@@ -1252,194 +1348,38 @@ void ContentDownloadPage::onListTranslateModeChanged(bool chinese)
             m_translateSwitch->setChineseMode(false);
             return;
         }
-        if (m_listTranslating)
+        if (m_translator->isBusy())
             return;
-        if (m_listTranslatedReady) {
+        if (m_translator->hasCache()) {
             applyListTranslation();
             return;
         }
-        startListTranslation();
+        m_translator->start(m_cardInfos);   // busy 态由 busyChanged 驱动卡片
         return;
     }
 
     // 切回 EN：取消进行中的请求并还原英文原文
-    if (m_listTranslating) {
-        if (m_listTranslator)
-            m_listTranslator->cancelCurrentRequest();
-        m_listTranslating = false;
-        m_translateSwitch->setBusy(false);
-    }
+    m_translator->cancel();
     m_translateSwitch->setChineseMode(false);
     restoreListTranslation();
 }
 
-void ContentDownloadPage::startListTranslation()
-{
-    if (m_cardInfos.isEmpty())
-        return;
-
-    if (!m_listTranslator) {
-        m_listTranslator = new TranslationService(this);
-        connect(m_listTranslator, &TranslationService::listTranslationFinished, this,
-                &ContentDownloadPage::onListTranslationFinished);
-        connect(m_listTranslator, &TranslationService::translationError, this,
-                [this](const QString &error) {
-            m_listTranslating = false;
-            if (m_translateSwitch) {
-                m_translateSwitch->setBusy(false);
-                m_translateSwitch->setChineseMode(false);
-            }
-            restoreListTranslation();
-            NotificationManager::showError(this, tr("翻译失败：%1").arg(error));
-        });
-    }
-
-    // 记录英文原文快照，切回 EN 时据此还原
-    m_originalCardInfos = m_cardInfos;
-    m_listTranslateItems.clear();
-    m_listTranslated.clear();
-
-    QStringList payload;
-    for (int i = 0; i < m_cardInfos.size(); ++i) {
-        const ModInfo &info = m_cardInfos.at(i);
-        ListTranslateItem item;
-        item.cardIndex = i;
-
-        // 已有中文名的资源不再让 AI 重翻名称，简介仍可翻
-        QString name = info.chineseName.isEmpty() ? info.name : QString();
-        if (!name.isEmpty() && containsHanText(name))
-            name.clear();
-        QString desc = info.description;
-        if (!desc.isEmpty() && containsHanText(desc))
-            desc.clear();
-
-        item.wantName = !name.isEmpty();
-        item.wantDesc = !desc.isEmpty();
-
-        if (item.wantName || item.wantDesc) {
-            item.marker = payload.size();
-            payload << QStringLiteral("[#%1#] %2 ||| %3").arg(item.marker).arg(name, desc);
-            m_listTranslateItems.append(item);
-        } else if (!info.chineseName.isEmpty()) {
-            // 名称本来就是中文：中文态直接顶上已知中文名
-            m_listTranslateItems.append(item);
-        }
-    }
-
-    if (payload.isEmpty()) {
-        // 没有任何需要送 AI 的内容：直接落到中文态
-        m_listTranslating = false;
-        m_listTranslatedReady = true;
-        applyListTranslation();
-        return;
-    }
-
-    m_listTranslating = true;
-    m_listTranslatedReady = false;
-    if (m_translateSwitch)
-        m_translateSwitch->setBusy(true);
-    m_listTranslator->translateList(payload.join('\n'),
-                                    SettingsManager::instance()->getTranslationConfig());
-}
-
-void ContentDownloadPage::onListTranslationFinished(const QString &text)
-{
-    m_listTranslating = false;
-    if (m_translateSwitch)
-        m_translateSwitch->setBusy(false);
-
-    if (m_listTranslateItems.isEmpty())
-        return;
-
-    // 按 [#序号#] 切分，容忍模型把多行合并或加了解释
-    QRegularExpression markerReg(
-        QStringLiteral("\\[#(\\d+)#\\]([\\s\\S]*?)(?=\\[#\\d+#\\]|$)"));
-    QMap<int, QPair<QString, QString>> parsed;
-    QRegularExpressionMatchIterator matchIt = markerReg.globalMatch(text);
-    while (matchIt.hasNext()) {
-        const QRegularExpressionMatch match = matchIt.next();
-        const int marker = match.captured(1).toInt();
-        QString body = match.captured(2).trimmed();
-        body.remove(QRegularExpression(QStringLiteral("<[^>]*>")));
-        body.remove(QRegularExpression(QStringLiteral("```[a-zA-Z]*")));
-        body.remove(QRegularExpression(QStringLiteral("```")));
-
-        // 模型偶尔会省掉 ||| 分隔符，退一步按「简介：」标记切分
-        QString name;
-        QString desc;
-        const int sep = body.indexOf(QStringLiteral("|||"));
-        if (sep >= 0) {
-            name = body.left(sep).trimmed();
-            desc = body.mid(sep + 3).trimmed();
-        } else {
-            const QRegularExpression descLabel(QStringLiteral("(?:简介|描述)\\s*[:：]"));
-            const QRegularExpressionMatch descMatch = descLabel.match(body);
-            if (descMatch.hasMatch()) {
-                name = body.left(descMatch.capturedStart()).trimmed();
-                desc = body.mid(descMatch.capturedEnd()).trimmed();
-            } else {
-                desc = body.trimmed();
-            }
-        }
-        name.remove(QRegularExpression(QStringLiteral("^名称\\s*[:：]\\s*")));
-        desc.remove(QRegularExpression(QStringLiteral("^简介\\s*[:：]\\s*")));
-        parsed.insert(marker, qMakePair(name, desc));
-    }
-
-    if (parsed.isEmpty()) {
-        // 模型没按约定格式返回：保持英文并提示
-        if (m_translateSwitch)
-            m_translateSwitch->setChineseMode(false);
-        restoreListTranslation();
-        NotificationManager::showError(this, tr("翻译结果格式异常，请稍后重试"));
-        return;
-    }
-
-    int maxMarker = -1;
-    for (const ListTranslateItem &item : m_listTranslateItems)
-        maxMarker = qMax(maxMarker, item.marker);
-    m_listTranslated.clear();
-    m_listTranslated.resize(maxMarker + 1);
-    for (auto it = parsed.cbegin(); it != parsed.cend(); ++it) {
-        if (it.key() >= 0 && it.key() < m_listTranslated.size())
-            m_listTranslated[it.key()] = it.value();
-    }
-
-    m_listTranslatedReady = true;
-    applyListTranslation();
-}
-
 void ContentDownloadPage::applyListTranslation()
 {
-    if (m_originalCardInfos.isEmpty() || m_originalCardInfos.size() != m_cardInfos.size())
+    if (!m_translator || !m_translator->hasCache())
+        return;
+    if (m_translator->originals().size() != m_cardInfos.size())
+        return;   // 批次已经变了，丢弃这次结果
+
+    const QList<ModInfo> translated = m_translator->translated();
+    if (translated.size() != m_cardInfos.size())
         return;
 
     m_applyingListTranslation = true;
-    for (const ListTranslateItem &item : m_listTranslateItems) {
-        if (item.cardIndex < 0 || item.cardIndex >= m_originalCardInfos.size())
-            continue;
-        const ModInfo &original = m_originalCardInfos.at(item.cardIndex);
-        ModInfo info = original;
-
-        const QPair<QString, QString> translated =
-            (item.marker >= 0 && item.marker < m_listTranslated.size())
-                ? m_listTranslated.at(item.marker)
-                : qMakePair(QString(), QString());
-
-        if (!original.chineseName.isEmpty()) {
-            info.name = original.chineseName;   // 已有的中文名优先于 AI 译名
-        } else if (item.wantName && !translated.first.isEmpty()) {
-            info.name = translated.first;
-        }
-        if (item.wantDesc && !translated.second.isEmpty())
-            info.description = translated.second;
-
-        info.chineseName = info.name;   // 列表式与瀑布流统一显示中文标题
-        m_cardInfos[item.cardIndex] = info;
-    }
-    m_listApplied = true;
+    m_cardInfos = translated;
     rebuildCards();
     m_applyingListTranslation = false;
+    m_translator->setApplied(true);
 
     if (m_translateSwitch) {
         m_translateSwitch->setBusy(false);
@@ -1449,49 +1389,23 @@ void ContentDownloadPage::applyListTranslation()
 
 void ContentDownloadPage::restoreListTranslation()
 {
-    if (!m_listApplied)
-        return;
-    m_listApplied = false;
-    if (m_originalCardInfos.isEmpty())
+    if (!m_translator || !m_translator->isApplied())
         return;
 
+    m_translator->setApplied(false);
     m_applyingListTranslation = true;
-    m_cardInfos = m_originalCardInfos;
+    m_cardInfos = m_translator->originals();
     rebuildCards();
     m_applyingListTranslation = false;
 }
 
-/* 卡片集合换了一批（翻页 / 重新搜索 / 追加加载）→ 翻译结果作废并回到 EN */
+/* 卡片集合换了一批（翻页 / 重新搜索 / 追加加载）→ 翻译结果作废并回到英文态 */
 void ContentDownloadPage::syncTranslateStateWithCards()
 {
-    if (!m_translateSwitch || m_applyingListTranslation)
+    if (!m_translateSwitch || !m_translator || m_applyingListTranslation)
         return;
-
-    // 只比 id：翻译只改名称与简介，不会改 id
-    bool sameBatch = (m_cardInfos.size() == m_originalCardInfos.size());
-    if (sameBatch) {
-        for (int i = 0; i < m_cardInfos.size(); ++i) {
-            if (m_cardInfos.at(i).id != m_originalCardInfos.at(i).id) {
-                sameBatch = false;
-                break;
-            }
-        }
-    }
-    if (sameBatch)
-        return;
-
-    if (m_listTranslating) {
-        if (m_listTranslator)
-            m_listTranslator->cancelCurrentRequest();
-        m_listTranslating = false;
-        m_translateSwitch->setBusy(false);
-    }
-    m_listTranslatedReady = false;
-    m_listApplied = false;
-    m_listTranslateItems.clear();
-    m_listTranslated.clear();
-    m_originalCardInfos = m_cardInfos;
-    m_translateSwitch->setChineseMode(false);
+    if (!m_translator->syncBatch(m_cardInfos))
+        m_translateSwitch->setChineseMode(false);
 }
 
 void ContentDownloadPage::loadCardIcon(QLabel *iconLabel, const QString &iconUrl)
@@ -1513,22 +1427,8 @@ void ContentDownloadPage::loadCardIcon(QLabel *iconLabel, const QString &iconUrl
         s_modIconNAM->setCache(diskCache);
     }
 
-    QUrl url(McimHelper::rewriteImageUrl(iconUrl));
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    QNetworkReply *reply = s_modIconNAM->get(request);
-    connect(reply, &QNetworkReply::finished, this, [reply, iconLabel, cacheKey]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QPixmap pixmap;
-            pixmap.loadFromData(reply->readAll());
-            if (!pixmap.isNull()) {
-                QPixmap scaled = pixmap.scaled(44, 44, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                QPixmapCache::insert(cacheKey, scaled);
-                iconLabel->setPixmap(scaled);
-            }
-        }
-        reply->deleteLater();
-    });
+    // 镜像把图片请求返回成网页时会自动改用原始地址重试，不会一直空白
+    McimHelper::loadImage(s_modIconNAM, iconLabel, iconUrl, QSize(44, 44), cacheKey);
 }
 
 bool ContentDownloadPage::eventFilter(QObject *watched, QEvent *event)

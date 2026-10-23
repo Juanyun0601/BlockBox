@@ -38,25 +38,17 @@
 #include "utils/ManifestCache.h"
 #include "utils/mod/ModScanner.h"
 #include "utils/mod/ModData.h"
+#include "utils/AiEndpointUrl.h"
 #include "utils/CommandAssistant/LitematicReader.h"
 #include "utils/skill/SkillManager.h"
 
 namespace {
 
-/// 把服务商基础端点补全为 /chat/completions 完整地址。
-/// 已带完整路径的原样返回；以 /v1 /v1beta /v2 /v3 等版本段结尾的直接拼 /chat/completions，
-/// 其余（如 https://api.deepseek.com）补 /v1/chat/completions。
+/// 把服务商基础端点补全为 /chat/completions 完整地址（实现见 utils/AiEndpointUrl.h，
+/// 翻译服务也复用同一份规则，避免把 /v1 拼成 /v1/v1）。
 QString buildChatCompletionsUrl(QString fullUrl)
 {
-    while (fullUrl.endsWith('/'))
-        fullUrl.chop(1);
-    if (fullUrl.endsWith(QLatin1String("/chat/completions"), Qt::CaseInsensitive))
-        return fullUrl;
-    static const QRegularExpression versionSuffix(
-        QStringLiteral("/v\\d+(alpha|beta)?/?$"), QRegularExpression::CaseInsensitiveOption);
-    if (versionSuffix.match(fullUrl).hasMatch())
-        return fullUrl + QStringLiteral("/chat/completions");
-    return fullUrl + QStringLiteral("/v1/chat/completions");
+    return AiEndpointUrl::buildChatCompletionsUrl(fullUrl);
 }
 
 } // namespace
@@ -2819,9 +2811,15 @@ QString AiService::executeSearchResources(const QJsonObject& args)
         cfClassId = QStringLiteral("4471");
         mrProjectType = QStringLiteral("modpack");
     }
+    else if (contentType == QStringLiteral("world"))
+    {
+        // Modrinth 没有「世界存档」分类，只能查 CurseForge
+        cfClassId = QStringLiteral("17");
+        mrProjectType.clear();
+    }
     else
     {
-        return QStringLiteral("错误：content_type 必须是 mod/resourcepack/shaderpack/datapack/modpack 之一");
+        return QStringLiteral("错误：content_type 必须是 mod/resourcepack/shaderpack/datapack/modpack/world 之一");
     }
 
     if (source.isEmpty())
@@ -2839,7 +2837,13 @@ QString AiService::executeSearchResources(const QJsonObject& args)
     QString mrError;
 
     bool queryCf = (source == QStringLiteral("curseforge") || source == QStringLiteral("auto"));
-    bool queryMr = (source == QStringLiteral("modrinth") || source == QStringLiteral("auto"));
+    bool queryMr = (source == QStringLiteral("modrinth") || source == QStringLiteral("auto"))
+                   && !mrProjectType.isEmpty();
+    if (source == QStringLiteral("modrinth") && mrProjectType.isEmpty())
+    {
+        mrFailed = true;
+        mrError = QStringLiteral("Modrinth 没有这个资源类型（例如世界存档只能从 CurseForge 获取）");
+    }
 
     if (queryCf)
     {
@@ -3260,9 +3264,13 @@ QString AiService::executeDownloadResource(const QJsonObject& args)
     {
         typeEnum = ContentType::Modpack;
     }
+    else if (contentTypeStr == QStringLiteral("world"))
+    {
+        typeEnum = ContentType::World;
+    }
     else
     {
-        return QStringLiteral("错误：content_type 必须是 mod/resourcepack/shaderpack/datapack/modpack 之一");
+        return QStringLiteral("错误：content_type 必须是 mod/resourcepack/shaderpack/datapack/modpack/world 之一");
     }
 
     // 获取资源详情

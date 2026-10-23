@@ -518,6 +518,7 @@ bool decompressGzip(const QString &path, QByteArray &out)
     }
 
     static constexpr int BUFFER_SIZE = 65536;
+    static constexpr int kMaxOutputSize = 256 * 1024 * 1024;
     char buffer[BUFFER_SIZE];
 
     do
@@ -525,8 +526,8 @@ bool decompressGzip(const QString &path, QByteArray &out)
         strm.next_out = reinterpret_cast<Bytef *>(buffer);
         strm.avail_out = BUFFER_SIZE;
         ret = inflate(&strm, Z_NO_FLUSH);
-        if (ret == Z_STREAM_ERROR || ret == Z_NEED_DICT ||
-            ret == Z_DATA_ERROR || ret == Z_MEM_ERROR)
+        // 只接受 Z_OK / Z_STREAM_END：截断数据返回 Z_BUF_ERROR，放行会死循环
+        if (ret != Z_OK && ret != Z_STREAM_END)
         {
             inflateEnd(&strm);
             qWarning() << "[LevelDatReader] inflate failed:" << ret
@@ -534,6 +535,12 @@ bool decompressGzip(const QString &path, QByteArray &out)
             return false;
         }
         out.append(buffer, BUFFER_SIZE - static_cast<int>(strm.avail_out));
+        if (out.size() > kMaxOutputSize)
+        {
+            inflateEnd(&strm);
+            qWarning() << "[LevelDatReader] 解压结果异常巨大，已放弃";
+            return false;
+        }
     } while (ret != Z_STREAM_END);
 
     inflateEnd(&strm);

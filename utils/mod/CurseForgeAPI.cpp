@@ -311,9 +311,20 @@ void CurseForgeAPI::fetchModDetail(const QString &modId)
     if (!apiKey.isEmpty())
         request.setRawHeader("X-API-KEY", apiKey.toUtf8());
 
+    m_currentDetailId = modId;
+    m_detailFallbackTried = false;
+
     abortReply(m_currentDetailReply);
     m_currentDetailReply = m_networkManager->get(request);
     connect(m_currentDetailReply, &QNetworkReply::finished, this, &CurseForgeAPI::onDetailReplyFinished);
+}
+
+bool CurseForgeAPI::switchOffMirror()
+{
+    if (!usingMirror())
+        return false;
+    m_baseUrl = QStringLiteral("https://api.curseforge.com");
+    return true;
 }
 
 void CurseForgeAPI::fetchModsByIds(const QStringList &modIds)
@@ -434,6 +445,13 @@ void CurseForgeAPI::onDetailReplyFinished()
     m_currentDetailReply = nullptr;
 
     if (reply->error() != QNetworkReply::NoError) {
+        // 镜像加速挂了（常见是 503）：退回官方接口再试一次（需要已配置 API Key，
+        // 没有 key 时官方会直接 403，就按失败处理，和以前一样）
+        if (!m_detailFallbackTried && switchOffMirror()) {
+            m_detailFallbackTried = true;
+            fetchModDetail(m_currentDetailId);
+            return;
+        }
         emit modDetailFailed(reply->errorString());
         return;
     }
@@ -452,7 +470,12 @@ void CurseForgeAPI::onDetailReplyFinished()
     info.name = obj["name"].toString();
     info.description = obj["summary"].toString();
     info.detailedDescription = obj["body"].toString();
-    info.author = obj["authors"].toArray().first().toObject()["name"].toString();
+    {
+        // authors 可能为空数组，对空数组调用 first() 会直接崩溃
+        const QJsonArray authors = obj["authors"].toArray();
+        if (!authors.isEmpty())
+            info.author = authors.first().toObject()["name"].toString();
+    }
     info.pageUrl = obj["links"].toObject()["websiteUrl"].toString();
     info.source = "curseforge";
     info.downloadCount = obj["downloadCount"].toInt();
@@ -606,7 +629,12 @@ void CurseForgeAPI::parseAddon(const QJsonObject &obj, ModInfo &info)
     info.id = QString::number(obj["id"].toInt());
     info.name = obj["name"].toString();
     info.description = obj["summary"].toString();
-    info.author = obj["authors"].toArray().first().toObject()["name"].toString();
+    {
+        // authors / latestFiles 可能为空，空数组调用 first() 会崩溃
+        const QJsonArray authors = obj["authors"].toArray();
+        if (!authors.isEmpty())
+            info.author = authors.first().toObject()["name"].toString();
+    }
     info.pageUrl = obj["links"].toObject()["websiteUrl"].toString();
     info.source = "curseforge";
     info.downloadCount = obj["downloadCount"].toInt();
@@ -625,7 +653,9 @@ void CurseForgeAPI::parseAddon(const QJsonObject &obj, ModInfo &info)
     for (const QJsonValue &v : categories)
         info.categories.append(v.toObject()["name"].toString());
 
-    QJsonObject latestFile = obj["latestFiles"].toArray().first().toObject();
+    const QJsonArray latestFilesArr = obj["latestFiles"].toArray();
+    QJsonObject latestFile = latestFilesArr.isEmpty() ? QJsonObject()
+                                                      : latestFilesArr.first().toObject();
     if (!latestFile.isEmpty()) {
         info.latestVersion = latestFile["displayName"].toString();
         info.downloadUrl = latestFile["downloadUrl"].toString();

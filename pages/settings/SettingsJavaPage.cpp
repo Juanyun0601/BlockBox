@@ -32,6 +32,7 @@
 #include "components/CustomCheckBox.h"
 #include "utils/GameLauncher.h"
 #include "utils/JavaScanWorker.h"
+#include "utils/RuntimeDependencyManager.h"
 #include "utils/SettingsManager.h"
 
 // ────────────────────────────────────────────────────────────
@@ -90,10 +91,56 @@ void SettingsPage::initJavaManagerSettings()
     addBtn->setToolTip(tr("通过浏览选择 java.exe 手动添加"));
     connect(addBtn, &QPushButton::clicked, this, &SettingsPage::onAddJavaClicked);
 
+#if defined(Q_OS_HARMONY)
+    // 鸿蒙端：桌面版 Java 安装包无法在鸿蒙上运行，直接把入口换成「一键安装运行环境」，
+    // 走运行依赖通道下载适配的运行时
+    QPushButton *downloadBtn = new QPushButton(tr("一键安装运行环境"), toolbar);
+    downloadBtn->setObjectName("downloadJavaBtn");
+    downloadBtn->setCursor(Qt::PointingHandCursor);
+    downloadBtn->setToolTip(tr("自动下载并安装适配鸿蒙的 Java 运行环境，安装后自动出现在下方列表"));
+    connect(downloadBtn, &QPushButton::clicked, this, [this, downloadBtn]() {
+        RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
+        if (deps->isChecking() || deps->isInstalling())
+            return;
+        downloadBtn->setEnabled(false);
+        downloadBtn->setText(tr("检查中…"));
+        auto *connection = new QMetaObject::Connection;
+        *connection = connect(deps, &RuntimeDependencyManager::checkFinished, deps,
+                              [this, deps, downloadBtn, connection](bool ok, const QString &message) {
+            disconnect(*connection);
+            delete connection;
+            downloadBtn->setEnabled(true);
+            downloadBtn->setText(tr("一键安装运行环境"));
+            if (!ok) {
+                AppMessageBox::warning(window(), tr("运行环境"),
+                                       tr("获取运行环境清单失败：\n%1").arg(message));
+                return;
+            }
+            if (deps->pendingCount() <= 0) {
+                AppMessageBox::information(window(), tr("运行环境"),
+                                           tr("运行环境已是最新，无需再次安装。"));
+                return;
+            }
+            deps->installAll();
+            AppMessageBox::information(
+                window(), tr("运行环境"),
+                tr("已开始下载安装，完成后会自动出现在「已安装的 Java」列表中。"));
+        });
+        deps->checkForUpdates(window(), true);
+    });
+
+    // 安装结束后刷新列表，让刚装好的运行时立即显示
+    connect(RuntimeDependencyManager::instance(), &RuntimeDependencyManager::allInstallsFinished,
+            this, [this](bool) {
+        refreshJavaList();
+        refreshGlobalJavaCombo();
+    });
+#else
     QPushButton *downloadBtn = new QPushButton(tr("下载Java"), toolbar);
     downloadBtn->setObjectName("downloadJavaBtn");
     downloadBtn->setCursor(Qt::PointingHandCursor);
     connect(downloadBtn, &QPushButton::clicked, this, &SettingsPage::downloadJavaRequested);
+#endif
 
     toolbarLayout->addWidget(m_javaDetectBtn);
     toolbarLayout->addWidget(addBtn);
@@ -188,7 +235,8 @@ QWidget* SettingsPage::createJavaItemWidget(const QString& path, const QString& 
 
     // 标题：JDK/JRE + 主版本号
     int major = javaMajorVersion(version);
-    QString typeStr = QFileInfo(QFileInfo(path).path() + "/javac.exe").exists()
+    const QString binDir = QFileInfo(path).absolutePath();
+    QString typeStr = (QFileInfo::exists(binDir + "/javac.exe") || QFileInfo::exists(binDir + "/javac"))
                       ? QStringLiteral("JDK") : QStringLiteral("JRE");
     QString titleStr = (major > 0)
                        ? QStringLiteral("%1 %2").arg(typeStr).arg(major)

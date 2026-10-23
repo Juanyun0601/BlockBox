@@ -16,6 +16,7 @@
 
 #include "components/OutlinedLabel.h"
 #include "utils/AppVersion.h"
+#include "utils/RuntimeDependencyManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/UpdateChecker.h"
 
@@ -80,6 +81,96 @@ void SettingsPage::initAboutSettings()
         checkUpdateBtn->setText(tr("检查更新"));
     });
     updateRow->addWidget(checkUpdateBtn);
+
+    // ── 运行依赖卡片（安卓 / 鸿蒙） ──
+    if (RuntimeDependencyManager::isSupportedPlatform()) {
+        RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
+        QVBoxLayout *runtimeCard = createSettingsCard(layout, tr("运行依赖"));
+
+        QHBoxLayout *checkDepsRow = appendSettingRow(runtimeCard,
+            tr("检查依赖更新"),
+            tr("获取运行 Minecraft 所需依赖的最新版本，检查启动器更新时也会自动检查。"));
+        QPushButton *checkDepsBtn = new QPushButton(tr("检查更新"), m_aboutSettings);
+        checkDepsBtn->setObjectName("checkUpdateBtn");
+        checkDepsBtn->setCursor(Qt::PointingHandCursor);
+        checkDepsBtn->setFixedWidth(96);
+        checkDepsRow->addWidget(checkDepsBtn);
+
+        QHBoxLayout *installRow = appendSettingRow(runtimeCard,
+            tr("一键安装"),
+            tr("自动下载并安装缺少的运行依赖，安装进度可在任务栏查看。"));
+        QPushButton *installAllBtn = new QPushButton(tr("一键安装"), m_aboutSettings);
+        installAllBtn->setObjectName("primaryButton");
+        installAllBtn->setCursor(Qt::PointingHandCursor);
+        installAllBtn->setFixedWidth(96);
+        installAllBtn->setEnabled(false);
+        installRow->addWidget(installAllBtn);
+
+        QHBoxLayout *statusRow = appendSettingRow(runtimeCard, QString(), QString(), QString(), true);
+        QLabel *statusLabel = new QLabel(tr("尚未检查，点击上方按钮获取最新版本。"), m_aboutSettings);
+        statusLabel->setObjectName("settingValueLabel");
+        statusLabel->setWordWrap(true);
+        statusRow->addWidget(statusLabel);
+
+        auto refreshRuntimeStatus = [statusLabel, installAllBtn]() {
+            RuntimeDependencyManager *manager = RuntimeDependencyManager::instance();
+            const QList<RuntimeDependency> items = manager->dependencies();
+            if (items.isEmpty()) {
+                statusLabel->setText(tr("尚未检查，点击上方按钮获取最新版本。"));
+                installAllBtn->setEnabled(false);
+                return;
+            }
+            QStringList lines;
+            int pendingCount = 0;
+            for (const RuntimeDependency &dependency : items) {
+                QString state;
+                if (!dependency.installed)
+                    state = tr("未安装");
+                else if (dependency.needsUpdate())
+                    state = tr("已安装 %1，可更新").arg(dependency.installedVersion);
+                else if (dependency.installedVersion.isEmpty())
+                    state = tr("已安装");
+                else
+                    state = tr("已安装 %1").arg(dependency.installedVersion);
+                if (dependency.isPending())
+                    ++pendingCount;
+                lines << QStringLiteral("%1 · %2 · %3")
+                             .arg(dependency.name, dependency.version, state);
+            }
+            statusLabel->setText(lines.join(QLatin1Char('\n')));
+            installAllBtn->setEnabled(pendingCount > 0 && !manager->isInstalling());
+        };
+
+        connect(checkDepsBtn, &QPushButton::clicked, this, [checkDepsBtn]() {
+            checkDepsBtn->setEnabled(false);
+            checkDepsBtn->setText(tr("检查中…"));
+            RuntimeDependencyManager::instance()->checkForUpdates(checkDepsBtn->window(), false);
+        });
+        connect(deps, &RuntimeDependencyManager::checkFinished, this,
+                [checkDepsBtn](bool, const QString &) {
+                    checkDepsBtn->setEnabled(true);
+                    checkDepsBtn->setText(tr("检查更新"));
+                });
+        connect(deps, &RuntimeDependencyManager::dependenciesChanged, this, refreshRuntimeStatus);
+        connect(installAllBtn, &QPushButton::clicked, this, []() {
+            RuntimeDependencyManager::instance()->installAll();
+        });
+        connect(deps, &RuntimeDependencyManager::installProgress, this,
+                [statusLabel, installAllBtn](const QString &id, int percent, const QString &stage) {
+                    installAllBtn->setEnabled(false);
+                    const RuntimeDependency dependency =
+                        RuntimeDependencyManager::instance()->dependencyById(id);
+                    const QString name = dependency.name.isEmpty() ? id : dependency.name;
+                    statusLabel->setText(tr("正在安装 %1：%2%（%3）")
+                                             .arg(name, QString::number(percent), stage));
+                });
+        connect(deps, &RuntimeDependencyManager::installFinished, this,
+                [refreshRuntimeStatus](const QString &, bool, const QString &) {
+                    refreshRuntimeStatus();
+                });
+
+        refreshRuntimeStatus();
+    }
 
     // ── 链接卡片 ──
     QVBoxLayout *linkCard = createSettingsCard(layout, tr("相关链接"));

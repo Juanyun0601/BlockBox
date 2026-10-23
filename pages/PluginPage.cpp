@@ -14,6 +14,7 @@
 #include <QEvent>
 #include <QFile>
 #include "components/AppFileDialog.h"
+#include "../utils/Safety.h"
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -1756,14 +1757,18 @@ void PluginPage::runCommand(const PluginInfo &info, const PluginCommand &cmd)
         // 把包内脚本解压到临时目录后打开
         if (cmd.target.isEmpty())
             return;
-        const QString tmpDir = QDir::tempPath() + QStringLiteral("/BlockBox/")
-                             + info.id;
+        const QString tmpDir = QDir::cleanPath(QDir::tempPath() + QStringLiteral("/BlockBox/")
+                             + Safety::safeFileName(info.id, QStringLiteral("plugin")));
         QString error;
         if (!PluginManager::instance()->extractPlugin(info.id, tmpDir, &error)) {
             AppMessageBox::warning(this, tr("打开脚本失败"), error);
             return;
         }
         const QString scriptPath = QDir::cleanPath(tmpDir + QStringLiteral("/") + cmd.target);
+        if (!Safety::isPathInside(tmpDir, scriptPath)) {
+            AppMessageBox::warning(this, tr("打开脚本失败"), tr("脚本路径非法"));
+            return;
+        }
         if (!QFileInfo::exists(scriptPath)) {
             AppMessageBox::warning(this, tr("打开脚本失败"),
                                    tr("包内未找到脚本：%1").arg(cmd.target));
@@ -1783,8 +1788,8 @@ void PluginPage::runCommand(const PluginInfo &info, const PluginCommand &cmd)
                 AppMessageBox::warning(this, tr("插件命令"), tr("命令目标为空"));
                 return;
             }
-            const QString tmpDir = QDir::tempPath() + QStringLiteral("/BlockBox/")
-                                 + info.id;
+            const QString tmpDir = QDir::cleanPath(QDir::tempPath() + QStringLiteral("/BlockBox/")
+                                 + Safety::safeFileName(info.id, QStringLiteral("plugin")));
             QString error;
             if (!PluginManager::instance()->extractPlugin(info.id, tmpDir, &error)) {
                 AppMessageBox::warning(this, tr("插件命令"),
@@ -1792,6 +1797,10 @@ void PluginPage::runCommand(const PluginInfo &info, const PluginCommand &cmd)
                 return;
             }
             const QString scriptPath = QDir::cleanPath(tmpDir + QStringLiteral("/") + rel);
+            if (!Safety::isPathInside(tmpDir, scriptPath)) {
+                AppMessageBox::warning(this, tr("插件命令"), tr("脚本路径非法"));
+                return;
+            }
             if (!QFileInfo::exists(scriptPath)) {
                 AppMessageBox::warning(this, tr("插件命令"),
                                        tr("包内未找到脚本：%1").arg(rel));
@@ -1817,8 +1826,15 @@ void PluginPage::runCommand(const PluginInfo &info, const PluginCommand &cmd)
             return;
         }
 
-        // 直接执行系统命令：信任已在添加插件时确认，此处直接执行
+        // 直接执行系统命令：命令内容来自插件清单，执行前必须让用户看清楚
         if (!cmd.target.isEmpty()) {
+            const auto answer = AppMessageBox::question(
+                this, tr("插件要执行系统命令"),
+                tr("插件「%1」请求执行以下命令：\n\n%2\n\n仅在你确认该命令安全时继续。")
+                    .arg(info.name, cmd.target),
+                AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
+            if (answer != AppMessageBox::Yes)
+                return;
             QProcess::startDetached(cmd.target);
             return;
         }

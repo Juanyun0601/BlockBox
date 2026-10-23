@@ -51,6 +51,8 @@ public slots:
 signals:
     void backToListRequested();
     void downloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile);
+    /** 点击左侧「一键安装」：安装最新正式版并自动补齐其必备前置 */
+    void installLatestRequested(const ModInfo &modInfo);
     void contentClicked(const ModInfo &info);
     void addToFavoritesRequested(const ModInfo &modInfo, ContentType type, const QString &source);
     void backToFavoriteFolderRequested(const QString &folderId);
@@ -71,6 +73,7 @@ private:
     void buildHeader();
     void buildLeftSidebar();
     void buildRightMain();
+    void buildInstallBlock(QVBoxLayout *parentLayout);
     void buildFilterBlock(QVBoxLayout *parentLayout);
     void buildDependenciesBlock(QVBoxLayout *parentLayout);
     void buildDownloadListBlock(QVBoxLayout *parentLayout);
@@ -167,6 +170,7 @@ private:
 
     // Left sidebar
     QWidget *m_leftPanel;
+    QPushButton *m_installBtn = nullptr;   // 「一键安装」按钮（在筛选选项之上）
     QComboBox *m_versionCombo;
     QComboBox *m_loaderCombo;
     QComboBox *m_versionTypeCombo;

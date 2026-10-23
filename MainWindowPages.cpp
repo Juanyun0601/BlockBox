@@ -548,12 +548,21 @@ void MainWindow::initLoaderDetailPage()
     connect(m_loaderDetailPage, &LoaderDetailPage::backToInstallPageRequested, this, &MainWindow::onBackToInstallPage);
     connect(m_loaderDetailPage, &LoaderDetailPage::viewAllVersionsRequested, this, &MainWindow::onViewAllVersions);
     connect(m_loaderDetailPage, &LoaderDetailPage::loaderCardClicked, this, &MainWindow::onViewAllVersions);
-    connect(m_loaderDetailPage, &LoaderDetailPage::installRequested, this, [this](const QString &instanceName, const QString &, const QMap<QString, SelectedLoader> &) {
-        QString instancePath = SettingsManager::instance()->getDefaultInstancePath();
-        if (!instancePath.isEmpty()) {
-            instancePath += "/" + instanceName;
-            updateCurrentInstance(instancePath);
+    connect(m_loaderDetailPage, &LoaderDetailPage::installRequested, this, [this](const QString &instancePath, const QString &instanceName, const QString &, const QMap<QString, SelectedLoader> &) {
+        // 使用实际安装出来的实例目录（<游戏根>/versions/<实例名>），
+        // 而不是「默认实例文件夹 + 实例名」这种拼错的路径
+        QString path = QDir::fromNativeSeparators(instancePath.trimmed());
+        if (path.isEmpty()) {
+            QString defaultRoot = SettingsManager::instance()->getDefaultInstancePath();
+            if (defaultRoot.isEmpty())
+                return;
+            path = QDir::fromNativeSeparators(defaultRoot) + "/versions/" + instanceName;
         }
+        if (m_instanceSelectPage) {
+            m_instanceSelectPage->loadInstances();
+            m_instanceSelectPage->updateInstanceList();
+        }
+        updateCurrentInstance(path);
     });
     connect(m_loaderDetailPage, &LoaderDetailPage::instanceModified, this, &MainWindow::onInstanceModified);
     m_pageInitialized[PageIndex::LoaderDetailPage] = true;
@@ -668,6 +677,14 @@ void MainWindow::initModDetailPage()
     // 问问AI：跳转 AI 助手并引用当前网络模组
     connect(m_modDetailPage, &ModDetailPage::askAiRequested,
             this, &MainWindow::openAiChatWithReference);
+    // 点击「前置模组」里的条目：直接打开该前置资源自己的详情页（沿用当前实例筛选）
+    connect(m_modDetailPage, &ModDetailPage::contentClicked,
+            this, [this](const ModInfo &depInfo) {
+        if (!m_modDetailPage || depInfo.id.isEmpty())
+            return;
+        showModDetailPage(depInfo, m_modDetailPage->instanceGameVersion(),
+                          m_modDetailPage->instanceLoaderType());
+    });
     m_pageInitialized[PageIndex::ModDetailPage] = true;
     PerformanceMonitor::instance()->endMeasurement("Mod Detail Page Initialization");
 }

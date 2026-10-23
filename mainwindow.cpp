@@ -17,6 +17,7 @@
 #include <QCursor>
 #include "components/AppMessageBox.h"
 #include "components/AppFileDialog.h"
+#include "utils/Safety.h"
 #include <QMouseEvent>
 #include <QPropertyAnimation>
 #include <QScrollArea>
@@ -2385,7 +2386,10 @@ void MainWindow::showContentDownloadPage(ContentType type)
 
     connect(m_contentDownloadPage, &ContentDownloadPage::cardDownloadRequested, this, [this, type](const ModInfo &info)
     {
-        onCardDownloadRequested(info, type, 0);
+        // 卡片下载图标与详情页「一键安装」同一套流程：按列表选中的实例版本/加载器挑正式版
+        const QString gameVersion = m_contentDownloadPage ? m_contentDownloadPage->selectedGameVersion() : QString();
+        const QString loader = m_contentDownloadPage ? m_contentDownloadPage->selectedLoader() : QString();
+        onCardDownloadRequested(info, type, 0, gameVersion, loader);
     });
 }
 
@@ -2421,6 +2425,14 @@ void MainWindow::showContentDetailPage(const ModInfo &info, ContentType type,
     connect(m_contentDetailPage, &ContentDetailPage::downloadRequested, this, [this, type](const ModInfo &modInfo, const ModVersionFile &versionFile)
     {
         onContentDownloadRequested(modInfo, versionFile, type);
+    });
+
+    // 左侧「一键安装」：安装与当前实例兼容的最新正式版，并自动补齐必备前置
+    connect(m_contentDetailPage, &ContentDetailPage::installLatestRequested, this, [this, type](const ModInfo &modInfo)
+    {
+        const QString gameVersion = m_contentDetailPage ? m_contentDetailPage->instanceGameVersion() : QString();
+        const QString loader = m_contentDetailPage ? m_contentDetailPage->instanceLoaderType() : QString();
+        onCardDownloadRequested(modInfo, type, 0, gameVersion, loader);
     });
 
     connect(m_contentDetailPage, &ContentDetailPage::backToListRequested, this, [this, type]()
@@ -2717,8 +2729,17 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
         }
     }
 
+    // 文件名来自 Modrinth/CurseForge 返回的上传者可控字段，必须清洗成单层文件名，
+    // 否则形如 "../../Startup/x.jar" 的内容会被写到实例目录之外
+    fileName = Safety::safeFileName(fileName, QStringLiteral("download.jar"));
+
     QString destDir = instancePath + "/" + config.folderName;
-    QString destPath = destDir + "/" + fileName;
+    QString destPath = QDir::cleanPath(destDir + "/" + fileName);
+    if (!Safety::isPathInside(destDir, destPath))
+    {
+        NotificationManager::showError(this, tr("文件名非法，已取消下载"));
+        return;
+    }
 
     QDir().mkpath(destDir);
 
@@ -2797,14 +2818,108 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
                 NotificationManager::showError(this, tr("%1 \"%2\" 下载失败").arg(config.displayName, modInfo.name));
             }
             engine->deleteLater();
-        });
+        }, versionFile.sha1);
 }
 
-void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType contentType, int depth)
+namespace {
+
+/** 是否正式版（releaseType 为空的历史数据按正式版处理） */
+bool isReleaseFile(const ModVersionFile &vf)
 {
-    // 根节点：重置已访问集合，开启一次全新的"一键下载"流程
+    return vf.releaseType.isEmpty()
+        || vf.releaseType.compare(QStringLiteral("release"), Qt::CaseInsensitive) == 0;
+}
+
+/** 从实例版本串中取出纯游戏版本号（如 "1.21.1-fabric0.16.5" → "1.21.1"） */
+QString normalizeGameVersion(const QString &raw)
+{
+    static const QRegularExpression versionRe(QStringLiteral("\\d+\\.\\d+(?:\\.\\d+)?"));
+    const QRegularExpressionMatch match = versionRe.match(raw);
+    return match.hasMatch() ? match.captured(0) : raw;
+}
+
+/** 目标游戏版本是否被该版本文件支持（文件未列出视为不限制） */
+bool matchesGameVersion(const ModVersionFile &vf, const QString &gameVersion)
+{
+    if (gameVersion.isEmpty() || vf.gameVersions.isEmpty())
+        return true;
+    const QString target = normalizeGameVersion(gameVersion);
+    for (const QString &v : vf.gameVersions) {
+        if (v.compare(target, Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
+/** 目标加载器是否被该版本文件支持（文件未列出视为不限制，如资源包/光影） */
+bool matchesLoader(const ModVersionFile &vf, const QString &loader)
+{
+    if (loader.isEmpty() || vf.loaders.isEmpty())
+        return true;
+    for (const QString &l : vf.loaders) {
+        if (l.compare(loader, Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
+/**
+ * @brief 挑选"最新正式版"：先求与目标实例兼容，再逐级放宽
+ * @param files       按发布时间倒序的版本列表
+ * @param gameVersion 目标游戏版本（可空）
+ * @param loader      目标加载器（可空）
+ * @param fallbackNonRelease 输出：是否因没有任何正式版而退回测试版本
+ */
+ModVersionFile pickLatestRelease(const QList<ModVersionFile> &files,
+                                 const QString &gameVersion,
+                                 const QString &loader,
+                                 bool *fallbackNonRelease)
+{
+    if (fallbackNonRelease)
+        *fallbackNonRelease = false;
+    if (files.isEmpty())
+        return ModVersionFile();
+
+    // 1) 正式版，且游戏版本与加载器都匹配
+    for (const ModVersionFile &vf : files) {
+        if (isReleaseFile(vf) && matchesGameVersion(vf, gameVersion) && matchesLoader(vf, loader))
+            return vf;
+    }
+    // 2) 正式版，至少游戏版本匹配（加载器标记可能缺失，避免选不出来）
+    if (!gameVersion.isEmpty()) {
+        for (const ModVersionFile &vf : files) {
+            if (isReleaseFile(vf) && matchesGameVersion(vf, gameVersion))
+                return vf;
+        }
+    }
+    // 3) 任意正式版
+    for (const ModVersionFile &vf : files) {
+        if (isReleaseFile(vf))
+            return vf;
+    }
+    // 4) 只有测试版：退回最新版本，由调用方提示
+    if (fallbackNonRelease)
+        *fallbackNonRelease = true;
+    return files.first();
+}
+
+} // namespace
+
+void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType contentType, int depth,
+                                         const QString &gameVersion, const QString &loader)
+{
+    // 根节点：重置已访问集合，开启一次全新的"一键安装"流程
+    QString targetGameVersion = gameVersion;
+    QString targetLoader = loader;
     if (depth == 0)
+    {
         m_cardDownloadVisited.clear();
+        // 调用方未指定目标时，按当前实例的游戏版本/加载器挑选兼容版本
+        if (targetGameVersion.isEmpty())
+            targetGameVersion = m_currentInstanceVersion;
+        if (targetLoader.isEmpty())
+            targetLoader = m_currentInstanceLoader;
+    }
 
     // 防止循环依赖导致无限递归
     QString visitKey = modInfo.source + ":" + modInfo.id;
@@ -2842,14 +2957,14 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
                 : QStringLiteral("https://api.modrinth.com"));
 
             connect(api, &ModrinthAPI::modDetailReceived, this,
-                [this, api, contentType, depth, modInfo](const ModInfo &detail)
+                [this, api, contentType, depth, modInfo, targetGameVersion, targetLoader](const ModInfo &detail)
             {
                 ModInfo merged = detail;
                 if (merged.name.isEmpty())
                     merged.name = modInfo.name;
                 api->deleteLater();
                 // 复用同深度（详情拉取属于"补全当前节点信息"）
-                onCardDownloadRequested(merged, contentType, depth);
+                onCardDownloadRequested(merged, contentType, depth, targetGameVersion, targetLoader);
             });
             connect(api, &ModrinthAPI::modDetailFailed, this,
                 [this, api, modInfo](const QString &err)
@@ -2873,13 +2988,13 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
                 : QStringLiteral("https://api.curseforge.com"));
 
             connect(api, &CurseForgeAPI::modDetailReceived, this,
-                [this, api, contentType, depth, modInfo](const ModInfo &detail)
+                [this, api, contentType, depth, modInfo, targetGameVersion, targetLoader](const ModInfo &detail)
             {
                 ModInfo merged = detail;
                 if (merged.name.isEmpty())
                     merged.name = modInfo.name;
                 api->deleteLater();
-                onCardDownloadRequested(merged, contentType, depth);
+                onCardDownloadRequested(merged, contentType, depth, targetGameVersion, targetLoader);
             });
             connect(api, &CurseForgeAPI::modDetailFailed, this,
                 [this, api, modInfo](const QString &err)
@@ -2898,35 +3013,50 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
         return;
     }
 
-    // 已具备 versionFiles：取首个（按发布时间倒序）即最新版本
-    ModVersionFile latest = modInfo.versionFiles.first();
+    // 已具备 versionFiles：挑选最新正式版（优先与目标实例的游戏版本/加载器兼容）
+    bool fallbackNonRelease = false;
+    ModVersionFile latest = pickLatestRelease(modInfo.versionFiles, targetGameVersion, targetLoader,
+                                             &fallbackNonRelease);
 
     // 校验下载链接
     if (latest.downloadUrl.isEmpty())
     {
         NotificationManager::showError(this,
-            tr("%1 最新版本没有可用的下载链接").arg(modInfo.name));
+            tr("%1 %2 没有可用的下载链接").arg(modInfo.name, latest.version));
         return;
     }
+
+    // 整合包/存档自身已包含全部内容，不存在"必备前置"概念，
+    // 否则会把前置文件塞进 modpacks/、saves/ 这类目录
+    const bool supportsDependencies =
+        (contentType != ContentType::Modpack && contentType != ContentType::World);
 
     if (depth == 0)
     {
         int depCount = 0;
-        for (const ModDependency &d : latest.dependencies)
-            if (d.isRequired) ++depCount;
+        if (supportsDependencies) {
+            for (const ModDependency &d : latest.dependencies)
+                if (d.isRequired) ++depCount;
+        }
         NotificationManager::showInfo(this,
-            tr("开始下载 %1（含 %2 个必备前置）").arg(modInfo.name).arg(depCount));
+            tr("开始安装 %1 %2（含 %3 个必备前置）").arg(modInfo.name, latest.version).arg(depCount));
+        if (fallbackNonRelease)
+            NotificationManager::showInfo(this,
+                tr("%1 暂无正式版，已按最新测试版 %2 安装").arg(modInfo.name, latest.version));
     }
     else
     {
         NotificationManager::showInfo(this,
-            tr("下载前置：%1").arg(modInfo.name));
+            tr("安装前置：%1 %2").arg(modInfo.name, latest.version));
     }
 
     // 触发主资源下载（复用现有完整流程：任务栏、进度、通知等）
     onContentDownloadRequested(modInfo, latest, contentType);
 
-    // 递归下载必备前置
+    if (!supportsDependencies)
+        return;
+
+    // 递归安装该正式版要求的必备前置（同样按目标实例版本/加载器挑选正式版）
     for (const ModDependency &dep : latest.dependencies)
     {
         if (!dep.isRequired)
@@ -2938,7 +3068,7 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
         depInfo.id = dep.name;
         depInfo.source = modInfo.source;
         depInfo.name = tr("前置: %1").arg(dep.name);
-        onCardDownloadRequested(depInfo, contentType, depth + 1);
+        onCardDownloadRequested(depInfo, contentType, depth + 1, targetGameVersion, targetLoader);
     }
 }
 

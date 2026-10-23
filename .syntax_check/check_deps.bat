@@ -2,11 +2,16 @@
 set PATH=D:\APP\Qt\Tools\mingw1310_64\bin;%PATH%
 cd /d D:\BlockBox\C-BlockBox
 call :chk pages\ContentDetailPage.cpp
+call :chk pages\ModDetailPage.cpp
+call :chk MainWindowPages.cpp
 call :chk utils\mod\ModrinthAPI.cpp
 call :chk utils\mod\CurseForgeAPI.cpp
 echo ===== moc ContentDetailPage.h =====
 D:\APP\Qt\6.11.1\mingw_64\bin\moc.exe pages\ContentDetailPage.h -o .syntax_check\moc_ContentDetailPage.cpp
 echo MOC_EXIT=%ERRORLEVEL%
+echo ===== moc ModDetailPage.h =====
+D:\APP\Qt\6.11.1\mingw_64\bin\moc.exe pages\ModDetailPage.h -o .syntax_check\moc_ModDetailPage.cpp
+echo MOC2_EXIT=%ERRORLEVEL%
 echo DONE
 exit /b 0
 :chk

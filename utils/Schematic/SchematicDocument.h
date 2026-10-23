@@ -135,6 +135,24 @@ public:
     SchematicBlockState blockAt(int i) const;
 
     /**
+     * @brief 读取体积序索引 i 处的调色板下标（渲染器专用快路径，避免逐格构造方块状态）
+     */
+    int paletteIndexAt(int i) const
+    {
+        return (i >= 0 && i < m_indices.size()) ? m_indices.at(i) : 0;
+    }
+
+    /** 调色板条目数（含空气） */
+    int paletteSize() const { return m_palette.size(); }
+
+    /** 按下标取调色板条目（越界返回空气；仅用于一次性建立渲染缓存） */
+    const SchematicBlockState &paletteEntry(int p) const
+    {
+        static const SchematicBlockState air{QStringLiteral("minecraft:air"), {}};
+        return (p >= 0 && p < m_palette.size()) ? m_palette.at(p) : air;
+    }
+
+    /**
      * @brief 放置/替换 (x,y,z) 处方块
      * @param state 空 name（或 air）表示破坏该格
      * @param error 输出失败原因
@@ -192,6 +210,34 @@ public:
      * @return true 成功
      */
     bool saveCopy(const QString &outputPath, QString *error = nullptr);
+
+    // ------------------------------------------------------------------ 撤销支持
+    /**
+     * @brief 体积序索引表的只读访问（用于撤销快照）
+     */
+    const QList<int> &indices() const { return m_indices; }
+
+    /**
+     * @brief 调色板存储的只读访问（快照搭配使用）
+     */
+    const QList<SchematicBlockState> &paletteStorage() const { return m_palette; }
+
+    /**
+     * @brief 直接把某格的调色板索引写回（撤销快路径，不追加新状态）
+     * @param cell 体积序索引
+     * @return true 成功（越界或无文档返回 false）
+     */
+    bool setPaletteIndexAt(int cell, int paletteIndex);
+
+    /**
+     * @brief 用快照整表覆盖当前索引（批量撤销；长度必须等于 volume()）
+     */
+    bool restoreIndices(const QList<int> &indices);
+
+    /**
+     * @brief 确保某个方块状态在调色板中存在，返回其下标
+     */
+    int ensurePaletteEntry(const SchematicBlockState &state) { return paletteIndexOf(state); }
 
 private:
     // 调色板索引（0 = air）

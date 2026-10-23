@@ -169,7 +169,7 @@ QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations(
         }
     }
     QList<QString> commonPaths;
-#ifdef Q_OS_ANDROID
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
     commonPaths << "/system/bin";
     commonPaths << "/data/data/com.termux/files/usr/bin";
     commonPaths << QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/BlockBox/java";
@@ -187,7 +187,7 @@ QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations(
             QFileInfoList subdirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
             for (const QFileInfo& subdir : subdirs)
             {
-#ifdef Q_OS_ANDROID
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
                 QString javaExePath = subdir.absoluteFilePath() + "/bin/java";
 #else
                 QDir binDir(subdir.absolutePath() + "/bin");
@@ -243,8 +243,8 @@ QList<GameLauncher::JavaInfo> GameLauncher::findJavaOnSystem()
     QList<JavaInfo> javaList;
     QSet<QString> seenPaths;
 
-#ifdef Q_OS_ANDROID
-    // Android: scan specific directories
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
+    // 移动端：扫描固定目录（含一键安装的运行依赖目录）
     QStringList androidPaths;
     androidPaths << "/system/bin";
     androidPaths << "/data/data/com.termux/files/usr/bin";
@@ -315,7 +315,7 @@ void GameLauncher::searchJavaInDirectory(const QString& dirPath, QList<JavaInfo>
         if (entry.isFile())
         {
             QString fileName = entry.fileName().toLower();
-#ifdef Q_OS_ANDROID
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
             if (fileName == "java")
 #else
             if (fileName == "java.exe" || fileName == "javaw.exe")
@@ -336,8 +336,8 @@ void GameLauncher::searchJavaInDirectory(const QString& dirPath, QList<JavaInfo>
         else if (entry.isDir())
         {
             QString dirName = entry.fileName().toLower();
-#ifdef Q_OS_ANDROID
-            // Android: skip common non-Java directories
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
+            // 移动端：跳过明显不是 Java 的系统目录
             if (dirName == "proc" || dirName == "sys" || dirName == "dev")
             {
                 continue;

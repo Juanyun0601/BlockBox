@@ -14,6 +14,7 @@
 #include "utils/ThemeManager.h"
 #include "utils/mod/CurseForgeAPI.h"
 #include "utils/mod/ModData.h"
+#include "utils/mod/SearchQueryResolver.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -24,6 +25,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QJsonObject>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
@@ -107,6 +109,13 @@ void BedrockContentPage::initUI()
     connect(searchBtn, &QPushButton::clicked, this, &BedrockContentPage::onSearchTriggered);
 
     cardLayout->addLayout(searchLayout);
+
+    // 中文搜索提示：说明当前关键词被翻译成了哪个英文名
+    m_searchHint = new QLabel(filterCard);
+    m_searchHint->setObjectName("searchHintLabel");
+    m_searchHint->setWordWrap(true);
+    m_searchHint->hide();
+    cardLayout->addWidget(m_searchHint);
 
     // ── 筛选栏 ──
     FlowLayout *filterLayout = new FlowLayout(nullptr, 0, 10, 8);
@@ -242,6 +251,7 @@ void BedrockContentPage::initAPI()
     const QString apiKey = SettingsManager::instance()->property("curseforge_api_key").toString();
     if (!apiKey.isEmpty())
         m_curseforgeAPI->setApiKey(apiKey);
+    m_queryResolver = new SearchQueryResolver(this);
     applyMCIMSetting();
 }
 
@@ -266,6 +276,8 @@ void BedrockContentPage::setupConnections()
             this, &BedrockContentPage::onSearchCompleted);
     connect(m_curseforgeAPI, &CurseForgeAPI::searchFailed,
             this, &BedrockContentPage::onSearchFailed);
+    connect(m_queryResolver, &SearchQueryResolver::resolved,
+            this, &BedrockContentPage::onQueryResolved);
 }
 
 void BedrockContentPage::setCategory(int classId)
@@ -365,8 +377,47 @@ void BedrockContentPage::performSearch(bool append)
     m_isLoading = true;
     m_paginationBar->hide();
 
+    if (m_searchHint)
+        m_searchHint->hide();
+
+    // 中文关键词先解析成下载源能识别的英文名，解析完成后再发请求
+    const quint64 token = ++m_queryToken;
+    m_queryResolver->resolve(token, m_currentQuery, QStringLiteral("bedrock"));
+}
+
+void BedrockContentPage::onQueryResolved(quint64 requestId, const QString &original,
+                                         const QString &keyword, const QString &matchedName)
+{
+    if (requestId != m_queryToken)
+        return;
+
+    if (m_searchHint) {
+        if (original.isEmpty()) {
+            m_searchHint->hide();
+        } else if (keyword.isEmpty()) {
+            m_searchHint->setText(tr("「%1」是分类词，已为你浏览全部内容").arg(original));
+            m_searchHint->show();
+        } else if (keyword.compare(original, Qt::CaseInsensitive) != 0) {
+            m_searchHint->setText(tr("已按中文名「%1」搜索：%2")
+                                      .arg(matchedName.isEmpty() ? original : matchedName, keyword));
+            m_searchHint->show();
+        } else if (SearchQueryResolver::containsChinese(original)) {
+            m_searchHint->setText(tr("没找到「%1」对应的英文名，已按原关键词搜索").arg(original));
+            m_searchHint->show();
+        } else {
+            m_searchHint->hide();
+        }
+    }
+
+    issueSearchRequests(keyword);
+}
+
+void BedrockContentPage::issueSearchRequests(const QString &keyword)
+{
+    m_effectiveQuery = keyword;
+
     m_curseforgeAPI->setClassId(selectedClassId());
-    m_curseforgeAPI->searchMods(m_currentQuery, QString(), QString(),
+    m_curseforgeAPI->searchMods(keyword, QString(), QString(),
                                 m_currentPage, 20, selectedSortField());
 }
 
@@ -780,22 +831,8 @@ void BedrockContentPage::loadCardIcon(QLabel *iconLabel, const QString &iconUrl)
         s_bedrockIconNAM->setCache(diskCache);
     }
 
-    QUrl url(McimHelper::rewriteImageUrl(iconUrl));
-    QNetworkRequest request(url);
-    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    QNetworkReply *reply = s_bedrockIconNAM->get(request);
-    connect(reply, &QNetworkReply::finished, this, [reply, iconLabel, cacheKey]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            QPixmap pixmap;
-            pixmap.loadFromData(reply->readAll());
-            if (!pixmap.isNull()) {
-                QPixmap scaled = pixmap.scaled(44, 44, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                QPixmapCache::insert(cacheKey, scaled);
-                iconLabel->setPixmap(scaled);
-            }
-        }
-        reply->deleteLater();
-    });
+    // 镜像把图片请求返回成网页时会自动改用原始地址重试，不会一直空白
+    McimHelper::loadImage(s_bedrockIconNAM, iconLabel, iconUrl, QSize(44, 44), cacheKey);
 }
 
 bool BedrockContentPage::eventFilter(QObject *watched, QEvent *event)
