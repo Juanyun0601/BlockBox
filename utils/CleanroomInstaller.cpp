@@ -94,6 +94,8 @@ QList<CleanroomVersionInfo> CleanroomInstaller::getCleanroomVersions(const QStri
     QNetworkRequest request;
     request.setUrl(QUrl(url));
     request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
+    // 30 秒无数据传输即超时，避免 GitHub 不可达时嵌套事件循环永不退出导致界面卡死
+    request.setTransferTimeout(30000);
 
     QEventLoop loop;
     QNetworkReply *reply = m_networkManager->get(request);
@@ -247,6 +249,8 @@ bool CleanroomInstaller::downloadFile(const QString &url, const QString &filePat
     QNetworkRequest request;
     request.setUrl(QUrl(url));
     request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
+    // 60 秒无数据传输即超时，避免连接停滞时嵌套事件循环永不退出导致界面卡死
+    request.setTransferTimeout(60000);
 
     QEventLoop loop;
     QNetworkReply *reply = m_networkManager->get(request);

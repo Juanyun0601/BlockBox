@@ -29,6 +29,7 @@
 #include <QNetworkRequest>
 #include <QPropertyAnimation>
 #include <QtConcurrent>
+#include <QSharedPointer>
 #include <QDateTime>
 #include <QRegularExpression>
 #include <QTimer>
@@ -381,9 +382,16 @@ void LoaderDetailPage::initUI()
                                 emit installRequested(instPath, instName, mcVer, m_selectedLoaders);
                             return;
                         }
-                        int pendingCount = 0;
-                        QStringList failedLoaders;
-                        QObject cleanupGuard;
+                        // 安装器的完成信号（尤其 Forge 是异步发出的）可能在本次回调返回之后才到达，
+                        // 信号连接必须挂在一个跨作用域存活的对象上；每次安装销毁旧作用域，
+                        // 避免上一次安装的残留信号串扰进本次结算
+                        if (m_loaderSignalScope)
+                            m_loaderSignalScope->deleteLater();
+                        m_loaderSignalScope = new QObject(this);
+                        QObject *signalScope = m_loaderSignalScope;
+                        auto pending = QSharedPointer<int>::create(0);
+                        auto failedLoaders = QSharedPointer<QStringList>::create();
+                        auto settled = QSharedPointer<bool>::create(false);
                         QString mainTaskId = VersionDownloader::instance()->currentTaskId();
                         ForgeInstaller::instance()->setCurrentTaskId(mainTaskId);
                         NeoForgeInstaller::instance()->setCurrentTaskId(mainTaskId);
@@ -392,28 +400,29 @@ void LoaderDetailPage::initUI()
                         LiteLoaderInstaller::instance()->setCurrentTaskId(mainTaskId);
                         CleanroomInstaller::instance()->setCurrentTaskId(mainTaskId);
                         OptiFabricInstaller::instance()->setCurrentTaskId(mainTaskId);
-                        auto checkAllComplete = [this, &pendingCount, &failedLoaders, mcVer, rootPath, versionsBefore, instName]() {
-                            if (pendingCount <= 0) {
-                                m_isInstalling = false;
-                                m_installButton->setEnabled(true);
-                                const QString installedDir =
-                                    resolveInstalledInstanceDir(rootPath, versionsBefore, mcVer);
-                                const QString shownPath = installedDir.isEmpty() ? rootPath : installedDir;
-                                if (failedLoaders.isEmpty()) {
-                                    NotificationManager::showSuccess(this,
-                                        tr("Minecraft %1 与 mod 加载器已成功安装到\r\n%2").arg(mcVer).arg(shownPath));
-                                } else {
-                                    NotificationManager::showError(this,
-                                        tr("Minecraft %1 安装成功，但以下加载器安装失败：\r\n%2")
-                                            .arg(mcVer).arg(failedLoaders.join("\r\n")));
-                                }
-                                if (m_modifyMode) {
-                                    emit instanceModified(installedDir.isEmpty() ? m_modifyInstancePath
-                                                                                 : installedDir);
-                                } else {
-                                    emit installRequested(installedDir.isEmpty() ? rootPath : installedDir,
-                                                          instName, mcVer, m_selectedLoaders);
-                                }
+                        auto checkAllComplete = [this, pending, failedLoaders, settled, mcVer, rootPath, versionsBefore, instName]() {
+                            if (*settled || *pending > 0)
+                                return;
+                            *settled = true;
+                            m_isInstalling = false;
+                            m_installButton->setEnabled(true);
+                            const QString installedDir =
+                                resolveInstalledInstanceDir(rootPath, versionsBefore, mcVer);
+                            const QString shownPath = installedDir.isEmpty() ? rootPath : installedDir;
+                            if (failedLoaders->isEmpty()) {
+                                NotificationManager::showSuccess(this,
+                                    tr("Minecraft %1 与 mod 加载器已成功安装到\r\n%2").arg(mcVer).arg(shownPath));
+                            } else {
+                                NotificationManager::showError(this,
+                                    tr("Minecraft %1 安装成功，但以下加载器安装失败：\r\n%2")
+                                        .arg(mcVer).arg(failedLoaders->join("\r\n")));
+                            }
+                            if (m_modifyMode) {
+                                emit instanceModified(installedDir.isEmpty() ? m_modifyInstancePath
+                                                                             : installedDir);
+                            } else {
+                                emit installRequested(installedDir.isEmpty() ? rootPath : installedDir,
+                                                      instName, mcVer, m_selectedLoaders);
                             }
                         };
                         bool hasOptiFine = ldrs.contains("OptiFine");
@@ -422,124 +431,124 @@ void LoaderDetailPage::initUI()
                             const SelectedLoader &loader = it.value();
                             QString lowerName = name.toLower();
                             if (lowerName == "optifine") continue;
-                            pendingCount++;
+                            (*pending)++;
                             if (lowerName == "forge") {
-                                auto onSuccess = [this, &pendingCount, &checkAllComplete](const QString &) {
-                                    pendingCount--;
+                                auto onSuccess = [this, pending, checkAllComplete](const QString &) {
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
-                                auto onFailed = [this, &pendingCount, name, &failedLoaders, &checkAllComplete](const QString &, const QString &error) {
-                                    failedLoaders.append(name + ": " + error);
-                                    pendingCount--;
+                                auto onFailed = [this, pending, name, failedLoaders, checkAllComplete](const QString &, const QString &error) {
+                                    failedLoaders->append(name + ": " + error);
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
                                 connect(ForgeInstaller::instance(), &ForgeInstaller::installCompleted,
-                                        &cleanupGuard, onSuccess);
+                                        signalScope, onSuccess);
                                 connect(ForgeInstaller::instance(), &ForgeInstaller::installFailed,
-                                        &cleanupGuard, onFailed);
+                                        signalScope, onFailed);
                                 ForgeInstaller::instance()->setVersionIsolationEnabled(
                                     SettingsManager::instance()->isVersionIsolationEnabled());
                                 ForgeInstaller::instance()->downloadForgeInstaller(mcVer, loader.version, rootPath, instName);
                             } else if (lowerName == "neoforge") {
-                                auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
-                                    pendingCount--;
+                                auto onSuccess = [this, pending, checkAllComplete]() {
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
-                                auto onFailed = [this, &pendingCount, name, &failedLoaders, &checkAllComplete](const QString &error) {
-                                    failedLoaders.append(name + ": " + error);
-                                    pendingCount--;
+                                auto onFailed = [this, pending, name, failedLoaders, checkAllComplete](const QString &error) {
+                                    failedLoaders->append(name + ": " + error);
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
                                 NeoForgeInstaller::instance()->setDownloadSource(
                                     SettingsManager::instance()->getNeoForgeDownloadSource());
                                 connect(NeoForgeInstaller::instance(), &NeoForgeInstaller::installCompleted,
-                                        &cleanupGuard, onSuccess);
+                                        signalScope, onSuccess);
                                 connect(NeoForgeInstaller::instance(), &NeoForgeInstaller::installFailed,
-                                        &cleanupGuard, onFailed);
+                                        signalScope, onFailed);
                                 NeoForgeInstaller::instance()->downloadNeoForgeInstaller(mcVer, loader.version, rootPath, instName);
                             } else if (lowerName == "fabric" || lowerName == "quilt" || lowerName == "legacyfabric") {
-                                auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
-                                    pendingCount--;
+                                auto onSuccess = [this, pending, checkAllComplete]() {
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
-                                auto onFailed = [this, &pendingCount, name, &failedLoaders, &checkAllComplete](const QString &error) {
-                                    failedLoaders.append(name + ": " + error);
-                                    pendingCount--;
+                                auto onFailed = [this, pending, name, failedLoaders, checkAllComplete](const QString &error) {
+                                    failedLoaders->append(name + ": " + error);
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
                                 connect(FabricInstaller::instance(), &FabricInstaller::installCompleted,
-                                        &cleanupGuard, onSuccess);
+                                        signalScope, onSuccess);
                                 connect(FabricInstaller::instance(), &FabricInstaller::installFailed,
-                                        &cleanupGuard, onFailed);
+                                        signalScope, onFailed);
                                 FabricInstaller::instance()->downloadFabricInstaller(mcVer, loader.version, rootPath);
                             } else if (lowerName == "liteloader") {
-                                auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
-                                    pendingCount--;
+                                auto onSuccess = [this, pending, checkAllComplete]() {
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
-                                auto onFailed = [this, &pendingCount, name, &failedLoaders, &checkAllComplete](const QString &error) {
-                                    failedLoaders.append(name + ": " + error);
-                                    pendingCount--;
+                                auto onFailed = [this, pending, name, failedLoaders, checkAllComplete](const QString &error) {
+                                    failedLoaders->append(name + ": " + error);
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
                                 connect(LiteLoaderInstaller::instance(), &LiteLoaderInstaller::installCompleted,
-                                        &cleanupGuard, onSuccess);
+                                        signalScope, onSuccess);
                                 connect(LiteLoaderInstaller::instance(), &LiteLoaderInstaller::installFailed,
-                                        &cleanupGuard, onFailed);
+                                        signalScope, onFailed);
                                 LiteLoaderInstaller::instance()->downloadLiteLoader(mcVer, loader.version, rootPath);
                             } else if (lowerName == "cleanroom") {
-                                auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
-                                    pendingCount--;
+                                auto onSuccess = [this, pending, checkAllComplete]() {
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
-                                auto onFailed = [this, &pendingCount, name, &failedLoaders, &checkAllComplete](const QString &error) {
-                                    failedLoaders.append(name + ": " + error);
-                                    pendingCount--;
+                                auto onFailed = [this, pending, name, failedLoaders, checkAllComplete](const QString &error) {
+                                    failedLoaders->append(name + ": " + error);
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
                                 connect(CleanroomInstaller::instance(), &CleanroomInstaller::installCompleted,
-                                        &cleanupGuard, onSuccess);
+                                        signalScope, onSuccess);
                                 connect(CleanroomInstaller::instance(), &CleanroomInstaller::installFailed,
-                                        &cleanupGuard, onFailed);
+                                        signalScope, onFailed);
                                 CleanroomInstaller::instance()->downloadCleanroom(mcVer, loader.version, loader.fileName, rootPath);
                             } else if (lowerName == "optifabric") {
-                                auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
-                                    pendingCount--;
+                                auto onSuccess = [this, pending, checkAllComplete]() {
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
-                                auto onFailed = [this, &pendingCount, name, &failedLoaders, &checkAllComplete](const QString &error) {
-                                    failedLoaders.append(name + ": " + error);
-                                    pendingCount--;
+                                auto onFailed = [this, pending, name, failedLoaders, checkAllComplete](const QString &error) {
+                                    failedLoaders->append(name + ": " + error);
+                                    (*pending)--;
                                     checkAllComplete();
                                 };
                                 connect(OptiFabricInstaller::instance(), &OptiFabricInstaller::installCompleted,
-                                        &cleanupGuard, onSuccess);
+                                        signalScope, onSuccess);
                                 connect(OptiFabricInstaller::instance(), &OptiFabricInstaller::installFailed,
-                                        &cleanupGuard, onFailed);
+                                        signalScope, onFailed);
                                 OptiFabricInstaller::instance()->downloadOptiFabric(mcVer, loader.version, loader.fileName, rootPath);
                             }
                         }
                         if (hasOptiFine) {
-                            pendingCount++;
+                            (*pending)++;
                             SelectedLoader optiFineLoader = ldrs["OptiFine"];
-                            auto onSuccess = [this, &pendingCount, &checkAllComplete]() {
-                                pendingCount--;
+                            auto onSuccess = [this, pending, checkAllComplete]() {
+                                (*pending)--;
                                 checkAllComplete();
                             };
-                            auto onFailed = [this, &pendingCount, &failedLoaders, &checkAllComplete](const QString &error) {
-                                failedLoaders.append("OptiFine: " + error);
-                                pendingCount--;
+                            auto onFailed = [this, pending, failedLoaders, checkAllComplete](const QString &error) {
+                                failedLoaders->append("OptiFine: " + error);
+                                (*pending)--;
                                 checkAllComplete();
                             };
                             OptiFineInstaller::instance()->setDownloadSource(
                                 SettingsManager::instance()->getOptiFineDownloadSource());
                             connect(OptiFineInstaller::instance(), &OptiFineInstaller::installCompleted,
-                                    &cleanupGuard, onSuccess);
+                                    signalScope, onSuccess);
                             connect(OptiFineInstaller::instance(), &OptiFineInstaller::installFailed,
-                                    &cleanupGuard, onFailed);
+                                    signalScope, onFailed);
                             OptiFineInstaller::instance()->downloadOptiFineInstaller(mcVer, optiFineLoader.version, optiFineLoader.fileName, rootPath);
                         }
-                        if (pendingCount == 0) {
+                        if (*pending == 0) {
                             checkAllComplete();
                         }
                     });

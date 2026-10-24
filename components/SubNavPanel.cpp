@@ -79,6 +79,43 @@ SubNavPanel::SubNavPanel(QWidget *parent)
 
     m_mainLayout->addWidget(m_header);
 
+    // 顶部搜索框：过滤当前页面主内容区（容器+图标+透明输入框，仿 modelSearchContainer）
+    m_searchContainer = new QWidget(this);
+    m_searchContainer->setObjectName("subNavSearchContainer");
+    QHBoxLayout *searchLayout = new QHBoxLayout(m_searchContainer);
+    searchLayout->setContentsMargins(12, 0, 12, 8);
+    searchLayout->setSpacing(0);
+
+    auto *searchIcon = new QLabel(m_searchContainer);
+    searchIcon->setObjectName("subNavSearchIcon");
+    searchIcon->setFixedWidth(30);
+    searchIcon->setAlignment(Qt::AlignCenter);
+    searchIcon->setPixmap(
+        loadColoredIcon(":/Images/Icons/search.svg", m_iconNormalColor).pixmap(15, 15));
+
+    m_searchEdit = new QLineEdit(m_searchContainer);
+    m_searchEdit->setObjectName("subNavSearchEdit");
+    m_searchEdit->setPlaceholderText(tr("搜索当前页面内容"));
+    m_searchEdit->setClearButtonEnabled(true);
+
+    searchLayout->addWidget(searchIcon);
+    searchLayout->addWidget(m_searchEdit, 1);
+    m_mainLayout->addWidget(m_searchContainer);
+
+    // 200ms 防抖后发出查询（ModelSelectDialog 同款节奏）
+    m_searchDebounce = new QTimer(this);
+    m_searchDebounce->setSingleShot(true);
+    m_searchDebounce->setInterval(200);
+    connect(m_searchDebounce, &QTimer::timeout, this, [this]()
+    {
+        if (m_searchEdit)
+            emit searchQueryChanged(m_searchEdit->text().trimmed());
+    });
+    connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString &)
+    {
+        m_searchDebounce->start();
+    });
+
     m_scrollArea = new QScrollArea(this);
     m_scrollArea->setWidgetResizable(true);
     m_scrollArea->setFrameShape(QFrame::NoFrame);
@@ -111,6 +148,26 @@ SubNavPanel::~SubNavPanel()
 void SubNavPanel::setSideBar(SideBar *sideBar)
 {
     m_sideBar = sideBar;
+}
+
+void SubNavPanel::clearSearch()
+{
+    if (!m_searchEdit)
+        return;
+    m_searchDebounce->stop();
+    if (m_searchEdit->text().isEmpty())
+        return;
+    // clear() 会触发 textChanged → 防抖计时器；这里直接同步发空查询，
+    // 保证切页瞬间旧过滤被清掉，不残留 200ms。
+    m_searchEdit->blockSignals(true);
+    m_searchEdit->clear();
+    m_searchEdit->blockSignals(false);
+    emit searchQueryChanged(QString());
+}
+
+QString SubNavPanel::searchQuery() const
+{
+    return m_searchEdit ? m_searchEdit->text().trimmed() : QString();
 }
 
 /** 计算并应用悬浮气泡的几何矩形（贴靠侧边栏右缘） */
@@ -152,6 +209,10 @@ void SubNavPanel::showForParent(int parentIndex, bool selectFirst)
     // 更新面板标题为父导航项名称
     if (m_headerTitle)
         m_headerTitle->setText(parent.text);
+
+    // 切换到别的分组时清空搜索框与旧页面过滤（同分组刷新保留用户输入）
+    if (parentIndex != m_currentParentIndex)
+        clearSearch();
 
     // Clear previous content
     clearContent();
@@ -272,6 +333,7 @@ void SubNavPanel::showForParent(int parentIndex, bool selectFirst)
 void SubNavPanel::hidePanel()
 {
     m_currentParentIndex = -1;
+    clearSearch();
 
     // Slide-out animation: 气泡向侧边栏边缘收拢
     const QRect startRect = this->geometry();

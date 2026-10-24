@@ -82,6 +82,24 @@ void SettingsPage::initAboutSettings()
     });
     updateRow->addWidget(checkUpdateBtn);
 
+    // ── 特别鸣谢卡片 ──
+    QVBoxLayout *thanksCard = createSettingsCard(layout, tr("特别鸣谢"));
+
+    appendSettingRow(thanksCard, QString(),
+        tr("以下朋友在测试阶段帮助发现了大量问题，为 BlockBox 的完善提供了宝贵帮助，特此鸣谢。"));
+
+    QHBoxLayout *thanksRow = appendSettingRow(thanksCard,
+        QStringLiteral("A花好月圆"),
+        tr("测试阶段反馈了许多 Bug，帮助启动器变得更稳定、更好用。"));
+    QPushButton *thanksBtn = new QPushButton(tr("抖音主页"), m_aboutSettings);
+    thanksBtn->setObjectName("primaryButton");
+    thanksBtn->setCursor(Qt::PointingHandCursor);
+    thanksBtn->setFixedWidth(96);
+    connect(thanksBtn, &QPushButton::clicked, []() {
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://v.douyin.com/ugbz7UwTmtY/")));
+    });
+    thanksRow->addWidget(thanksBtn);
+
     // ── 运行依赖卡片（安卓 / 鸿蒙） ──
     if (RuntimeDependencyManager::isSupportedPlatform()) {
         RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();

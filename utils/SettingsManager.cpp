@@ -11,6 +11,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -117,7 +118,7 @@ QList<AccountInfo> SettingsManager::loadAccountsFromFile() const
     return accounts;
 }
 
-void SettingsManager::saveAccountsToFile(const QList<AccountInfo>& accounts) const
+bool SettingsManager::saveAccountsToFile(const QList<AccountInfo>& accounts) const
 {
     QJsonArray array;
     for (const AccountInfo &info : accounts)
@@ -134,15 +135,30 @@ void SettingsManager::saveAccountsToFile(const QList<AccountInfo>& accounts) con
         array.append(obj);
     }
 
-    QJsonDocument doc(array);
-    QFile file(getAccountsFilePath());
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        qWarning() << "[SettingsManager] 账户文件写入失败:" << getAccountsFilePath()
-                   << file.errorString();
-        return;
+    const QString filePath = getAccountsFilePath();
+
+    // 数据目录可能还不存在（首次运行 / 目录被清理），先补建再写
+    const QFileInfo fileInfo(filePath);
+    QDir parentDir = fileInfo.absoluteDir();
+    if (!parentDir.exists() && !parentDir.mkpath(parentDir.absolutePath())) {
+        qWarning() << "[SettingsManager] 账户目录创建失败:" << parentDir.absolutePath();
+        return false;
     }
-    file.write(doc.toJson());
+
+    QJsonDocument doc(array);
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        qWarning() << "[SettingsManager] 账户文件写入失败:" << filePath
+                   << file.errorString();
+        return false;
+    }
+    const bool written = (file.write(doc.toJson()) >= 0);
     file.close();
+    if (!written) {
+        qWarning() << "[SettingsManager] 账户文件写入不完整:" << filePath
+                   << file.errorString();
+    }
+    return written;
 }
 
 QList<AccountInfo> SettingsManager::getAccounts() const
@@ -177,13 +193,14 @@ QList<AccountInfo> SettingsManager::getAccounts() const
     return accounts;
 }
 
-void SettingsManager::saveAccountsToSettings(const QList<AccountInfo>& accounts)
+bool SettingsManager::saveAccountsToSettings(const QList<AccountInfo>& accounts)
 {
-    saveAccountsToFile(accounts);
+    const bool saved = saveAccountsToFile(accounts);
     emit accountsChanged();
+    return saved;
 }
 
-void SettingsManager::addAccount(const QString &username, const QString &type, const QString &serverUrl, bool isDefault)
+bool SettingsManager::addAccount(const QString &username, const QString &type, const QString &serverUrl, bool isDefault)
 {
     // 先获取现有账户
     QList<AccountInfo> accounts = getAccounts();
@@ -191,7 +208,7 @@ void SettingsManager::addAccount(const QString &username, const QString &type, c
     // 检查是否已存在同名账户
     for (int i = 0; i < accounts.size(); ++i) {
         if (accounts[i].username == username) {
-            return; // 账户已存在
+            return false; // 账户已存在
         }
     }
     
@@ -210,8 +227,8 @@ void SettingsManager::addAccount(const QString &username, const QString &type, c
     newAccount.isDefault = isDefault;
     accounts.append(newAccount);
     
-    // 保存账户列表
-    saveAccountsToSettings(accounts);
+    // 保存账户列表（写入失败要让调用方知道，不能静默假装成功）
+    return saveAccountsToSettings(accounts);
 }
 
 // 添加Microsoft账户的重载方法
@@ -948,7 +965,16 @@ void SettingsManager::initDefaultInstanceFolders()
             }
         }
         
-        if (defaultIndex >= 0 && folders[defaultIndex].path != defaultPath) {
+        // 只在「原默认文件夹已经不在了」时才跟随启动器所在目录：
+        // 以前这里只要路径和「启动器目录/.minecraft」不同就无条件改写，
+        // 于是换个目录启动（调试版、绿色版挪位置、从源码目录运行）都会把
+        // 用户自己设好的默认实例文件夹替换掉，设置里的下载实例位置莫名变成
+        // 启动器目录下的 .minecraft，下载实例列表也跟着变空。
+        const bool storedDefaultMissing =
+            defaultIndex >= 0 && !QDir(folders[defaultIndex].path).exists();
+        const bool appDirFolderExists = QDir(defaultPath).exists();
+        if (storedDefaultMissing && appDirFolderExists
+            && folders[defaultIndex].path != defaultPath) {
             folders[defaultIndex].path = defaultPath;
             
             m_settings->beginWriteArray("instanceFolders");

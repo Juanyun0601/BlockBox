@@ -425,8 +425,12 @@ void ContentDetailPage::setModInfo(const ModInfo &info)
 
 void ContentDetailPage::setInstanceFilter(const QString &gameVersion, const QString &loaderType)
 {
+    // 资源包/数据包/光影包/世界没有加载器概念：丢弃实例加载器，
+    // 否则版本会被一个永远匹配不上的加载器筛掉，下载列表整块空白
+    const QString effectiveLoader = supportsLoaderFilter() ? loaderType : QString();
+
     m_instanceGameVersion = gameVersion;
-    m_instanceLoaderType = loaderType;
+    m_instanceLoaderType = effectiveLoader;
 
     if (m_versionCombo) m_versionCombo->blockSignals(true);
     if (m_loaderCombo) m_loaderCombo->blockSignals(true);
@@ -449,8 +453,8 @@ void ContentDetailPage::setInstanceFilter(const QString &gameVersion, const QStr
         }
         m_versionCombo->setCurrentIndex(idx);
     }
-    if (m_loaderCombo && !loaderType.isEmpty()) {
-        QString lower = loaderType.toLower();
+    if (m_loaderCombo && !effectiveLoader.isEmpty()) {
+        QString lower = effectiveLoader.toLower();
         for (int i = 0; i < m_loaderCombo->count(); ++i) {
             if (m_loaderCombo->itemText(i).toLower().contains(lower)) {
                 m_loaderCombo->setCurrentIndex(i);
@@ -463,7 +467,7 @@ void ContentDetailPage::setInstanceFilter(const QString &gameVersion, const QStr
     if (m_loaderCombo) m_loaderCombo->blockSignals(false);
 
     // 立即按带入的实例筛选刷新下载列表
-    if (!gameVersion.isEmpty() || !loaderType.isEmpty()) {
+    if (!gameVersion.isEmpty() || !effectiveLoader.isEmpty()) {
         m_downloadCurrentPage = 0;
         applyDownloadFilter();
     }
@@ -735,6 +739,19 @@ void ContentDetailPage::buildRightMain()
     m_contentLayout->addWidget(mainBody, 1);
 }
 
+/**
+ * @brief 该类资源是否存在"加载器"概念
+ *
+ * 只有模组与整合包按加载器（forge/fabric/neoforge/quilt）区分版本；
+ * 资源包、数据包、光影包、世界与加载器无关（Modrinth 侧其版本 loaders 为
+ * "minecraft" 或为空），若仍显示加载器筛选并按实例加载器过滤，会把下载
+ * 列表里的版本全部筛掉。
+ */
+bool ContentDetailPage::supportsLoaderFilter() const
+{
+    return m_contentType == ContentType::Mod || m_contentType == ContentType::Modpack;
+}
+
 void ContentDetailPage::buildFilterBlock(QVBoxLayout *parentLayout)
 {
     QWidget *section = new QWidget();
@@ -754,13 +771,17 @@ void ContentDetailPage::buildFilterBlock(QVBoxLayout *parentLayout)
         m_versionCombo->addItem(v);
     sectionLayout->addWidget(m_versionCombo);
 
-    m_loaderCombo = new QComboBox();
-    m_loaderCombo->setObjectName("modDetailCombo");
-    m_loaderCombo->addItem(tr("全部加载器"));
-    QStringList commonLoaders = {"forge", "fabric", "neoforge", "quilt"};
-    for (const QString &l : commonLoaders)
-        m_loaderCombo->addItem(l);
-    sectionLayout->addWidget(m_loaderCombo);
+    // 只有模组/整合包才显示加载器筛选：资源包等类型的版本没有加载器，
+    // 显示出来只会把实例加载器（如 fabric）套上去，导致下载列表全被筛空
+    if (supportsLoaderFilter()) {
+        m_loaderCombo = new QComboBox();
+        m_loaderCombo->setObjectName("modDetailCombo");
+        m_loaderCombo->addItem(tr("全部加载器"));
+        QStringList commonLoaders = {"forge", "fabric", "neoforge", "quilt"};
+        for (const QString &l : commonLoaders)
+            m_loaderCombo->addItem(l);
+        sectionLayout->addWidget(m_loaderCombo);
+    }
 
     m_versionTypeCombo = new QComboBox();
     m_versionTypeCombo->setObjectName("modDetailCombo");
@@ -772,8 +793,10 @@ void ContentDetailPage::buildFilterBlock(QVBoxLayout *parentLayout)
 
     connect(m_versionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this]() { applyDownloadFilter(); });
-    connect(m_loaderCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this]() { applyDownloadFilter(); });
+    if (m_loaderCombo) {
+        connect(m_loaderCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this]() { applyDownloadFilter(); });
+    }
     connect(m_versionTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this]() { applyDownloadFilter(); });
 
@@ -1095,8 +1118,9 @@ QWidget *ContentDetailPage::createDownloadCard(const ModVersionFile &vf)
 
     QPushButton *dlBtn = new QPushButton();
     dlBtn->setObjectName("modDetailDownloadBtn");
-    QColor themeColor(ThemeManager::instance()->currentThemeColor());
-    dlBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/download.svg", themeColor, 18));
+    // 按钮底色就是主题色，图标必须用反白，否则与底色同色、看着像一块空白色块
+    dlBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/download.svg",
+                                               QColor("#ffffff"), 18));
     dlBtn->setIconSize(QSize(18, 18));
     dlBtn->setFixedSize(32, 32);
     dlBtn->setToolTip(tr("下载"));

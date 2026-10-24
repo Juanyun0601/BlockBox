@@ -29,6 +29,7 @@
 
 #include <QButtonGroup>
 #include <QColorDialog>
+#include <QDebug>
 #include <QDir>
 #include "components/AppFileDialog.h"
 #include <QFileInfo>
@@ -45,12 +46,15 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include "components/CustomCheckBox.h"
 #include "utils/BackgroundManager.h"
+#include "utils/GameLauncher.h"
+#include "utils/JavaDownloader.h"
 #include "utils/JavaScanWorker.h"
 #include "utils/LauncherImporter.h"
 #include "utils/LanguageManager.h"
@@ -70,6 +74,40 @@ const char *kAccentNames[6] = {
 const char *kAccentHex[6] = {
     "#10B981", "#6366F1", "#8B5CF6", "#EC4899", "#F59E0B", "#06B6D4",
 };
+
+/// 在下载目录里查找 bin/java(.exe)：解压后的目录层级由压缩包决定，逐层向下找
+QString findJavaExecutableIn(const QString &dir)
+{
+    if (dir.isEmpty())
+        return QString();
+
+#ifdef Q_OS_WIN
+    const QString javaName = QStringLiteral("java.exe");
+#else
+    const QString javaName = QStringLiteral("java");
+#endif
+
+    const QString direct = dir + QStringLiteral("/bin/") + javaName;
+    if (QFileInfo(direct).isFile())
+        return direct;
+
+    const QFileInfoList children = QDir(dir).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo &child : children) {
+        const QString found = findJavaExecutableIn(child.absoluteFilePath());
+        if (!found.isEmpty())
+            return found;
+    }
+    return QString();
+}
+
+/// 中文环境优先走国内镜像，其余走官方源（与「设置 > Java 下载」的默认选择一致）
+QString javaDownloadMirrorId()
+{
+    const LanguageManager::Language lang = LanguageManager::instance()->currentLanguage();
+    return (lang == LanguageManager::Chinese || lang == LanguageManager::ChineseTraditional)
+               ? QStringLiteral("tuna")
+               : QStringLiteral("official");
+}
 } // namespace
 
 OnboardingWizard::OnboardingWizard(QWidget *parent)
@@ -975,12 +1013,12 @@ void OnboardingWizard::buildStep3()
 
     QHBoxLayout *dlCards = new QHBoxLayout();
     dlCards->setSpacing(12);
-    struct DlInfo { QString ver; QString tag; QString size; };
+    struct DlInfo { int major; QString ver; QString tag; QString size; };
     const QVector<DlInfo> dlInfos = {
-        { QStringLiteral("Java 8"),  tr("\u517C\u5BB9 1.7 \u2013 1.16"),  QStringLiteral("JRE \u00B7 87 MB") },
-        { QStringLiteral("Java 17"), tr("\u517C\u5BB9 1.17 \u2013 1.20"), QStringLiteral("JRE \u00B7 176 MB") },
-        { QStringLiteral("Java 21"), tr("\u517C\u5BB9 1.20.5+"),          QStringLiteral("JRE \u00B7 190 MB") },
-        { QStringLiteral("Java 24"), tr("\u6700\u65B0\u7248\u672C"),      QStringLiteral("JRE \u00B7 200 MB") },
+        { 8,  QStringLiteral("Java 8"),  tr("\u517C\u5BB9 1.7 \u2013 1.16"),  QStringLiteral("JRE \u00B7 87 MB") },
+        { 17, QStringLiteral("Java 17"), tr("\u517C\u5BB9 1.17 \u2013 1.20"), QStringLiteral("JRE \u00B7 176 MB") },
+        { 21, QStringLiteral("Java 21"), tr("\u517C\u5BB9 1.20.5+"),          QStringLiteral("JRE \u00B7 190 MB") },
+        { 24, QStringLiteral("Java 24"), tr("\u6700\u65B0\u7248\u672C"),      QStringLiteral("JRE \u00B7 200 MB") },
     };
     for (const DlInfo &info : dlInfos) {
         QFrame *dlCard = new QFrame(page);
@@ -1003,14 +1041,45 @@ void OnboardingWizard::buildStep3()
         QPushButton *dlBtn = new QPushButton(tr("\u4E0B\u8F7D"), dlCard);
         dlBtn->setObjectName(QStringLiteral("obwBtnPrimary"));
         dlBtn->setCursor(Qt::PointingHandCursor);
-        connect(dlBtn, &QPushButton::clicked, this, [this, info]() {
-            m_footerHint->setText(
-                tr("\u5B8C\u6210\u5F15\u5BFC\u540E\u53EF\u5728\u300C\u8BBE\u7F6E > Java \u4E0B\u8F7D\u300D\u5B8C\u6210 %1 \u4E0B\u8F7D\u3002").arg(info.ver));
+        const int major = info.major;
+        connect(dlBtn, &QPushButton::clicked, this, [this, major]() {
+            startJavaDownload(major);
         });
         dLay->addWidget(dlBtn);
+        m_javaDlButtons.append(dlBtn);
         dlCards->addWidget(dlCard, 1);
     }
     lay->addLayout(dlCards);
+
+    // 下载进度 / 结果提示（原来这里的按钮只写一行「请去设置里下载」的提示，等于点了没反应）
+    m_javaDlStatusLabel = new QLabel(
+        tr("\u70B9\u51FB\u4E0A\u65B9\u300C\u4E0B\u8F7D\u300D\u5373\u53EF\u76F4\u63A5\u5B89\u88C5 Java\uFF0C\u5B89\u88C5\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u52A0\u5165\u4E0A\u65B9\u5217\u8868\u3002"),
+        page);
+    m_javaDlStatusLabel->setObjectName(QStringLiteral("hintLabel"));
+    m_javaDlStatusLabel->setWordWrap(true);
+    lay->addWidget(m_javaDlStatusLabel);
+
+    // 接线 Java 下载器：进度、失败与解压完成都要能反馈到本页
+    if (!m_javaDownloaderWired) {
+        JavaDownloader *downloader = JavaDownloader::instance();
+        if (downloader) {
+            connect(downloader, &JavaDownloader::versionListFetched,
+                    this, &OnboardingWizard::onJavaVersionListFetched);
+            connect(downloader, &JavaDownloader::fetchError,
+                    this, &OnboardingWizard::onJavaFetchError);
+            connect(downloader, &JavaDownloader::downloadProgress,
+                    this, &OnboardingWizard::onJavaDownloadProgress);
+            connect(downloader, &JavaDownloader::downloadBytesProgress,
+                    this, &OnboardingWizard::onJavaDownloadBytesProgress);
+            connect(downloader, &JavaDownloader::downloadFailed,
+                    this, &OnboardingWizard::onJavaDownloadFailed);
+            connect(downloader, &JavaDownloader::extractCompleted,
+                    this, &OnboardingWizard::onJavaExtractCompleted);
+            connect(downloader, &JavaDownloader::extractFailed,
+                    this, &OnboardingWizard::onJavaExtractFailed);
+            m_javaDownloaderWired = true;
+        }
+    }
 
     m_stack->addWidget(page);
     refreshJavaList();
@@ -2286,7 +2355,16 @@ void OnboardingWizard::onAddOfflineAccount()
         m_footerHint->setText(tr("\u8BF7\u8F93\u5165\u6E38\u620F\u6635\u79F0\u3002"));
         return;
     }
-    SettingsManager::instance()->addAccount(name, QStringLiteral("offline"), QString());
+    SettingsManager *sm = SettingsManager::instance();
+    if (!sm)
+        return;
+    // 类型与账户管理页保持一致（"离线"），否则后续启动会被当成未知类型账户；
+    // 同时必须检查保存结果，磁盘写入失败时不能再提示添加成功。
+    const bool firstAccount = sm->getAccounts().isEmpty();
+    if (!sm->addAccount(name, tr("\u79BB\u7EBF"), QString(), firstAccount)) {
+        m_footerHint->setText(tr("\u79BB\u7EBF\u8D26\u6237\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BF7\u68C0\u67E5\u542F\u52A8\u5668\u6240\u5728\u6587\u4EF6\u5939\u7684\u5199\u5165\u6743\u9650\u3002"));
+        return;
+    }
     m_offlineNameInput->clear();
     m_addAccountPanel->setVisible(false);
     refreshAccountList();
@@ -2415,6 +2493,210 @@ void OnboardingWizard::onScanJava()
                                   ? tr("\u65B0\u53D1\u73B0 %1 \u4E2A Java\uFF0C\u5DF2\u52A0\u5165\u5217\u8868\u3002").arg(added)
                                   : tr("\u672A\u53D1\u73B0\u65B0\u7684 Java\uFF0C\u53EF\u4E0B\u65B9\u4E0B\u8F7D\u3002"));
     });
+}
+
+/* ============================================================
+ * Step3 Java 下载（向导内直接下载并安装）
+ * ============================================================ */
+void OnboardingWizard::startJavaDownload(int majorVersion, const QString &mirrorId)
+{
+    JavaDownloader *downloader = JavaDownloader::instance();
+    if (!downloader || !m_javaDlStatusLabel)
+        return;
+
+    const JavaDownloadStatus status = downloader->status();
+    if (status == JavaDownloadStatus::FetchingBinaries ||
+        status == JavaDownloadStatus::Downloading ||
+        status == JavaDownloadStatus::Extracting) {
+        m_javaDlStatusLabel->setText(
+            tr("\u6B63\u5728\u5B89\u88C5 Java %1\uFF0C\u8BF7\u7B49\u5F85\u5F53\u524D\u4E0B\u8F7D\u5B8C\u6210\u3002")
+                .arg(m_javaDlMajor > 0 ? QString::number(m_javaDlMajor) : QString()));
+        return;
+    }
+
+    m_javaDlMajor = majorVersion;
+    setJavaDownloadBusy(true);
+    m_javaDlStatusLabel->setText(tr("\u6B63\u5728\u83B7\u53D6 Java %1 \u4E0B\u8F7D\u5730\u5740\u2026")
+                                     .arg(majorVersion));
+    m_footerHint->setText(tr("\u6B63\u5728\u4E0B\u8F7D Java %1\uFF0C\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u5B89\u88C5\u3002")
+                              .arg(majorVersion));
+
+    downloader->fetchAvailableBinaries(
+        QStringLiteral("adoptium"),
+        mirrorId.isEmpty() ? javaDownloadMirrorId() : mirrorId,
+        majorVersion);
+}
+
+void OnboardingWizard::setJavaDownloadBusy(bool busy)
+{
+    for (QPushButton *btn : m_javaDlButtons) {
+        if (btn)
+            btn->setEnabled(!busy);
+    }
+}
+
+void OnboardingWizard::onJavaVersionListFetched(const QVector<JavaBinaryInfo> &binaries)
+{
+    if (m_javaDlMajor <= 0 || !m_javaDlStatusLabel)
+        return; // 不是引导页发起的请求
+
+    // 优先取 JRE（体积更小，启动游戏够用），否则取第一个可用包
+    JavaBinaryInfo chosen;
+    bool found = false;
+    bool chosenIsJre = false;
+    for (const JavaBinaryInfo &bin : binaries) {
+        if (bin.downloadUrl.isEmpty())
+            continue;
+        const bool isJre = (bin.packageType.compare(QStringLiteral("jre"), Qt::CaseInsensitive) == 0);
+        if (!found || (isJre && !chosenIsJre)) {
+            chosen = bin;
+            chosenIsJre = isJre;
+            found = true;
+        }
+        if (isJre)
+            break;
+    }
+
+    if (!found) {
+        m_javaDlStatusLabel->setText(
+            tr("\u672A\u627E\u5230\u9002\u5408\u5F53\u524D\u7CFB\u7EDF\u7684 Java %1\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u6216\u5230\u300C\u8BBE\u7F6E > Java \u4E0B\u8F7D\u300D\u624B\u52A8\u9009\u62E9\u3002")
+                .arg(m_javaDlMajor));
+        setJavaDownloadBusy(false);
+        m_javaDlMajor = 0;
+        return;
+    }
+
+    QString installDir;
+    if (SettingsManager::instance())
+        installDir = SettingsManager::instance()->getDefaultInstancePath();
+    if (installDir.isEmpty())
+        installDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (installDir.isEmpty())
+        installDir = QDir::homePath();
+    installDir += QStringLiteral("/java");
+    QDir().mkpath(installDir);
+
+    m_javaDlStatusLabel->setText(
+        tr("\u6B63\u5728\u4E0B\u8F7D %1\uFF08%2\uFF09\u2026")
+            .arg(chosen.versionName, chosen.distributionName));
+    JavaDownloader::instance()->downloadAndExtract(chosen, installDir);
+}
+
+void OnboardingWizard::onJavaFetchError(const QString &error)
+{
+    if (m_javaDlMajor <= 0 || !m_javaDlStatusLabel)
+        return;
+
+    // 镜像源拿不到文件时回落官方源再试一次
+    if (!m_javaDlRetried) {
+        m_javaDlRetried = true;
+        m_javaDlStatusLabel->setText(tr("\u955C\u50CF\u6E90\u4E0D\u53EF\u7528\uFF0C\u6B63\u5728\u6539\u7528\u5B98\u65B9\u6E90\u91CD\u8BD5\u2026"));
+        startJavaDownload(m_javaDlMajor, QStringLiteral("official"));
+        return;
+    }
+
+    m_javaDlStatusLabel->setText(tr("\u4E0B\u8F7D Java %1 \u5931\u8D25\uFF1A%2").arg(m_javaDlMajor).arg(error));
+    m_footerHint->setText(
+        tr("Java \u4E0B\u8F7D\u5931\u8D25\uFF0C\u53EF\u5728\u300C\u8BBE\u7F6E > Java \u4E0B\u8F7D\u300D\u91CD\u8BD5\u3002"));
+    setJavaDownloadBusy(false);
+    m_javaDlMajor = 0;
+}
+
+void OnboardingWizard::onJavaDownloadProgress(const QString &fileName, int percent)
+{
+    Q_UNUSED(fileName);
+    if (m_javaDlMajor <= 0 || !m_javaDlStatusLabel)
+        return;
+    m_javaDlStatusLabel->setText(
+        tr("\u6B63\u5728\u4E0B\u8F7D Java %1\u2026 %2%").arg(m_javaDlMajor).arg(percent));
+}
+
+void OnboardingWizard::onJavaDownloadBytesProgress(qint64 bytesReceived, qint64 bytesTotal)
+{
+    if (m_javaDlMajor <= 0 || !m_javaDlStatusLabel || bytesTotal <= 0)
+        return;
+    m_javaDlStatusLabel->setText(
+        tr("\u6B63\u5728\u4E0B\u8F7D Java %1\u2026 %2 / %3 MB")
+            .arg(m_javaDlMajor)
+            .arg(bytesReceived / (1024.0 * 1024.0), 0, 'f', 1)
+            .arg(bytesTotal / (1024.0 * 1024.0), 0, 'f', 1));
+}
+
+void OnboardingWizard::onJavaDownloadFailed(const QString &error)
+{
+    if (m_javaDlMajor <= 0 || !m_javaDlStatusLabel)
+        return;
+
+    // 镜像下载中断时同样回落官方源一次
+    if (!m_javaDlRetried) {
+        m_javaDlRetried = true;
+        m_javaDlStatusLabel->setText(tr("\u4E0B\u8F7D\u4E2D\u65AD\uFF0C\u6B63\u5728\u6539\u7528\u5B98\u65B9\u6E90\u91CD\u8BD5\u2026"));
+        startJavaDownload(m_javaDlMajor, QStringLiteral("official"));
+        return;
+    }
+
+    m_javaDlStatusLabel->setText(tr("\u4E0B\u8F7D Java %1 \u5931\u8D25\uFF1A%2").arg(m_javaDlMajor).arg(error));
+    m_footerHint->setText(
+        tr("Java \u4E0B\u8F7D\u5931\u8D25\uFF0C\u53EF\u5728\u300C\u8BBE\u7F6E > Java \u4E0B\u8F7D\u300D\u91CD\u8BD5\u3002"));
+    setJavaDownloadBusy(false);
+    m_javaDlMajor = 0;
+}
+
+void OnboardingWizard::onJavaExtractCompleted(const QString &javaPath)
+{
+    if (m_javaDlMajor <= 0 || !m_javaDlStatusLabel)
+        return;
+
+    registerDownloadedJava(javaPath);
+    m_javaDlStatusLabel->setText(
+        tr("Java %1 \u5DF2\u5B89\u88C5\u5B8C\u6210\uFF1A%2").arg(m_javaDlMajor).arg(javaPath));
+    m_footerHint->setText(tr("Java \u5B89\u88C5\u5B8C\u6210\uFF0C\u53EF\u4EE5\u7EE7\u7EED\u4E0B\u4E00\u6B65\u3002"));
+    setJavaDownloadBusy(false);
+    m_javaDlMajor = 0;
+}
+
+void OnboardingWizard::onJavaExtractFailed(const QString &error)
+{
+    if (m_javaDlMajor <= 0 || !m_javaDlStatusLabel)
+        return;
+
+    m_javaDlStatusLabel->setText(tr("\u5B89\u88C5 Java %1 \u5931\u8D25\uFF1A%2").arg(m_javaDlMajor).arg(error));
+    m_footerHint->setText(
+        tr("Java \u5B89\u88C5\u5931\u8D25\uFF0C\u53EF\u5728\u300C\u8BBE\u7F6E > Java \u4E0B\u8F7D\u300D\u91CD\u8BD5\u3002"));
+    setJavaDownloadBusy(false);
+    m_javaDlMajor = 0;
+}
+
+void OnboardingWizard::registerDownloadedJava(const QString &javaPath)
+{
+    SettingsManager *sm = SettingsManager::instance();
+    if (!sm)
+        return;
+
+    const QString javaExe = findJavaExecutableIn(javaPath);
+    if (javaExe.isEmpty()) {
+        qWarning() << "[OnboardingWizard] 未在下载目录中找到 java 可执行文件:" << javaPath;
+        return;
+    }
+
+    // 能识别出版本号就带上版本，识别失败也把路径登记进去，避免用户白下载一场
+    QString versionLabel;
+    GameLauncher::JavaInfo info;
+    if (GameLauncher::instance() && GameLauncher::instance()->validateJavaPath(javaExe, info))
+        versionLabel = info.version;
+    if (versionLabel.isEmpty())
+        versionLabel = QFileInfo(javaExe).absoluteDir().dirName();
+
+    QList<QPair<QString, QString>> installations = sm->getJavaInstallations();
+    for (const auto &inst : installations) {
+        if (inst.first.compare(javaExe, Qt::CaseInsensitive) == 0) {
+            refreshJavaList();
+            return; // 已在列表中
+        }
+    }
+    installations.append(qMakePair(javaExe, versionLabel));
+    sm->setJavaInstallations(installations);
+    refreshJavaList();
 }
 
 /* ============================================================

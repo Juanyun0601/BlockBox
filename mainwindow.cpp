@@ -2914,18 +2914,13 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
     if (depth == 0)
     {
         m_cardDownloadVisited.clear();
+        m_cardDownloadDetailTried.clear();
         // 调用方未指定目标时，按当前实例的游戏版本/加载器挑选兼容版本
         if (targetGameVersion.isEmpty())
             targetGameVersion = m_currentInstanceVersion;
         if (targetLoader.isEmpty())
             targetLoader = m_currentInstanceLoader;
     }
-
-    // 防止循环依赖导致无限递归
-    QString visitKey = modInfo.source + ":" + modInfo.id;
-    if (visitKey.isEmpty() || m_cardDownloadVisited.contains(visitKey))
-        return;
-    m_cardDownloadVisited.insert(visitKey);
 
     if (depth > kMaxCardDownloadDepth)
         return;
@@ -2937,6 +2932,8 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
         return;
     }
 
+    const QString visitKey = modInfo.source + ":" + modInfo.id;
+
     // 卡片搜索结果不含 versionFiles：需要先拉取详情才能拿到最新版本和前置列表
     if (modInfo.versionFiles.isEmpty())
     {
@@ -2946,6 +2943,17 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
                 tr("资源 %1 信息不完整，无法获取版本").arg(modInfo.name));
             return;
         }
+
+        // 每个资源只补全一次详情：拉回来的版本列表仍为空时必须明确提示，
+        // 否则会「补全→再进本函数→再补全」无限循环
+        if (!visitKey.isEmpty() && m_cardDownloadDetailTried.contains(visitKey))
+        {
+            NotificationManager::showError(this,
+                tr("%1 暂无可安装的版本（可能已被作者删除或只提供站外下载）").arg(modInfo.name));
+            return;
+        }
+        if (!visitKey.isEmpty())
+            m_cardDownloadDetailTried.insert(visitKey);
 
         if (modInfo.source == QStringLiteral("modrinth"))
         {
@@ -3013,6 +3021,21 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
         return;
     }
 
+    // 循环依赖防护：只有真正进入下载阶段才记账。
+    // 卡片搜索结果里没有 versionFiles，需要先拉详情再回到本函数继续；如果提前记账，
+    // 第二次进入会被自己挡掉，整条「一键下载」就会毫无提示地中断（点了没反应）。
+    if (!visitKey.isEmpty())
+    {
+        if (m_cardDownloadVisited.contains(visitKey))
+        {
+            if (depth > 0)
+                NotificationManager::showInfo(this,
+                    tr("前置 %1 已在本次安装中处理，跳过").arg(modInfo.name));
+            return;
+        }
+        m_cardDownloadVisited.insert(visitKey);
+    }
+
     // 已具备 versionFiles：挑选最新正式版（优先与目标实例的游戏版本/加载器兼容）
     bool fallbackNonRelease = false;
     ModVersionFile latest = pickLatestRelease(modInfo.versionFiles, targetGameVersion, targetLoader,
@@ -3021,8 +3044,12 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
     // 校验下载链接
     if (latest.downloadUrl.isEmpty())
     {
-        NotificationManager::showError(this,
-            tr("%1 %2 没有可用的下载链接").arg(modInfo.name, latest.version));
+        if (latest.version.isEmpty())
+            NotificationManager::showError(this,
+                tr("%1 暂无可下载的版本，安装未能开始").arg(modInfo.name));
+        else
+            NotificationManager::showError(this,
+                tr("%1 %2 没有可用的下载链接，请到详情页换一个版本").arg(modInfo.name, latest.version));
         return;
     }
 

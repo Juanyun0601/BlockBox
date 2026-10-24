@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QCryptographicHash>
 #include <QJsonArray>
@@ -18,8 +19,34 @@
 #include <QNetworkReply>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTimer>
 
 #include "utils/DownloadTaskManager.h"
+
+namespace {
+
+// 以事件循环方式等待进程退出：等待期间 GUI 事件照常派发，界面不会失去响应；
+// 超时后强制结束进程并返回 false
+bool waitForProcessFinished(QProcess &process, int timeoutMs)
+{
+    QEventLoop loop;
+    QObject::connect(&process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                     &loop, &QEventLoop::quit);
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timeoutTimer.start(timeoutMs);
+    loop.exec();
+
+    if (process.state() != QProcess::NotRunning) {
+        process.kill();
+        process.waitForFinished(1000);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
 
 OptiFineInstaller* OptiFineInstaller::m_instance = nullptr;
 QMutex OptiFineInstaller::m_instanceMutex;
@@ -128,6 +155,8 @@ QString OptiFineInstaller::resolveOfficialDownloadUrl(const QString &fileName)
     request.setRawHeader("Accept", "text/html");
     request.setRawHeader("Accept-Language", "en-US,en;q=0.5");
     request.setRawHeader("X-Requested-With", "XMLHttpRequest");
+    // 30 秒无数据传输即超时，避免官网解析页不可达时嵌套事件循环永不退出导致界面卡死
+    request.setTransferTimeout(30000);
 
     QNetworkReply *reply = m_networkManager->get(request);
     QEventLoop loop;
@@ -361,7 +390,11 @@ bool OptiFineInstaller::runOptiFinePatcher(const QString &installerPath, const Q
         return false;
     }
 
-    process.waitForFinished(-1);
+    // 修补器可能运行数分钟，必须用事件循环等待，否则界面会彻底卡死
+    if (!waitForProcessFinished(process, 10 * 60 * 1000)) {
+        qWarning() << "OptiFine patcher timed out (10 minutes)";
+        return false;
+    }
 
     if (process.exitCode() != 0) {
         qWarning() << "OptiFine patcher exited with code" << process.exitCode();
@@ -501,6 +534,8 @@ bool OptiFineInstaller::downloadFile(const QString &url, const QString &filePath
     QNetworkRequest request;
     request.setUrl(QUrl(url));
     request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
+    // 60 秒无数据传输即超时，避免连接停滞时嵌套事件循环永不退出导致界面卡死
+    request.setTransferTimeout(60000);
 
     QNetworkReply *reply = m_networkManager->get(request);
     m_currentReply = reply;
@@ -672,7 +707,7 @@ QString OptiFineInstaller::readJarEntry(const QString &jarPath, const QString &e
         return QString();
     }
 
-    process.waitForFinished(30000);
+    waitForProcessFinished(process, 60000);
 
     QString extractedEntryPath = m_tempDir + "/" + entryPath;
     QFile tempFile(extractedEntryPath);
@@ -710,7 +745,7 @@ bool OptiFineInstaller::extractJarEntry(const QString &jarPath, const QString &e
         return false;
     }
 
-    process.waitForFinished(30000);
+    waitForProcessFinished(process, 60000);
 
     QString sourcePath = m_tempDir + "/" + entryPath;
     QFile extractedFile(sourcePath);
@@ -748,7 +783,7 @@ bool OptiFineInstaller::jarEntryExists(const QString &jarPath, const QString &en
         return false;
     }
 
-    process.waitForFinished(30000);
+    waitForProcessFinished(process, 60000);
 
     QString output = QString::fromUtf8(process.readAllStandardOutput());
     QStringList lines = output.split(QRegularExpression("[\r\n]"), Qt::SkipEmptyParts);

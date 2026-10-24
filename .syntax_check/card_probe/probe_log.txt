@@ -1,0 +1,12 @@
+[probe] 启动
+[probe] QApplication 就绪
+[probe] 实例目录: D:/BlockBox/C-BlockBox/.syntax_check/card_probe/instance/probe1
+[probe] mods 已存在: 1, 原有 jar 数: 0
+[probe] 开始构造 MainWindow
+[probe] MainWindow 构造完成
+[probe] MainWindow show 完成
+[probe] 当前实例: path=D:/BlockBox/C-BlockBox/.syntax_check/card_probe/instance/probe1 version=1.21.1 loader=
+[probe] 触发一键下载（versionFiles 为空，应走详情补全）
+[probe] onCardDownloadRequested 返回（异步下载已发起）
+[probe] 等待中 20s
+[probe] 结果: 成功落盘, 耗时 25287ms, jar=sodium-neoforge-0.8.13+mc1.21.1.jar

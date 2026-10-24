@@ -13,9 +13,52 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QTextStream>
 
 namespace Platform {
+
+    namespace {
+
+        /**
+         * @brief 判断程序所在目录是否可写
+         *
+         * 安装版默认安装在 C:\Program Files\BlockBox，普通权限运行的程序无法写入该目录。
+         * 一旦写不进去，账户、配置、Java 与游戏文件都会静默保存失败（界面上却提示成功），
+         * 所以这里实测一次写入能力，只计算一次（程序目录在运行期不会变化）。
+         */
+        bool appDirectoryWritable()
+        {
+            static const bool writable = []() {
+                const QString appDir = QCoreApplication::applicationDirPath();
+                QDir dir(appDir);
+                if (!dir.exists())
+                    return false;
+
+                QTemporaryFile probe(appDir + QStringLiteral("/.bb_write_test_XXXXXX"));
+                if (!probe.open())
+                    return false;
+
+                const bool ok = (probe.write("bb") == 2);
+                probe.close();
+                probe.remove();
+                return ok;
+            }();
+            return writable;
+        }
+
+        /// 程序目录不可写时使用的数据根目录（用户数据目录下的 BlockBox）
+        QString fallbackDataRoot()
+        {
+            QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+            if (base.isEmpty())
+                base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+            if (base.isEmpty())
+                base = QDir::homePath();
+            return base + QStringLiteral("/BlockBox");
+        }
+
+    } // namespace
 
     // Windows: HKCU 注册表 Run 键；macOS: LaunchAgents plist；Linux: autostart .desktop
     namespace AutoStart {
@@ -128,16 +171,21 @@ namespace Platform {
 #else
         // 获取应用程序所在目录
         QString appDir = QCoreApplication::applicationDirPath();
-        
+
         // 创建BlockBox文件夹用于存放启动器文件
-        QString blockBoxDir = appDir + "/BlockBox";
+        // 装在 Program Files 等只读位置时退回用户数据目录，否则账户与配置会静默保存失败
+        QString blockBoxDir = appDirectoryWritable()
+                                  ? appDir + "/BlockBox"
+                                  : fallbackDataRoot();
         QDir blockBoxPath(blockBoxDir);
         if (!blockBoxPath.exists()) {
             blockBoxPath.mkpath(blockBoxDir);
         }
         
-        // 创建.minecraft文件夹用于存放我的世界游戏内容
-        QString minecraftDir = appDir + "/.minecraft";
+        // 创建.minecraft文件夹用于存放我的世界游戏内容（与数据目录同源，保证可写）
+        QString minecraftDir = appDirectoryWritable()
+                                   ? appDir + "/.minecraft"
+                                   : blockBoxDir + "/.minecraft";
         QDir minecraftPath(minecraftDir);
         if (!minecraftPath.exists()) {
             minecraftPath.mkpath(minecraftDir);
@@ -158,7 +206,9 @@ namespace Platform {
         return getDataDirectory() + "/.minecraft";
 #else
         QString appDir = QCoreApplication::applicationDirPath();
-        return appDir + "/.minecraft";
+        // 与数据目录保持一致：只读安装目录下改用用户数据目录里的 .minecraft
+        return appDirectoryWritable() ? appDir + "/.minecraft"
+                                      : getDataDirectory() + "/.minecraft";
 #endif
     }
     
@@ -174,7 +224,9 @@ namespace Platform {
         return bedrockDir;
 #else
         QString appDir = QCoreApplication::applicationDirPath();
-        QString bedrockDir = appDir + "/BedrockData";
+        QString bedrockDir = appDirectoryWritable()
+                                 ? appDir + "/BedrockData"
+                                 : getDataDirectory() + "/BedrockData";
         QDir bedrockPath(bedrockDir);
         if (!bedrockPath.exists()) {
             bedrockPath.mkpath(bedrockDir);

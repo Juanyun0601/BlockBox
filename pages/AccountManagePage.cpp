@@ -758,11 +758,20 @@ void AccountManagePage::initLoginPage()
         }
         
         // Add offline account
+        bool created = false;
         if (SettingsManager::instance())
         {
-            SettingsManager::instance()->addAccount(username, tr("离线"), "", true);
+            created = SettingsManager::instance()->addAccount(username, tr("离线"), "", true);
         }
-        
+
+        if (!created)
+        {
+            // 写入失败（例如启动器装在 Program Files 但没有写入权限）时如实提示，
+            // 不能提示成功后再让用户在列表里看到「暂无账户」
+            NotificationManager::showError(this, tr("离线账户创建失败：账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限"));
+            return;
+        }
+
         // Switch back to account list and reload accounts
         m_stackedWidget->setCurrentWidget(m_accountManageWidget);
         loadAccounts();

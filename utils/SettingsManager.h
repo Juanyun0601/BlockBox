@@ -113,7 +113,11 @@ public:
 
     // Account management methods
     QList<AccountInfo> getAccounts() const;
-    void addAccount(const QString &username, const QString &type, const QString &serverUrl, bool isDefault = false);
+    /**
+     * @brief 添加账户
+     * @return 是否真的写入成功（同名已存在或磁盘写入失败时返回 false，调用方需据此提示用户）
+     */
+    bool addAccount(const QString &username, const QString &type, const QString &serverUrl, bool isDefault = false);
     void addMicrosoftAccount(const QString &username, const QString &accessToken, const QString &refreshToken, const QString &uuid, const QString &skinUrl, bool isDefault = false);
     void removeAccount(const QString &username);
     void setDefaultAccount(const QString &username);
@@ -278,10 +282,10 @@ signals:
     void accountsChanged();
 
 private:
-    void saveAccountsToSettings(const QList<AccountInfo>& accounts);
+    bool saveAccountsToSettings(const QList<AccountInfo>& accounts);
     QString getAccountsFilePath() const;
     QList<AccountInfo> loadAccountsFromFile() const;
-    void saveAccountsToFile(const QList<AccountInfo>& accounts) const;
+    bool saveAccountsToFile(const QList<AccountInfo>& accounts) const;
 
     QSettings *m_settings;        // 系统设置（注册表/AppData），存UI偏好等
     QSettings *m_configSettings;  // BlockBox/config.ini，仅存Java安装缓存

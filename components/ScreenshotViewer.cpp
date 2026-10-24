@@ -40,9 +40,10 @@ void ScreenshotViewer::setupUI()
     displayLayout->setContentsMargins(4, 0, 4, 0);
     displayLayout->setSpacing(0);
 
+    // 圆形导航按钮：底色要足够实，才能在亮/暗图片上都显出圆形
     QString btnStyle =
-        "QPushButton { background: rgba(0,0,0,40); border: none; border-radius: 16px; }"
-        "QPushButton:hover { background: rgba(0,0,0,70); border-radius: 16px; }";
+        "QPushButton { background: rgba(0,0,0,120); border: none; border-radius: 20px; }"
+        "QPushButton:hover { background: rgba(0,0,0,165); border-radius: 20px; }";
 
     m_scene = new QGraphicsScene(this);
     m_view = new QGraphicsView(m_scene);
@@ -56,14 +57,14 @@ void ScreenshotViewer::setupUI()
     displayLayout->addWidget(m_view, 0, 0, 1, 3);
 
     m_prevBtn = new QPushButton();
-    m_prevBtn->setFixedSize(32, 32);
+    m_prevBtn->setFixedSize(40, 40);
     m_prevBtn->setCursor(Qt::PointingHandCursor);
     m_prevBtn->setFlat(true);
     m_prevBtn->setStyleSheet(btnStyle);
     displayLayout->addWidget(m_prevBtn, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
 
     m_nextBtn = new QPushButton();
-    m_nextBtn->setFixedSize(32, 32);
+    m_nextBtn->setFixedSize(40, 40);
     m_nextBtn->setCursor(Qt::PointingHandCursor);
     m_nextBtn->setFlat(true);
     m_nextBtn->setStyleSheet(btnStyle);

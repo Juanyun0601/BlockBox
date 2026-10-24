@@ -677,6 +677,37 @@ QLabel#subNavBadgeLabel {
     min-height: 16px;
 }
 
+/* 子导航顶部搜索框容器（过滤当前页面内容） */
+QWidget#subNavSearchContainer {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+}
+
+QWidget#subNavSearchContainer:hover {
+    background-color: @BG_HOVER@;
+    border-color: @BORDER_STRONG@;
+}
+
+QWidget#subNavSearchContainer > QLineEdit#subNavSearchEdit {
+    background-color: transparent;
+    border: none;
+    padding: 8px 8px 8px 0;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+}
+
+QWidget#subNavSearchContainer > QLineEdit#subNavSearchEdit::placeholder {
+    color: @TEXT_TERTIARY@;
+}
+
+QLabel#subNavSearchIcon {
+    background-color: transparent;
+    border: none;
+    padding: 0 0 0 10px;
+    color: @TEXT_DISABLED@;
+}
+
 /* ============================================================
  * Section 7. 页面容器样式（HomePage、ResourcesPage、SettingsPage 等）
  * ============================================================ */

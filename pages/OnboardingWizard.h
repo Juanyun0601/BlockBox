@@ -8,6 +8,7 @@
 #define ONBOARDINGWIZARD_H
 
 #include "components/AppDialogBase.h"
+#include "utils/JavaDownloader.h"  // JavaBinaryInfo（Step3 下载回调参数）
 #include "utils/SettingsManager.h" // AccountInfo
 
 #include <QList>
@@ -69,6 +70,15 @@ private slots:
     void onBrowseImage();
     void onPickAccent(const QString &colorName);
 
+    // Step3 Java 下载（引导页内直接下载并安装官方 Java）
+    void onJavaVersionListFetched(const QVector<JavaBinaryInfo> &binaries);
+    void onJavaFetchError(const QString &error);
+    void onJavaDownloadProgress(const QString &fileName, int percent);
+    void onJavaDownloadBytesProgress(qint64 bytesReceived, qint64 bytesTotal);
+    void onJavaDownloadFailed(const QString &error);
+    void onJavaExtractCompleted(const QString &javaPath);
+    void onJavaExtractFailed(const QString &error);
+
 private:
     void initUI();
     QWidget *buildHeader(QWidget *parent);
@@ -115,6 +125,13 @@ protected:
     QString launcherDisplayName(const QString &key) const;
     void importJavaPath(const QString &javaExe);
     QList<QPair<QString, QString>> lightJavaDetect() const;
+
+    /// 发起 Java 下载（mirrorId 为空时按当前语言自动选择镜像源）
+    void startJavaDownload(int majorVersion, const QString &mirrorId = QString());
+    /// 下载/安装期间禁用版本卡按钮，结束后恢复
+    void setJavaDownloadBusy(bool busy);
+    /// 下载完成后把 java.exe 登记进 Java 列表，并刷新上方列表
+    void registerDownloadedJava(const QString &javaPath);
 
     // 状态
     int m_method = MethodManual;      ///< 当前选择的引导方式
@@ -171,6 +188,11 @@ protected:
     QWidget *m_javaListWidget = nullptr;
     QPushButton *m_scanJavaBtn = nullptr;
     QLabel *m_scanJavaText = nullptr;
+    QLabel *m_javaDlStatusLabel = nullptr;   ///< 下载/安装进度提示
+    QList<QPushButton *> m_javaDlButtons;    ///< 四张版本卡的「下载」按钮（下载中禁用）
+    bool m_javaDownloaderWired = false;      ///< 是否已把下载器信号接到本向导
+    int m_javaDlMajor = 0;                   ///< 正在下载的 Java 主版本号（0=空闲）
+    bool m_javaDlRetried = false;            ///< 镜像源失败后是否已回落官方源重试
 
     // Step4 文件夹
     QWidget *m_folderListWidget = nullptr;

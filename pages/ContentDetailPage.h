@@ -143,6 +143,8 @@ private:
     QPushButton *m_downloadNextBtn;
     QLabel *m_downloadPageLabel;
     QLabel *m_downloadEmptyHint;   // 筛选后没有可下载版本时的提示
+    /** 该类资源是否存在"加载器"概念（资源包/数据包/光影包/世界都没有） */
+    bool supportsLoaderFilter() const;
     void updateDownloadPagination();
     void onDownloadPrevPage();
     void onDownloadNextPage();

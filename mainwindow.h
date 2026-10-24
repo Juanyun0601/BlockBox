@@ -375,4 +375,5 @@ private:
 
     static constexpr int kMaxCardDownloadDepth = 3; ///< 一键下载递归前置的最大深度，防止循环依赖
     QSet<QString> m_cardDownloadVisited;            ///< 一次"一键下载"流程中已处理的资源 ID（source:id）
+    QSet<QString> m_cardDownloadDetailTried;        ///< 一次"一键下载"流程中已请求过详情的资源 ID，避免重复补全与死循环
 };

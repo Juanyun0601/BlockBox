@@ -119,8 +119,12 @@ private:
     
     // Selected loaders
     QMap<QString, SelectedLoader> m_selectedLoaders;
-    
+
     bool m_isInstalling;
+
+    // 每次安装一个作用域对象：加载器安装器的完成信号是异步发出的，
+    // 信号连接挂在该对象上，跨安装回调作用域存活、下次安装时销毁
+    QObject *m_loaderSignalScope = nullptr;
 };
 
 #endif // LOADERDETAILPAGE_H

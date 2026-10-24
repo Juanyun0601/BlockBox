@@ -11,6 +11,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QIcon>
@@ -19,6 +20,8 @@
 #include <QPropertyAnimation>
 
 #include "components/SideBar.h"
+
+class QTimer;
 
 class SubNavPanel : public QWidget
 {
@@ -38,6 +41,10 @@ public:
     void setSelectedChild(int childIndex);
     /** 获取当前展开的父项索引，未展开时返回 -1 */
     int currentParentIndex() const { return m_currentParentIndex; }
+    /** 清空顶部搜索框（切换分组/收起面板时调用，会同步发出空查询信号） */
+    void clearSearch();
+    /** 当前搜索框关键词（去空白） */
+    QString searchQuery() const;
 
     /** 悬浮气泡面板的固定宽度 */
     static constexpr int kWidth = 240;
@@ -52,6 +59,8 @@ signals:
     void childItemClicked(int parentIndex, int childIndex);
     /** 面板可见性变化（展开/收起）；true=气泡显示，false=气泡隐藏 */
     void panelVisibilityChanged(bool visible);
+    /** 顶部搜索框内容变化（已做 200ms 防抖）；用于过滤当前页面主内容区 */
+    void searchQueryChanged(const QString &query);
 
 private:
     void clearContent();
@@ -63,6 +72,9 @@ private:
     QWidget *m_header;
     QLabel *m_headerTitle;
     QPushButton *m_collapseBtn;
+    QWidget *m_searchContainer;
+    QLineEdit *m_searchEdit;
+    QTimer *m_searchDebounce;
     QScrollArea *m_scrollArea;
     QWidget *m_scrollContent;
     QVBoxLayout *m_contentLayout;

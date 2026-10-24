@@ -1,0 +1,4 @@
+thread 1
+bt 30
+detach
+quit
