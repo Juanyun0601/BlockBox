@@ -974,10 +974,11 @@ void VoxelViewWidget::buildGeometry()
                                 rotatePoint3(lx, ly, lz,
                                              box.rotOrigin[0], box.rotOrigin[1], box.rotOrigin[2],
                                              box.rotAngle, box.rotAxis);
-                            // blockstate 的 y 旋转：绕格心转（-yaw 才是 MC 的旋转方向），
+                            // blockstate 的 y 旋转：绕格心转（正角度即 MC 的 y 方向，
+                            // 例如 facing=south 就是 y=90、模型东侧转到南侧），
                             // 几何与贴图一起转，所以楼梯/栅栏/玻璃板的朝向与贴图都正确
                             if (box.yaw)
-                                rotatePoint3(lx, ly, lz, 0.5f, 0.5f, 0.5f, -float(box.yaw), 1);
+                                rotatePoint3(lx, ly, lz, 0.5f, 0.5f, 0.5f, float(box.yaw), 1);
 
                             Vtx &v = q[c];
                             v.x = float(x) + lx;
@@ -1405,7 +1406,7 @@ void VoxelViewWidget::appendCellLines(int cellIndex, const QVector<RenderBox> &b
                 rotatePoint3(lx, ly, lz, box.rotOrigin[0], box.rotOrigin[1], box.rotOrigin[2],
                              box.rotAngle, box.rotAxis);
             if (box.yaw)
-                rotatePoint3(lx, ly, lz, 0.5f, 0.5f, 0.5f, -float(box.yaw), 1);
+                rotatePoint3(lx, ly, lz, 0.5f, 0.5f, 0.5f, float(box.yaw), 1);
             w[c][0] = float(x) + lx + (lx >= cx ? eps : -eps);
             w[c][1] = float(y) + ly + (ly >= cy ? eps : -eps);
             w[c][2] = float(z) + lz + (lz >= cz ? eps : -eps);
@@ -1514,7 +1515,7 @@ void VoxelViewWidget::rebuildHoverGeometry()
                     rotatePoint3(bx, by, bz, box.rotOrigin[0], box.rotOrigin[1], box.rotOrigin[2],
                                  box.rotAngle, box.rotAxis);
                 if (box.yaw)
-                    rotatePoint3(bx, by, bz, 0.5f, 0.5f, 0.5f, -float(box.yaw), 1);
+                    rotatePoint3(bx, by, bz, 0.5f, 0.5f, 0.5f, float(box.yaw), 1);
                 w[c][0] = float(xx) + bx + (bx >= box.from[0] ? eps : -eps);
                 w[c][1] = float(yy) + by + (by >= box.from[1] ? eps : -eps);
                 w[c][2] = float(zz) + bz + (bz >= box.from[2] ? eps : -eps);
@@ -1748,7 +1749,7 @@ void VoxelViewWidget::boxWorldBounds(const RenderBox &box, int x, int y, int z,
             rotatePoint3(px, py, pz, box.rotOrigin[0], box.rotOrigin[1], box.rotOrigin[2],
                          box.rotAngle, box.rotAxis);
         if (box.yaw)
-            rotatePoint3(px, py, pz, 0.5f, 0.5f, 0.5f, -float(box.yaw), 1);
+            rotatePoint3(px, py, pz, 0.5f, 0.5f, 0.5f, float(box.yaw), 1);
         px += float(x);
         py += float(y);
         pz += float(z);

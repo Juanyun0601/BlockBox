@@ -50,6 +50,8 @@ public slots:
 signals:
     void backToListRequested();
     void downloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile);
+    /** 点击左侧「一键安装」：安装最新正式版并自动补齐它的必备前置模组 */
+    void installLatestRequested(const ModInfo &modInfo);
     /** 用户点击顶部来源切换，请求拉取另一来源的详情（source: "modrinth"/"curseforge"） */
     void sourceSwitchRequested(const QString &source);
     /** 点击「问问AI」：请求跳转 AI 助手并引用当前网络模组 */
@@ -68,6 +70,7 @@ private:
     void buildHeader();
     void buildLeftSidebar();
     void buildRightMain();
+    void buildInstallBlock(QVBoxLayout *parentLayout);
     void buildFilterBlock(QVBoxLayout *parentLayout);
     void buildDependenciesBlock(QVBoxLayout *parentLayout);
     void buildDownloadListBlock(QVBoxLayout *parentLayout);
@@ -126,6 +129,7 @@ private:
 
     // Left sidebar
     QWidget *m_leftPanel;
+    QPushButton *m_installBtn;               // 「一键安装」按钮（在筛选选项之上）
     QComboBox *m_versionCombo;
     QComboBox *m_loaderCombo;
     QComboBox *m_versionTypeCombo;

@@ -58,6 +58,8 @@ private slots:
 
 private:
     void initUI();
+    void applyTaskTypeLayout();
+    QString currentStageLabel(int stepIndex) const;
     void updateDisplay();
     void updateButtons();
     void updateStatusPill();
@@ -71,6 +73,13 @@ private:
     QLabel *createChip(const QString &text);
     void setPillState(const QString &state);
     static QString stageToString(DownloadStage stage);
+
+    // 按任务类型渲染：阶段步条名称 / 标题动词 / 信息卡行名
+    QStringList m_stageNames;
+    QString m_typeLabel;
+    int m_currentStepIndex = 0;
+    QList<QLabel *> m_heroChips;
+    QMap<QString, QLabel *> m_infoLabels;
 
     struct FileRow
     {

@@ -361,7 +361,7 @@ void Skin3DWidget::setPose(SkinPose pose)
 // ============================================================
 void Skin3DWidget::applyPoseAnimation(float t)
 {
-  // 复位所有关节
+  // 复位所有关节与根位移补偿
   auto resetPart = [](BodyPart& p) { p.rotation.setToIdentity(); };
   resetPart(m_skin.head);
   resetPart(m_skin.body);
@@ -369,6 +369,7 @@ void Skin3DWidget::applyPoseAnimation(float t)
   resetPart(m_skin.leftArm);
   resetPart(m_skin.rightLeg);
   resetPart(m_skin.leftLeg);
+  m_poseRootOffset = QVector3D(0.0f, 0.0f, 0.0f);
 
   if (m_pose == SkinPose::Idle)
     return;
@@ -413,6 +414,83 @@ void Skin3DWidget::applyPoseAnimation(float t)
     m_skin.rightArm.rotation.rotate(20.0f, 1, 0, 0);
     m_skin.leftArm.rotation.rotate(20.0f, 1, 0, 0);
   }
+  else if (m_pose == SkinPose::Sneak)
+  {
+    // 潜行：身体前倾压低（负角度=向前倾，见 Swim 的 -90° 前扑）、
+    // 头微抬看向前方、手臂随身体略前摆、腿微屈补偿保持直立
+    m_skin.body.rotation.rotate(-20.0f, 1, 0, 0);
+    m_skin.head.rotation.rotate(16.0f, 1, 0, 0);
+    m_skin.rightArm.rotation.rotate(-8.0f, 1, 0, 0);
+    m_skin.leftArm.rotation.rotate(-8.0f, 1, 0, 0);
+    m_skin.rightLeg.rotation.rotate(12.0f, 1, 0, 0);
+    m_skin.leftLeg.rotation.rotate(12.0f, 1, 0, 0);
+  }
+  else if (m_pose == SkinPose::Swim)
+  {
+    // 游泳：俯卧放平（身体绕颈部 pivot 前倒 -90°，面向下），
+    // 双臂前伸过头交替划水，双腿交替打水，头微抬看向前方；
+    // 整体重心下拉回视口中心
+    m_skin.body.rotation.rotate(-90.0f, 1, 0, 0);
+    m_skin.head.rotation.rotate(25.0f, 1, 0, 0);
+    m_skin.rightArm.rotation.rotate(165.0f + 12.0f * std::sin(t * 4.0f), 1, 0, 0);
+    m_skin.leftArm.rotation.rotate(165.0f - 12.0f * std::sin(t * 4.0f), 1, 0, 0);
+    m_skin.rightLeg.rotation.rotate(15.0f * std::sin(t * 6.0f), 1, 0, 0);
+    m_skin.leftLeg.rotation.rotate(-15.0f * std::sin(t * 6.0f), 1, 0, 0);
+    m_poseRootOffset = QVector3D(0.0f, -0.5f, 0.0f);
+  }
+  else if (m_pose == SkinPose::Sleep)
+  {
+    // 睡觉：仰面平躺（身体绕颈部 pivot 后倒 90°），四肢自然放平，轻微呼吸起伏
+    m_skin.body.rotation.rotate(90.0f, 1, 0, 0);
+    m_skin.head.rotation.rotate(3.0f * std::sin(t * 1.5f), 1, 0, 0);
+    m_skin.rightLeg.rotation.rotate(2.0f * std::sin(t * 1.5f), 1, 0, 0);
+    m_skin.leftLeg.rotation.rotate(2.0f * std::sin(t * 1.5f + 0.4f), 1, 0, 0);
+    m_poseRootOffset = QVector3D(0.0f, -0.5f, 0.0f);
+  }
+  else if (m_pose == SkinPose::Attack)
+  {
+    // 攻击：右臂持剑上举→下劈循环，身体随挥砍轻微前倾，左臂后摆配平
+    const float swing = 0.5f - 0.5f * std::cos(t * 5.0f); // 0..1..0 循环
+    m_skin.rightArm.rotation.rotate(-120.0f + 150.0f * swing, 1, 0, 0);
+    m_skin.rightArm.rotation.rotate(-12.0f, 0, 0, 1);
+    m_skin.leftArm.rotation.rotate(-25.0f * swing, 1, 0, 0);
+    m_skin.body.rotation.rotate(-12.0f * swing, 1, 0, 0); // 随挥砍向前压（负=前倾）
+  }
+  else if (m_pose == SkinPose::Dance)
+  {
+    // 舞蹈：双臂交替侧举摆动，身体/头部绕 Y 轴左右摇摆，双腿交替微抬打节拍
+    const float s = std::sin(t * 6.0f);
+    const float c = std::cos(t * 3.0f);
+    m_skin.rightArm.rotation.rotate(-55.0f + 20.0f * s, 0, 0, 1);
+    m_skin.leftArm.rotation.rotate(55.0f - 20.0f * s, 0, 0, 1);
+    m_skin.rightArm.rotation.rotate(14.0f * s, 1, 0, 0);
+    m_skin.leftArm.rotation.rotate(-14.0f * s, 1, 0, 0);
+    m_skin.body.rotation.rotate(9.0f * c, 0, 1, 0);
+    m_skin.head.rotation.rotate(-9.0f * c, 0, 1, 0);
+    m_skin.rightLeg.rotation.rotate(17.0f * s, 1, 0, 0);
+    m_skin.leftLeg.rotation.rotate(-17.0f * s, 1, 0, 0);
+  }
+  else if (m_pose == SkinPose::Cheer)
+  {
+    // 欢呼：双臂高举过头顶交替挥动，身体轻微左右摇摆庆祝
+    const float s = std::sin(t * 5.0f);
+    m_skin.rightArm.rotation.rotate(-155.0f + 11.0f * s, 0, 0, 1);
+    m_skin.leftArm.rotation.rotate(155.0f - 11.0f * s, 0, 0, 1);
+    m_skin.body.rotation.rotate(4.0f * std::sin(t * 2.5f), 0, 0, 1);
+    m_skin.head.rotation.rotate(8.6f * s, 1, 0, 0);
+  }
+}
+
+QMatrix4x4 Skin3DWidget::bodyFrameMatrix() const
+{
+  // 身体 pivot（颈部，见 getModelSpec）为轴的旋转坐标系；
+  // Idle 时 body.rotation 为单位阵，结果恒等
+  QMatrix4x4 frame;
+  const QMatrix4x4& bp = m_skin.body.partTransform;
+  frame.translate(bp(0, 3), bp(1, 3), bp(2, 3));
+  frame *= m_skin.body.rotation;
+  frame.translate(-bp(0, 3), -bp(1, 3), -bp(2, 3));
+  return frame;
 }
 
 // ============================================================
@@ -907,12 +985,19 @@ void Skin3DWidget::paintGL()
 
   // 渲染所有身体部件
   // 顺序：内层先（不透明），外层后（透明测试）
-  auto renderPart = [&](BodyPart& part)
+  // 四肢/头部挂接在身体的 pivot 坐标系下（bodyFrameMatrix）：
+  // 身体大幅前倾/放平的姿势（鞠躬/游泳/睡觉）肢体随动不脱节；
+  // Idle 时身体 rotation 为单位阵、bodyFrame 恒等，与旧的扁平渲染逐位一致
+  const QMatrix4x4 bodyFrame = bodyFrameMatrix();
+  auto renderPart = [&](BodyPart& part, bool followsBody)
   {
     if (!part.visible) return;
 
-    // 模型矩阵 = 根变换 * 部件变换(pivot) * 关节旋转
+    // 模型矩阵 = 根变换 * 根位移补偿 * [身体坐标系] * 部件变换(pivot) * 关节旋转
     QMatrix4x4 model = m_skin.rootTransform;
+    model.translate(m_poseRootOffset);
+    if (followsBody)
+      model *= bodyFrame;
     model *= part.partTransform * part.rotation;
 
     // 内层
@@ -938,12 +1023,12 @@ void Skin3DWidget::paintGL()
     }
   };
 
-  renderPart(m_skin.head);
-  renderPart(m_skin.body);
-  renderPart(m_skin.rightArm);
-  renderPart(m_skin.leftArm);
-  renderPart(m_skin.rightLeg);
-  renderPart(m_skin.leftLeg);
+  renderPart(m_skin.head, true);
+  renderPart(m_skin.body, false);
+  renderPart(m_skin.rightArm, true);
+  renderPart(m_skin.leftArm, true);
+  renderPart(m_skin.rightLeg, true);
+  renderPart(m_skin.leftLeg, true);
 
   if (m_texture) m_texture->release();
   m_program.release();
@@ -1728,9 +1813,15 @@ Skin3DWidget::PickResult Skin3DWidget::pick(const QPoint& widgetPos) const
   };
 
   // 世界射线 → 部件局部（pivot 居中、缩放后）空间
+  // 矩阵合成与 renderPart 保持一致（根位移补偿 + 身体坐标系挂接），
+  // 保证 Paint 拾取与渲染命中同一表面（Idle 姿势下 bodyFrame 恒等）
+  const QMatrix4x4 bodyFrame = bodyFrameMatrix();
   auto localRay = [&](const PartSpec& ps, int pi, QVector3D& roOut, QVector3D& rdOut)
   {
     QMatrix4x4 M = m_skin.rootTransform;
+    M.translate(m_poseRootOffset);
+    if (pi != 1) // 1=身体：身体部件不挂接自身坐标系
+      M *= bodyFrame;
     M.translate(ps.px * S, ps.py * S, ps.pz * S);
     M *= partRotation(pi);
     const QMatrix4x4 Minv = M.inverted();

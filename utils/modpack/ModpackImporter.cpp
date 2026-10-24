@@ -8,6 +8,10 @@
 #include "ModpackImporter.h"
 #include "../SettingsManager.h"
 #include "../VersionDownloader.h"
+#include "../download/DownloadMirrors.h"
+#include "../net/Download.h"
+#include "../net/ChecksumValidator.h"
+#include "../net/NetworkAccess.h"
 #include "../forge/ForgeInstaller.h"
 #include "../fabric/FabricInstaller.h"
 #include "../NeoForgeInstaller.h"
@@ -22,6 +26,7 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QUrl>
 
 #include <zlib.h>
 
@@ -308,7 +313,7 @@ QByteArray ZipReader::decompressDeflate(const QByteArray& compressed, quint32 ex
 // ============================================================================
 
 ModpackImporter::ModpackImporter(QObject* parent)
-  : QObject(parent)
+  : Task(parent)
   , m_networkManager(new QNetworkAccessManager(this))
   , m_currentModReply(nullptr)
   , m_currentModIndex(0)
@@ -322,15 +327,20 @@ ModpackImporter::~ModpackImporter()
 {
 }
 
-void ModpackImporter::startInstall()
+void ModpackImporter::executeTask()
 {
   if (m_instanceName.isEmpty())
     m_instanceName = m_info.name;
 
+  // 实例名可能来自整合包元数据/用户输入，压成合法文件夹名，杜绝路径穿越
+  m_instanceName = Safety::safeFileName(m_instanceName, QStringLiteral("instance"));
+
   if (m_instancePath.isEmpty())
   {
+    // 实例列表只扫 <游戏根>/versions/* 一级目录，且版本 JSON 必须叫 <实例名>.json，
+    // 否则导入完在启动器里根本看不到（对照 InstanceSelectPage / LoaderDetailPage 约定）
     QString basePath = SettingsManager::instance()->getDefaultInstancePath();
-    m_instancePath = basePath + "/" + m_instanceName;
+    m_instancePath = basePath + "/versions/" + m_instanceName;
   }
 
   QDir dir;
@@ -340,8 +350,17 @@ void ModpackImporter::startInstall()
     return;
   }
 
-  emit stageChanged(tr("正在下载 Minecraft 版本..."));
-  emit installProgressChanged(0, tr("准备下载 Minecraft %1").arg(m_info.gameVersion));
+  // 通用包/未知格式：没有游戏版本可下载，直接解压内容成实例
+  if (m_info.gameVersion.trimmed().isEmpty())
+  {
+    emitStage(tr("正在解压整合包内容..."));
+    emitProgress(40, tr("整合包未提供游戏版本，直接解压为实例"));
+    extractOverrides();
+    return;
+  }
+
+  emitStage(tr("正在下载 Minecraft 版本..."));
+  emitProgress(0, tr("准备下载 Minecraft %1").arg(m_info.gameVersion));
 
   installVersion();
 }
@@ -355,17 +374,18 @@ void ModpackImporter::installVersion()
     {
       disconnect(vd, &VersionDownloader::downloadCompleted, this, nullptr);
       disconnect(vd, &VersionDownloader::downloadFailed, this, nullptr);
+      disconnect(vd, &VersionDownloader::downloadCancelled, this, nullptr);
 
-      emit installProgressChanged(30, tr("Minecraft %1 下载完成").arg(m_info.gameVersion));
+      emitProgress(30, tr("Minecraft %1 下载完成").arg(m_info.gameVersion));
 
       if (!m_info.loaderType.isEmpty())
       {
-        emit stageChanged(tr("正在安装加载器 %1...").arg(m_info.loaderType));
+        emitStage(tr("正在安装加载器 %1...").arg(m_info.loaderType));
         installLoader();
       }
       else
       {
-        emit stageChanged(tr("正在下载模组..."));
+        emitStage(tr("正在下载模组..."));
         installMods();
       }
     });
@@ -375,10 +395,24 @@ void ModpackImporter::installVersion()
     {
       disconnect(vd, &VersionDownloader::downloadCompleted, this, nullptr);
       disconnect(vd, &VersionDownloader::downloadFailed, this, nullptr);
+      disconnect(vd, &VersionDownloader::downloadCancelled, this, nullptr);
       failInstall(tr("Minecraft 版本下载失败：%1").arg(error));
     });
 
-  vd->downloadVanilla(m_info.gameVersion, m_instancePath, m_instanceName);
+  // 用户点「取消」时 VersionDownloader 只发 downloadCancelled，
+  // 不补这条连接任务会永远停在 Running、进度框关不掉
+  connect(vd, &VersionDownloader::downloadCancelled,
+    this, [this, vd]()
+    {
+      disconnect(vd, &VersionDownloader::downloadCompleted, this, nullptr);
+      disconnect(vd, &VersionDownloader::downloadFailed, this, nullptr);
+      disconnect(vd, &VersionDownloader::downloadCancelled, this, nullptr);
+      failInstall(tr("已取消"));
+    });
+
+  // 版本文件必须落到 <游戏根>/versions/<实例名>（downloadVanillaTo 直写目标目录），
+  // 旧实现 downloadVanilla 会在实例目录下再拼一层 versions/<mcVer>，实例列表扫不到
+  vd->downloadVanillaTo(m_info.gameVersion, m_instancePath, m_instanceName);
 }
 
 void ModpackImporter::installLoader()
@@ -395,8 +429,8 @@ void ModpackImporter::installLoader()
         disconnect(installer, &ForgeInstaller::installCompleted, this, nullptr);
         disconnect(installer, &ForgeInstaller::installFailed, this, nullptr);
 
-        emit installProgressChanged(60, tr("Forge %1 安装完成").arg(m_info.loaderVersion));
-        emit stageChanged(tr("正在下载模组..."));
+        emitProgress(60, tr("Forge %1 安装完成").arg(m_info.loaderVersion));
+        emitStage(tr("正在下载模组..."));
         installMods();
       });
 
@@ -421,8 +455,8 @@ void ModpackImporter::installLoader()
         disconnect(installer, &FabricInstaller::installCompleted, this, nullptr);
         disconnect(installer, &FabricInstaller::installFailed, this, nullptr);
 
-        emit installProgressChanged(60, tr("Fabric %1 安装完成").arg(m_info.loaderVersion));
-        emit stageChanged(tr("正在下载模组..."));
+        emitProgress(60, tr("Fabric %1 安装完成").arg(m_info.loaderVersion));
+        emitStage(tr("正在下载模组..."));
         installMods();
       });
 
@@ -447,8 +481,8 @@ void ModpackImporter::installLoader()
         disconnect(installer, &NeoForgeInstaller::installCompleted, this, nullptr);
         disconnect(installer, &NeoForgeInstaller::installFailed, this, nullptr);
 
-        emit installProgressChanged(60, tr("NeoForge %1 安装完成").arg(m_info.loaderVersion));
-        emit stageChanged(tr("正在下载模组..."));
+        emitProgress(60, tr("NeoForge %1 安装完成").arg(m_info.loaderVersion));
+        emitStage(tr("正在下载模组..."));
         installMods();
       });
 
@@ -466,8 +500,8 @@ void ModpackImporter::installLoader()
   else
   {
     // Unknown loader type - skip loader installation
-    emit installProgressChanged(60, tr("跳过未知加载器：%1").arg(m_info.loaderType));
-    emit stageChanged(tr("正在下载模组..."));
+    emitProgress(60, tr("跳过未知加载器：%1").arg(m_info.loaderType));
+    emitStage(tr("正在下载模组..."));
     installMods();
   }
 }
@@ -475,14 +509,15 @@ void ModpackImporter::installLoader()
 void ModpackImporter::installMods()
 {
   m_totalMods = m_info.mods.size();
-  m_currentModIndex = 0;
   m_modsDownloaded = 0;
   m_modsFailed = 0;
+  m_serialModIndices.clear();
+  m_serialPos = 0;
 
   if (m_totalMods == 0)
   {
-    emit installProgressChanged(75, tr("无模组需要下载"));
-    emit stageChanged(tr("正在解压覆盖文件..."));
+    emitProgress(75, tr("无模组需要下载"));
+    emitStage(tr("正在解压覆盖文件..."));
     extractOverrides();
     return;
   }
@@ -491,136 +526,275 @@ void ModpackImporter::installMods()
   QDir dir;
   dir.mkpath(modsDir);
 
-  emit installProgressChanged(62, tr("正在下载模组 (0/%1)...").arg(m_totalMods));
-  downloadNextMod();
+  emitProgress(62, tr("正在下载模组 (0/%1)...").arg(m_totalMods));
+
+  // MultiMC net 层：带下载地址的文件（Modrinth 清单）全部放进一个 NetJob，
+  // 并发下载；只有项目/文件 ID 的（CurseForge 清单）进串行队列逐个下。
+  // 注意：NetJob 各 part 的回调只计数，串行推进只由 NetJob finished 后驱动，
+  // 否则并发完成会把串行索引提前烧完、任务在下载未结束时就宣告成功。
+  m_modJob = NetJob::Ptr(new NetJob(tr("整合包模组"), Net::networkAccessManager()));
+
+  for (int i = 0; i < m_info.mods.size(); ++i)
+  {
+    const ModInfo& mod = m_info.mods.at(i);
+    const QStringList candidates = buildModCandidates(mod);
+    if (candidates.isEmpty())
+    {
+      // 无直接地址：CurseForge 旧路径（有项目/文件 ID），或两者皆无（记失败）
+      m_serialModIndices.append(i);
+      continue;
+    }
+
+    // mrpack 的 path 可能是 resourcepacks/xxx.zip 这类非 mods/ 路径，保留目录结构
+    QString relTarget;
+    const QString modPath = mod.name.trimmed();
+    if (modPath.contains(QLatin1Char('/')) && !modPath.startsWith(QLatin1Char('/')))
+      relTarget = modPath;
+    else
+      relTarget = QStringLiteral("mods/") + modFileName(mod, candidates);
+
+    const QString filePath = QDir::cleanPath(m_instancePath + "/" + relTarget);
+    if (!Safety::isPathInside(m_instancePath, filePath))
+    {
+      ++m_modsFailed;
+      continue;
+    }
+    QDir().mkpath(QFileInfo(filePath).absolutePath());
+
+    auto dl = Net::Download::makeFile(QUrl(candidates.first()), filePath);
+    for (int j = 1; j < candidates.size(); ++j)
+      dl->addUrlFallback(QUrl(candidates.at(j)));
+
+    // 清单校验和：sha1 优先，其次 sha512
+    if (!mod.sha1.isEmpty())
+    {
+      dl->addValidator(new Net::ChecksumValidator(QCryptographicHash::Sha1,
+                                                  QByteArray::fromHex(mod.sha1.toLatin1())));
+    }
+    else if (!mod.sha512.isEmpty())
+    {
+      dl->addValidator(new Net::ChecksumValidator(QCryptographicHash::Sha512,
+                                                  QByteArray::fromHex(mod.sha512.toLatin1())));
+    }
+
+    // 并发回调只更新计数与进度，不驱动串行状态机
+    connect(dl.get(), &NetAction::succeeded, this, [this](int) {
+      ++m_modsDownloaded;
+      reportModProgress();
+    });
+    connect(dl.get(), &NetAction::failed, this, [this](int) {
+      ++m_modsFailed;
+      reportModProgress();
+    });
+
+    m_modJob->addNetAction(dl);
+  }
+
+  const bool hasDirectDownloads = m_modJob->size() > 0;
+
+  connect(m_modJob.get(), &Task::finished, this, [this]() {
+    m_modJob.reset();
+    if (m_abortRequested)
+    {
+      failInstall(tr("已取消"));
+      return;
+    }
+    // 直接下载全部结束后才轮到串行（CurseForge ID）队列，队列空则收尾
+    downloadNextMod();
+  });
+
+  if (hasDirectDownloads)
+  {
+    m_modJob->start();
+  }
+  else
+  {
+    m_modJob.reset();
+    downloadNextMod();
+  }
 }
 
 void ModpackImporter::downloadNextMod()
 {
-  if (m_currentModIndex >= m_totalMods)
+  if (m_abortRequested)
   {
-    int progress = 75;
-    emit installProgressChanged(progress,
-      tr("模组下载完成 (%1 成功, %2 失败)").arg(m_modsDownloaded).arg(m_modsFailed));
-    emit stageChanged(tr("正在解压覆盖文件..."));
-    extractOverrides();
+    failInstall(tr("已取消"));
     return;
   }
 
-  const ModInfo& mod = m_info.mods.at(m_currentModIndex);
-  QString url;
-
-  if (!mod.downloadUrl.isEmpty())
+  // 串行队列：只处理无直接下载地址的 mod（下标来自 m_serialModIndices）
+  while (m_serialPos < m_serialModIndices.size())
   {
-    url = mod.downloadUrl;
-  }
-  else if (!mod.projectId.isEmpty() && !mod.fileId.isEmpty())
-  {
-    url = getCurseForgeDownloadUrl(mod.projectId, mod.fileId);
-  }
+    const int idx = m_serialModIndices.at(m_serialPos);
+    const ModInfo& mod = m_info.mods.at(idx);
 
-  if (url.isEmpty())
-  {
-    ++m_modsFailed;
-    ++m_currentModIndex;
-    downloadNextMod();
-    return;
-  }
+    QString url;
+    if (!mod.projectId.isEmpty() && !mod.fileId.isEmpty())
+      url = getCurseForgeDownloadUrl(mod.projectId, mod.fileId);
 
-  QNetworkRequest request{QUrl(url)};
-  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                       QNetworkRequest::NoLessSafeRedirectPolicy);
-
-  m_currentModReply = m_networkManager->get(request);
-
-  connect(m_currentModReply, &QNetworkReply::finished, this, [this]()
-  {
-    if (!m_currentModReply)
-      return;
-
-    QString modsDir = m_instancePath + "/mods";
-
-    if (m_currentModReply->error() == QNetworkReply::NoError)
+    if (url.isEmpty())
     {
-      QByteArray data = m_currentModReply->readAll();
+      // 既无下载地址也无 CurseForge ID：内容应在 overrides 里，计失败继续
+      ++m_modsFailed;
+      ++m_serialPos;
+      reportModProgress();
+      continue;
+    }
 
-      // Determine filename from Content-Disposition or URL
-      QString fileName;
-      QString contentDisposition =
-        m_currentModReply->rawHeader("Content-Disposition");
-      if (!contentDisposition.isEmpty())
+    QNetworkRequest request{QUrl(url)};
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+
+    m_currentModReply = m_networkManager->get(request);
+
+    connect(m_currentModReply, &QNetworkReply::finished, this, [this]()
+    {
+      if (!m_currentModReply)
+        return;
+
+      QString modsDir = m_instancePath + "/mods";
+
+      if (m_currentModReply->error() == QNetworkReply::NoError)
       {
-        int idx = contentDisposition.indexOf("filename=");
-        if (idx >= 0)
-        {
-          fileName = contentDisposition.mid(idx + 9).trimmed();
-          if (fileName.startsWith('"') && fileName.endsWith('"'))
-            fileName = fileName.mid(1, fileName.length() - 2);
-        }
-      }
+        QByteArray data = m_currentModReply->readAll();
 
-      if (fileName.isEmpty())
-      {
-        // Fall back to mod name or last segment of URL
-        const ModInfo& mod = m_info.mods.at(m_currentModIndex);
-        if (!mod.name.isEmpty())
-          fileName = mod.name;
-        else
+        // Determine filename from Content-Disposition or URL
+        QString fileName;
+        QString contentDisposition =
+          m_currentModReply->rawHeader("Content-Disposition");
+        if (!contentDisposition.isEmpty())
         {
-          QString urlPath = m_currentModReply->url().path();
-          int lastSlash = urlPath.lastIndexOf('/');
-          fileName = (lastSlash >= 0) ? urlPath.mid(lastSlash + 1) : "mod.jar";
+          int idx = contentDisposition.indexOf("filename=");
+          if (idx >= 0)
+          {
+            fileName = contentDisposition.mid(idx + 9).trimmed();
+            if (fileName.startsWith('"') && fileName.endsWith('"'))
+              fileName = fileName.mid(1, fileName.length() - 2);
+          }
         }
 
-        // Ensure .jar extension
+        if (fileName.isEmpty())
+        {
+          // Fall back to mod name or last segment of URL
+          const int modIdx = m_serialPos < m_serialModIndices.size()
+                                 ? m_serialModIndices.at(m_serialPos)
+                                 : -1;
+          const ModInfo& mod = modIdx >= 0 ? m_info.mods.at(modIdx) : ModInfo{};
+          if (!mod.name.isEmpty())
+            fileName = mod.name;
+          else
+          {
+            QString urlPath = m_currentModReply->url().path();
+            int lastSlash = urlPath.lastIndexOf('/');
+            fileName = (lastSlash >= 0) ? urlPath.mid(lastSlash + 1) : "mod.jar";
+          }
+
+          // Ensure .jar extension
+          if (!fileName.endsWith(".jar", Qt::CaseInsensitive))
+            fileName += ".jar";
+        }
+
+        // 文件名来自服务器响应/整合包清单，先压成安全的单层文件名
+        fileName = Safety::safeFileName(fileName, QStringLiteral("mod.jar"));
         if (!fileName.endsWith(".jar", Qt::CaseInsensitive))
           fileName += ".jar";
-      }
 
-      // 文件名来自服务器响应/整合包清单，先压成安全的单层文件名
-      fileName = Safety::safeFileName(fileName, QStringLiteral("mod.jar"));
-      if (!fileName.endsWith(".jar", Qt::CaseInsensitive))
-        fileName += ".jar";
-
-      QDir().mkpath(modsDir);
-      QString filePath = QDir::cleanPath(modsDir + "/" + fileName);
-      QFile file(filePath);
-      if (Safety::isPathInside(modsDir, filePath) && file.open(QIODevice::WriteOnly))
-      {
-        file.write(data);
-        file.close();
-        ++m_modsDownloaded;
+        QDir().mkpath(modsDir);
+        QString filePath = QDir::cleanPath(modsDir + "/" + fileName);
+        QFile file(filePath);
+        if (Safety::isPathInside(modsDir, filePath) && file.open(QIODevice::WriteOnly))
+        {
+          file.write(data);
+          file.close();
+          ++m_modsDownloaded;
+        }
+        else
+        {
+          ++m_modsFailed;
+        }
       }
       else
       {
         ++m_modsFailed;
       }
-    }
-    else
-    {
-      ++m_modsFailed;
-    }
 
-    m_currentModReply->deleteLater();
-    m_currentModReply = nullptr;
+      m_currentModReply->deleteLater();
+      m_currentModReply = nullptr;
 
-    ++m_currentModIndex;
+      ++m_serialPos;
+      reportModProgress();
+      downloadNextMod();
+    });
 
-    int pctBase = 62;
-    int pctRange = 13;
-    int progress = pctBase + (m_currentModIndex * pctRange / m_totalMods);
-    emit installProgressChanged(progress,
-      tr("正在下载模组 (%1/%2)...").arg(m_currentModIndex).arg(m_totalMods));
+    return; // 异步下载已发起，等 finished 回调再推进
+  }
 
-    downloadNextMod();
-  });
+  // 串行队列耗收尾
+  emitProgress(75,
+    tr("模组下载完成 (%1 成功, %2 失败)").arg(m_modsDownloaded).arg(m_modsFailed));
+  emitStage(tr("正在解压覆盖文件..."));
+  extractOverrides();
+}
+
+QStringList ModpackImporter::buildModCandidates(const ModInfo& mod) const
+{
+  QStringList candidates;
+  for (const QString& u : mod.downloadUrls)
+  {
+    // 每个地址展开为「镜像在前、官方兜底」，整体仍保持清单里的先后顺序
+    const QStringList expanded = DownloadMirrors::expandFileCandidates(u);
+    for (const QString& c : expanded)
+      if (!candidates.contains(c))
+        candidates.append(c);
+  }
+  if (candidates.isEmpty() && !mod.downloadUrl.isEmpty())
+    candidates = DownloadMirrors::expandFileCandidates(mod.downloadUrl);
+  return candidates;
+}
+
+QString ModpackImporter::modFileName(const ModInfo& mod, const QStringList& candidates) const
+{
+  QString fileName;
+
+  // mrpack 的 path 形如 "mods/xxx.jar"，取末段作为文件名
+  if (!mod.name.isEmpty())
+  {
+    const QString trimmed = mod.name.trimmed();
+    const int lastSlash = qMax(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+    fileName = (lastSlash >= 0) ? trimmed.mid(lastSlash + 1) : trimmed;
+  }
+
+  if (fileName.isEmpty() && !candidates.isEmpty())
+  {
+    const QString path = QUrl(candidates.first()).path();
+    const int lastSlash = path.lastIndexOf('/');
+    fileName = (lastSlash >= 0) ? path.mid(lastSlash + 1) : QString();
+  }
+
+  fileName = Safety::safeFileName(fileName, QStringLiteral("mod.jar"));
+  if (!fileName.endsWith(".jar", Qt::CaseInsensitive))
+    fileName += ".jar";
+  return fileName;
+}
+
+void ModpackImporter::advanceAfterModDownload()
+{
+  ++m_currentModIndex;
+
+  const int pctBase = 62;
+  const int pctRange = 13;
+  const int progress = pctBase + (m_currentModIndex * pctRange / m_totalMods);
+  emitProgress(progress,
+    tr("正在下载模组 (%1/%2)...").arg(m_currentModIndex).arg(m_totalMods));
+
+  downloadNextMod();
 }
 
 void ModpackImporter::extractOverrides()
 {
   if (m_zipPath.isEmpty() || !QFile::exists(m_zipPath))
   {
-    emit installProgressChanged(90, tr("无覆盖文件需要解压"));
+    emitProgress(90, tr("无覆盖文件需要解压"));
     createInstance();
     return;
   }
@@ -628,7 +802,7 @@ void ModpackImporter::extractOverrides()
   ZipReader zip;
   if (!zip.open(m_zipPath))
   {
-    emit installProgressChanged(90, tr("无法打开整合包文件，跳过覆盖文件解压"));
+    emitProgress(90, tr("无法打开整合包文件，跳过覆盖文件解压"));
     createInstance();
     return;
   }
@@ -735,7 +909,7 @@ void ModpackImporter::extractOverrides()
     }
   }
 
-  emit installProgressChanged(92,
+  emitProgress(92,
     tr("已解压 %1 个覆盖文件").arg(extractedCount));
   createInstance();
 }
@@ -760,13 +934,53 @@ void ModpackImporter::createInstance()
     file.close();
   }
 
-  emit installProgressChanged(100, tr("安装完成"));
+  emitProgress(100, tr("安装完成"));
   emit installFinished(true, m_instancePath);
+  emitSucceeded();
 }
 
 void ModpackImporter::failInstall(const QString& error)
 {
   emit installFinished(false, error);
+  if (m_abortRequested)
+    emitAborted();
+  else
+    emitFailed(error);
+}
+
+bool ModpackImporter::canAbort() const
+{
+  return true;
+}
+
+bool ModpackImporter::abort()
+{
+  m_abortRequested = true;
+
+  // 模组下载阶段：取消在途 NetJob / 请求
+  if (m_modJob)
+    m_modJob->abort();
+  if (m_currentModReply)
+    m_currentModReply->abort();
+
+  // 版本下载阶段：该下载由本次导入发起，随之取消
+  VersionDownloader* vd = VersionDownloader::instance();
+  if (vd->isDownloading())
+    vd->cancelDownload();
+
+  return true;
+}
+
+void ModpackImporter::emitStage(const QString& stage)
+{
+  emit stageChanged(stage);
+  setStatus(stage);
+}
+
+void ModpackImporter::emitProgress(int percent, const QString& message)
+{
+  emit installProgressChanged(percent, message);
+  setProgress(percent, 100);
 }
 
 QString ModpackImporter::getCurseForgeDownloadUrl(const QString& projectId,

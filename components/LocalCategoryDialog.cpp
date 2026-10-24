@@ -13,12 +13,16 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QStackedWidget>
+#include <QStyle>
 #include <QVBoxLayout>
 
 LocalCategoryDialog::LocalCategoryDialog(LocalCategoryManager *manager, QWidget *parent)
     : QDialog(parent)
     , m_manager(manager)
+    , m_stack(nullptr)
     , m_list(nullptr)
+    , m_emptyLabel(nullptr)
     , m_renameBtn(nullptr)
     , m_deleteBtn(nullptr)
 {
@@ -32,21 +36,50 @@ void LocalCategoryDialog::initUI()
 {
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     setWindowTitle(tr("管理分类"));
-    setFixedSize(400, 380);
+    setObjectName(QStringLiteral("localCategoryDialog"));
+    // 固定宽改为「可缩放 + 合适默认值」，列表内容多时也能拉大查看
+    resize(440, 420);
+    setMinimumSize(400, 360);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(24, 24, 24, 20);
-    layout->setSpacing(14);
+    layout->setContentsMargins(24, 22, 24, 18);
+    layout->setSpacing(10);
 
     QLabel *titleLabel = new QLabel(tr("管理分类"), this);
+    titleLabel->setObjectName(QStringLiteral("listTitle"));
     layout->addWidget(titleLabel);
 
-    QLabel *hintLabel = new QLabel(tr("分类用于手动整理实例内的本地资源（模组等），可随时修改。"), this);
+    QLabel *hintLabel = new QLabel(
+        tr("分类用于手动整理实例内的本地资源（模组等），可随时修改。"), this);
+    hintLabel->setObjectName(QStringLiteral("hintLabel"));
     hintLabel->setWordWrap(true);
     layout->addWidget(hintLabel);
+    layout->addSpacing(2);
 
-    m_list = new QListWidget(this);
-    layout->addWidget(m_list, 1);
+    // 内容区：空态提示 与 分类列表 二选一，保证空态在框内垂直居中
+    m_stack = new QStackedWidget(this);
+    m_stack->setObjectName(QStringLiteral("localCatStack"));
+    m_stack->setMinimumHeight(160);
+
+    // 空态容器复用列表同一套边框/底色，避免切换时布局跳变
+    auto *emptyBox = new QWidget(m_stack);
+    emptyBox->setObjectName(QStringLiteral("localCatEmptyBox"));
+    auto *emptyBoxLayout = new QVBoxLayout(emptyBox);
+    emptyBoxLayout->setContentsMargins(12, 12, 12, 12);
+    m_emptyLabel = new QLabel(
+        tr("暂无分类\n点击下方「新建分类」开始整理"), emptyBox);
+    m_emptyLabel->setObjectName(QStringLiteral("localCatEmpty"));
+    m_emptyLabel->setAlignment(Qt::AlignCenter);
+    m_emptyLabel->setWordWrap(true);
+    emptyBoxLayout->addWidget(m_emptyLabel, 1);
+    m_stack->addWidget(emptyBox);
+
+    m_list = new QListWidget(m_stack);
+    m_list->setObjectName(QStringLiteral("localCatList"));
+    m_list->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_stack->addWidget(m_list);
+
+    layout->addWidget(m_stack, 1);
 
     QHBoxLayout *btnLayout = new QHBoxLayout();
     btnLayout->setSpacing(8);
@@ -58,12 +91,14 @@ void LocalCategoryDialog::initUI()
     btnLayout->addWidget(createBtn);
 
     m_renameBtn = new QPushButton(tr("重命名"), this);
+    m_renameBtn->setObjectName(QStringLiteral("localCatSecondaryBtn"));
     m_renameBtn->setEnabled(false);
     m_renameBtn->setCursor(Qt::PointingHandCursor);
     connect(m_renameBtn, &QPushButton::clicked, this, &LocalCategoryDialog::onRenameCategory);
     btnLayout->addWidget(m_renameBtn);
 
     m_deleteBtn = new QPushButton(tr("删除"), this);
+    m_deleteBtn->setObjectName(QStringLiteral("localCatDeleteBtn"));
     m_deleteBtn->setEnabled(false);
     m_deleteBtn->setCursor(Qt::PointingHandCursor);
     connect(m_deleteBtn, &QPushButton::clicked, this, &LocalCategoryDialog::onDeleteCategory);
@@ -80,23 +115,89 @@ void LocalCategoryDialog::initUI()
 
     connect(m_list, &QListWidget::itemSelectionChanged,
             this, &LocalCategoryDialog::onSelectionChanged);
+    connect(m_list, &QListWidget::itemDoubleClicked,
+            this, &LocalCategoryDialog::onItemDoubleClicked);
+}
+
+QWidget *LocalCategoryDialog::makeCategoryRow(const QString &name, int count, QWidget *parent)
+{
+    QWidget *row = new QWidget(parent);
+    row->setObjectName(QStringLiteral("localCatRow"));
+
+    QHBoxLayout *h = new QHBoxLayout(row);
+    h->setContentsMargins(10, 0, 10, 0);
+    h->setSpacing(8);
+
+    QLabel *nameLabel = new QLabel(name, row);
+    nameLabel->setObjectName(QStringLiteral("localCatName"));
+    nameLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+    h->addWidget(nameLabel, 1);
+
+    QLabel *badge = new QLabel(QString::number(count), row);
+    badge->setObjectName(QStringLiteral("localCatCountBadge"));
+    badge->setAlignment(Qt::AlignCenter);
+    h->addWidget(badge);
+
+    return row;
 }
 
 void LocalCategoryDialog::reloadList()
 {
+    // 记住当前选中分类，重建后尽量恢复，避免重命名/外部变更后选中丢失
+    QString keepId;
+    if (QListWidgetItem *cur = m_list->currentItem())
+        keepId = cur->data(Qt::UserRole).toString();
+
     m_list->blockSignals(true);
     m_list->clear();
 
     const QList<LocalResourceCategory> cats = m_manager->categories();
-    for (const LocalResourceCategory &c : cats)
+    if (cats.isEmpty())
     {
-        const int count = m_manager->filesInCategory(c.id).size();
-        QListWidgetItem *item = new QListWidgetItem(
-            QString("%1（%2 项）").arg(c.name).arg(count), m_list);
-        item->setData(Qt::UserRole, c.id);
+        m_stack->setCurrentIndex(0);
     }
+    else
+    {
+        int restoreRow = -1;
+        for (int i = 0; i < cats.size(); ++i)
+        {
+            const LocalResourceCategory &c = cats.at(i);
+            const int count = m_manager->filesInCategory(c.id).size();
+            QListWidgetItem *item = new QListWidgetItem(m_list);
+            item->setData(Qt::UserRole, c.id);
+            // 视觉由 setItemWidget 行控件绘制；item 本身不再画文字，避免叠字
+            item->setText(QString());
+            item->setToolTip(tr("%1 — %2 项").arg(c.name).arg(count));
+            item->setSizeHint(QSize(0, 44));
+            m_list->setItemWidget(item, makeCategoryRow(c.name, count, m_list));
+            if (restoreRow < 0 && !keepId.isEmpty() && c.id == keepId)
+                restoreRow = i;
+        }
+        m_stack->setCurrentIndex(1);
+        if (restoreRow >= 0)
+            m_list->setCurrentRow(restoreRow);
+    }
+
     m_list->blockSignals(false);
+    updateRowSelectedFlags();
     refreshButtons();
+}
+
+void LocalCategoryDialog::updateRowSelectedFlags()
+{
+    for (int i = 0; i < m_list->count(); ++i)
+    {
+        QWidget *row = m_list->itemWidget(m_list->item(i));
+        if (!row)
+            continue;
+        const bool selected = (m_list->currentRow() == i);
+        if (row->property("selected").toBool() == selected)
+            continue;
+        row->setProperty("selected", selected);
+        row->style()->unpolish(row);
+        row->style()->polish(row);
+        row->update();
+    }
 }
 
 void LocalCategoryDialog::refreshButtons()
@@ -108,7 +209,16 @@ void LocalCategoryDialog::refreshButtons()
 
 void LocalCategoryDialog::onSelectionChanged()
 {
+    updateRowSelectedFlags();
     refreshButtons();
+}
+
+void LocalCategoryDialog::onItemDoubleClicked(QListWidgetItem *item)
+{
+    if (!item)
+        return;
+    // 空态占位项不可选中，不会走到这里
+    onRenameCategory();
 }
 
 void LocalCategoryDialog::onCreateCategory()

@@ -69,6 +69,39 @@ public:
     static bool imageHostBroken() { return imageHostBrokenRef(); }
 
     /**
+     * @brief Modrinth API 基地址（跟随 use_mcim 设置）
+     *
+     * 未设置时默认开启镜像，与资源下载页等其余页面的行为保持一致。
+     */
+    static QString modrinthApiBaseUrl()
+    {
+        QVariant mcimVal = SettingsManager::instance()->property("use_mcim");
+        const bool useMcim = mcimVal.isValid() ? mcimVal.toBool() : true;
+        return useMcim ? QStringLiteral("https://mod.mcimirror.top/modrinth")
+                       : QStringLiteral("https://api.modrinth.com");
+    }
+
+    /**
+     * @brief 将内容文件下载 URL 通过 MCIM 镜像改写（未开启镜像时原样返回）
+     *
+     * 与 rewriteImageUrl 同一套主机映射，但不含图片专用的「镜像不可用」标记；
+     * 调用方应在下载失败时回退原始地址。
+     */
+    static QString rewriteFileUrl(const QString &url)
+    {
+        QVariant mcimVal = SettingsManager::instance()->property("use_mcim");
+        if (!mcimVal.isValid() || !mcimVal.toBool())
+            return url;
+        if (url.startsWith(QStringLiteral("https://cdn.modrinth.com/")))
+            return QString(url).replace(QStringLiteral("https://cdn.modrinth.com/"),
+                                        QStringLiteral("https://mod.mcimirror.top/"));
+        if (url.startsWith(QStringLiteral("https://edge.forgecdn.net/")))
+            return QString(url).replace(QStringLiteral("https://edge.forgecdn.net/"),
+                                        QStringLiteral("https://mod.mcimirror.top/"));
+        return url;
+    }
+
+    /**
      * @brief 下载网络图片并显示到 label（自动处理镜像回退）
      *
      * 先按镜像地址请求；若返回的不是图片（镜像把图片请求返回成网页）或请求失败，

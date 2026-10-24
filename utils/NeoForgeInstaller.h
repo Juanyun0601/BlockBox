@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -175,9 +176,8 @@ private:
     QNetworkAccessManager *m_networkManager;
     NeoForgeDownloadSource m_downloadSource;
     QNetworkReply *m_currentReply;
-    QProcess *m_currentProcess;
-    bool m_isInstalling;
-    bool m_isCancelled;
+    std::atomic<bool> m_isInstalling;
+    std::atomic<bool> m_isCancelled;
     bool m_isDownloadPhase;
 
     QString m_currentMcVersion;

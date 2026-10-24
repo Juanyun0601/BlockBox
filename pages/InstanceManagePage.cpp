@@ -67,6 +67,8 @@ void InstanceManagePage::setCurrentTab(int index)
     m_contentStack->setCurrentIndex(stackIndex);
     // 懒加载：进入对应标签页时才生成该页内容
     loadSubPage(stackIndex);
+    // 子导航搜索词保持生效：应用到新切换到的子页
+    applyFilterToCurrentSubPage();
 }
 
 void InstanceManagePage::setCurrentInstancePath(const QString &instancePath)
@@ -404,6 +406,39 @@ void InstanceManagePage::refresh()
     // 存档地图页：顶栏刷新 = 重新渲染当前维度
     if (m_contentStack && m_contentStack->currentIndex() == 15 && m_worldMapPage)
         m_worldMapPage->refresh();
+}
+
+void InstanceManagePage::applyPageFilter(const QString &query)
+{
+    m_pageFilterQuery = query;
+    applyFilterToCurrentSubPage();
+}
+
+void InstanceManagePage::applyFilterToCurrentSubPage()
+{
+    if (!m_contentStack)
+        return;
+
+    // 先恢复上一个被过滤的子页（可能已切走）
+    if (m_lastFilteredInner)
+    {
+        QMetaObject::invokeMethod(m_lastFilteredInner, "applyPageFilter",
+                                  Q_ARG(QString, QString()));
+        m_lastFilteredInner = nullptr;
+    }
+
+    if (m_pageFilterQuery.isEmpty())
+        return;
+
+    QWidget *inner = m_contentStack->currentWidget();
+    if (!inner)
+        return;
+    // 子页实现了 Q_INVOKABLE applyPageFilter(const QString &) 才转发；
+    // 未实现的子页（概览/导出/日志等）静默忽略。
+    if (inner->metaObject()->indexOfMethod("applyPageFilter(QString)") < 0)
+        return;
+    QMetaObject::invokeMethod(inner, "applyPageFilter", Q_ARG(QString, m_pageFilterQuery));
+    m_lastFilteredInner = inner;
 }
 
 template <typename T>

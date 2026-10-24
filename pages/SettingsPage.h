@@ -25,6 +25,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "utils/PageFilter.h"
+
 class CustomCheckBox;
 
 class SettingsPage : public QWidget
@@ -60,6 +62,12 @@ protected:
 public:
     void retranslateUi();
     void setCurrentSettingsTab(int index);
+
+    /**
+     * 子导航搜索框分发：对当前设置面板做行级过滤（卡片标题/设置行文本匹配）。
+     * 切换设置子页（setCurrentSettingsTab）时自动重新应用。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
     /** 基岩版模式：隐藏 Java 版相关设置页与设置行 */
     void setBedrockMode(bool bedrock);
 
@@ -184,6 +192,10 @@ private:
     QWidget *m_gameMemoryCard = nullptr;
 
     bool m_bedrockMode = false;
+
+    // 子导航搜索：当前面板行级过滤器 + 当前查询（切页重应用）
+    PageFilter::PanelFilter m_panelFilter;
+    QString m_pageFilterQuery;
 };
 
 #endif // SETTINGSPAGE_H

@@ -15,6 +15,7 @@
 #include "utils/LocalCategoryManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/ThumbnailProvider.h"
+#include "utils/McimHelper.h"
 #include "utils/mod/ModrinthAPI.h"
 #include "utils/content/ContentDownloader.h"
 #include "utils/DownloadTaskManager.h"
@@ -1307,6 +1308,13 @@ void InstanceFilePage::onSearchTextChanged(const QString &text)
     applyFilterAndSearch();
 }
 
+void InstanceFilePage::applyPageFilter(const QString &query)
+{
+    // 同步到页内搜索框：setText 触发 textChanged → 既有过滤管线
+    if (m_searchEdit)
+        m_searchEdit->setText(query);
+}
+
 /* 按当前排序模式重排 m_fileList 并重建 SHA-1 → 索引映射 */
 void InstanceFilePage::sortFileList()
 {
@@ -2181,6 +2189,9 @@ void InstanceFilePage::onCheckUpdatesClicked()
     m_checkUpdateBtn->setText(tr("检查中..."));
     m_statsLabel->setText(tr("正在检查更新..."));
 
+    // 检查更新跟随全局镜像设置：直连官方 API 在国内常失败，导致资源查不到更新
+    m_updateCheckApi->setBaseUrl(McimHelper::modrinthApiBaseUrl());
+
     // 第一步：批量哈希匹配，得到已安装版本（一次请求）
     m_updateCheckApi->matchHashes(sha1s);
 }
@@ -2361,8 +2372,8 @@ void InstanceFilePage::processNextModUpdate()
 
     // 注册下载任务
     QString instanceName = QFileInfo(m_instancePath).fileName();
-    QString taskId = DownloadTaskManager::instance()->addTask(
-        instanceName, m_instancePath, QString(), QStringList());
+    QString taskId = DownloadTaskManager::instance()->addTaskWithType(
+        instanceName, m_instancePath, QString(), QStringList(), TaskType::ContentDownload);
 
     DownloadTaskManager::instance()->updateTaskStatus(
         taskId, DownloadTaskStatus::Downloading,

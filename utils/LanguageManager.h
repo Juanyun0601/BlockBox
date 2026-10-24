@@ -20,11 +20,15 @@ class LanguageManager : public QObject
     Q_OBJECT
 
 public:
+    // 注意：枚举顺序与「设置 > 语言」下拉框、新手引导语言卡片的顺序一一对应，
+    // 新增语言只能追加在末尾，不能插在中间，否则已保存的语言偏好会错位。
     enum Language {
         Chinese,
         ChineseTraditional,
         English,
-        Spanish
+        Spanish,
+        Japanese,
+        Russian
     };
 
     explicit LanguageManager(QObject *parent = nullptr);

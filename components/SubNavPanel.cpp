@@ -7,11 +7,14 @@
 #include "SubNavPanel.h"
 
 #include <QPainter>
+#include <QEvent>
 #include <QGraphicsDropShadowEffect>
 #include <QIcon>
+#include <QPalette>
 #include <QPixmap>
 #include <QPropertyAnimation>
 #include <QScrollBar>
+#include <QStyle>
 #include <QTimer>
 
 #include "utils/IconHelper.h"
@@ -39,8 +42,14 @@ SubNavPanel::SubNavPanel(QWidget *parent)
         QColor c(color);
         if (c.isValid())
             m_iconSelectedColor = c;
+        updateSearchChrome();
         if (isVisible())
             setSelectedChild(m_currentChildIndex);
+    });
+
+    // 明暗主题切换：搜索框图标与占位提示的灰度需要重新取
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ThemeManager::ThemeType) {
+        updateSearchChrome();
     });
 
     // 悬浮气泡外阴影
@@ -79,28 +88,41 @@ SubNavPanel::SubNavPanel(QWidget *parent)
 
     m_mainLayout->addWidget(m_header);
 
-    // 顶部搜索框：过滤当前页面主内容区（容器+图标+透明输入框，仿 modelSearchContainer）
-    m_searchContainer = new QWidget(this);
-    m_searchContainer->setObjectName("subNavSearchContainer");
-    QHBoxLayout *searchLayout = new QHBoxLayout(m_searchContainer);
-    searchLayout->setContentsMargins(12, 0, 12, 8);
-    searchLayout->setSpacing(0);
+    // 顶部搜索框：过滤当前页面主内容区。
+    // 外层 searchRow 只负责外边距，让胶囊四边都离气泡边缘留白；
+    // 底色/描边/聚焦态全部交给 QSS（聚焦走 searchFocus 动态属性，Qt 没有 :focus-within）。
+    m_searchRow = new QWidget(this);
+    m_searchRow->setObjectName("subNavSearchRow");
+    auto *rowLayout = new QHBoxLayout(m_searchRow);
+    rowLayout->setContentsMargins(12, 0, 12, 12);
+    rowLayout->setSpacing(0);
 
-    auto *searchIcon = new QLabel(m_searchContainer);
-    searchIcon->setObjectName("subNavSearchIcon");
-    searchIcon->setFixedWidth(30);
-    searchIcon->setAlignment(Qt::AlignCenter);
-    searchIcon->setPixmap(
-        loadColoredIcon(":/Images/Icons/search.svg", m_iconNormalColor).pixmap(15, 15));
+    m_searchContainer = new QWidget(m_searchRow);
+    m_searchContainer->setObjectName("subNavSearchContainer");
+    m_searchContainer->setAttribute(Qt::WA_Hover, true);
+    m_searchContainer->setCursor(Qt::IBeamCursor);
+    m_searchContainer->installEventFilter(this);
+    QHBoxLayout *searchLayout = new QHBoxLayout(m_searchContainer);
+    searchLayout->setContentsMargins(10, 0, 10, 0);
+    searchLayout->setSpacing(6);
+
+    m_searchIcon = new QLabel(m_searchContainer);
+    m_searchIcon->setObjectName("subNavSearchIcon");
+    m_searchIcon->setFixedSize(16, 16);
+    m_searchIcon->setAlignment(Qt::AlignCenter);
+    m_searchIcon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
     m_searchEdit = new QLineEdit(m_searchContainer);
     m_searchEdit->setObjectName("subNavSearchEdit");
     m_searchEdit->setPlaceholderText(tr("搜索当前页面内容"));
     m_searchEdit->setClearButtonEnabled(true);
+    // 焦点进出只改描边，不再由输入框自己画框
+    m_searchEdit->installEventFilter(this);
 
-    searchLayout->addWidget(searchIcon);
+    rowLayout->addWidget(m_searchContainer);
+    searchLayout->addWidget(m_searchIcon);
     searchLayout->addWidget(m_searchEdit, 1);
-    m_mainLayout->addWidget(m_searchContainer);
+    m_mainLayout->addWidget(m_searchRow);
 
     // 200ms 防抖后发出查询（ModelSelectDialog 同款节奏）
     m_searchDebounce = new QTimer(this);
@@ -113,8 +135,12 @@ SubNavPanel::SubNavPanel(QWidget *parent)
     });
     connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString &)
     {
+        // 有内容时图标点亮为主色（提示「过滤已生效」）
+        updateSearchChrome();
         m_searchDebounce->start();
     });
+
+    updateSearchChrome();
 
     m_scrollArea = new QScrollArea(this);
     m_scrollArea->setWidgetResizable(true);
@@ -148,6 +174,85 @@ SubNavPanel::~SubNavPanel()
 void SubNavPanel::setSideBar(SideBar *sideBar)
 {
     m_sideBar = sideBar;
+}
+
+/** 搜索框里的次要灰度（图标 / 占位提示）：文字色向面板底色靠，避免抢视线 */
+QColor SubNavPanel::searchMutedColor() const
+{
+    QColor text(ThemeManager::instance()->currentTextColor());
+    if (!text.isValid())
+        text = QColor("#333333");
+
+    const bool dark = ThemeManager::instance()->currentTheme() != ThemeManager::LightTheme;
+    const QColor base = dark ? QColor("#2d2d2d") : QColor("#ffffff");
+    constexpr qreal textWeight = 0.45;   // 偏底色，保证暗色主题下也够立体
+    const qreal baseWeight = 1.0 - textWeight;
+
+    return QColor(qRound(text.red() * textWeight + base.red() * baseWeight),
+                  qRound(text.green() * textWeight + base.green() * baseWeight),
+                  qRound(text.blue() * textWeight + base.blue() * baseWeight));
+}
+
+/** 按「聚焦 / 有内容 / 明暗主题」刷新搜索框图标与占位提示色 */
+void SubNavPanel::updateSearchChrome()
+{
+    if (!m_searchEdit || !m_searchIcon)
+        return;
+
+    const bool active = m_searchEdit->hasFocus() || !m_searchEdit->text().isEmpty();
+    const QColor iconColor = active ? m_iconSelectedColor : searchMutedColor();
+    m_searchIcon->setPixmap(
+        loadColoredIcon(QStringLiteral(":/Images/Icons/search.svg"), iconColor).pixmap(16, 16));
+
+    // QSS 无法单独设置占位提示色，这里走调色板
+    QPalette pal = m_searchEdit->palette();
+    pal.setColor(QPalette::PlaceholderText, searchMutedColor());
+    m_searchEdit->setPalette(pal);
+
+    if (m_searchContainer)
+    {
+        m_searchContainer->style()->unpolish(m_searchContainer);
+        m_searchContainer->style()->polish(m_searchContainer);
+        m_searchContainer->update();
+    }
+}
+
+bool SubNavPanel::eventFilter(QObject *watched, QEvent *event)
+{
+    if (!m_searchContainer || !m_searchEdit)
+        return QWidget::eventFilter(watched, event);
+
+    // 点胶囊的空白处（图标一侧 / 内边距）也把光标送进输入框，不用正好点中文字区域
+    if (watched == m_searchContainer && event->type() == QEvent::MouseButtonPress)
+    {
+        m_searchEdit->setFocus(Qt::MouseFocusReason);
+        return QWidget::eventFilter(watched, event);
+    }
+
+    // 输入框自身不画边框，焦点态由外层胶囊的 searchFocus 属性表达
+    if (watched == m_searchEdit)
+    {
+        switch (event->type())
+        {
+        case QEvent::FocusIn:
+            m_searchContainer->setProperty("searchFocus", true);
+            updateSearchChrome();
+            break;
+        case QEvent::FocusOut:
+            m_searchContainer->setProperty("searchFocus", false);
+            updateSearchChrome();
+            break;
+        case QEvent::Enter:
+        case QEvent::Leave:
+            // 光标进出输入框时同步刷新胶囊 hover 描边，避免鼠标在胶囊内而描边不亮
+            m_searchContainer->style()->unpolish(m_searchContainer);
+            m_searchContainer->style()->polish(m_searchContainer);
+            break;
+        default:
+            break;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void SubNavPanel::clearSearch()

@@ -1263,28 +1263,43 @@ void ForgeVersionListPage::onInstallClicked()
     
     if (loaderNameLower == "optifine") {
         OptiFineInstaller::instance()->setDownloadSource(settings->getOptiFineDownloadSource());
-        
+
         QString mcVersion = m_minecraftVersion;
         QString optiFineVersion = m_selectedVersion.version;
         QString optiFineFileName = m_selectedVersion.fileName;
-        QTimer::singleShot(0, [mcVersion, optiFineVersion, optiFineFileName, instancePath]() {
+        // 安装器内部是阻塞式实现，放到后台线程执行，避免长时间占用 GUI 线程造成卡死
+        QtConcurrent::run([mcVersion, optiFineVersion, optiFineFileName, instancePath]() {
             OptiFineInstaller::instance()->downloadOptiFineInstaller(mcVersion, optiFineVersion, optiFineFileName, instancePath);
         });
     } else if (loaderNameLower == "liteloader") {
         LiteLoaderInstaller::instance()->setCurrentTaskId(ForgeInstaller::instance()->currentTaskId());
         connect(LiteLoaderInstaller::instance(), &LiteLoaderInstaller::installCompleted, this, &ForgeVersionListPage::onInstallCompleted);
         connect(LiteLoaderInstaller::instance(), &LiteLoaderInstaller::installFailed, this, &ForgeVersionListPage::onInstallFailed);
-        LiteLoaderInstaller::instance()->downloadLiteLoader(m_minecraftVersion, m_selectedVersion.version, instancePath);
+        QString mcVersion = m_minecraftVersion;
+        QString loaderVersion = m_selectedVersion.version;
+        QtConcurrent::run([mcVersion, loaderVersion, instancePath]() {
+            LiteLoaderInstaller::instance()->downloadLiteLoader(mcVersion, loaderVersion, instancePath);
+        });
     } else if (loaderNameLower == "cleanroom") {
         CleanroomInstaller::instance()->setCurrentTaskId(ForgeInstaller::instance()->currentTaskId());
         connect(CleanroomInstaller::instance(), &CleanroomInstaller::installCompleted, this, &ForgeVersionListPage::onInstallCompleted);
         connect(CleanroomInstaller::instance(), &CleanroomInstaller::installFailed, this, &ForgeVersionListPage::onInstallFailed);
-        CleanroomInstaller::instance()->downloadCleanroom(m_minecraftVersion, m_selectedVersion.version, m_selectedVersion.fileName, instancePath);
+        QString mcVersion = m_minecraftVersion;
+        QString loaderVersion = m_selectedVersion.version;
+        QString fileName = m_selectedVersion.fileName;
+        QtConcurrent::run([mcVersion, loaderVersion, fileName, instancePath]() {
+            CleanroomInstaller::instance()->downloadCleanroom(mcVersion, loaderVersion, fileName, instancePath);
+        });
     } else if (loaderNameLower == "optifabric") {
         OptiFabricInstaller::instance()->setCurrentTaskId(ForgeInstaller::instance()->currentTaskId());
         connect(OptiFabricInstaller::instance(), &OptiFabricInstaller::installCompleted, this, &ForgeVersionListPage::onInstallCompleted);
         connect(OptiFabricInstaller::instance(), &OptiFabricInstaller::installFailed, this, &ForgeVersionListPage::onInstallFailed);
-        OptiFabricInstaller::instance()->downloadOptiFabric(m_minecraftVersion, m_selectedVersion.version, m_selectedVersion.fileName, instancePath);
+        QString mcVersion = m_minecraftVersion;
+        QString loaderVersion = m_selectedVersion.version;
+        QString fileName = m_selectedVersion.fileName;
+        QtConcurrent::run([mcVersion, loaderVersion, fileName, instancePath]() {
+            OptiFabricInstaller::instance()->downloadOptiFabric(mcVersion, loaderVersion, fileName, instancePath);
+        });
     } else {
         m_forgeInstaller->setInstancePath(instancePath);
         m_forgeInstaller->setMcVersion(m_minecraftVersion);

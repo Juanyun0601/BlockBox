@@ -51,7 +51,29 @@ void DownloadTaskManager::emitActiveTaskCountChanged()
     emit activeTaskCountChanged(count);
 }
 
+QString taskTypeDisplayName(TaskType type)
+{
+    switch (type)
+    {
+    case TaskType::InstanceInstall:   return QObject::tr("安装新实例");
+    case TaskType::LoaderInstall:     return QObject::tr("安装加载器");
+    case TaskType::ContentDownload:   return QObject::tr("资源下载");
+    case TaskType::JavaDownload:      return QObject::tr("下载 Java");
+    case TaskType::LanTransfer:       return QObject::tr("局域网传输");
+    case TaskType::AiModel:           return QObject::tr("AI 模型");
+    case TaskType::SystemTool:        return QObject::tr("系统组件");
+    case TaskType::RuntimeDependency: return QObject::tr("运行依赖");
+    case TaskType::Generic:           break;
+    }
+    return QObject::tr("下载任务");
+}
+
 QString DownloadTaskManager::addTask(const QString &instanceName, const QString &instancePath, const QString &mcVersion, const QStringList &loaders)
+{
+    return addTaskWithType(instanceName, instancePath, mcVersion, loaders, TaskType::Generic);
+}
+
+QString DownloadTaskManager::addTaskWithType(const QString &instanceName, const QString &instancePath, const QString &mcVersion, const QStringList &loaders, TaskType type)
 {
     QString taskId = generateTaskId();
     
@@ -61,6 +83,7 @@ QString DownloadTaskManager::addTask(const QString &instanceName, const QString 
     task.instancePath = instancePath;
     task.mcVersion = mcVersion;
     task.loaders = loaders;
+    task.type = type;
     task.progress = 0;
     task.status = DownloadTaskStatus::Queued;
     task.statusMessage = tr("等待中");

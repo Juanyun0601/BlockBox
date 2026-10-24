@@ -437,6 +437,10 @@ QWidget* ModpackExportPage::createStep1()
   // 默认选中第一个
   m_formatGroup->button(0)->setChecked(true);
   m_selectedFormat = "blockbox";
+  // setChecked 是程序化选中，不触发 idClicked，需手动启用「下一步」，
+  // 否则冷启动导出页在用户点过格式卡片前无法进入后续步骤
+  if (m_nextBtn)
+    m_nextBtn->setEnabled(true);
 
   layout->addStretch();
   scrollArea->setWidget(page);

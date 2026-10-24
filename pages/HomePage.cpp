@@ -10,15 +10,18 @@
 #include "components/OutlinedLabel.h"
 #include "components/HomeDataVisuals.h"
 #include "components/NewsCard.h"
+#include "components/NewsDetailDialog.h"
 #include "components/Skin3DWidget.h"
 #include "utils/DownloadTaskManager.h"
 #include "utils/DownloadUtils.h"
 #include "utils/SkinDownloader.h"
 #include "utils/SystemInfo.h"
 #include "utils/mod/ModData.h"
+#include "utils/news/NewsFeed.h"
 
 #include <algorithm>
 #include <QAbstractAnimation>
+#include <QButtonGroup>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -27,6 +30,7 @@
 #include <QEvent>
 #include <QEasingCurve>
 #include <QFile>
+#include <QFontMetrics>
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -46,6 +50,7 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QShowEvent>
+#include <QStackedWidget>
 #include <QStorageInfo>
 #include <QStyle>
 #include <QUrl>
@@ -139,6 +144,16 @@ static QColor homeCardBorderColor()
   case ThemeManager::LightTheme: return QColor("#e8eaed");
   case ThemeManager::DarkTheme:  return QColor("#3a3a3a");
   default:                       return QColor("#404040");
+  }
+}
+
+// 主题次级文字色（与 style.qss 中 @TEXT_TERTIARY@ 的取值保持一致）
+static QColor homeTextTertiaryColor()
+{
+  switch (ThemeManager::instance()->currentTheme())
+  {
+  case ThemeManager::LightTheme: return QColor("#888888");
+  default:                       return QColor("#808080");
   }
 }
 
@@ -409,6 +424,7 @@ HomePage::HomePage(QWidget *parent)
   loadPictures();
   // 最近游玩记录改为后台线程异步扫描（见 loadRecentPlays），
   // 「我的实例」区块仅在首次创建时才加载（见 createInstancesSection）
+  loadSkinPanelMode();
   initUI();
 
   // 账户列表变化（添加/删除/切换默认）时刷新皮肤面板
@@ -420,6 +436,8 @@ HomePage::HomePage(QWidget *parent)
   {
     if (m_skin3D && m_skin3D->isVisible() && !texture.isNull())
       m_skin3D->setSkin(texture);
+    // 经典模式头像跟随皮肤下载完成更新
+    refreshClassicPage();
   });
   // 主题切换：同步 3D 预览底色，轮播/面板描边取主题色重绘即可
   connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]()
@@ -430,6 +448,9 @@ HomePage::HomePage(QWidget *parent)
       m_skinPanel->update();
     if (m_carouselView)
       m_carouselView->update();
+    // 经典模式图标按新主题色重新着色
+    refreshClassicIcons();
+    refreshModeSwitchIcons();
   });
 }
 
@@ -512,6 +533,11 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
     // 若此处直接重建，等于在布局激活途中增删子项，可能导致布局丢更新、
     // 卡片拿不到几何尺寸而整块空白（概率性不加载），因此延迟到事件循环里合并执行。
     scheduleRecentPlaysRebuild();
+  }
+  if (event->type() == QEvent::Resize && watched == m_newsContainer)
+  {
+    // 官方新闻卡片同样按容器宽度均分三列，重建方式与最近游玩一致
+    scheduleNewsRebuild();
   }
   if (event->type() == QEvent::MouseButtonPress)
   {
@@ -885,7 +911,8 @@ void HomePage::rebuildContent()
   // ── 默认布局：轮播 + 预设区块 ──
   QSet<QString> usedTypes;
   usedTypes << HomeCardType::Carousel << HomeCardType::QuickLinks
-            << HomeCardType::Recent << HomeCardType::Websites
+            << HomeCardType::Recent << HomeCardType::News
+            << HomeCardType::Websites
             << HomeCardType::Performance;
 
   QWidget *cw = sectionWidget(HomeCardType::Carousel);
@@ -895,6 +922,7 @@ void HomePage::rebuildContent()
   const QStringList order = {
       HomeCardType::QuickLinks,
       HomeCardType::Recent,
+      HomeCardType::News,
       HomeCardType::Websites,
       HomeCardType::Performance,
   };
@@ -1027,6 +1055,13 @@ QWidget* HomePage::createSkinPanel()
   m_skinPanel->setFixedWidth(kSkinPanelWidth);
   m_skinPanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
+  // 面板内容分两页切换：0=默认（3D 预览/添加账户空态），1=经典（头像+启动游戏）
+  m_skinPageStack = new QStackedWidget();
+  auto *defaultPage = new QWidget();
+  auto *defaultLayout = new QVBoxLayout(defaultPage);
+  defaultLayout->setContentsMargins(0, 0, 0, 0);
+  defaultLayout->setSpacing(0);
+
   // 有账户：当前皮肤的 3D 预览模型（自动旋转，可拖拽/滚轮调整视角）
   // 背景 = 卡片色 50% 透明：GL 走 AlwaysStackOnTop 合成路径，
   // 帧缓冲内自绘圆角背景（清屏全透明 + SDF 圆角矩形），圆角外透出页面背景
@@ -1041,7 +1076,7 @@ QWidget* HomePage::createSkinPanel()
   m_skin3D->setFormat(glFormat);
   m_skin3D->setAttribute(Qt::WA_AlwaysStackOnTop);
   m_skin3D->installEventFilter(this);
-  m_skinPanel->contentLayout->addWidget(m_skin3D, 1);
+  defaultLayout->addWidget(m_skin3D, 1);
 
   // 无账户：「添加首个账户」空态
   m_skinAddBtn = new QPushButton();
@@ -1077,7 +1112,55 @@ QWidget* HomePage::createSkinPanel()
   bl->addWidget(d);
 
   connect(m_skinAddBtn, &QPushButton::clicked, this, &HomePage::accountManageRequested);
-  m_skinPanel->contentLayout->addWidget(m_skinAddBtn, 1);
+  defaultLayout->addWidget(m_skinAddBtn, 1);
+  m_skinPageStack->addWidget(defaultPage);
+
+  // 经典模式页（头像 / 账户名 / 启动游戏 / 实例图标行 / 当前实例名）
+  m_classicPage = createClassicSkinPage();
+  m_skinPageStack->addWidget(m_classicPage);
+  m_skinPanel->contentLayout->addWidget(m_skinPageStack, 1);
+  // 内容区与底部切换条之间留一点呼吸感
+  m_skinPanel->contentLayout->setSpacing(4);
+
+  // 面板底部的「默认 / 经典」图标切换（居中窄胶囊；选择会持久化、下次启动仍生效）
+  auto *modeWrap = new QWidget();
+  auto *modeWrapLayout = new QVBoxLayout(modeWrap);
+  modeWrapLayout->setContentsMargins(0, 0, 0, 3);
+  auto *modeRow = new QWidget();
+  modeRow->setObjectName("homeSkinModeSwitch");
+  modeRow->setFixedSize(84, 32);
+  auto *modeLayout = new QHBoxLayout(modeRow);
+  modeLayout->setContentsMargins(3, 3, 3, 3);
+  modeLayout->setSpacing(2);
+  auto *modeGroup = new QButtonGroup(this);
+  modeGroup->setExclusive(true);
+  m_modeDefaultBtn = new QPushButton(modeRow);
+  m_modeClassicBtn = new QPushButton(modeRow);
+  m_modeDefaultBtn->setToolTip(tr("默认：3D 皮肤模型"));
+  m_modeClassicBtn->setToolTip(tr("经典：头像 + 启动卡片"));
+  for (auto *btn : { m_modeDefaultBtn, m_modeClassicBtn })
+  {
+    btn->setObjectName("homeSkinModeBtn");
+    btn->setCheckable(true);
+    btn->setCursor(Qt::PointingHandCursor);
+    btn->setFixedHeight(26);
+    btn->setFocusPolicy(Qt::NoFocus);
+    modeLayout->addWidget(btn, 1);
+    modeGroup->addButton(btn);
+  }
+  connect(m_modeDefaultBtn, &QPushButton::clicked, this, [this]()
+  {
+    setSkinPanelMode(QStringLiteral("default"));
+  });
+  connect(m_modeClassicBtn, &QPushButton::clicked, this, [this]()
+  {
+    setSkinPanelMode(QStringLiteral("classic"));
+  });
+  m_modeDefaultBtn->setChecked(m_skinPanelMode != "classic");
+  m_modeClassicBtn->setChecked(m_skinPanelMode == "classic");
+  refreshModeSwitchIcons();
+  modeWrapLayout->addWidget(modeRow, 0, Qt::AlignHCenter);
+  m_skinPanel->contentLayout->addWidget(modeWrap);
 
   m_skinPanel->finalizeOverlay();
   refreshSkinPanel();
@@ -1092,21 +1175,222 @@ void HomePage::refreshSkinPanel()
   const bool hasAccount = !SettingsManager::instance()->getAccounts().isEmpty();
   m_skin3D->setVisible(hasAccount);
   m_skinAddBtn->setVisible(!hasAccount);
-  // 空态保留卡片底色；展示预览时关闭填充，让 50% 透明的 GL 背景透出页面背景
-  if (m_skinPanel)
-    m_skinPanel->setFillEnabled(!hasAccount);
   if (!hasAccount)
+  {
+    applySkinPanelMode();
     return;
+  }
 
   // 同步加载当前账户皮肤（离线目录 > 缓存 > 官方默认皮肤）
   const AccountInfo acc = SettingsManager::instance()->getDefaultAccount();
   m_skin3D->setSkin(SkinDownloader::loadSkinForAccount(acc.username, acc.uuid));
+  refreshClassicPage();
 
   // 正版/第三方账户皮肤可能尚未缓存，异步下载补齐（命中缓存则直接加载并发出 skinLoaded）
   if (!acc.uuid.isEmpty())
     SkinDownloader::instance()->downloadSkinByUuid(acc.uuid);
   else if (!acc.skinUrl.isEmpty())
     SkinDownloader::instance()->downloadSkin(acc.username, acc.skinUrl);
+
+  applySkinPanelMode();
+}
+
+// ============================================================================
+// 皮肤面板「默认 / 经典」模式切换（选择持久化，重启后生效）
+// ============================================================================
+
+void HomePage::loadSkinPanelMode()
+{
+  const QString saved = SettingsManager::instance()
+                            ->getProperty("home_skin_panel_mode", "default").toString();
+  m_skinPanelMode = (saved == "classic") ? QStringLiteral("classic")
+                                         : QStringLiteral("default");
+}
+
+void HomePage::setSkinPanelMode(const QString &mode)
+{
+  const QString next = (mode == "classic") ? QStringLiteral("classic")
+                                           : QStringLiteral("default");
+  if (next == m_skinPanelMode)
+    return;
+  m_skinPanelMode = next;
+  SettingsManager::instance()->setProperty("home_skin_panel_mode", m_skinPanelMode);
+  applySkinPanelMode();
+}
+
+void HomePage::applySkinPanelMode()
+{
+  const bool classic = (m_skinPanelMode == "classic");
+  if (m_skinPageStack)
+    m_skinPageStack->setCurrentIndex(classic ? 1 : 0);
+  if (m_modeDefaultBtn)
+    m_modeDefaultBtn->setChecked(!classic);
+  if (m_modeClassicBtn)
+    m_modeClassicBtn->setChecked(classic);
+  // 经典模式始终保留卡片底色；默认模式下空态保留底色，
+  // 3D 预览关闭填充，让 50% 透明的 GL 背景透出页面背景
+  if (m_skinPanel)
+  {
+    const bool hasAccount = !SettingsManager::instance()->getAccounts().isEmpty();
+    m_skinPanel->setFillEnabled(classic || !hasAccount);
+  }
+}
+
+void HomePage::setCurrentInstanceName(const QString &name)
+{
+  if (m_homeInstanceName == name)
+    return;
+  m_homeInstanceName = name;
+  refreshClassicPage();
+}
+
+QPixmap HomePage::roundedPixmap(const QPixmap &src, int radius)
+{
+  if (src.isNull())
+    return src;
+  QPixmap out(src.size());
+  out.fill(Qt::transparent);
+  QPainter p(&out);
+  p.setRenderHint(QPainter::Antialiasing);
+  QPainterPath path;
+  path.addRoundedRect(0, 0, src.width(), src.height(), radius, radius);
+  p.setClipPath(path);
+  p.drawPixmap(0, 0, src);
+  p.end();
+  return out;
+}
+
+QWidget* HomePage::createClassicSkinPage()
+{
+  auto *page = new QWidget();
+  auto *vlay = new QVBoxLayout(page);
+  vlay->setContentsMargins(14, 12, 14, 10);
+  vlay->setSpacing(6);
+  vlay->addStretch(1);   // 内容整体垂直居中
+
+  // 头像：带边框芯片的圆角头像（当前账户皮肤的头部正面）
+  m_classicAvatar = new QLabel(page);
+  m_classicAvatar->setObjectName("homeClassicAvatar");
+  m_classicAvatar->setFixedSize(74, 74);
+  m_classicAvatar->setAlignment(Qt::AlignCenter);
+  vlay->addWidget(m_classicAvatar, 0, Qt::AlignHCenter);
+
+  // 账户名
+  m_classicName = new QLabel(page);
+  m_classicName->setObjectName("homeClassicName");
+  m_classicName->setAlignment(Qt::AlignCenter);
+  vlay->addWidget(m_classicName, 0, Qt::AlignHCenter);
+
+  // 启动游戏（复用顶栏主按钮样式；未选实例时主窗口会引导去实例选择页）
+  // 宽度不锁死，按文字 + 内边距自适应，居中显示
+  m_classicLaunchBtn = new QPushButton(tr("启动游戏"), page);
+  m_classicLaunchBtn->setObjectName("launchGameBtn");
+  m_classicLaunchBtn->setCursor(Qt::PointingHandCursor);
+  m_classicLaunchBtn->setFixedHeight(32);
+  connect(m_classicLaunchBtn, &QPushButton::clicked, this, &HomePage::launchRequested);
+  vlay->addWidget(m_classicLaunchBtn, 0, Qt::AlignHCenter);
+
+  // 实例图标行：实例选择 / 实例设置 / 实例助手（芯片式图标按钮）
+  auto *iconRow = new QHBoxLayout();
+  iconRow->setSpacing(12);
+  const auto makeIconBtn = [page](const QString &objectName, const QString &tip)
+  {
+    auto *btn = new QPushButton(page);
+    btn->setObjectName(objectName);
+    btn->setToolTip(tip);
+    btn->setCursor(Qt::PointingHandCursor);
+    btn->setFixedSize(32, 32);
+    btn->setIconSize(QSize(16, 16));
+    return btn;
+  };
+  m_classicSelectBtn = makeIconBtn("homeClassicIconBtn", tr("实例选择"));
+  m_classicSettingsBtn = makeIconBtn("homeClassicIconBtn", tr("实例设置"));
+  m_classicAssistantBtn = makeIconBtn("homeClassicIconBtn", tr("实例助手"));
+  connect(m_classicSelectBtn, &QPushButton::clicked, this, &HomePage::instanceSelectRequested);
+  connect(m_classicSettingsBtn, &QPushButton::clicked, this, &HomePage::instanceSettingsRequested);
+  connect(m_classicAssistantBtn, &QPushButton::clicked, this, &HomePage::instanceAssistantRequested);
+  iconRow->addStretch(1);
+  iconRow->addWidget(m_classicSelectBtn);
+  iconRow->addWidget(m_classicSettingsBtn);
+  iconRow->addWidget(m_classicAssistantBtn);
+  iconRow->addStretch(1);
+  vlay->addLayout(iconRow);
+
+  // 当前实例名（过长省略，悬停看全名）
+  m_classicInstanceName = new QLabel(page);
+  m_classicInstanceName->setObjectName("homeClassicInstanceName");
+  m_classicInstanceName->setAlignment(Qt::AlignCenter);
+  vlay->addWidget(m_classicInstanceName, 0, Qt::AlignHCenter);
+
+  vlay->addStretch(1);
+  refreshClassicIcons();
+  refreshClassicPage();
+  return page;
+}
+
+void HomePage::refreshClassicIcons()
+{
+  if (!m_classicSelectBtn || !m_classicSettingsBtn || !m_classicAssistantBtn)
+    return;
+  const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+  const auto setIcon = [](QPushButton *btn, const QString &path, const QColor &color)
+  {
+    btn->setIcon(IconHelper::loadColoredIcon(path, color, 16));
+  };
+  setIcon(m_classicSelectBtn, ":/Images/Icons/instance_select.svg", themeColor);
+  setIcon(m_classicSettingsBtn, ":/Images/Icons/instance_settings.svg", themeColor);
+  setIcon(m_classicAssistantBtn, ":/Images/Icons/instance_assistant.svg", themeColor);
+}
+
+void HomePage::refreshModeSwitchIcons()
+{
+  if (!m_modeDefaultBtn || !m_modeClassicBtn)
+    return;
+  const QColor active(ThemeManager::instance()->currentThemeColor());
+  const QColor idle = homeTextTertiaryColor();
+  // 同一图标放两套配色：未选中（Off）用次级文字色，选中（On）用主题色，
+  // 切换选中态时 QIcon 自动换色，无需手动刷新
+  const auto setStateIcon = [](QPushButton *btn, const QString &path,
+                               const QColor &idle, const QColor &active)
+  {
+    QIcon icon;
+    icon.addPixmap(IconHelper::loadColoredIcon(path, idle, 18).pixmap(18, 18),
+                   QIcon::Normal, QIcon::Off);
+    icon.addPixmap(IconHelper::loadColoredIcon(path, active, 18).pixmap(18, 18),
+                   QIcon::Normal, QIcon::On);
+    btn->setIcon(icon);
+    btn->setIconSize(QSize(18, 18));
+  };
+  setStateIcon(m_modeDefaultBtn, ":/Images/Icons/pose_idle.svg", idle, active);
+  setStateIcon(m_modeClassicBtn, ":/Images/Icons/list_view.svg", idle, active);
+}
+
+void HomePage::refreshClassicPage()
+{
+  if (!m_classicAvatar || !m_classicName || !m_classicInstanceName)
+    return;
+
+  // 头像 + 账户名：取默认账户的皮肤头部正面（无账户时回退默认皮肤）
+  const AccountInfo acc = SettingsManager::instance()->getDefaultAccount();
+  const QImage skin = SkinDownloader::loadSkinForAccount(acc.username, acc.uuid);
+  const QImage head = SkinDownloader::cropHeadPortrait(skin, 64);
+  if (!head.isNull())
+    m_classicAvatar->setPixmap(roundedPixmap(QPixmap::fromImage(head), 14));
+  m_classicName->setText(acc.username.isEmpty() ? tr("未登录") : acc.username);
+
+  // 当前实例名：面板宽度固定，直接按内容宽度省略
+  QFontMetrics fm(m_classicInstanceName->font());
+  const int avail = kSkinPanelWidth - 40;
+  if (m_homeInstanceName.isEmpty())
+  {
+    m_classicInstanceName->setText(tr("未选择实例"));
+    m_classicInstanceName->setToolTip(QString());
+  }
+  else
+  {
+    m_classicInstanceName->setText(fm.elidedText(m_homeInstanceName, Qt::ElideMiddle, avail));
+    m_classicInstanceName->setToolTip(m_homeInstanceName);
+  }
 }
 
 void HomePage::updateCarousel()
@@ -1437,6 +1721,8 @@ void HomePage::showEvent(QShowEvent *event)
   });
   // 皮肤可能在皮肤编辑器/账户页中被更改，回首页时同步一次预览
   refreshSkinPanel();
+  // 官方新闻：数据过期（默认 30 分钟）时顺手更新一次，新鲜则直接复用缓存
+  NewsFeed::instance()->refresh(false);
 }
 
 /* 最近游玩卡片构建（一行四个横排；parent 为挂载图层） */
@@ -2117,34 +2403,196 @@ QWidget* HomePage::createNewsSection()
   section->setObjectName("homeCard");
   auto *vlay = new QVBoxLayout(section);
   vlay->setContentsMargins(0, 0, 0, 0);
-  vlay->setSpacing(6);
+  vlay->setSpacing(10);
 
-  auto *titleLabel = new OutlinedLabel(tr("公告"), section);
+  // ── 标题行：官方新闻 · 来源标注 · 刷新 / 查看全部 ──
+  auto *header = new QHBoxLayout();
+  header->setContentsMargins(0, 0, 0, 0);
+  header->setSpacing(8);
+
+  auto *titleLabel = new OutlinedLabel(tr("官方新闻"), section);
   titleLabel->setObjectName("homeSectionTitle");
-  vlay->addWidget(titleLabel);
+  header->addWidget(titleLabel);
 
-  struct NewsItem
-  {
-    QString title;
-    QString date;
-    QString summary;
-    QString url;
-  };
-  QList<NewsItem> items = {
-      {tr("BlockBox 1.0 正式发布"),       "2026-06-01", tr("全新的启动器体验，支持 Java 与基岩版双模式。"), QStringLiteral("https://www.minecraft.net/")},
-      {tr("多线程下载引擎上线"),           "2026-05-20", tr("资源下载大幅提速，断点续传更稳定。"),             QStringLiteral("https://www.minecraft.net/")},
-      {tr("AI 助手功能预览"),             "2026-05-01", tr("内置智能对话与指令翻译，探索新世界。"),             QStringLiteral("https://www.minecraft.net/")},
-  };
+  auto *sourceLabel = new QLabel(tr("来自 Minecraft 官方"), section);
+  sourceLabel->setObjectName("homeNewsSource");
+  header->addWidget(sourceLabel);
+  header->addStretch();
 
-  for (const auto &item : items)
-  {
-    auto *card = new NewsCard(item.title, item.date, item.summary, section);
-    QObject::connect(card, &NewsCard::clicked, [item]() {
-      QDesktopServices::openUrl(QUrl(item.url));
-    });
-    vlay->addWidget(card);
-  }
+  m_newsRefreshBtn = new QPushButton(tr("刷新"), section);
+  m_newsRefreshBtn->setObjectName("homeLinkBtn");
+  m_newsRefreshBtn->setCursor(Qt::PointingHandCursor);
+  m_newsRefreshBtn->setToolTip(tr("重新获取最新官方新闻"));
+  QObject::connect(m_newsRefreshBtn, &QPushButton::clicked, this, []() {
+    NewsFeed::instance()->refresh(true);
+  });
+  header->addWidget(m_newsRefreshBtn);
+
+  auto *allBtn = new QPushButton(tr("查看全部"), section);
+  allBtn->setObjectName("homeLinkBtn");
+  allBtn->setCursor(Qt::PointingHandCursor);
+  allBtn->setToolTip(tr("在软件内查看全部官方新闻"));
+  QObject::connect(allBtn, &QPushButton::clicked, this, &HomePage::newsPageRequested);
+  header->addWidget(allBtn);
+  vlay->addLayout(header);
+
+  // ── 新闻卡片区（一行三张，宽度自适应） ──
+  m_newsContainer = new QWidget(section);
+  m_newsLayout = new FlowLayout(m_newsContainer, 0, 12, 12);
+  m_newsLayout->setContentsMargins(0, 0, 0, 0);
+  m_newsContainer->installEventFilter(this);
+  vlay->addWidget(m_newsContainer);
+
+  // ── 状态提示：加载中 / 网络失败 ──
+  m_newsStatusLabel = new QLabel(section);
+  m_newsStatusLabel->setObjectName("homeNewsStatus");
+  m_newsStatusLabel->setWordWrap(true);
+  m_newsStatusLabel->setVisible(false);
+  vlay->addWidget(m_newsStatusLabel);
+
+  NewsFeed *feed = NewsFeed::instance();
+  QObject::connect(feed, &NewsFeed::entriesChanged, this, &HomePage::rebuildNewsContent);
+  QObject::connect(feed, &NewsFeed::loadingChanged, this, [this](bool) {
+    updateNewsStatus();
+    // 还没有内容时，占位文案要跟着「加载中/加载结束」切换；已有内容则不必重建
+    if (!NewsFeed::instance()->hasData())
+      rebuildNewsContent();
+  });
+  QObject::connect(feed, &NewsFeed::requestFailed, this, [this](const QString &) {
+    updateNewsStatus();
+    rebuildNewsContent();
+  });
+
+  rebuildNewsContent();
+  updateNewsStatus();
+
+  // 稍等片刻再拉取：不和启动阶段的其他请求抢带宽
+  QTimer::singleShot(300, this, []() {
+    NewsFeed::instance()->refresh(false);
+  });
+
   return section;
+}
+
+int HomePage::calculateNewsCardWidth() const
+{
+  constexpr int kColumns = 3;
+  const int spacing = m_newsLayout ? m_newsLayout->horizontalSpacing() : 12;
+
+  int availableWidth = m_newsContainer ? m_newsContainer->width() : 0;
+  if (availableWidth <= 0)
+    availableWidth = qMax(320, width() - 48);   // 尚未完成布局时按本页宽度估算
+
+  return qMax(180, (availableWidth - (kColumns - 1) * spacing) / kColumns);
+}
+
+void HomePage::rebuildNewsContent()
+{
+  if (!m_newsLayout)
+    return;
+
+  QLayoutItem *item;
+  while ((item = m_newsLayout->takeAt(0)) != nullptr)
+  {
+    if (item->widget())
+      item->widget()->deleteLater();
+    delete item;
+  }
+
+  const QVector<NewsEntry> &entries = NewsFeed::instance()->entries();
+  const int count = qMin(entries.size(), 3);
+  const int cardWidth = calculateNewsCardWidth();
+
+  if (count == 0)
+  {
+    const QString hint = NewsFeed::instance()->isLoading()
+        ? tr("正在获取 Minecraft 官方新闻…")
+        : tr("暂时没有可显示的官方新闻，稍后再来看看吧");
+    auto *placeholder = new QLabel(hint, m_newsContainer);
+    placeholder->setObjectName("homeEmptyLabel");
+    placeholder->setAlignment(Qt::AlignCenter);
+    placeholder->setMinimumHeight(72);
+    placeholder->setWordWrap(true);
+    m_newsLayout->addWidget(placeholder);
+
+    m_newsBuiltWidth = cardWidth;
+    if (m_newsContainer)
+      m_newsContainer->updateGeometry();
+    return;
+  }
+
+  QVector<NewsCard*> cards;
+  int rowHeight = 0;
+  for (int i = 0; i < count; ++i)
+  {
+    const NewsEntry &entry = entries.at(i);
+
+    auto *card = new NewsCard(entry.categoryLabel, entry.title,
+                              NewsFeed::formatNewsDate(entry.date), entry.summary,
+                              m_newsContainer);
+    // 卡片宽度均分三列；高度先按各自内容算，再统一取本行最高值，保证一排卡片等高等宽
+    const QSize size = card->contentSizeForWidth(cardWidth);
+    rowHeight = qMax(rowHeight, size.height());
+    card->setToolTip(tr("点击查看详情"));
+
+    QObject::connect(card, &NewsCard::clicked, this, [this, entry]() {
+      showNewsDetailDialog(this, entry);
+    });
+    cards.append(card);
+  }
+
+  for (NewsCard *card : cards)
+  {
+    card->setFixedSize(cardWidth, rowHeight);
+    m_newsLayout->addWidget(card);
+  }
+
+  m_newsBuiltWidth = cardWidth;
+  if (m_newsContainer)
+    m_newsContainer->updateGeometry();
+}
+
+void HomePage::scheduleNewsRebuild()
+{
+  if (m_newsRebuildPending)
+    return;
+
+  m_newsRebuildPending = true;
+  QTimer::singleShot(0, this, [this]() {
+    m_newsRebuildPending = false;
+    if (calculateNewsCardWidth() == m_newsBuiltWidth)
+      return;   // 宽度没变（仅高度变化），无需重建
+    rebuildNewsContent();
+  });
+}
+
+void HomePage::updateNewsStatus()
+{
+  const NewsFeed *feed = NewsFeed::instance();
+
+  if (m_newsRefreshBtn)
+  {
+    m_newsRefreshBtn->setEnabled(!feed->isLoading());
+    m_newsRefreshBtn->setText(feed->isLoading() ? tr("刷新中…") : tr("刷新"));
+  }
+
+  if (!m_newsStatusLabel)
+    return;
+
+  QString text;
+  if (feed->isLoading() && !feed->hasData())
+  {
+    text = tr("正在获取 Minecraft 官方新闻…");
+  }
+  else if (!feed->lastError().isEmpty())
+  {
+    text = feed->hasData()
+        ? tr("网络不太顺畅，当前显示的是最近一次同步的官方新闻")
+        : tr("暂时获取不到官方新闻：%1").arg(feed->lastError());
+  }
+
+  m_newsStatusLabel->setText(text);
+  m_newsStatusLabel->setVisible(!text.isEmpty());
 }
 
 QWidget* HomePage::createDownloadsSection()

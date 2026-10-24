@@ -705,8 +705,8 @@ void LocalModelManager::downloadInstaller()
 
     // 在任务系统中注册一个下载任务，任务栏会自动显示进度卡片
     const QString fileName = QFileInfo(m_installerPath).fileName();
-    const QString taskId = DownloadTaskManager::instance()->addTask(
-        tr("Ollama 安装器"), dir, QString(), QStringList());
+    const QString taskId = DownloadTaskManager::instance()->addTaskWithType(
+        tr("Ollama 安装器"), dir, QString(), QStringList(), TaskType::AiModel);
     m_installerTaskId = taskId;
     DownloadTaskManager::instance()->updateTaskStatus(
         taskId, DownloadTaskStatus::Downloading, tr("连接中..."));

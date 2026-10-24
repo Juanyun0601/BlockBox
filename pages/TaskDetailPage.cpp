@@ -225,9 +225,12 @@ void TaskDetailPage::initUI()
     m_heroChipsLayout = new QHBoxLayout(m_heroChipsRow);
     m_heroChipsLayout->setContentsMargins(0, 10, 0, 0);
     m_heroChipsLayout->setSpacing(8);
-    m_heroChipsLayout->addWidget(createChip(tr("实例：—")));
-    m_heroChipsLayout->addWidget(createChip(tr("版本：—")));
-    m_heroChipsLayout->addWidget(createChip(tr("加载器：—")));
+    for (const QString &text : {tr("实例：—"), tr("版本：—"), tr("加载器：—")})
+    {
+        QLabel *chip = createChip(text);
+        m_heroChips.append(chip);
+        m_heroChipsLayout->addWidget(chip);
+    }
     m_heroChipsLayout->addStretch();
     heroLeft->addWidget(m_heroChipsRow);
     heroLayout->addLayout(heroLeft, 3);
@@ -378,6 +381,7 @@ void TaskDetailPage::initUI()
         itemLayout->addWidget(valueLabel);
 
         m_infoValues[keys.at(i)] = valueLabel;
+        m_infoLabels[keys.at(i)] = keyLabel;
         m_infoGrid->addWidget(item, col, row);
     }
 
@@ -440,6 +444,9 @@ void TaskDetailPage::initUI()
 
     scrollArea->setWidget(content);
     mainLayout->addWidget(scrollArea, 1);
+
+    // 默认按通用类型初始化阶段布局，避免任务设置前阶段列表为空
+    applyTaskTypeLayout();
 }
 
 /* ============================================================
@@ -459,10 +466,16 @@ void TaskDetailPage::setTaskId(const QString &taskId)
     m_logView->clear();
     m_speedChart->clearSamples();
 
+    applyTaskTypeLayout();
+
     appendLog(tr("开始监控任务：%1").arg(taskId));
-    if (!m_currentTask.instanceName.isEmpty())
+    if (m_currentTask.type == TaskType::InstanceInstall && !m_currentTask.instanceName.isEmpty())
     {
         appendLog(tr("目标实例：%1 · 版本 %2").arg(m_currentTask.instanceName, m_currentTask.mcVersion));
+    }
+    else
+    {
+        appendLog(tr("任务类型：%1").arg(m_typeLabel));
     }
 
     for (const QString &file : m_currentTask.fileQueue)
@@ -532,37 +545,90 @@ void TaskDetailPage::updateThemeColors()
 /* ============================================================
  * 显示更新
  * ============================================================ */
+void TaskDetailPage::applyTaskTypeLayout()
+{
+    const TaskType type = m_currentTask.type;
+    m_typeLabel = taskTypeDisplayName(type);
+
+    switch (type)
+    {
+    case TaskType::InstanceInstall:
+        m_stageNames = {tr("获取版本清单"), tr("获取版本详情"), tr("下载客户端"),
+                        tr("下载依赖库"), tr("下载资源文件"), tr("安装加载器"), tr("安装完成")};
+        break;
+    case TaskType::LoaderInstall:
+        m_stageNames = {tr("下载安装器"), tr("安装组件"), tr("安装完成")};
+        break;
+    case TaskType::ContentDownload:
+        m_stageNames = {tr("下载文件"), tr("完成")};
+        break;
+    case TaskType::LanTransfer:
+        m_stageNames = {tr("传输中"), tr("传输完成")};
+        break;
+    default:
+        m_stageNames = {tr("下载中"), tr("完成")};
+        break;
+    }
+    m_stepper->setStages(m_stageNames);
+
+    // 信息卡首行：实例类任务叫「目标实例」，其余叫「任务名称」
+    if (m_infoLabels.contains(tr("目标实例")))
+    {
+        const bool instanceLike = (type == TaskType::InstanceInstall
+                                   || type == TaskType::LoaderInstall
+                                   || type == TaskType::ContentDownload);
+        m_infoLabels[tr("目标实例")]->setText(instanceLike ? tr("目标实例") : tr("任务名称"));
+    }
+}
+
+QString TaskDetailPage::currentStageLabel(int stepIndex) const
+{
+    return m_stageNames.value(stepIndex, m_typeLabel);
+}
+
 void TaskDetailPage::updateDisplay()
 {
     const double target = m_currentTask.progressDouble;
     const double displayed = m_simulating ? m_animProgress : target;
 
-    m_heroTitleLabel->setText(m_currentTask.instanceName.isEmpty()
-                                  ? tr("下载任务")
-                                  : tr("安装 %1").arg(m_currentTask.instanceName));
-
-    // Hero 元信息
-    const QStringList chipTexts = {
-        tr("实例：%1").arg(m_currentTask.instanceName.isEmpty()
-                               ? tr("未知实例") : m_currentTask.instanceName),
-        tr("版本：%1").arg(m_currentTask.mcVersion),
-        m_currentTask.loaders.isEmpty()
-            ? tr("加载器：无")
-            : tr("加载器：%1").arg(m_currentTask.loaders.join(QStringLiteral("、")))
-    };
-    int chipIdx = 0;
-    for (int i = 0; i < m_heroChipsLayout->count(); ++i)
+    // 标题动词按任务类型区分
+    const TaskType taskType = m_currentTask.type;
+    if (m_currentTask.instanceName.isEmpty())
     {
-        QLayoutItem *item = m_heroChipsLayout->itemAt(i);
-        QLabel *chip = qobject_cast<QLabel *>(item ? item->widget() : nullptr);
-        if (chip && chip->objectName() == QStringLiteral("tdChip"))
-        {
-            if (chipIdx < chipTexts.size())
-            {
-                chip->setText(chipTexts.at(chipIdx));
-                ++chipIdx;
-            }
-        }
+        m_heroTitleLabel->setText(m_typeLabel);
+    }
+    else if (taskType == TaskType::LanTransfer)
+    {
+        m_heroTitleLabel->setText(tr("传输 %1").arg(m_currentTask.instanceName));
+    }
+    else if (taskType == TaskType::InstanceInstall || taskType == TaskType::LoaderInstall)
+    {
+        m_heroTitleLabel->setText(tr("安装 %1").arg(m_currentTask.instanceName));
+    }
+    else
+    {
+        m_heroTitleLabel->setText(tr("下载 %1").arg(m_currentTask.instanceName));
+    }
+
+    // Hero 元信息按类型取舍：实例类显示 实例/版本/加载器，其余只显示存在的字段
+    const bool instanceLike = (taskType == TaskType::InstanceInstall
+                               || taskType == TaskType::LoaderInstall
+                               || taskType == TaskType::ContentDownload);
+    QList<QPair<bool, QString>> chipSpecs;
+    chipSpecs.append({true,
+        instanceLike ? tr("实例：%1").arg(m_currentTask.instanceName.isEmpty()
+                                             ? tr("未知实例") : m_currentTask.instanceName)
+                     : tr("任务：%1").arg(m_currentTask.instanceName.isEmpty()
+                                              ? m_typeLabel : m_currentTask.instanceName)});
+    chipSpecs.append({!m_currentTask.mcVersion.isEmpty(),
+        tr("版本：%1").arg(m_currentTask.mcVersion)});
+    chipSpecs.append({!m_currentTask.loaders.isEmpty(),
+        tr("加载器：%1").arg(m_currentTask.loaders.join(QStringLiteral("、")))});
+
+    for (int i = 0; i < m_heroChips.size() && i < chipSpecs.size(); ++i)
+    {
+        m_heroChips[i]->setText(chipSpecs.at(i).second);
+        m_heroChips[i]->setVisible(chipSpecs.at(i).first);
     }
 
     m_heroSubLabel->setText(tr("正在传输 %1 · 共 %2 个文件")
@@ -578,21 +644,34 @@ void TaskDetailPage::updateDisplay()
     m_bigBar->setValue(static_cast<int>(displayed * 10.0));
     m_bigPctLabel->setText(QStringLiteral("%1%").arg(qRound(displayed)));
 
-    // 阶段步骤条
-    int stageIndex = static_cast<int>(m_currentTask.stage);
+    // 阶段步骤条：按任务类型映射当前步骤
+    const int stepCount = m_stageNames.size();
+    int stepIndex = 0;
     if (m_currentTask.status == DownloadTaskStatus::Completed
         || m_currentTask.status == DownloadTaskStatus::Cancelled)
     {
-        m_stepper->setCurrentStage(6);
+        stepIndex = stepCount - 1;
+    }
+    else if (taskType == TaskType::InstanceInstall)
+    {
+        stepIndex = qBound(0, static_cast<int>(m_currentTask.stage), stepCount - 1);
+    }
+    else if (taskType == TaskType::LoaderInstall)
+    {
+        // 加载器安装沿用实例任务的百分比预算（安装器下载 60~90、安装 90~100）
+        stepIndex = displayed >= 99.5 ? 2 : (displayed >= 90.0 ? 1 : 0);
     }
     else
     {
-        m_stepper->setCurrentStage(qBound(0, stageIndex, 6));
+        stepIndex = displayed >= 99.5 ? stepCount - 1 : 0;
     }
+    stepIndex = qBound(0, stepIndex, stepCount - 1);
+    m_currentStepIndex = stepIndex;
+    m_stepper->setCurrentStage(stepIndex);
     m_stepper->setProgress(displayed);
     m_stageChip->setText(tr("阶段 %1 / %2 · %3")
-                             .arg(stageIndex + 1).arg(m_currentTask.totalStages)
-                             .arg(stageToString(m_currentTask.stage)));
+                             .arg(stepIndex + 1).arg(stepCount)
+                             .arg(currentStageLabel(stepIndex)));
 
     // 指标
     if (m_currentTask.downloadSpeed > 0 && m_currentTask.status == DownloadTaskStatus::Downloading)
@@ -653,7 +732,7 @@ void TaskDetailPage::updateDisplay()
         m_statEta->setText(QStringLiteral("--:--:--"));
     }
 
-    m_statThreads->setText(stageToString(m_currentTask.stage));
+    m_statThreads->setText(currentStageLabel(m_currentStepIndex));
     m_footRight->setText(m_currentTask.downloadSpeed > 0
                              ? DownloadUtils::formatSpeed(m_currentTask.downloadSpeed)
                              : QStringLiteral("0 B/s"));
@@ -668,7 +747,16 @@ void TaskDetailPage::updateDisplay()
     setInfo(tr("目标实例"), m_currentTask.instanceName.isEmpty() ? tr("未知实例") : m_currentTask.instanceName);
     setInfo(tr("游戏版本"), m_currentTask.mcVersion.isEmpty() ? tr("—") : m_currentTask.mcVersion);
     setInfo(tr("加载器"), m_currentTask.loaders.isEmpty() ? tr("无") : m_currentTask.loaders.join(QStringLiteral("、")));
-    setInfo(tr("下载来源"), tr("下载引擎"));
+    QString sourceLabel = tr("下载引擎");
+    switch (m_currentTask.type)
+    {
+    case TaskType::LanTransfer:       sourceLabel = tr("局域网"); break;
+    case TaskType::AiModel:           sourceLabel = tr("模型仓库"); break;
+    case TaskType::RuntimeDependency: sourceLabel = tr("依赖清单"); break;
+    case TaskType::JavaDownload:      sourceLabel = tr("镜像源"); break;
+    default: break;
+    }
+    setInfo(tr("下载来源"), sourceLabel);
     setInfo(tr("文件大小"), m_currentTask.bytesTotal > 0
                                 ? QStringLiteral("%1 / %2")
                                       .arg(DownloadUtils::formatSize(m_currentTask.bytesReceived),
@@ -973,10 +1061,17 @@ void TaskDetailPage::onTaskStageChanged(const QString &taskId, DownloadStage sta
         m_currentTask = DownloadTaskManager::instance()->getTaskCopy(taskId);
         m_currentTask.stage = stage;
         m_currentTask.stageProgress = stageProgress;
-        appendLog(tr("阶段切换：%1 (%2/%3)")
-                      .arg(stageToString(stage))
-                      .arg(static_cast<int>(stage) + 1)
-                      .arg(m_currentTask.totalStages));
+        if (m_currentTask.type == TaskType::InstanceInstall)
+        {
+            appendLog(tr("阶段切换：%1 (%2/%3)")
+                          .arg(stageToString(stage))
+                          .arg(static_cast<int>(stage) + 1)
+                          .arg(m_currentTask.totalStages));
+        }
+        else
+        {
+            appendLog(tr("进度更新：%1%").arg(qRound(m_currentTask.progressDouble)));
+        }
         updateDisplay();
     }
 }

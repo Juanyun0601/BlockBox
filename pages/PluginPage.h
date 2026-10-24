@@ -19,6 +19,7 @@
 #include <QWidget>
 
 #include "utils/plugin/PluginInfo.h"
+#include "utils/PageFilter.h"
 
 class QFormLayout;
 class QHBoxLayout;
@@ -46,6 +47,12 @@ public:
     void showPluginDetail(int index);
     /** 重新加载插件列表（监听 PluginManager::pluginsChanged 自动调用） */
     void refreshList();
+
+    /**
+     * 子导航搜索框分发：按插件名称/作者/描述过滤总览卡片；
+     * 插件列表重建（rebuildCards）后自动重新应用。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
 
 signals:
     void importPluginRequested();
@@ -198,6 +205,10 @@ private:
     QList<PluginInfo> m_plugins;
     int m_currentDetailIndex = -1;
     bool m_initialized = false;
+
+    // ── 子导航搜索：总览卡片过滤状态（rebuildCards 后重新应用） ──
+    QString m_pageFilterQuery;
+    PageFilter::VisibilityFilter m_pageFilter;
 };
 
 #endif // PLUGINPAGE_H

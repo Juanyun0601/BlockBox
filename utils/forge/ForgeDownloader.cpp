@@ -1,13 +1,18 @@
 /**
  * @file   ForgeDownloader.cpp
- * @brief  Forge多源统一下载器实现 — 委托给 DownloadEngine
+ * @brief  Forge多源统一下载器实现 — 基于 MultiMC net 层（NetJob/Download）
  * @author BlockBox Team
  * @date   2026-06-01
  */
 
 #include "ForgeDownloader.h"
 
+#include "../net/Download.h"
+#include "../net/ChecksumValidator.h"
+#include "../net/NetworkAccess.h"
+
 #include <QDebug>
+#include <QFileInfo>
 
 namespace forge {
 
@@ -17,13 +22,8 @@ static const QString MINECRAFT_LIBRARIES = QStringLiteral("https://libraries.min
 
 ForgeDownloader::ForgeDownloader(QObject *parent)
   : QObject(parent)
-  , m_engine(new DownloadEngine(this))
   , m_downloadSource(DownloadSource::Official)
 {
-  connect(m_engine, &DownloadEngine::downloadProgress,
-          this, &ForgeDownloader::downloadProgress);
-  connect(m_engine, &DownloadEngine::downloadBytesProgress,
-          this, &ForgeDownloader::downloadBytesProgress);
 }
 
 ForgeDownloader::~ForgeDownloader()
@@ -43,7 +43,8 @@ DownloadSource ForgeDownloader::downloadSource() const
 
 void ForgeDownloader::setMaxConcurrency(int max)
 {
-  m_engine->setMaxConcurrency(max);
+  // MultiMC 的 NetJob 内部以 6 个并发 part 为上限，这里仅记录设置
+  m_maxConcurrency = qBound(1, max, 128);
 }
 
 QStringList ForgeDownloader::getCandidateUrls(const QString &path)
@@ -100,34 +101,121 @@ QStringList ForgeDownloader::getInstallerCandidateUrls(const QString &mcVersion,
   return urls;
 }
 
+// 把候选地址装进一个 Download 动作：首个作主地址，其余作回退，
+// 失败按顺序换源；expectedSha1 非空时挂 SHA1 校验
+static Net::Download::Ptr makeDownload(const QStringList &candidateUrls, const QString &filePath,
+                                       const QString &expectedSha1)
+{
+  auto dl = Net::Download::makeFile(QUrl(candidateUrls.first()), filePath);
+  for (int i = 1; i < candidateUrls.size(); ++i)
+    dl->addUrlFallback(QUrl(candidateUrls.at(i)));
+  if (!expectedSha1.isEmpty())
+  {
+    dl->addValidator(new Net::ChecksumValidator(QCryptographicHash::Sha1,
+                                                QByteArray::fromHex(expectedSha1.toLatin1())));
+  }
+  return dl;
+}
+
 void ForgeDownloader::downloadFile(const QStringList &candidateUrls, const QString &filePath,
                                     const std::function<void(bool success)> &callback,
                                     const QString &expectedSha1, int maxRetries)
 {
-  m_engine->downloadFile(candidateUrls, filePath, callback, expectedSha1, maxRetries);
+  Q_UNUSED(maxRetries); // NetJob 对每个 part 自带 3 次重试
+
+  auto job = NetJob::Ptr(new NetJob(QFileInfo(filePath).fileName(),
+                                    Net::networkAccessManager()));
+  auto dl = makeDownload(candidateUrls, filePath, expectedSha1);
+
+  const QString fileName = QFileInfo(filePath).fileName();
+  connect(dl.get(), &NetAction::netActionProgress, this,
+          [this, fileName](int, qint64 received, qint64 total) {
+    emit downloadProgress(fileName, total > 0 ? static_cast<int>(received * 100 / total) : 0);
+    emit downloadBytesProgress(received, total);
+  });
+
+  job->addNetAction(dl);
+
+  connect(job.get(), &Task::finished, this, [this, job, callback]() {
+    const bool ok = job->wasSuccessful();
+    m_activeJobs.removeAll(job);
+    if (callback)
+      callback(ok);
+  });
+
+  m_activeJobs.append(job);
+  job->start();
 }
 
 void ForgeDownloader::downloadFiles(const QVector<QPair<QStringList, QString>> &tasks,
                                      const std::function<void(int completed, int total)> &progressCallback,
                                      const std::function<void(bool allSuccess, const QStringList &failed)> &completionCallback)
 {
-  QVector<FileDownloadTask> engineTasks;
-  engineTasks.reserve(tasks.size());
+  if (tasks.isEmpty())
+  {
+    if (completionCallback)
+      completionCallback(true, {});
+    return;
+  }
+
+  auto job = NetJob::Ptr(new NetJob(QStringLiteral("ForgeFiles"),
+                                    Net::networkAccessManager()));
+
+  const int total = tasks.size();
+  auto finishedCount = std::make_shared<int>(0);
+  auto failedFiles = std::make_shared<QStringList>();
 
   for (const auto &task : tasks)
   {
-    FileDownloadTask dt;
-    dt.candidateUrls = task.first;
-    dt.filePath = task.second;
-    engineTasks.append(dt);
+    auto dl = makeDownload(task.first, task.second, QString());
+
+    const QString fileName = QFileInfo(task.second).fileName();
+    connect(dl.get(), &NetAction::netActionProgress, this,
+            [this, fileName](int, qint64 received, qint64 totalBytes) {
+      emit downloadProgress(fileName, totalBytes > 0
+                                          ? static_cast<int>(received * 100 / totalBytes)
+                                          : 0);
+      emit downloadBytesProgress(received, totalBytes);
+    });
+
+    const QString filePath = task.second;
+    connect(dl.get(), &NetAction::succeeded, this,
+            [this, finishedCount, progressCallback, total](int) {
+      ++(*finishedCount);
+      if (progressCallback)
+        progressCallback(*finishedCount, total);
+    });
+    connect(dl.get(), &NetAction::failed, this,
+            [this, finishedCount, failedFiles, progressCallback, total, filePath](int) {
+      ++(*finishedCount);
+      failedFiles->append(filePath);
+      if (progressCallback)
+        progressCallback(*finishedCount, total);
+    });
+
+    job->addNetAction(dl);
   }
 
-  m_engine->downloadFiles(engineTasks, progressCallback, completionCallback);
+  connect(job.get(), &Task::finished, this, [this, job, completionCallback, failedFiles]() {
+    const bool allSuccess = job->wasSuccessful();
+    m_activeJobs.removeAll(job);
+    if (completionCallback)
+      completionCallback(allSuccess, *failedFiles);
+  });
+
+  m_activeJobs.append(job);
+  job->start();
 }
 
 void ForgeDownloader::cancelAll()
 {
-  m_engine->cancelAll();
+  auto jobs = m_activeJobs;
+  m_activeJobs.clear();
+  for (const auto &job : jobs)
+  {
+    if (job)
+      job->abort();
+  }
 }
 
 } // namespace forge

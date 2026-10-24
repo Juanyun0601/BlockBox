@@ -542,8 +542,8 @@ private:
         m_speedStart = 0;
         m_speedWindowBytes = 0;
         m_lastReport = 0;
-        m_taskId = DownloadTaskManager::instance()->addTask(
-            tr("文件传输"), fi.absolutePath(), QString());
+        m_taskId = DownloadTaskManager::instance()->addTaskWithType(
+            tr("文件传输"), fi.absolutePath(), QString(), QStringList(), TaskType::LanTransfer);
         DownloadTaskManager::instance()->updateTaskDisplayStatus(m_taskId, tr("传输中"));
         DownloadTaskManager::instance()->updateTaskStatus(
             m_taskId, DownloadTaskStatus::Downloading, tr("接收: %1").arg(fi.fileName()));
@@ -844,8 +844,8 @@ void LanTransfer::beginSend(const LanDevice &device, const QStringList &localPat
     m_sendLastSpeed = 0;
     m_sendLastReport = 0;
 
-    m_sendTaskId = DownloadTaskManager::instance()->addTask(tr("文件传输"), remoteDir,
-                                                            QString());
+    m_sendTaskId = DownloadTaskManager::instance()->addTaskWithType(
+        tr("文件传输"), remoteDir, QString(), QStringList(), TaskType::LanTransfer);
     DownloadTaskManager::instance()->updateTaskDisplayStatus(m_sendTaskId, tr("传输中"));
     DownloadTaskManager::instance()->updateTaskStatus(
         m_sendTaskId, DownloadTaskStatus::Downloading,

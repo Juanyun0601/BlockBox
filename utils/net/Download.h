@@ -1,0 +1,90 @@
+/* Copyright 2013-2023 MultiMC Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// Ported from MultiMC launcher/net/Download.h (Apache-2.0).
+// BlockBox adaptation (mirrors what PrismLauncher later added upstream): a
+// Download may carry a list of fallback URLs (mirrors first, official last);
+// on failure the next URL is tried before the action reports failure.
+
+#pragma once
+
+#include "NetAction.h"
+#include "HttpMetaCache.h"
+#include "Validator.h"
+#include "Sink.h"
+
+#include "QObjectPtr.h"
+
+#include <QVector>
+
+namespace Net {
+class Download : public NetAction
+{
+    Q_OBJECT
+
+public: /* types */
+    typedef shared_qobject_ptr<class Download> Ptr;
+    enum class Option
+    {
+        NoOptions = 0,
+        AcceptLocalFiles = 1
+    };
+    Q_DECLARE_FLAGS(Options, Option)
+
+protected: /* con/des */
+    explicit Download();
+public:
+    virtual ~Download(){};
+    static Download::Ptr makeCached(QUrl url, MetaEntryPtr entry, Options options = Option::NoOptions);
+    static Download::Ptr makeByteArray(QUrl url, QByteArray *output, Options options = Option::NoOptions);
+    static Download::Ptr makeFile(QUrl url, QString path, Options options = Option::NoOptions);
+
+public: /* methods */
+    QString getTargetFilepath()
+    {
+        return m_target_path;
+    }
+    void addValidator(Validator * v);
+    bool abort() override;
+    bool canAbort() override;
+    /// BlockBox adaptation: additional fallback URLs (tried in order after m_url)
+    void addUrlFallback(const QUrl & url);
+
+private: /* methods */
+    bool handleRedirect();
+    /// BlockBox adaptation: advance to the next fallback URL, if any
+    bool startNextUrl();
+
+protected slots:
+    void downloadProgress(qint64 bytesReceived, qint64 bytesTotal) override;
+    void downloadError(QNetworkReply::NetworkError error) override;
+    void sslErrors(const QList<QSslError> & errors);
+    void downloadFinished() override;
+    void downloadReadyRead() override;
+
+public slots:
+    void startImpl() override;
+
+private: /* data */
+    // FIXME: remove this, it has no business being here.
+    QString m_target_path;
+    std::unique_ptr<Sink> m_sink;
+    Options m_options;
+    QVector<QUrl> m_url_list;
+    int m_current_url = 0;
+};
+}
+
+Q_DECLARE_OPERATORS_FOR_FLAGS(Net::Download::Options)

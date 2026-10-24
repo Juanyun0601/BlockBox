@@ -45,6 +45,7 @@
 #include "pages/SearchPage.h"
 #include "pages/SkinEditorPage.h"
 #include "pages/TaskListPage.h"
+#include "pages/NewsPage.h"
 #include "utils/PerformanceMonitor.h"
 #include "utils/SettingsManager.h"
 #include "utils/VersionDownloader.h"
@@ -147,6 +148,13 @@ void MainWindow::initEssentialPages()
     });
     // 首页账号卡片 / 轮播右侧皮肤区「添加首个账户」→ 账户管理页
     connect(homePage, &HomePage::accountManageRequested, this, &MainWindow::showAccountManagePage);
+    // 首页「官方新闻 · 查看全部」→ 软件内置新闻列表页
+    connect(homePage, &HomePage::newsPageRequested, this, &MainWindow::showNewsPage);
+    // 经典模式皮肤面板：启动游戏 / 实例选择 / 实例设置 / 实例助手
+    connect(homePage, &HomePage::launchRequested, this, qOverload<>(&MainWindow::onLaunchGameClicked));
+    connect(homePage, &HomePage::instanceSelectRequested, this, &MainWindow::onInstanceSelectClicked);
+    connect(homePage, &HomePage::instanceSettingsRequested, this, &MainWindow::onInstanceSettingsClicked);
+    connect(homePage, &HomePage::instanceAssistantRequested, this, &MainWindow::openInstanceAssistant);
     connect(homePage, &HomePage::recentPlayCopyNameClicked, this, [this](const QString &name) {
         // 复制存档名到剪贴板
         if (!name.isEmpty()) {
@@ -324,6 +332,10 @@ void MainWindow::initEssentialPages()
     QWidget *placeholderPlugin = new QWidget(this);
     m_stackedWidget->addWidget(placeholderPlugin);
 
+    // 官方新闻列表页占位（保持 PageIndex 枚举与 stackedWidget 索引对齐）
+    QWidget *placeholderNews = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderNews);
+
     m_pageAnimator->animateToIndex(0);
 }
 
@@ -391,6 +403,9 @@ void MainWindow::ensurePageInitialized(PageIndex pageIndex)
         break;
     case PageIndex::PluginPage:
         initPluginPage();
+        break;
+    case PageIndex::NewsPage:
+        initNewsPage();
         break;
     case PageIndex::SettingsPage:
         initSettingsPage();
@@ -633,6 +648,13 @@ void MainWindow::initModDetailPage()
     });
     connect(m_modDetailPage, &ModDetailPage::downloadRequested,
             this, &MainWindow::onModDownloadRequested);
+    // 左侧「一键安装」：安装与当前实例兼容的最新正式版，并自动补齐必备前置模组
+    connect(m_modDetailPage, &ModDetailPage::installLatestRequested,
+            this, [this](const ModInfo &modInfo) {
+        const QString gameVersion = m_modDetailPage ? m_modDetailPage->instanceGameVersion() : QString();
+        const QString loader = m_modDetailPage ? m_modDetailPage->instanceLoaderType() : QString();
+        onCardDownloadRequested(modInfo, ContentType::Mod, 0, gameVersion, loader);
+    });
     // Connect detail signals from APIs
     connect(m_modDownloadPage->curseforgeAPI(), &CurseForgeAPI::modDetailReceived,
             m_modDetailPage, &ModDetailPage::receiveDetail);
@@ -1152,6 +1174,30 @@ void MainWindow::initPluginPage()
 
     m_pageInitialized[PageIndex::PluginPage] = true;
     PerformanceMonitor::instance()->endMeasurement("Plugin Page Initialization");
+}
+
+void MainWindow::initNewsPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::NewsPage]) { return; }
+    PerformanceMonitor::instance()->startMeasurement("News Page Initialization");
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::NewsPage));
+    m_newsPage = new NewsPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::NewsPage), m_newsPage);
+    delete placeholder;
+    m_pageInitialized[PageIndex::NewsPage] = true;
+    PerformanceMonitor::instance()->endMeasurement("News Page Initialization");
+}
+
+void MainWindow::showNewsPage()
+{
+    ensurePageInitialized(PageIndex::NewsPage);
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("官方新闻"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::NewsPage));
 }
 
 void MainWindow::initSettingsPage()

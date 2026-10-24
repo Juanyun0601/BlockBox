@@ -89,7 +89,10 @@
 #include "platform.h"
 #include "utils/SettingsManager.h"
 #include "utils/SkinDownloader.h"
-#include "utils/download/DownloadEngine.h"
+#include "utils/net/NetJob.h"
+#include "utils/net/Download.h"
+#include "utils/net/ChecksumValidator.h"
+#include "utils/net/NetworkAccess.h"
 #include "utils/content/ContentDownloader.h"
 #include "utils/ClipboardMonitor.h"
 #include "utils/PageTransitionAnimator.h"
@@ -102,6 +105,39 @@
 #include <QDragLeaveEvent>
 #include <QDropEvent>
 #include <QMimeData>
+
+namespace {
+// MultiMC net 层：单文件资源下载（镜像回退 + SHA1 校验 + .part 原子落盘）
+void startResourceDownload(QObject *context, const QStringList &candidateUrls,
+                           const QString &destPath, const QString &expectedSha1,
+                           const std::function<void(bool)> &onDone,
+                           const std::function<void(qint64, qint64)> &onProgress)
+{
+    auto dl = Net::Download::makeFile(QUrl(candidateUrls.first()), destPath);
+    for (int i = 1; i < candidateUrls.size(); ++i)
+        dl->addUrlFallback(QUrl(candidateUrls.at(i)));
+    if (!expectedSha1.isEmpty())
+    {
+        dl->addValidator(new Net::ChecksumValidator(
+            QCryptographicHash::Sha1, QByteArray::fromHex(expectedSha1.toLatin1())));
+    }
+
+    auto job = NetJob::Ptr(new NetJob(QFileInfo(destPath).fileName(),
+                                      Net::networkAccessManager()));
+    job->addNetAction(dl);
+
+    if (onProgress)
+    {
+        QObject::connect(dl.get(), &NetAction::netActionProgress, context,
+                         [onProgress](int, qint64 received, qint64 total) { onProgress(received, total); });
+    }
+    QObject::connect(job.get(), &Task::finished, context, [job, onDone]() {
+        if (onDone)
+            onDone(job->wasSuccessful());
+    }, Qt::SingleShotConnection);
+    job->start();
+}
+}
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -186,22 +222,7 @@ MainWindow::MainWindow(QWidget *parent)
     // Connect instance settings signal
     connect(m_topBar, &TopBar::instanceSettingsClicked, this, &MainWindow::onInstanceSettingsClicked);
     // Connect instance assistant signal
-    connect(m_topBar, &TopBar::instanceAssistantClicked, this, [this]() {
-        if (!m_instanceAssistantWindow) {
-            m_instanceAssistantWindow = new InstanceAssistantWindow(this);
-            // 转发资源管理页的存档快捷启动信号到主窗口处理
-            connect(m_instanceAssistantWindow, &InstanceAssistantWindow::quickLaunchSaveRequested,
-                    this, &MainWindow::onQuickLaunchSaveClicked);
-        }
-        // 注入当前实例上下文（路径、版本、loader）
-        m_instanceAssistantWindow->setInstanceContext(
-            m_currentInstancePath,
-            m_currentInstanceVersion,
-            m_currentInstanceLoader);
-        m_instanceAssistantWindow->show();
-        m_instanceAssistantWindow->raise();
-        m_instanceAssistantWindow->activateWindow();
-    });
+    connect(m_topBar, &TopBar::instanceAssistantClicked, this, &MainWindow::openInstanceAssistant);
     
     // Connect account manage signal
     connect(m_topBar, &TopBar::accountManageClicked, this, &MainWindow::onAccountManageClicked);
@@ -383,6 +404,15 @@ void MainWindow::initUI()
     connect(m_sideBar, &SideBar::parentItemClicked, this, &MainWindow::onParentNavClicked);
     connect(m_sideBar, &SideBar::childItemClicked, this, &MainWindow::onChildNavClicked);
     connect(m_subNavPanel, &SubNavPanel::childItemClicked, this, &MainWindow::onChildNavClicked);
+
+    // 子导航顶部搜索框：200ms 防抖后过滤当前页面主内容区
+    connect(m_subNavPanel, &SubNavPanel::searchQueryChanged, this, &MainWindow::onSubNavSearchQueryChanged);
+    // 页面切换后：把当前查询重新应用到新页面（新页实现 applyPageFilter 时生效）
+    connect(m_stackedWidget, &QStackedWidget::currentChanged, this, [this](int)
+    {
+        if (m_subNavPanel)
+            onSubNavSearchQueryChanged(m_subNavPanel->searchQuery());
+    });
 
     // 气泡展开时主内容区左侧留出空隙，收起时恢复
     connect(m_subNavPanel, &SubNavPanel::panelVisibilityChanged, this, [this](bool visible)
@@ -1012,6 +1042,24 @@ void MainWindow::onInstanceSelectClicked()
     showInstanceSelectPage();
 }
 
+void MainWindow::openInstanceAssistant()
+{
+    if (!m_instanceAssistantWindow) {
+        m_instanceAssistantWindow = new InstanceAssistantWindow(this);
+        // 转发资源管理页的存档快捷启动信号到主窗口处理
+        connect(m_instanceAssistantWindow, &InstanceAssistantWindow::quickLaunchSaveRequested,
+                this, &MainWindow::onQuickLaunchSaveClicked);
+    }
+    // 注入当前实例上下文（路径、版本、loader）
+    m_instanceAssistantWindow->setInstanceContext(
+        m_currentInstancePath,
+        m_currentInstanceVersion,
+        m_currentInstanceLoader);
+    m_instanceAssistantWindow->show();
+    m_instanceAssistantWindow->raise();
+    m_instanceAssistantWindow->activateWindow();
+}
+
 void MainWindow::onInstanceSettingsClicked()
 {
     if (m_currentInstancePath.isEmpty()) {
@@ -1129,6 +1177,11 @@ void MainWindow::applyInstanceContext(const QString &instancePath)
 
     m_topBar->setInstanceName(instanceName);
 
+    // 同步到首页经典模式皮肤面板
+    if (m_homePage) {
+        m_homePage->setCurrentInstanceName(instanceName);
+    }
+
     saveCurrentInstancePath();
 
     if (m_resourcesPage) {
@@ -1233,7 +1286,8 @@ void MainWindow::updateBackgroundWidget()
     m_backgroundWidget->setBlurRadius(bg->blurRadius());
     if (bg->currentMode() == BackgroundManager::SolidColor) {
         m_backgroundWidget->setSolidColor(QColor(bg->solidColor()));
-    } else if (bg->currentMode() == BackgroundManager::Image) {
+    } else if (bg->currentMode() == BackgroundManager::Image
+               || bg->currentMode() == BackgroundManager::Rotating) {
         m_backgroundWidget->setImage(bg->imagePath());
     } else if (bg->currentMode() == BackgroundManager::Bing) {
         // 先显示上次缓存的壁纸（可能为空），再由必应壁纸管理器异步补齐最新图片
@@ -1453,6 +1507,51 @@ void MainWindow::onRefreshClicked()
     // Try to call common refresh methods on the current page
     if (!QMetaObject::invokeMethod(currentPage, "onRefreshVersions", Qt::DirectConnection))
         QMetaObject::invokeMethod(currentPage, "refresh", Qt::DirectConnection);
+}
+
+// ── 子导航搜索框 → 当前页内容过滤 ─────────────────────────────────────────
+
+QWidget *MainWindow::resolveCurrentFilterPage() const
+{
+    if (!m_stackedWidget)
+        return nullptr;
+    QWidget *page = m_stackedWidget->currentWidget();
+    // HomePage / SettingsPage 外层包了 QScrollArea
+    if (auto *scrollArea = qobject_cast<QScrollArea *>(page))
+        page = scrollArea->widget();
+    return page;
+}
+
+void MainWindow::dispatchPageFilter(const QString &query)
+{
+    m_subNavFilterQuery = query;
+
+    // 先恢复上一次被过滤的页面（页面可能已切换，不能再找「当前页」）
+    if (m_lastFilteredPage)
+    {
+        QMetaObject::invokeMethod(m_lastFilteredPage, "applyPageFilter",
+                                  Q_ARG(QString, QString()));
+        m_lastFilteredPage = nullptr;
+    }
+
+    if (query.isEmpty())
+        return;
+
+    QWidget *page = resolveCurrentFilterPage();
+    if (!page)
+        return;
+
+    // 仅当页面实现了 Q_INVOKABLE applyPageFilter(const QString &) 时分发
+    if (page->metaObject()->indexOfMethod("applyPageFilter(QString)") < 0)
+        return;
+
+    QMetaObject::invokeMethod(page, "applyPageFilter", Q_ARG(QString, query));
+    m_lastFilteredPage = page;
+}
+
+void MainWindow::onSubNavSearchQueryChanged(const QString &query)
+{
+    dispatchPageFilter(query);
 }
 
 void MainWindow::saveCurrentInstancePath()
@@ -2281,18 +2380,8 @@ void MainWindow::onModDownloadRequested(const ModInfo &modInfo, const ModVersion
     DownloadTaskManager::instance()->updateTaskCurrentFile(taskId, fileName);
     DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::ClientJar, 0);
 
-    DownloadEngine *engine = new DownloadEngine(this);
-    connect(engine, &DownloadEngine::downloadBytesProgress, this,
-        [this, taskId, fileName](qint64 received, qint64 total) {
-            DownloadTaskManager::instance()->updateTaskFileProgress(taskId, fileName, received, total);
-            if (total > 0) {
-                int pct = qBound(0, static_cast<int>(received * 100 / total), 100);
-                DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, pct);
-            }
-        });
-
-    engine->downloadFile({versionFile.downloadUrl}, destPath,
-        [this, engine, taskId, fileName, modInfo](bool success) {
+    startResourceDownload(this, {versionFile.downloadUrl}, destPath, QString(),
+        [this, taskId, fileName, modInfo](bool success) {
             if (success) {
                 DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::Completed, 100);
                 DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, 100);
@@ -2304,7 +2393,13 @@ void MainWindow::onModDownloadRequested(const ModInfo &modInfo, const ModVersion
                     taskId, DownloadTaskStatus::Failed, tr("下载失败"));
                 NotificationManager::showError(this, tr("模组 \"%1\" 下载失败").arg(modInfo.name));
             }
-            engine->deleteLater();
+        },
+        [this, taskId, fileName](qint64 received, qint64 total) {
+            DownloadTaskManager::instance()->updateTaskFileProgress(taskId, fileName, received, total);
+            if (total > 0) {
+                int pct = qBound(0, static_cast<int>(received * 100 / total), 100);
+                DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, pct);
+            }
         });
 }
 
@@ -2751,18 +2846,6 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
     DownloadTaskManager::instance()->updateTaskCurrentFile(taskId, fileName);
     DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::ClientJar, 0);
 
-    DownloadEngine *engine = new DownloadEngine(this);
-    connect(engine, &DownloadEngine::downloadBytesProgress, this,
-        [this, taskId, fileName](qint64 received, qint64 total)
-        {
-            DownloadTaskManager::instance()->updateTaskFileProgress(taskId, fileName, received, total);
-            if (total > 0)
-            {
-                int pct = qBound(0, static_cast<int>(received * 100 / total), 100);
-                DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, pct);
-            }
-        });
-
     // For worlds, use ContentDownloader to handle extraction
     if (contentType == ContentType::World)
     {
@@ -2796,12 +2879,11 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
                 downloader->deleteLater();
             });
         downloader->downloadToInstance(versionFile.downloadUrl, fileName, instancePath, contentType);
-        engine->deleteLater();
         return;
     }
 
-    engine->downloadFile({versionFile.downloadUrl}, destPath,
-        [this, engine, taskId, fileName, modInfo, config](bool success)
+    startResourceDownload(this, {versionFile.downloadUrl}, destPath, versionFile.sha1,
+        [this, taskId, fileName, modInfo, config](bool success)
         {
             if (success)
             {
@@ -2817,8 +2899,16 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
                     taskId, DownloadTaskStatus::Failed, tr("下载失败"));
                 NotificationManager::showError(this, tr("%1 \"%2\" 下载失败").arg(config.displayName, modInfo.name));
             }
-            engine->deleteLater();
-        }, versionFile.sha1);
+        },
+        [this, taskId, fileName](qint64 received, qint64 total)
+        {
+            DownloadTaskManager::instance()->updateTaskFileProgress(taskId, fileName, received, total);
+            if (total > 0)
+            {
+                int pct = qBound(0, static_cast<int>(received * 100 / total), 100);
+                DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, pct);
+            }
+        });
 }
 
 namespace {

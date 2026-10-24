@@ -1527,6 +1527,7 @@ void ContentDownloadPage::placeCards()
             m_cardGridLayout->addItem(spacer, 0, 0);
         }
         syncTranslateStateWithCards();
+        applyLocalCardFilter();
         return;
     }
 
@@ -1542,7 +1543,25 @@ void ContentDownloadPage::placeCards()
             m_cardFlowLayout->addItem(spacer);
         }
         syncTranslateStateWithCards();
+        applyLocalCardFilter();
     }
+}
+
+void ContentDownloadPage::applyPageFilter(const QString &query)
+{
+    m_pageFilterQuery = query;
+    applyLocalCardFilter();
+}
+
+void ContentDownloadPage::applyLocalCardFilter()
+{
+    if (m_pageFilterQuery.isEmpty()) {
+        m_pageFilter.clear();
+        return;
+    }
+    // 按卡片可见文本（名称/作者/标签等）匹配，不依赖卡片与数据的下标平行
+    for (QWidget *card : std::as_const(m_cardWidgets))
+        m_pageFilter.setShow(card, PageFilter::matches(PageFilter::collectText(card), m_pageFilterQuery));
 }
 
 void ContentDownloadPage::updatePaginationControls()

@@ -1,5 +1,7 @@
 #include "BackgroundWidget.h"
 
+#include "PanoramaSkyWidget.h"
+
 #include <QPainter>
 #include <QDebug>
 #include <QRadialGradient>
@@ -19,6 +21,10 @@ BackgroundWidget::BackgroundWidget(QWidget *parent)
         if (m_flowRunning && isVisible())
             update();
     });
+
+    // 旋转全景的天空盒渲染交给 GL 子控件，仅旋转模式显示
+    m_panoramaSky = new PanoramaSkyWidget(this);
+    m_panoramaSky->hide();
 }
 
 void BackgroundWidget::setMode(Mode mode)
@@ -26,10 +32,21 @@ void BackgroundWidget::setMode(Mode mode)
     if (m_mode == mode)
         return;
     m_mode = mode;
-    if (mode == FlowLight || mode == Rotating) {
+    if (mode == FlowLight) {
         startFlowAnimation();
     } else {
         stopFlowAnimation();
+    }
+    if (mode == Rotating) {
+        if (!m_imagePath.isEmpty()) {
+            QImage img(m_imagePath);
+            m_panoramaSky->setPanorama(img);
+        }
+        m_panoramaSky->setGeometry(rect());
+        m_panoramaSky->show();
+        m_panoramaSky->raise();
+    } else {
+        m_panoramaSky->hide();
     }
     update();
 }
@@ -45,6 +62,10 @@ void BackgroundWidget::setImage(const QString &path)
 {
     if (m_imagePath != path) {
         m_imagePath = path;
+        if (m_mode == Rotating) {
+            QImage img(path);
+            m_panoramaSky->setPanorama(img);
+        }
         updatePixmap();
         if (m_mode == Image || m_mode == Rotating || m_mode == Bing)
             update();
@@ -56,6 +77,7 @@ void BackgroundWidget::setBlurRadius(int radius)
     radius = qBound(0, radius, 64);
     if (m_blurRadius != radius) {
         m_blurRadius = radius;
+        m_panoramaSky->setBlurRadius(radius);
         if (!m_originalPixmap.isNull()) {
             QImage img = m_originalPixmap.toImage();
             m_pixmap = QPixmap::fromImage(blurImage(img, radius));
@@ -205,7 +227,8 @@ void BackgroundWidget::paintEvent(QPaintEvent *event)
         break;
 
     case Rotating:
-        paintRotating(painter);
+        // GL 天空盒子控件就绪前铺深色底，避免白屏闪烁
+        painter.fillRect(rect(), QColor(15, 23, 42));
         break;
 
     case Classic:
@@ -297,39 +320,6 @@ void BackgroundWidget::paintFlowLight(QPainter &painter)
     }
 }
 
-// 旋转全景背景：背景图片围绕中心缓慢旋转（类似《我的世界》启动界面），
-// 缩放尺寸保证任意旋转角度下都能覆盖整个窗口。
-void BackgroundWidget::paintRotating(QPainter &painter)
-{
-    const int w = width();
-    const int h = height();
-    if (w <= 0 || h <= 0)
-        return;
-
-    // 无图片时的兜底底色（深色，避免白屏）
-    painter.fillRect(rect(), QColor(15, 23, 42));
-
-    if (m_pixmap.isNull())
-        return;
-
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-
-    // 覆盖窗口对角线所需的缩放比例
-    const qreal diag = qSqrt(qreal(w) * w + qreal(h) * h);
-    const qreal scale = qMax(diag / m_pixmap.width(), diag / m_pixmap.height());
-    const int sw = qCeil(m_pixmap.width() * scale);
-    const int sh = qCeil(m_pixmap.height() * scale);
-
-    // 缓慢旋转：360° 约 2 分钟
-    constexpr qreal kDegPerSec = 3.0;
-
-    painter.save();
-    painter.translate(w / 2.0, h / 2.0);
-    painter.rotate(flowPhase() * kDegPerSec);
-    painter.drawPixmap(QRect(-sw / 2, -sh / 2, sw, sh), m_pixmap);
-    painter.restore();
-}
-
 void BackgroundWidget::startFlowAnimation()
 {
     m_flowRunning = true;
@@ -352,7 +342,9 @@ qreal BackgroundWidget::flowPhase() const
 void BackgroundWidget::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    if (m_mode == FlowLight || m_mode == Rotating)
+    if (m_panoramaSky)
+        m_panoramaSky->setGeometry(rect());
+    if (m_mode == FlowLight)
         update();
 }
 
@@ -367,6 +359,6 @@ void BackgroundWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     // 重新显示时恢复定时器
-    if (m_flowRunning && (m_mode == FlowLight || m_mode == Rotating))
+    if (m_flowRunning && m_mode == FlowLight)
         m_flowTimer.start();
 }

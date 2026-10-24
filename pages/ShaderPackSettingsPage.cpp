@@ -183,6 +183,12 @@ void ShaderPackSettingsPage::buildTabs()
         case LanguageManager::Spanish:
             appLangCode = QStringLiteral("es");
             break;
+        case LanguageManager::Japanese:
+            appLangCode = QStringLiteral("ja");
+            break;
+        case LanguageManager::Russian:
+            appLangCode = QStringLiteral("ru");
+            break;
         case LanguageManager::Chinese:
         default:
             appLangCode = QStringLiteral("zh");

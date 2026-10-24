@@ -36,4 +36,4 @@ HEADERS += ../../pages/ForgeVersionListPage.h \
            ../loader_detail_probe/fake/utils/CleanroomInstaller.h \
            ../loader_detail_probe/fake/utils/OptiFabricInstaller.h
 
-RESOURCES += ../../resources.qrc
+RESOURCES += ../../resources.qrc ../../resources_data.qrc

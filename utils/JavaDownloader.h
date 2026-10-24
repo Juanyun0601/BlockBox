@@ -18,6 +18,8 @@
 
 #include <functional>
 
+class QFile;
+
 /**
  * @brief Java 发行版信息
  */
@@ -97,6 +99,9 @@ public:
   // --- 支持的 Java 版本列表 ---
   QVector<JavaVersionInfo> supportedVersions() const;
 
+  // --- 指定发行版实际提供的主版本号（如 Microsoft 不提供 Java 8/22/23/24） ---
+  QVector<int> supportedMajorVersions(const QString &distributionId) const;
+
   // --- 获取当前平台信息 ---
   QString currentOS() const;
   QString currentArchitecture() const;
@@ -134,14 +139,24 @@ private:
 
   // 构建下载 URL
   QString buildAdoptiumUrl(const QString &mirrorId, int majorVersion);
-  QString buildCorrettoUrl(const QString &mirrorId, int majorVersion);
+  QString buildCorrettoUrl(int majorVersion);
   QString buildMicrosoftUrl(const QString &mirrorId, int majorVersion);
   QString buildZuluUrl(int majorVersion);
 
+  // 构建镜像站目录页 URL（Adoptium 镜像：需要从目录里解析出真实文件名）
+  QString mirrorDirectoryUrl(const QString &mirrorId, int majorVersion,
+                             const QString &os, const QString &arch,
+                             const QString &packageType) const;
+
   // 解析 API 响应
   void parseAdoptiumResponse(const QByteArray &data);
-  void parseCorrettoResponse(const QByteArray &data, int majorVersion);
   void parseZuluResponse(const QByteArray &data, int majorVersion);
+
+  // 镜像目录解析：逐个把目录页里的真实文件名填进下载链接，
+  // 全部完成后一次性发 versionListFetched
+  void resolveNextMirrorBinary();
+  void fetchMirrorChecksumSidecar(const JavaBinaryInfo &info);
+  void finishMirrorResolution();
 
   // 下载与解压
   void doDownload(const QString &url, const QString &savePath);
@@ -168,4 +183,11 @@ private:
   QString m_currentArchivePath;
   QString m_currentChecksum;      // 待校验的 sha256（来自官方 API，可能为空）
   QString m_currentChecksumType;  // 校验算法，目前为 "sha256"
+
+  // 镜像目录解析状态
+  QVector<JavaBinaryInfo> m_pendingMirrorBinaries; // 还没解析出文件名的条目
+  QVector<JavaBinaryInfo> m_resolvedMirrorBinaries; // 已解析完成的条目
+
+  // 流式下载的落盘文件（下载期间持有）
+  QFile *m_downloadFile = nullptr;
 };

@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QElapsedTimer>
 
+class PanoramaSkyWidget;
+
 class BackgroundWidget : public QWidget
 {
     Q_OBJECT
@@ -22,6 +24,9 @@ public:
     void setImage(const QString &path);
     void setBlurRadius(int radius);
 
+    // 供 PanoramaSkyWidget 处理面贴图模糊复用
+    static QImage blurImage(const QImage &source, int radius);
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -30,9 +35,7 @@ protected:
 
 private:
     void updatePixmap();
-    static QImage blurImage(const QImage &source, int radius);
     void paintFlowLight(QPainter &painter);
-    void paintRotating(QPainter &painter);
     void startFlowAnimation();
     void stopFlowAnimation();
     qreal flowPhase() const;
@@ -43,6 +46,9 @@ private:
     int m_blurRadius;
     QPixmap m_originalPixmap;
     QPixmap m_pixmap;
+
+    // 旋转全景模式由该 GL 天空盒子控件渲染（VersePc2 方案移植）
+    PanoramaSkyWidget *m_panoramaSky = nullptr;
 
     QTimer m_flowTimer;
     QElapsedTimer m_flowClock;

@@ -25,6 +25,24 @@ enum class DownloadStage {
     Completed
 };
 
+/// 任务类型：决定任务详情页按哪套阶段与文案渲染（安装新实例之外的
+/// 任务不再复用实例安装的阶段名）
+enum class TaskType
+{
+    Generic,           ///< 通用下载
+    InstanceInstall,   ///< 安装新实例
+    LoaderInstall,     ///< 安装加载器（Forge / NeoForge 等）
+    ContentDownload,   ///< 实例资源下载（模组 / 资源包 / 光影 / 存档等）
+    JavaDownload,      ///< Java 运行时下载
+    LanTransfer,       ///< 局域网传输
+    AiModel,           ///< AI 模型下载
+    SystemTool,        ///< 系统组件下载
+    RuntimeDependency  ///< 运行依赖安装
+};
+
+/// 各任务类型在详情页的展示名
+QString taskTypeDisplayName(TaskType type);
+
 /// 阶段权重配置（参考 HMCL 做法，各阶段有明确的百分比范围）
 struct StageWeight
 {
@@ -49,6 +67,7 @@ struct DownloadTask {
     QString instancePath;
     QString mcVersion;
     QStringList loaders;
+    TaskType type = TaskType::Generic;
     int progress;
     double progressDouble;
     DownloadTaskStatus status;
@@ -93,6 +112,9 @@ public:
     static DownloadTaskManager* instance();
 
     QString addTask(const QString &instanceName, const QString &instancePath, const QString &mcVersion, const QStringList &loaders = QStringList());
+    /// 创建带类型标签的任务（详情页按类型渲染）
+    QString addTaskWithType(const QString &instanceName, const QString &instancePath,
+                            const QString &mcVersion, const QStringList &loaders, TaskType type);
     void updateTaskProgress(const QString &taskId, int progress, qint64 bytesReceived, qint64 bytesTotal);
     void updateTaskProgressDouble(const QString &taskId, double progress, qint64 bytesReceived, qint64 bytesTotal, qint64 speed);
     void updateTaskCurrentFile(const QString &taskId, const QString &fileName);

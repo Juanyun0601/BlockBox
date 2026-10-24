@@ -468,31 +468,51 @@ QPushButton *AppMessageBox::createStandardButton(StandardButton button)
 QString AppMessageBox::standardButtonText(StandardButton button) const
 {
     const LanguageManager::Language lang = LanguageManager::instance()->currentLanguage();
-    const bool zh   = (lang == LanguageManager::Chinese);
-    const bool trad = (lang == LanguageManager::ChineseTraditional);
-    const bool es   = (lang == LanguageManager::Spanish);
+    // 按语言取文案：简体 / 繁體 / English / Español / 日本語 / Русский
+    auto pick = [lang](const QString &zh, const QString &trad, const QString &en,
+                       const QString &es, const QString &ja, const QString &ru) -> QString {
+        switch (lang) {
+        case LanguageManager::Chinese:            return zh;
+        case LanguageManager::ChineseTraditional: return trad;
+        case LanguageManager::Spanish:            return es;
+        case LanguageManager::Japanese:           return ja;
+        case LanguageManager::Russian:            return ru;
+        case LanguageManager::English:
+        default:                                  return en;
+        }
+    };
 
     switch (button) {
     case Ok:
-        return zh ? QStringLiteral("确定") : (trad ? QStringLiteral("確定") : (es ? QStringLiteral("Aceptar") : QStringLiteral("OK")));
+        return pick(QStringLiteral("确定"), QStringLiteral("確定"), QStringLiteral("OK"),
+                    QStringLiteral("Aceptar"), QStringLiteral("OK"), QStringLiteral("ОК"));
     case Cancel:
-        return zh ? QStringLiteral("取消") : (trad ? QStringLiteral("取消") : (es ? QStringLiteral("Cancelar") : QStringLiteral("Cancel")));
+        return pick(QStringLiteral("取消"), QStringLiteral("取消"), QStringLiteral("Cancel"),
+                    QStringLiteral("Cancelar"), QStringLiteral("キャンセル"), QStringLiteral("Отмена"));
     case Yes:
-        return zh ? QStringLiteral("是") : (trad ? QStringLiteral("是") : (es ? QStringLiteral("Sí") : QStringLiteral("Yes")));
+        return pick(QStringLiteral("是"), QStringLiteral("是"), QStringLiteral("Yes"),
+                    QStringLiteral("Sí"), QStringLiteral("はい"), QStringLiteral("Да"));
     case No:
-        return zh ? QStringLiteral("否") : (trad ? QStringLiteral("否") : (es ? QStringLiteral("No") : QStringLiteral("No")));
+        return pick(QStringLiteral("否"), QStringLiteral("否"), QStringLiteral("No"),
+                    QStringLiteral("No"), QStringLiteral("いいえ"), QStringLiteral("Нет"));
     case Close:
-        return zh ? QStringLiteral("关闭") : (trad ? QStringLiteral("關閉") : (es ? QStringLiteral("Cerrar") : QStringLiteral("Close")));
+        return pick(QStringLiteral("关闭"), QStringLiteral("關閉"), QStringLiteral("Close"),
+                    QStringLiteral("Cerrar"), QStringLiteral("閉じる"), QStringLiteral("Закрыть"));
     case Apply:
-        return zh ? QStringLiteral("应用") : (trad ? QStringLiteral("套用") : (es ? QStringLiteral("Aplicar") : QStringLiteral("Apply")));
+        return pick(QStringLiteral("应用"), QStringLiteral("套用"), QStringLiteral("Apply"),
+                    QStringLiteral("Aplicar"), QStringLiteral("適用"), QStringLiteral("Применить"));
     case Reset:
-        return zh ? QStringLiteral("重置") : (trad ? QStringLiteral("重設") : (es ? QStringLiteral("Restablecer") : QStringLiteral("Reset")));
+        return pick(QStringLiteral("重置"), QStringLiteral("重設"), QStringLiteral("Reset"),
+                    QStringLiteral("Restablecer"), QStringLiteral("リセット"), QStringLiteral("Сброс"));
     case Help:
-        return zh ? QStringLiteral("帮助") : (trad ? QStringLiteral("說明") : (es ? QStringLiteral("Ayuda") : QStringLiteral("Help")));
+        return pick(QStringLiteral("帮助"), QStringLiteral("說明"), QStringLiteral("Help"),
+                    QStringLiteral("Ayuda"), QStringLiteral("ヘルプ"), QStringLiteral("Справка"));
     case Save:
-        return zh ? QStringLiteral("保存") : (trad ? QStringLiteral("儲存") : (es ? QStringLiteral("Guardar") : QStringLiteral("Save")));
+        return pick(QStringLiteral("保存"), QStringLiteral("儲存"), QStringLiteral("Save"),
+                    QStringLiteral("Guardar"), QStringLiteral("保存"), QStringLiteral("Сохранить"));
     case Open:
-        return zh ? QStringLiteral("打开") : (trad ? QStringLiteral("開啟") : (es ? QStringLiteral("Abrir") : QStringLiteral("Open")));
+        return pick(QStringLiteral("打开"), QStringLiteral("開啟"), QStringLiteral("Open"),
+                    QStringLiteral("Abrir"), QStringLiteral("開く"), QStringLiteral("Открыть"));
     default:
         break;
     }

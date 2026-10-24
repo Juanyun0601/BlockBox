@@ -26,6 +26,7 @@
 #include <QWidget>
 
 #include "../components/ContentViewSwitch.h"
+#include "../utils/PageFilter.h"
 
 class BlurLoadingOverlay;
 class MasonryLayout;
@@ -64,6 +65,12 @@ public:
     QString modifyInstanceName() const { return m_modifyInstanceName; }
     QString modifyInstanceVersion() const { return m_modifyInstanceVersion; }
     QString modifyInstanceLoader() const { return m_modifyInstanceLoader; }
+
+    /**
+     * 子导航搜索框分发：过滤版本列表与瀑布流卡片（按版本号/类型文本匹配）；
+     * 刷新重建列表后自动重新应用。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -148,6 +155,12 @@ private:
     QString m_currentFilter;
     // 是否已自动加载过版本列表（首次 showEvent 触发，避免重复请求）
     bool m_versionsLoaded;
+
+    // ── 子导航搜索：版本列表/瀑布流卡片过滤状态（重建后重新应用） ──
+    QString m_pageFilterQuery;
+    PageFilter::VisibilityFilter m_pageFilter;
+    /** 按 m_pageFilterQuery 过滤当前版本列表与瀑布流卡片 */
+    void applyLocalVersionFilter();
 };
 
 #endif // INSTALLINSTANCEPAGE_H

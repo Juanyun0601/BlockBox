@@ -17,6 +17,7 @@
 
 #include "components/AppFileDialog.h"
 #include "components/AppMessageBox.h"
+#include "components/ProgressDialog.h"
 
 ModpackImportPage::ModpackImportPage(QWidget* parent)
     : QWidget(parent)
@@ -278,7 +279,7 @@ void ModpackImportPage::onInstallClicked()
     return;
   }
 
-  // 创建导入器并开始安装
+  // 创建导入器（MultiMC 模式：导入流程是一个 Task），交给进度对话框执行
   modpack::ModpackImporter* importer = new modpack::ModpackImporter(this);
   importer->setModpackInfo(m_currentInfo);
   importer->setZipFilePath(m_currentFilePath);
@@ -287,25 +288,35 @@ void ModpackImportPage::onInstallClicked()
   QString basePath = SettingsManager::instance()->getDefaultInstancePath();
   importer->setInstancePath(basePath + "/" + instanceName);
 
-  connect(importer, &modpack::ModpackImporter::stageChanged, this, [this](const QString& stage)
-  {
-    NotificationManager::showInfo(this, stage);
+  // MultiMC 进度系统：非模态进度窗口实时显示阶段状态与百分比、可随时取消，
+  // 安装期间软件其他部分照常可用
+  m_installBtn->setEnabled(false);
+
+  ProgressDialog* progressDlg = new ProgressDialog(this);
+  progressDlg->setAttribute(Qt::WA_DeleteOnClose);
+  progressDlg->setSkipButton(true, tr("取消"));
+
+  connect(importer, &Task::finished, this, [this, importer]() {
+    m_installBtn->setEnabled(true);
+    if (importer->wasSuccessful())
+    {
+      NotificationManager::showSuccess(this, tr("整合包安装完成！"));
+      emit modpackInstalled();
+      emit backRequested();
+    }
+    else if (importer->wasAborted())
+    {
+      NotificationManager::showInfo(this, tr("整合包安装已取消"));
+    }
+    else
+    {
+      AppMessageBox::warning(this, tr("安装失败"),
+                             importer->failReason().isEmpty()
+                                 ? tr("整合包安装失败，请检查日志。")
+                                 : importer->failReason());
+    }
+    importer->deleteLater();
   });
 
-  connect(importer, &modpack::ModpackImporter::installFinished, this,
-    [this](bool success, const QString& instancePath)
-    {
-      if (success)
-      {
-        NotificationManager::showSuccess(this, tr("整合包安装完成！"));
-        emit modpackInstalled();
-        emit backRequested();
-      }
-      else
-      {
-        AppMessageBox::warning(this, tr("安装失败"), tr("整合包安装失败，请检查日志。"));
-      }
-    });
-
-  importer->startInstall();
+  progressDlg->showWithTask(importer);
 }

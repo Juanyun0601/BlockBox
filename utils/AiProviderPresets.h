@@ -40,7 +40,7 @@ struct AiProviderPreset
 inline QList<AiProviderPreset> aiProviderPresets()
 {
     return {
-        // ── 常用（原有 8 家） ──
+        // ── 常用 ──
         {QStringLiteral("DeepSeek"),   QStringLiteral("DeepSeek"),
          QStringLiteral("https://api.deepseek.com/v1"), QStringLiteral("ai/provider_deepseek"),
          QStringLiteral("deepseek.com")},
@@ -56,6 +56,12 @@ inline QList<AiProviderPreset> aiProviderPresets()
         {QStringLiteral("OpenRouter"), QStringLiteral("OpenRouter"),
          QStringLiteral("https://openrouter.ai/api/v1"), QStringLiteral("ai/provider_openrouter"),
          QStringLiteral("openrouter.ai")},
+        {QStringLiteral("OpenCode Go"), QStringLiteral("OpenCode Go"),
+         QStringLiteral("https://opencode.ai/zen/go/v1"),
+         QStringLiteral("ai/provider_opencode_go"), QStringLiteral("opencode.ai/zen/go/v1")},
+        {QStringLiteral("OpenCode Zen"), QStringLiteral("OpenCode Zen"),
+         QStringLiteral("https://opencode.ai/zen/v1"),
+         QStringLiteral("ai/provider_opencode_zen"), QStringLiteral("opencode.ai/zen/v1")},
         {QStringLiteral("GLM"),        QStringLiteral("智谱 GLM"),
          QStringLiteral("https://open.bigmodel.cn/api/paas/v4"), QStringLiteral("ai/provider_glm"),
          QStringLiteral("bigmodel.cn")},
@@ -103,7 +109,7 @@ inline QList<AiProviderPreset> aiProviderPresets()
         {QStringLiteral("360"),        QStringLiteral("360 智脑"),
          QStringLiteral("https://api.360.cn/v1"), QStringLiteral("ai/provider_360"),
          QStringLiteral("api.360.cn")},
-        {QStringLiteral("SenseChat"),  QStringLiteral("商汤商商量"),
+        {QStringLiteral("SenseChat"),  QStringLiteral("商汤（日日新）"),
          QStringLiteral("https://api.sensenova.cn/v1"), QStringLiteral("ai/provider_sensechat"),
          QStringLiteral("sensenova.cn")},
         {QStringLiteral("XVERSE"),     QStringLiteral("元象 XVERSE"),

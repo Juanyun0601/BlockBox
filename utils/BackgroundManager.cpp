@@ -73,7 +73,7 @@ void BackgroundManager::setImagePath(const QString &path)
     if (m_imagePath != path) {
         m_imagePath = path;
         saveToSettings();
-        if (m_mode == Image) {
+        if (m_mode == Image || m_mode == Rotating) {
             emit backgroundChanged();
         }
     }
@@ -106,7 +106,7 @@ void BackgroundManager::setBlurRadius(int radius)
     if (m_blurRadius != radius) {
         m_blurRadius = radius;
         saveToSettings();
-        if (m_mode == Image || m_mode == Bing) {
+        if (m_mode == Image || m_mode == Rotating || m_mode == Bing) {
             emit backgroundChanged();
         }
     }

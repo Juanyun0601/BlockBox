@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
+#include <QRegularExpression>
 
 #include <zlib.h>
 
@@ -41,6 +42,7 @@ private:
   bool readCentralDirectory(qint64 centralDirOffset, quint16 totalEntries);
   QByteArray readRaw(quint32 offset, quint32 size);
   QByteArray decompressDeflate(const QByteArray& compressed, quint32 expectedSize);
+  QByteArray decompressDeflateIncremental(const QByteArray& compressed);
 
   QFile m_file;
   QList<Entry> m_entries;
@@ -291,42 +293,48 @@ QByteArray ZipReader::decompressDeflate(const QByteArray& compressed, quint32 ex
 
     if (ret != Z_STREAM_END)
     {
-      // Fall back to incremental decompression
-      return QByteArray();
+      // 中央目录里的 uncompressedSize 与实际不符（或单次缓冲不够）时，
+      // 回退到未知大小的增量解压，而不是直接丢弃文件
+      return decompressDeflateIncremental(compressed);
     }
     result.resize(strm.total_out);
   }
   else
   {
-    // Size unknown, decompress incrementally
-    inflateEnd(&strm);
-
-    strm = {};
-    strm.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
-    strm.avail_in = compressed.size();
-    ret = inflateInit2(&strm, -MAX_WBITS);
-    if (ret != Z_OK)
-      return QByteArray();
-
-    const int CHUNK = 16384;
-    QByteArray buffer(CHUNK, '\0');
-    do
-    {
-      strm.next_out = reinterpret_cast<Bytef*>(buffer.data());
-      strm.avail_out = CHUNK;
-      ret = inflate(&strm, Z_NO_FLUSH);
-      if (ret == Z_STREAM_ERROR || ret == Z_DATA_ERROR || ret == Z_MEM_ERROR)
-      {
-        inflateEnd(&strm);
-        return QByteArray();
-      }
-      result.append(buffer.data(), CHUNK - strm.avail_out);
-    }
-    while (strm.avail_out == 0);
-
-    inflateEnd(&strm);
+    return decompressDeflateIncremental(compressed);
   }
 
+  return result;
+}
+
+QByteArray ZipReader::decompressDeflateIncremental(const QByteArray& compressed)
+{
+  QByteArray result;
+  z_stream strm = {};
+  strm.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
+  strm.avail_in = compressed.size();
+
+  int ret = inflateInit2(&strm, -MAX_WBITS);
+  if (ret != Z_OK)
+    return QByteArray();
+
+  const int CHUNK = 16384;
+  QByteArray buffer(CHUNK, '\0');
+  do
+  {
+    strm.next_out = reinterpret_cast<Bytef*>(buffer.data());
+    strm.avail_out = CHUNK;
+    ret = inflate(&strm, Z_NO_FLUSH);
+    if (ret == Z_STREAM_ERROR || ret == Z_DATA_ERROR || ret == Z_MEM_ERROR)
+    {
+      inflateEnd(&strm);
+      return QByteArray();
+    }
+    result.append(buffer.data(), CHUNK - strm.avail_out);
+  }
+  while (strm.avail_out == 0);
+
+  inflateEnd(&strm);
   return result;
 }
 
@@ -343,6 +351,7 @@ QString ModpackInfo::typeName() const
   case ModpackType::MultiMC:    return QStringLiteral("MultiMC");
   case ModpackType::MCBBS:      return QStringLiteral("MCBBS");
   case ModpackType::HMCL:       return QStringLiteral("HMCL");
+  case ModpackType::BlockBox:   return QStringLiteral("方块盒子");
   case ModpackType::Generic:    return QStringLiteral("通用整合包");
   default:                      return QStringLiteral("未知");
   }
@@ -473,7 +482,8 @@ static ModpackInfo parseModrinth(ZipReader& zip)
   info.gameVersion = deps.value("minecraft").toString();
 
   // Check loader dependencies
-  static const char* loaderKeys[] = {"forge", "fabric-loader", "fabric", "neoforge", "quilt", nullptr};
+  static const char* loaderKeys[] = {"forge", "fabric-loader", "fabric", "neoforge",
+                                     "quilt-loader", "quilt", nullptr};
   for (int i = 0; loaderKeys[i] != nullptr; ++i)
   {
     QString key = QString::fromLatin1(loaderKeys[i]);
@@ -482,6 +492,8 @@ static ModpackInfo parseModrinth(ZipReader& zip)
       QString ver = deps.value(key).toString();
       if (key == "fabric-loader")
         key = "fabric";
+      else if (key == "quilt-loader")
+        key = "quilt";
 
       if (info.loaderType.isEmpty())
       {
@@ -500,13 +512,20 @@ static ModpackInfo parseModrinth(ZipReader& zip)
     mod.name = fileObj.value("path").toString();
 
     QJsonObject hashes = fileObj.value("hashes").toObject();
-    mod.fileId = hashes.value("sha1").toString();
-    if (mod.fileId.isEmpty())
-      mod.fileId = hashes.value("sha512").toString();
+    mod.sha1 = hashes.value("sha1").toString();
+    mod.sha512 = hashes.value("sha512").toString();
+    // 兼容旧逻辑：fileId 继续承接摘要作为唯一键使用
+    mod.fileId = mod.sha1.isEmpty() ? mod.sha512 : mod.sha1;
 
     QJsonArray downloads = fileObj.value("downloads").toArray();
-    if (!downloads.isEmpty())
-      mod.downloadUrl = downloads.first().toString();
+    for (const auto& dv : downloads)
+    {
+      const QString u = dv.toString();
+      if (!u.isEmpty() && !mod.downloadUrls.contains(u))
+        mod.downloadUrls.append(u);
+    }
+    if (!mod.downloadUrls.isEmpty())
+      mod.downloadUrl = mod.downloadUrls.first();
 
     mod.required = true;
     info.mods.append(mod);
@@ -564,10 +583,28 @@ static ModpackInfo parseMultiMC(ZipReader& zip)
     }
   }
 
-  // For MultiMC, the overrides are in the minecraft/ subfolder
+  // For MultiMC, the overrides are in the minecraft/ or .minecraft/ subfolder
   QString mcFolder = zip.findFile("minecraft/");
+  if (mcFolder.isEmpty())
+    mcFolder = zip.findFile(".minecraft/");
   if (!mcFolder.isEmpty())
-    info.overridesPath = "minecraft";
+    info.overridesPath = mcFolder.startsWith('.') ? QStringLiteral(".minecraft")
+                                                  : QStringLiteral("minecraft");
+
+  // 实例名写在 instance.cfg 而不是 mmc-pack.json 里
+  if (info.name.isEmpty())
+  {
+    const QByteArray cfg = zip.extractFile("instance.cfg");
+    if (!cfg.isEmpty())
+    {
+      const QString cfgText = QString::fromUtf8(cfg);
+      static const QRegularExpression nameRe(QStringLiteral("^name=(.+)$"),
+                                             QRegularExpression::MultilineOption);
+      const QRegularExpressionMatch m = nameRe.match(cfgText);
+      if (m.hasMatch())
+        info.name = m.captured(1).trimmed();
+    }
+  }
 
   return info;
 }
@@ -577,7 +614,11 @@ static ModpackInfo parseMCBBS(ZipReader& zip)
   ModpackInfo info;
   info.type = ModpackType::MCBBS;
 
+  // 历史格式 mcbbs.pack.json；本家导出为 mcbbs.packmeta（字段结构不同）
   QByteArray data = zip.extractFile("mcbbs.pack.json");
+  const bool isPackmeta = data.isEmpty();
+  if (isPackmeta)
+    data = zip.extractFile("mcbbs.packmeta");
   if (data.isEmpty())
     return info;
 
@@ -587,8 +628,31 @@ static ModpackInfo parseMCBBS(ZipReader& zip)
   info.name = root.value("name").toString();
   info.version = root.value("version").toString();
   info.author = root.value("author").toString();
-  info.gameVersion = root.value("gameVersion").toString();
   info.description = root.value("description").toString();
+
+  if (isPackmeta)
+  {
+    // packmeta：游戏版本与加载器都在 addons 数组里
+    const QJsonArray addons = root.value("addons").toArray();
+    for (const auto& addonVal : addons)
+    {
+      const QJsonObject addon = addonVal.toObject();
+      const QString id = addon.value("id").toString();
+      const QString ver = addon.value("version").toString();
+      if (id == QLatin1String("game"))
+        info.gameVersion = ver;
+      else if (info.loaderType.isEmpty())
+      {
+        info.loaderType = id.toLower();
+        info.loaderVersion = ver;
+      }
+    }
+    // files 仅含 path/hash（内容已打进 overrides），无需网络下载
+    info.overridesPath = QStringLiteral("overrides");
+    return info;
+  }
+
+  info.gameVersion = root.value("gameVersion").toString();
 
   // loader
   QString loader = root.value("modLoader").toString();
@@ -689,8 +753,53 @@ static ModpackInfo parseHMCL(ZipReader& zip)
   return info;
 }
 
-static ModpackInfo parseGeneric(ZipReader& zip, const QString& zipFilePath)
+// 方块盒子原生格式：zip 根下 blockbox.pack.json 清单 + 原始相对路径文件
+static ModpackInfo parseBlockBox(ZipReader& zip, const QString& zipFilePath)
 {
+  ModpackInfo info;
+  info.type = ModpackType::BlockBox;
+
+  QByteArray data = zip.extractFile("blockbox.pack.json");
+  if (data.isEmpty())
+  {
+    QFileInfo fi(zipFilePath);
+    info.name = fi.completeBaseName();
+    info.overridesPath = QString();
+    return info;
+  }
+
+  QJsonDocument doc = QJsonDocument::fromJson(data);
+  QJsonObject root = doc.object();
+
+  info.name = root.value("name").toString();
+  info.version = root.value("version").toString();
+  info.author = root.value("author").toString();
+  info.description = root.value("description").toString();
+  info.gameVersion = root.value("gameVersion").toString();
+
+  const QJsonArray loaders = root.value("loaders").toArray();
+  for (const auto& lv : loaders)
+  {
+    const QJsonObject lo = lv.toObject();
+    if (info.loaderType.isEmpty() && lo.value("id").isString())
+    {
+      info.loaderType = lo.value("id").toString().toLower();
+      info.loaderVersion = lo.value("version").toString();
+    }
+  }
+
+  if (info.name.isEmpty())
+  {
+    QFileInfo fi(zipFilePath);
+    info.name = fi.completeBaseName();
+  }
+
+  // 文件都按原始相对路径打在 zip 根下，整包即覆盖内容
+  info.overridesPath = QString();
+  return info;
+}
+
+static ModpackInfo parseGeneric(ZipReader& zip, const QString& zipFilePath){
   ModpackInfo info;
   info.type = ModpackType::Generic;
 
@@ -732,13 +841,17 @@ ModpackType ModpackDetector::detect(const QString& zipFilePath)
 
   // Check in priority order - most specific format markers first
 
+  if (zip.hasFile("blockbox.pack.json"))
+    return ModpackType::BlockBox;
+
   if (zip.hasFile("modrinth.index.json"))
     return ModpackType::Modrinth;
 
   if (zip.hasFile("mmc-pack.json") || zip.hasFile("instance.cfg"))
     return ModpackType::MultiMC;
 
-  if (zip.hasFile("mcbbs.pack.json"))
+  // MCBBS：历史包用 mcbbs.pack.json，本家导出用 mcbbs.packmeta
+  if (zip.hasFile("mcbbs.pack.json") || zip.hasFile("mcbbs.packmeta"))
     return ModpackType::MCBBS;
 
   if (zip.hasFile("modpack.json") || zip.hasFile("pack.json"))
@@ -809,6 +922,8 @@ ModpackInfo ModpackDetector::parse(const QString& zipFilePath)
     return parseMCBBS(zip);
   case ModpackType::HMCL:
     return parseHMCL(zip);
+  case ModpackType::BlockBox:
+    return parseBlockBox(zip, zipFilePath);
   case ModpackType::Generic:
     return parseGeneric(zip, zipFilePath);
   default:

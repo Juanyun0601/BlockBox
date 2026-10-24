@@ -1,0 +1,111 @@
+name: 问题反馈
+description: 反馈使用方块盒子时遇到的 Bug，例如启动失败、界面异常、下载或安装出错
+title: "[问题反馈] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你抽空反馈问题！信息填得越完整，问题定位和修复得越快。
+
+        提交之前，麻烦先确认几件事：
+        - 在 Issues 里搜一下，看看有没有人已经遇到过同样的问题；
+        - 更新到最新版本再试一次，不少问题新版本里已经修好了；
+        - 电脑、安卓、鸿蒙三端的表现可能不一样，请注明自己用的是哪个平台。
+
+  - type: input
+    id: version
+    attributes:
+      label: 启动器版本
+      description: 在「设置 → 关于」里能看到版本号。
+      placeholder: 例如 beta6
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 运行平台
+      options:
+        - Windows（x64）
+        - Windows（ARM64）
+        - Android
+        - 鸿蒙 HarmonyOS
+        - 其他（请在问题描述里说明）
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 系统版本
+      description: 电脑上可以在「设置 → 系统 → 关于」里查看。
+      placeholder: 例如 Windows 11 23H2 / Android 14 / HarmonyOS NEXT 5.0
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 说说发生了什么，涉及哪个页面、哪个实例，越具体越好。
+      placeholder: 例如：在「安装新实例」里选 1.20.1 + Forge 47.2.0，点安装后进度条走完，但实例列表里没有出现新实例。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 按顺序写下你点过哪些地方，方便照着再试一遍。
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+      placeholder: 例如：安装完成后自动打开新实例。
+    validations:
+      required: false
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 如果有报错弹窗，把提示文字原样贴进来。
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 在「设置 → 高级设置 → 运行日志」里点「导出日志」可以导出启动器日志；遇到游戏内问题时，也可以在「实例管理 → 日志」里导出游戏日志。把关键内容粘贴到这里，或直接把日志文件拖进输入框。日志很长时，贴最后几十行就可以。
+      placeholder: 粘贴日志内容，或把 .log 文件拖进来
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图 / 录屏
+      description: 能直接说明问题的截图或录屏，拖进输入框就会自动上传。
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经搜索过 Issues，没有找到相同的问题
+          required: true
+        - label: 我用的是方块盒子官方发布的版本（没有自行修改过程序文件）
+          required: false
+        - label: 我已经附上了日志或截图（实在没有也可以说明原因）
+          required: false

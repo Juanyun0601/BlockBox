@@ -366,7 +366,7 @@ void AccountManagePage::initModelActions()
     modelActionTitle->setObjectName("accountTypeLabel");
     modelActionColumn->addWidget(modelActionTitle);
 
-    // 2 列网格：待机/挥手/走路/跑步 各占一格，骑马坐姿（文字较长）独占一行
+    // 2 列网格：两字动作各占一格，「骑马坐姿」（文字较长）独占最后一行
     QGridLayout *poseGrid = new QGridLayout();
     poseGrid->setContentsMargins(0, 0, 0, 0);
     poseGrid->setHorizontalSpacing(6);
@@ -382,10 +382,18 @@ void AccountManagePage::initModelActions()
         { tr("挥手"), ":/Images/Icons/pose_wave.svg", "pose_wave" },
         { tr("走路"), ":/Images/Icons/pose_walk.svg", "pose_walk" },
         { tr("跑步"), ":/Images/Icons/pose_run.svg", "pose_run" },
+        { tr("潜行"), ":/Images/Icons/pose_sneak.svg", "pose_sneak" },
+        { tr("游泳"), ":/Images/Icons/pose_swim.svg", "pose_swim" },
+        { tr("睡觉"), ":/Images/Icons/pose_sleep.svg", "pose_sleep" },
+        { tr("攻击"), ":/Images/Icons/pose_attack.svg", "pose_attack" },
+        { tr("舞蹈"), ":/Images/Icons/pose_dance.svg", "pose_dance" },
+        { tr("欢呼"), ":/Images/Icons/pose_cheer.svg", "pose_cheer" },
         { tr("骑马坐姿"), ":/Images/Icons/pose_ride.svg", "pose_ride" },
     };
+    constexpr int kPoseCount = int(sizeof(poses) / sizeof(poses[0]));
+    constexpr int kSpanIndex = kPoseCount - 1;   // 骑马坐姿跨两列
 
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < kPoseCount; ++i)
     {
         QPushButton *btn = new QPushButton(poses[i].text);
         btn->setObjectName("skinPoseButton");
@@ -400,7 +408,7 @@ void AccountManagePage::initModelActions()
         connect(btn, &QPushButton::clicked, this, &AccountManagePage::onModelPoseButtonClicked);
         m_modelPoseButtons.append(btn);
 
-        if (i == 4)
+        if (i == kSpanIndex)
             poseGrid->addWidget(btn, i / 2, 0, 1, 2);
         else
             poseGrid->addWidget(btn, i / 2, i % 2);
@@ -676,11 +684,22 @@ void AccountManagePage::initLoginPage()
             microsoftStatusLabel->setText(tr("登录成功！"));
             
             // Add Microsoft account
+            bool saved = false;
             if (SettingsManager::instance())
             {
                 SettingsManager::instance()->addMicrosoftAccount(username, accessToken, refreshToken, "", "", true);
+                saved = SettingsManager::instance()->accountExists(username);
             }
-            
+
+            if (!saved)
+            {
+                // 授权成功了但账户没存进磁盘（例如启动器装在只读目录），必须如实告知
+                AppMessageBox::information(this, tr("保存失败"),
+                                           tr("Microsoft 账户已登录成功，但账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限。"));
+                loginDialog->deleteLater();
+                return;
+            }
+
             // Switch back to account list and reload accounts
             m_stackedWidget->setCurrentWidget(m_accountManageWidget);
             loadAccounts();
@@ -937,11 +956,18 @@ void AccountManagePage::initLoginPage()
         }
         
         // 添加第三方账户
+        bool created = false;
         if (SettingsManager::instance())
         {
-            SettingsManager::instance()->addAccount(username, serverName, serverUrl, true);
+            created = SettingsManager::instance()->addAccount(username, serverName, serverUrl, true);
         }
-        
+
+        if (!created)
+        {
+            NotificationManager::showError(this, tr("第三方账户登录成功，但账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限"));
+            return;
+        }
+
         // 切换回账户列表并重新加载账户
         m_stackedWidget->setCurrentWidget(m_accountManageWidget);
         loadAccounts();
@@ -1424,6 +1450,18 @@ void AccountManagePage::onModelPoseButtonClicked()
         setModelPose(SkinPose::Walk, tr("已切换为走路"));
     else if (action == "pose_run")
         setModelPose(SkinPose::Run, tr("已切换为跑步"));
+    else if (action == "pose_sneak")
+        setModelPose(SkinPose::Sneak, tr("已切换为潜行"));
+    else if (action == "pose_swim")
+        setModelPose(SkinPose::Swim, tr("已切换为游泳"));
+    else if (action == "pose_sleep")
+        setModelPose(SkinPose::Sleep, tr("已切换为睡觉"));
+    else if (action == "pose_attack")
+        setModelPose(SkinPose::Attack, tr("已切换为攻击"));
+    else if (action == "pose_dance")
+        setModelPose(SkinPose::Dance, tr("已切换为舞蹈"));
+    else if (action == "pose_cheer")
+        setModelPose(SkinPose::Cheer, tr("已切换为欢呼"));
     else if (action == "pose_ride")
         setModelPose(SkinPose::Ride, tr("已切换为骑马坐姿"));
 }
@@ -1438,11 +1476,17 @@ void AccountManagePage::setModelPose(SkinPose pose, const QString &tip)
     QString poseData;
     switch (pose)
     {
-    case SkinPose::Idle: poseData = "pose_idle"; break;
-    case SkinPose::Wave: poseData = "pose_wave"; break;
-    case SkinPose::Walk: poseData = "pose_walk"; break;
-    case SkinPose::Run:  poseData = "pose_run";  break;
-    case SkinPose::Ride: poseData = "pose_ride"; break;
+    case SkinPose::Idle:  poseData = "pose_idle";  break;
+    case SkinPose::Wave:  poseData = "pose_wave";  break;
+    case SkinPose::Walk:  poseData = "pose_walk";  break;
+    case SkinPose::Run:   poseData = "pose_run";   break;
+    case SkinPose::Sneak: poseData = "pose_sneak"; break;
+    case SkinPose::Swim:  poseData = "pose_swim";  break;
+    case SkinPose::Sleep: poseData = "pose_sleep"; break;
+    case SkinPose::Attack: poseData = "pose_attack"; break;
+    case SkinPose::Dance: poseData = "pose_dance"; break;
+    case SkinPose::Cheer: poseData = "pose_cheer"; break;
+    case SkinPose::Ride:  poseData = "pose_ride";  break;
     }
 
     for (QPushButton *btn : m_modelPoseButtons)

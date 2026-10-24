@@ -10,6 +10,8 @@
 #include <QPixmap>
 #include <QList>
 
+#include "utils/PageFilter.h"
+
 class ResourcesPage : public QWidget
 {
     Q_OBJECT
@@ -19,6 +21,12 @@ public:
     ~ResourcesPage();
 
     void setInstancePath(const QString &path);
+
+    /**
+     * 子导航搜索框分发：按标题/描述过滤资源入口卡片与收藏夹卡片；
+     * 分组内全部不匹配时连同分组标题一并隐藏。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
 
 signals:
     // 统一导航信号：childIndex 与左侧导航项索引一致
@@ -59,6 +67,10 @@ private:
     QVBoxLayout *m_favoritesLayout;
 
     QString m_instancePath;
+
+    // ── 子导航搜索：卡片过滤 + 分组标题联动隐藏 ──
+    QString m_pageFilterQuery;
+    PageFilter::VisibilityFilter m_pageFilter;
 };
 
 #endif // RESOURCESPAGE_H

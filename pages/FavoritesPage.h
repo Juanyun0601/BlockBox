@@ -18,6 +18,7 @@
 #include "../components/MasonryContentCard.h"
 
 #include "utils/FavoritesManager.h"
+#include "utils/PageFilter.h"
 
 class QGridLayout;
 class FlowLayout;
@@ -36,6 +37,12 @@ public:
 
     void setFolder(const QString &folderId);
     QString folderId() const { return m_folderId; }
+
+    /**
+     * 子导航搜索框分发：按资源名称/作者过滤收藏卡片；
+     * 切换收藏夹或视图重建卡片后自动重新应用。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
 
 signals:
     void favoriteClicked(const FavoriteItem &item);
@@ -83,6 +90,10 @@ private:
 
     QList<QWidget *> m_cardWidgets;
     QList<FavoriteItem> m_cardItems;
+
+    // ── 子导航搜索：收藏卡片过滤状态（重建卡片后重新应用） ──
+    QString m_pageFilterQuery;
+    PageFilter::VisibilityFilter m_pageFilter;
 
     QNetworkAccessManager *m_iconNAM;
     QNetworkDiskCache *m_iconCache;

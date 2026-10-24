@@ -25,6 +25,7 @@ class QVBoxLayout;
 class FlowLayout;
 class QLabel;
 class QShowEvent;
+class QStackedWidget;
 class Skin3DWidget;
 class CarouselView;
 class HomeSkinPanel;
@@ -61,6 +62,9 @@ public:
 
   // 切换游戏版本模式（Java版 / 基岩版），重建「资源下载」快捷入口卡片
   void setBedrockMode(bool bedrock);
+
+  /** 同步当前实例名（MainWindow 在切换/恢复实例时推送），经典模式面板显示用 */
+  void setCurrentInstanceName(const QString &name);
 
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override;
@@ -107,8 +111,19 @@ signals:
   void aiChatRequested();
   /** 请求打开搜索页 */
   void searchRequested();
+  /** 请求打开内置「官方新闻」列表页 */
+  void newsPageRequested();
   /** 请求打开任务列表页（下载任务） */
   void taskListRequested();
+  // 经典模式皮肤面板快捷操作
+  /** 请求启动当前实例（无实例时主窗口会引导去实例选择页） */
+  void launchRequested();
+  /** 请求打开实例选择页 */
+  void instanceSelectRequested();
+  /** 请求打开当前实例的设置 */
+  void instanceSettingsRequested();
+  /** 请求打开实例助手窗口 */
+  void instanceAssistantRequested();
 
 private:
   void initUI();
@@ -142,6 +157,29 @@ private:
   HomeSkinPanel *m_skinPanel = nullptr;
   Skin3DWidget *m_skin3D = nullptr;
   QPushButton *m_skinAddBtn = nullptr;
+  // 皮肤面板「默认 / 经典」模式切换（选择持久化，重启后生效）
+  QStackedWidget *m_skinPageStack = nullptr;  // 0=默认（3D 预览/空态） 1=经典
+  QPushButton *m_modeDefaultBtn = nullptr;
+  QPushButton *m_modeClassicBtn = nullptr;
+  QString m_skinPanelMode = QStringLiteral("default");   // "default" / "classic"
+  void loadSkinPanelMode();                              // 启动时读取持久化的选择
+  void setSkinPanelMode(const QString &mode);            // 切换并持久化
+  void applySkinPanelMode();                             // 按当前模式切换面板内容
+  // 经典模式面板内容：头像 / 账户名 / 启动游戏 / 实例图标行 / 当前实例名
+  QWidget* createClassicSkinPage();
+  void refreshClassicPage();
+  void refreshClassicIcons();
+  void refreshModeSwitchIcons();
+  static QPixmap roundedPixmap(const QPixmap &src, int radius);
+  QWidget *m_classicPage = nullptr;
+  QLabel *m_classicAvatar = nullptr;
+  QLabel *m_classicName = nullptr;
+  QPushButton *m_classicLaunchBtn = nullptr;
+  QPushButton *m_classicSelectBtn = nullptr;
+  QPushButton *m_classicSettingsBtn = nullptr;
+  QPushButton *m_classicAssistantBtn = nullptr;
+  QLabel *m_classicInstanceName = nullptr;
+  QString m_homeInstanceName;                 // 当前实例名（MainWindow 同步推送）
 
   // Section 2: Quick Links
   QWidget* createQuickLinksSection();
@@ -199,9 +237,20 @@ private:
   QWidget* createAccountSection();   // 账号（小）
   QWidget* createAiSection();        // AI 助手（小）
   QWidget* createSearchSection();    // 快捷搜索（小）
-  QWidget* createNewsSection();      // 公告（中）
+  QWidget* createNewsSection();      // 官方新闻（中）
   QWidget* createDownloadsSection(); // 下载任务（中）
   QWidget* createSystemSection();    // 系统信息（中）
+  // 官方新闻：数据来自 NewsFeed，卡片按容器宽度重排
+  void rebuildNewsContent();
+  void updateNewsStatus();
+  void scheduleNewsRebuild();
+  int calculateNewsCardWidth() const;
+  QWidget *m_newsContainer = nullptr;
+  FlowLayout *m_newsLayout = nullptr;
+  QLabel *m_newsStatusLabel = nullptr;
+  QPushButton *m_newsRefreshBtn = nullptr;
+  int m_newsBuiltWidth = -1;      // 上次构建使用的卡片宽度
+  bool m_newsRebuildPending = false;  // 已有延迟重建排队（合并连续 resize）
   void rebuildDownloadsContent();
   QWidget *m_downloadsContainer = nullptr;
   FlowLayout *m_downloadsLayout = nullptr;

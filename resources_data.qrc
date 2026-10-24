@@ -1,0 +1,25 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <!-- 文本 / 数据类资源：开发时改动最频繁（QSS 样式、翻译、AI 提示词、题库等）。
+             单独一个 qrc，改这里只会重新编译这一小块，不必重新生成几 MB 的图片资源代码。 -->
+        <file>styles/style.qss</file>
+        <file>translations/BlockBox_zh.qm</file>
+        <file>translations/BlockBox_zh_Hant.qm</file>
+        <file>translations/BlockBox_en.qm</file>
+        <file>translations/BlockBox_es.qm</file>
+        <file>translations/BlockBox_ja.qm</file>
+        <file>translations/BlockBox_ru.qm</file>
+        <file>utils/mod/mcmod_names.json</file>
+        <file>resources/nonOccluding.json</file>
+        <file>resources/command_database.json</file>
+        <file>resources/bedrock_command_database.json</file>
+        <file>resources/terracotta_version.json</file>
+        <file>resources/gravitycone_version.json</file>
+        <file>resources/ai_system_prompts.json</file>
+        <file>resources/ai_models.json</file>
+        <file>resources/ai_agent_tools.json</file>
+        <!-- 入站答题题库 -->
+        <file>resources/quiz/quiz_bank.txt</file>
+    </qresource>
+</RCC>

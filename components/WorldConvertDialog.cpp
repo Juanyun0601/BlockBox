@@ -11,7 +11,6 @@
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -23,6 +22,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include "components/AppFileDialog.h"
 #include "components/AppMessageBox.h"
 #include "utils/ThemeManager.h"
 
@@ -428,7 +428,7 @@ void WorldConvertDialog::onRescanJava()
 
 void WorldConvertDialog::onPickJava()
 {
-    const QString path = QFileDialog::getOpenFileName(
+    const QString path = AppFileDialog::getOpenFileName(
         this, tr("选择 java.exe"), QString(),
 #ifdef Q_OS_WIN
         tr("Java 可执行文件 (java.exe);;所有文件 (*.*)")
@@ -494,7 +494,7 @@ void WorldConvertDialog::onBrowseOutput()
     const QString start = m_outputEdit->text().isEmpty()
         ? QFileInfo(m_worldDir).absolutePath()
         : m_outputEdit->text();
-    const QString dir = QFileDialog::getExistingDirectory(
+    const QString dir = AppFileDialog::getExistingDirectory(
         this, tr("选择输出文件夹（需为空或不存在的路径）"), start);
     if (!dir.isEmpty())
         m_outputEdit->setText(dir);

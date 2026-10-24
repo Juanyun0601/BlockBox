@@ -53,21 +53,16 @@ JavaDownloadPage::JavaDownloadPage(QWidget *parent)
   m_extractPath = defaultJavaInstallPath();
   m_extractPathLabel->setText(m_extractPath);
 
-  // 初始化版本列表
-  QVector<JavaVersionInfo> versions = downloader->supportedVersions();
-  for (const JavaVersionInfo &v : versions)
+  // 默认镜像源：官方源（GitHub）在国内网络不稳定，默认走清华 TUNA 镜像
+  int idxTuna = m_mirrorCombo->findData("tuna");
+  if (idxTuna >= 0)
   {
-    QString label = v.versionName;
-    if (v.isLts) label += " (LTS)";
-    m_versionCombo->addItem(label, v.majorVersion);
+    QSignalBlocker blocker(m_mirrorCombo);
+    m_mirrorCombo->setCurrentIndex(idxTuna);
   }
 
-  // 默认选中 Java 21
-  int idx21 = m_versionCombo->findData(21);
-  if (idx21 >= 0)
-    m_versionCombo->setCurrentIndex(idx21);
-  else
-    m_versionCombo->setCurrentIndex(0);
+  // 初始化版本列表（按发行版实际提供的版本过滤）
+  repopulateVersionCombo("adoptium");
 
   updateUIState();
 }
@@ -219,12 +214,41 @@ void JavaDownloadPage::onDistributionChanged(int index)
   QString distId = m_distributionCombo->currentData().toString();
   m_mirrorCombo->setEnabled(distId == "adoptium");
 
-  onVersionChanged(m_versionCombo->currentIndex());
+  // 不同发行版提供的版本不同（如 Microsoft 没有 Java 8/22/23/24），重建版本下拉框
+  repopulateVersionCombo(distId);
 }
 
 void JavaDownloadPage::onMirrorChanged(int index)
 {
   Q_UNUSED(index);
+  onVersionChanged(m_versionCombo->currentIndex());
+}
+
+void JavaDownloadPage::repopulateVersionCombo(const QString &distId)
+{
+  {
+    QSignalBlocker blocker(m_versionCombo);
+    m_versionCombo->clear();
+
+    QVector<JavaVersionInfo> all = JavaDownloader::instance()->supportedVersions();
+    QVector<int> majors = JavaDownloader::instance()->supportedMajorVersions(distId);
+    for (const JavaVersionInfo &v : all)
+    {
+      if (!majors.contains(v.majorVersion))
+        continue;
+      QString label = v.versionName;
+      if (v.isLts) label += " (LTS)";
+      m_versionCombo->addItem(label, v.majorVersion);
+    }
+
+    // 默认选中 Java 21
+    int idx21 = m_versionCombo->findData(21);
+    if (idx21 >= 0)
+      m_versionCombo->setCurrentIndex(idx21);
+    else if (m_versionCombo->count() > 0)
+      m_versionCombo->setCurrentIndex(0);
+  }
+
   onVersionChanged(m_versionCombo->currentIndex());
 }
 

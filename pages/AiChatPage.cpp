@@ -49,6 +49,7 @@
 #include <QTcpSocket>
 #include <QTimer>
 #include <QNetworkAccessManager>
+#include <QtConcurrent>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUuid>
@@ -5035,8 +5036,8 @@ void AiChatPage::onResourceDownloadRequested(const ModInfo &info, const ModVersi
 
     // 注册下载任务
     QString instanceName = QFileInfo(instancePath).fileName();
-    QString taskId = DownloadTaskManager::instance()->addTask(
-        instanceName, instancePath, QString(), QStringList());
+    QString taskId = DownloadTaskManager::instance()->addTaskWithType(
+        instanceName, instancePath, QString(), QStringList(), TaskType::ContentDownload);
 
     ContentTypeConfig config = ContentTypeConfig::getConfig(contentType);
     DownloadTaskManager::instance()->updateTaskStatus(
@@ -5148,11 +5149,15 @@ void AiChatPage::triggerInstanceDownload(const QString &versionId, const QString
             NotificationManager::showInfo(this,
                 tr("原版已下载完成，正在安装加载器 %1 %2...").arg(ldType, ldVer));
 
-            // 按加载器类型分发安装
+            // 按加载器类型分发安装。
+            // 除 Forge 外的安装器内部是阻塞式实现，必须放到后台线程执行，
+            // 否则会长时间占用 GUI 线程造成卡死；Forge 自身异步，直接启动
             if (ldType == QStringLiteral("fabric") || ldType == QStringLiteral("quilt")
                 || ldType == QStringLiteral("legacyfabric"))
             {
-                FabricInstaller::instance()->downloadFabricInstaller(mcVer, ldVer, instPath);
+                QtConcurrent::run([mcVer, ldVer, instPath]() {
+                    FabricInstaller::instance()->downloadFabricInstaller(mcVer, ldVer, instPath);
+                });
             }
             else if (ldType == QStringLiteral("forge"))
             {
@@ -5164,14 +5169,18 @@ void AiChatPage::triggerInstanceDownload(const QString &versionId, const QString
             {
                 NeoForgeInstaller::instance()->setDownloadSource(
                     SettingsManager::instance()->getNeoForgeDownloadSource());
-                NeoForgeInstaller::instance()->downloadNeoForgeInstaller(mcVer, ldVer, instPath, instName);
+                QtConcurrent::run([mcVer, ldVer, instPath, instName]() {
+                    NeoForgeInstaller::instance()->downloadNeoForgeInstaller(mcVer, ldVer, instPath, instName);
+                });
             }
             else if (ldType == QStringLiteral("optifine"))
             {
                 // OptiFine 需要 installerFileName，用标准命名
                 QString installerFileName = QStringLiteral("OptiFine_%1_%2.jar").arg(mcVer, ldVer);
-                OptiFineInstaller::instance()->downloadOptiFineInstaller(
-                    mcVer, ldVer, installerFileName, instPath);
+                QtConcurrent::run([mcVer, ldVer, installerFileName, instPath]() {
+                    OptiFineInstaller::instance()->downloadOptiFineInstaller(
+                        mcVer, ldVer, installerFileName, instPath);
+                });
             }
             else
             {

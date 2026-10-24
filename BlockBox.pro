@@ -14,6 +14,23 @@ CONFIG += c++11
 # deprecated API in order to know how to port your code away from it.
 DEFINES += QT_DEPRECATED_WARNINGS
 
+# ---------------------------------------------------------------- 构建速度优化
+# 预编译头：把几百个文件都要用的 Qt 头只解析一次，单文件编译变快（详见 pch.h）。
+# 只对 gcc / clang 工具链启用：MSVC 的预编译头要求每个源文件第一行就包含它，
+# 本工程没这么做；Android/OHOS 走各自工具链打包，也保持原样不受影响。
+!android:!ohos:gcc|clang {
+    CONFIG += precompile_header
+    PRECOMPILED_HEADER = pch.h
+    HEADERS += pch.h
+}
+
+# -pipe：编译器之间用管道传中间结果，省掉临时文件读写（gcc / clang 支持）。
+gcc|clang {
+    QMAKE_CFLAGS += -pipe
+    QMAKE_CXXFLAGS += -pipe
+}
+# ------------------------------------------------------------ 构建速度优化结束
+
 # Increase compiler memory limit for moc (MSVC specific)
 win32-msvc* {
     QMAKE_CXXFLAGS += /Zm500
@@ -62,6 +79,8 @@ components/CustomCheckBox.cpp \
     components/LanTransferDialog.cpp \
      components/DownloadTaskCard.cpp \
      components/TaskProgressWidgets.cpp \
+components/ProgressWidget.cpp \
+components/ProgressDialog.cpp \
       components/Skin3DWidget.cpp \
       components/SubNavPanel.cpp \
      components/LoadingOverlay.cpp \
@@ -83,7 +102,9 @@ components/CustomCheckBox.cpp \
      components/GameFloatingIcon.cpp \
      components/BedrockInstanceAssistantWindow.cpp \
      components/BackgroundWidget.cpp \
+     components/PanoramaSkyWidget.cpp \
      components/NewsCard.cpp \
+     components/NewsDetailDialog.cpp \
      components/PerfMonitorCard.cpp \
      components/PerformanceDetailDialog.cpp \
      components/ModelSelectDialog.cpp \
@@ -165,6 +186,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/SpeedCalculator.cpp \
     utils/SystemInfo.cpp \
     utils/UpdateChecker.cpp \
+    utils/news/NewsFeed.cpp \
     utils/RuntimeArchive.cpp \
     utils/RuntimeDependencyManager.cpp \
     utils/HarmonyBridge.cpp \
@@ -193,7 +215,12 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/MemoryAllocator.cpp \
     utils/VersionDownloader.cpp \
     utils/download/VersionDownloaderAssets.cpp \
-    utils/download/DownloadEngine.cpp \
+    utils/net/Task.cpp \
+    utils/net/NetJob.cpp \
+    utils/net/Download.cpp \
+    utils/net/FileSink.cpp \
+    utils/net/MetaCacheSink.cpp \
+    utils/net/HttpMetaCache.cpp \
     utils/DownloadTaskManager.cpp \
     utils/DownloadUtils.cpp \
     utils/StartupProgressWidget.cpp \
@@ -236,6 +263,7 @@ pages/settings/SettingsAdvancedPage.cpp \
      pages/OnboardingWizard.cpp \
     utils/JavaScanWorker.cpp \
     utils/LauncherImporter.cpp \
+    utils/LauncherLogger.cpp \
     utils/JavaDownloader.cpp \
     utils/mod/ModData.cpp \
      utils/mod/CurseForgeAPI.cpp \
@@ -309,6 +337,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     components/CreatePluginDialog.cpp \
     components/PluginSettingsDialog.cpp \
     pages/PluginPage.cpp \
+    pages/NewsPage.cpp \
     utils/skill/SkillManager.cpp \
     components/SkillManagerDialog.cpp \
     components/PluginRunnerDialog.cpp \
@@ -334,6 +363,8 @@ components/CustomCheckBox.h \
     components/LanTransferDialog.h \
      components/DownloadTaskCard.h \
      components/TaskProgressWidgets.h \
+components/ProgressWidget.h \
+components/ProgressDialog.h \
       components/Skin3DWidget.h \
      components/SubNavPanel.h \
      components/LoadingOverlay.h \
@@ -352,10 +383,12 @@ components/CustomCheckBox.h \
      components/NotificationManager.h \
      components/NotificationHistoryDialog.h \
        components/BackgroundWidget.h \
+       components/PanoramaSkyWidget.h \
        components/InstanceAssistantWindow.h \
        components/GameFloatingIcon.h \
        components/BedrockInstanceAssistantWindow.h \
        components/NewsCard.h \
+     components/NewsDetailDialog.h \
       components/PerfMonitorCard.h \
       components/PerformanceDetailDialog.h \
       components/ModelSelectDialog.h \
@@ -403,12 +436,14 @@ components/ProjectionBlockEditorDialog.h \
     pages/TaskListPage.h \
     pages/TaskDetailPage.h \
     utils/SettingsManager.h \
+    utils/PageFilter.h \
     utils/QuizBank.h \
     utils/McimHelper.h \
     utils/SkinDownloader.h \
     utils/SpeedCalculator.h \
     utils/SystemInfo.h \
     utils/UpdateChecker.h \
+    utils/news/NewsFeed.h \
     utils/RuntimeArchive.h \
     utils/RuntimeDependencyManager.h \
     utils/HarmonyBridge.h \
@@ -435,7 +470,23 @@ components/ProjectionBlockEditorDialog.h \
     utils/VersionDownloader.h \
     utils/DownloadTaskManager.h \
     utils/DownloadUtils.h \
-    utils/download/DownloadEngine.h \
+    utils/net/Task.h \
+    utils/net/NetAction.h \
+    utils/net/NetJob.h \
+    utils/net/Download.h \
+    utils/net/Sink.h \
+    utils/net/FileSink.h \
+    utils/net/Validator.h \
+    utils/net/ChecksumValidator.h \
+    utils/net/ByteArraySink.h \
+    utils/net/MetaCacheSink.h \
+    utils/net/HttpMetaCache.h \
+    utils/net/FileSystem.h \
+    utils/net/QObjectPtr.h \
+    utils/net/NetworkAccess.h \
+    utils/net/Mode.h \
+    utils/net/BuildConfig.h \
+    utils/download/DownloadMirrors.h \
     utils/StartupProgressWidget.h \
     utils/AsyncInitializer.h \
     utils/LowConfigMode.h \
@@ -496,6 +547,7 @@ pages/ProjectionManagePage.h \
     pages/settings/BedrockInstanceSettingsPage.h \
       utils/JavaScanWorker.h \
     utils/LauncherImporter.h \
+    utils/LauncherLogger.h \
     utils/JavaDownloader.h \
      utils/mod/ModData.h \
       utils/WebpLoader.h \
@@ -570,6 +622,7 @@ pages/ProjectionManagePage.h \
     components/CreatePluginDialog.h \
     components/PluginSettingsDialog.h \
     pages/PluginPage.h \
+    pages/NewsPage.h \
     utils/skill/SkillInfo.h \
     utils/skill/SkillManager.h \
     components/SkillManagerDialog.h \
@@ -582,8 +635,12 @@ pages/ProjectionManagePage.h \
 FORMS += \
     mainwindow.ui
 
+# 资源拆成两块：图片（很少改、体积大）和文本数据（QSS/翻译/JSON，开发时改得最勤）。
+# 以前所有资源挤在一个 qrc 里，改一句样式就要重新生成并编译几 MB 的资源代码（约 20s）；
+# 拆开后改样式只需要重编文本那一小块（约 2s）。
 RESOURCES += \
-    resources.qrc
+    resources.qrc \
+    resources_data.qrc
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
@@ -599,7 +656,9 @@ TRANSLATIONS += \
     translations/BlockBox_en.ts \
     translations/BlockBox_zh.ts \
     translations/BlockBox_zh_Hant.ts \
-    translations/BlockBox_es.ts
+    translations/BlockBox_es.ts \
+    translations/BlockBox_ja.ts \
+    translations/BlockBox_ru.ts
 
 # Auto-generate .qm files from .ts files on each build
 lrelease.name = Generate .qm from .ts

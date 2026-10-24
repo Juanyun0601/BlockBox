@@ -8,6 +8,8 @@
 #define VERSIONDOWNLOADER_H
 
 #include <QElapsedTimer>
+#include <QHash>
+#include <functional>
 #include <QJsonObject>
 #include <QList>
 #include <QMap>
@@ -20,6 +22,7 @@
 #include <QStringList>
 
 #include "utils/DownloadTaskManager.h"
+#include "utils/net/NetJob.h"
 
 class VersionDownloader : public QObject
 {
@@ -60,7 +63,6 @@ public:
         qint64 fileSize;
         QString expectedHash;   // 预期 SHA1 哈希，用于下载后完整性验证
         QString fallbackUrl;    // 镜像源失败后的官方源兜底地址（仅 BMCL 源时填）
-        int retryCount = 0;
     };
 
     static VersionDownloader* instance();
@@ -95,13 +97,6 @@ signals:
     void downloadResumed();
     void statusChanged(const QString &status);
 
-private slots:
-    void onManifestReplyFinished();
-    void onVersionJsonReplyFinished();
-    void onClientJarProgress(qint64 bytesReceived, qint64 bytesTotal);
-    void onLibraryFileFinished();
-    void onAssetIndexReplyFinished();
-
 private:
     VersionDownloader();
     ~VersionDownloader();
@@ -134,23 +129,31 @@ private:
     void startAssetScan(QList<PendingDownload> all, const QString &assetsPath);
     void applyAssetScanResult(QList<PendingDownload> remaining, qint64 reusedBytes, int scanId);
     void completeDownload();
+
+    // ── 清单类 JSON（MultiMC net 层：HttpMetaCache + Download::makeCached）──
+    void fetchJsonCached(const QStringList &urls, const QString &resourcePath,
+                         std::function<void(bool ok, const QByteArray &data)> onDone);
+
+    // ── 文件传输（MultiMC net 层：Download + FileSink + ChecksumValidator）──
+    /// 单个待下载文件的全部参数（重试/暂停重排时需要原样带回）
+    struct NetFileParams
+    {
+        QString url;
+        QString filePath;
+        qint64 fileSize = 0;
+        QString expectedHash;
+        QString fallbackUrl;
+        bool isClientJar = false;
+    };
     void downloadSingleFile(const QString &url, const QString &filePath,
                             qint64 fileSize, const QString &expectedHash = QString(),
-                            int retryCount = 0, const QString &fallbackUrl = QString(),
+                            const QString &fallbackUrl = QString(),
                             bool isClientJar = false);
-    void scheduleFileRetry(const QString &url, const QString &filePath,
-                           qint64 fileSize, const QString &expectedHash,
-                           int nextRetryCount, bool rateLimited = false,
-                           const QString &fallbackUrl = QString(),
-                           bool isClientJar = false);
-    void downloadFileSegments(const QString &url, const QString &filePath, qint64 fileSize);
-    void issueSegmentRequest(const QString &url, const QString &tempPath,
-                             int segIndex, int totalSegs, const QString &finalPath,
-                             qint64 finalSize, qint64 start, qint64 end,
-                             int retryCount);
-    void onSegmentReplyFinished();
+    void onNetFileSucceeded(const NetFileParams &params);
+    void onNetFileFailed(const NetFileParams &params);
+    void onNetFileAborted(const NetFileParams &params);
+    void requeuePendingFile(const NetFileParams &params);
 
-    QString getManifestUrl(const QString &versionId);
     QString getClientDownloadUrl(const QJsonObject &versionManifest);
     int effectiveConcurrentLimit() const;
     void calculateTotalSize(const QJsonObject &versionManifest);
@@ -161,9 +164,7 @@ private:
 
     static const int MAX_CONCURRENT_DOWNLOADS = 128;
     static const int MAX_RETRY_COUNT = 3;
-    static const qint64 MIN_PARALLEL_FILE_SIZE = 2 * 1024 * 1024;
 
-    QNetworkAccessManager *m_networkManager;
     DownloadSource m_downloadSource;
     DownloadPhase m_currentPhase;
 
@@ -180,15 +181,15 @@ private:
     qint64 m_clientJarSize;
 
     QList<QNetworkReply*> m_activeReplies;
-    QMap<QNetworkReply*, qint64> m_activeFileProgress;
+    // 在途文件进度（键为文件路径，MultiMC net 层接管传输后按文件聚合）
+    QHash<QString, qint64> m_activeFileProgress;
+    // MultiMC net 层：在途的单文件下载任务（取消时统一 abort）
+    QList<NetJob::Ptr> m_fileJobs;
     QQueue<PendingDownload> m_pendingDownloads;
     QQueue<PendingDownload> m_pendingAssets;
     int m_activeDownloadCount;
 
-    QString m_tempSegmentDir;
-    // 分段下载已降级单连接标志：防止并发分段同时触发降级互相踩踏
-    bool m_segmentFallbackStarted = false;
-    // BMCL 源客户端 JAR 的官方源兜底地址与校验哈希（分段降级路径使用）
+    // BMCL 源客户端 JAR 的官方源兜底地址与校验哈希（Download 的回退地址）
     QString m_clientJarFallbackUrl;
     QString m_clientJarSha1;
 

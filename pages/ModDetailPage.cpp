@@ -2,6 +2,7 @@
 #include "utils/IconHelper.h"
 #include "utils/McimHelper.h"
 #include "utils/SettingsManager.h"
+#include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
 #include "utils/mod/CurseForgeAPI.h"
 #include "utils/mod/ModrinthAPI.h"
@@ -64,6 +65,7 @@ ModDetailPage::ModDetailPage(QWidget *parent)
     , m_englishNameLabel(nullptr)
     , m_descriptionLabel(nullptr)
     , m_leftPanel(nullptr)
+    , m_installBtn(nullptr)
     , m_versionCombo(nullptr)
     , m_loaderCombo(nullptr)
     , m_versionTypeCombo(nullptr)
@@ -144,7 +146,12 @@ void ModDetailPage::initUI()
     m_loadingOverlay->hide();
 
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
-            this, [this]() { updateScreenshotNavStyle(); });
+            this, [this]() {
+        updateScreenshotNavStyle();
+        // 一键安装按钮用的是内联样式，切换主题后需重新套用一次
+        if (m_installBtn)
+            m_installBtn->setStyleSheet(StyleKit::primaryButton());
+    });
 
     // Carousel: advance every 5 seconds
     m_carouselTimer->setInterval(5000);
@@ -214,6 +221,7 @@ void ModDetailPage::clearContent()
     m_englishNameLabel = nullptr;
     m_descriptionLabel = nullptr;
     m_leftPanel = nullptr;
+    m_installBtn = nullptr;
     m_versionCombo = nullptr;
     m_loaderCombo = nullptr;
     m_versionTypeCombo = nullptr;
@@ -397,10 +405,50 @@ void ModDetailPage::buildLeftSidebar()
     leftLayout->setContentsMargins(0, 0, 0, 0);
     leftLayout->setSpacing(16);
 
+    buildInstallBlock(leftLayout);
     buildFilterBlock(leftLayout);
     buildDependenciesBlock(leftLayout);
     buildDownloadListBlock(leftLayout);
     leftLayout->addStretch();
+}
+
+void ModDetailPage::buildInstallBlock(QVBoxLayout *parentLayout)
+{
+    QWidget *section = new QWidget();
+    section->setObjectName("modDetailSection");
+    addSectionShadow(section);
+    QVBoxLayout *sectionLayout = new QVBoxLayout(section);
+    sectionLayout->setContentsMargins(12, 12, 12, 12);
+    sectionLayout->setSpacing(10);
+
+    QLabel *title = new QLabel(tr("快捷安装"));
+    title->setObjectName("modDetailSectionTitle");
+    sectionLayout->addWidget(title);
+
+    m_installBtn = new QPushButton(tr("一键安装最新正式版"));
+    m_installBtn->setObjectName("modDetailInstallBtn");
+    m_installBtn->setCursor(Qt::PointingHandCursor);
+    m_installBtn->setMinimumHeight(42);
+    m_installBtn->setStyleSheet(StyleKit::primaryButton());
+    m_installBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/download.svg", QColor("#ffffff"), 18));
+    m_installBtn->setIconSize(QSize(18, 18));
+    m_installBtn->setToolTip(tr("安装与当前实例匹配的最新正式版，并自动安装它必需的前置模组"));
+    connect(m_installBtn, &QPushButton::clicked, this, [this]() {
+        // 短时间内避免连点造成两套安装流程并行
+        m_installBtn->setEnabled(false);
+        QPushButton *btn = m_installBtn;
+        QTimer::singleShot(2500, btn, [btn]() { btn->setEnabled(true); });
+        emit installLatestRequested(m_modInfo);
+    });
+    sectionLayout->addWidget(m_installBtn);
+
+    QLabel *hint = new QLabel(tr("自动安装最新正式版及它必需的前置模组到当前实例"));
+    hint->setWordWrap(true);
+    hint->setStyleSheet(StyleKit::mutedLabel());
+    sectionLayout->addWidget(hint);
+
+    parentLayout->addWidget(section);
 }
 
 void ModDetailPage::buildRightMain()

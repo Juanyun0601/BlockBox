@@ -62,17 +62,27 @@ signals:
     /** 顶部搜索框内容变化（已做 200ms 防抖）；用于过滤当前页面主内容区 */
     void searchQueryChanged(const QString &query);
 
+protected:
+    /** 监听搜索输入框的焦点/悬停，驱动胶囊的 searchFocus 属性 */
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     void clearContent();
     QIcon loadColoredIcon(const QString &path, const QColor &color) const;
     /** 按图标类型加载：SVG 染色，普通图片原样缩放 */
     QIcon loadIcon(const QString &path, bool isSvg, const QColor &color) const;
+    /** 搜索框次要色（图标 / 占位提示），跟随明暗主题 */
+    QColor searchMutedColor() const;
+    /** 刷新搜索框图标与占位提示色（聚焦/有内容/换主题时调用） */
+    void updateSearchChrome();
 
     QVBoxLayout *m_mainLayout;
     QWidget *m_header;
     QLabel *m_headerTitle;
     QPushButton *m_collapseBtn;
+    QWidget *m_searchRow;
     QWidget *m_searchContainer;
+    QLabel *m_searchIcon;
     QLineEdit *m_searchEdit;
     QTimer *m_searchDebounce;
     QScrollArea *m_scrollArea;

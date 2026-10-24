@@ -262,8 +262,12 @@ void SettingsPage::initAboutSettings()
         "GPL-3.0", "https://github.com/HMCL-dev/HMCL");
     addOpenSourceRow("PCL-CE", tr("PCL 社区开源版，参考存档设置、Mod 更新判断等。"),
         "Apache-2.0", "https://github.com/PCL-Community/PCL-CE");
-    addOpenSourceRow("MultiMC / PrismLauncher", tr("实例管理启动器，参考 Java 扫描、内存分配、整合包格式。"),
-        "Apache-2.0 / GPL-3.0", "https://github.com/PrismLauncher/PrismLauncher");
+    addOpenSourceRow("Verse 启动器（VersePc2）", tr("新一代启动器，旋转全景背景的 3D 天空盒渲染移植自其开源壁纸引擎。"),
+        "GPL-3.0", "https://github.com/doujie081231/VersePc2");
+    addOpenSourceRow("MultiMC", tr("实例管理启动器，其下载层（多任务并发、多源回退、哈希校验、ETag 缓存、QSaveFile 原子落盘）与进度条系统（任务进度聚合、进度对话框）已整体移植进 BlockBox（Apache-2.0）。"),
+        "Apache-2.0", "https://github.com/MultiMC/Launcher");
+    addOpenSourceRow("PrismLauncher", tr("MultiMC 社区分支，参考 Java 扫描、内存分配、整合包格式。"),
+        "GPL-3.0", "https://github.com/PrismLauncher/PrismLauncher");
     addOpenSourceRow("ProjBobcat", tr(".NET 启动器核心库，参考账户登录与资源下载流程设计。"),
         "MIT", "https://github.com/Corona-Studio/ProjBobcat");
 

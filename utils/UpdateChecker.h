@@ -95,7 +95,10 @@ public:
      * @brief 安装用户拖入/指定的本地更新包（不经应用内下载）
      * @param parent 确认框父窗口
      * @param filePath 更新包绝对路径
-     * 校验文件类型后弹确认框，确认则走与已下载更新相同的平台安装流程
+     *
+     * 校验文件类型后弹确认框，确认则走与已下载更新相同的平台安装流程。
+     * 桌面端先在本进程里把包准备好（免安装包会提前解压并定位到真正的程序目录），
+     * 准备失败会当场说明原因，不会出现「关掉程序就没下文」的情况。
      */
     void installExternalPackage(QWidget *parent, const QString &filePath);
 

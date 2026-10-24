@@ -37,6 +37,9 @@ public:
 
     void setInstancePath(const QString &path);
 
+    /** 子导航搜索框分发：同步到页内搜索框（复用现有过滤管线） */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
+
 signals:
     void connectToServerRequested(const QString &address);
     /** 请求快捷启动游戏并自动连接到指定服务器 */

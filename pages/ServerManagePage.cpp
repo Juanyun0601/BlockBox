@@ -75,6 +75,13 @@ void ServerManagePage::setInstancePath(const QString &path)
     }
 }
 
+void ServerManagePage::applyPageFilter(const QString &query)
+{
+    // 同步到页内搜索框：setText 触发 textChanged → onSearchTextChanged → 既有过滤管线
+    if (m_searchEdit)
+        m_searchEdit->setText(query);
+}
+
 void ServerManagePage::initUI()
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);

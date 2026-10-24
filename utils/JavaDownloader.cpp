@@ -20,6 +20,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
@@ -29,6 +30,71 @@
 #include <windows.h>
 #include <shellapi.h>
 #endif
+
+namespace {
+
+// 目录列表 HTML 里挑选安装包：OpenJDK{主版本}U-{jdk|jre}_{架构}_{系统}_hotspot_版本号.后缀
+// Java 8 的版本号段是字母数字混合（如 8u504b01），不能只匹配数字
+QString mirrorFilePattern(int majorVersion, const QString &packageType,
+                          const QString &arch, const QString &os,
+                          const QString &ext)
+{
+  QString prefix = QString("OpenJDK%1U-%2_%3_%4_hotspot_")
+                       .arg(majorVersion)
+                       .arg(packageType)
+                       .arg(arch)
+                       .arg(os);
+  QString extPattern = QRegularExpression::escape(ext);
+  return QRegularExpression::escape(prefix) + QStringLiteral("[A-Za-z0-9._]+\\.") + extPattern;
+}
+
+// 把版本段拆成数字/字母串，逐段比较（数字按数值比），用于在多个候选文件中取最新
+QStringList versionRuns(const QString &s)
+{
+  QStringList runs;
+  QString current;
+  bool currentIsDigit = false;
+  for (const QChar &c : s)
+  {
+    bool isDigit = c.isDigit();
+    if (!current.isEmpty() && isDigit != currentIsDigit)
+    {
+      runs.append(current);
+      current.clear();
+    }
+    currentIsDigit = isDigit;
+    current.append(c);
+  }
+  if (!current.isEmpty())
+    runs.append(current);
+  return runs;
+}
+
+int compareVersionRuns(const QStringList &a, const QStringList &b)
+{
+  int n = qMax(a.size(), b.size());
+  for (int i = 0; i < n; ++i)
+  {
+    if (i >= a.size()) return -1;
+    if (i >= b.size()) return 1;
+    const QString &ra = a[i];
+    const QString &rb = b[i];
+    bool aNum = false, bNum = false;
+    qlonglong av = ra.toLongLong(&aNum);
+    qlonglong bv = rb.toLongLong(&bNum);
+    if (aNum && bNum)
+    {
+      if (av != bv) return av < bv ? -1 : 1;
+    }
+    else if (ra != rb)
+    {
+      return ra < rb ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+} // namespace
 
 JavaDownloader* JavaDownloader::instance()
 {
@@ -53,7 +119,7 @@ QVector<JavaDistribution> JavaDownloader::availableDistributions() const
     {"Amazon Corretto", "corretto",
      "Amazon 维护的免费 OpenJDK 发行版，针对云环境优化"},
     {"Microsoft OpenJDK", "microsoft",
-     "Microsoft 维护的 OpenJDK 发行版"},
+     "Microsoft 维护的 OpenJDK 发行版（仅提供 Java 11/17/21/25）"},
     {"Azul Zulu", "zulu",
      "Azul 维护的 OpenJDK 发行版，支持广泛平台"},
   };
@@ -64,8 +130,7 @@ QVector<JavaMirror> JavaDownloader::availableMirrors() const
   return {
     {"官方源", "official", ""},
     {"清华大学 TUNA", "tuna", "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/"},
-    {"阿里云", "aliyun", "https://mirrors.aliyun.com/adoptium/"},
-    {"中科大 USTC", "ustc", "https://mirrors.ustc.edu.cn/adoptium/"},
+    {"中科大 USTC", "ustc", "https://mirrors.ustc.edu.cn/adoptium/releases/"},
   };
 }
 
@@ -79,7 +144,16 @@ QVector<JavaVersionInfo> JavaDownloader::supportedVersions() const
     {22, "Java 22", "Java 22",           false},
     {23, "Java 23", "Java 23",           false},
     {24, "Java 24", "Java 24",           false},
+    {25, "Java 25", "Java 25 (LTS)",     true},
   };
+}
+
+QVector<int> JavaDownloader::supportedMajorVersions(const QString &distributionId) const
+{
+  // Microsoft 只发布 11/17/21/25，其余版本直链是死链
+  if (distributionId == "microsoft")
+    return {11, 17, 21, 25};
+  return {8, 11, 17, 21, 22, 23, 24, 25};
 }
 
 QString JavaDownloader::currentOS() const
@@ -136,12 +210,12 @@ QString JavaDownloader::currentArchitecture() const
 QString JavaDownloader::platformExtension() const
 {
 #ifdef Q_OS_WIN
-  return ".zip";
+  return "zip";
 #elif defined(Q_OS_ANDROID)
   // Android uses tar.gz for Java archives
-  return ".tar.gz";
+  return "tar.gz";
 #else
-  return ".tar.gz";
+  return "tar.gz";
 #endif
 }
 
@@ -149,27 +223,25 @@ QString JavaDownloader::platformExtension() const
 
 QString JavaDownloader::buildAdoptiumUrl(const QString &mirrorId, int majorVersion)
 {
+  Q_UNUSED(mirrorId);
   // Adoptium API v3: 获取指定版本的最新二进制包列表
   // 官方 API: https://api.adoptium.net/v3/assets/latest/{version}/hotspot
-  if (mirrorId == "official")
-  {
-    return QString("https://api.adoptium.net/v3/assets/latest/%1/hotspot")
-        .arg(majorVersion);
-  }
-  // 镜像源：直接使用镜像站的预构建二进制
-  // 注意：镜像源 URL 格式不同，需要先查 API 获取版本号，再拼接镜像下载地址
-  // 这里先获取 API 数据，再在 parse 阶段替换为镜像 URL
   return QString("https://api.adoptium.net/v3/assets/latest/%1/hotspot")
       .arg(majorVersion);
 }
 
-QString JavaDownloader::buildCorrettoUrl(const QString &mirrorId, int majorVersion)
+QString JavaDownloader::buildCorrettoUrl(int majorVersion)
 {
-  Q_UNUSED(mirrorId);
-  // Amazon Corretto: 使用 API 获取最新版本信息
-  // https://corretto.github.io/corretto-downloads/latest_links/indexmap_with_checksum.html
-  // 该页面返回所有平台的最新版本链接
-  return "https://corretto.github.io/corretto-downloads/latest_links/indexmap_with_checksum.html";
+  // Corretto 提供固定格式的“最新版”直链，302 到当前最新构建，全版本可用
+  // https://corretto.aws/downloads/latest/amazon-corretto-{ver}-{arch}-{os}-jdk.{ext}
+  QString os = currentOS();
+  if (os == "mac")
+    os = "macos";
+  return QString("https://corretto.aws/downloads/latest/amazon-corretto-%1-%2-%3-jdk.%4")
+      .arg(majorVersion)
+      .arg(currentArchitecture())
+      .arg(os)
+      .arg(platformExtension());
 }
 
 QString JavaDownloader::buildMicrosoftUrl(const QString &mirrorId, int majorVersion)
@@ -195,10 +267,9 @@ QString JavaDownloader::buildMicrosoftUrl(const QString &mirrorId, int majorVers
 QString JavaDownloader::buildZuluUrl(int majorVersion)
 {
   // Azul Zulu API: 获取最新版本信息
-  // https://api.azul.com/metadata/v1/zulu/packages/?java_version={version}&os={os}&arch={arch}&archive_type={ext}&java_package_type=jdk&latest=true
   QString os = currentOS();
   QString arch = currentArchitecture();
-  QString ext = (os == "windows") ? "zip" : "tar.gz";
+  QString ext = platformExtension();
 
   return QString("https://api.azul.com/metadata/v1/zulu/packages/"
                  "?java_version=%1&os=%2&arch=%3&archive_type=%4"
@@ -207,6 +278,28 @@ QString JavaDownloader::buildZuluUrl(int majorVersion)
       .arg(os)
       .arg(arch)
       .arg(ext);
+}
+
+QString JavaDownloader::mirrorDirectoryUrl(const QString &mirrorId, int majorVersion,
+                                           const QString &os, const QString &arch,
+                                           const QString &packageType) const
+{
+  if (mirrorId == "tuna")
+  {
+    // 清华 TUNA: /Adoptium/{主版本}/{jdk|jre}/{架构}/{系统}/
+    return QString("https://mirrors.tuna.tsinghua.edu.cn/Adoptium/%1/%2/%3/%4/")
+        .arg(majorVersion)
+        .arg(packageType)
+        .arg(arch)
+        .arg(os);
+  }
+  if (mirrorId == "ustc")
+  {
+    // 中科大 USTC: /adoptium/releases/temurin{主版本}-binaries/LatestRelease/
+    return QString("https://mirrors.ustc.edu.cn/adoptium/releases/temurin%1-binaries/LatestRelease/")
+        .arg(majorVersion);
+  }
+  return QString();
 }
 
 // --- 获取可用二进制包 ---
@@ -218,24 +311,24 @@ void JavaDownloader::fetchAvailableBinaries(const QString &distributionId,
   m_currentDistributionId = distributionId;
   m_currentMirrorId = mirrorId;
   m_currentMajorVersion = majorVersion;
+  m_pendingMirrorBinaries.clear();
+  m_resolvedMirrorBinaries.clear();
 
   setStatus(JavaDownloadStatus::FetchingBinaries);
 
-  QString url;
-  if (distributionId == "adoptium")
-    url = buildAdoptiumUrl(mirrorId, majorVersion);
-  else if (distributionId == "corretto")
-    url = buildCorrettoUrl(mirrorId, majorVersion);
-  else if (distributionId == "microsoft")
+  if (distributionId == "microsoft" || distributionId == "corretto")
   {
-    // Microsoft 直接构建下载 URL，无需 API 查询
+    // 这两家提供固定格式的直链，无需查询 API
     QVector<JavaBinaryInfo> binaries;
     JavaBinaryInfo info;
     info.majorVersion = majorVersion;
     info.versionName = QString("Java %1").arg(majorVersion);
-    info.distributionId = "microsoft";
-    info.distributionName = "Microsoft OpenJDK";
-    info.downloadUrl = url;
+    info.distributionId = distributionId;
+    info.distributionName = (distributionId == "microsoft") ? "Microsoft OpenJDK"
+                                                            : "Amazon Corretto";
+    info.downloadUrl = (distributionId == "microsoft")
+                           ? buildMicrosoftUrl(mirrorId, majorVersion)
+                           : buildCorrettoUrl(majorVersion);
     info.architecture = currentArchitecture();
     info.osName = currentOS();
     info.packageType = "jdk";
@@ -245,6 +338,10 @@ void JavaDownloader::fetchAvailableBinaries(const QString &distributionId,
     emit versionListFetched(binaries);
     return;
   }
+
+  QString url;
+  if (distributionId == "adoptium")
+    url = buildAdoptiumUrl(mirrorId, majorVersion);
   else if (distributionId == "zulu")
     url = buildZuluUrl(majorVersion);
   else
@@ -257,6 +354,8 @@ void JavaDownloader::fetchAvailableBinaries(const QString &distributionId,
   QNetworkRequest request(url);
   request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
   request.setRawHeader("Accept", "application/json");
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                       QNetworkRequest::NoLessSafeRedirectPolicy);
   request.setTransferTimeout(15000);
 
   if (m_activeReply)
@@ -290,8 +389,6 @@ void JavaDownloader::fetchAvailableBinaries(const QString &distributionId,
 
     if (distributionId == "adoptium")
       parseAdoptiumResponse(data);
-    else if (distributionId == "corretto")
-      parseCorrettoResponse(data, majorVersion);
     else if (distributionId == "zulu")
       parseZuluResponse(data, majorVersion);
   });
@@ -333,121 +430,44 @@ void JavaDownloader::parseAdoptiumResponse(const QByteArray &data)
     info.osName = binaryOs;
     info.packageType = binaryType;
 
-    // 根据镜像源替换下载 URL
-    QString originalUrl = package["link"].toString();
-    QString checksum = package["checksum"].toString();
-
     if (m_currentMirrorId == "official")
     {
-      info.downloadUrl = originalUrl;
+      info.downloadUrl = package["link"].toString();
+      info.checksum = package["checksum"].toString();
+      info.fileSize = package["size"].toVariant().toLongLong();
     }
-    else if (m_currentMirrorId == "tuna")
+    else
     {
-      // 清华大学 TUNA: https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{version}/ga/{os}/{arch}/jdk/hotspot/normal/eclipse
-      // 从原始 URL 中提取路径部分
-      // 原始格式: https://github.com/adoptium/temurin{version}-binaries/releases/download/...
-      // TUNA 格式: https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{major}/ga/{os}/{arch}/jdk/hotspot/normal/eclipse
-      QString tunaUrl = QString("https://mirrors.tuna.tsinghua.edu.cn/Adoptium/%1/ga/%2/%3/jdk/hotspot/normal/eclipse")
-                            .arg(m_currentMajorVersion)
-                            .arg(os)
-                            .arg(arch);
-      info.downloadUrl = tunaUrl;
+      // 镜像站需要先从目录页解析出真实文件名（镜像同步的构建版本
+      // 可能落后于 API 最新版，官方 API 的校验和对不上），
+      // 这里先放目录页 URL，随后逐个解析
+      info.downloadUrl = mirrorDirectoryUrl(m_currentMirrorId, m_currentMajorVersion,
+                                            binaryOs, binaryArch, binaryType);
+      info.checksum.clear();
+      info.fileSize = 0;
     }
-    else if (m_currentMirrorId == "aliyun")
-    {
-      QString aliUrl = QString("https://mirrors.aliyun.com/adoptium/%1/ga/%2/%3/jdk/hotspot/normal/eclipse")
-                           .arg(m_currentMajorVersion)
-                           .arg(os)
-                           .arg(arch);
-      info.downloadUrl = aliUrl;
-    }
-    else if (m_currentMirrorId == "ustc")
-    {
-      QString ustcUrl = QString("https://mirrors.ustc.edu.cn/adoptium/%1/ga/%2/%3/jdk/hotspot/normal/eclipse")
-                            .arg(m_currentMajorVersion)
-                            .arg(os)
-                            .arg(arch);
-      info.downloadUrl = ustcUrl;
-    }
-
-    info.checksum = checksum;
     info.checksumType = "sha256";
-    info.fileSize = package["size"].toInt();
 
     binaries.append(info);
   }
 
-  setStatus(JavaDownloadStatus::Idle);
-
   if (binaries.isEmpty())
   {
+    setStatus(JavaDownloadStatus::Idle);
     emit fetchError(tr("未找到适用于当前平台的 Java %1 二进制包").arg(m_currentMajorVersion));
+    return;
+  }
+
+  if (m_currentMirrorId == "official")
+  {
+    setStatus(JavaDownloadStatus::Idle);
+    emit versionListFetched(binaries);
   }
   else
   {
-    emit versionListFetched(binaries);
-  }
-}
-
-void JavaDownloader::parseCorrettoResponse(const QByteArray &data, int majorVersion)
-{
-  Q_UNUSED(majorVersion);
-  // Amazon Corretto 的 latest_links 是一个 HTML 页面，包含 JSON 数据
-  // 实际上返回的是纯文本链接列表，按平台分类
-  QString content = QString::fromUtf8(data);
-  QVector<JavaBinaryInfo> binaries;
-  QString os = currentOS();
-  QString arch = currentArchitecture();
-
-  // 构建当前平台的匹配模式
-  QString platformPrefix;
-  if (os == "windows") platformPrefix = "windows-";
-  else if (os == "mac") platformPrefix = "macos-";
-  else platformPrefix = "linux-";
-
-  QString archSuffix = (arch == "x64") ? "x64" : "aarch64";
-  QString majorStr = QString::number(majorVersion);
-
-  // 解析每行链接
-  QStringList lines = content.split('\n', Qt::SkipEmptyParts);
-  for (const QString &line : lines)
-  {
-    QString trimmed = line.trimmed();
-    // 跳过 HTML 标签
-    if (trimmed.startsWith("<") || trimmed.startsWith("<!DOCTYPE")) continue;
-
-    // 查找匹配的 JDK 链接
-    // 格式: https://corretto.aws/downloads/resources/.../amazon-corretto-{version}-{platform}-{arch}-jdk.{ext}
-    if (trimmed.contains("amazon-corretto-" + majorStr) &&
-        trimmed.contains(platformPrefix) &&
-        trimmed.contains(archSuffix) &&
-        trimmed.contains("jdk") &&
-        !trimmed.contains("jre"))
-    {
-      JavaBinaryInfo info;
-      info.versionName = QString("Java %1").arg(majorVersion);
-      info.majorVersion = majorVersion;
-      info.distributionId = "corretto";
-      info.distributionName = "Amazon Corretto";
-      info.downloadUrl = trimmed;
-      info.architecture = arch;
-      info.osName = os;
-      info.packageType = "jdk";
-      info.fileSize = 0;
-      binaries.append(info);
-      break;
-    }
-  }
-
-  setStatus(JavaDownloadStatus::Idle);
-
-  if (binaries.isEmpty())
-  {
-    emit fetchError(tr("未找到适用于当前平台的 Amazon Corretto Java %1").arg(majorVersion));
-  }
-  else
-  {
-    emit versionListFetched(binaries);
+    m_pendingMirrorBinaries = binaries;
+    m_resolvedMirrorBinaries.clear();
+    resolveNextMirrorBinary(); // 保持 FetchingBinaries 状态直到全部解析完成
   }
 }
 
@@ -470,7 +490,7 @@ void JavaDownloader::parseZuluResponse(const QByteArray &data, int majorVersion)
     info.downloadUrl = item["download_url"].toString();
     info.checksum = item["sha256_hash"].toString();
     info.checksumType = "sha256";
-    info.architecture = "x64";
+    info.architecture = currentArchitecture();
     info.osName = currentOS();
     info.packageType = "jdk";
     info.fileSize = item["size"].toVariant().toLongLong();
@@ -489,6 +509,165 @@ void JavaDownloader::parseZuluResponse(const QByteArray &data, int majorVersion)
   {
     emit versionListFetched(binaries);
   }
+}
+
+// --- 镜像目录解析 ---
+
+void JavaDownloader::resolveNextMirrorBinary()
+{
+  if (m_pendingMirrorBinaries.isEmpty())
+  {
+    finishMirrorResolution();
+    return;
+  }
+
+  JavaBinaryInfo info = m_pendingMirrorBinaries.first();
+
+  if (m_activeReply)
+  {
+    QNetworkReply *old = m_activeReply;
+    m_activeReply = nullptr;
+    old->abort();
+    old->deleteLater();
+  }
+
+  QNetworkRequest request(info.downloadUrl); // 此处存的是目录页 URL
+  request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                       QNetworkRequest::NoLessSafeRedirectPolicy);
+  request.setTransferTimeout(15000);
+
+  QNetworkReply *reply = m_networkManager->get(request);
+  m_activeReply = reply;
+
+  connect(reply, &QNetworkReply::finished, this, [this, reply, info]()
+  {
+    if (!m_activeReply || m_activeReply != reply) return;
+
+    QByteArray data = reply->readAll();
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    m_activeReply = nullptr;
+    reply->deleteLater();
+
+    m_pendingMirrorBinaries.removeFirst();
+
+    JavaBinaryInfo resolved = info;
+    bool found = false;
+    if (statusCode == 200)
+    {
+      QString html = QString::fromUtf8(data);
+      QString ext = platformExtension();
+      QString pattern = mirrorFilePattern(info.majorVersion, info.packageType,
+                                          info.architecture, info.osName, ext);
+      QRegularExpression re(pattern);
+      QString best;
+      QStringList bestRuns;
+      QRegularExpressionMatchIterator it = re.globalMatch(html);
+      while (it.hasNext())
+      {
+        QString name = it.next().captured(0);
+        // 去掉可能混入的路径部分
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.mid(slash + 1);
+        QString prefix = QString("OpenJDK%1U-%2_%3_%4_hotspot_")
+                             .arg(info.majorVersion)
+                             .arg(info.packageType)
+                             .arg(info.architecture)
+                             .arg(info.osName);
+        QString verPart = name;
+        verPart.remove(prefix);
+        verPart.chop(ext.length() + 1);
+        QStringList runs = versionRuns(verPart);
+        if (best.isEmpty() || compareVersionRuns(runs, bestRuns) > 0)
+        {
+          best = name;
+          bestRuns = runs;
+        }
+      }
+      if (!best.isEmpty())
+      {
+        resolved.downloadUrl = QUrl(info.downloadUrl).resolved(QUrl(best)).toString();
+        found = true;
+      }
+    }
+
+    if (!found)
+    {
+      // 该条目在镜像上不可用（目录打不开或没有匹配文件），跳过继续
+      resolveNextMirrorBinary();
+      return;
+    }
+
+    m_resolvedMirrorBinaries.append(resolved);
+    fetchMirrorChecksumSidecar(resolved);
+  });
+}
+
+void JavaDownloader::fetchMirrorChecksumSidecar(const JavaBinaryInfo &info)
+{
+  if (m_activeReply)
+  {
+    QNetworkReply *old = m_activeReply;
+    m_activeReply = nullptr;
+    old->abort();
+    old->deleteLater();
+  }
+
+  QNetworkRequest request(info.downloadUrl + ".sha256.txt");
+  request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                       QNetworkRequest::NoLessSafeRedirectPolicy);
+  request.setTransferTimeout(10000);
+
+  QNetworkReply *reply = m_networkManager->get(request);
+  m_activeReply = reply;
+
+  connect(reply, &QNetworkReply::finished, this, [this, reply, info]()
+  {
+    if (!m_activeReply || m_activeReply != reply) return;
+
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QByteArray data = reply->readAll();
+    m_activeReply = nullptr;
+    reply->deleteLater();
+
+    if (statusCode == 200)
+    {
+      QRegularExpression hexRe("([0-9a-fA-F]{64})");
+      QRegularExpressionMatch m = hexRe.match(QString::fromUtf8(data));
+      if (m.hasMatch())
+      {
+        for (JavaBinaryInfo &b : m_resolvedMirrorBinaries)
+        {
+          if (b.downloadUrl == info.downloadUrl)
+          {
+            b.checksum = m.captured(1);
+            b.checksumType = "sha256";
+            break;
+          }
+        }
+      }
+    }
+
+    // 无论 sidecar 是否存在（TUNA 没有）都继续下一条
+    resolveNextMirrorBinary();
+  });
+}
+
+void JavaDownloader::finishMirrorResolution()
+{
+  setStatus(JavaDownloadStatus::Idle);
+
+  if (m_resolvedMirrorBinaries.isEmpty())
+  {
+    emit fetchError(tr("镜像站上没有找到 Java %1 的安装包（非 LTS 版本可能未被镜像收录），"
+                       "可切换回官方源或更换版本重试")
+                        .arg(m_currentMajorVersion));
+    setStatus(JavaDownloadStatus::Failed);
+    return;
+  }
+
+  emit versionListFetched(m_resolvedMirrorBinaries);
 }
 
 // --- 下载操作 ---
@@ -510,7 +689,7 @@ void JavaDownloader::downloadAndExtract(const JavaBinaryInfo &binaryInfo,
 
   // 生成临时下载路径
   QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-  QString fileName = QString("java_%1_%2_%3%4")
+  QString fileName = QString("java_%1_%2_%3.%4")
                          .arg(binaryInfo.distributionId)
                          .arg(binaryInfo.majorVersion)
                          .arg(QUuid::createUuid().toString(QUuid::Id128).left(8))
@@ -533,9 +712,27 @@ void JavaDownloader::doDownload(const QString &url, const QString &savePath)
     old->deleteLater();
   }
 
+  // 流式写盘：JDK 安装包约 200MB，不能整个读进内存
+  QFileInfo fileInfo(savePath);
+  if (!fileInfo.absoluteDir().exists())
+    QDir().mkpath(fileInfo.absolutePath());
+
+  m_downloadFile = new QFile(savePath, this);
+  if (!m_downloadFile->open(QIODevice::WriteOnly | QIODevice::Truncate))
+  {
+    QString err = m_downloadFile->errorString();
+    m_downloadFile->deleteLater();
+    m_downloadFile = nullptr;
+    emit downloadFailed(tr("写入文件失败: %1").arg(err));
+    setStatus(JavaDownloadStatus::Failed);
+    return;
+  }
+
   QNetworkRequest request(url);
   request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
-  request.setTransferTimeout(600000); // 10 分钟超时
+  request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                       QNetworkRequest::NoLessSafeRedirectPolicy);
+  request.setTransferTimeout(600000); // 10 分钟无数据超时
 
   QNetworkReply *reply = m_networkManager->get(request);
   m_activeReply = reply;
@@ -564,78 +761,82 @@ void JavaDownloader::doDownload(const QString &url, const QString &savePath)
       emit downloadBytesProgress(bytesReceived, bytesTotal);
     });
 
+  // 数据到达即写盘
+  connect(reply, &QNetworkReply::readyRead, this,
+    [this, reply]()
+    {
+      if (!m_activeReply || m_activeReply != reply || !m_downloadFile) return;
+      m_downloadFile->write(reply->readAll());
+    });
+
   // 完成处理
   connect(reply, &QNetworkReply::finished, this, [this, reply, savePath]()
   {
     if (!m_activeReply || m_activeReply != reply) return;
 
-    QByteArray data = reply->readAll();
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QNetworkReply::NetworkError error = reply->error();
+    if (m_downloadFile)
+      m_downloadFile->write(reply->readAll()); // 收尾的零散字节
     m_activeReply = nullptr;
     reply->deleteLater();
 
-    if (error != QNetworkReply::NoError && statusCode != 200)
+    if (m_downloadFile)
     {
-      emit downloadFailed(tr("下载失败 (HTTP %1): %2").arg(statusCode).arg(error));
+      m_downloadFile->close();
+      m_downloadFile->deleteLater();
+      m_downloadFile = nullptr;
+    }
+
+    bool networkOk = (error == QNetworkReply::NoError) &&
+                     (statusCode == 200 || statusCode == 206);
+    if (!networkOk)
+    {
+      QFile::remove(savePath);
+      QString msg = tr("下载失败 (HTTP %1): %2").arg(statusCode).arg(error);
+      if (m_currentMirrorId == "official")
+        msg += tr("\n官方源可能无法直接访问，可在“镜像源”中切换到清华 TUNA 等国内镜像后重试。");
+      emit downloadFailed(msg);
       setStatus(JavaDownloadStatus::Failed);
       return;
     }
 
-    // 写入文件
-    QFile file(savePath);
-    QFileInfo fileInfo(savePath);
-    QDir dir = fileInfo.absoluteDir();
-    if (!dir.exists())
-      dir.mkpath(".");
-
-    if (file.open(QIODevice::WriteOnly))
+    // 校验 sha256（官方 API 或镜像 sidecar 提供；为空则跳过）
+    if (!m_currentChecksum.isEmpty())
     {
-      file.write(data);
-      file.close();
-      qDebug() << "[JavaDownloader] Downloaded:" << savePath;
-
-      // 校验官方 API 给出的 sha256：下载可能经过镜像/加速节点，
-      // 而这份 Java 之后会用来启动游戏，内容不可信就等于交出执行权
-      if (!m_currentChecksum.isEmpty())
+      QCryptographicHash hash(QCryptographicHash::Sha256);
+      QFile check(savePath);
+      bool hashed = check.open(QIODevice::ReadOnly) && hash.addData(&check);
+      if (!hashed)
       {
-        QCryptographicHash hash(QCryptographicHash::Sha256);
-        QFile check(savePath);
-        bool hashed = check.open(QIODevice::ReadOnly) && hash.addData(&check);
-        if (!hashed)
-        {
-          emit downloadFailed(tr("无法校验下载的 Java 运行时"));
-          setStatus(JavaDownloadStatus::Failed);
-          return;
-        }
-        if (hash.result().toHex().compare(m_currentChecksum.trimmed().toLatin1(),
-                                          Qt::CaseInsensitive) != 0)
-        {
-          check.close();
-          QFile::remove(savePath);
-          emit downloadFailed(tr("Java 运行时校验失败，下载内容可能已被篡改"));
-          setStatus(JavaDownloadStatus::Failed);
-          return;
-        }
+        QFile::remove(savePath);
+        emit downloadFailed(tr("无法校验下载的 Java 运行时"));
+        setStatus(JavaDownloadStatus::Failed);
+        return;
       }
-
-      emit downloadCompleted(savePath);
-
-      // 如果需要解压
-      if (!m_currentExtractDir.isEmpty())
+      if (hash.result().toHex().compare(m_currentChecksum.trimmed().toLatin1(),
+                                        Qt::CaseInsensitive) != 0)
       {
-        setStatus(JavaDownloadStatus::Extracting);
-        doExtract(savePath, m_currentExtractDir);
+        check.close();
+        QFile::remove(savePath);
+        emit downloadFailed(tr("Java 运行时校验失败，下载内容可能已被篡改"));
+        setStatus(JavaDownloadStatus::Failed);
+        return;
       }
-      else
-      {
-        setStatus(JavaDownloadStatus::Completed);
-      }
+    }
+
+    qDebug() << "[JavaDownloader] Downloaded:" << savePath;
+    emit downloadCompleted(savePath);
+
+    // 如果需要解压
+    if (!m_currentExtractDir.isEmpty())
+    {
+      setStatus(JavaDownloadStatus::Extracting);
+      doExtract(savePath, m_currentExtractDir);
     }
     else
     {
-      emit downloadFailed(tr("写入文件失败: %1").arg(savePath));
-      setStatus(JavaDownloadStatus::Failed);
+      setStatus(JavaDownloadStatus::Completed);
     }
   });
 }
@@ -759,6 +960,16 @@ void JavaDownloader::cancel()
     old->abort();
     old->deleteLater();
   }
+  if (m_downloadFile)
+  {
+    QString partialPath = m_downloadFile->fileName();
+    m_downloadFile->close();
+    m_downloadFile->deleteLater();
+    m_downloadFile = nullptr;
+    QFile::remove(partialPath);
+  }
+  m_pendingMirrorBinaries.clear();
+  m_resolvedMirrorBinaries.clear();
   m_currentExtractDir.clear();
   setStatus(JavaDownloadStatus::Idle);
 }

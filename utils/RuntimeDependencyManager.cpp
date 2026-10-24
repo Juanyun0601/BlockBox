@@ -661,8 +661,9 @@ void RuntimeDependencyManager::beginInstall(const QString &id)
     QDir(m_stagingDir).removeRecursively();
     QDir().mkpath(m_stagingDir);
 
-    m_taskId = DownloadTaskManager::instance()->addTask(dependency.name, installDirFor(dependency),
-                                                        dependency.version, QStringList{tr("运行依赖")});
+    m_taskId = DownloadTaskManager::instance()->addTaskWithType(
+        dependency.name, installDirFor(dependency), dependency.version,
+        QStringList{tr("运行依赖")}, TaskType::RuntimeDependency);
     DownloadTaskManager::instance()->updateTaskDisplayStatus(m_taskId, tr("准备下载"));
     DownloadTaskManager::instance()->updateTaskStep(m_taskId, tr("下载 %1").arg(dependency.name));
 

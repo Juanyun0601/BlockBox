@@ -191,6 +191,39 @@ void FavoritesPage::setFolder(const QString &folderId)
     placeCards();
 
     showEmptyHint(m_items.isEmpty());
+    // 切换收藏夹后重新应用子导航搜索过滤
+    applyPageFilter(m_pageFilterQuery);
+}
+
+void FavoritesPage::applyPageFilter(const QString &query)
+{
+    m_pageFilterQuery = query;
+
+    if (query.isEmpty())
+    {
+        m_pageFilter.clear();
+        showEmptyHint(m_items.isEmpty());
+        return;
+    }
+
+    int visible = 0;
+    for (int i = 0; i < m_cardWidgets.size() && i < m_cardItems.size(); ++i)
+    {
+        const FavoriteItem &item = m_cardItems.at(i);
+        const bool match = item.name.contains(query, Qt::CaseInsensitive)
+                           || item.chineseName.contains(query, Qt::CaseInsensitive)
+                           || item.englishName.contains(query, Qt::CaseInsensitive)
+                           || item.author.contains(query, Qt::CaseInsensitive);
+        m_pageFilter.setShow(m_cardWidgets.at(i), match);
+        if (match)
+            ++visible;
+    }
+
+    // 过滤后无结果：复用空态提示（区分文案）
+    if (m_cardWidgets.isEmpty())
+        showEmptyHint(m_items.isEmpty());
+    else
+        showEmptyHint(visible == 0);
 }
 
 void FavoritesPage::rebuildHeader()
@@ -561,6 +594,8 @@ void FavoritesPage::rebuildCards()
     for (const FavoriteItem &item : items)
         addCard(item);
     placeCards();
+    // 视图切换重建卡片后重新应用子导航搜索过滤
+    applyPageFilter(m_pageFilterQuery);
 }
 
 

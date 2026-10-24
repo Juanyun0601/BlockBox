@@ -27,6 +27,9 @@ public:
 
     void loadInstances();
 
+    /** 子导航搜索框分发：同步到页内搜索框（复用既有过滤管线） */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
+
 signals:
     void contentClicked(const ModInfo &info);
     /** 卡片点击「问问AI」：请求跳转 AI 助手并引用该本地资源 */

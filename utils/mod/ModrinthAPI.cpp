@@ -531,6 +531,8 @@ void ModrinthAPI::matchHashes(const QList<QString> &sha1s)
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("User-Agent", "BlockBox/1.0");
+    // 批量匹配响应随模组数量线性增大（含完整更新日志），放宽到 30s 防止传输中途被掐断
+    request.setTransferTimeout(30000);
 
     QJsonObject body;
     body["hashes"] = hashesArr;
@@ -570,6 +572,8 @@ void ModrinthAPI::checkModUpdates(const QList<QString> &sha1s,
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("User-Agent", "BlockBox/1.0");
+    // 同上：响应随模组数量增大，放宽到 30s
+    request.setTransferTimeout(30000);
 
     QJsonObject body;
     body["hashes"] = hashesArr;

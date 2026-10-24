@@ -20,6 +20,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProcess>
+#include <QTimer>
 #include <QUuid>
 #include <QUrl>
 
@@ -32,7 +33,6 @@ NeoForgeInstaller::NeoForgeInstaller()
     : m_networkManager(new QNetworkAccessManager(this))
     , m_downloadSource(NeoForgeDownloadSource::BMCL)
     , m_currentReply(nullptr)
-    , m_currentProcess(nullptr)
     , m_isInstalling(false)
     , m_isCancelled(false)
     , m_isDownloadPhase(true)
@@ -137,8 +137,9 @@ void NeoForgeInstaller::downloadNeoForgeInstaller(const QString &mcVersion, cons
                 taskName = QString("NeoForge %1").arg(forgeVersion);
             }
         }
-        QString taskId = DownloadTaskManager::instance()->addTask(
-            taskName, instancePath, QString("NeoForge %1").arg(forgeVersion));
+        QString taskId = DownloadTaskManager::instance()->addTaskWithType(
+            taskName, instancePath, QString("NeoForge %1").arg(forgeVersion), QStringList(),
+            TaskType::LoaderInstall);
         m_currentTaskId = taskId;
     }
 
@@ -198,10 +199,17 @@ void NeoForgeInstaller::installNeoForge(const QString &installerPath, const QStr
         return;
     }
 
-    m_currentProcess = new QProcess(this);
+    emit statusChanged(tr("正在运行NeoForge安装程序..."));
+    updateTaskStatus(tr("正在运行NeoForge安装程序"));
+    emit installProgressUpdated(30, tr("运行安装程序"));
 
-    connect(m_currentProcess, &QProcess::readyReadStandardOutput, this, [this]() {
-        QString output = QString::fromUtf8(m_currentProcess->readAllStandardOutput());
+    // 本函数运行在后台线程（加载器安装已移出 GUI 线程），进程与等待循环都
+    // 留在当前线程内；结果通过信号排队送回 GUI 线程
+    QProcess process;
+    process.setProcessChannelMode(QProcess::MergedChannels);
+
+    connect(&process, &QProcess::readyReadStandardOutput, [this, &process]() {
+        QString output = QString::fromUtf8(process.readAllStandardOutput());
         qDebug() << "[NeoForgeInstaller]" << output.trimmed();
 
         if (output.contains("Installing")) {
@@ -210,63 +218,84 @@ void NeoForgeInstaller::installNeoForge(const QString &installerPath, const QStr
         }
     });
 
-    connect(m_currentProcess, &QProcess::readyReadStandardError, this, [this]() {
-        QString errorOutput = QString::fromUtf8(m_currentProcess->readAllStandardError());
-        if (!errorOutput.isEmpty()) {
-            qWarning() << "[NeoForgeInstaller]" << errorOutput.trimmed();
-        }
-    });
-
-    connect(m_currentProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, instancePath](int exitCode, QProcess::ExitStatus exitStatus) {
-        Q_UNUSED(exitStatus);
-
-        if (m_isCancelled) {
-            return;
-        }
-
-        if (exitCode == 0) {
-            emit installProgressUpdated(90, tr("安装完成"));
-            updateTaskStatus(tr("安装完成"));
-            DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 90);
-
-            cleanupTempFiles();
-
-            m_isInstalling = false;
-
-            QString versionId = m_currentMcVersion + "-NeoForge" + m_currentForgeVersion;
-            emit installProgressUpdated(100, tr("安装完成"));
-            emit installCompleted(versionId);
-
-            if (!m_currentTaskId.isEmpty()) {
-                DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Completed,
-                                                                   tr("安装完成"));
-                DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 100);
-            }
-        } else {
-            m_isInstalling = false;
-            emit installFailed(tr("NeoForge安装程序异常退出（错误码: %1）").arg(exitCode));
-
-            if (!m_currentTaskId.isEmpty()) {
-                DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Failed,
-                                                                   tr("安装失败"));
-            }
-        }
-    });
-
-    emit statusChanged(tr("正在运行NeoForge安装程序..."));
-    updateTaskStatus(tr("正在运行NeoForge安装程序"));
-    emit installProgressUpdated(30, tr("运行安装程序"));
-
     QStringList args;
     args << "-jar" << installerPath << "--installClient" << instancePath;
 
-    m_currentProcess->start(javaPath, args);
+    process.start(javaPath, args);
 
-    if (!m_currentProcess->waitForStarted(10000)) {
+    if (!process.waitForStarted(10000)) {
         emit installFailed(tr("无法启动NeoForge安装程序"));
         m_isInstalling = false;
         return;
+    }
+
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    connect(&process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            &loop, &QEventLoop::quit);
+    // 安装期间 GUI 侧的取消只置位标志，这里轮询到后主动结束等待并杀进程
+    QTimer cancelPoll;
+    connect(&cancelPoll, &QTimer::timeout, &loop, [this, &loop]() {
+        if (m_isCancelled) {
+            loop.quit();
+        }
+    });
+    timeoutTimer.start(10 * 60 * 1000);
+    cancelPoll.start(500);
+    loop.exec();
+    cancelPoll.stop();
+    timeoutTimer.stop();
+
+    if (m_isCancelled) {
+        if (process.state() != QProcess::NotRunning) {
+            process.kill();
+            process.waitForFinished(1000);
+        }
+        m_isInstalling = false;
+        return;
+    }
+
+    if (process.state() != QProcess::NotRunning) {
+        process.kill();
+        process.waitForFinished(1000);
+        emit installFailed(tr("NeoForge安装超时（超过10分钟）"));
+        m_isInstalling = false;
+
+        if (!m_currentTaskId.isEmpty()) {
+            DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Failed,
+                                                              tr("安装失败"));
+        }
+        return;
+    }
+
+    if (process.exitCode() == 0) {
+        emit installProgressUpdated(90, tr("安装完成"));
+        updateTaskStatus(tr("安装完成"));
+        DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 90);
+
+        cleanupTempFiles();
+
+        m_isInstalling = false;
+
+        QString versionId = m_currentMcVersion + "-NeoForge" + m_currentForgeVersion;
+        emit installProgressUpdated(100, tr("安装完成"));
+        emit installCompleted(versionId);
+
+        if (!m_currentTaskId.isEmpty()) {
+            DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Completed,
+                                                               tr("安装完成"));
+            DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 100);
+        }
+    } else {
+        m_isInstalling = false;
+        emit installFailed(tr("NeoForge安装程序异常退出（错误码: %1）").arg(process.exitCode()));
+
+        if (!m_currentTaskId.isEmpty()) {
+            DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Failed,
+                                                               tr("安装失败"));
+        }
     }
 }
 
@@ -279,17 +308,12 @@ void NeoForgeInstaller::cancelInstall()
     m_isCancelled = true;
     m_isInstalling = false;
 
+    // reply 可能存活在执行安装的后台线程，跨线程直接 abort 不安全；
+    // 通过排队调用投递到 reply 所属线程执行。安装进程则由后台线程内的
+    // 取消轮询（每 0.5 秒）发现标志后自行结束，不在这里跨线程操作
     if (m_currentReply) {
-        m_currentReply->abort();
-        m_currentReply->deleteLater();
+        QMetaObject::invokeMethod(m_currentReply, &QNetworkReply::abort, Qt::QueuedConnection);
         m_currentReply = nullptr;
-    }
-
-    if (m_currentProcess && m_currentProcess->state() != QProcess::NotRunning) {
-        m_currentProcess->terminate();
-        if (!m_currentProcess->waitForFinished(3000)) {
-            m_currentProcess->kill();
-        }
     }
 
     if (!m_currentTaskId.isEmpty()) {
@@ -333,7 +357,12 @@ bool NeoForgeInstaller::downloadFile(const QString &url, const QString &filePath
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                         QNetworkRequest::NoLessSafeRedirectPolicy);
 
-    QNetworkReply *reply = m_networkManager->get(request);
+    // 本函数可能在后台线程执行（加载器安装已移出 GUI 线程），
+    // QNetworkAccessManager 必须与调用线程同亲和，这里用局部实例，
+    // 离开作用域时连同其子 reply 一起销毁
+    QNetworkAccessManager nam;
+
+    QNetworkReply *reply = nam.get(request);
     m_currentReply = reply;
 
     QFile file(filePath);
@@ -346,8 +375,9 @@ bool NeoForgeInstaller::downloadFile(const QString &url, const QString &filePath
     }
 
     QEventLoop loop;
+    // 数据落盘保持直接连接，在执行线程内写文件；进度上报挂到 this（GUI 线程）排队
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    connect(reply, &QNetworkReply::readyRead, this, [reply, &file]() {
+    connect(reply, &QNetworkReply::readyRead, [reply, &file]() {
         file.write(reply->readAll());
     });
     connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 bytesReceived, qint64 bytesTotal) {

@@ -336,7 +336,6 @@ void ResourcesPage::rebuildFavoriteCards()
         m_favoritesLayout->addWidget(emptyLabel);
         return;
     }
-
     // 收藏夹卡片渐变色板（原型中不同收藏夹使用不同渐变）
     struct GradPair { const char *c1; const char *c2; };
     static const GradPair palette[] = {
@@ -363,6 +362,82 @@ void ResourcesPage::rebuildFavoriteCards()
             ":/Images/Icons/nav_folder.svg", 9 + i));
     }
     m_favoritesLayout->addWidget(gridHolder);
+
+    // 收藏夹卡片是动态重建的：重建后重新应用子导航搜索过滤
+    applyPageFilter(m_pageFilterQuery);
+}
+
+// ── 子导航搜索：卡片过滤 + 分组标题联动 ──────────────────────────────────
+
+void ResourcesPage::applyPageFilter(const QString &query)
+{
+    m_pageFilterQuery = query;
+    if (!m_scrollContent)
+        return;
+
+    if (query.isEmpty())
+    {
+        m_pageFilter.clear();
+        return;
+    }
+
+    auto *lay = m_scrollContent->layout();
+    if (!lay)
+        return;
+
+    // 分组结构：标题 → 副标题 → [分组标题 → 卡片行] × N → 收藏夹容器 → stretch。
+    // 分组标题先记下，等处理完其后的卡片行再决定显隐（全部不匹配则标题一并隐藏）。
+    QWidget *pendingHeader = nullptr;
+    for (int i = 0; i < lay->count(); ++i)
+    {
+        QLayoutItem *item = lay->itemAt(i);
+        if (!item)
+            continue;
+        QWidget *w = item->widget();
+        if (!w)
+            continue;
+
+        if (w->findChild<QLabel *>(QStringLiteral("resourcesSectionTitle")))
+        {
+            pendingHeader = w;
+            continue;
+        }
+
+        // 卡片行 / 收藏夹容器：过滤其内部的 resourcesCard，按是否有可见卡片决定整行显隐
+        const auto allCards = w->findChildren<QWidget *>(QStringLiteral("resourcesCard"));
+        if (!allCards.isEmpty())
+        {
+            bool anyVisible = false;
+            for (QWidget *card : allCards)
+            {
+                const bool match = PageFilter::matches(PageFilter::collectText(card), query);
+                m_pageFilter.setShow(card, match);
+                anyVisible = anyVisible || match;
+            }
+            m_pageFilter.setShow(w, anyVisible);
+            if (pendingHeader)
+            {
+                m_pageFilter.setShow(pendingHeader, anyVisible);
+                pendingHeader = nullptr;
+            }
+            continue;
+        }
+
+        // 页面标题/副标题 / 空态容器等：按自身文本过滤；
+        // 若上一个分组标题还没配对（分组内无卡片行的场景），按本控件显隐一并处理
+        const bool wVisible = PageFilter::matches(PageFilter::collectText(w), query);
+        m_pageFilter.setShow(w, wVisible);
+        if (pendingHeader)
+        {
+            m_pageFilter.setShow(pendingHeader, wVisible);
+            pendingHeader = nullptr;
+        }
+    }
+
+    // 末尾若还有未配对的分组标题（收藏夹在无卡片时可能落到这里），按标题自身文本处理
+    if (pendingHeader)
+        m_pageFilter.setShow(pendingHeader,
+                             PageFilter::matches(PageFilter::collectText(pendingHeader), query));
 }
 
 // ── 分区标题（渐变竖条 + 标题 + 可选右侧控件） ────────────────────────────

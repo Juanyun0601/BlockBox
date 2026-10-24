@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file   ShaderPackParser.cpp
  * @brief  光影包选项解析器实现（对齐 Iris 26.1 源码规则）
  * @author BlockBox Team
@@ -643,6 +643,10 @@ void ShaderPackParser::autoSetLanguage(const QString &appLangCode)
                    << QStringLiteral("zh");
     else if (appLangCode.compare(QStringLiteral("es"), Qt::CaseInsensitive) == 0)
         candidates << QStringLiteral("es_es") << QStringLiteral("es");
+    else if (appLangCode.compare(QStringLiteral("ja"), Qt::CaseInsensitive) == 0)
+        candidates << QStringLiteral("ja_jp") << QStringLiteral("ja");
+    else if (appLangCode.compare(QStringLiteral("ru"), Qt::CaseInsensitive) == 0)
+        candidates << QStringLiteral("ru_ru") << QStringLiteral("ru");
     else
         candidates << QStringLiteral("en_us") << QStringLiteral("en");
 

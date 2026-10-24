@@ -54,6 +54,8 @@ static const char *languageFileName(LanguageManager::Language lang)
     case LanguageManager::English:             return "BlockBox_en.qm";
     case LanguageManager::ChineseTraditional:   return "BlockBox_zh_Hant.qm";
     case LanguageManager::Spanish:             return "BlockBox_es.qm";
+    case LanguageManager::Japanese:            return "BlockBox_ja.qm";
+    case LanguageManager::Russian:             return "BlockBox_ru.qm";
     case LanguageManager::Chinese:
     default:                                   return "BlockBox_zh.qm";
     }
@@ -65,9 +67,22 @@ static const char *languageCode(LanguageManager::Language lang)
     case LanguageManager::English:             return "en";
     case LanguageManager::ChineseTraditional:   return "zh_Hant";
     case LanguageManager::Spanish:             return "es";
+    case LanguageManager::Japanese:            return "ja";
+    case LanguageManager::Russian:             return "ru";
     case LanguageManager::Chinese:
     default:                                   return "zh";
     }
+}
+
+/// QSettings 里存的语言代号 → 枚举（未知代号一律回退简体中文）
+static LanguageManager::Language languageFromCode(const QString &code)
+{
+    if (code == "en")       return LanguageManager::English;
+    if (code == "zh_Hant")  return LanguageManager::ChineseTraditional;
+    if (code == "es")       return LanguageManager::Spanish;
+    if (code == "ja")       return LanguageManager::Japanese;
+    if (code == "ru")       return LanguageManager::Russian;
+    return LanguageManager::Chinese;
 }
 
 void LanguageManager::setLanguagePreference(Language lang)
@@ -113,16 +128,7 @@ void LanguageManager::setLanguageInternal(Language lang)
 void LanguageManager::loadLanguageSync()
 {
     QSettings settings("BlockBox", "BlockBox");
-    QString langCode = settings.value("language", "zh").toString();
-    Language lang;
-    if (langCode == "en")
-        lang = English;
-    else if (langCode == "zh_Hant")
-        lang = ChineseTraditional;
-    else if (langCode == "es")
-        lang = Spanish;
-    else
-        lang = Chinese;
+    const Language lang = languageFromCode(settings.value("language", "zh").toString());
     setLanguageInternal(lang);
     {
         QMutexLocker locker(&m_mutex);
@@ -140,16 +146,7 @@ QFuture<void> LanguageManager::initializeAsync()
 {
     return QtConcurrent::run([this]() {
         QSettings settings("BlockBox", "BlockBox");
-        QString langCode = settings.value("language", "zh").toString();
-        Language lang;
-        if (langCode == "en")
-            lang = English;
-        else if (langCode == "zh_Hant")
-            lang = ChineseTraditional;
-        else if (langCode == "es")
-            lang = Spanish;
-        else
-            lang = Chinese;
+        const Language lang = languageFromCode(settings.value("language", "zh").toString());
 
         QMetaObject::invokeMethod(this, [this, lang]() {
             if (m_translator->isEmpty())

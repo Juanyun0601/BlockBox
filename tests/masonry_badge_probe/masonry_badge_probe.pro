@@ -23,4 +23,4 @@ HEADERS += ../../components/MasonryContentCard.h \
            ../../platform.h \
            fake/utils/ThemeManager.h
 
-RESOURCES += ../../resources.qrc
+RESOURCES += ../../resources.qrc ../../resources_data.qrc

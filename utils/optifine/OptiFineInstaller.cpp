@@ -25,9 +25,9 @@
 
 namespace {
 
-// 以事件循环方式等待进程退出：等待期间 GUI 事件照常派发，界面不会失去响应；
-// 超时后强制结束进程并返回 false
-bool waitForProcessFinished(QProcess &process, int timeoutMs)
+// 以事件循环方式等待进程退出：等待期间本线程事件照常派发（本函数可能运行在
+// 后台线程，GUI 线程不受影响）；超时或取消时强制结束进程并返回 false
+bool waitForProcessFinished(QProcess &process, int timeoutMs, const std::atomic<bool> *cancelFlag = nullptr)
 {
     QEventLoop loop;
     QObject::connect(&process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
@@ -36,7 +36,19 @@ bool waitForProcessFinished(QProcess &process, int timeoutMs)
     timeoutTimer.setSingleShot(true);
     QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
     timeoutTimer.start(timeoutMs);
+
+    QTimer cancelPoll;
+    if (cancelFlag) {
+        QObject::connect(&cancelPoll, &QTimer::timeout, &loop, [&loop, cancelFlag]() {
+            if (cancelFlag->load()) {
+                loop.quit();
+            }
+        });
+        cancelPoll.start(500);
+    }
+
     loop.exec();
+    cancelPoll.stop();
 
     if (process.state() != QProcess::NotRunning) {
         process.kill();
@@ -158,7 +170,9 @@ QString OptiFineInstaller::resolveOfficialDownloadUrl(const QString &fileName)
     // 30 秒无数据传输即超时，避免官网解析页不可达时嵌套事件循环永不退出导致界面卡死
     request.setTransferTimeout(30000);
 
-    QNetworkReply *reply = m_networkManager->get(request);
+    // 可能在后台线程执行，QNAM 必须与调用线程同亲和，用局部实例
+    QNetworkAccessManager nam;
+    QNetworkReply *reply = nam.get(request);
     QEventLoop loop;
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     loop.exec();
@@ -312,6 +326,10 @@ void OptiFineInstaller::installOptiFine(const QString &installerPath, const QStr
                                + "/optifine-OptiFine-" + m_currentMcVersion + "_" + m_currentType + "_" + m_currentPatch + ".jar";
 
         if (!runOptiFinePatcher(installerPath, gameJarPath, outputLibPath)) {
+            if (m_isCancelled) {
+                m_isInstalling = false;
+                return;
+            }
             emit installFailed(tr("OptiFine修补器运行失败"));
             m_isInstalling = false;
             return;
@@ -390,8 +408,12 @@ bool OptiFineInstaller::runOptiFinePatcher(const QString &installerPath, const Q
         return false;
     }
 
-    // 修补器可能运行数分钟，必须用事件循环等待，否则界面会彻底卡死
-    if (!waitForProcessFinished(process, 10 * 60 * 1000)) {
+    // 修补器可能运行数分钟，必须用事件循环等待，否则执行线程会被占死；
+    // 期间用户取消可即时中断
+    if (!waitForProcessFinished(process, 10 * 60 * 1000, &m_isCancelled)) {
+        if (m_isCancelled) {
+            return false;
+        }
         qWarning() << "OptiFine patcher timed out (10 minutes)";
         return false;
     }
@@ -537,7 +559,11 @@ bool OptiFineInstaller::downloadFile(const QString &url, const QString &filePath
     // 60 秒无数据传输即超时，避免连接停滞时嵌套事件循环永不退出导致界面卡死
     request.setTransferTimeout(60000);
 
-    QNetworkReply *reply = m_networkManager->get(request);
+    // 可能在后台线程执行，QNAM 必须与调用线程同亲和，用局部实例，
+    // 离开作用域时连同其子 reply 一起销毁
+    QNetworkAccessManager nam;
+
+    QNetworkReply *reply = nam.get(request);
     m_currentReply = reply;
 
     QFile file(filePath);
@@ -549,6 +575,8 @@ bool OptiFineInstaller::downloadFile(const QString &url, const QString &filePath
     }
 
     QEventLoop loop;
+    // 进度上报挂在 this（GUI 线程）上跨线程排队；数据落盘保持直接连接，
+    // 在执行线程内写文件
     connect(reply, &QNetworkReply::downloadProgress, this, [this, reply](qint64 bytesReceived, qint64 bytesTotal) {
         Q_UNUSED(reply);
         this->m_totalBytes = bytesTotal;
@@ -558,7 +586,7 @@ bool OptiFineInstaller::downloadFile(const QString &url, const QString &filePath
     });
 
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    connect(reply, &QNetworkReply::readyRead, this, [reply, &file]() {
+    connect(reply, &QNetworkReply::readyRead, [reply, &file]() {
         file.write(reply->readAll());
     });
 
@@ -637,9 +665,10 @@ void OptiFineInstaller::cancelInstall()
     m_isCancelled = true;
     m_isInstalling = false;
 
+    // reply 可能存活在执行安装的后台线程，跨线程直接 abort 不安全；
+    // 通过排队调用投递到 reply 所属线程执行
     if (m_currentReply) {
-        m_currentReply->abort();
-        m_currentReply->deleteLater();
+        QMetaObject::invokeMethod(m_currentReply, &QNetworkReply::abort, Qt::QueuedConnection);
         m_currentReply = nullptr;
     }
 

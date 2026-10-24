@@ -153,6 +153,14 @@ void InstanceGameSettingsPage::setGameVersion(const QString &version)
     }
 }
 
+void InstanceGameSettingsPage::applyPageFilter(const QString &query)
+{
+    if (query.isEmpty())
+        m_panelFilter.clear();
+    else
+        m_panelFilter.apply(m_formContent, query);
+}
+
 void InstanceGameSettingsPage::setLoaderInfo(const QString &loader)
 {
     m_loaderInfo = loader;
@@ -327,6 +335,7 @@ void InstanceGameSettingsPage::initUI()
     QVBoxLayout *layout = new QVBoxLayout(contentWidget);
     layout->setContentsMargins(24, 8, 24, 24);
     layout->setSpacing(16);
+    m_formContent = contentWidget;
 
     // 顶部工具栏 — 对应原型 .list-toolbar
     QHBoxLayout *toolbar = new QHBoxLayout();

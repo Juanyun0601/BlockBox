@@ -5,6 +5,7 @@
 #include <QStackedWidget>
 #include <QLabel>
 #include <QHash>
+#include <QPointer>
 
 #include "../utils/mod/ModData.h"
 #include "../utils/content/ContentData.h"
@@ -45,6 +46,12 @@ public:
 
     /** 顶栏刷新按钮 / F5 触发：刷新当前所在子页（日志页重新读取日志） */
     Q_INVOKABLE void refresh();
+
+    /**
+     * 子导航搜索框分发：把查询转发给当前内层子页（子页需实现 applyPageFilter）。
+     * 切换子页（setCurrentTab）时自动重新应用已存查询。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
 
 signals:
     void modDetailRequested(const ModInfo &info);
@@ -102,6 +109,12 @@ private:
     QString m_currentInstancePath;
     /** 记录每个子页面当前已加载/展示的实例路径，用于判断是否需要重新加载 */
     QHash<const void *, QString> m_loadedPaths;
+    /** 子导航搜索框的当前查询（切换内层子页时重新应用） */
+    QString m_pageFilterQuery;
+    /** 最近一次被过滤的内层子页（切走/清空查询时先恢复它） */
+    QPointer<QWidget> m_lastFilteredInner;
+    /** 把 m_pageFilterQuery 应用到 m_contentStack 当前子页 */
+    void applyFilterToCurrentSubPage();
 };
 
 #endif // INSTANCEMANAGEPAGE_H

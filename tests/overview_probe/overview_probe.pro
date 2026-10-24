@@ -20,4 +20,4 @@ HEADERS += ../../pages/InstanceOverviewPage.h \
            ../../components/OutlinedLabel.h \
            fake/utils/ThemeManager.h
 
-RESOURCES += ../../resources.qrc
+RESOURCES += ../../resources.qrc ../../resources_data.qrc

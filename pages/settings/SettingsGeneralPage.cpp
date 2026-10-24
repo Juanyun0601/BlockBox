@@ -19,6 +19,7 @@
 #include "components/OutlinedLabel.h"
 #include "components/QuizDialog.h"
 #include "pages/OnboardingWizard.h"
+#include "platform.h"
 #include "utils/QuizBank.h"
 #include "utils/SettingsManager.h"
 #include "utils/UpdateChecker.h"
@@ -195,29 +196,44 @@ void SettingsPage::initGeneralSettings()
     threadCountRow->addWidget(threadCountLabel);
     threadCountRow->addWidget(threadCountWarning);
 
-    // ── 选择器类型 ──
-    QVBoxLayout *pickerCard = createSettingsCard(layout, tr("选择器类型"));
-
-    QComboBox *pickerTypeCombo = new QComboBox();
-    pickerTypeCombo->addItem(tr("系统文件资源管理器"), static_cast<int>(FilePickerType::System));
-    pickerTypeCombo->addItem(tr("软件自带"), static_cast<int>(FilePickerType::BuiltIn));
-    disableWheelEffect(pickerTypeCombo);
-
-    int pickerIndex = pickerTypeCombo->findData(
-        static_cast<int>(settings->getFilePickerType()));
-    pickerTypeCombo->setCurrentIndex(pickerIndex >= 0 ? pickerIndex
-                                                      : pickerTypeCombo->findData(static_cast<int>(FilePickerType::BuiltIn)));
-
-    connect(pickerTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [pickerTypeCombo](int idx) {
-        SettingsManager::instance()->setFilePickerType(
-            static_cast<FilePickerType>(pickerTypeCombo->itemData(idx).toInt()));
-    });
+    // ── 文件选择器 ──
+    const bool mobilePicker = Platform::isMobile();
+    QVBoxLayout *pickerCard = createSettingsCard(layout, tr("文件选择器"));
 
     QHBoxLayout *pickerTypeRow = appendSettingRow(pickerCard,
-        tr("选择器类型"), tr("选择打开文件、文件夹时使用的对话框。"),
-        tr("系统文件资源管理器使用操作系统自带的选择窗口；软件自带使用启动器内置的文件浏览器，支持实例资源浏览与预览。"), true);
-    pickerTypeRow->addWidget(pickerTypeCombo);
+        tr("选择器类型"),
+        mobilePicker ? tr("手机端固定使用软件自带的文件浏览器。")
+                     : tr("选择打开文件、文件夹时使用的窗口，电脑端默认使用系统自带。"),
+        tr("系统自带会打开操作系统提供的文件选择窗口；软件自带使用启动器内置的文件浏览器，"
+           "可以直接浏览实例里的模组、资源包、光影包、存档等文件。手机端固定使用软件自带。"),
+        true);
+
+    if (mobilePicker) {
+        QLabel *fixedPickerLabel = new QLabel(tr("软件自带"));
+        fixedPickerLabel->setObjectName("settingValueLabel");
+        pickerTypeRow->addWidget(fixedPickerLabel);
+    } else {
+        QComboBox *pickerTypeCombo = new QComboBox();
+        pickerTypeCombo->addItem(tr("系统自带（文件资源管理器）"),
+                                 static_cast<int>(FilePickerType::System));
+        pickerTypeCombo->addItem(tr("软件自带（内置文件浏览器）"),
+                                 static_cast<int>(FilePickerType::BuiltIn));
+        disableWheelEffect(pickerTypeCombo);
+
+        int pickerIndex = pickerTypeCombo->findData(
+            static_cast<int>(settings->getFilePickerType()));
+        if (pickerIndex < 0)
+            pickerIndex = pickerTypeCombo->findData(
+                static_cast<int>(SettingsManager::defaultFilePickerType()));
+        pickerTypeCombo->setCurrentIndex(pickerIndex >= 0 ? pickerIndex : 0);
+
+        connect(pickerTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [pickerTypeCombo](int idx) {
+            SettingsManager::instance()->setFilePickerType(
+                static_cast<FilePickerType>(pickerTypeCombo->itemData(idx).toInt()));
+        });
+        pickerTypeRow->addWidget(pickerTypeCombo);
+    }
 
     // ── 地图结构图标：文字旁小图标（默认） / 结构概览 ──
     QVBoxLayout *mapIconCard = createSettingsCard(layout, tr("地图结构图标"));

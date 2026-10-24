@@ -1073,8 +1073,9 @@ void SystemTools::startMultiThreadDownload(QWidget* parentWidget)
     }
 
     QString fileName = QFileInfo(savePath).fileName();
-    QString taskId = DownloadTaskManager::instance()->addTask(fileName, QFileInfo(savePath).absolutePath(),
-                                                              QString(), QStringList());
+    QString taskId = DownloadTaskManager::instance()->addTaskWithType(
+        fileName, QFileInfo(savePath).absolutePath(), QString(), QStringList(),
+        TaskType::SystemTool);
     DownloadTaskManager::instance()->updateTaskStatus(taskId, DownloadTaskStatus::Downloading, tr("连接中..."));
 
     m_multiDownloader = new MultiThreadDownloader(this);

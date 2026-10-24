@@ -57,6 +57,9 @@ public:
     void setInstancePath(const QString &path);
     void refreshFileList();
 
+    /** 子导航搜索框分发：同步到页内搜索框（复用既有过滤管线） */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
+
     /** 获取子目录名称（相对实例路径） */
     QString subDirName() const;
     /** 获取文件类型中文名 */

@@ -22,22 +22,13 @@
 
 #include "FileReuse.h"
 #include "DownloadTaskManager.h"
+#include "net/Download.h"
+#include "net/ChecksumValidator.h"
+#include "net/NetworkAccess.h"
+#include "net/HttpMetaCache.h"
 
-/** 计算文件 SHA1 哈希，返回小写十六进制字符串 */
-static QString calculateSha1(const QString& filePath)
-{
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly))
-        return QString();
-
-    QCryptographicHash hash(QCryptographicHash::Sha1);
-    const qint64 chunkSize = 1024 * 1024; // 1MB chunks
-    while (!file.atEnd())
-    {
-        hash.addData(file.read(chunkSize));
-    }
-    return QString(hash.result().toHex());
-}
+#include <QStandardPaths>
+#include <functional>
 
 const int VersionDownloader::MAX_CONCURRENT_DOWNLOADS;
 #include "SettingsManager.h"
@@ -48,8 +39,7 @@ VersionDownloader* VersionDownloader::m_instance = nullptr;
 static QMutex s_vdInstanceMutex;
 
 VersionDownloader::VersionDownloader()
-    : m_networkManager(new QNetworkAccessManager(this))
-    , m_downloadSource(Official)
+    : m_downloadSource(Official)
     , m_currentPhase(DownloadPhase::Idle)
     , m_isDownloading(false)
     , m_isPaused(false)
@@ -122,7 +112,8 @@ void VersionDownloader::downloadVanillaTo(const QString &versionId, const QStrin
         }
     }
 
-    QString taskId = DownloadTaskManager::instance()->addTask(taskName, m_currentInstancePath, versionId, loaders);
+    QString taskId = DownloadTaskManager::instance()->addTaskWithType(
+        taskName, m_currentInstancePath, versionId, loaders, TaskType::InstanceInstall);
     m_currentTaskId = taskId;
 
     emit downloadStarted(taskId);
@@ -161,12 +152,6 @@ void VersionDownloader::cancelDownload()
     m_currentVersionId.clear();
     m_currentInstancePath.clear();
     m_currentPhase = DownloadPhase::Idle;
-
-    // 清理多段下载残留的临时分段目录，避免取消后留下磁盘垃圾
-    if (!m_tempSegmentDir.isEmpty()) {
-        QDir(m_tempSegmentDir).removeRecursively();
-        m_tempSegmentDir.clear();
-    }
 
     emit downloadCancelled();
 }
@@ -252,7 +237,6 @@ void VersionDownloader::setCurrentTaskId(const QString &taskId)
 void VersionDownloader::cleanupActiveReply(QNetworkReply *reply)
 {
     m_activeReplies.removeOne(reply);
-    m_activeFileProgress.remove(reply);
     reply->deleteLater();
 }
 
@@ -264,6 +248,14 @@ void VersionDownloader::abortAllActiveReplies()
         reply->deleteLater();
     }
     m_activeReplies.clear();
+    // MultiMC net 层的在途单文件任务：abort 后由 aborted 回调收尾
+    const QList<NetJob::Ptr> jobs = m_fileJobs;
+    m_fileJobs.clear();
+    for (const auto &job : jobs)
+    {
+        if (job)
+            job->abort();
+    }
     m_activeFileProgress.clear();
     m_activeDownloadCount = 0;
 }
@@ -285,6 +277,41 @@ void VersionDownloader::failDownload(const QString &error)
     emit downloadFailed(error);
 }
 
+// ── 清单类 JSON：MultiMC net 层的 HttpMetaCache 缓存下载 ──
+// ETag/Last-Modified 条件请求：内容未变时服务器回 304，直接复用本地缓存
+void VersionDownloader::fetchJsonCached(const QStringList &urls, const QString &resourcePath,
+                                        std::function<void(bool ok, const QByteArray &data)> onDone)
+{
+    HttpMetaCache *metaCache = HttpMetaCache::instance();
+    metaCache->addBase(QStringLiteral("meta"),
+                       QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                           + QStringLiteral("/cache/download-meta"));
+
+    auto entry = metaCache->resolveEntry(QStringLiteral("meta"), resourcePath);
+    auto dl = Net::Download::makeCached(QUrl(urls.first()), entry);
+    for (int i = 1; i < urls.size(); ++i)
+        dl->addUrlFallback(QUrl(urls.at(i)));
+
+    auto job = NetJob::Ptr(new NetJob(resourcePath, Net::networkAccessManager()));
+    job->addNetAction(dl);
+
+    connect(job.get(), &Task::finished, this, [this, job, entry, onDone]() {
+        if (!job->wasSuccessful() || !m_isDownloading || m_isPaused)
+        {
+            onDone(false, QByteArray());
+            return;
+        }
+        QFile file(entry->getFullPath());
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            onDone(false, QByteArray());
+            return;
+        }
+        onDone(true, file.readAll());
+    });
+    job->start();
+}
+
 void VersionDownloader::fetchManifest()
 {
     ManifestCache *cache = ManifestCache::instance();
@@ -304,63 +331,53 @@ void VersionDownloader::fetchManifest()
     emit statusChanged(tr("正在获取版本清单..."));
     updateTaskStatus(tr("正在获取版本清单"));
 
-    QString manifestUrl = getManifestUrl(m_currentVersionId);
-    QNetworkRequest request;
-    request.setUrl(QUrl(manifestUrl));
-    QNetworkReply *reply = m_networkManager->get(request);
-    m_activeReplies.append(reply);
+    // 双源：当前设置的源优先，另一个作回退（MultiMC 语义：候选列表逐个尝试）
+    const QString officialUrl =
+        QStringLiteral("https://launchermeta.mojang.com/mc/game/version_manifest_v2.json");
+    const QString bmclUrl =
+        QStringLiteral("https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json");
+    QStringList urls;
+    if (m_downloadSource == BMCL)
+        urls << bmclUrl << officialUrl;
+    else
+        urls << officialUrl << bmclUrl;
 
-    connect(reply, &QNetworkReply::finished, this, &VersionDownloader::onManifestReplyFinished);
-}
+    fetchJsonCached(urls, QStringLiteral("version_manifest_v2.json"),
+        [this](bool ok, const QByteArray &data) {
+            if (!ok || data.isEmpty())
+            {
+                if (m_isDownloading && !m_isPaused)
+                    failDownload(tr("获取版本清单失败"));
+                return;
+            }
 
-void VersionDownloader::onManifestReplyFinished()
-{
-    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
+            QJsonParseError parseErr;
+            QJsonDocument doc = QJsonDocument::fromJson(data, &parseErr);
+            if (parseErr.error != QJsonParseError::NoError || doc.isNull())
+            {
+                failDownload(tr("版本清单解析失败: %1").arg(parseErr.errorString()));
+                return;
+            }
+            QJsonObject rootObj = doc.object();
 
-    if (m_isPaused || !m_isDownloading)
-    {
-        cleanupActiveReply(reply);
-        return;
-    }
+            if (!rootObj.contains("versions"))
+            {
+                failDownload(tr("版本清单格式错误"));
+                return;
+            }
 
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        QString errMsg = tr("获取版本清单失败: %1").arg(reply->errorString());
-        cleanupActiveReply(reply);
-        failDownload(errMsg);
-        return;
-    }
+            ManifestCache::instance()->setManifest(rootObj);
 
-    QByteArray data = reply->readAll();
-    cleanupActiveReply(reply);
+            QString versionUrl = ManifestCache::instance()->getVersionUrl(m_currentVersionId);
+            if (versionUrl.isEmpty())
+            {
+                failDownload(QStringLiteral("找不到版本 %1").arg(m_currentVersionId));
+                return;
+            }
 
-    QJsonParseError parseErr;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseErr);
-    if (parseErr.error != QJsonParseError::NoError || doc.isNull())
-    {
-        failDownload(tr("版本清单解析失败: %1").arg(parseErr.errorString()));
-        return;
-    }
-    QJsonObject rootObj = doc.object();
-
-    if (!rootObj.contains("versions"))
-    {
-        failDownload(tr("版本清单格式错误"));
-        return;
-    }
-
-    ManifestCache::instance()->setManifest(rootObj);
-
-    QString versionUrl = ManifestCache::instance()->getVersionUrl(m_currentVersionId);
-    if (versionUrl.isEmpty())
-    {
-        failDownload(QString("找不到版本 %1").arg(m_currentVersionId));
-        return;
-    }
-
-    m_currentPhase = DownloadPhase::VersionJsonFetch;
-    fetchVersionJson();
+            m_currentPhase = DownloadPhase::VersionJsonFetch;
+            fetchVersionJson();
+        });
 }
 
 void VersionDownloader::fetchVersionJson()
@@ -381,57 +398,44 @@ void VersionDownloader::fetchVersionJson()
     updateTaskStatus(tr("正在获取版本详情"));
 
     QString versionUrl = cache->getVersionUrl(m_currentVersionId);
+    QString bmclUrl = versionUrl;
+    bmclUrl.replace(QStringLiteral("https://launchermeta.mojang.com"),
+                    QStringLiteral("https://bmclapi2.bangbang93.com"));
+    bmclUrl.replace(QStringLiteral("https://piston-meta.mojang.com"),
+                    QStringLiteral("https://bmclapi2.bangbang93.com"));
 
+    QStringList urls;
     if (m_downloadSource == BMCL)
-    {
-        versionUrl.replace("https://launchermeta.mojang.com", "https://bmclapi2.bangbang93.com");
-        versionUrl.replace("https://piston-meta.mojang.com", "https://bmclapi2.bangbang93.com");
-    }
+        urls << bmclUrl << versionUrl;
+    else
+        urls << versionUrl << bmclUrl;
+    urls.removeDuplicates();
 
-    QNetworkRequest request;
-    request.setUrl(QUrl(versionUrl));
-    QNetworkReply *reply = m_networkManager->get(request);
-    m_activeReplies.append(reply);
+    fetchJsonCached(urls, QStringLiteral("versions/") + m_currentVersionId
+                        + QStringLiteral(".json"),
+        [this](bool ok, const QByteArray &data) {
+            if (!ok || data.isEmpty())
+            {
+                if (m_isDownloading && !m_isPaused)
+                    failDownload(tr("获取版本详情失败"));
+                return;
+            }
 
-    connect(reply, &QNetworkReply::finished, this, &VersionDownloader::onVersionJsonReplyFinished);
-}
+            QJsonParseError parseErr;
+            QJsonDocument doc = QJsonDocument::fromJson(data, &parseErr);
+            if (parseErr.error != QJsonParseError::NoError || doc.isNull())
+            {
+                failDownload(tr("版本 JSON 解析失败: %1").arg(parseErr.errorString()));
+                return;
+            }
+            QJsonObject versionManifest = doc.object();
 
-void VersionDownloader::onVersionJsonReplyFinished()
-{
-    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
+            m_currentVersionManifest = versionManifest;
+            ManifestCache::instance()->setVersionJson(m_currentVersionId, versionManifest);
 
-    if (m_isPaused || !m_isDownloading)
-    {
-        cleanupActiveReply(reply);
-        return;
-    }
-
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        QString errMsg = tr("获取版本详情失败: %1").arg(reply->errorString());
-        cleanupActiveReply(reply);
-        failDownload(errMsg);
-        return;
-    }
-
-    QByteArray data = reply->readAll();
-    cleanupActiveReply(reply);
-
-    QJsonParseError parseErr;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseErr);
-    if (parseErr.error != QJsonParseError::NoError || doc.isNull())
-    {
-        failDownload(tr("版本 JSON 解析失败: %1").arg(parseErr.errorString()));
-        return;
-    }
-    QJsonObject versionManifest = doc.object();
-
-    m_currentVersionManifest = versionManifest;
-    ManifestCache::instance()->setVersionJson(m_currentVersionId, versionManifest);
-
-    m_currentPhase = DownloadPhase::ClientJar;
-    downloadClientJar();
+            m_currentPhase = DownloadPhase::ClientJar;
+            downloadClientJar();
+        });
 }
 
 void VersionDownloader::downloadClientJar()
@@ -518,27 +522,11 @@ void VersionDownloader::downloadClientJarFromNetwork()
 
     emit statusChanged(tr("正在下载客户端 JAR 文件..."));
 
-    if (m_clientJarSize >= MIN_PARALLEL_FILE_SIZE)
-    {
-        downloadFileSegments(clientUrl, clientJarPath, m_clientJarSize);
-        return;
-    }
-
+    // MultiMC net 层传输：Download + FileSink + SHA1 校验，
+    // BMCL 源携带官方地址作回退，无需再分段
     m_activeDownloadCount++;
-    QNetworkRequest jarRequest;
-    jarRequest.setUrl(QUrl(clientUrl));
-    jarRequest.setTransferTimeout(300000);
-    jarRequest.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-    QNetworkReply *jarReply = m_networkManager->get(jarRequest);
-    m_activeReplies.append(jarReply);
-    jarReply->setProperty("url", clientUrl);
-    jarReply->setProperty("filePath", clientJarPath);
-    jarReply->setProperty("fileSize", m_clientJarSize);
-    jarReply->setProperty("isClientJar", true);
-    jarReply->setProperty("expectedHash", m_clientJarSha1);
-    jarReply->setProperty("fallbackUrl", m_clientJarFallbackUrl);
-    connect(jarReply, &QNetworkReply::finished, this, &VersionDownloader::onLibraryFileFinished);
-    connect(jarReply, &QNetworkReply::downloadProgress, this, &VersionDownloader::onClientJarProgress);
+    downloadSingleFile(clientUrl, clientJarPath, m_clientJarSize, m_clientJarSha1,
+                       m_clientJarFallbackUrl, true);
 }
 
 void VersionDownloader::startClientJarReuseScan(const QString &clientJarPath, qint64 clientSize,
@@ -596,559 +584,162 @@ void VersionDownloader::proceedAfterClientJar()
     startLibrariesDownload();
 }
 
-void VersionDownloader::onClientJarProgress(qint64 bytesReceived, qint64 bytesTotal)
-{
-    Q_UNUSED(bytesTotal);
-    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
-    if (reply) {
-        m_activeFileProgress[reply] = bytesReceived;
-    }
-    qint64 totalInFlight = 0;
-    for (auto it = m_activeFileProgress.begin(); it != m_activeFileProgress.end(); ++it)
-    {
-        totalInFlight += it.value();
-    }
-    updateTaskProgress(m_downloadedBytes + totalInFlight, m_totalBytes);
-}
-
+// ── 文件传输：MultiMC net 层（Download + FileSink + ChecksumValidator）──
+// 传输、重试（含退避）、镜像回退、完整性校验全部由 Download/NetJob 负责；
+// 这里只负责并发槽位记账、字节进度聚合与阶段推进
 void VersionDownloader::downloadSingleFile(const QString &url, const QString &filePath,
                                            qint64 fileSize, const QString &expectedHash,
-                                           int retryCount, const QString &fallbackUrl,
-                                           bool isClientJar)
+                                           const QString &fallbackUrl, bool isClientJar)
 {
     if (m_isPaused || !m_isDownloading) return;
 
-    int timeoutMs = (fileSize > 0 && fileSize < 1024 * 1024) ? 60000 : 300000;
+    NetFileParams params;
+    params.url = url;
+    params.filePath = filePath;
+    params.fileSize = fileSize;
+    params.expectedHash = expectedHash;
+    params.fallbackUrl = fallbackUrl;
+    params.isClientJar = isClientJar;
 
-    QNetworkRequest request;
-    request.setUrl(QUrl(url));
-    request.setTransferTimeout(timeoutMs);
-    // 参考 HMCL：强制 HTTP/1.1。BMCLAPI 会 302 到兼容性较差的对象存储后端，
-    // HTTP/2 下会出现 "HTTP/2 protocol error" 瞬时失败
-    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-    QNetworkReply *reply = m_networkManager->get(request);
-    m_activeReplies.append(reply);
+    auto dl = Net::Download::makeFile(QUrl(url), filePath);
+    if (!fallbackUrl.isEmpty() && fallbackUrl != url)
+        dl->addUrlFallback(QUrl(fallbackUrl));
+    if (!expectedHash.isEmpty())
+    {
+        dl->addValidator(new Net::ChecksumValidator(
+            QCryptographicHash::Sha1, QByteArray::fromHex(expectedHash.toLatin1())));
+    }
 
-    reply->setProperty("url", url);
-    reply->setProperty("filePath", filePath);
-    reply->setProperty("fileSize", fileSize);
-    reply->setProperty("retryCount", retryCount);
-    reply->setProperty("expectedHash", expectedHash);
-    reply->setProperty("fallbackUrl", fallbackUrl);
-    reply->setProperty("isClientJar", isClientJar);
-
-    connect(reply, &QNetworkReply::finished, this, &VersionDownloader::onLibraryFileFinished);
-    connect(reply, &QNetworkReply::downloadProgress, this, [this, reply](qint64 bytesReceived, qint64 bytesTotal) {
-        Q_UNUSED(bytesTotal);
-        m_activeFileProgress[reply] = bytesReceived;
+    connect(dl.get(), &NetAction::netActionProgress, this,
+            [this, filePath](int, qint64 bytesReceived, qint64) {
+        m_activeFileProgress[filePath] = bytesReceived;
         qint64 totalInFlight = 0;
-        for (auto it = m_activeFileProgress.begin(); it != m_activeFileProgress.end(); ++it)
+        for (auto it = m_activeFileProgress.constBegin();
+             it != m_activeFileProgress.constEnd(); ++it)
         {
             totalInFlight += it.value();
         }
         updateTaskProgress(m_downloadedBytes + totalInFlight, m_totalBytes);
     });
-}
 
-/* 带退避的延迟重试：BMCLAPI 等镜像对突发并发会瞬时返回 429/503，
- * 立即重试会在毫秒内烧完全部重试机会导致整个安装失败。
- * 调用方已为本次重试持有并发槽位（m_activeDownloadCount++），退避期间不释放，
- * 防止队列在「pending 空且无在途下载」时误判当前阶段完成而提前进入下一阶段 */
-void VersionDownloader::scheduleFileRetry(const QString &url, const QString &filePath,
-                                          qint64 fileSize, const QString &expectedHash,
-                                          int nextRetryCount, bool rateLimited,
-                                          const QString &fallbackUrl, bool isClientJar)
-{
-    // 限流响应（429/503）用更长退避，普通错误用短退避
-    const int backoffMs = (rateLimited ? 2000 : 800) * nextRetryCount;
-    // 任务代数：新任务/取消/失败会使旧定时器作废，避免过期重试污染新任务
-    const int epoch = m_reuseScanId;
-    QTimer::singleShot(backoffMs, this, [this, epoch, url, filePath, fileSize, expectedHash,
-                                         nextRetryCount, fallbackUrl, isClientJar]() {
-        if (epoch != m_reuseScanId)
-            return;
-        if (m_isPaused)
-        {
-            // 暂停：客户端 JAR 丢弃（恢复时整文件重新下载），其余释放槽位重新入队
-            m_activeDownloadCount--;
-            if (isClientJar)
-                return;
-            PendingDownload pending;
-            pending.url = url;
-            pending.filePath = filePath;
-            pending.fileSize = fileSize;
-            pending.expectedHash = expectedHash;
-            pending.fallbackUrl = fallbackUrl;
-            pending.retryCount = nextRetryCount;
-            if (m_currentPhase == DownloadPhase::Assets)
-                m_pendingAssets.enqueue(pending);
-            else
-                m_pendingDownloads.enqueue(pending);
-            return;
-        }
-        if (!m_isDownloading)
-        {
-            // 已取消/失败：abortAllActiveReplies 已将计数清零，无需释放
-            return;
-        }
-        downloadSingleFile(url, filePath, fileSize, expectedHash, nextRetryCount, fallbackUrl,
-                           isClientJar);
-    });
-}
+    // 单文件一个 NetJob：MultiMC 语义下由 NetJob 负责重试（3 次、带退避）
+    auto job = NetJob::Ptr(new NetJob(QFileInfo(filePath).fileName(),
+                                      Net::networkAccessManager()));
+    job->addNetAction(dl);
 
-void VersionDownloader::onLibraryFileFinished()
-{
-    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
-
-    m_activeDownloadCount--;
-    QString url = reply->property("url").toString();
-    QString filePath = reply->property("filePath").toString();
-    qint64 fileSize = reply->property("fileSize").toLongLong();
-    int retryCount = reply->property("retryCount").toInt();
-    bool isClientJar = reply->property("isClientJar").toBool();
-    QString expectedHash = reply->property("expectedHash").toString();
-    QString fallbackUrl = reply->property("fallbackUrl").toString();
-
-    if (m_isPaused || !m_isDownloading)
-    {
-        // 暂停时把该文件重新排队，恢复后继续下载；取消时直接丢弃
-        if (m_isPaused && !isClientJar)
-        {
-            PendingDownload pending;
-            pending.url = url;
-            pending.filePath = filePath;
-            pending.fileSize = fileSize;
-            pending.expectedHash = expectedHash;
-            pending.fallbackUrl = fallbackUrl;
-            pending.retryCount = retryCount;
-            if (m_currentPhase == DownloadPhase::Assets)
-                m_pendingAssets.enqueue(pending);
-            else
-                m_pendingDownloads.enqueue(pending);
-        }
-        cleanupActiveReply(reply);
-        if (m_isPaused) return;
-        failDownload(tr("下载已取消"));
-        return;
-    }
-
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        QNetworkReply::NetworkError err = reply->error();
-        cleanupActiveReply(reply);
-
-        if (statusCode == 404)
-        {
-            failDownload(tr("文件不存在 (404): %1").arg(QFileInfo(filePath).fileName()));
-            return;
-        }
-
-        // 镜像源失败后切换到官方源兜底重试（BMCL 的镜像后端可能单个故障，
-        // 如 403/429；官方地址仍在原始清单里，切换一次不增加总重试次数）
-        QString retryUrl = url;
-        QString retryFallback = fallbackUrl;
-        if (!fallbackUrl.isEmpty() && fallbackUrl != url)
-        {
-            retryUrl = fallbackUrl;
-            retryFallback.clear();
-            emit statusChanged(tr("镜像源下载 %1 失败，改用官方源重试...")
-                                   .arg(QFileInfo(filePath).fileName()));
-        }
-
-        if (err == QNetworkReply::TimeoutError && retryCount < MAX_RETRY_COUNT)
-        {
-            if (retryCount > 0)
-            {
-                emit statusChanged(tr("下载超时，正在重试 %1 (第 %2 次)...")
-                    .arg(QFileInfo(filePath).fileName())
-                    .arg(retryCount + 1));
-            }
-
-            m_activeDownloadCount++;
-            scheduleFileRetry(retryUrl, filePath, fileSize, expectedHash, retryCount + 1,
-                              false, retryFallback);
-            return;
-        }
-
-        if (retryCount < MAX_RETRY_COUNT)
-        {
-            if (retryCount > 0)
-            {
-                emit statusChanged(tr("正在重试下载 %1 (第 %2 次)...")
-                    .arg(QFileInfo(filePath).fileName())
-                    .arg(retryCount + 1));
-            }
-
-            m_activeDownloadCount++;
-            // 429/503 属于镜像限流，采用更长的退避间隔
-            const bool rateLimited = (statusCode == 429 || statusCode == 503);
-            scheduleFileRetry(retryUrl, filePath, fileSize, expectedHash, retryCount + 1,
-                              rateLimited, retryFallback);
-            return;
-        }
-
-        QString failMsg;
-        if (err == QNetworkReply::TimeoutError)
-        {
-            failMsg = tr("下载超时 (已重试 %1 次): %2")
-                .arg(MAX_RETRY_COUNT)
-                .arg(QFileInfo(filePath).fileName());
-        }
+    connect(job.get(), &Task::finished, this, [this, params, job]() {
+        m_fileJobs.removeAll(job);
+        if (job->wasSuccessful())
+            onNetFileSucceeded(params);
+        else if (job->wasAborted())
+            onNetFileAborted(params);
         else
+            onNetFileFailed(params);
+    });
+
+    m_fileJobs.append(job);
+    job->start();
+}
+
+// 下载版本清单 logging.client 指定的日志配置文件（log4j2 配置，SHA1 校验）
+void VersionDownloader::downloadLogConfigs()
+{
+    QString clientLogUrl;
+    QString clientLogId;
+    QString clientLogSha1;
+    qint64 clientLogSize = 0;
+    if (m_currentVersionManifest.contains("logging"))
+    {
+        QJsonObject logging = m_currentVersionManifest["logging"].toObject();
+        if (logging.contains("client"))
         {
-            failMsg = tr("下载失败 (已重试 %1 次): %2 (%3)")
-                .arg(MAX_RETRY_COUNT)
-                .arg(QFileInfo(filePath).fileName(), reply->errorString());
-        }
-        failDownload(failMsg);
-        return;
-    }
-
-    QByteArray data = reply->readAll();
-    cleanupActiveReply(reply);
-
-    QDir dir = QFileInfo(filePath).absoluteDir();
-    if (!dir.exists())
-    {
-        dir.mkpath(".");
-    }
-
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly))
-    {
-        failDownload(tr("无法创建文件: %1").arg(filePath));
-        return;
-    }
-    file.write(data);
-    file.close();
-
-    // 验证下载文件完整性（参考 HMCL FileDownloadTask IntegrityCheck）
-    if (!expectedHash.isEmpty())
-    {
-        QString actualHash = calculateSha1(filePath);
-        if (actualHash != expectedHash)
-        {
-            if (retryCount < 3)
-            {
-                // 同一镜像反复给出坏文件时切换官方源（与网络错误分支同一兜底策略）
-                QString retryUrl = url;
-                QString retryFallback = fallbackUrl;
-                if (!fallbackUrl.isEmpty() && fallbackUrl != url)
-                {
-                    retryUrl = fallbackUrl;
-                    retryFallback.clear();
-                }
-                if (isClientJar)
-                {
-                    // 客户端 JAR 损坏：直接按原参数重下（带官方源兜底）。
-                    // 不能进公共队列：ClientJar 阶段没有任何队列泵，入队后会永久滞留
-                    m_activeDownloadCount++;
-                    qWarning() << "客户端 JAR 校验失败，重新下载:" << filePath;
-                    scheduleFileRetry(retryUrl, filePath, fileSize, expectedHash, retryCount + 1,
-                                      false, retryFallback, true);
-                    return;
-                }
-                PendingDownload pending;
-                pending.url = retryUrl;
-                pending.filePath = filePath;
-                pending.fileSize = fileSize;
-                pending.expectedHash = expectedHash;
-                pending.fallbackUrl = retryFallback;
-                pending.retryCount = retryCount + 1;
-                // 按当前阶段入队，避免跨阶段借用队列被后续扫描覆盖
-                if (m_currentPhase == DownloadPhase::Assets)
-                {
-                    m_pendingAssets.enqueue(pending);
-                    processAssetQueue();
-                }
-                else
-                {
-                    m_pendingDownloads.enqueue(pending);
-                    processLibraryQueue();
-                }
-                return;
-            }
-            qWarning() << "文件校验失败且重试耗尽，继续安装:" << filePath;
+            QJsonObject client = logging["client"].toObject();
+            QJsonObject file = client["file"].toObject();
+            clientLogId = file["id"].toString();
+            clientLogUrl = file["url"].toString();
+            clientLogSha1 = file["sha1"].toString();
+            clientLogSize = file["size"].toVariant().toLongLong();
         }
     }
+    if (clientLogUrl.isEmpty() || clientLogId.isEmpty())
+        return; // 该版本没有日志配置
 
-    m_downloadedBytes += fileSize;
+    QString logConfigPath = m_currentInstancePath + "/" + clientLogId;
+    if (QFile::exists(logConfigPath))
+        return;
+
+    m_activeDownloadCount++;
+    downloadSingleFile(clientLogUrl, logConfigPath, clientLogSize, clientLogSha1,
+                       QString(), false);
+}
+
+void VersionDownloader::onNetFileSucceeded(const NetFileParams &params)
+{
+    m_activeDownloadCount--;
+    m_activeFileProgress.remove(params.filePath);
+
+    if (!m_isDownloading) return;
+
+    m_downloadedBytes += params.fileSize;
     updateTaskProgress(m_downloadedBytes, m_totalBytes);
 
-    if (isClientJar)
+    if (params.isClientJar)
     {
         proceedAfterClientJar();
         return;
     }
 
     if (m_currentPhase == DownloadPhase::Libraries)
-    {
         processLibraryQueue();
-    }
     else if (m_currentPhase == DownloadPhase::Assets)
-    {
         processAssetQueue();
-    }
 }
 
-void VersionDownloader::issueSegmentRequest(const QString &url, const QString &tempPath,
-                                            int segIndex, int totalSegs, const QString &finalPath,
-                                            qint64 finalSize, qint64 start, qint64 end,
-                                            int retryCount)
+void VersionDownloader::onNetFileFailed(const NetFileParams &params)
 {
-    QNetworkRequest request;
-    request.setUrl(QUrl(url));
-    request.setRawHeader("Range", QString("bytes=%1-%2").arg(start).arg(end).toUtf8());
-    request.setTransferTimeout(300000);
-    // 参考 HMCL：强制 HTTP/1.1 避免 HTTP/2 + Range 协议错误
-    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-
-    QNetworkReply *reply = m_networkManager->get(request);
-    m_activeReplies.append(reply);
-
-    reply->setProperty("tempPath", tempPath);
-    reply->setProperty("segmentIndex", segIndex);
-    reply->setProperty("totalSegments", totalSegs);
-    reply->setProperty("finalPath", finalPath);
-    reply->setProperty("finalSize", finalSize);
-    reply->setProperty("segmentStart", start);
-    reply->setProperty("segmentEnd", end);
-    reply->setProperty("retryCount", retryCount);
-
-    connect(reply, &QNetworkReply::finished, this, &VersionDownloader::onSegmentReplyFinished);
-}
-
-void VersionDownloader::downloadFileSegments(const QString &url, const QString &filePath, qint64 fileSize)
-{
-    int maxSegments = qMax(2, SettingsManager::instance()->getDownloadThreadCount());
-    // BMCLAPI 对单 IP 并发限流严格（429），分段数压缩到 4；官方源维持原有策略
-    const int segmentCap = (m_downloadSource == BMCL) ? 4 : 128;
-    qint64 segCount = qMin(
-        static_cast<qint64>(maxSegments * 2),
-        qMax(static_cast<qint64>(2), fileSize / (512 * 1024))
-    );
-    if (segCount > segmentCap) segCount = segmentCap;
-    if (segCount > 128) segCount = 128;
-
-    m_segmentFallbackStarted = false;
-    qint64 segmentSize = fileSize / segCount;
-    m_tempSegmentDir = QFileInfo(filePath).absolutePath() + "/.tmpsegments_" + QFileInfo(filePath).fileName();
-
-    for (int i = 0; i < segCount; ++i)
-    {
-        qint64 start = i * segmentSize;
-        qint64 end = (i == segCount - 1) ? fileSize - 1 : (i + 1) * segmentSize - 1;
-        QString tempPath = m_tempSegmentDir + QString("/seg_%1.tmp").arg(i);
-
-        m_activeDownloadCount++;
-        issueSegmentRequest(url, tempPath, i, static_cast<int>(segCount),
-                            filePath, fileSize, start, end, 0);
-    }
-}
-
-void VersionDownloader::onSegmentReplyFinished()
-{
-    QNetworkReply *segReply = qobject_cast<QNetworkReply*>(sender());
-    if (!segReply) return;
-
     m_activeDownloadCount--;
-    if (m_isPaused || !m_isDownloading)
+    m_activeFileProgress.remove(params.filePath);
+
+    if (m_isPaused)
     {
-        cleanupActiveReply(segReply);
-        if (m_isPaused) return;
-        failDownload(tr("分段下载已取消"));
+        // 暂停：非客户端 JAR 的文件恢复后重新入队；客户端 JAR 由恢复路径整体重下
+        if (!params.isClientJar)
+            requeuePendingFile(params);
         return;
     }
+    if (!m_isDownloading) return;
 
-    if (segReply->error() != QNetworkReply::NoError)
-    {
-        int retries = segReply->property("retryCount").toInt();
-        const int statusCode = segReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        qWarning() << "分段下载失败 (第" << retries << "次重试后):" << segReply->errorString()
-                   << segReply->request().url().toString();
-        if (retries < 3 && !m_segmentFallbackStarted)
-        {
-            // 采集参数
-            qint64 start = segReply->property("segmentStart").toLongLong();
-            qint64 end = segReply->property("segmentEnd").toLongLong();
-            QString tempPath = segReply->property("tempPath").toString();
-            int segIndex = segReply->property("segmentIndex").toInt();
-            int totalSegs = segReply->property("totalSegments").toInt();
-            QString finalPath = segReply->property("finalPath").toString();
-            qint64 finalSize = segReply->property("finalSize").toLongLong();
-            QString url = segReply->request().url().toString();
-
-            cleanupActiveReply(segReply);
-            // 退避期间继续持有并发槽位，防止分段计数被并发收尾逻辑误判
-            m_activeDownloadCount++;
-
-            // 镜像限流（429/503）表现为瞬时失败，立即重试只会原地烧完重试次数
-            const bool rateLimited = (statusCode == 429 || statusCode == 503);
-            const int backoffMs = (rateLimited ? 2000 : 800) * (retries + 1);
-            const int epoch = m_reuseScanId;
-            QTimer::singleShot(backoffMs, this, [this, epoch, url, tempPath, segIndex, totalSegs,
-                                                 finalPath, finalSize, start, end, retries]() {
-                if (epoch != m_reuseScanId)
-                    return; // 任务已更换/取消：过期重试作废
-                if (m_segmentFallbackStarted)
-                    return; // 已降级单连接：分段重试作废
-                if (m_isPaused)
-                {
-                    // 暂停：丢弃该分段（恢复时整文件重新走分段下载）
-                    m_activeDownloadCount--;
-                    return;
-                }
-                if (!m_isDownloading)
-                {
-                    // 已取消/失败：abortAllActiveReplies 已将计数清零，无需释放
-                    return;
-                }
-                issueSegmentRequest(url, tempPath, segIndex, totalSegs,
-                                    finalPath, finalSize, start, end, retries + 1);
-            });
-            return;
-        }
-
-        if (m_segmentFallbackStarted)
-        {
-            // 已有降级下载在进行：本分段直接丢弃，不重复降级也不打断在途下载
-            cleanupActiveReply(segReply);
-            return;
-        }
-
-        // 重试耗尽，降级到单连接下载（同一文件只降级一次，防止并发分段互相踩踏）
-        m_segmentFallbackStarted = true;
-        cleanupActiveReply(segReply);
-        qWarning() << "分段下载重试耗尽，降级到单连接下载:" << segReply->request().url().toString();
-
-        // 清理所有进行中的分段请求
-        for (QNetworkReply *r : m_activeReplies)
-        {
-            r->disconnect();
-            r->abort();
-            r->deleteLater();
-        }
-        m_activeReplies.clear();
-        m_activeDownloadCount = 0;
-
-        // 清理临时分段目录
-        QDir(m_tempSegmentDir).removeRecursively();
-
-        // 降级到单连接下载
-        // isClientJar=true：降级下载完成后仍需走 proceedAfterClientJar 推进阶段，
-        // 否则任务会永远停在客户端 JAR 阶段（既不完成也不失败）
-        QString finalPath = segReply->property("finalPath").toString();
-        qint64 finalSize = segReply->property("finalSize").toLongLong();
-        downloadSingleFile(segReply->request().url().toString(), finalPath, finalSize,
-                           m_clientJarSha1, 0, m_clientJarFallbackUrl, true);
-        return;
-    }
-
-    QString tempPath = segReply->property("tempPath").toString();
-    QDir().mkpath(QFileInfo(tempPath).absolutePath());
-
-    QFile segFile(tempPath);
-    if (segFile.open(QIODevice::WriteOnly))
-    {
-        segFile.write(segReply->readAll());
-        segFile.close();
-    }
-
-    cleanupActiveReply(segReply);
-
-    QDir segDir(m_tempSegmentDir);
-    int totalSegs = segReply->property("totalSegments").toInt();
-    if (segDir.exists() && segDir.entryList(QDir::Files).count() >= totalSegs)
-    {
-        QString finalPath = segReply->property("finalPath").toString();
-        qint64 finalSize = segReply->property("finalSize").toLongLong();
-        QDir().mkpath(QFileInfo(finalPath).absolutePath());
-
-        QFile outFile(finalPath);
-        if (!outFile.open(QIODevice::WriteOnly))
-        {
-            QDir(m_tempSegmentDir).removeRecursively();
-            failDownload(tr("无法创建输出文件: %1").arg(finalPath));
-            return;
-        }
-
-        qint64 written = 0;
-        for (int j = 0; j < totalSegs; ++j)
-        {
-            QFile sf(QString("%1/seg_%2.tmp").arg(m_tempSegmentDir).arg(j));
-            if (sf.open(QIODevice::ReadOnly))
-            {
-                QByteArray d = sf.readAll();
-                sf.close();
-                outFile.write(d);
-                written += d.size();
-            }
-        }
-        outFile.close();
-        QDir(m_tempSegmentDir).removeRecursively();
-
-        m_downloadedBytes += finalSize;
-        updateTaskProgress(m_downloadedBytes, m_totalBytes);
-
-        proceedAfterClientJar();
-    }
+    failDownload(tr("下载失败 (已重试多次): %1").arg(QFileInfo(params.filePath).fileName()));
 }
 
-void VersionDownloader::downloadLogConfigs()
+void VersionDownloader::onNetFileAborted(const NetFileParams &params)
 {
-    // 参考 HMCL：下载 logging 配置文件 (log4j XML)
-    QString versionJsonPath = m_currentInstancePath + "/" + QFileInfo(m_currentInstancePath).fileName() + ".json";
-    QFile jsonFile(versionJsonPath);
-    if (!jsonFile.open(QIODevice::ReadOnly)) return;
+    m_activeDownloadCount--;
+    m_activeFileProgress.remove(params.filePath);
 
-    QJsonDocument doc = QJsonDocument::fromJson(jsonFile.readAll());
-    jsonFile.close();
-    QJsonObject root = doc.object();
-
-    if (!root.contains("logging") || !root["logging"].isObject()) return;
-    QJsonObject logging = root["logging"].toObject();
-    if (!logging.contains("client") || !logging["client"].isObject()) return;
-    QJsonObject client = logging["client"].toObject();
-    if (!client.contains("file") || !client["file"].isObject()) return;
-
-    QJsonObject fileInfo = client["file"].toObject();
-    QString fileId = fileInfo["id"].toString();
-    QString fileUrl = fileInfo["url"].toString();
-
-    if (fileId.isEmpty() || fileUrl.isEmpty()) return;
-
-    QString logConfigsDir = m_currentInstancePath + "/log_configs";
-    QDir().mkpath(logConfigsDir);
-    QString destPath = logConfigsDir + "/" + fileId;
-
-    // 已存在且大小匹配则跳过
-    if (QFile::exists(destPath))
+    if (m_isPaused)
     {
-        QFileInfo fi(destPath);
-        qint64 expectedSize = fileInfo["size"].toVariant().toLongLong();
-        if (fi.size() == expectedSize) return;
+        if (!params.isClientJar)
+            requeuePendingFile(params);
+        return;
     }
-
-    QNetworkRequest request;
-    request.setUrl(QUrl(fileUrl));
-    QNetworkReply* reply = m_networkManager->get(request);
-    m_activeReplies.append(reply);
-    connect(reply, &QNetworkReply::finished, [this, reply, destPath]() {
-        reply->deleteLater();
-        m_activeReplies.removeOne(reply);
-        if (reply->error() == QNetworkReply::NoError)
-        {
-            QFile file(destPath);
-            if (file.open(QIODevice::WriteOnly))
-            {
-                file.write(reply->readAll());
-                file.close();
-            }
-        }
-    });
+    // 运行中 abort 只发生在任务取消/失败：abortAllActiveReplies 已完成清理
 }
+
+void VersionDownloader::requeuePendingFile(const NetFileParams &params)
+{
+    PendingDownload pending;
+    pending.url = params.url;
+    pending.filePath = params.filePath;
+    pending.fileSize = params.fileSize;
+    pending.expectedHash = params.expectedHash;
+    pending.fallbackUrl = params.fallbackUrl;
+    if (m_currentPhase == DownloadPhase::Assets)
+        m_pendingAssets.enqueue(pending);
+    else
+        m_pendingDownloads.enqueue(pending);
+}
+
 
 void VersionDownloader::startLibrariesDownload()
 {
@@ -1309,7 +900,7 @@ void VersionDownloader::processLibraryQueue()
     {
         PendingDownload dl = m_pendingDownloads.dequeue();
         m_activeDownloadCount++;
-        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash, dl.retryCount,
+        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash,
                            dl.fallbackUrl);
     }
 }
@@ -1349,56 +940,42 @@ void VersionDownloader::fetchAssetIndex()
     updateTaskStatus(tr("正在获取资源索引"));
 
     QString assetUrl = assetIndex["url"].toString();
+    QString bmclUrl = assetUrl;
+    bmclUrl.replace(QStringLiteral("https://launchermeta.mojang.com"),
+                    QStringLiteral("https://bmclapi2.bangbang93.com"));
+    bmclUrl.replace(QStringLiteral("https://piston-meta.mojang.com"),
+                    QStringLiteral("https://bmclapi2.bangbang93.com"));
+
+    QStringList urls;
     if (m_downloadSource == BMCL)
-    {
-        assetUrl.replace("https://launchermeta.mojang.com", "https://bmclapi2.bangbang93.com");
-        assetUrl.replace("https://piston-meta.mojang.com", "https://bmclapi2.bangbang93.com");
-    }
+        urls << bmclUrl << assetUrl;
+    else
+        urls << assetUrl << bmclUrl;
+    urls.removeDuplicates();
 
-    QNetworkRequest request;
-    request.setUrl(QUrl(assetUrl));
-    QNetworkReply *reply = m_networkManager->get(request);
-    m_activeReplies.append(reply);
+    fetchJsonCached(urls, QStringLiteral("asset_indexes/") + assetId
+                        + QStringLiteral(".json"),
+        [this, assetId](bool ok, const QByteArray &data) {
+            if (!ok || data.isEmpty())
+            {
+                if (m_isDownloading && !m_isPaused)
+                    failDownload(tr("获取资源索引失败"));
+                return;
+            }
 
-    connect(reply, &QNetworkReply::finished, this, &VersionDownloader::onAssetIndexReplyFinished);
-}
+            QJsonDocument doc = QJsonDocument::fromJson(data);
+            QJsonObject rootObj = doc.object();
 
-void VersionDownloader::onAssetIndexReplyFinished()
-{
-    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) return;
+            ManifestCache::instance()->setAssetIndex(assetId, rootObj);
 
-    if (m_isPaused || !m_isDownloading)
-    {
-        cleanupActiveReply(reply);
-        return;
-    }
+            if (!rootObj.contains("objects"))
+            {
+                failDownload(tr("资源索引格式错误"));
+                return;
+            }
 
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        QString errMsg = tr("获取资源索引失败: %1").arg(reply->errorString());
-        cleanupActiveReply(reply);
-        failDownload(errMsg);
-        return;
-    }
-
-    QByteArray data = reply->readAll();
-    cleanupActiveReply(reply);
-
-    QJsonDocument doc = QJsonDocument::fromJson(data);
-    QJsonObject rootObj = doc.object();
-
-    QJsonObject assetIndex = m_currentVersionManifest["assetIndex"].toObject();
-    QString assetId = assetIndex["id"].toString();
-    ManifestCache::instance()->setAssetIndex(assetId, rootObj);
-
-    if (!rootObj.contains("objects"))
-    {
-        failDownload(tr("资源索引格式错误"));
-        return;
-    }
-
-    startAssetsFromIndex(rootObj["objects"].toObject(), assetId, data);
+            startAssetsFromIndex(rootObj["objects"].toObject(), assetId, data);
+        });
 }
 
 void VersionDownloader::startAssetsFromIndex(const QJsonObject &objects, const QString &assetId,
@@ -1564,7 +1141,7 @@ void VersionDownloader::processAssetQueue()
     {
         PendingDownload dl = m_pendingAssets.dequeue();
         m_activeDownloadCount++;
-        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash, dl.retryCount,
+        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash,
                            dl.fallbackUrl);
     }
 }
@@ -1618,16 +1195,6 @@ void VersionDownloader::setDownloadSource(DownloadSource source)
 VersionDownloader::DownloadSource VersionDownloader::downloadSource() const
 {
     return m_downloadSource;
-}
-
-QString VersionDownloader::getManifestUrl(const QString &versionId)
-{
-    Q_UNUSED(versionId);
-    if (m_downloadSource == BMCL)
-    {
-        return QString("https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json");
-    }
-    return QString("https://launchermeta.mojang.com/mc/game/version_manifest_v2.json");
 }
 
 QString VersionDownloader::getClientDownloadUrl(const QJsonObject &versionManifest)

@@ -768,14 +768,32 @@ void SettingsManager::setDownloadSource(DownloadSource source)
     m_settings->setValue("download/source", static_cast<int>(source));
 }
 
+FilePickerType SettingsManager::defaultFilePickerType()
+{
+    // 手机端没有通用的系统文件选择窗口，使用启动器自带的文件浏览器；
+    // 电脑端默认使用系统自带的文件资源管理器。
+    return Platform::isMobile() ? FilePickerType::BuiltIn : FilePickerType::System;
+}
+
 FilePickerType SettingsManager::getFilePickerType() const
 {
-    return static_cast<FilePickerType>(
-        m_settings->value("filePicker/type", static_cast<int>(FilePickerType::BuiltIn)).toInt());
+    // 手机端固定软件自带，避免旧设置或误选系统选择器后弹不出窗口
+    if (Platform::isMobile())
+        return FilePickerType::BuiltIn;
+
+    const int stored = m_settings->value(
+        "filePicker/type", static_cast<int>(defaultFilePickerType())).toInt();
+    if (stored == static_cast<int>(FilePickerType::System)
+        || stored == static_cast<int>(FilePickerType::BuiltIn))
+        return static_cast<FilePickerType>(stored);
+    return defaultFilePickerType();
 }
 
 void SettingsManager::setFilePickerType(FilePickerType type)
 {
+    // 手机端只保存软件自带，防止选择系统选择器后无法正常选择文件
+    if (Platform::isMobile())
+        type = FilePickerType::BuiltIn;
     m_settings->setValue("filePicker/type", static_cast<int>(type));
 }
 

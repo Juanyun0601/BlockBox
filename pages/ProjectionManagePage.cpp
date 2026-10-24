@@ -813,6 +813,13 @@ void ProjectionManagePage::onSearchTextChanged(const QString &text)
     placeCards();
 }
 
+void ProjectionManagePage::applyPageFilter(const QString &query)
+{
+    // 同步到页内搜索框：setText 触发 textChanged → 既有过滤管线
+    if (m_searchEdit)
+        m_searchEdit->setText(query);
+}
+
 void ProjectionManagePage::onAddProjectionClicked()
 {
     QString dirPath = projectionsDirPath();

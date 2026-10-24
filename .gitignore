@@ -21,6 +21,10 @@ ui_*.h
 # 测试/探针构建输出
 tests/debug/
 tests/release/
+tests/update_install_probe/build/
+tests/update_install_probe/work/
+tests/update_install_probe/setupwork/
+tests/update_install_probe/negwork/
 *.log
 
 # 备份文件

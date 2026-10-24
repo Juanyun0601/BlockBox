@@ -26,6 +26,8 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <QTemporaryFile>
+#include <QTimer>
 
 #include "components/AppMessageBox.h"
 #include "platform.h"
@@ -183,13 +185,6 @@ bool isInstalledEdition()
 #endif
 }
 
-// PowerShell 单引号字符串转义
-QString psQuote(QString path)
-{
-    path.replace(QLatin1Char('\''), QStringLiteral("''"));
-    return path;
-}
-
 // 清理 Release 说明文本用于弹窗展示：统一换行（弹窗支持 Markdown 滚动，不再截断）
 QString normalizeNotes(const QString &notes)
 {
@@ -245,25 +240,29 @@ QString shQuote(QString path)
     return path;
 }
 
-// 桌面平台安装确认文案（按平台与发行形态区分）
-QString installConfirmText()
+// 桌面平台安装确认文案（按平台与更新包形态区分）
+QString installConfirmText(bool setupPackage = false)
 {
 #if defined(Q_OS_WIN)
-    if (isInstalledEdition())
+    if (setupPackage)
         return QCoreApplication::translate("UpdateChecker",
-            "将关闭方块盒子并静默运行安装程序完成更新，确定继续吗？");
+            "将关闭方块盒子，静默运行安装程序把新版本装到当前程序目录，"
+            "完成后自动重新打开，确定继续吗？");
     return QCoreApplication::translate("UpdateChecker",
-        "将解压更新包覆盖当前程序目录并重启方块盒子，确定继续吗？");
+        "将关闭方块盒子，用更新包里的文件覆盖当前程序目录，完成后自动重新打开，确定继续吗？");
 #elif defined(Q_OS_HARMONY)
+    Q_UNUSED(setupPackage)
     return QCoreApplication::translate("UpdateChecker",
         "将尝试通过系统包管理器安装更新；若无权限将提供手动安装命令，确定继续吗？");
 #elif defined(Q_OS_LINUX)
+    Q_UNUSED(setupPackage)
     if (isInstalledEdition())
         return QCoreApplication::translate("UpdateChecker",
             "将打开系统授权安装更新，完成后自动重新启动方块盒子，确定继续吗？");
     return QCoreApplication::translate("UpdateChecker",
         "将解压更新包到当前应用目录旁并从新版本目录重启，确定继续吗？");
 #else
+    Q_UNUSED(setupPackage)
     return QCoreApplication::translate("UpdateChecker",
         "将关闭方块盒子并完成更新安装，确定继续吗？");
 #endif
@@ -271,56 +270,486 @@ QString installConfirmText()
 
 // 桌面平台（Windows/Linux）按发行形态启动延迟安装流程；
 // 返回 false 表示当前平台没有可用的应用内安装方式。
-bool launchDesktopUpdateInstaller(const QString &packagePath)
-{
+
 #if defined(Q_OS_WIN)
-    // PowerShell 延迟 2 秒启动，确保本进程完全退出后再写入文件
-    const QFileInfo appExe(QCoreApplication::applicationFilePath());
-    const QString appDir = QDir::toNativeSeparators(appExe.absolutePath());
-    const QString appExeName = appExe.fileName();
-    const QString package = QDir::toNativeSeparators(packagePath);
-    QString command;
-    if (isInstalledEdition()) {
-        // 安装版：静默运行 Inno 安装程序（BlockBox.iss 支持 /VERYSILENT）
-        command = QStringLiteral(
-            "Start-Sleep -Seconds 2; "
-            "& '%1' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART")
-            .arg(psQuote(package));
-    } else {
-        // 绿色版：解压覆盖应用目录后重新启动
-        command = QStringLiteral(
-            "Start-Sleep -Seconds 2; "
-            "Expand-Archive -LiteralPath '%1' -DestinationPath '%2' -Force; "
-            "Start-Process '%3\\%4'")
-            .arg(psQuote(package), psQuote(appDir), psQuote(appDir), psQuote(appExeName));
+// ─────────────────────────── Windows 应用内更新 ───────────────────────────
+//
+// 官方 Windows 资产有两种形态：
+//   安装包      BlockBox-<版本>-win64-setup.exe      （Inno Setup，支持 /VERYSILENT）
+//   免安装压缩包 BlockBox-<版本>-win64-portable.zip   （顶层还套着一层版本目录）
+//
+// 旧实现把 zip 直接 Expand-Archive 到程序目录，官方包里那一层版本目录会让文件
+// 全部解到 <程序目录>/BlockBox-<版本>-win64-portable/ 下面，原来那份程序一个字节
+// 都没被替换，重启后仍是旧版本——这就是「拖入新版本文件却装不上」的直接原因。
+// 另外固定 Start-Sleep 2 秒并不能保证旧进程已经退出，安装程序会因文件被占用
+// 而静默失败；失败后也无任何提示。
+//
+// 现在的做法：
+//   1. 判定包形态；免安装包先在应用内解压到临时目录，并找到真正放着程序的目录；
+//   2. 写一份后台辅助脚本，等旧进程完全退出后再覆盖文件或静默运行安装包；
+//   3. 成功后重新打开方块盒子，失败时弹窗说明原因并重新打开原版本。
+
+enum class WinPackageKind { Unknown, Setup, Portable };
+
+WinPackageKind winPackageKind(const QString &packagePath)
+{
+    const QString lower = QFileInfo(packagePath).fileName().toLower();
+    if (lower.endsWith(QStringLiteral(".exe")))
+        return WinPackageKind::Setup;
+    if (lower.endsWith(QStringLiteral(".zip")))
+        return WinPackageKind::Portable;
+    return WinPackageKind::Unknown;
+}
+
+// 本次更新的暂存目录：解压出来的新版本、辅助脚本与日志都放这里
+QString updateStagingDir()
+{
+    return QDir(QDir::tempPath())
+        .filePath(QStringLiteral("BlockBox-update-%1").arg(QCoreApplication::applicationPid()));
+}
+
+// 清掉可能残留的暂存目录（上次失败、或这次解压中途出错）
+void removeUpdateStagingDir()
+{
+    QDir(updateStagingDir()).removeRecursively();
+}
+
+// 读 PE 头里的机器类型，用来挡住「把 arm64 包拖到 x64 版本上」这类错包
+quint16 peMachineType(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return 0;
+    const QByteArray head = file.read(4096);
+    if (head.size() < 0x40)
+        return 0;
+    const uchar *data = reinterpret_cast<const uchar *>(head.constData());
+    const quint32 peOffset = quint32(data[0x3C]) | (quint32(data[0x3D]) << 8)
+        | (quint32(data[0x3E]) << 16) | (quint32(data[0x3F]) << 24);
+    if (peOffset + 6 > quint32(head.size()))
+        return 0;
+    if (head.at(int(peOffset)) != 'P' || head.at(int(peOffset) + 1) != 'E')
+        return 0;
+    return quint16(quint8(head.at(int(peOffset) + 4))
+                   | (quint16(quint8(head.at(int(peOffset) + 5))) << 8));
+}
+
+QString peMachineName(quint16 machine)
+{
+    switch (machine) {
+    case 0x8664: return QStringLiteral("x64");
+    case 0xAA64: return QStringLiteral("arm64");
+    case 0x014C: return QStringLiteral("x86");
+    default:     return QString();
     }
-    QProcess::startDetached(QStringLiteral("powershell.exe"),
-                            {QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"),
-                             QStringLiteral("Hidden"), QStringLiteral("-Command"), command});
+}
+
+// 用 PowerShell -File 运行脚本：参数走 argv，中文与空格路径都不需要手工拼引号
+bool runPowerShellScript(const QString &scriptPath, const QStringList &arguments, QString *error)
+{
+    QProcess process;
+    process.setProgram(QStringLiteral("powershell.exe"));
+    process.setArguments(QStringList{QStringLiteral("-NoProfile"),
+                                     QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
+                                     QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"),
+                                     QStringLiteral("-File"), scriptPath}
+                         + arguments);
+    process.start();
+    if (!process.waitForStarted(15000)) {
+        *error = QCoreApplication::translate("UpdateChecker",
+                                             "无法启动系统解压组件（PowerShell）");
+        return false;
+    }
+    if (!process.waitForFinished(180000)) {
+        process.kill();
+        process.waitForFinished(3000);
+        *error = QCoreApplication::translate("UpdateChecker", "解压更新包超时，请稍后重试");
+        return false;
+    }
+    const QString errText = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        *error = errText.isEmpty()
+            ? QCoreApplication::translate("UpdateChecker", "解压更新包失败")
+            : errText;
+        return false;
+    }
     return true;
-#elif defined(Q_OS_LINUX)
+}
+
+// 写 UTF-8 BOM 的脚本文件：Windows PowerShell 5.1 只有带 BOM 才按 UTF-8 解析，否则中文乱码
+bool writePowerShellScript(const QString &path, const QString &script, QString *error)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        *error = QCoreApplication::translate("UpdateChecker", "无法写入临时文件：%1").arg(path);
+        return false;
+    }
+    file.write("\xEF\xBB\xBF");
+    file.write(script.toUtf8());
+    file.close();
+    return true;
+}
+
+// 在解压结果里找「真正放着主程序」的目录：
+// 兼容官方包的一层版本目录，也兼容直接平铺（或多套一层）的包
+QString locatePayloadRoot(const QString &rootPath, const QString &exeName)
+{
+    if (QFileInfo::exists(QDir(rootPath).filePath(exeName)))
+        return rootPath;
+
+    const QFileInfoList entries =
+        QDir(rootPath).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &entry : entries) {
+        if (QFileInfo::exists(QDir(entry.absoluteFilePath()).filePath(exeName)))
+            return entry.absoluteFilePath();
+    }
+    for (const QFileInfo &entry : entries) {
+        const QFileInfoList children =
+            QDir(entry.absoluteFilePath())
+                .entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QFileInfo &child : children) {
+            if (QFileInfo::exists(QDir(child.absoluteFilePath()).filePath(exeName)))
+                return child.absoluteFilePath();
+        }
+    }
+    return QString();
+}
+
+// 解压脚本（独立脚本文件，避免 -Command 里的引号转义问题）
+const char *kExtractScript = R"PSEOF(
+param([string]$Zip, [string]$Dest)
+$ErrorActionPreference = 'Stop'
+try {
+    if (-not (Test-Path -LiteralPath $Dest)) { New-Item -ItemType Directory -Force -Path $Dest | Out-Null }
+    Expand-Archive -LiteralPath $Zip -DestinationPath $Dest -Force -ErrorAction Stop
+    exit 0
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
+)PSEOF";
+
+// 安装脚本：等旧进程退出 → 覆盖/安装 → 重新启动；任何失败都弹窗并重开原版本
+const char *kInstallScript = R"PSEOF(
+param(
+    [int]$AppPid,
+    [string]$AppDir,
+    [string]$ExeName,
+    [string]$Kind,
+    [string]$Package,
+    [string]$PayloadDir,
+    [string]$StagingDir,
+    [string]$LogPath,
+    [int]$NeedElevate,
+    [int]$Elevated
+)
+$ErrorActionPreference = 'Stop'
+
+function Write-Note([string]$text) {
+    try {
+        if ($LogPath) {
+            $line = '[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] ' + $text
+            Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+        }
+    } catch { }
+}
+
+function Show-Tip([string]$text, [int]$icon) {
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        [void]$shell.Popup($text, 0, '方块盒子 更新', $icon)
+    } catch { }
+}
+
+function Start-BlockBox {
+    try {
+        $exe = Join-Path $AppDir $ExeName
+        if (-not (Test-Path -LiteralPath $exe)) { return $false }
+        if ($Elevated -eq 1) {
+            # 提权运行时改用资源管理器启动，避免新版本跟着以管理员身份运行
+            Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $exe + '"')
+        } else {
+            Start-Process -FilePath $exe -WorkingDirectory $AppDir
+        }
+        return $true
+    } catch {
+        Write-Note ('启动方块盒子失败：' + $_.Exception.Message)
+        return $false
+    }
+}
+
+function Stop-WithError([string]$text) {
+    Write-Note ('失败：' + $text)
+    $message = '方块盒子未能完成更新。' + "`r`n`r`n" + $text
+    if ($LogPath) { $message = $message + "`r`n`r`n" + '详细日志：' + $LogPath }
+    Show-Tip $message 16
+    [void](Start-BlockBox)
+    exit 1
+}
+
+Write-Note ('开始更新：Kind=' + $Kind + '；Package=' + $Package + '；AppDir=' + $AppDir)
+
+# 0) 程序目录不可写（例如装在 Program Files）时，申请一次管理员权限继续
+if (($NeedElevate -eq 1) -and ($Elevated -eq 0)) {
+    Write-Note '程序目录需要管理员权限，尝试提权重试'
+    $argumentLine = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+        '-File', ('"' + $PSCommandPath + '"'),
+        '-AppPid', $AppPid,
+        '-AppDir', ('"' + $AppDir + '"'),
+        '-ExeName', ('"' + $ExeName + '"'),
+        '-Kind', $Kind,
+        '-Package', ('"' + $Package + '"'),
+        '-PayloadDir', ('"' + $PayloadDir + '"'),
+        '-StagingDir', ('"' + $StagingDir + '"'),
+        '-LogPath', ('"' + $LogPath + '"'),
+        '-NeedElevate', '0',
+        '-Elevated', '1'
+    ) -join ' '
+    try {
+        Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argumentLine
+        exit 0
+    } catch {
+        Stop-WithError '写入程序目录需要管理员权限，但未能获得授权。'
+    }
+}
+
+# 1) 等旧进程真正退出：固定等待会抢在退出前写文件，安装程序只能失败
+$deadline = (Get-Date).AddSeconds(120)
+while ($AppPid -gt 0 -and (Get-Date) -lt $deadline) {
+    if (-not (Get-Process -Id $AppPid -ErrorAction SilentlyContinue)) { break }
+    Start-Sleep -Milliseconds 200
+}
+Start-Sleep -Milliseconds 600
+if ($AppPid -gt 0 -and (Get-Process -Id $AppPid -ErrorAction SilentlyContinue)) {
+    Stop-WithError '旧版本仍在运行，无法覆盖程序文件。'
+}
+
+$dataDir = Join-Path $AppDir 'BlockBox'
+$dataBackup = Join-Path $StagingDir 'data-backup'
+
+# 2) 安装
+if ($Kind -eq 'setup') {
+    # 安装包里带了一份出厂数据目录，先备份用户数据，装完再放回，
+    # 避免账户、设置、收藏这些真正的用户数据被更新包里的默认值覆盖
+    if (Test-Path -LiteralPath $dataDir) {
+        Write-Note '备份用户数据目录'
+        robocopy $dataDir $dataBackup /E /R:3 /W:1 /NFL /NDL /NJH /NJS | Out-Null
+    }
+    $setupLog = Join-Path $StagingDir 'setup.log'
+    $setupArgs = @(
+        '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CLOSEAPPLICATIONS',
+        ('/DIR="' + $AppDir + '"'),
+        ('/LOG="' + $setupLog + '"')
+    )
+    Write-Note ('运行安装程序：' + $Package)
+    $code = -1
+    try {
+        $proc = Start-Process -FilePath $Package -ArgumentList $setupArgs -Wait -PassThru
+        $code = $proc.ExitCode
+    } catch {
+        Stop-WithError ('无法启动安装程序：' + $_.Exception.Message)
+    }
+    Write-Note ('安装程序退出码：' + $code)
+    if ($code -ne 0) {
+        Stop-WithError ('安装程序未能完成安装（退出码 ' + $code + '）。')
+    }
+    if (Test-Path -LiteralPath $dataBackup) {
+        Write-Note '还原用户数据目录'
+        robocopy $dataBackup $dataDir /E /IS /R:3 /W:1 /NFL /NDL /NJH /NJS | Out-Null
+    }
+} else {
+    if (($PayloadDir -eq '') -or -not (Test-Path -LiteralPath $PayloadDir)) {
+        Stop-WithError '更新包里没有找到可用的程序文件。'
+    }
+    Write-Note '把新版本文件覆盖到程序目录'
+    # 跳过用户数据目录：更新只替换程序文件，不碰账户、设置与游戏数据
+    robocopy $PayloadDir $AppDir /E /IS /IT /R:10 /W:1 /NFL /NDL /NJH /NJS /XD 'BlockBox' '.minecraft' 'BedrockData' | Out-Null
+    $code = $LASTEXITCODE
+    Write-Note ('复制结果代码：' + $code)
+    if ($code -ge 8) {
+        Stop-WithError ('复制更新文件失败（错误码 ' + $code + '），可能有程序正在占用文件。')
+    }
+}
+
+# 3) 启动新版本
+Write-Note '更新完成，重新打开方块盒子'
+if (-not (Start-BlockBox)) {
+    Show-Tip '更新已经完成，但没能自动打开方块盒子，请手动启动。' 48
+    exit 1
+}
+
+# 4) 交给独立进程延迟清理暂存目录（脚本自身还在里面，不能直接删）
+try {
+    $cleanup = '/c ping -n 3 127.0.0.1 >nul & rmdir /s /q "' + $StagingDir + '"'
+    Start-Process -FilePath 'cmd.exe' -ArgumentList $cleanup -WindowStyle Hidden
+} catch { }
+exit 0
+)PSEOF";
+
+/**
+ * @brief 准备 Windows 更新：识别包形态，免安装包先在应用内解压并定位程序目录
+ * @param packagePath 更新包绝对路径
+ * @param[out] isSetup 是否为 setup.exe 安装包
+ * @param[out] payloadDir 免安装包解压后真正的程序目录（安装包为空）
+ * @param[out] error 失败原因（面向用户的说明）
+ */
+bool prepareWindowsUpdate(const QString &packagePath, bool *isSetup, QString *payloadDir,
+                          QString *error)
+{
+    const WinPackageKind kind = winPackageKind(packagePath);
+    if (kind == WinPackageKind::Unknown) {
+        *error = QCoreApplication::translate("UpdateChecker",
+                                             "无法识别这个文件的类型，需要 setup.exe 或 portable.zip");
+        return false;
+    }
+
+    *isSetup = kind == WinPackageKind::Setup;
+    payloadDir->clear();
+    if (*isSetup)
+        return true; // 安装包交给安装程序自己解压
+
+    const QString stagingDir = updateStagingDir();
+    const QString extractDir = QDir(stagingDir).filePath(QStringLiteral("payload"));
+    removeUpdateStagingDir(); // 上一次失败可能留下半截解压结果
+    if (!QDir().mkpath(extractDir)) {
+        *error = QCoreApplication::translate("UpdateChecker",
+                                             "无法创建更新临时目录：%1").arg(stagingDir);
+        return false;
+    }
+    const QString extractScript = QDir(stagingDir).filePath(QStringLiteral("extract.ps1"));
+    if (!writePowerShellScript(extractScript, QString::fromLatin1(kExtractScript), error)) {
+        removeUpdateStagingDir();
+        return false;
+    }
+    if (!runPowerShellScript(extractScript,
+                             {QStringLiteral("-Zip"), packagePath,
+                              QStringLiteral("-Dest"), extractDir},
+                             error)) {
+        removeUpdateStagingDir();
+        return false;
+    }
+
+    const QString exeName = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
+    const QString root = locatePayloadRoot(extractDir, exeName);
+    if (root.isEmpty()) {
+        *error = QCoreApplication::translate("UpdateChecker",
+                                             "更新包里没有找到 %1，可能不是完整的更新包")
+                     .arg(exeName);
+        removeUpdateStagingDir();
+        return false;
+    }
+
+    // 防止把另一个架构的包装上来（例如把 winarm64 包拖进 x64 版本）
+    const QString newExe = QDir(root).filePath(exeName);
+    if (QFileInfo(newExe).size() <= 0) {
+        *error = QCoreApplication::translate("UpdateChecker", "更新包里的程序文件是空的，已停止安装");
+        removeUpdateStagingDir();
+        return false;
+    }
+    const quint16 currentMachine = peMachineType(QCoreApplication::applicationFilePath());
+    const quint16 incomingMachine = peMachineType(newExe);
+    if (currentMachine != 0 && incomingMachine != 0 && currentMachine != incomingMachine) {
+        *error = QCoreApplication::translate("UpdateChecker",
+                                             "这个更新包是给 %1 用的，当前版本是 %2，不能直接安装")
+                     .arg(peMachineName(incomingMachine), peMachineName(currentMachine));
+        removeUpdateStagingDir();
+        return false;
+    }
+
+    *payloadDir = root;
+    return true;
+}
+
+/**
+ * @brief 启动后台辅助脚本完成安装
+ *
+ * 脚本会等当前进程退出后再动手，所以调用方在返回 true 后即可退出应用。
+ */
+bool launchWindowsUpdate(const QString &packagePath, bool isSetup, const QString &payloadDir,
+                         QString *error)
+{
     const QFileInfo appExe(QCoreApplication::applicationFilePath());
     const QString appDir = appExe.absolutePath();
-    if (isInstalledEdition()) {
-        // deb：polkit 授权后 dpkg 安装，成功即重启应用
-        const QString cmd = QStringLiteral("sleep 2; pkexec dpkg -i '%1' && exec '%2'")
-            .arg(shQuote(packagePath), shQuote(appExe.absoluteFilePath()));
-        QProcess::startDetached(QStringLiteral("sh"), {QStringLiteral("-c"), cmd});
-    } else {
-        // tar.gz：包内为带顶层版本目录的目录树，解压到应用目录旁后从新目录启动
-        const QString parentDir = QFileInfo(appDir).absolutePath();
-        const QString topDir = QFileInfo(packagePath).completeBaseName();
-        const QString cmd = QStringLiteral("sleep 2; tar -xzf '%1' -C '%2' && exec '%3/%4/%5'")
-            .arg(shQuote(packagePath), shQuote(parentDir), shQuote(parentDir),
-                 shQuote(topDir), shQuote(appExe.fileName()));
-        QProcess::startDetached(QStringLiteral("sh"), {QStringLiteral("-c"), cmd});
+    const QString stagingDir = updateStagingDir();
+    if (!QDir().mkpath(stagingDir)) {
+        *error = QCoreApplication::translate("UpdateChecker",
+                                             "无法创建更新临时目录：%1").arg(stagingDir);
+        return false;
+    }
+
+    const QString scriptPath = QDir(stagingDir).filePath(QStringLiteral("install.ps1"));
+    if (!writePowerShellScript(scriptPath, QString::fromLatin1(kInstallScript), error)) {
+        removeUpdateStagingDir();
+        return false;
+    }
+
+    // 程序目录不可写（装在 Program Files 这类位置）时，辅助脚本会申请一次管理员权限
+    bool needElevate = false;
+    {
+        QTemporaryFile probe(QDir(appDir).filePath(QStringLiteral("bb_update_probe_XXXXXX")));
+        needElevate = !probe.open();
+    }
+
+    const QString logPath = QDir(stagingDir).filePath(QStringLiteral("update.log"));
+    const QStringList arguments{
+        QStringLiteral("-NoProfile"),
+        QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
+        QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"),
+        QStringLiteral("-File"), scriptPath,
+        QStringLiteral("-AppPid"), QString::number(QCoreApplication::applicationPid()),
+        QStringLiteral("-AppDir"), appDir,
+        QStringLiteral("-ExeName"), appExe.fileName(),
+        QStringLiteral("-Kind"), isSetup ? QStringLiteral("setup") : QStringLiteral("portable"),
+        QStringLiteral("-Package"), packagePath,
+        QStringLiteral("-PayloadDir"), payloadDir,
+        QStringLiteral("-StagingDir"), stagingDir,
+        QStringLiteral("-LogPath"), logPath,
+        QStringLiteral("-NeedElevate"), needElevate ? QStringLiteral("1") : QStringLiteral("0"),
+        QStringLiteral("-Elevated"), QStringLiteral("0"),
+    };
+    if (!QProcess::startDetached(QStringLiteral("powershell.exe"), arguments)) {
+        *error = QCoreApplication::translate("UpdateChecker", "无法启动更新辅助程序，请手动安装");
+        removeUpdateStagingDir();
+        return false;
     }
     return true;
-#else
-    Q_UNUSED(packagePath);
-    return false;
-#endif
 }
+#endif // Q_OS_WIN
+
+#if defined(Q_OS_LINUX)
+// 等当前进程退出后再安装：固定 sleep 会抢在退出前写文件
+QString waitForSelfExitScript()
+{
+    return QStringLiteral("while kill -0 %1 2>/dev/null; do sleep 0.2; done; sleep 0.5;")
+        .arg(QCoreApplication::applicationPid());
+}
+
+bool launchLinuxUpdateInstaller(const QString &packagePath)
+{
+    const QFileInfo appExe(QCoreApplication::applicationFilePath());
+    const QString appDir = appExe.absolutePath();
+    const QString wait = waitForSelfExitScript();
+
+    if (isInstalledEdition()) {
+        // deb：polkit 授权后 dpkg 安装，成功即重启应用
+        const QString cmd = QStringLiteral("%1 pkexec dpkg -i '%2' && exec '%3'")
+            .arg(wait, shQuote(packagePath), shQuote(appExe.absoluteFilePath()));
+        QProcess::startDetached(QStringLiteral("sh"), {QStringLiteral("-c"), cmd});
+        return true;
+    }
+
+    // tar.gz：包内为带顶层版本目录的目录树；顶层目录名从包里取，不靠文件名猜
+    const QString parentDir = QFileInfo(appDir).absolutePath();
+    const QString script = QStringLiteral(
+        "%1 TOP=$(tar -tzf '%2' 2>/dev/null | head -1 | cut -d/ -f1); "
+        "tar -xzf '%2' -C '%3' && exec '%3'/$TOP/'%4'")
+        .arg(wait, shQuote(packagePath), shQuote(parentDir), shQuote(appExe.fileName()));
+    QProcess::startDetached(QStringLiteral("sh"),
+                            {QStringLiteral("-c"), QStringLiteral("sh -c ") + shQuote(script)});
+    return true;
+}
+#endif // Q_OS_LINUX
 
 } // namespace
 
@@ -905,10 +1334,11 @@ bool UpdateChecker::isUpdatePackageFile(const QString &filePath)
         return false;
 
 #if defined(Q_OS_WIN)
-    return lower.endsWith(QStringLiteral("-setup.exe"))
-        || lower.endsWith(QStringLiteral("setup.exe"))
-        || lower.endsWith(QStringLiteral("-portable.zip"))
-        || lower.endsWith(QStringLiteral("portable.zip"));
+    // 桌面端只区分「安装包」和「免安装压缩包」，具体是哪种交给安装流程判断。
+    // 不再要求文件名以 -setup.exe / -portable.zip 结尾：浏览器重复下载会加
+    // " (1)" 后缀，改名后以前会被当成无关文件直接忽略，拖进来毫无反应。
+    return lower.endsWith(QStringLiteral(".exe"))
+        || lower.endsWith(QStringLiteral(".zip"));
 #elif defined(Q_OS_ANDROID)
     return lower.endsWith(QStringLiteral(".apk"));
 #elif defined(Q_OS_HARMONY)
@@ -978,17 +1408,51 @@ void UpdateChecker::installPackageAtPath(QWidget *parent, const QString &package
     m_downloadPath = packagePath;
     HarmonyBridge::instance()->installHap(packagePath);
 #else
+#if defined(Q_OS_WIN)
+    const bool setupPackage = winPackageKind(packagePath) == WinPackageKind::Setup;
+#else
+    const bool setupPackage = false;
+#endif
     if (parent) {
         const auto choice = AppMessageBox::question(
-            parent, tr("安装更新"), installConfirmText(),
+            parent, tr("安装更新"), installConfirmText(setupPackage),
             AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::Yes);
         if (choice != AppMessageBox::Yes)
             return;
     }
-    if (launchDesktopUpdateInstaller(packagePath))
-        QCoreApplication::quit();
+
+#if defined(Q_OS_WIN)
+    // 先在应用内完成识别与解压：出问题时还能当场提示，而不是关掉程序就没下文
+    bool isSetup = false;
+    QString payloadDir;
+    QString errorText;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const bool prepared = prepareWindowsUpdate(packagePath, &isSetup, &payloadDir, &errorText);
+    QApplication::restoreOverrideCursor();
+    if (!prepared) {
+        if (parent)
+            AppMessageBox::warning(parent, tr("安装更新"),
+                                   tr("这个更新包无法安装：\n%1\n\n%2")
+                                       .arg(QDir::toNativeSeparators(packagePath), errorText));
+        return;
+    }
+    if (!launchWindowsUpdate(packagePath, isSetup, payloadDir, &errorText)) {
+        if (parent)
+            AppMessageBox::warning(parent, tr("安装更新"), errorText);
+        return;
+    }
+    // 拖放事件里直接 quit 会打断 OLE 拖拽的收尾，放到下一轮事件循环再退出
+    QTimer::singleShot(0, qApp, []() { QCoreApplication::quit(); });
+#elif defined(Q_OS_LINUX)
+    if (launchLinuxUpdateInstaller(packagePath))
+        QTimer::singleShot(0, qApp, []() { QCoreApplication::quit(); });
     else if (parent)
         AppMessageBox::information(parent, tr("安装更新"),
                                    tr("当前平台暂不支持应用内更新，请前往浏览器手动安装。"));
+#else
+    if (parent)
+        AppMessageBox::information(parent, tr("安装更新"),
+                                   tr("当前平台暂不支持应用内更新，请前往浏览器手动安装。"));
+#endif
 #endif
 }

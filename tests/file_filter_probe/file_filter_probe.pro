@@ -70,5 +70,5 @@ HEADERS += ../../pages/InstanceFilePage.h \
            ../../utils/GithubAccelerator.h \
            fake/utils/ThemeManager.h
 
-RESOURCES += ../../resources.qrc
+RESOURCES += ../../resources.qrc ../../resources_data.qrc
 LIBS    += -lgdi32 -lole32 -lshell32 -lshlwapi -luser32 -ladvapi32 -lws2_32 -loleaut32 -luuid -lcomdlg32

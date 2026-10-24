@@ -71,8 +71,10 @@ const char *kAccentNames[6] = {
     "\u7425\u73C0",     // 琥珀
     "\u5929\u9752",     // 天青
 };
+// 首色必须与应用一贯的翡翠绿主色（#2E7D32）一致，否则当前主题色不在这 6 个预设里时
+// 会被回落到第 0 格，界面上会把一个偏亮的 #10B981 当成「当前强调色」显示。
 const char *kAccentHex[6] = {
-    "#10B981", "#6366F1", "#8B5CF6", "#EC4899", "#F59E0B", "#06B6D4",
+    "#2E7D32", "#6366F1", "#8B5CF6", "#EC4899", "#F59E0B", "#06B6D4",
 };
 
 /// 在下载目录里查找 bin/java(.exe)：解压后的目录层级由压缩包决定，逐层向下找
@@ -223,10 +225,11 @@ void OnboardingWizard::buildStepper(QWidget *parent)
 {
     m_stepperWidget = new QWidget(parent);
     m_stepperWidget->setObjectName(QStringLiteral("obwStepper"));
-    m_stepperWidget->setFixedHeight(58);
+    // 圆点 34 + 间距 3 + 标签 ~18 ≈ 55，再加上下留白；过矮会把步骤文字裁掉
+    m_stepperWidget->setFixedHeight(72);
 
     QHBoxLayout *lay = new QHBoxLayout(m_stepperWidget);
-    lay->setContentsMargins(32, 8, 32, 8);
+    lay->setContentsMargins(32, 8, 32, 10);
     lay->setSpacing(10);
 
     const QStringList labels = {
@@ -250,7 +253,7 @@ void OnboardingWizard::buildStepper(QWidget *parent)
         if (i > 0) {
             QFrame *line = new QFrame(m_stepperWidget);
             line->setObjectName(QStringLiteral("obwStepLine"));
-            line->setFixedSize(40, 2);
+            line->setFixedSize(52, 3);
             lay->addWidget(line, 0, Qt::AlignVCenter);
             m_stepLines.append(line);
         }
@@ -259,7 +262,7 @@ void OnboardingWizard::buildStepper(QWidget *parent)
         node->setObjectName(QStringLiteral("obwStepNode"));
         QVBoxLayout *nLay = new QVBoxLayout(node);
         nLay->setContentsMargins(2, 0, 2, 0);
-        nLay->setSpacing(3);
+        nLay->setSpacing(4);
         nLay->setAlignment(Qt::AlignCenter);
 
         QLabel *dot = new QLabel(QString::number(i + 1), node);
@@ -287,10 +290,10 @@ QWidget *OnboardingWizard::buildFooter(QWidget *parent)
 {
     QFrame *footer = new QFrame(parent);
     footer->setObjectName(QStringLiteral("obwFooter"));
-    footer->setFixedHeight(64);
+    footer->setFixedHeight(68);
 
     QHBoxLayout *lay = new QHBoxLayout(footer);
-    lay->setContentsMargins(28, 10, 28, 10);
+    lay->setContentsMargins(28, 12, 28, 12);
     lay->setSpacing(10);
 
     m_footerHint = new QLabel(tr("\u9009\u62E9\u4E00\u4E2A\u5F15\u5BFC\u65B9\u5F0F\u5F00\u59CB"), footer);
@@ -328,7 +331,9 @@ void OnboardingWizard::buildStep0()
     OutlinedLabel *title = new OutlinedLabel(
         tr("\u9009\u62E9\u8BED\u8A00") + QStringLiteral("  \u00B7  Select Language  \u00B7  \u3053\u3068\u3070\u3092\u9078\u629E"), page);
     title->setObjectName(QStringLiteral("obwPageTitle"));
-    title->setWordWrap(true);
+    title->setWordWrap(false);
+    title->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    title->setFixedHeight(34);
     lay->addWidget(title);
 
     QLabel *desc = new QLabel(
@@ -355,6 +360,12 @@ void OnboardingWizard::buildStep0()
           QStringLiteral("English"), QStringLiteral("English"), QStringLiteral("EN") },
         { LanguageManager::Spanish,
           QStringLiteral("Espa\u00F1ol"), QStringLiteral("Spanish"), QStringLiteral("ES") },
+        { LanguageManager::Japanese,
+          QStringLiteral("\u65E5\u672C\u8A9E"),                 // 日本語
+          QStringLiteral("Japanese"), QStringLiteral("JA") },
+        { LanguageManager::Russian,
+          QStringLiteral("\u0420\u0443\u0441\u0441\u043A\u0438\u0439"), // Русский
+          QStringLiteral("Russian"), QStringLiteral("RU") },
     };
 
     QButtonGroup *group = new QButtonGroup(this);
@@ -365,8 +376,9 @@ void OnboardingWizard::buildStep0()
         card->setObjectName(QStringLiteral("obwMethodCard")); // 复用引导方式卡片样式
         card->setCheckable(true);
         card->setCursor(Qt::PointingHandCursor);
-        card->setMinimumHeight(150);
-        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        card->setMinimumHeight(140);
+        card->setMaximumHeight(160);
+        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
         QVBoxLayout *clay = new QVBoxLayout(card);
         clay->setContentsMargins(18, 20, 18, 18);
@@ -398,12 +410,15 @@ void OnboardingWizard::buildStep0()
     }
 
     connect(group, &QButtonGroup::idClicked, this, &OnboardingWizard::onPickLanguage);
-    lay->addLayout(cards, 1);
+    lay->addLayout(cards);
 
     QLabel *tip = new QLabel(
         tr("\u672A\u9009\u62E9\u65F6\u9ED8\u8BA4\u4F7F\u7528\u4E2D\u6587\uFF0C\u540E\u7EED\u53EF\u5728\u300C\u8BBE\u7F6E > \u8BED\u8A00\u300D\u4E2D\u4FEE\u6539\u3002"), page);
     tip->setObjectName(QStringLiteral("obwTip"));
+    tip->setWordWrap(true);
+    tip->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     lay->addWidget(tip);
+    lay->addStretch(1);
 
     // 默认勾选当前语言
     LanguageManager *lm = LanguageManager::instance();
@@ -562,8 +577,9 @@ void OnboardingWizard::buildStep1()
         card->setObjectName(QStringLiteral("obwMethodCard"));
         card->setCheckable(true);
         card->setCursor(Qt::PointingHandCursor);
-        card->setMinimumHeight(210);
-        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        card->setMinimumHeight(190);
+        card->setMaximumHeight(210);
+        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
         QVBoxLayout *clay = new QVBoxLayout(card);
         clay->setContentsMargins(22, 26, 22, 22);   // 对齐 HTML padding: 26px 22px 22px
@@ -632,6 +648,8 @@ void OnboardingWizard::buildStep1()
 
     QLabel *tip = new QLabel(
         tr("\u65E0\u8BBA\u9009\u62E9\u54EA\u79CD\u65B9\u5F0F\uFF0C\u6240\u6709\u8BBE\u7F6E\u4E4B\u540E\u90FD\u53EF\u4EE5\u5728\u300C\u8BBE\u7F6E\u300D\u4E2D\u968F\u65F6\u4FEE\u6539\u3002"), page);
+    tip->setWordWrap(true);
+    tip->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     tip->setObjectName(QStringLiteral("obwTip"));
     lay->addWidget(tip);
     lay->addStretch(1);
@@ -833,6 +851,7 @@ void OnboardingWizard::buildStep2Manual()
 
     m_accountListWidget = new QWidget(page);
     m_accountListWidget->setObjectName(QStringLiteral("obwAccountList"));
+    m_accountListWidget->setAttribute(Qt::WA_StyledBackground, true);
     QVBoxLayout *listLay = new QVBoxLayout(m_accountListWidget);
     listLay->setContentsMargins(12, 12, 12, 12);
     listLay->setSpacing(8);
@@ -946,6 +965,7 @@ void OnboardingWizard::buildStep2Manual()
     panelLay->addWidget(m_formLegacy);
 
     lay->addWidget(m_addAccountPanel);
+    lay->addStretch(1);
 
     connect(tabGroup, &QButtonGroup::idClicked,
             this, &OnboardingWizard::onSwitchAccountTab);
@@ -1002,6 +1022,7 @@ void OnboardingWizard::buildStep3()
     scroll->setMaximumHeight(180);
     m_javaListWidget = new QWidget(scroll);
     m_javaListWidget->setObjectName(QStringLiteral("obwJavaList"));
+    m_javaListWidget->setAttribute(Qt::WA_StyledBackground, true);
     QVBoxLayout *jList = new QVBoxLayout(m_javaListWidget);
     jList->setContentsMargins(10, 10, 10, 10);
     jList->setSpacing(8);
@@ -1043,6 +1064,8 @@ void OnboardingWizard::buildStep3()
         dlBtn->setCursor(Qt::PointingHandCursor);
         const int major = info.major;
         connect(dlBtn, &QPushButton::clicked, this, [this, major]() {
+            // 用户重新点击：允许再次走「镜像源失败就回落官方源」的重试
+            m_javaDlRetried = false;
             startJavaDownload(major);
         });
         dLay->addWidget(dlBtn);
@@ -1122,6 +1145,7 @@ void OnboardingWizard::buildStep4()
 
     m_folderListWidget = new QWidget(page);
     m_folderListWidget->setObjectName(QStringLiteral("obwFolderList"));
+    m_folderListWidget->setAttribute(Qt::WA_StyledBackground, true);
     QVBoxLayout *fList = new QVBoxLayout(m_folderListWidget);
     fList->setContentsMargins(12, 12, 12, 12);
     fList->setSpacing(8);
@@ -1241,6 +1265,9 @@ void OnboardingWizard::buildStep5()
         card->setObjectName(QStringLiteral("obwThemeCard"));
         card->setCheckable(true);
         card->setCursor(Qt::PointingHandCursor);
+        card->setMinimumHeight(112);
+        card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        card->setFlat(true);
 
         QVBoxLayout *cLay = new QVBoxLayout(card);
         cLay->setContentsMargins(8, 8, 8, 8);
@@ -1250,7 +1277,9 @@ void OnboardingWizard::buildStep5()
         QWidget *preview = new QWidget(card);
         preview->setObjectName(QStringLiteral("obwThemePreview"));
         preview->setProperty("mode", i == 0 ? QStringLiteral("light") : QStringLiteral("dark"));
-        preview->setFixedHeight(78);
+        preview->setFixedHeight(72);
+        preview->setMinimumHeight(72);
+        preview->setMaximumHeight(72);
         QVBoxLayout *pLay = new QVBoxLayout(preview);
         pLay->setContentsMargins(6, 5, 6, 5);
         pLay->setSpacing(5);
@@ -1413,8 +1442,8 @@ void OnboardingWizard::buildStep5()
             sw->setProperty("hex", presetColors.at(i));
             const QString hex = presetColors.at(i);
             sw->setStyleSheet(QStringLiteral(
-                "background-color: %1; border-radius: 15px;"
-                "border: 2px solid transparent; color: #FFFFFF; font-size: 13px; font-weight: 800;")
+                "background-color: %1; border-radius: 14px;"
+                "border: 2px solid transparent; color: #FFFFFF; font-size: 12px; font-weight: 800;")
                 .arg(hex));
             colorGroup->addButton(sw, i);
             m_colorSwatches.append(sw);
@@ -1424,7 +1453,7 @@ void OnboardingWizard::buildStep5()
                 sw->setStyleSheet(QStringLiteral(
                     "background-color: %1; border-radius: 15px;"
                     "border: 2px solid %2; color: #FFFFFF; font-size: 13px; font-weight: 800;")
-                    .arg(hex, on ? QStringLiteral("#FFFFFF") : QStringLiteral("transparent")));
+                    .arg(hex, on ? QStringLiteral("#FFFFFF") : QStringLiteral("rgba(255,255,255,0.35)")));
             });
         }
         colorRow->addStretch();
@@ -1595,11 +1624,13 @@ void OnboardingWizard::buildStep5()
     for (int i = 0; i < 6; ++i) {
         QPushButton *swatch = new QPushButton(accentBlock);
         swatch->setObjectName(QStringLiteral("obwAccentSwatch"));
-        swatch->setFixedSize(36, 36);
+        swatch->setFixedSize(32, 32);
+        swatch->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         swatch->setCursor(Qt::PointingHandCursor);
         swatch->setCheckable(true);
+        swatch->setFlat(true);
         swatch->setStyleSheet(QStringLiteral(
-            "background-color: %1; border-radius: 18px; border: 2px solid transparent; color: #FFFFFF; font-size: 15px; font-weight: 800;")
+            "background-color: %1; border-radius: 16px; border: 2px solid transparent; color: #FFFFFF; font-size: 13px; font-weight: 800;")
             .arg(QString::fromLatin1(kAccentHex[i])));
         accentGroup->addButton(swatch, i);
         swatchRow->addWidget(swatch);
@@ -1632,9 +1663,9 @@ void OnboardingWizard::buildStep5()
         const auto applyStyle = [swatch, hex](bool on) {
             swatch->setText(on ? QStringLiteral("\u2714") : QString());
             swatch->setStyleSheet(QStringLiteral(
-                "background-color: %1; border-radius: 18px;"
-                "border: 2px solid %2; color: #FFFFFF; font-size: 15px; font-weight: 800;")
-                .arg(hex, on ? QStringLiteral("#FFFFFF") : QStringLiteral("transparent")));
+                "background-color: %1; border-radius: 16px;"
+                "border: 2px solid %2; color: #FFFFFF; font-size: 13px; font-weight: 800;")
+                .arg(hex, on ? QStringLiteral("#FFFFFF") : QStringLiteral("rgba(255,255,255,0.35)")));
         };
         applyStyle(swatch->isChecked());
         connect(swatch, &QPushButton::toggled, this, [applyStyle](bool on) { applyStyle(on); });
@@ -1681,11 +1712,21 @@ void OnboardingWizard::buildDonePage()
     lay->setSpacing(4);
     lay->addStretch();
 
-    QLabel *icon = new QLabel(QStringLiteral("\u2714"), page);
+    // 光环 104 + 对勾 80：圆角用边长一半；✔(U+2714) 在 Windows 会当彩色 emoji 渲染，
+    // 必须用 U+2713 才能吃到 QSS 白色
+    QWidget *halo = new QWidget(page);
+    halo->setObjectName(QStringLiteral("obwDoneHalo"));
+    halo->setFixedSize(104, 104);
+    halo->setAttribute(Qt::WA_StyledBackground, true);
+    QHBoxLayout *haloLay = new QHBoxLayout(halo);
+    haloLay->setContentsMargins(0, 0, 0, 0);
+    haloLay->setAlignment(Qt::AlignCenter);
+    QLabel *icon = new QLabel(QStringLiteral("\u2713"), halo);
     icon->setObjectName(QStringLiteral("obwDoneIcon"));
-    icon->setFixedSize(96, 96);
+    icon->setFixedSize(80, 80);
     icon->setAlignment(Qt::AlignCenter);
-    lay->addWidget(icon, 0, Qt::AlignHCenter);
+    haloLay->addWidget(icon);
+    lay->addWidget(halo, 0, Qt::AlignHCenter);
 
     QLabel *doneTitle = new QLabel(tr("\u4E00\u5207\u5C31\u7EEA\uFF01"), page);
     doneTitle->setObjectName(QStringLiteral("obwDoneTitle"));
@@ -1899,9 +1940,9 @@ void OnboardingWizard::onPickLanguage(int index)
     if (index < 0 || index >= m_languageCards.size())
         return;
     const LanguageManager::Language selected = static_cast<LanguageManager::Language>(index);
-    // 非中文（English / Español）用户默认使用官方下载源；
+    // 非中文（English / Español / 日本語 / Русский）用户默认使用官方下载源；
     // 繁體中文由新增的「下载源选择」步骤由用户自行决定。
-    if (selected == LanguageManager::English || selected == LanguageManager::Spanish)
+    if (selected != LanguageManager::Chinese && selected != LanguageManager::ChineseTraditional)
         setAllDownloadSourcesOfficial();
     // 与当前已加载语言相同则无需重启，留在向导内继续
     if (selected == LanguageManager::instance()->currentLanguage()) {
@@ -2244,7 +2285,10 @@ void OnboardingWizard::refreshAccountList()
         return;
     }
     for (const AccountInfo &acc : accounts) {
-        const bool isMs = (acc.type == QStringLiteral("microsoft"));
+        // 微软账户的类型存的可能是 "Microsoft"/"microsoft"，统一按不区分大小写判断，
+        // 否则会被显示成离线账户
+        const bool isMs = acc.type.compare(QStringLiteral("microsoft"), Qt::CaseInsensitive) == 0
+                          || acc.type.contains(tr("\u5FAE\u8F6F"));
         addAccountRow(acc.username,
                       isMs ? tr("\u5FAE\u8F6F") : tr("\u79BB\u7EBF"),
                       isMs ? QStringLiteral("microsoft") : QStringLiteral("offline"),
@@ -2260,19 +2304,13 @@ void OnboardingWizard::addAccountRow(const QString &name, const QString &typeBad
 {
     if (!m_accountListWidget)
         return;
-    // 用 QWidget 容器 + setAutoFillBackground + setStyleSheet 强制背景/边框/圆角
+    // 背景/边框/圆角/悬停由 QSS Section 50 的 obwAccountItem 规则统一控制并实时跟随主题；
+    // WA_StyledBackground 让普通 QWidget 也绘制样式表背景（行选择器必须匹配 QWidget）
     QWidget *row = new QWidget(m_accountListWidget);
     row->setObjectName(QStringLiteral("obwAccountItem"));
     row->setMinimumHeight(64);
     row->setMaximumHeight(64);
-    {
-        ThemeManager *tm = ThemeManager::instance();
-        const bool isLight = (tm->currentTheme() == ThemeManager::LightTheme);
-        const QString bg = isLight ? QStringLiteral("#ffffff") : QStringLiteral("#2d2d2d");
-        const QString border = isLight ? QStringLiteral("#e8eaed") : QStringLiteral("#3a3a3a");
-        row->setAutoFillBackground(true);
-        row->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid %2; border-radius: 12px;").arg(bg, border));
-    }
+    row->setAttribute(Qt::WA_StyledBackground, true);
 
     QHBoxLayout *lay = new QHBoxLayout(row);
     lay->setContentsMargins(16, 12, 16, 12);
@@ -2360,6 +2398,10 @@ void OnboardingWizard::onAddOfflineAccount()
         return;
     // 类型与账户管理页保持一致（"离线"），否则后续启动会被当成未知类型账户；
     // 同时必须检查保存结果，磁盘写入失败时不能再提示添加成功。
+    if (sm->accountExists(name)) {
+        m_footerHint->setText(tr("\u8BE5\u7528\u6237\u540D\u5DF2\u5B58\u5728\u3002"));
+        return;
+    }
     const bool firstAccount = sm->getAccounts().isEmpty();
     if (!sm->addAccount(name, tr("\u79BB\u7EBF"), QString(), firstAccount)) {
         m_footerHint->setText(tr("\u79BB\u7EBF\u8D26\u6237\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BF7\u68C0\u67E5\u542F\u52A8\u5668\u6240\u5728\u6587\u4EF6\u5939\u7684\u5199\u5165\u6743\u9650\u3002"));
@@ -2408,15 +2450,8 @@ void OnboardingWizard::refreshJavaList()
         row->setObjectName(QStringLiteral("obwJavaItem"));
         row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         row->setFixedHeight(64);
-        row->setAutoFillBackground(true);
-        {
-            ThemeManager *tm = ThemeManager::instance();
-            const bool isLight = (tm->currentTheme() == ThemeManager::LightTheme);
-            const QString bg = isLight ? QStringLiteral("#ffffff") : QStringLiteral("#2d2d2d");
-            const QString border = isLight ? QStringLiteral("#e8eaed") : QStringLiteral("#3a3a3a");
-            row->setAutoFillBackground(true);
-        row->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid %2; border-radius: 12px;").arg(bg, border));
-        }
+        // 背景/边框/圆角由 QSS Section 50 的 obwJavaItem 规则统一控制（实时跟随主题）
+        row->setAttribute(Qt::WA_StyledBackground, true);
         QHBoxLayout *lay = new QHBoxLayout(row);
         lay->setContentsMargins(16, 12, 16, 12);
         lay->setSpacing(12);
@@ -2733,17 +2768,10 @@ void OnboardingWizard::refreshFolderList()
         row->setObjectName(QStringLiteral("obwFolderItem"));
         row->setMinimumHeight(64);
         row->setMaximumHeight(64);
-        row->setAutoFillBackground(true);
+        // 背景/边框/圆角由 QSS Section 50 的 obwFolderItem 规则统一控制（实时跟随主题）
+        row->setAttribute(Qt::WA_StyledBackground, true);
         if (f.isDefault)
             row->setProperty("state", QStringLiteral("default"));
-        {
-            ThemeManager *tm = ThemeManager::instance();
-            const bool isLight = (tm->currentTheme() == ThemeManager::LightTheme);
-            const QString bg = isLight ? QStringLiteral("#ffffff") : QStringLiteral("#2d2d2d");
-            const QString border = isLight ? QStringLiteral("#e8eaed") : QStringLiteral("#3a3a3a");
-            row->setAutoFillBackground(true);
-        row->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid %2; border-radius: 12px;").arg(bg, border));
-        }
         QHBoxLayout *lay = new QHBoxLayout(row);
         lay->setContentsMargins(16, 14, 16, 14);
         lay->setSpacing(12);

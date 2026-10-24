@@ -10,6 +10,7 @@
 
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QtConcurrent>
 #include "components/AppMessageBox.h"
 #include <QTimer>
 #include <QUrl>
@@ -293,7 +294,8 @@ void NeoForgeVersionListPage::onInstallClicked()
 
     QString mcVersion = m_minecraftVersion;
     QString neoForgeVersion = m_selectedVersion.version;
-    QTimer::singleShot(0, [mcVersion, neoForgeVersion, instancePath]() {
+    // 安装器内部是阻塞式实现，放到后台线程执行，避免长时间占用 GUI 线程造成卡死
+    QtConcurrent::run([mcVersion, neoForgeVersion, instancePath]() {
         NeoForgeInstaller::instance()->downloadNeoForgeInstaller(mcVersion, neoForgeVersion, instancePath);
     });
 }

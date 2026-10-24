@@ -34,6 +34,9 @@ public:
 
     void setInstancePath(const QString &path);
 
+    /** 子导航搜索框分发：同步到页内搜索框（复用既有过滤管线） */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
+
 signals:
     /** 请求编辑投影文件（点击卡片上的编辑按钮或双击卡片） */
     void projectionEditRequested(const QString &filePath);

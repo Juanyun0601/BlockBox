@@ -31,6 +31,7 @@
 #include <QtConcurrent>
 #include <QSharedPointer>
 #include <QDateTime>
+#include <functional>
 #include <QRegularExpression>
 #include <QTimer>
 #include <QVersionNumber>
@@ -426,6 +427,10 @@ void LoaderDetailPage::initUI()
                             }
                         };
                         bool hasOptiFine = ldrs.contains("OptiFine");
+                        // 除 Forge 外的加载器安装器内部是阻塞式实现，必须在后台线程执行，
+                        // 否则长时间占用 GUI 线程造成卡死；完成/失败信号自动排队回 GUI 线程结算。
+                        // Forge 自身是异步实现，仍在本线程直接启动
+                        QList<std::function<void()>> deferredInstalls;
                         for (auto it = ldrs.constBegin(); it != ldrs.constEnd(); ++it) {
                             const QString &name = it.key();
                             const SelectedLoader &loader = it.value();
@@ -465,7 +470,10 @@ void LoaderDetailPage::initUI()
                                         signalScope, onSuccess);
                                 connect(NeoForgeInstaller::instance(), &NeoForgeInstaller::installFailed,
                                         signalScope, onFailed);
-                                NeoForgeInstaller::instance()->downloadNeoForgeInstaller(mcVer, loader.version, rootPath, instName);
+                                deferredInstalls.append([mcVer, loader, rootPath, instName]() {
+                                    NeoForgeInstaller::instance()->downloadNeoForgeInstaller(
+                                        mcVer, loader.version, rootPath, instName);
+                                });
                             } else if (lowerName == "fabric" || lowerName == "quilt" || lowerName == "legacyfabric") {
                                 auto onSuccess = [this, pending, checkAllComplete]() {
                                     (*pending)--;
@@ -480,7 +488,10 @@ void LoaderDetailPage::initUI()
                                         signalScope, onSuccess);
                                 connect(FabricInstaller::instance(), &FabricInstaller::installFailed,
                                         signalScope, onFailed);
-                                FabricInstaller::instance()->downloadFabricInstaller(mcVer, loader.version, rootPath);
+                                deferredInstalls.append([mcVer, loader, rootPath]() {
+                                    FabricInstaller::instance()->downloadFabricInstaller(
+                                        mcVer, loader.version, rootPath);
+                                });
                             } else if (lowerName == "liteloader") {
                                 auto onSuccess = [this, pending, checkAllComplete]() {
                                     (*pending)--;
@@ -495,7 +506,10 @@ void LoaderDetailPage::initUI()
                                         signalScope, onSuccess);
                                 connect(LiteLoaderInstaller::instance(), &LiteLoaderInstaller::installFailed,
                                         signalScope, onFailed);
-                                LiteLoaderInstaller::instance()->downloadLiteLoader(mcVer, loader.version, rootPath);
+                                deferredInstalls.append([mcVer, loader, rootPath]() {
+                                    LiteLoaderInstaller::instance()->downloadLiteLoader(
+                                        mcVer, loader.version, rootPath);
+                                });
                             } else if (lowerName == "cleanroom") {
                                 auto onSuccess = [this, pending, checkAllComplete]() {
                                     (*pending)--;
@@ -510,7 +524,10 @@ void LoaderDetailPage::initUI()
                                         signalScope, onSuccess);
                                 connect(CleanroomInstaller::instance(), &CleanroomInstaller::installFailed,
                                         signalScope, onFailed);
-                                CleanroomInstaller::instance()->downloadCleanroom(mcVer, loader.version, loader.fileName, rootPath);
+                                deferredInstalls.append([mcVer, loader, rootPath]() {
+                                    CleanroomInstaller::instance()->downloadCleanroom(
+                                        mcVer, loader.version, loader.fileName, rootPath);
+                                });
                             } else if (lowerName == "optifabric") {
                                 auto onSuccess = [this, pending, checkAllComplete]() {
                                     (*pending)--;
@@ -525,7 +542,10 @@ void LoaderDetailPage::initUI()
                                         signalScope, onSuccess);
                                 connect(OptiFabricInstaller::instance(), &OptiFabricInstaller::installFailed,
                                         signalScope, onFailed);
-                                OptiFabricInstaller::instance()->downloadOptiFabric(mcVer, loader.version, loader.fileName, rootPath);
+                                deferredInstalls.append([mcVer, loader, rootPath]() {
+                                    OptiFabricInstaller::instance()->downloadOptiFabric(
+                                        mcVer, loader.version, loader.fileName, rootPath);
+                                });
                             }
                         }
                         if (hasOptiFine) {
@@ -546,7 +566,17 @@ void LoaderDetailPage::initUI()
                                     signalScope, onSuccess);
                             connect(OptiFineInstaller::instance(), &OptiFineInstaller::installFailed,
                                     signalScope, onFailed);
-                            OptiFineInstaller::instance()->downloadOptiFineInstaller(mcVer, optiFineLoader.version, optiFineLoader.fileName, rootPath);
+                            deferredInstalls.append([mcVer, optiFineLoader, rootPath]() {
+                                OptiFineInstaller::instance()->downloadOptiFineInstaller(
+                                    mcVer, optiFineLoader.version, optiFineLoader.fileName, rootPath);
+                            });
+                        }
+                        if (!deferredInstalls.isEmpty()) {
+                            QtConcurrent::run([deferredInstalls]() {
+                                for (const auto &install : deferredInstalls) {
+                                    install();
+                                }
+                            });
                         }
                         if (*pending == 0) {
                             checkAllComplete();

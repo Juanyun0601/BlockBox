@@ -12,6 +12,7 @@
 #include <QSet>
 #include <QShortcut>
 #include <QStringList>
+#include <QPointer>
 
 #include "utils/DownloadTaskManager.h"
 #include "utils/content/ContentData.h"
@@ -48,6 +49,7 @@ class HomePage;
 class FavoritesPage;
 class SkinEditorPage;
 class PluginPage;
+class NewsPage;
 struct ModInfo;
 struct ModVersionFile;
 class GameLauncher;
@@ -97,7 +99,8 @@ enum class PageIndex {
     JavaDownloadPage = 22,
     FavoritesPage = 23,
     SkinEditorPage = 24,
-    PluginPage = 25
+    PluginPage = 25,
+    NewsPage = 26
 };
 
 class MainWindow : public QMainWindow
@@ -131,6 +134,8 @@ private slots:
     void onSearchClicked();
     void onScrollToTop();
     void onRefreshClicked();
+    /** 子导航顶部搜索框内容变化（200ms 防抖后）：过滤当前页面主内容区 */
+    void onSubNavSearchQueryChanged(const QString &query);
     void animateScrollToTop(QScrollBar *scrollBar);
     void animatedSwitchToPage(PageIndex index);
     void animatedSwitchToPageDirectional(PageIndex index, int fromSidebarIndex, int toSidebarIndex);
@@ -219,6 +224,7 @@ private:
     FavoritesPage *m_favoritesPage = nullptr;
     SkinEditorPage *m_skinEditorPage = nullptr;
     PluginPage *m_pluginPage = nullptr;
+    NewsPage *m_newsPage = nullptr;
 
     ClipboardMonitor *m_clipboardMonitor = nullptr;
     bool m_clipboardDialogOpen = false; ///< 剪贴板确认框是否已弹出（防剪贴板变化重入叠加弹窗）
@@ -262,6 +268,20 @@ private:
      */
     void restoreSideBarWithSubNav(int parentIndex, int childIndex);
 
+    /**
+     * 解析「当前可过滤页」：解包 HomePage/SettingsPage 外层 QScrollArea；
+     * 实例管理页返回其自身（由它转发给内层当前子页）。
+     * 无对应页时返回 nullptr。
+     */
+    QWidget *resolveCurrentFilterPage() const;
+    /** 把查询分发到当前可过滤页（Q_INVOKABLE applyPageFilter）；空查询恢复上一被过滤页 */
+    void dispatchPageFilter(const QString &query);
+
+    /** 最近一次被子导航搜索过滤过的页面（切换/清空时先恢复它） */
+    QPointer<QWidget> m_lastFilteredPage;
+    /** 子导航当前查询词（页面/子页切换后需重新应用） */
+    QString m_subNavFilterQuery;
+
 #ifdef Q_OS_ANDROID
     /** 安卓游戏内：弹出/收起右侧实例助手侧栏（由 GameFloatingIcon 点击触发） */
     void toggleGameAssistantOverlay();
@@ -297,9 +317,12 @@ private:
     void initJavaDownloadPage();
     void initSkinEditorPage();
     void initPluginPage();
+    void initNewsPage();
     void initSettingsPage();
     void showJavaDownloadPage();
     void showFavoritesPage(const QString &folderId);
+    /** 打开内置「官方新闻」列表页 */
+    void showNewsPage();
     void showContentDetailFromFavorite(const FavoriteItem &item);
     void onCreateFavoriteFolderRequested();
     void onManageFavoriteFoldersRequested();
@@ -318,6 +341,8 @@ private:
 
     void showInstanceSelectPage();
     void showAccountManagePage();
+    /** 打开实例助手窗口（顶栏与首页经典模式面板共用），注入当前实例上下文 */
+    void openInstanceAssistant();
     void showSkinEditorPage();
     void showLaunchDetailsPage();
     void showTaskListPage();

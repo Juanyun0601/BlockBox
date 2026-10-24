@@ -17,6 +17,7 @@
 #include "../components/MasonryContentCard.h"
 #include "../components/TranslateSwitchCard.h"
 #include "../components/CardListTranslator.h"
+#include "../utils/PageFilter.h"
 
 class BlurLoadingOverlay;
 class MCModAPI;
@@ -45,6 +46,12 @@ public:
     void setSearchText(const QString &text);
     QString selectedGameVersion() const;
     QString selectedLoader() const;
+
+    /**
+     * 子导航搜索框分发：本地过滤已加载卡片（按卡片文本匹配），
+     * 不发起网络搜索；新结果落卡（placeCards）后自动重新应用。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
 
     CurseForgeAPI *curseforgeAPI() const { return m_curseforgeAPI; }
     ModrinthAPI *modrinthAPI() const { return m_modrinthAPI; }
@@ -87,6 +94,8 @@ private:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void loadCardIcon(QLabel *iconLabel, const QString &iconUrl);
     void clearCards();
+    /** 按 m_pageFilterQuery 过滤当前已加载卡片（空查询=恢复显示） */
+    void applyLocalCardFilter();
     void addCard(const ModInfo &info);
     void addListCard(const ModInfo &info);
     void addMasonryCard(const ModInfo &info);
@@ -168,6 +177,10 @@ private:
     TranslateSwitchCard *m_translateSwitch = nullptr;
     CardListTranslator *m_translator = nullptr;
     bool m_applyingListTranslation = false;   // rebuildCards() 期间不重算翻译状态
+
+    // ── 子导航搜索：本地卡片过滤状态（placeCards 后重新应用） ──
+    QString m_pageFilterQuery;
+    PageFilter::VisibilityFilter m_pageFilter;
 };
 
 #endif

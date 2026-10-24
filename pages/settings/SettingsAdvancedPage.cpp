@@ -7,13 +7,21 @@
 #include "pages/SettingsPage.h"
 
 #include <QComboBox>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QDir>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QTextEdit>
+#include <QUrl>
 #include <QVBoxLayout>
 
+#include "components/AppFileDialog.h"
 #include "components/CustomCheckBox.h"
 #include "components/OutlinedLabel.h"
+#include "platform.h"
+#include "utils/LauncherLogger.h"
 
 void SettingsPage::initAdvancedSettings()
 {
@@ -52,15 +60,77 @@ void SettingsPage::initAdvancedSettings()
         true);
     jvmParamsRow->addWidget(jvmParamsEdit, 1);
 
-    // ── 调试日志 ──
-    QVBoxLayout *debugLogCard = createSettingsCard(layout, tr("调试日志"));
+    // ── 运行日志 ──
+    QVBoxLayout *runtimeLogCard = createSettingsCard(layout, tr("运行日志"));
 
-    CustomCheckBox *debugLogCheck = new CustomCheckBox();
-    debugLogCheck->setChecked(false);
+    CustomCheckBox *runtimeLogCheck = new CustomCheckBox();
+    runtimeLogCheck->setChecked(LauncherLogger::isEnabled());
 
-    QHBoxLayout *debugLogRow = appendSettingRow(debugLogCard,
-        tr("启用调试日志"), tr("记录启动器与游戏的详细运行日志，便于排查问题。"), QString(), true);
-    debugLogRow->addWidget(debugLogCheck);
+    QHBoxLayout *runtimeLogRow = appendSettingRow(runtimeLogCard,
+        tr("记录运行日志"),
+        tr("把启动器的启动、下载、安装和报错过程记进日志文件，遇到问题时方便排查。"));
+    runtimeLogRow->addWidget(runtimeLogCheck);
+
+    connect(runtimeLogCheck, &CustomCheckBox::toggled, [](bool checked) {
+        LauncherLogger::setEnabled(checked);
+    });
+
+    CustomCheckBox *verboseLogCheck = new CustomCheckBox();
+    verboseLogCheck->setChecked(LauncherLogger::isVerbose());
+
+    QHBoxLayout *verboseLogRow = appendSettingRow(runtimeLogCard,
+        tr("记录详细调试信息"),
+        tr("额外记下每条日志来自哪个文件、哪个线程，日志更完整，文件也会更大。"));
+    verboseLogRow->addWidget(verboseLogCheck);
+
+    connect(verboseLogCheck, &CustomCheckBox::toggled, [](bool checked) {
+        LauncherLogger::setVerbose(checked);
+    });
+
+    QHBoxLayout *logFileRow = appendSettingRow(runtimeLogCard,
+        tr("日志文件"),
+        tr("当前日志：%1").arg(QDir::toNativeSeparators(LauncherLogger::logFilePath())),
+        tr("反馈问题时把导出的日志一并附上，问题会更容易定位。"), true);
+
+    QPushButton *openLogDirBtn = new QPushButton(tr("打开文件夹"), m_advancedSettings);
+    openLogDirBtn->setObjectName("primaryButton");
+    openLogDirBtn->setCursor(Qt::PointingHandCursor);
+    openLogDirBtn->setFixedWidth(96);
+    openLogDirBtn->setVisible(!Platform::isMobile());
+    connect(openLogDirBtn, &QPushButton::clicked, this, []() {
+        const QString dir = LauncherLogger::logDirectory();
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    logFileRow->addWidget(openLogDirBtn);
+
+    QPushButton *exportLogBtn = new QPushButton(tr("导出日志"), m_advancedSettings);
+    exportLogBtn->setObjectName("primaryButton");
+    exportLogBtn->setCursor(Qt::PointingHandCursor);
+    exportLogBtn->setFixedWidth(96);
+    connect(exportLogBtn, &QPushButton::clicked, this, [this]() {
+        const QString defaultName = QStringLiteral("BlockBox_Log_%1.log")
+            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+
+        const QString path = AppFileDialog::getSaveFileName(
+            this,
+            tr("导出运行日志"),
+            defaultName,
+            tr("日志文件 (*.log);;文本文件 (*.txt);;所有文件 (*)"));
+        if (path.isEmpty())
+            return;
+
+        QString error;
+        if (!LauncherLogger::exportLog(path, &error)) {
+            QMessageBox::warning(this, tr("导出运行日志"),
+                tr("导出失败：%1").arg(error));
+            return;
+        }
+
+        QMessageBox::information(this, tr("导出运行日志"),
+            tr("运行日志已导出到：\n%1").arg(QDir::toNativeSeparators(path)));
+    });
+    logFileRow->addWidget(exportLogBtn);
 
     // ── 启动前进程检查 ──
     QVBoxLayout *processCheckCard = createSettingsCard(layout, tr("启动前进程检查"));

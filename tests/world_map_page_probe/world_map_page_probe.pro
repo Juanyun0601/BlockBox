@@ -50,5 +50,5 @@ HEADERS += ../../pages/WorldMapPage.h \
            fake/components/AppFileDialog.h \
            fake/components/NotificationManager.h
 
-RESOURCES += ../../resources.qrc
+RESOURCES += ../../resources.qrc ../../resources_data.qrc
 LIBS    += -lz

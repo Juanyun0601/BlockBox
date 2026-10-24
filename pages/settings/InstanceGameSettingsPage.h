@@ -18,6 +18,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "utils/PageFilter.h"
+
 class CustomCheckBox;
 
 class InstanceGameSettingsPage : public QWidget
@@ -38,6 +40,12 @@ public:
     void setLoaderInfo(const QString &loader);
     /** 设置实例图标（外部联动，如保存后刷新） */
     void setInstanceIcon(const QString &iconPath);
+
+    /**
+     * 子导航搜索框分发：对表单卡片做行级过滤（卡片标题/设置行文本匹配）。
+     * 由 InstanceManagePage 转发调用。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
 
     /** 获取当前配置的 Java 路径 */
     QString javaPath() const;
@@ -114,6 +122,10 @@ private:
     // 升级策略
     CustomCheckBox *m_priorityUpgradeCheck;
     CustomCheckBox *m_cautiousUpgradeCheck;
+
+    // 子导航搜索：表单内容容器（卡片挂载其布局上）+ 行级过滤器
+    QWidget *m_formContent = nullptr;
+    PageFilter::PanelFilter m_panelFilter;
 };
 
 #endif // INSTANCEGAMESETTINGSPAGE_H

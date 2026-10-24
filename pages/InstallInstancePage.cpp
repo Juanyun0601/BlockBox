@@ -500,12 +500,56 @@ void InstallInstancePage::populateVersionList()
     } else {
         m_loadingOverlay->showError(tr("没有找到符合条件的版本"));
     }
+
+    // 版本列表重建后重新应用子导航搜索过滤
+    applyLocalVersionFilter();
 }
 
 void InstallInstancePage::rebuildVersionCards()
 {
     m_versionList->clear();
     populateVersionList();
+}
+
+void InstallInstancePage::applyPageFilter(const QString &query)
+{
+    m_pageFilterQuery = query;
+    applyLocalVersionFilter();
+}
+
+void InstallInstancePage::applyLocalVersionFilter()
+{
+    if (m_pageFilterQuery.isEmpty()) {
+        m_pageFilter.clear();
+        if (m_versionList) {
+            for (int i = 0; i < m_versionList->count(); ++i) {
+                if (QListWidgetItem *item = m_versionList->item(i))
+                    item->setHidden(false);
+            }
+        }
+        return;
+    }
+
+    const QString &q = m_pageFilterQuery;
+
+    // 列表视图：按版本号 + 自定义卡片文本过滤条目
+    if (m_versionList) {
+        for (int i = 0; i < m_versionList->count(); ++i) {
+            QListWidgetItem *item = m_versionList->item(i);
+            if (!item)
+                continue;
+            QString text = item->data(Qt::UserRole).toString();
+            if (QWidget *w = m_versionList->itemWidget(item))
+                text += QStringLiteral(" ") + PageFilter::collectText(w);
+            item->setHidden(!text.contains(q, Qt::CaseInsensitive));
+        }
+    }
+
+    // 瀑布流视图：按卡片文本过滤
+    for (auto it = m_masonryCards.constBegin(); it != m_masonryCards.constEnd(); ++it) {
+        QWidget *card = it.value();
+        m_pageFilter.setShow(card, PageFilter::matches(PageFilter::collectText(card), q));
+    }
 }
 
 void InstallInstancePage::createVersionListCard(const QString &id, const QString &type,

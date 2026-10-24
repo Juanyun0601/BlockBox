@@ -633,6 +633,14 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
             args << QStringLiteral("-Duser.language=zh");
             args << QStringLiteral("-Duser.country=CN");
             args << QStringLiteral("-Duser.region=CN");
+        } else if (lang == LanguageManager::Japanese) {
+            args << QStringLiteral("-Duser.language=ja");
+            args << QStringLiteral("-Duser.country=JP");
+            args << QStringLiteral("-Duser.region=JP");
+        } else if (lang == LanguageManager::Russian) {
+            args << QStringLiteral("-Duser.language=ru");
+            args << QStringLiteral("-Duser.country=RU");
+            args << QStringLiteral("-Duser.region=RU");
         } else {
             args << QStringLiteral("-Duser.language=en");
             args << QStringLiteral("-Duser.country=US");
@@ -1036,17 +1044,30 @@ bool GameLauncher::updateOptionsTxt(const LaunchConfig& config)
          */
         auto normalizeGameLanguageTag =
             [](LanguageManager::Language launcherLang, int major, int minor) -> QString {
-                if (launcherLang == LanguageManager::English)
-                    return "en_us";
-
-                // Chinese
-                if (major == 1)
+                // 基础标签用小写写法，繁体对应 zh_tw、西语对应 es_es，均在 MC 内置语言列表内
+                QString tag;
+                switch (launcherLang)
                 {
-                    if (minor < 1)   return QString();     // MC 1.0: 无语言选项
-                    if (minor <= 10) return "zh_CN";       // MC 1.1~1.10: 必须大写
-                    return "zh_cn";                        // MC 1.11+: 小写
+                case LanguageManager::English:            tag = "en_us"; break;
+                case LanguageManager::Japanese:           tag = "ja_jp"; break;
+                case LanguageManager::Russian:            tag = "ru_ru"; break;
+                case LanguageManager::Spanish:            tag = "es_es"; break;
+                case LanguageManager::ChineseTraditional: tag = "zh_tw"; break;
+                case LanguageManager::Chinese:
+                default:                                  tag = "zh_cn"; break;
                 }
-                return "zh_cn";                            // 非 1.x: 小写
+
+                if (major == 1 && minor < 1)
+                    return QString();                       // MC 1.0: 无语言选项
+
+                // MC 1.1~1.10 只认「zh_CN」这种首字母大写写法，写小写会被忽略甚至 NPE
+                if (major == 1 && minor <= 10)
+                {
+                    const int sep = tag.indexOf(QLatin1Char('_'));
+                    if (sep > 0)
+                        return tag.left(sep) + QLatin1Char('_') + tag.mid(sep + 1).toUpper();
+                }
+                return tag;
             };
 
         QString langTag = normalizeGameLanguageTag(lang, mcMajor, mcMinor);

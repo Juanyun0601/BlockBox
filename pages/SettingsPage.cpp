@@ -205,9 +205,22 @@ void SettingsPage::setCurrentSettingsTab(int index)
         if (m_contentStack->currentWidget() == m_aiAssistantSettings) {
             refreshAiDefaultModelCombo();
         }
+        // 子导航搜索词保持生效：应用到新切换到的设置面板
+        if (!m_pageFilterQuery.isEmpty())
+            m_panelFilter.apply(m_contentStack->currentWidget(), m_pageFilterQuery);
     }
     // 切换设置子页时重置外层滚动位置，避免新页面停留在上一子页的滚动位置
     resetSettingsScroll();
+}
+
+void SettingsPage::applyPageFilter(const QString &query)
+{
+    m_pageFilterQuery = query;
+    QWidget *panel = m_contentStack ? m_contentStack->currentWidget() : nullptr;
+    if (query.isEmpty())
+        m_panelFilter.clear();
+    else
+        m_panelFilter.apply(panel, query);
 }
 
 void SettingsPage::setBedrockMode(bool bedrock)

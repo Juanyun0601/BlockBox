@@ -71,6 +71,7 @@ private:
     void initUI();
     void updateUIState();
     void updateBinaryDetail();
+    void repopulateVersionCombo(const QString &distId);
     QString formatFileSize(qint64 bytes) const;
     QString defaultInstallPath() const;
     QString findJavaExecutable(const QString &dir) const;

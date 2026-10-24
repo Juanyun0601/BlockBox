@@ -29,6 +29,8 @@ inline bool preferChinese()
         return true;
     case LanguageManager::English:
     case LanguageManager::Spanish:
+    case LanguageManager::Japanese:
+    case LanguageManager::Russian:
         return false;
     }
     return true;

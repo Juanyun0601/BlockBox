@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QMutex>
@@ -292,8 +293,8 @@ private:
     QNetworkAccessManager *m_networkManager;
     FabricDownloadSource m_downloadSource;
     QNetworkReply *m_currentReply;
-    bool m_isInstalling;
-    bool m_isCancelled;
+    std::atomic<bool> m_isInstalling;
+    std::atomic<bool> m_isCancelled;
 
     QString m_currentMcVersion;
     QString m_currentFabricVersion;

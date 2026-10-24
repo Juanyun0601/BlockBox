@@ -292,6 +292,13 @@ void ContentListPage::onSearchTextChanged(const QString &text)
     applyFilter();
 }
 
+void ContentListPage::applyPageFilter(const QString &query)
+{
+    // 同步到页内搜索框：setText 触发 textChanged → 既有过滤管线
+    if (m_searchEdit)
+        m_searchEdit->setText(query);
+}
+
 void ContentListPage::onFilterChanged(int index)
 {
     Q_UNUSED(index);

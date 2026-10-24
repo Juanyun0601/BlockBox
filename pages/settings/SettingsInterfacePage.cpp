@@ -8,12 +8,15 @@
 
 #include <QColor>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDate>
 #include <QDebug>
 #include <QFile>
+#include <QProcess>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include "components/AppFileDialog.h"
+#include "components/AppMessageBox.h"
 #include <functional>
 #include <QLabel>
 #include <QPushButton>
@@ -558,26 +561,15 @@ void SettingsPage::initInterfaceSettings()
     QVBoxLayout *languageCard = createSettingsCard(layout, tr("语言设置"));
 
     QComboBox *languageCombo = new QComboBox();
-    languageCombo->addItems({tr("简体中文"), tr("繁體中文"), tr("English"), tr("Español")});
+    // 顺序必须与 LanguageManager::Language 枚举一致，下拉框索引即枚举值
+    languageCombo->addItems({tr("简体中文"), tr("繁體中文"), tr("English"), tr("Español"),
+                             tr("日本語"), tr("Русский")});
     disableWheelEffect(languageCombo);
 
     LanguageManager::Language currentLang = LanguageManager::instance()->currentLanguage();
-    int langIndex;
-    switch (currentLang)
-    {
-    case LanguageManager::ChineseTraditional:
-        langIndex = 1;
-        break;
-    case LanguageManager::English:
-        langIndex = 2;
-        break;
-    case LanguageManager::Spanish:
-        langIndex = 3;
-        break;
-    default:
+    int langIndex = static_cast<int>(currentLang);
+    if (langIndex < 0 || langIndex >= languageCombo->count())
         langIndex = 0;
-        break;
-    }
     {
         const QSignalBlocker blocker(languageCombo);
         languageCombo->setCurrentIndex(langIndex);
@@ -585,23 +577,23 @@ void SettingsPage::initInterfaceSettings()
 
     connect(languageCombo, &QComboBox::currentIndexChanged, [=](int index) {
         LanguageManager *langManager = LanguageManager::instance();
-        LanguageManager::Language lang;
-        switch (index)
-        {
-        case 1:
-            lang = LanguageManager::ChineseTraditional;
-            break;
-        case 2:
-            lang = LanguageManager::English;
-            break;
-        case 3:
-            lang = LanguageManager::Spanish;
-            break;
-        default:
-            lang = LanguageManager::Chinese;
-            break;
+        LanguageManager::Language lang = static_cast<LanguageManager::Language>(index);
+
+        if (lang == langManager->currentLanguage())
+            return;
+
+        // 界面文字在各页面创建时就已经翻译好，运行时只换翻译器并不能重译已建好的
+        // 控件，会出现「一半新语言、一半旧语言」的界面。这里与新手引导保持一致：
+        // 只写入偏好，然后重启进程，由启动时的 loadLanguageSync() 干净加载。
+        langManager->setLanguagePreference(lang);
+        const AppMessageBox::StandardButton restartReply = AppMessageBox::question(
+            this, tr("切换语言"),
+            tr("语言已保存，需要重启方块盒子后才会完全生效。是否立即重启？"),
+            AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::Yes);
+        if (restartReply == AppMessageBox::Yes) {
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), QStringList());
+            QCoreApplication::quit();
         }
-        langManager->setLanguage(lang);
     });
 
     QHBoxLayout *languageRow = appendSettingRow(languageCard,

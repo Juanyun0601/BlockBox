@@ -191,7 +191,9 @@ public:
     DownloadSource getDownloadSource() const;
     void setDownloadSource(DownloadSource source);
 
-    // 文件选择器类型（系统文件资源管理器 / 软件自带）
+    // 文件选择器类型（系统自带 / 软件自带）
+    // 电脑端默认系统自带，手机端（Android / HarmonyOS）默认并固定软件自带
+    static FilePickerType defaultFilePickerType();
     FilePickerType getFilePickerType() const;
     void setFilePickerType(FilePickerType type);
 

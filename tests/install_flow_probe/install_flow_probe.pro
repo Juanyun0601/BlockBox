@@ -52,4 +52,4 @@ HEADERS += ../../pages/LoaderDetailPage.h \
            fake/utils/OptiFabricInstaller.h \
            fake/components/AppFileDialog.h
 
-RESOURCES += ../../resources.qrc
+RESOURCES += ../../resources.qrc ../../resources_data.qrc

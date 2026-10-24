@@ -69,14 +69,22 @@ enum class InteractionMode
  * @brief 模型动作/姿势（参考 skinview3d 的 walking/wave/riding 动画）
  *
  * 驱动各关节 rotation（绕 X 轴=前后摆，绕 Z 轴=侧抬臂）形成肢体动画。
+ * 四肢/头部在渲染时挂接在身体的 pivot 坐标系下（见 bodyFrameMatrix），
+ * 身体大幅前倾/放平的姿势（鞠躬/游泳/睡觉）肢体随动不脱节。
  */
 enum class SkinPose
 {
-  Idle = 0, // 待机（静止，默认）
-  Wave,     // 挥手（右臂抬起左右摆动）
-  Walk,     // 走路（双臂双腿交替前后摆动）
-  Run,      // 跑步（幅度更大的走路 + 身体前倾）
-  Ride      // 骑马/坐姿（双腿前屈，身体微前倾）
+  Idle = 0,   // 待机（静止，默认）
+  Wave,       // 挥手（右臂抬起左右摆动）
+  Walk,       // 走路（双臂双腿交替前后摆动）
+  Run,        // 跑步（幅度更大的走路 + 身体前倾）
+  Ride,       // 骑马/坐姿（双腿前屈，身体微前倾）
+  Sneak,      // 潜行（身体前倾压低，头微抬看向前方）
+  Swim,       // 游泳（俯卧水平，双臂前伸划水，双腿交替打水）
+  Sleep,      // 睡觉（仰面平躺，轻微呼吸起伏）
+  Attack,     // 攻击（右臂持剑上举下劈循环，身体随挥动前倾）
+  Dance,      // 舞蹈（双臂交替侧举摆动，身体头部左右摇摆）
+  Cheer       // 欢呼（双臂高举过头顶交替挥动）
 };
 
 /**
@@ -342,9 +350,14 @@ private:
   QTimer m_animTimer;
   SkinPose m_pose = SkinPose::Idle;  // 当前模型动作/姿势
   float m_poseTime = 0.0f;           // 动作动画时钟（秒，驱动关节旋转）
+  QVector3D m_poseRootOffset;        // 动作根位移补偿（俯卧/仰躺把模型重心拉回视口中心，世界单位）
 
   // 动作动画：按当前 pose 更新各关节 rotation（onAnimTick 调用）
   void applyPoseAnimation(float t);
+
+  /// 身体旋转的父坐标系（以身体 pivot[颈部] 为轴）；四肢/头部渲染与拾取挂接其下，
+  /// Idle（身体 rotation 为单位阵）时恒等，不影响编辑器拾取
+  QMatrix4x4 bodyFrameMatrix() const;
 
   // ---- 3D 绘制（Paint 模式）状态 ----
   InteractionMode m_interactionMode = InteractionMode::Orbit;

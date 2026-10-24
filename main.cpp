@@ -29,6 +29,7 @@
 #include "utils/AsyncInitializer.h"
 #include "utils/GameLauncher.h"
 #include "utils/LanguageManager.h"
+#include "utils/LauncherLogger.h"
 #include "utils/LowConfigMode.h"
 #include "utils/PerformanceMonitor.h"
 #include "utils/QuizBank.h"
@@ -84,6 +85,12 @@ int main(int argc, char *argv[])
 
     // 设置应用程序图标
     a.setWindowIcon(QIcon(":/Images/icon.ico"));
+
+    // 初始化运行日志：尽早装上，把启动过程也记进去
+    LauncherLogger::install();
+    QObject::connect(&a, &QCoreApplication::aboutToQuit, []() {
+        LauncherLogger::shutdown();
+    });
 
     // 初始化低配置模式检测
     LowConfigMode* lowConfigMode = LowConfigMode::instance();

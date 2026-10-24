@@ -16,6 +16,7 @@
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
+#include "utils/McimHelper.h"
 #include "utils/mod/ModNameFetcher.h"
 #include "utils/mod/ModrinthAPI.h"
 #include "utils/content/ContentDownloader.h"
@@ -411,6 +412,13 @@ void InstanceModsPage::refreshModList()
     showEmptyHint(false);
     clearCards();
     m_scanner->scanMods(m_instancePath);
+}
+
+void InstanceModsPage::applyPageFilter(const QString &query)
+{
+    // 同步到页内搜索框：setText 触发 textChanged → onSearchTextChanged → 既有过滤管线
+    if (m_searchEdit)
+        m_searchEdit->setText(query);
 }
 
 void InstanceModsPage::onSearchTextChanged(const QString &text)
@@ -1357,6 +1365,9 @@ void InstanceModsPage::onCheckUpdatesClicked()
     m_updateCache.clear();
     updateBottomBarState();
 
+    // 检查更新跟随全局镜像设置：直连官方 API 在国内常失败，导致模组查不到更新
+    m_updateCheckApi->setBaseUrl(McimHelper::modrinthApiBaseUrl());
+
     // 第一步：批量哈希匹配，得到本地文件对应的已安装版本（一次请求）
     m_updateCheckApi->matchHashes(sha1s);
 }
@@ -2105,8 +2116,8 @@ void InstanceModsPage::processNextModUpdate()
 
     // 注册下载任务
     QString instanceName = QFileInfo(m_instancePath).fileName();
-    QString taskId = DownloadTaskManager::instance()->addTask(
-        instanceName, m_instancePath, QString(), QStringList());
+    QString taskId = DownloadTaskManager::instance()->addTaskWithType(
+        instanceName, m_instancePath, QString(), QStringList(), TaskType::ContentDownload);
 
     DownloadTaskManager::instance()->updateTaskStatus(
         taskId, DownloadTaskStatus::Downloading,
@@ -2114,6 +2125,16 @@ void InstanceModsPage::processNextModUpdate()
     DownloadTaskManager::instance()->updateTaskCurrentFile(taskId, fileName);
     DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::ClientJar, 0);
 
+    // 镜像优先下载，失败自动回退官方源
+    const QString requestUrl = McimHelper::rewriteFileUrl(target.downloadUrl);
+    downloadModUpdateFile(mod, target, taskId, fileName, requestUrl,
+                          requestUrl != target.downloadUrl);
+}
+
+void InstanceModsPage::downloadModUpdateFile(const ModInfo &mod, const ModVersionFile &target,
+                                             const QString &taskId, const QString &fileName,
+                                             const QString &url, bool allowFallback)
+{
     auto *downloader = new ContentDownloader(this);
 
     connect(downloader, &ContentDownloader::downloadProgress, this,
@@ -2128,7 +2149,7 @@ void InstanceModsPage::processNextModUpdate()
         });
 
     connect(downloader, &ContentDownloader::downloadFinished, this,
-        [this, taskId, downloader, mod, fileName](const QString &destPath)
+        [this, taskId, downloader, mod](const QString &destPath)
         {
             DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::Completed, 100);
             DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, 100);
@@ -2141,15 +2162,25 @@ void InstanceModsPage::processNextModUpdate()
         });
 
     connect(downloader, &ContentDownloader::downloadFailed, this,
-        [this, taskId, downloader](const QString &error)
+        [this, taskId, downloader, mod, target, fileName, url, allowFallback](const QString &error)
         {
+            downloader->deleteLater();
+            if (allowFallback)
+            {
+                // 镜像下载失败：换官方地址重试同一文件
+                DownloadTaskManager::instance()->updateTaskStatus(
+                    taskId, DownloadTaskStatus::Downloading,
+                    tr("镜像下载失败，改用官方源重试: ") + mod.name);
+                downloadModUpdateFile(mod, target, taskId, fileName,
+                                      target.downloadUrl, false);
+                return;
+            }
             DownloadTaskManager::instance()->updateTaskStatus(
                 taskId, DownloadTaskStatus::Failed, error);
-            downloader->deleteLater();
             processNextModUpdate();
         });
 
-    downloader->downloadToInstance(target.downloadUrl, fileName, m_instancePath, ContentType::Mod);
+    downloader->downloadToInstance(url, fileName, m_instancePath, ContentType::Mod);
 }
 
 void InstanceModsPage::removeOldModFiles(const ModInfo &mod, const QString &newPath)

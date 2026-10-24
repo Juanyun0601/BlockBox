@@ -305,7 +305,8 @@ void FabricVersionListPage::onInstallClicked()
     QString mcVersion = m_minecraftVersion;
     QString fabricVersion = m_selectedVersion.fabricVersion;
 
-    QTimer::singleShot(0, [mcVersion, fabricVersion, instancePath]() {
+    // 安装器内部是阻塞式实现，放到后台线程执行，避免长时间占用 GUI 线程造成卡死
+    QtConcurrent::run([mcVersion, fabricVersion, instancePath]() {
         FabricInstaller::instance()->downloadFabricInstaller(mcVersion, fabricVersion, instancePath);
     });
 }

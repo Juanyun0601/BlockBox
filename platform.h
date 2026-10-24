@@ -83,6 +83,17 @@ namespace Platform {
 #endif
     }
 
+    // 检查是否为移动端（Android / HarmonyOS）
+    // 注意：不能依赖上面的 PLATFORM_xxx 宏。Android 构建同时定义 Q_OS_LINUX，
+    // 会在上方被判定为 Linux；这里直接按 Qt / 工程宏判断。
+    inline bool isMobile() {
+#if defined(Q_OS_ANDROID) || defined(ANDROID_OS) || defined(HARMONY_OS)
+        return true;
+#else
+        return false;
+#endif
+    }
+
     // 获取应用数据目录
     QString getDataDirectory();
     

@@ -161,9 +161,10 @@ static void rotateBoxPoint(float &x, float &y, float &z,
 }
 
 // 把 blockstate 级的 x/y 旋转施加到 boxes[start..] 上。
-// y 旋转保留为「渲染期绕格心的旋转」(ShapeBox::yaw)：这样零厚度平面（十字植物）
-// 与自带 45° 旋转的元素不会被打包成错误的大方块；x 旋转（楼梯/台阶的上下翻转）
-// 仍烘焙进轴向包围盒——它对 AABB 是精确的。
+// MC 的旋转顺序是「先绕 X、再绕 Y」（y 在最外层）：楼梯 half=top 就是先按 x=180
+// 上下翻转，再按 facing 的 y 转向。所以这里先把 x 烘焙进轴向包围盒（对 AABB 精确），
+// y 则保留为「渲染期绕格心的旋转」(ShapeBox::yaw)——零厚度平面（十字植物）与自带
+// 45° 旋转的元素才不会被打包成错误的大方块。顺序反过来会让楼梯等上下颠倒后转向相反。
 static void applyBlockRotation(QList<ShapeBox> &boxes, int start, float rotX, float rotY)
 {
     if (qFuzzyIsNull(rotX) && qFuzzyIsNull(rotY))
@@ -172,6 +173,29 @@ static void applyBlockRotation(QList<ShapeBox> &boxes, int start, float rotX, fl
     for (int i = start; i < boxes.size(); ++i)
     {
         ShapeBox &b = boxes[i];
+        if (!qFuzzyIsNull(rotX))
+        {
+            float mn[3] = {1e9f, 1e9f, 1e9f}, mx[3] = {-1e9f, -1e9f, -1e9f};
+            for (int bit = 0; bit < 8; ++bit)
+            {
+                float px = (bit & 1) ? b.to[0] : b.from[0];
+                float py = (bit & 2) ? b.to[1] : b.from[1];
+                float pz = (bit & 4) ? b.to[2] : b.from[2];
+                if (b.rotated)
+                    rotateBoxPoint(px, py, pz, b.rotOrigin[0], b.rotOrigin[1], b.rotOrigin[2],
+                                   b.rotAngle, b.rotAxis);
+                rotateBoxPoint(px, py, pz, cx, cy, cz, rotX, 0);
+                mn[0] = qMin(mn[0], px); mn[1] = qMin(mn[1], py); mn[2] = qMin(mn[2], pz);
+                mx[0] = qMax(mx[0], px); mx[1] = qMax(mx[1], py); mx[2] = qMax(mx[2], pz);
+            }
+            for (int a = 0; a < 3; ++a)
+            {
+                b.from[a] = mn[a];
+                b.to[a]   = mx[a];
+            }
+            b.rotated = false;      // 已合入轴向包围盒
+            b.rotAngle = 0.0f;
+        }
         if (!qFuzzyIsNull(rotY))
         {
             int y = b.yaw + int(qRound(rotY));
@@ -180,32 +204,6 @@ static void applyBlockRotation(QList<ShapeBox> &boxes, int start, float rotX, fl
                 y += 360;
             b.yaw = y;
         }
-        if (qFuzzyIsNull(rotX))
-            continue;
-
-        float mn[3] = {1e9f, 1e9f, 1e9f}, mx[3] = {-1e9f, -1e9f, -1e9f};
-        for (int bit = 0; bit < 8; ++bit)
-        {
-            float px = (bit & 1) ? b.to[0] : b.from[0];
-            float py = (bit & 2) ? b.to[1] : b.from[1];
-            float pz = (bit & 4) ? b.to[2] : b.from[2];
-            if (b.rotated)
-                rotateBoxPoint(px, py, pz, b.rotOrigin[0], b.rotOrigin[1], b.rotOrigin[2],
-                               b.rotAngle, b.rotAxis);
-            if (b.yaw)
-                rotateBoxPoint(px, py, pz, cx, cy, cz, -float(b.yaw), 1);
-            rotateBoxPoint(px, py, pz, cx, cy, cz, rotX, 0);
-            mn[0] = qMin(mn[0], px); mn[1] = qMin(mn[1], py); mn[2] = qMin(mn[2], pz);
-            mx[0] = qMax(mx[0], px); mx[1] = qMax(mx[1], py); mx[2] = qMax(mx[2], pz);
-        }
-        for (int a = 0; a < 3; ++a)
-        {
-            b.from[a] = mn[a];
-            b.to[a]   = mx[a];
-        }
-        b.rotated = false;      // 已合入轴向包围盒
-        b.rotAngle = 0.0f;
-        b.yaw = 0;
     }
 }
 

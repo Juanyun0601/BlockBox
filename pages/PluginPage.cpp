@@ -804,6 +804,28 @@ void PluginPage::rebuildCards()
 
     // 底部弹性占位：吸收滚动区多余高度，保证卡片置顶向下排列而非居中/摊开
     m_cardsLayout->addStretch(1);
+
+    // 插件列表重建后重新应用子导航搜索过滤
+    applyPageFilter(m_pageFilterQuery);
+}
+
+void PluginPage::applyPageFilter(const QString &query)
+{
+    m_pageFilterQuery = query;
+
+    if (query.isEmpty()) {
+        m_pageFilter.clear();
+        return;
+    }
+
+    // 仅过滤总览卡片；详情/设置视图下卡片不可见，过滤无副作用
+    for (int i = 0; i < m_cardWidgets.size() && i < m_plugins.size(); ++i) {
+        const PluginInfo &info = m_plugins.at(i);
+        const bool match = info.name.contains(query, Qt::CaseInsensitive)
+                           || info.author.contains(query, Qt::CaseInsensitive)
+                           || info.description.contains(query, Qt::CaseInsensitive);
+        m_pageFilter.setShow(m_cardWidgets.at(i), match);
+    }
 }
 
 bool PluginPage::eventFilter(QObject *watched, QEvent *event)

@@ -49,6 +49,9 @@ public:
     /** 手动刷新模组列表 */
     void refreshModList();
 
+    /** 子导航搜索框分发：同步到页内搜索框（复用现有过滤管线） */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
+
 signals:
     /** 点击模组卡片，请求打开详情页 */
     void modDetailRequested(const ModInfo &info);
@@ -133,6 +136,10 @@ private:
     /** 选中高亮遮罩样式（随主题色） */
     QString selectionOverlayStyle() const;
     void processNextModUpdate();
+    /** 发起单个模组更新文件的下载（镜像优先；allowFallback 时失败自动回退原始地址） */
+    void downloadModUpdateFile(const ModInfo &mod, const ModVersionFile &target,
+                               const QString &taskId, const QString &fileName,
+                               const QString &url, bool allowFallback);
     void markCachedUpdateChips();
     void removeOldModFiles(const ModInfo &mod, const QString &newPath);
 

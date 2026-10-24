@@ -2,6 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+**简体中文** | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [Español](README.es.md)
+
 跨平台 Minecraft 启动器（Java 版 / 基岩版），基于 Qt 与 C++ 开发，AI 全程加持。一个盒子装下整个方块世界。
 
 ## 功能特性
@@ -13,7 +15,7 @@
 - **皮肤编辑**：内置皮肤编辑器与 3D 预览
 - **联机与网络**：局域网联机传输、隧道组网
 - **存档管理**：世界存档备份与恢复
-- **多语言**：简体中文、繁体中文、英语、西班牙语
+- **多语言**：简体中文、繁体中文、英语、西班牙语、日语、俄语
 
 ## 支持平台
 
@@ -97,3 +99,7 @@ make
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request。
+
+---
+
+[繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md) · [Русский](README.ru.md) · [Español](README.es.md)

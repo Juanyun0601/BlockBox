@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -152,8 +153,8 @@ private:
     // 成员变量
     QNetworkAccessManager *m_networkManager;
     QNetworkReply *m_currentReply;
-    bool m_isInstalling;
-    bool m_isCancelled;
+    std::atomic<bool> m_isInstalling;
+    std::atomic<bool> m_isCancelled;
 
     QString m_currentMcVersion;
     QString m_currentCleanroomVersion;

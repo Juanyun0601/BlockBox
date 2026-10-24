@@ -1,6 +1,6 @@
 /**
  * @file   ForgeDownloader.h
- * @brief  Forge多源统一下载器 — 委托给 DownloadEngine
+ * @brief  Forge多源统一下载器 — 基于 MultiMC net 层（NetJob/Download）
  * @author BlockBox Team
  * @date   2026-06-01
  */
@@ -14,7 +14,7 @@
 
 #include <functional>
 
-#include "../download/DownloadEngine.h"
+#include "../net/NetJob.h"
 
 namespace forge {
 
@@ -34,6 +34,7 @@ public:
 
   void setDownloadSource(DownloadSource source);
   DownloadSource downloadSource() const;
+  /// MultiMC 的 NetJob 内部固定 6 路并发；此设置保留接口供上层调用
   void setMaxConcurrency(int max);
 
   QStringList getCandidateUrls(const QString &path);
@@ -54,8 +55,9 @@ signals:
   void downloadBytesProgress(qint64 bytesReceived, qint64 bytesTotal);
 
 private:
-  DownloadEngine *m_engine;
   DownloadSource m_downloadSource;
+  int m_maxConcurrency = 6;
+  QList<NetJob::Ptr> m_activeJobs;
 };
 
 } // namespace forge

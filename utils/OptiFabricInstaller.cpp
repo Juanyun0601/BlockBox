@@ -97,8 +97,10 @@ QList<OptiFabricVersionInfo> OptiFabricInstaller::getOptiFabricVersions(const QS
     // 30 秒无数据传输即超时，避免连接停滞时嵌套事件循环永不退出导致界面卡死
     request.setTransferTimeout(30000);
 
+    // 可能在后台线程执行，QNAM 必须与调用线程同亲和，用局部实例
+    QNetworkAccessManager nam;
     QEventLoop loop;
-    QNetworkReply *reply = m_networkManager->get(request);
+    QNetworkReply *reply = nam.get(request);
 
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
 
@@ -216,8 +218,10 @@ bool OptiFabricInstaller::downloadFile(const QString &url, const QString &filePa
     // 60 秒无数据传输即超时，避免连接停滞时嵌套事件循环永不退出导致界面卡死
     request.setTransferTimeout(60000);
 
+    // 可能在后台线程执行，QNAM 必须与调用线程同亲和，用局部实例
+    QNetworkAccessManager nam;
     QEventLoop loop;
-    QNetworkReply *reply = m_networkManager->get(request);
+    QNetworkReply *reply = nam.get(request);
 
     connect(reply, &QNetworkReply::downloadProgress, this, &OptiFabricInstaller::updateTaskProgress);
     connect(reply, &QNetworkReply::downloadProgress, this, [this](qint64 bytesReceived, qint64 bytesTotal) {
@@ -259,9 +263,8 @@ void OptiFabricInstaller::cancelInstall()
 {
     m_isCancelled = true;
 
-    if (m_currentReply) {
-        m_currentReply->abort();
-    }
+    // 下载可能在后台线程进行，这里只置位取消标志；
+    // 未及中止的请求会在传输超时（60 秒）内自行结束
 
     cleanupTempFiles();
     m_isInstalling = false;
