@@ -106,6 +106,17 @@ void SideBar::initUI()
             m_iconSelectedColor = c;
         refreshNavIcons();
     });
+
+    // 明暗切换：未选中 SVG 图标默认灰度要跟着变，否则深色底上仍是浅色主题的 #666
+    auto applyThemeIconNormal = [this]() {
+        m_iconNormalColor = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme)
+                                ? QColor(QStringLiteral("#9CA3AF"))
+                                : QColor(QStringLiteral("#666666"));
+        refreshNavIcons();
+    };
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged, this,
+            [applyThemeIconNormal](ThemeManager::ThemeType) { applyThemeIconNormal(); });
+    applyThemeIconNormal();
 }
 
 void SideBar::showEvent(QShowEvent *event)

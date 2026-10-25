@@ -72,10 +72,19 @@ void maybeCheckUpdates(QWidget *parent)
 
 int main(int argc, char *argv[])
 {
-    // 设置 OpenGL 3.3 Core Profile 表面格式（必须在 QApplication 之前）
+    // 设置 OpenGL 表面格式（必须在 QApplication 之前）
+    // 桌面端用 OpenGL 3.3 Core Profile；安卓 / 鸿蒙只有 OpenGL ES（版本号最高 3.2），
+    // 沿用 3.3 Core 会让 EGL 直接报 EGL_BAD_CONFIG（Unknown ES version 3.3），
+    // 拿不到 GL 上下文后整个窗口一片白，应用看起来就是「卡在白屏」。
     QSurfaceFormat glFormat;
+#if defined(Q_OS_ANDROID) || defined(HARMONY_OS)
+    glFormat.setRenderableType(QSurfaceFormat::OpenGLES);
+    glFormat.setVersion(3, 0);
+    glFormat.setProfile(QSurfaceFormat::NoProfile);
+#else
     glFormat.setVersion(3, 3);
     glFormat.setProfile(QSurfaceFormat::CoreProfile);
+#endif
     glFormat.setDepthBufferSize(24);
     glFormat.setStencilBufferSize(0);
     glFormat.setSamples(0);

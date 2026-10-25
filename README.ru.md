@@ -1,6 +1,6 @@
 # Лаунчер BlockBox
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 [简体中文](README.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | **Русский** | [Español](README.es.md)
 
@@ -94,11 +94,13 @@ make
 
 ## Лицензия
 
-Проект распространяется по [лицензии MIT](LICENSE) © Juanyun0601
+Проект распространяется по [лицензии GNU GPL v3.0](LICENSE) © Juanyun0601
+
+Программа предоставляется «как есть», без каких-либо гарантий. Копирование, изменение и распространение должны соответствовать GPL-3.0, а изменённые версии также обязаны открывать исходный код под GPL-3.0.
 
 ## Участие в разработке
 
-Мы рады Issue и Pull Request.
+Мы рады Issue и Pull Request. Присланный код включается в проект под лицензией GPL-3.0.
 
 ---
 

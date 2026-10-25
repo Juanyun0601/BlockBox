@@ -43,8 +43,18 @@ void SettingsPage::initGeneralSettings()
     QVBoxLayout *downloadSourceCard = createSettingsCard(layout, tr("游戏下载源"));
 
     QComboBox *downloadSourceCombo = new QComboBox();
-    downloadSourceCombo->addItems({tr("官方源"), tr("BMCL镜像源")});
+    downloadSourceCombo->addItem(tr("官方源"), static_cast<int>(DownloadSource::Official));
+    downloadSourceCombo->addItem(tr("BMCL镜像源"), static_cast<int>(DownloadSource::BMCL));
     disableWheelEffect(downloadSourceCombo);
+
+    int downloadSourceIndex = downloadSourceCombo->findData(static_cast<int>(settings->getDownloadSource()));
+    if (downloadSourceIndex >= 0) {
+        downloadSourceCombo->setCurrentIndex(downloadSourceIndex);
+    }
+    connect(downloadSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [downloadSourceCombo](int idx) {
+        SettingsManager::instance()->setDownloadSource(
+            static_cast<DownloadSource>(downloadSourceCombo->itemData(idx).toInt()));
+    });
 
     QHBoxLayout *downloadSourceRow = appendSettingRow(downloadSourceCard,
         tr("原版下载源"), tr("选择原版游戏下载来源。"),

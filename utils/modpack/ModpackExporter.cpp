@@ -20,6 +20,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QRegularExpression>
+#include <QSet>
 
 #include <zlib.h>
 
@@ -75,6 +76,7 @@ public:
 private:
   QFile m_file;
   QList<CentralDirEntry> m_entries;
+  QSet<QString> m_addedDirs;
   quint32 m_cdOffset = 0;
 };
 
@@ -85,6 +87,7 @@ bool ZipWriter::open(const QString& filePath)
     return false;
 
   m_entries.clear();
+  m_addedDirs.clear();
   m_cdOffset = 0;
   return true;
 }
@@ -138,13 +141,14 @@ bool ZipWriter::addFile(const QString& zipPath, const QByteArray& data, bool com
   quint32 headerOffset = static_cast<quint32>(m_file.pos());
 
   // Write local file header
+  // GP bit 11 (0x800)：文件名是 UTF-8 编码，否则中文名在资源管理器里乱码
   QByteArray localHeader;
   {
     QDataStream ds(&localHeader, QIODevice::WriteOnly);
     ds.setByteOrder(QDataStream::LittleEndian);
     ds << LOCAL_FILE_HEADER_SIG;
     ds << static_cast<quint16>(20);  // version needed (2.0)
-    ds << static_cast<quint16>(0);   // general purpose flag
+    ds << static_cast<quint16>(0x800); // UTF-8 filename flag
     ds << method;
     ds << dosDateTime();
     ds << crc;
@@ -178,6 +182,11 @@ bool ZipWriter::addDirectory(const QString& zipPath)
   if (!dirPath.endsWith('/'))
     dirPath += '/';
 
+  // 同名目录只写一次，避免每个文件都重复添加父目录导致条目膨胀
+  if (m_addedDirs.contains(dirPath))
+    return true;
+  m_addedDirs.insert(dirPath);
+
   QByteArray fileNameBytes = dirPath.toUtf8();
 
   quint32 headerOffset = static_cast<quint32>(m_file.pos());
@@ -189,7 +198,7 @@ bool ZipWriter::addDirectory(const QString& zipPath)
     ds.setByteOrder(QDataStream::LittleEndian);
     ds << LOCAL_FILE_HEADER_SIG;
     ds << static_cast<quint16>(20);
-    ds << static_cast<quint16>(0);
+    ds << static_cast<quint16>(0x800);
     ds << static_cast<quint16>(0);   // stored
     ds << dosDateTime();
     ds << static_cast<quint32>(0);   // crc32
@@ -232,7 +241,7 @@ bool ZipWriter::close()
       ds << CENTRAL_DIR_ENTRY_SIG;
       ds << static_cast<quint16>(20);  // version made by
       ds << static_cast<quint16>(20);  // version needed
-      ds << static_cast<quint16>(0);   // flag
+      ds << static_cast<quint16>(0x800); // UTF-8 filename flag
       ds << entry.compressionMethod;
       ds << dosDateTime();
       ds << entry.crc32;
@@ -303,81 +312,6 @@ QByteArray compressDeflate(const QByteArray& data)
 
   deflateEnd(&strm);
   return result;
-}
-
-// CRC32 helper (not available in QCryptographicHash)
-static quint32 crc32Block(const QByteArray& data)
-{
-  static const quint32 table[256] = {
-    0x00000000, 0x77073096, 0xEE0E612C, 0x990951BA,
-    0x076DC419, 0x706AF48F, 0xE963A535, 0x9E6495A3,
-    0x0EDB8832, 0x79DCB8A4, 0xE0D5E91E, 0x97D2D988,
-    0x09B64C2B, 0x7EB17CBD, 0xE7B82D07, 0x90BF1D91,
-    0x1DB71064, 0x6AB020F2, 0xF3B97148, 0x84BE41DE,
-    0x1ADAD47D, 0x6DDDE4EB, 0xF4D4B551, 0x83D385C7,
-    0x136C9856, 0x646BA8C0, 0xFD62F97A, 0x8A65C9EC,
-    0x14015C4F, 0x63066CD9, 0xFA0F3D63, 0x8D080DF5,
-    0x3B6E20C8, 0x4C69105E, 0xD56041E4, 0xA2677172,
-    0x3C03E4D1, 0x4B04D447, 0xD20D85FD, 0xA50AB56B,
-    0x35B5A8FA, 0x42B2986C, 0xDBBBC9D6, 0xACBCF940,
-    0x32D86CE3, 0x45DF5C75, 0xDCD60DCF, 0xABD13D59,
-    0x26D930AC, 0x51DE003A, 0xC8D75180, 0xBFD06116,
-    0x21B4F4B5, 0x56B3C423, 0xCFBA9599, 0xB8BDA50F,
-    0x2802B89E, 0x5F058808, 0xC60CD9B2, 0xB10BE924,
-    0x2F6F7C87, 0x58684C11, 0xC1611DAB, 0xB6662D3D,
-    0x76DC4190, 0x01DB7106, 0x98D220BC, 0xEFD5102A,
-    0x71B18589, 0x06B6B51F, 0x9FBFE4A5, 0xE8B8D433,
-    0x7807C9A2, 0x0F00F934, 0x9609A88E, 0xE10E9818,
-    0x7F6A0DBB, 0x086D3D2D, 0x91646C97, 0xE6635C01,
-    0x6B6B51F4, 0x1C6C6162, 0x856530D8, 0xF262004E,
-    0x6C0695ED, 0x1B01A57B, 0x8208F4C1, 0xF50FC457,
-    0x65B0D9C6, 0x12B7E950, 0x8BBEB8EA, 0xFCB9887C,
-    0x62DD1DDF, 0x15DA2D49, 0x8CD37CF3, 0xFBD44C65,
-    0x4DB26158, 0x3AB551CE, 0xA3BC0074, 0xD4BB30E2,
-    0x4ADFA541, 0x3DD895D7, 0xA4D1C46D, 0xD3D6F4FB,
-    0x4369E96A, 0x346ED9FC, 0xAD678846, 0xDA60B8D0,
-    0x44042D73, 0x33031DE5, 0xAA0A4C5F, 0xDD0D7CC9,
-    0x5005713C, 0x270241AA, 0xBE0B1010, 0xC90C2086,
-    0x5768B525, 0x206F85B3, 0xB966D409, 0xCE61E49F,
-    0x5EDEF90E, 0x29D9C998, 0xB0D09822, 0xC7D7A8B4,
-    0x59B33D17, 0x2EB40D81, 0xB7BD5C3B, 0xC0BA6CAD,
-    0xEDB88320, 0x9ABFB3B6, 0x03B6B20C, 0x74B1B29A,
-    0xEAD54739, 0x9DD277AF, 0x04DB2615, 0x73DC1683,
-    0xE3630B12, 0x94643B84, 0x0D6D6A3E, 0x7A6A5AA8,
-    0xE40ECF0B, 0x9309FF9D, 0x0A00AE27, 0x7D079EB1,
-    0xF00F9344, 0x8708A3D2, 0x1E01F268, 0x6906C2FE,
-    0xF762575D, 0x806567CB, 0x196C3671, 0x6E6B06E7,
-    0xFED41B76, 0x89D32BE0, 0x10DA7A5A, 0x67DD4ACC,
-    0xF9B9DF6F, 0x8EBEEFF9, 0x17B7BE43, 0x60B08ED5,
-    0xD6D6A3E8, 0xA1D1937E, 0x38D8C2C4, 0x4FDFF252,
-    0xD1BB67F1, 0xA6BC5767, 0x3FB506DD, 0x48B2364B,
-    0xD80D2BDA, 0xAF0A1B4C, 0x36034AF6, 0x41047A60,
-    0xDF60EFC3, 0xA867DF55, 0x316E8EEF, 0x4669BE79,
-    0xCB61B38C, 0xBC66831A, 0x256FD2A0, 0x5268E236,
-    0xCC0C7795, 0xBB0B4703, 0x220216B9, 0x5505262F,
-    0xC5BA3BBE, 0xB2BD0B28, 0x2BB45A92, 0x5CB30A04,
-    0xC2D7FFA7, 0xB5D0CF31, 0x2CD99E8B, 0x5BDEAE1D,
-    0x9B64C2B0, 0xEC63F226, 0x756AA39C, 0x026D930A,
-    0x9C0906A9, 0xEB0E363F, 0x72076785, 0x05005713,
-    0x95BF4A82, 0xE2B87A14, 0x7BB12BAE, 0x0CB61B38,
-    0x92D28E9B, 0xE5D5BE0D, 0x7CDCEFB7, 0x0BDBDF21,
-    0x86D3D2D4, 0xF1D4E242, 0x68DDB3F8, 0x1FDA836E,
-    0x81BE16CD, 0xF6B9265B, 0x6FB077E1, 0x18B74777,
-    0x88085AE6, 0xFF0F6A70, 0x66063BCA, 0x11010B5C,
-    0x8F659EFF, 0xF862AE69, 0x616BFFD3, 0x166CCF45,
-    0xA00AE278, 0xD70DD2EE, 0x4E048354, 0x3903B3C2,
-    0xA7672661, 0xD06016F7, 0x4969474D, 0x3E6E77DB,
-    0xAED16A4A, 0xD9D65ADC, 0x40DF0B66, 0x37D83BF0,
-    0xA9BCAE53, 0xDEBB9EC5, 0x47B2CF7F, 0x30B5FFE9,
-    0xBDBDF21C, 0xCABAC28A, 0x53B39330, 0x24B4A3A6,
-    0xBAD03605, 0xCDD70693, 0x54DE5729, 0x23D967BF,
-    0xB3667A2E, 0xC4614AB8, 0x5D681B02, 0x2A6F2B94,
-    0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D
-  };
-  quint32 crc = 0xFFFFFFFF;
-  for (const char c : data)
-    crc = table[(crc ^ static_cast<quint8>(c)) & 0xFF] ^ (crc >> 8);
-  return crc ^ 0xFFFFFFFF;
 }
 
 } // anonymous namespace
@@ -521,20 +455,10 @@ void ModpackExporter::exportAsCurseForge()
 
       QString zipPath = QStringLiteral("overrides/") + relPath;
 
-      // Ensure parent directories exist in zip
-      QString parentDir = QFileInfo(zipPath).path();
+      // Ensure parent directories exist in zip（parentDir 已含前缀，勿再拼一次）
+      const QString parentDir = QFileInfo(zipPath).path();
       if (!parentDir.isEmpty() && parentDir != QStringLiteral("."))
-      {
-        QStringList dirParts = parentDir.split('/');
-        QString accumulated;
-        for (const QString& part : dirParts)
-        {
-          if (part.isEmpty())
-            continue;
-          accumulated += part + "/";
-          zip.addDirectory(QStringLiteral("overrides/") + accumulated);
-        }
-      }
+        zip.addDirectory(parentDir);
 
       zip.addFile(zipPath, fileData);
 
@@ -544,7 +468,12 @@ void ModpackExporter::exportAsCurseForge()
     }
   }
 
-  zip.close();
+  if (!zip.close())
+  {
+    QFile::remove(m_outputPath);
+    emit exportFinished(false, QString(), tr("写入压缩包失败，磁盘可能已满"));
+    return;
+  }
   emit exportProgressChanged(100, tr("导出完成"));
   emit exportFinished(true, m_outputPath, QString());
 }
@@ -660,20 +589,10 @@ void ModpackExporter::exportAsMultiMC()
 
       QString zipPath = QStringLiteral(".minecraft/") + relPath;
 
-      // Ensure parent directories exist in zip
-      QString parentDir = QFileInfo(zipPath).path();
+      // Ensure parent directories exist in zip（parentDir 已含前缀，勿再拼一次）
+      const QString parentDir = QFileInfo(zipPath).path();
       if (!parentDir.isEmpty() && parentDir != QStringLiteral("."))
-      {
-        QStringList dirParts = parentDir.split('/');
-        QString accumulated;
-        for (const QString& part : dirParts)
-        {
-          if (part.isEmpty())
-            continue;
-          accumulated += part + "/";
-          zip.addDirectory(QStringLiteral(".minecraft/") + accumulated);
-        }
-      }
+        zip.addDirectory(parentDir);
 
       zip.addFile(zipPath, fileData);
 
@@ -683,7 +602,12 @@ void ModpackExporter::exportAsMultiMC()
     }
   }
 
-  zip.close();
+  if (!zip.close())
+  {
+    QFile::remove(m_outputPath);
+    emit exportFinished(false, QString(), tr("写入压缩包失败，磁盘可能已满"));
+    return;
+  }
   emit exportProgressChanged(100, tr("导出完成"));
   emit exportFinished(true, m_outputPath, QString());
 }
@@ -773,20 +697,10 @@ void ModpackExporter::exportAsServer()
 
       QString zipPath = QStringLiteral("overrides/") + relPath;
 
-      // Ensure parent directories exist in zip
-      QString parentDir = QFileInfo(zipPath).path();
+      // Ensure parent directories exist in zip（parentDir 已含前缀，勿再拼一次）
+      const QString parentDir = QFileInfo(zipPath).path();
       if (!parentDir.isEmpty() && parentDir != QStringLiteral("."))
-      {
-        QStringList dirParts = parentDir.split('/');
-        QString accumulated;
-        for (const QString& part : dirParts)
-        {
-          if (part.isEmpty())
-            continue;
-          accumulated += part + "/";
-          zip.addDirectory(QStringLiteral("overrides/") + accumulated);
-        }
-      }
+        zip.addDirectory(parentDir);
 
       zip.addFile(zipPath, fileData);
 
@@ -796,7 +710,12 @@ void ModpackExporter::exportAsServer()
     }
   }
 
-  zip.close();
+  if (!zip.close())
+  {
+    QFile::remove(m_outputPath);
+    emit exportFinished(false, QString(), tr("写入压缩包失败，磁盘可能已满"));
+    return;
+  }
   emit exportProgressChanged(100, tr("导出完成"));
   emit exportFinished(true, m_outputPath, QString());
 }
@@ -813,19 +732,8 @@ void ModpackExporter::exportAsModrinth()
   QString loaderType = detectLoaderType();
   QString loaderVersion = detectLoaderVersion();
 
-  // Separate mod files from non-mod files
-  QStringList modFiles;
-  QStringList overrideFiles;
-
-  for (const QString& relPath : m_selectedFiles)
-  {
-    if (relPath.startsWith(QStringLiteral("mods/"), Qt::CaseInsensitive))
-      modFiles.append(relPath);
-    else
-      overrideFiles.append(relPath);
-  }
-
-  // Build modrinth.index.json
+  // 离线导出没有可供下载的模组 URL：把全部选中文件（含 mods/）打进
+  // client-overrides/，files 清单留空。导入端解压时剥掉该前缀即可完整还原
   QJsonObject index;
   index["formatVersion"] = 1;
   index["game"] = QStringLiteral("minecraft");
@@ -833,48 +741,7 @@ void ModpackExporter::exportAsModrinth()
   index["name"] = m_exportInfo.name;
   if (!m_exportInfo.description.isEmpty())
     index["summary"] = m_exportInfo.description;
-
-  // Files array (mods only - not packed into client-overrides)
-  QJsonArray filesArray;
-  int totalMods = modFiles.size();
-  int processedMods = 0;
-
-  for (const QString& relPath : modFiles)
-  {
-    QString fullPath = m_instancePath + "/" + relPath;
-    QFileInfo fi(fullPath);
-
-    QByteArray sha1 = calculateSha1(fullPath);
-    QByteArray sha512 = calculateSha512(fullPath);
-    if (sha1.isEmpty() || sha512.isEmpty())
-    {
-      ++processedMods;
-      continue;
-    }
-
-    QJsonObject fileObj;
-    fileObj["path"] = relPath;
-
-    QJsonObject hashes;
-    hashes["sha1"] = QString::fromLatin1(sha1.toHex());
-    hashes["sha512"] = QString::fromLatin1(sha512.toHex());
-    fileObj["hashes"] = hashes;
-
-    QJsonObject env;
-    env["client"] = QStringLiteral("required");
-    fileObj["env"] = env;
-
-    fileObj["downloads"] = QJsonArray();
-    fileObj["fileSize"] = static_cast<qint64>(fi.size());
-
-    filesArray.append(fileObj);
-
-    ++processedMods;
-    int percent = processedMods * 30 / qMax(totalMods, 1);
-    emit exportProgressChanged(percent, tr("正在计算模组哈希 (%1/%2)...").arg(processedMods).arg(totalMods));
-  }
-
-  index["files"] = filesArray;
+  index["files"] = QJsonArray();
 
   // Dependencies
   QJsonObject dependencies;
@@ -896,7 +763,7 @@ void ModpackExporter::exportAsModrinth()
   QJsonDocument indexDoc(index);
   QByteArray indexData = indexDoc.toJson(QJsonDocument::Indented);
 
-  emit exportProgressChanged(30, tr("正在创建整合包文件..."));
+  emit exportProgressChanged(10, tr("正在创建整合包文件..."));
 
   ZipWriter zip;
   if (!zip.open(m_outputPath))
@@ -905,17 +772,23 @@ void ModpackExporter::exportAsModrinth()
     return;
   }
 
-  zip.addFile(QStringLiteral("modrinth.index.json"), indexData, false);
-
-  // Add non-mod files under "client-overrides/"
-  if (!overrideFiles.isEmpty())
+  if (!zip.addFile(QStringLiteral("modrinth.index.json"), indexData, false))
   {
-    int total = overrideFiles.size();
+    zip.close();
+    QFile::remove(m_outputPath);
+    emit exportFinished(false, QString(), tr("写入清单文件失败"));
+    return;
+  }
+
+  // Add all selected files under "client-overrides/"
+  if (!m_selectedFiles.isEmpty())
+  {
+    int total = m_selectedFiles.size();
     int processed = 0;
 
     zip.addDirectory(QStringLiteral("client-overrides"));
 
-    for (const QString& relPath : overrideFiles)
+    for (const QString& relPath : m_selectedFiles)
     {
       QString fullPath = m_instancePath + "/" + relPath;
       QFile file(fullPath);
@@ -930,30 +803,25 @@ void ModpackExporter::exportAsModrinth()
 
       QString zipPath = QStringLiteral("client-overrides/") + relPath;
 
-      // Ensure parent directories exist in zip
-      QString parentDir = QFileInfo(zipPath).path();
+      // Ensure parent directories exist in zip（parentDir 已含前缀，勿再拼一次）
+      const QString parentDir = QFileInfo(zipPath).path();
       if (!parentDir.isEmpty() && parentDir != QStringLiteral("."))
-      {
-        QStringList dirParts = parentDir.split('/');
-        QString accumulated;
-        for (const QString& part : dirParts)
-        {
-          if (part.isEmpty())
-            continue;
-          accumulated += part + "/";
-          zip.addDirectory(QStringLiteral("client-overrides/") + accumulated);
-        }
-      }
+        zip.addDirectory(parentDir);
 
       zip.addFile(zipPath, fileData);
 
       ++processed;
-      int percent = 30 + (processed * 60 / total);
-      emit exportProgressChanged(percent, tr("正在打包覆盖文件 (%1/%2)...").arg(processed).arg(total));
+      int percent = 10 + (processed * 80 / total);
+      emit exportProgressChanged(percent, tr("正在打包文件 (%1/%2)...").arg(processed).arg(total));
     }
   }
 
-  zip.close();
+  if (!zip.close())
+  {
+    QFile::remove(m_outputPath);
+    emit exportFinished(false, QString(), tr("写入压缩包失败，磁盘可能已满"));
+    return;
+  }
   emit exportProgressChanged(100, tr("导出完成"));
   emit exportFinished(true, m_outputPath, QString());
 }
@@ -988,7 +856,7 @@ void ModpackExporter::exportAsMcbbs()
       }
 
       QJsonObject fileObj;
-      fileObj["name"] = true;
+      fileObj["name"] = QFileInfo(relPath).fileName();
       fileObj["path"] = relPath;
       fileObj["hash"] = QString::fromLatin1(sha1.toHex());
       filesArray.append(fileObj);
@@ -1157,20 +1025,10 @@ void ModpackExporter::exportAsMcbbs()
 
       QString zipPath = QStringLiteral("overrides/") + relPath;
 
-      // Ensure parent directories exist in zip
-      QString parentDir = QFileInfo(zipPath).path();
+      // Ensure parent directories exist in zip（parentDir 已含前缀，勿再拼一次）
+      const QString parentDir = QFileInfo(zipPath).path();
       if (!parentDir.isEmpty() && parentDir != QStringLiteral("."))
-      {
-        QStringList dirParts = parentDir.split('/');
-        QString accumulated;
-        for (const QString& part : dirParts)
-        {
-          if (part.isEmpty())
-            continue;
-          accumulated += part + "/";
-          zip.addDirectory(QStringLiteral("overrides/") + accumulated);
-        }
-      }
+        zip.addDirectory(parentDir);
 
       zip.addFile(zipPath, fileData);
 
@@ -1180,7 +1038,12 @@ void ModpackExporter::exportAsMcbbs()
     }
   }
 
-  zip.close();
+  if (!zip.close())
+  {
+    QFile::remove(m_outputPath);
+    emit exportFinished(false, QString(), tr("写入压缩包失败，磁盘可能已满"));
+    return;
+  }
   emit exportProgressChanged(100, tr("导出完成"));
   emit exportFinished(true, m_outputPath, QString());
 }
@@ -1192,7 +1055,10 @@ void ModpackExporter::exportAsMcbbs()
 void ModpackExporter::exportAsBlockBox()
 {
   // =========================================================================
-  // Phase 1 - Scan (0-10%)
+  // 方块盒子原生格式：ZIP 容器 + blockbox.pack.json 清单 + 原始相对路径文件。
+  // 旧实现是自定义 BBOX 二进制（元数据重写后偏移全错、产物必然损坏），
+  // 且导入端完全无法识别；改为 zip 后复用现有 ZipWriter/ZipReader，
+  // 导入端按 blockbox.pack.json 识别并整包解压即可往返。
   // =========================================================================
   emit exportProgressChanged(0, tr("正在扫描文件..."));
 
@@ -1204,38 +1070,22 @@ void ModpackExporter::exportAsBlockBox()
   };
   QList<FileEntry> entries;
 
-  if (!m_selectedFiles.isEmpty())
+  for (const QString& relPath : m_selectedFiles)
   {
-    int total = m_selectedFiles.size();
-    int processed = 0;
+    const QString fullPath = m_instancePath + "/" + relPath;
+    const QFileInfo fi(fullPath);
+    if (!fi.exists() || !fi.isFile())
+      continue;
 
-    for (const QString& relPath : m_selectedFiles)
-    {
-      QString fullPath = m_instancePath + "/" + relPath;
-      QFileInfo fi(fullPath);
-      if (!fi.exists() || !fi.isFile())
-      {
-        ++processed;
-        continue;
-      }
+    const QByteArray sha1 = calculateSha1(fullPath);
+    if (sha1.isEmpty())
+      continue;
 
-      QByteArray sha1 = calculateSha1(fullPath);
-      if (sha1.isEmpty())
-      {
-        ++processed;
-        continue;
-      }
-
-      FileEntry entry;
-      entry.path = relPath;
-      entry.size = fi.size();
-      entry.sha1 = sha1;
-      entries.append(entry);
-
-      ++processed;
-      int percent = processed * 10 / total;
-      emit exportProgressChanged(percent, tr("正在扫描文件..."));
-    }
+    FileEntry entry;
+    entry.path = relPath;
+    entry.size = fi.size();
+    entry.sha1 = sha1;
+    entries.append(entry);
   }
 
   if (entries.isEmpty())
@@ -1244,13 +1094,10 @@ void ModpackExporter::exportAsBlockBox()
     return;
   }
 
-  // =========================================================================
-  // Phase 2 - Metadata (10-30%)
-  // =========================================================================
   emit exportProgressChanged(10, tr("正在生成元数据..."));
 
-  QString gameVersion = detectGameVersion();
-  QMap<QString, QString> allLoaders = detectAllLoaders();
+  const QString gameVersion = detectGameVersion();
+  const QMap<QString, QString> allLoaders = detectAllLoaders();
 
   // Group files by top-level directory for module classification
   struct ModuleInfo
@@ -1278,7 +1125,6 @@ void ModpackExporter::exportAsBlockBox()
     mod.totalSize += entry.size;
   }
 
-  // Build JSON metadata
   QJsonObject meta;
   meta["blockboxVersion"] = 1;
   meta["name"] = m_exportInfo.name;
@@ -1287,7 +1133,6 @@ void ModpackExporter::exportAsBlockBox()
   meta["description"] = m_exportInfo.description;
   meta["gameVersion"] = gameVersion;
 
-  // Loaders
   QJsonArray loadersArray;
   for (auto it = allLoaders.constBegin(); it != allLoaders.constEnd(); ++it)
   {
@@ -1298,7 +1143,6 @@ void ModpackExporter::exportAsBlockBox()
   }
   meta["loaders"] = loadersArray;
 
-  // Modules
   QJsonArray modulesArray;
   for (const ModuleInfo& mod : moduleMap)
   {
@@ -1311,199 +1155,74 @@ void ModpackExporter::exportAsBlockBox()
   }
   meta["modules"] = modulesArray;
 
-  // Files - compute offsets later during packing
   QJsonArray filesArray;
   for (const FileEntry& entry : entries)
   {
     QJsonObject fileObj;
     fileObj["path"] = entry.path;
-    fileObj["offset"] = 0;  // placeholder
     fileObj["size"] = entry.size;
     fileObj["sha1"] = QString::fromLatin1(entry.sha1.toHex());
-    fileObj["compressed"] = false;  // placeholder
     filesArray.append(fileObj);
   }
   meta["files"] = filesArray;
 
-  QJsonDocument metaDoc(meta);
-  QByteArray metaBytes = metaDoc.toJson(QJsonDocument::Compact);
+  const QByteArray metaBytes =
+    QJsonDocument(meta).toJson(QJsonDocument::Compact);
 
-  emit exportProgressChanged(30, tr("正在生成元数据..."));
+  emit exportProgressChanged(20, tr("正在创建整合包文件..."));
 
-  // =========================================================================
-  // Phase 3 - Pack (30-90%)
-  // =========================================================================
-  emit exportProgressChanged(30, tr("正在打包文件..."));
-  emit exportProgressChanged(30, tr("正在打包文件 (%1/%2)...").arg(0).arg(entries.size()));
-
-  QFile outFile(m_outputPath);
-  if (!outFile.open(QIODevice::WriteOnly))
+  ZipWriter zip;
+  if (!zip.open(m_outputPath))
   {
     emit exportFinished(false, QString(), tr("无法创建输出文件：%1").arg(m_outputPath));
     return;
   }
 
-  // Write header: magic "BBOX" + version + metadata_len (placeholder)
+  if (!zip.addFile(QStringLiteral("blockbox.pack.json"), metaBytes, false))
   {
-    QDataStream ds(&outFile);
-    ds.setByteOrder(QDataStream::LittleEndian);
-    const quint8 magic[4] = { 'B', 'B', 'O', 'X' };
-    ds.writeRawData(reinterpret_cast<const char*>(magic), 4);
-    ds << static_cast<quint32>(1);         // version
-    ds << static_cast<quint32>(0);         // metadata_len placeholder
+    zip.close();
+    QFile::remove(m_outputPath);
+    emit exportFinished(false, QString(), tr("写入清单文件失败"));
+    return;
   }
 
-  // Write metadata JSON
-  qint64 metaStartPos = outFile.pos();
-  outFile.write(metaBytes);
-  qint64 metaEndPos = outFile.pos();
-
-  // Go back and fill metadata_len
-  {
-    quint32 metaLen = static_cast<quint32>(metaEndPos - metaStartPos);
-    outFile.seek(8);  // after magic(4) + version(4)
-    QDataStream ds(&outFile);
-    ds.setByteOrder(QDataStream::LittleEndian);
-    ds << metaLen;
-    outFile.seek(metaEndPos);
-  }
-
-  // Track offsets for JSON update
-  QList<qint64> fileOffsets;
-  QList<bool> fileCompressed;
-  // 原实现将全部文件数据累积到 allDataBlocks 用于最终 CRC 计算，大整合包会耗尽内存。
-  // 改为循环内增量计算 CRC32（zlib 支持流式 crc32(crc, data, len)）。
-  quint32 runningCrc = 0;
-
-  // Write file data blocks
-  int total = entries.size();
+  const int total = entries.size();
   int processed = 0;
-
   for (const FileEntry& entry : entries)
   {
-    QString fullPath = m_instancePath + "/" + entry.path;
-    QFile file(fullPath);
+    QFile file(m_instancePath + "/" + entry.path);
     if (!file.open(QIODevice::ReadOnly))
     {
-      ++processed;
-      continue;
+      zip.close();
+      QFile::remove(m_outputPath);
+      emit exportFinished(false, QString(),
+                          tr("读取文件失败：%1").arg(entry.path));
+      return;
     }
-
-    QByteArray fileData = file.readAll();
+    const QByteArray fileData = file.readAll();
     file.close();
 
-    QString ext = QFileInfo(entry.path).suffix();
-    bool isCompressed = isAlreadyCompressed(ext);
-
-    QByteArray writeData;
-    bool compressed = false;
-
-    if (isCompressed)
+    if (!zip.addFile(entry.path, fileData))
     {
-      // Already compressed, store as-is
-      writeData = fileData;
-      compressed = false;
+      zip.close();
+      QFile::remove(m_outputPath);
+      emit exportFinished(false, QString(),
+                          tr("打包文件失败：%1").arg(entry.path));
+      return;
     }
-    else
-    {
-      // Try deflate compression for text/config files
-      static const QStringList textExts = {
-        "json", "cfg", "txt", "properties", "toml", "lang", "info",
-        "mcmeta", "nbt", "dat", "xml", "yml", "yaml", "html", "css", "js"
-      };
-
-      if (textExts.contains(ext.toLower()))
-      {
-        QByteArray deflated = compressDeflate(fileData);
-        if (!deflated.isEmpty() && deflated.size() < fileData.size())
-        {
-          writeData = deflated;
-          compressed = true;
-        }
-        else
-        {
-          writeData = fileData;
-          compressed = false;
-        }
-      }
-      else
-      {
-        writeData = fileData;
-        compressed = false;
-      }
-    }
-
-    qint64 offset = outFile.pos();
-    fileOffsets.append(offset);
-    fileCompressed.append(compressed);
-
-    outFile.write(writeData);
-    runningCrc = crc32(runningCrc,
-                       reinterpret_cast<const Bytef*>(writeData.constData()),
-                       static_cast<uInt>(writeData.size()));
 
     ++processed;
-    int percent = 30 + (processed * 60 / total);
-    emit exportProgressChanged(percent, tr("正在打包文件 (%1/%2)...").arg(processed).arg(total));
+    emit exportProgressChanged(20 + processed * 75 / total,
+                               tr("正在打包文件 (%1/%2)...").arg(processed).arg(total));
   }
 
-  // Update file offsets and compressed flags in the JSON metadata
-  // We need to rebuild the metadata with correct offsets
+  if (!zip.close())
   {
-    QJsonArray updatedFilesArray;
-    for (int i = 0; i < entries.size(); ++i)
-    {
-      QJsonObject fileObj;
-      fileObj["path"] = entries[i].path;
-      fileObj["offset"] = fileOffsets.value(i, 0);
-      fileObj["size"] = entries[i].size;
-      fileObj["sha1"] = QString::fromLatin1(entries[i].sha1.toHex());
-      fileObj["compressed"] = fileCompressed.value(i, false);
-      updatedFilesArray.append(fileObj);
-    }
-    meta["files"] = updatedFilesArray;
-
-    QJsonDocument updatedMetaDoc(meta);
-    QByteArray updatedMetaBytes = updatedMetaDoc.toJson(QJsonDocument::Compact);
-
-    // Rewrite: seek to beginning, write header, write updated metadata
-    outFile.seek(0);
-    {
-      QDataStream ds(&outFile);
-      ds.setByteOrder(QDataStream::LittleEndian);
-      const quint8 magic[4] = { 'B', 'B', 'O', 'X' };
-      ds.writeRawData(reinterpret_cast<const char*>(magic), 4);
-      ds << static_cast<quint32>(1);  // version
-      ds << static_cast<quint32>(updatedMetaBytes.size());
-    }
-    outFile.write(updatedMetaBytes);
-
-    // Seek to end for footer
-    outFile.seek(outFile.size());
+    QFile::remove(m_outputPath);
+    emit exportFinished(false, QString(), tr("写入压缩包失败，磁盘可能已满"));
+    return;
   }
 
-  // =========================================================================
-  // Phase 4 - Verify (90-95%)
-  // =========================================================================
-  emit exportProgressChanged(90, tr("正在校验..."));
-
-  quint32 crc = runningCrc;
-
-  // Write footer: magic "BBOX" + CRC32
-  {
-    QDataStream ds(&outFile);
-    ds.setByteOrder(QDataStream::LittleEndian);
-    const quint8 magic[4] = { 'B', 'B', 'O', 'X' };
-    ds.writeRawData(reinterpret_cast<const char*>(magic), 4);
-    ds << crc;
-  }
-
-  emit exportProgressChanged(95, tr("正在校验..."));
-
-  // =========================================================================
-  // Phase 5 - Done (95-100%)
-  // =========================================================================
-  outFile.close();
   emit exportProgressChanged(100, tr("导出完成"));
   emit exportFinished(true, m_outputPath, QString());
 }
@@ -1759,286 +1478,178 @@ void ModpackExporter::exportAsPackwiz()
 // Helper methods
 // ---------------------------------------------------------------------------
 
+namespace {
+
+/// 读取实例目录里的版本 JSON（约定文件名 <目录名>.json，兜底任意 *.json）
+QJsonObject readInstanceVersionJson(const QString& instancePath)
+{
+  const QString dirName = QFileInfo(instancePath).fileName();
+  QStringList candidates{instancePath + "/" + dirName + ".json"};
+  const QStringList jsons =
+    QDir(instancePath).entryList(QStringList() << "*.json", QDir::Files);
+  for (const QString& j : jsons)
+  {
+    const QString p = instancePath + "/" + j;
+    if (!candidates.contains(p))
+      candidates.append(p);
+  }
+  for (const QString& p : candidates)
+  {
+    QFile f(p);
+    if (!f.open(QIODevice::ReadOnly))
+      continue;
+    const QJsonObject obj = QJsonDocument::fromJson(f.readAll()).object();
+    f.close();
+    if (!obj.isEmpty())
+      return obj;
+  }
+  return QJsonObject();
+}
+
+/// 从版本 JSON 的 id / inheritsFrom 推导游戏版本号
+QString gameVersionFromJson(const QJsonObject& obj)
+{
+  // 加载器 JSON：inheritsFrom 指向原版版本
+  const QString inherits = obj.value(QStringLiteral("inheritsFrom")).toString();
+  if (!inherits.isEmpty())
+    return inherits;
+  // 纯原版 JSON：id 就是版本号；带后缀的（1.20.1-forge-47.2.0）截取前段
+  const QString id = obj.value(QStringLiteral("id")).toString();
+  if (id.isEmpty())
+    return QString();
+  static const QRegularExpression pureVer(
+    QStringLiteral("^(1\\.\\d+(\\.\\d+)?|[a-z]+\\d+[a-z]?)$"),
+    QRegularExpression::CaseInsensitiveOption);
+  if (pureVer.match(id).hasMatch())
+    return id;
+  static const QRegularExpression extract(QStringLiteral("1\\.\\d+(\\.\\d+)?"));
+  const QRegularExpressionMatch m = extract.match(id);
+  return m.hasMatch() ? m.captured() : QString();
+}
+
+/// 从版本 JSON 的 id 解析加载器类型与版本号
+void loaderFromJson(const QJsonObject& obj, QString& type, QString& version)
+{
+  const QString id = obj.value(QStringLiteral("id")).toString().toLower();
+  if (id.isEmpty())
+    return;
+  // fabric-loader-0.15.11-1.20.1 → fabric / 0.15.11
+  static const QRegularExpression fabricRe(
+    QStringLiteral("fabric-loader-([0-9][0-9a-zA-Z\\.\\+]*)-"));
+  QRegularExpressionMatch m = fabricRe.match(id);
+  if (m.hasMatch())
+  {
+    type = QStringLiteral("fabric");
+    version = m.captured(1);
+    return;
+  }
+  // quilt-loader-x.y-1.20.1 → quilt
+  static const QRegularExpression quiltRe(
+    QStringLiteral("quilt-loader-([0-9][0-9a-zA-Z\\.\\+]*)-"));
+  m = quiltRe.match(id);
+  if (m.hasMatch())
+  {
+    type = QStringLiteral("quilt");
+    version = m.captured(1);
+    return;
+  }
+  // neoforge-20.4.237 或 1.20.1-neoforge-20.4.237 → neoforge
+  static const QRegularExpression neoforgeRe(QStringLiteral("neoforge-([0-9][0-9a-zA-Z\\.]*)"));
+  m = neoforgeRe.match(id);
+  if (m.hasMatch())
+  {
+    type = QStringLiteral("neoforge");
+    version = m.captured(1);
+    return;
+  }
+  // forge-1.20.1-47.2.0 或 1.20.1-forge-47.2.0 → forge（取 forge- 之后的部分）
+  static const QRegularExpression forgeRe(QStringLiteral("forge-(.+)$"));
+  m = forgeRe.match(id);
+  if (m.hasMatch())
+  {
+    type = QStringLiteral("forge");
+    QString ver = m.captured(1);
+    // 若形如 1.20.1-47.2.0（forge- 后又带了游戏版本），去掉游戏版本前缀
+    static const QRegularExpression stripMc(QStringLiteral("^1\\.\\d+(\\.\\d+)?-"));
+    ver.remove(stripMc);
+    version = ver;
+    return;
+  }
+
+  // 合并式版本 JSON（无 inheritsFrom，id 形如 "1.21.4-Fabric 0.17.1"）:
+  // 从 mainClass 与库坐标识别加载器及其版本号
+  const QString mainClass = obj.value(QStringLiteral("mainClass")).toString();
+  if (mainClass.contains(QStringLiteral("fabricmc"), Qt::CaseInsensitive))
+    type = QStringLiteral("fabric");
+  else if (mainClass.contains(QStringLiteral("quiltmc"), Qt::CaseInsensitive))
+    type = QStringLiteral("quilt");
+  for (const QJsonValue& libVal : obj.value(QStringLiteral("libraries")).toArray())
+  {
+    const QStringList coords = libVal.toObject().value(QStringLiteral("name")).toString().split(QChar(':'));
+    if (coords.size() < 3)
+      continue;
+    if (coords[0] == QLatin1String("net.fabricmc") && coords[1] == QLatin1String("fabric-loader"))
+    {
+      type = QStringLiteral("fabric");
+      version = coords[2];
+      break;
+    }
+    if (coords[0] == QLatin1String("org.quiltmc") && coords[1] == QLatin1String("quilt-loader"))
+    {
+      type = QStringLiteral("quilt");
+      version = coords[2];
+      break;
+    }
+    if (coords[0] == QLatin1String("net.neoforged") && coords[1] == QLatin1String("neoforge"))
+    {
+      type = QStringLiteral("neoforge");
+      version = coords[2];
+      break;
+    }
+  }
+}
+
+} // namespace
+
 QString ModpackExporter::detectGameVersion() const
 {
-  // Scan versions directory for Minecraft version JSON files
-  QString versionsDir = m_instancePath + "/versions";
-  QDir dir(versionsDir);
-  if (!dir.exists())
-    return QString();
-
-  QStringList jsonFiles = dir.entryList(QStringList() << "*.json", QDir::Files);
-  if (jsonFiles.isEmpty())
-    return QString();
-
-  // Look for the vanilla Minecraft version (not a loader version)
-  for (const QString& fileName : jsonFiles)
-  {
-    QString filePath = versionsDir + "/" + fileName;
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly))
-      continue;
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (!doc.isObject())
-      continue;
-
-    QJsonObject obj = doc.object();
-
-    // Skip loader-specific versions
-    QString versionId = obj["id"].toString();
-    QString inheritsFrom = obj["inheritsFrom"].toString();
-    QString type = obj["type"].toString();
-
-    // If it's a vanilla release/snapshot, use this version id
-    if (type == QStringLiteral("release") || type == QStringLiteral("snapshot"))
-    {
-      if (inheritsFrom.isEmpty())
-        return versionId;
-    }
-
-    // If it inherits from vanilla, use the inherited version
-    if (!inheritsFrom.isEmpty())
-    {
-      // Check if the inherited version is a vanilla version
-      // For simplicity, return inheritsFrom directly
-      return inheritsFrom;
-    }
-  }
-
-  // Fallback: return the first version id found
-  for (const QString& fileName : jsonFiles)
-  {
-    QString filePath = versionsDir + "/" + fileName;
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly))
-      continue;
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (doc.isObject())
-    {
-      QString versionId = doc.object()["id"].toString();
-      if (!versionId.isEmpty())
-        return versionId;
-    }
-  }
-
-  return QString();
+  // 实例目录自身就带版本 JSON（<实例名>.json），直接读它，
+  // 不要再去扫 <实例>/versions —— 那是旧「游戏根」布局，真实实例没有这层
+  return gameVersionFromJson(readInstanceVersionJson(m_instancePath));
 }
 
 QString ModpackExporter::detectLoaderType() const
 {
-  QString versionsDir = m_instancePath + "/versions";
-  QDir dir(versionsDir);
-  if (!dir.exists())
+  QString type, version;
+  loaderFromJson(readInstanceVersionJson(m_instancePath), type, version);
+  if (type.isEmpty())
     return QString();
-
-  QStringList entries = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-  for (const QString& entry : entries)
-  {
-    QString lower = entry.toLower();
-    if (lower.startsWith(QStringLiteral("forge-")) && !lower.contains(QStringLiteral("neoforge")))
-      return QStringLiteral("Forge");
-    if (lower.startsWith(QStringLiteral("fabric-loader-")))
-      return QStringLiteral("Fabric");
-    if (lower.startsWith(QStringLiteral("neoforge-")))
-      return QStringLiteral("NeoForge");
-    if (lower.startsWith(QStringLiteral("liteloader-")))
-      return QStringLiteral("LiteLoader");
-    if (lower.startsWith(QStringLiteral("optifine-")))
-      return QStringLiteral("OptiFine");
-    if (lower.startsWith(QStringLiteral("quilt-loader-")))
-      return QStringLiteral("Quilt");
-  }
-
-  // Also check JSON files for loader info
-  QStringList jsonFiles = dir.entryList(QStringList() << "*.json", QDir::Files);
-  for (const QString& fileName : jsonFiles)
-  {
-    QString lower = fileName.toLower();
-    if (lower.startsWith(QStringLiteral("forge-")) && !lower.contains(QStringLiteral("neoforge")))
-      return QStringLiteral("Forge");
-    if (lower.startsWith(QStringLiteral("fabric-loader-")))
-      return QStringLiteral("Fabric");
-    if (lower.startsWith(QStringLiteral("neoforge-")))
-      return QStringLiteral("NeoForge");
-    if (lower.startsWith(QStringLiteral("liteloader-")))
-      return QStringLiteral("LiteLoader");
-    if (lower.startsWith(QStringLiteral("optifine-")))
-      return QStringLiteral("OptiFine");
-    if (lower.startsWith(QStringLiteral("quilt-loader-")))
-      return QStringLiteral("Quilt");
-  }
-
-  // Also check JSON content for loader detection
-  for (const QString& fileName : jsonFiles)
-  {
-    QString filePath = versionsDir + "/" + fileName;
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly))
-      continue;
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (!doc.isObject())
-      continue;
-
-    QJsonObject obj = doc.object();
-    QString id = obj["id"].toString().toLower();
-
-    if (id.contains(QStringLiteral("liteloader")))
-      return QStringLiteral("LiteLoader");
-    if (id.contains(QStringLiteral("optifine")))
-      return QStringLiteral("OptiFine");
-    if (id.contains(QStringLiteral("quilt-loader")))
-      return QStringLiteral("Quilt");
-  }
-
-  return QString();
+  // 保持旧接口的展示大小写
+  if (type == QLatin1String("forge"))
+    return QStringLiteral("Forge");
+  if (type == QLatin1String("fabric"))
+    return QStringLiteral("Fabric");
+  if (type == QLatin1String("neoforge"))
+    return QStringLiteral("NeoForge");
+  if (type == QLatin1String("quilt"))
+    return QStringLiteral("Quilt");
+  return type;
 }
 
 QString ModpackExporter::detectLoaderVersion() const
 {
-  QString versionsDir = m_instancePath + "/versions";
-  QDir dir(versionsDir);
-  if (!dir.exists())
-    return QString();
-
-  QStringList entries = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-  for (const QString& entry : entries)
-  {
-    QString lower = entry.toLower();
-    if (lower.startsWith(QStringLiteral("forge-")) && !lower.contains(QStringLiteral("neoforge")))
-      return entry.mid(6);  // "forge-".length() == 6
-    if (lower.startsWith(QStringLiteral("fabric-loader-")))
-      return entry.mid(14); // "fabric-loader-".length() == 14
-    if (lower.startsWith(QStringLiteral("neoforge-")))
-      return entry.mid(9);  // "neoforge-".length() == 9
-    if (lower.startsWith(QStringLiteral("liteloader-")))
-      return entry.mid(11); // "liteloader-".length() == 11
-    if (lower.startsWith(QStringLiteral("optifine-")))
-      return entry.mid(9);  // "optifine-".length() == 9
-    if (lower.startsWith(QStringLiteral("quilt-loader-")))
-      return entry.mid(13); // "quilt-loader-".length() == 13
-  }
-
-  // Also check JSON files
-  QStringList jsonFiles = dir.entryList(QStringList() << "*.json", QDir::Files);
-  for (const QString& fileName : jsonFiles)
-  {
-    QString lower = fileName.toLower();
-    QString baseName = fileName;
-    if (baseName.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive))
-      baseName.chop(5);
-
-    QString lowerBase = baseName.toLower();
-    if (lowerBase.startsWith(QStringLiteral("forge-")) && !lowerBase.contains(QStringLiteral("neoforge")))
-      return baseName.mid(6);
-    if (lowerBase.startsWith(QStringLiteral("fabric-loader-")))
-      return baseName.mid(14);
-    if (lowerBase.startsWith(QStringLiteral("neoforge-")))
-      return baseName.mid(9);
-    if (lowerBase.startsWith(QStringLiteral("liteloader-")))
-      return baseName.mid(11);
-    if (lowerBase.startsWith(QStringLiteral("optifine-")))
-      return baseName.mid(9);
-    if (lowerBase.startsWith(QStringLiteral("quilt-loader-")))
-      return baseName.mid(13);
-  }
-
-  return QString();
+  QString type, version;
+  loaderFromJson(readInstanceVersionJson(m_instancePath), type, version);
+  return version;
 }
 
 QMap<QString, QString> ModpackExporter::detectAllLoaders() const
 {
   QMap<QString, QString> loaders;
-  QString versionsDir = m_instancePath + "/versions";
-  QDir dir(versionsDir);
-  if (!dir.exists())
-    return loaders;
-
-  // Scan directory names for loader versions
-  QStringList entries = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-  for (const QString& entry : entries)
-  {
-    QString lower = entry.toLower();
-    if (lower.startsWith(QStringLiteral("forge-")) && !lower.contains(QStringLiteral("neoforge")))
-      loaders[QStringLiteral("forge")] = entry.mid(6);
-    else if (lower.startsWith(QStringLiteral("fabric-loader-")))
-      loaders[QStringLiteral("fabric")] = entry.mid(14);
-    else if (lower.startsWith(QStringLiteral("neoforge-")))
-      loaders[QStringLiteral("neoforge")] = entry.mid(9);
-    else if (lower.startsWith(QStringLiteral("liteloader-")))
-      loaders[QStringLiteral("liteloader")] = entry.mid(11);
-    else if (lower.startsWith(QStringLiteral("optifine-")))
-      loaders[QStringLiteral("optifine")] = entry.mid(9);
-    else if (lower.startsWith(QStringLiteral("quilt-loader-")))
-      loaders[QStringLiteral("quilt")] = entry.mid(13);
-  }
-
-  // Also scan JSON file names for loader versions
-  QStringList jsonFiles = dir.entryList(QStringList() << "*.json", QDir::Files);
-  for (const QString& fileName : jsonFiles)
-  {
-    QString lower = fileName.toLower();
-    QString baseName = fileName;
-    if (baseName.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive))
-      baseName.chop(5);
-
-    QString lowerBase = baseName.toLower();
-    if (lowerBase.startsWith(QStringLiteral("forge-")) && !lowerBase.contains(QStringLiteral("neoforge"))
-        && !loaders.contains(QStringLiteral("forge")))
-      loaders[QStringLiteral("forge")] = baseName.mid(6);
-    else if (lowerBase.startsWith(QStringLiteral("fabric-loader-"))
-             && !loaders.contains(QStringLiteral("fabric")))
-      loaders[QStringLiteral("fabric")] = baseName.mid(14);
-    else if (lowerBase.startsWith(QStringLiteral("neoforge-"))
-             && !loaders.contains(QStringLiteral("neoforge")))
-      loaders[QStringLiteral("neoforge")] = baseName.mid(9);
-    else if (lowerBase.startsWith(QStringLiteral("liteloader-"))
-             && !loaders.contains(QStringLiteral("liteloader")))
-      loaders[QStringLiteral("liteloader")] = baseName.mid(11);
-    else if (lowerBase.startsWith(QStringLiteral("optifine-"))
-             && !loaders.contains(QStringLiteral("optifine")))
-      loaders[QStringLiteral("optifine")] = baseName.mid(9);
-    else if (lowerBase.startsWith(QStringLiteral("quilt-loader-"))
-             && !loaders.contains(QStringLiteral("quilt")))
-      loaders[QStringLiteral("quilt")] = baseName.mid(13);
-  }
-
-  // Also check JSON content for loaders not yet detected
-  for (const QString& fileName : jsonFiles)
-  {
-    QString filePath = versionsDir + "/" + fileName;
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly))
-      continue;
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (!doc.isObject())
-      continue;
-
-    QJsonObject obj = doc.object();
-    QString id = obj["id"].toString().toLower();
-    QString version = obj["version"].toString();
-    if (version.isEmpty())
-      version = obj["name"].toString();
-
-    if (id.contains(QStringLiteral("liteloader")) && !loaders.contains(QStringLiteral("liteloader")))
-      loaders[QStringLiteral("liteloader")] = version;
-    if (id.contains(QStringLiteral("optifine")) && !loaders.contains(QStringLiteral("optifine")))
-      loaders[QStringLiteral("optifine")] = version;
-    if (id.contains(QStringLiteral("quilt-loader")) && !loaders.contains(QStringLiteral("quilt")))
-      loaders[QStringLiteral("quilt")] = version;
-  }
-
+  QString type, version;
+  loaderFromJson(readInstanceVersionJson(m_instancePath), type, version);
+  if (!type.isEmpty() && !version.isEmpty())
+    loaders[type] = version;
   return loaders;
 }
 
@@ -2076,15 +1687,6 @@ QByteArray ModpackExporter::calculateSha256(const QString& filePath) const
   hash.addData(&file);
   file.close();
   return hash.result().toHex();
-}
-
-bool ModpackExporter::isAlreadyCompressed(const QString& ext) const
-{
-  static const QStringList compressed = {
-    "jar", "zip", "png", "jpg", "jpeg", "gif", "webp", "ogg", "mp3", "mp4",
-    "webm", "gz", "bz2", "xz", "lz4", "lzma", "7z"
-  };
-  return compressed.contains(ext.toLower());
 }
 
 } // namespace modpack

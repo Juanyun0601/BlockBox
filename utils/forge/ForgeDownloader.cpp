@@ -151,6 +151,17 @@ void ForgeDownloader::downloadFiles(const QVector<QPair<QStringList, QString>> &
                                      const std::function<void(int completed, int total)> &progressCallback,
                                      const std::function<void(bool allSuccess, const QStringList &failed)> &completionCallback)
 {
+  QVector<ForgeFileDownload> converted;
+  converted.reserve(tasks.size());
+  for (const auto &task : tasks)
+    converted.append({task.first, task.second, QString()});
+  downloadFiles(converted, progressCallback, completionCallback);
+}
+
+void ForgeDownloader::downloadFiles(const QVector<ForgeFileDownload> &tasks,
+                                     const std::function<void(int completed, int total)> &progressCallback,
+                                     const std::function<void(bool allSuccess, const QStringList &failed)> &completionCallback)
+{
   if (tasks.isEmpty())
   {
     if (completionCallback)
@@ -167,9 +178,9 @@ void ForgeDownloader::downloadFiles(const QVector<QPair<QStringList, QString>> &
 
   for (const auto &task : tasks)
   {
-    auto dl = makeDownload(task.first, task.second, QString());
+    auto dl = makeDownload(task.urls, task.filePath, task.expectedSha1);
 
-    const QString fileName = QFileInfo(task.second).fileName();
+    const QString fileName = QFileInfo(task.filePath).fileName();
     connect(dl.get(), &NetAction::netActionProgress, this,
             [this, fileName](int, qint64 received, qint64 totalBytes) {
       emit downloadProgress(fileName, totalBytes > 0
@@ -178,7 +189,7 @@ void ForgeDownloader::downloadFiles(const QVector<QPair<QStringList, QString>> &
       emit downloadBytesProgress(received, totalBytes);
     });
 
-    const QString filePath = task.second;
+    const QString filePath = task.filePath;
     connect(dl.get(), &NetAction::succeeded, this,
             [this, finishedCount, progressCallback, total](int) {
       ++(*finishedCount);

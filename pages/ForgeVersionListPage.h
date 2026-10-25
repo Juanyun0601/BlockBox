@@ -28,10 +28,11 @@ struct ForgeVersionInfo {
     QString version;
     QString mcversion;
     QString branch;
-    int build;
+    int build = 0;
     QString modified;
-    bool hasInstaller;
-    bool isAvailable;
+    bool hasInstaller = false;
+    bool hasUniversalZip = false;   ///< 有 universal/client 压缩包（MC ≤1.5.2 的经典安装方式）
+    bool isAvailable = false;
     QString fileName;
 };
 

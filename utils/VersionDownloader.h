@@ -9,6 +9,7 @@
 
 #include <QElapsedTimer>
 #include <QHash>
+#include <QSet>
 #include <functional>
 #include <QJsonObject>
 #include <QList>
@@ -111,10 +112,8 @@ private:
     void downloadClientJarFromNetwork();
     void downloadLogConfigs();
     void startLibrariesDownload();
-    void processLibraryQueue();
     void startAssetsDownload();
     void fetchAssetIndex();
-    void processAssetQueue();
 
     // ── 本地文件复用（参考 HMCL/PCL2：安装前复用其他实例/共享目录中的同内容文件）──
     QStringList buildReuseBases() const;
@@ -152,17 +151,21 @@ private:
     void onNetFileSucceeded(const NetFileParams &params);
     void onNetFileFailed(const NetFileParams &params);
     void onNetFileAborted(const NetFileParams &params);
-    void requeuePendingFile(const NetFileParams &params);
+
+    // ── 阶段作业（MultiMC 进度逻辑：库/资源各自装进一个 NetJob，
+    //    完成文件等权 + 在途文件按字节占比，由 NetJob 聚合出阶段进度）──
+    void startPhaseJob(const QList<PendingDownload> &files, DownloadPhase phase);
+    void onPhaseJobFinished(const NetJob::Ptr &job);
+    void reportPhaseProgress(bool force);
+    void addCompletedFile(const QString &filePath, qint64 fileSize);
 
     QString getClientDownloadUrl(const QJsonObject &versionManifest);
-    int effectiveConcurrentLimit() const;
     void calculateTotalSize(const QJsonObject &versionManifest);
     void addAssetTotalSize(const QJsonObject &versionManifest);
     QString getActualVersionPath() const;
     void updateTaskProgress(qint64 bytesReceived, qint64 bytesTotal);
     void updateTaskStatus(const QString &status);
 
-    static const int MAX_CONCURRENT_DOWNLOADS = 128;
     static const int MAX_RETRY_COUNT = 3;
 
     DownloadSource m_downloadSource;
@@ -181,13 +184,15 @@ private:
     qint64 m_clientJarSize;
 
     QList<QNetworkReply*> m_activeReplies;
-    // 在途文件进度（键为文件路径，MultiMC net 层接管传输后按文件聚合）
-    QHash<QString, qint64> m_activeFileProgress;
-    // MultiMC net 层：在途的单文件下载任务（取消时统一 abort）
+    // MultiMC net 层：在途的单文件下载任务（客户端 JAR / 日志配置，取消时统一 abort）
     QList<NetJob::Ptr> m_fileJobs;
-    QQueue<PendingDownload> m_pendingDownloads;
-    QQueue<PendingDownload> m_pendingAssets;
-    int m_activeDownloadCount;
+
+    // 当前阶段作业（库/资源各一个 NetJob）及其文件清单与完成集合
+    NetJob::Ptr m_phaseJob;
+    DownloadPhase m_phaseJobPhase = DownloadPhase::Libraries;
+    QSet<QString> m_completedFiles;                 ///< 本次任务已完成文件的绝对路径
+    QHash<NetAction *, qint64> m_phaseActionReceived; ///< 在途动作已收字节（进度聚合用）
+    qint64 m_lastProgressReportMs = 0;              ///< 进度上报节流
 
     // BMCL 源客户端 JAR 的官方源兜底地址与校验哈希（Download 的回退地址）
     QString m_clientJarFallbackUrl;

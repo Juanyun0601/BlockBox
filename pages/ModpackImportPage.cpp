@@ -13,7 +13,6 @@
 #include "utils/modpack/ModpackDetector.h"
 #include "utils/modpack/ModpackImporter.h"
 #include "components/NotificationManager.h"
-#include "utils/SettingsManager.h"
 
 #include "components/AppFileDialog.h"
 #include "components/AppMessageBox.h"
@@ -204,7 +203,7 @@ void ModpackImportPage::onSelectFileClicked()
     this,
     tr("选择整合包文件"),
     QString(),
-    tr("整合包文件 (*.zip)")
+    tr("整合包文件 (*.zip *.mrpack *.blockbox)")
   );
 
   if (filePath.isEmpty())
@@ -229,12 +228,19 @@ void ModpackImportPage::loadModpackFile(const QString& filePath)
   m_descLabel->setText(m_currentInfo.description);
   m_instanceNameEdit->setText(m_currentInfo.name);
 
+  // 通用/未知格式的包没有游戏版本：把字段放开让用户填，否则装完也没有可启动的版本
+  const bool needManualVersion = m_currentInfo.gameVersion.trimmed().isEmpty();
+  m_gameVersionEdit->setReadOnly(!needManualVersion);
+  m_gameVersionEdit->setPlaceholderText(needManualVersion
+                                            ? tr("必填，例如 1.20.1")
+                                            : QString());
+
   if (m_currentInfo.type == modpack::ModpackType::Unknown)
   {
     AppMessageBox::warning(
       this,
       tr("无法识别"),
-      tr("未检测到标准整合包格式，将作为通用整合包导入。\n请手动设置实例名称。")
+      tr("未检测到标准整合包格式，将作为通用整合包导入。\n请手动填写游戏版本。")
     );
     m_nameEdit->setText(QFileInfo(filePath).completeBaseName());
     m_instanceNameEdit->setText(QFileInfo(filePath).completeBaseName());
@@ -243,7 +249,7 @@ void ModpackImportPage::loadModpackFile(const QString& filePath)
   {
     NotificationManager::showInfo(
       this,
-      tr("检测为通用整合包，将直接解压内容到实例目录。\n请确认游戏版本和加载器信息。")
+      tr("检测为通用整合包，将解压内容到实例目录。\n请确认游戏版本。")
     );
   }
   else
@@ -279,14 +285,21 @@ void ModpackImportPage::onInstallClicked()
     return;
   }
 
-  // 创建导入器（MultiMC 模式：导入流程是一个 Task），交给进度对话框执行
+  // 通用/未知包允许手填游戏版本，同步回清单
+  m_currentInfo.gameVersion = m_gameVersionEdit->text().trimmed();
+  if (m_currentInfo.gameVersion.isEmpty())
+  {
+    AppMessageBox::warning(this, tr("错误"), tr("请填写游戏版本，例如 1.20.1"));
+    m_gameVersionEdit->setFocus();
+    return;
+  }
+
+  // 创建导入器（MultiMC 模式：导入流程是一个 Task），交给进度对话框执行。
+  // 实例路径由导入器按 <游戏根>/versions/<实例名> 自行计算，页面不再拼接
   modpack::ModpackImporter* importer = new modpack::ModpackImporter(this);
   importer->setModpackInfo(m_currentInfo);
   importer->setZipFilePath(m_currentFilePath);
   importer->setInstanceName(instanceName);
-
-  QString basePath = SettingsManager::instance()->getDefaultInstancePath();
-  importer->setInstancePath(basePath + "/" + instanceName);
 
   // MultiMC 进度系统：非模态进度窗口实时显示阶段状态与百分比、可随时取消，
   // 安装期间软件其他部分照常可用

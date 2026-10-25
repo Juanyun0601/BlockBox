@@ -110,6 +110,8 @@ void DownloadTaskManager::updateTaskProgress(const QString &taskId, int progress
     }
     
     DownloadTask &task = m_tasks[taskId];
+    // 统一钳位：上游换算（重定向重复计数、总量估算偏差等）可能算出 >100
+    progress = qBound(0, progress, 100);
     task.progress = progress;
     task.progressDouble = static_cast<double>(progress);
     task.bytesReceived = bytesReceived;
@@ -127,7 +129,7 @@ void DownloadTaskManager::updateTaskProgressDouble(const QString &taskId, double
     
     DownloadTask &task = m_tasks[taskId];
     task.progress = static_cast<int>(progress);
-    task.progressDouble = progress;
+    task.progressDouble = qBound(0.0, progress, 100.0);
     task.bytesReceived = bytesReceived;
     task.bytesTotal = bytesTotal;
     task.downloadSpeed = speed;
@@ -232,6 +234,7 @@ void DownloadTaskManager::updateTaskProgressPercent(const QString &taskId, int p
         return;
     }
 
+    percent = qBound(0, percent, 100);
     task.progress = percent;
     task.progressDouble = static_cast<double>(percent);
     // 不覆盖 bytesReceived/bytesTotal/downloadSpeed
@@ -286,6 +289,7 @@ void DownloadTaskManager::updateTaskStageProgress(const QString &taskId, Downloa
 
     task.stage = stage;
     task.stageProgress = internalProgress;
+    globalProgress = qBound(0, globalProgress, 100);
     task.progress = globalProgress;
     task.progressDouble = static_cast<double>(globalProgress);
 

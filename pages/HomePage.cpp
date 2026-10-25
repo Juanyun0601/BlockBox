@@ -638,10 +638,26 @@ QVector<RecentPlayEntry> HomePage::scanRecentPlays(const QList<InstanceFolderInf
             detectedVersion = rootObj["id"].toString();
 
           // 检测加载器类型
-          if (rootObj.contains("fabricLoader")) { detectedLoader = "Fabric"; }
-          else if (rootObj.contains("forge")) { detectedLoader = "Forge"; }
-          else if (rootObj.contains("quiltLoader")) { detectedLoader = "Quilt"; }
-          else if (rootObj.contains("neoForge")) { detectedLoader = "NeoForge"; }
+          // 先看 JSON 标记字段（兼容旧版安装器），再按 mainClass 与库坐标推断，
+          // 覆盖官方合并式版本（无 inheritsFrom，mainClass 为 Knot 等）
+          const QString mainClass = rootObj.value("mainClass").toString();
+          bool hasFabric = rootObj.contains("fabricLoader")
+                           || mainClass.contains("fabricmc", Qt::CaseInsensitive);
+          bool hasQuilt = rootObj.contains("quiltLoader")
+                          || mainClass.contains("quiltmc", Qt::CaseInsensitive);
+          bool hasNeoForge = rootObj.contains("neoForge");
+          bool hasForge = rootObj.contains("forge");
+          for (const QJsonValue &libVal : rootObj.value("libraries").toArray()) {
+            const QString libName = libVal.toObject().value("name").toString();
+            if (libName.startsWith("net.fabricmc:")) hasFabric = true;
+            else if (libName.startsWith("org.quiltmc:")) hasQuilt = true;
+            else if (libName.startsWith("net.neoforged:")) hasNeoForge = true;
+            else if (libName.startsWith("net.minecraftforge:")) hasForge = true;
+          }
+          if (hasFabric) { detectedLoader = "Fabric"; }
+          else if (hasQuilt) { detectedLoader = "Quilt"; }
+          else if (hasNeoForge) { detectedLoader = "NeoForge"; }
+          else if (hasForge) { detectedLoader = "Forge"; }
           else
           {
             for (auto keyIter = rootObj.constBegin(); keyIter != rootObj.constEnd(); ++keyIter)
@@ -870,10 +886,11 @@ void HomePage::initUI()
   m_mainLayout->setContentsMargins(0, 0, 0, 0);
   m_mainLayout->setSpacing(0);
 
-  // 默认模式轮播槽：圆角描边后不再全出血贴边，侧边距与下方内容区对齐
+  // 默认模式轮播槽：圆角描边后不再全出血贴边，侧边距与下方内容区对齐；
+  // 顶部留出与侧边距一致的 24px 呼吸空间，封面图与皮肤模型不再顶到顶栏
   m_carouselSlot = new QWidget();
   m_carouselSlotLayout = new QVBoxLayout(m_carouselSlot);
-  m_carouselSlotLayout->setContentsMargins(24, 16, 24, 0);
+  m_carouselSlotLayout->setContentsMargins(24, 24, 24, 0);
   m_carouselSlotLayout->setSpacing(0);
   m_mainLayout->addWidget(m_carouselSlot);
 
@@ -2014,11 +2031,30 @@ void HomePage::loadInstances()
           if (v.isEmpty()) v = rootObj["id"].toString();
           entry.version = v;
 
-          if (rootObj.contains("fabricLoader"))       entry.loader = "Fabric";
-          else if (rootObj.contains("quiltLoader"))   entry.loader = "Quilt";
-          else if (rootObj.contains("neoForge"))      entry.loader = "NeoForge";
-          else if (rootObj.contains("forge"))         entry.loader = "Forge";
-          else if (rootObj.contains("optifine"))      entry.loader = "OptiFine";
+          // 先看标记字段，再按 mainClass/库坐标推断（覆盖合并式版本 JSON）
+          const QString mainClass = rootObj.value("mainClass").toString();
+          if (rootObj.contains("fabricLoader")
+                  || mainClass.contains("fabricmc", Qt::CaseInsensitive))
+            entry.loader = "Fabric";
+          else if (rootObj.contains("quiltLoader")
+                   || mainClass.contains("quiltmc", Qt::CaseInsensitive))
+            entry.loader = "Quilt";
+          else if (rootObj.contains("neoForge"))
+            entry.loader = "NeoForge";
+          else if (rootObj.contains("forge"))
+            entry.loader = "Forge";
+          else if (rootObj.contains("optifine"))
+            entry.loader = "OptiFine";
+          else
+          {
+            for (const QJsonValue &libVal : rootObj.value("libraries").toArray()) {
+              const QString libName = libVal.toObject().value("name").toString();
+              if (libName.startsWith("net.fabricmc:")) { entry.loader = "Fabric"; break; }
+              if (libName.startsWith("org.quiltmc:")) { entry.loader = "Quilt"; break; }
+              if (libName.startsWith("net.neoforged:")) { entry.loader = "NeoForge"; break; }
+              if (libName.startsWith("net.minecraftforge:")) { entry.loader = "Forge"; break; }
+            }
+          }
         }
       }
       m_instances.append(entry);
@@ -2533,9 +2569,17 @@ void HomePage::rebuildNewsContent()
     // 卡片宽度均分三列；高度先按各自内容算，再统一取本行最高值，保证一排卡片等高等宽
     const QSize size = card->contentSizeForWidth(cardWidth);
     rowHeight = qMax(rowHeight, size.height());
-    card->setToolTip(tr("点击查看详情"));
+    card->setToolTip(tr("点击在浏览器中打开官方原文"));
 
+    // 首页新闻卡片：直接打开对应的官方文章（与官方启动器的习惯一致）；
+    // 链接缺失或是打不开时，再退回软件内的详情弹窗，保证点击总有反馈
     QObject::connect(card, &NewsCard::clicked, this, [this, entry]() {
+      const QUrl link(entry.link);
+      const bool isWebLink = link.isValid()
+          && (link.scheme() == QStringLiteral("http") || link.scheme() == QStringLiteral("https"));
+      if (isWebLink && QDesktopServices::openUrl(link))
+        return;
+
       showNewsDetailDialog(this, entry);
     });
     cards.append(card);

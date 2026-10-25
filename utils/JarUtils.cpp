@@ -130,6 +130,13 @@ bool extractFromJar(const QString &jarPath, const QString &entryPath, const QStr
         return false;
     }
 
+    // 进程内解析优先（毫秒级）：外部工具（jar.exe/PowerShell/Python）在部分机器上
+    // 启动极慢甚至卡到超时，只作为解析失败时的兜底
+    if (tryExtractManual(jarPath, entryPath, destPath))
+    {
+        return true;
+    }
+
     if (tryExtractWithJarTool(jarPath, entryPath, destPath))
     {
         return true;
@@ -148,11 +155,6 @@ bool extractFromJar(const QString &jarPath, const QString &entryPath, const QStr
 #endif
 
     if (tryExtractWithPython(jarPath, entryPath, destPath))
-    {
-        return true;
-    }
-
-    if (tryExtractManual(jarPath, entryPath, destPath))
     {
         return true;
     }
@@ -323,8 +325,14 @@ bool extractJarDirectory(const QString &jarPath, const QString &dirPath, const Q
         QDir().mkpath(destDir);
     }
 
+    // 进程内解析优先（毫秒级），外部工具只在解析失败时兜底
+    if (tryExtractJarDirectoryManual(jarPath, dirPath, destDir))
+    {
+        return true;
+    }
+
     QString jarToolPath = getJarToolPath();
-    if (!jarToolPath.isEmpty())
+    if (!jarToolPath.isEmpty() && QFile::exists(jarToolPath))
     {
         QProcess process;
         QStringList args;
@@ -350,11 +358,6 @@ bool extractJarDirectory(const QString &jarPath, const QString &dirPath, const Q
 #endif
 
     if (tryExtractJarDirectoryWithPython(jarPath, dirPath, destDir))
-    {
-        return true;
-    }
-
-    if (tryExtractJarDirectoryManual(jarPath, dirPath, destDir))
     {
         return true;
     }

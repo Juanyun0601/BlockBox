@@ -200,12 +200,15 @@ void PluginPage::initUI()
 
     // 空状态
     m_emptyState = new QWidget(m_stack);
+    m_emptyState->setObjectName(QStringLiteral("pluginEmptyHost"));
+    // 空状态直接透出自定义背景时文字不可读，宿主容器自己带一块暗色卡片底
+    m_emptyState->setAttribute(Qt::WA_StyledBackground, true);
     QVBoxLayout *emptyLayout = new QVBoxLayout(m_emptyState);
     emptyLayout->setContentsMargins(24, 24, 24, 24);
     m_emptyLabel = new QLabel(tr("还没有安装任何插件\n\n点击上方「导入插件」选择 .BlockBox 插件文件，\n或点击「制作插件」创建你的第一个插件"), m_emptyState);
     m_emptyLabel->setObjectName(QStringLiteral("pluginPageEmpty"));
     m_emptyLabel->setAlignment(Qt::AlignCenter);
-    emptyLayout->addWidget(m_emptyLabel);
+    emptyLayout->addWidget(m_emptyLabel, 0, Qt::AlignHCenter);
     m_stack->addWidget(m_emptyState);
 
     // --- 详情页 ---

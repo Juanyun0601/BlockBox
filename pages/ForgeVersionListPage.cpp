@@ -215,6 +215,7 @@ void ForgeVersionListPage::loadForgeVersions()
                     info.build = versionObj["build"].toInt();
                     info.modified = versionObj["modified"].toString();
                     info.hasInstaller = false;
+                    info.hasUniversalZip = false;
                     info.isAvailable = false;
 
                     QJsonArray filesArray = versionObj["files"].toArray();
@@ -224,10 +225,14 @@ void ForgeVersionListPage::loadForgeVersions()
                         QString format = fileObj["format"].toString();
                         if (category == "installer" || category == "installer-win") {
                             info.hasInstaller = true;
-                            info.isAvailable = true;
-                            break;
+                        }
+                        // 老版本 Forge（MC ≤1.5.2）只有 universal/client 压缩包，
+                        // 没有安装器，走 MultiMC 经典合并方式安装
+                        if (format == "zip" && (category == "universal" || category == "client")) {
+                            info.hasUniversalZip = true;
                         }
                     }
+                    info.isAvailable = info.hasInstaller || info.hasUniversalZip;
 
                     m_forgeVersions.append(info);
                 }
@@ -755,6 +760,9 @@ void ForgeVersionListPage::populateVersionList()
         }
         if (!info.branch.isEmpty())
             chips << info.branch;
+        // 无安装器、只有 universal/client 包的老版本走 MultiMC 经典合并安装
+        if (info.hasUniversalZip && !info.hasInstaller)
+            chips << tr("经典安装");
         addVersionCard(info, info.version, chips);
     }
 

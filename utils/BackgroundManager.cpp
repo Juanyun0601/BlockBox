@@ -13,6 +13,7 @@ BackgroundManager::BackgroundManager(QObject *parent)
     , m_mode(Classic)
     , m_solidColor("#f5f5f5")
     , m_blurRadius(0)
+    , m_rotatingSpeed(100)
 {
     loadFromSettings();
 }
@@ -95,6 +96,22 @@ void BackgroundManager::setBingImagePath(const QString &path)
     }
 }
 
+QString BackgroundManager::panoramaScene() const
+{
+    return m_panoramaScene;
+}
+
+void BackgroundManager::setPanoramaScene(const QString &scene)
+{
+    if (m_panoramaScene != scene) {
+        m_panoramaScene = scene;
+        saveToSettings();
+        if (m_mode == Rotating) {
+            emit backgroundChanged();
+        }
+    }
+}
+
 int BackgroundManager::blurRadius() const
 {
     return m_blurRadius;
@@ -109,6 +126,22 @@ void BackgroundManager::setBlurRadius(int radius)
         if (m_mode == Image || m_mode == Rotating || m_mode == Bing) {
             emit backgroundChanged();
         }
+    }
+}
+
+int BackgroundManager::rotatingSpeed() const
+{
+    return m_rotatingSpeed;
+}
+
+void BackgroundManager::setRotatingSpeed(int percent)
+{
+    percent = qBound(0, percent, 400);
+    if (m_rotatingSpeed != percent) {
+        m_rotatingSpeed = percent;
+        saveToSettings();
+        // 只通知速度变化：重建样式表开销大，拖动滑条时会明显卡顿
+        emit rotatingSpeedChanged(m_rotatingSpeed);
     }
 }
 
@@ -190,8 +223,10 @@ void BackgroundManager::loadFromSettings()
     m_mode = static_cast<BackgroundMode>(settings.value("background/mode", static_cast<int>(Classic)).toInt());
     m_solidColor = settings.value("background/solidColor", "#f5f5f5").toString();
     m_imagePath = settings.value("background/imagePath", "").toString();
+    m_panoramaScene = settings.value("background/panoramaScene", "overworld").toString();
     m_bingImagePath = settings.value("background/bingPath", "").toString();
     m_blurRadius = settings.value("background/blurRadius", 0).toInt();
+    m_rotatingSpeed = settings.value("background/rotatingSpeed", 100).toInt();
 }
 
 void BackgroundManager::saveToSettings()
@@ -200,6 +235,8 @@ void BackgroundManager::saveToSettings()
     settings.setValue("background/mode", static_cast<int>(m_mode));
     settings.setValue("background/solidColor", m_solidColor);
     settings.setValue("background/imagePath", m_imagePath);
+    settings.setValue("background/panoramaScene", m_panoramaScene);
     settings.setValue("background/bingPath", m_bingImagePath);
     settings.setValue("background/blurRadius", m_blurRadius);
+    settings.setValue("background/rotatingSpeed", m_rotatingSpeed);
 }

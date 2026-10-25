@@ -74,7 +74,8 @@ QString resolveTokens(QString style, bool dark)
             {"@BORDER_DISABLED@", "#b0b0b0"}, {"@BORDER_LIGHT@", "#f0f1f3"},
             {"@TEXT_SECONDARY@", "#666666"}, {"@TEXT_TERTIARY@", "#888888"},
             {"@TEXT_DISABLED@", "#bbbbbb"}, {"@TEXT_PRIMARY@", "#333333"},
-            {"@PRIMARY_BG@", "#e8f5e9"}, {"@TEXT_ACCENT@", "#1b5e20"},
+            {"@PRIMARY_BG@", "#e8f5e9"}, {"@PRIMARY_BG_SOFT@", "#f1faf2"},
+            {"@TEXT_ACCENT@", "#1b5e20"},
             {"@DANGER@", "#c62828"}, {"@DANGER_BG@", "#ffebee"},
             {"@DANGER_BORDER@", "#ffcdd2"},
             {"@BLACK_RGBA_0.06@", "rgba(0, 0, 0, 0.06)"},
@@ -93,7 +94,8 @@ QString resolveTokens(QString style, bool dark)
             {"@BORDER_DISABLED@", "#444444"}, {"@BORDER_LIGHT@", "#444444"},
             {"@TEXT_SECONDARY@", "#b0b0b0"}, {"@TEXT_TERTIARY@", "#808080"},
             {"@TEXT_DISABLED@", "#808080"}, {"@TEXT_PRIMARY@", "#e6e6e6"},
-            {"@PRIMARY_BG@", "#2d4d2d"}, {"@TEXT_ACCENT@", "#66bb6a"},
+            {"@PRIMARY_BG@", "#2d4d2d"}, {"@PRIMARY_BG_SOFT@", "#355535"},
+            {"@TEXT_ACCENT@", "#66bb6a"},
             {"@DANGER@", "#ff6b6b"}, {"@DANGER_BG@", "#5d2d2d"},
             {"@DANGER_BORDER@", "#8d4d4d"},
             {"@BLACK_RGBA_0.06@", "rgba(255, 255, 255, 0.08)"},
@@ -141,7 +143,7 @@ QWidget *createJavaItemWidget(const QString &path, const QString &version)
     itemFrame->setFrameShape(QFrame::NoFrame);
 
     auto *itemLayout = new QHBoxLayout(itemFrame);
-    itemLayout->setContentsMargins(12, 10, 12, 10);
+    itemLayout->setContentsMargins(14, 12, 14, 12);
     itemLayout->setSpacing(12);
 
     const bool isJdk = path.contains(QStringLiteral("Adoptium"))
@@ -157,7 +159,7 @@ QWidget *createJavaItemWidget(const QString &path, const QString &version)
     avatarLabel->setObjectName(QStringLiteral("javaItemAvatar"));
     avatarLabel->setProperty("kind", isJdk ? "jdk" : "jre");
     avatarLabel->setAlignment(Qt::AlignCenter);
-    avatarLabel->setFixedSize(40, 40);
+    avatarLabel->setFixedSize(44, 44);
 
     auto *infoWidget = new QWidget(itemFrame);
     auto *infoLayout = new QVBoxLayout(infoWidget);
@@ -201,6 +203,7 @@ QWidget *createJavaItemWidget(const QString &path, const QString &version)
     auto *actionsLayout = new QHBoxLayout(actionsWidget);
     actionsLayout->setContentsMargins(0, 0, 0, 0);
     actionsLayout->setSpacing(8);
+    actionsWidget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
     auto *openFolderBtn = new QPushButton(QStringLiteral("打开文件夹"), actionsWidget);
     openFolderBtn->setObjectName(QStringLiteral("javaOpenFolderBtn"));
@@ -220,7 +223,7 @@ QWidget *createJavaItemWidget(const QString &path, const QString &version)
     return itemFrame;
 }
 
-QWidget *buildContent(QWidget *parent)
+QWidget *buildContent(QWidget *parent, bool emptyList = false)
 {
     auto *root = new QWidget(parent);
     auto *layout = new QVBoxLayout(root);
@@ -271,23 +274,37 @@ QWidget *buildContent(QWidget *parent)
     list->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     list->setMinimumHeight(180);
 
-    struct Item { const char *path; const char *ver; };
-    const Item items[] = {
-        {"C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.4.7-hotspot\\bin\\javaw.exe",
-         "21.0.4"},
-        {"C:\\Program Files\\Java\\jre1.8.0_301\\bin\\javaw.exe",
-         "1.8.0_301"},
-        {"D:\\develop\\jdk-17.0.11+9\\bin\\javaw.exe",
-         "17.0.11"},
-    };
-    for (const auto &it : items) {
+    if (emptyList) {
+        auto *empty = new QLabel(
+            QStringLiteral("尚未发现任何 Java 安装。\n点击上方「Java检测」或「手动添加」以检测 Java。"),
+            list);
+        empty->setObjectName(QStringLiteral("javaEmptyLabel"));
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setWordWrap(true);
         auto *item = new QListWidgetItem(list);
-        item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
-        QWidget *w = createJavaItemWidget(QString::fromUtf8(it.path),
-                                          QString::fromUtf8(it.ver));
+        item->setFlags(item->flags() & ~Qt::ItemIsEnabled & ~Qt::ItemIsSelectable);
         list->addItem(item);
-        list->setItemWidget(item, w);
-        item->setSizeHint(w->sizeHint().expandedTo(QSize(0, 72)));
+        list->setItemWidget(item, empty);
+        item->setSizeHint(empty->sizeHint().expandedTo(QSize(0, 120)));
+    } else {
+        struct Item { const char *path; const char *ver; };
+        const Item items[] = {
+            {"C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.4.7-hotspot\\bin\\javaw.exe",
+             "21.0.4"},
+            {"C:\\Program Files\\Java\\jre1.8.0_301\\bin\\javaw.exe",
+             "1.8.0_301"},
+            {"D:\\develop\\jdk-17.0.11+9\\bin\\javaw.exe",
+             "17.0.11"},
+        };
+        for (const auto &it : items) {
+            auto *item = new QListWidgetItem(list);
+            item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+            QWidget *w = createJavaItemWidget(QString::fromUtf8(it.path),
+                                              QString::fromUtf8(it.ver));
+            list->addItem(item);
+            list->setItemWidget(item, w);
+            item->setSizeHint(w->sizeHint().expandedTo(QSize(0, 76)));
+        }
     }
     layout->addWidget(list, 1);
     layout->addStretch();
@@ -308,12 +325,13 @@ int main(int argc, char **argv)
     }
     const QString raw = QString::fromUtf8(f.readAll());
 
-    struct Shot { const char *name; bool dark; int w; bool hover; };
+    struct Shot { const char *name; bool dark; int w; bool hover; bool empty; };
     const Shot shots[] = {
-        {"java_list_light.png", false, 860, false},
-        {"java_list_dark.png", true, 860, false},
-        {"java_list_narrow.png", false, 460, false},
-        {"java_list_hover.png", false, 860, true},
+        {"java_list_light.png", false, 860, false, false},
+        {"java_list_dark.png", true, 860, false, false},
+        {"java_list_narrow.png", false, 460, false, false},
+        {"java_list_hover.png", false, 860, true, false},
+        {"java_list_empty.png", false, 860, false, true},
     };
 
     for (const Shot &s : shots) {
@@ -321,9 +339,17 @@ int main(int argc, char **argv)
 
         QWidget win;
         win.setFixedSize(s.w, 620);
+        {
+            QPalette pal = win.palette();
+            pal.setColor(QPalette::Window,
+                         QColor(s.dark ? QStringLiteral("#1a1a1a")
+                                       : QStringLiteral("#f5f5f5")));
+            win.setAutoFillBackground(true);
+            win.setPalette(pal);
+        }
         auto *rootLayout = new QVBoxLayout(&win);
         rootLayout->setContentsMargins(0, 0, 0, 0);
-        rootLayout->addWidget(buildContent(&win));
+        rootLayout->addWidget(buildContent(&win, s.empty));
 
         win.show();
         app.processEvents();

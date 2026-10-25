@@ -1087,7 +1087,8 @@
         <location filename="../pages/AiChatPage.cpp" line="5137"/>
         <source>Minecraft %1 已下载完成<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 のダウンロードが完了しました</translation>
+        <translation>Minecraft %1 のダウンロードが完了しました<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/AiChatPage.cpp" line="5145"/>
@@ -1108,7 +1109,8 @@
         <location filename="../pages/AiChatPage.cpp" line="5206"/>
         <source>开始下载 Minecraft %1 到<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 のダウンロードを開始します：</translation>
+        <translation>Minecraft %1 のダウンロードを開始します：<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/AiChatPage.cpp" line="5214"/>
@@ -12406,20 +12408,23 @@
         <location filename="../pages/LoaderDetailPage.cpp" line="323"/>
         <source>Minecraft %1 已成功安装到<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 を正常にインストールしました：</translation>
+        <translation>Minecraft %1 を正常にインストールしました：<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="379"/>
         <location filename="../pages/LoaderDetailPage.cpp" line="415"/>
         <source>Minecraft %1 与 mod 加载器已成功安装到<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 と MOD ローダーを正常にインストールしました：</translation>
+        <translation>Minecraft %1 と MOD ローダーを正常にインストールしました：<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="418"/>
         <source>Minecraft %1 安装成功，但以下加载器安装失败：<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 のインストールは成功しましたが、次のローダーのインストールに失敗しました：</translation>
+        <translation>Minecraft %1 のインストールは成功しましたが、次のローダーのインストールに失敗しました：<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="618"/>
@@ -22890,6 +22895,16 @@ BlockBox のファイルエクスプローラーから投影を選ぶことも�
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="215"/>
         <source>BlockBox 基于开源协议发布，并使用了以下第三方开源库，特此致谢。</source>
         <translation>BlockBox はオープンソースライセンスのもとで公開されており、以下のサードパーティ製オープンソースライブラリを使用しています。ここに感謝の意を表します。</translation>
+    </message>
+    <message>
+        <location filename="../pages/settings/SettingsAboutPage.cpp" line="220"/>
+        <source>启动器本体以 GNU 通用公共许可证第 3 版（GPL-3.0）发布，第三方库与素材仍遵循各自协议。</source>
+        <translation>ランチャー本体は GNU General Public License v3.0（GPL-3.0）で公開されています。サードパーティのライブラリと素材はそれぞれのライセンスに従います。</translation>
+    </message>
+    <message>
+        <location filename="../pages/settings/SettingsAboutPage.cpp" line="236"/>
+        <source>Copyright (C) 2026 Juanyun0601。本程序不提供任何担保，可自由复制、修改与再发布，但须同样以 GPL-3.0 公开源代码。</source>
+        <translation>Copyright (C) 2026 Juanyun0601。本プログラムはいかなる保証も提供しません。自由に複製・改変・再配布できますが、改変版も GPL-3.0 でソースコードを公開する必要があります。</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="218"/>

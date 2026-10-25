@@ -45,6 +45,22 @@ void NotificationManager::showError(QWidget *parent, const QString &text, int du
     instance()->showCard(NotificationCard::Error, parent, text, duration);
 }
 
+QString NotificationManager::withDetail(const QString &titleTemplate, const QString &titleArg,
+                                        const QString &detail)
+{
+    QString format = titleTemplate;
+    if (!format.contains(QLatin1String("%1"))) {
+        // 连标题参数都丢了：把参数补在前面，至少不吞信息
+        format.prepend(QLatin1String("%1 "));
+    }
+    if (!format.contains(QLatin1String("%2"))) {
+        // 译文漏了 %2：详情换行接在后面，效果与模板一致
+        return format.arg(titleArg) + QLatin1String("\r\n") + detail;
+    }
+    // 两个占位符一次性替换：标题参数里万一含有 %2 也不会被再次解析
+    return format.arg(titleArg, detail);
+}
+
 void NotificationManager::showCard(NotificationCard::Type type, QWidget *parent,
                                     const QString &text, int duration)
 {

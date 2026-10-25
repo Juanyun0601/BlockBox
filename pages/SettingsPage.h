@@ -172,8 +172,11 @@ private:
     // Background settings
     QComboBox *m_backgroundModeCombo;
     QWidget *m_solidColorSection;
+    QWidget *m_rotatingSection;
     QWidget *m_imageSection;
+    QWidget *m_blurSection;
     QWidget *m_bingSection;
+    QComboBox *m_sceneCombo;
     QPushButton *m_solidColorBtn;
     QLineEdit *m_imagePathEdit;
     QPushButton *m_browseImageBtn;

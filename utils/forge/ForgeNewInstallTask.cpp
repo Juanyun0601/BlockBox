@@ -20,7 +20,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QtConcurrent/QtConcurrent>
 #include <QRegularExpression>
 #include <QSet>
@@ -42,6 +45,7 @@
 
 #include "../SettingsManager.h"
 #include "../DownloadTaskManager.h"
+#include "../GameLauncher.h"
 
 namespace forge {
 
@@ -76,6 +80,10 @@ void ForgeNewInstallTask::execute()
 void ForgeNewInstallTask::cancel()
 {
     m_cancelled = true;
+    if (m_libDownloader)
+    {
+        m_libDownloader->cancelAll();
+    }
 }
 
 void ForgeNewInstallTask::setTaskId(const QString &taskId)
@@ -321,6 +329,15 @@ void ForgeNewInstallTask::onPreExecuteDone()
 
 void ForgeNewInstallTask::doExecute()
 {
+    // 处理器要以原版客户端 JAR 为输入（拆分/重命名/补丁），缺了就先失败并说明原因
+    QString vanillaJar = m_instancePath + "/versions/" + m_profile.minecraft + "/"
+                         + m_profile.minecraft + ".jar";
+    if (!QFile::exists(vanillaJar))
+    {
+        emit completed(false, tr("未找到原版 %1 客户端，请先安装原版再装Forge").arg(m_profile.minecraft));
+        return;
+    }
+
     emit progressUpdated(tr("正在构建变量"), 30);
 
     if (!m_taskId.isEmpty()) {
@@ -363,8 +380,13 @@ void ForgeNewInstallTask::postExecute()
         DownloadTaskManager::instance()->updateTaskProgressPercent(m_taskId, 80);
     }
 
+    // 官方安装器/MultiMC 的最后一步：按最终版本 JSON 把库补齐。
+    // 下载是异步的，完成后由 finishPostExecute() 收尾
     downloadRemainingLibraries();
+}
 
+void ForgeNewInstallTask::finishPostExecute()
+{
     if (m_cancelled)
     {
         emit completed(false, tr("安装已取消"));
@@ -681,8 +703,18 @@ void ForgeNewInstallTask::buildVariables()
                     }
                     else
                     {
+                        // 安装器内嵌数据文件（如 /data/client.lzma），ZIP 条目名不带前导斜杠
+                        QString entry = value;
+                        while (entry.startsWith('/'))
+                        {
+                            entry = entry.mid(1);
+                        }
                         QString filePath = m_tempDir + "/data_" + key;
-                        if (JarUtils::extractFromJar(m_installerJarPath, value, filePath))
+                        if (JarUtils::extractFromJar(m_installerJarPath, entry, filePath))
+                        {
+                            value = filePath;
+                        }
+                        else if (entry != value && JarUtils::extractFromJar(m_installerJarPath, value, filePath))
                         {
                             value = filePath;
                         }
@@ -948,7 +980,7 @@ void ForgeNewInstallTask::runProcessorsAsync()
     QString javaPath = getJavaPath();
     if (javaPath.isEmpty())
     {
-        emit completed(false, tr("未找到Java运行环境"));
+        emit completed(false, tr("未找到可用的 Java，请先在设置的 Java 管理中选择或下载一个 Java"));
         return;
     }
 
@@ -1130,6 +1162,8 @@ void ForgeNewInstallTask::runProcessorsAsync()
             }
 
             QProcess process;
+            // 合并输出：部分工具把错误打到 stdout，只看 stderr 会拿到空信息
+            process.setProcessChannelMode(QProcess::MergedChannels);
             qDebug() << "[ForgeNewInstallTask]" << "Executing processor:" << processor.jar;
             qDebug() << "[ForgeNewInstallTask]" << "Working directory:" << instancePath;
             qDebug() << "[ForgeNewInstallTask]" << "Command:" << javaPath << args.join(" ");
@@ -1139,7 +1173,7 @@ void ForgeNewInstallTask::runProcessorsAsync()
 
             if (!process.waitForStarted())
             {
-                QString errorOutput = QString::fromUtf8(process.readAllStandardError());
+                QString errorOutput = QString::fromUtf8(process.readAll());
                 QString error = tr("无法启动处理器: %1\n%2").arg(processor.jar, errorOutput.left(500));
                 QMetaObject::invokeMethod(this, [this, error]()
                 {
@@ -1160,9 +1194,12 @@ void ForgeNewInstallTask::runProcessorsAsync()
 
             if (process.exitCode() != 0)
             {
-                QString errorOutput = QString::fromUtf8(process.readAllStandardError());
-                qWarning() << "[ForgeNewInstallTask]" << "Processor failed:" << processor.jar << errorOutput;
-                QString error = tr("处理器执行失败: %1\n%2").arg(processor.jar, errorOutput);
+                QString errorOutput = QString::fromUtf8(process.readAll());
+                qWarning() << "[ForgeNewInstallTask]" << "Processor failed:" << processor.jar
+                           << "exit code:" << process.exitCode() << errorOutput;
+                QString error = tr("处理器执行失败 (退出码 %1): %2\n%3")
+                                    .arg(process.exitCode())
+                                    .arg(processor.jar, errorOutput.left(800));
                 QMetaObject::invokeMethod(this, [this, error]()
                 {
                     emit completed(false, error);
@@ -1256,10 +1293,17 @@ void ForgeNewInstallTask::generateVersionJson()
 {
     QJsonObject versionJson = m_baseVersionJson;
 
+    QString mcVersion = m_profile.minecraft;
+    // install_profile 的 version 字段是完整版本号（如 1.20.1-forge-47.3.0），补丁版本号要剥掉前缀
+    QString forgeVersion = m_profile.version;
+    const QString fullPrefix = mcVersion + "-forge-";
+    if (forgeVersion.startsWith(fullPrefix))
+    {
+        forgeVersion = forgeVersion.mid(fullPrefix.length());
+    }
+
     if (versionJson.isEmpty())
     {
-        QString mcVersion = m_profile.minecraft;
-        QString forgeVersion = m_profile.version;
         QString forgeVersionId = QString("%1-forge-%2").arg(mcVersion, forgeVersion);
 
         versionJson["id"] = forgeVersionId;
@@ -1281,9 +1325,6 @@ void ForgeNewInstallTask::generateVersionJson()
     }
     else
     {
-        QString mcVersion = m_profile.minecraft;
-        QString forgeVersion = m_profile.version;
-
         QString versionId = versionJson["id"].toString();
         if (versionId.isEmpty())
         {
@@ -1359,11 +1400,179 @@ void ForgeNewInstallTask::generateVersionJson()
     QJsonDocument doc(versionJson);
     versionFile.write(doc.toJson());
     versionFile.close();
+
+    m_writtenVersionId = versionId;
+    m_writtenVersionJsonPath = versionJsonPath;
+
+    // 官方安装器行为：把原版客户端 JAR 拷成 versions/<id>/<id>.jar，
+    // 启动时 classpath 与 ignoreList 里的 ${version_name}.jar 都指向它
+    const QString vanillaJar = m_instancePath + "/versions/" + mcVersion + "/" + mcVersion + ".jar";
+    const QString targetJar = versionDir + "/" + versionId + ".jar";
+    if (QFile::exists(vanillaJar) && !QFile::exists(targetJar))
+    {
+        if (!QFile::copy(vanillaJar, targetJar))
+        {
+            qWarning() << "[ForgeNewInstallTask]" << "Failed to copy vanilla jar to" << targetJar;
+        }
+    }
 }
 
 void ForgeNewInstallTask::downloadRemainingLibraries()
 {
-    Q_UNUSED(this);
+    // MultiMC 式收尾：按生成的版本 JSON 把所有库补齐到 <游戏根>/libraries。
+    // 多源候选（官方 Forge Maven / Mojang / BMCLAPI）+ SHA1 校验，
+    // 全部装进一个 NetJob 由 net 层做 6 路并发
+    if (m_writtenVersionJsonPath.isEmpty())
+    {
+        finishPostExecute();
+        return;
+    }
+
+    QFile versionFile(m_writtenVersionJsonPath);
+    if (!versionFile.open(QIODevice::ReadOnly))
+    {
+        finishPostExecute();
+        return;
+    }
+    QJsonDocument doc = QJsonDocument::fromJson(versionFile.readAll());
+    versionFile.close();
+
+    const QJsonArray libraries = doc.object()["libraries"].toArray();
+    QString librariesPath = m_instancePath + "/libraries";
+
+    ForgeDownloader sourceProvider;
+    ForgeDownloadSource source = SettingsManager::instance()->getForgeDownloadSource();
+    sourceProvider.setDownloadSource(
+        source == ForgeDownloadSource::Official ? DownloadSource::Official : DownloadSource::BMCL);
+
+    QVector<ForgeFileDownload> tasks;
+    int reusedCount = 0;
+    for (const QJsonValue &libValue : libraries)
+    {
+        if (!libValue.isObject())
+        {
+            continue;
+        }
+        QJsonObject libObj = libValue.toObject();
+        QString name = libObj["name"].toString();
+        if (name.isEmpty())
+        {
+            continue;
+        }
+
+        QString relPath;
+        QString expectedSha1;
+        QString directUrl;
+        if (libObj.contains("downloads") && libObj["downloads"].isObject())
+        {
+            QJsonObject artifact = libObj["downloads"].toObject()["artifact"].toObject();
+            relPath = artifact["path"].toString();
+            expectedSha1 = artifact["sha1"].toString();
+            directUrl = artifact["url"].toString();
+        }
+        if (relPath.isEmpty())
+        {
+            relPath = getLibraryPath(name);
+        }
+        if (relPath.isEmpty())
+        {
+            continue;
+        }
+
+        QString filePath = librariesPath + "/" + relPath;
+        QFileInfo info(filePath);
+        if (info.exists())
+        {
+            if (expectedSha1.isEmpty())
+            {
+                ++reusedCount;
+                continue;
+            }
+            // 已存在但内容不对的库重新下载（MultiMC 的校验行为）
+            if (calculateSha1(filePath) == expectedSha1)
+            {
+                ++reusedCount;
+                continue;
+            }
+            QFile::remove(filePath);
+        }
+
+        ForgeFileDownload task;
+        task.filePath = filePath;
+        task.expectedSha1 = expectedSha1;
+
+        // 按下载源排好的多源候选优先（BMCL 源时国内镜像在前），
+        // 官方精确文件地址殿后兜底；重复地址去重
+        const QStringList candidates = sourceProvider.getCandidateUrls(relPath);
+        for (const QString &url : candidates)
+        {
+            if (!task.urls.contains(url))
+            {
+                task.urls.append(url);
+            }
+        }
+        if (!directUrl.isEmpty() && !task.urls.contains(directUrl))
+        {
+            task.urls.append(directUrl);
+        }
+        if (task.urls.isEmpty())
+        {
+            continue;
+        }
+        tasks.append(task);
+    }
+
+    if (reusedCount > 0)
+    {
+        qDebug() << "[ForgeNewInstallTask]" << "Reused" << reusedCount << "existing libraries";
+    }
+
+    if (tasks.isEmpty())
+    {
+        finishPostExecute();
+        return;
+    }
+
+    if (m_libDownloader)
+    {
+        m_libDownloader->deleteLater();
+    }
+    m_libDownloader = new ForgeDownloader(this);
+    ForgeDownloadSource source2 = SettingsManager::instance()->getForgeDownloadSource();
+    m_libDownloader->setDownloadSource(
+        source2 == ForgeDownloadSource::Official ? DownloadSource::Official : DownloadSource::BMCL);
+
+    const int totalTasks = tasks.size();
+    connect(m_libDownloader, &ForgeDownloader::downloadBytesProgress, this,
+            [this](qint64 bytesReceived, qint64 bytesTotal)
+            {
+                if (!m_taskId.isEmpty())
+                {
+                    DownloadTaskManager::instance()->updateTaskProgress(m_taskId, 80, bytesReceived, bytesTotal);
+                }
+            });
+
+    m_libDownloader->downloadFiles(tasks,
+        [this, totalTasks](int completed, int total)
+        {
+            Q_UNUSED(total);
+            int percent = 80 + (completed * 15 / totalTasks);
+            emit progressUpdated(tr("正在下载剩余库文件"), percent);
+            if (!m_taskId.isEmpty())
+            {
+                DownloadTaskManager::instance()->updateTaskProgressPercent(m_taskId, percent);
+            }
+        },
+        [this](bool allSuccess, const QStringList &failed)
+        {
+            if (!allSuccess)
+            {
+                qWarning() << "[ForgeNewInstallTask]" << "Some libraries failed to download:" << failed;
+                emit completed(false, tr("库文件下载失败: %1").arg(failed.join(", ")));
+                return;
+            }
+            finishPostExecute();
+        });
 }
 
 void ForgeNewInstallTask::cleanupTempFiles()
@@ -1404,32 +1613,164 @@ QString ForgeNewInstallTask::getLibraryPath(const QString &libraryName)
            .arg(group, artifact, version, classifier, extension);
 }
 
-QString ForgeNewInstallTask::getJavaPath()
-{
-    QString javaPath = SettingsManager::instance()->getJavaPath();
+namespace {
 
+// 缓存已验证可用的 Java：处理器会多次启动 Java，-version 验证只做一次
+QMutex &validatedJavaMutex()
+{
+    static QMutex mutex;
+    return mutex;
+}
+QString &validatedJavaPath()
+{
+    static QString path;
+    return path;
+}
+
+/// 验证某个 java 可执行文件真的能跑（PATH 里可能残留卸载后的空壳 java.exe）
+bool javaExecutableWorks(const QString &javaPath)
+{
     if (javaPath.isEmpty())
     {
-        javaPath = qEnvironmentVariable("JAVA_HOME");
-        if (!javaPath.isEmpty())
+        return false;
+    }
+    QProcess process;
+    process.start(javaPath, QStringList() << QStringLiteral("-version"));
+    if (!process.waitForStarted(5000) || !process.waitForFinished(10000))
+    {
+        if (process.state() != QProcess::NotRunning)
         {
-#ifdef Q_OS_WIN
-            javaPath += "/bin/java.exe";
-#else
-            javaPath += "/bin/java";
-#endif
+            process.kill();
+            process.waitForFinished(2000);
         }
-        else
+        return false;
+    }
+    return process.exitCode() == 0;
+}
+
+/// 常见安装位置里快速找一个能用的 java（只查目录，不扫盘）
+QString findJavaInCommonLocations()
+{
+    QStringList roots;
+#ifdef Q_OS_WIN
+    roots << QStringLiteral("C:/Program Files/Java")
+          << QStringLiteral("C:/Program Files (x86)/Java")
+          << QStringLiteral("C:/Program Files/Microsoft")
+          << QStringLiteral("C:/Program Files/Eclipse Adoptium")
+          << QStringLiteral("C:/Program Files/Zulu");
+#else
+    roots << QStringLiteral("/usr/lib/jvm") << QStringLiteral("/usr/local/lib/jvm");
+#endif
+    QStringList candidates;
+    for (const QString &root : roots)
+    {
+        QDir dir(root);
+        if (!dir.exists())
+        {
+            continue;
+        }
+        const QStringList jdkDirs = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot,
+                                                  QDir::Name | QDir::Reversed);
+        for (const QString &jdk : jdkDirs)
         {
 #ifdef Q_OS_WIN
-            javaPath = "java.exe";
+            candidates << root + QStringLiteral("/") + jdk + QStringLiteral("/bin/java.exe");
 #else
-            javaPath = "java";
+            candidates << root + QStringLiteral("/") + jdk + QStringLiteral("/bin/java");
 #endif
         }
     }
+    for (const QString &candidate : candidates)
+    {
+        if (QFile::exists(candidate) && javaExecutableWorks(candidate))
+        {
+            return candidate;
+        }
+    }
+    return QString();
+}
 
-    return javaPath;
+} // namespace
+
+QString ForgeNewInstallTask::getJavaPath()
+{
+    // 之前已验证过的直接复用
+    {
+        QMutexLocker locker(&validatedJavaMutex());
+        if (!validatedJavaPath().isEmpty())
+        {
+            return validatedJavaPath();
+        }
+    }
+
+    // 用户明确指定了 Java（且不是「自动选择」的 auto 字面量）时优先使用
+    const QString configured = SettingsManager::instance()->getJavaPath();
+    if (!configured.isEmpty()
+        && configured.compare(QStringLiteral("auto"), Qt::CaseInsensitive) != 0
+        && QFile::exists(configured)
+        && javaExecutableWorks(configured))
+    {
+        QMutexLocker locker(&validatedJavaMutex());
+        validatedJavaPath() = configured;
+        return configured;
+    }
+
+    // 自动模式：复用启动器给游戏选 Java 的同一套逻辑（按 MC 版本约束选版本）。
+    // 只在已有缓存清单时走这条路，避免现场扫描磁盘卡住界面
+    const QList<QPair<QString, QString>> cached =
+        SettingsManager::instance()->getJavaInstallations();
+    if (!cached.isEmpty())
+    {
+        GameLauncher::JavaInfo info =
+            GameLauncher::instance()->findBestJavaVersion(m_profile.minecraft);
+        if (info.valid && QFile::exists(info.path) && javaExecutableWorks(info.path))
+        {
+            QMutexLocker locker(&validatedJavaMutex());
+            validatedJavaPath() = info.path;
+            return info.path;
+        }
+    }
+
+    // JAVA_HOME
+    QString javaPath = qEnvironmentVariable("JAVA_HOME");
+    if (!javaPath.isEmpty())
+    {
+#ifdef Q_OS_WIN
+        javaPath += QStringLiteral("/bin/java.exe");
+#else
+        javaPath += QStringLiteral("/bin/java");
+#endif
+        if (QFile::exists(javaPath) && javaExecutableWorks(javaPath))
+        {
+            QMutexLocker locker(&validatedJavaMutex());
+            validatedJavaPath() = javaPath;
+            return javaPath;
+        }
+    }
+
+    // 常见安装目录（只查固定位置，快）
+    const QString found = findJavaInCommonLocations();
+    if (!found.isEmpty())
+    {
+        QMutexLocker locker(&validatedJavaMutex());
+        validatedJavaPath() = found;
+        return found;
+    }
+
+    // PATH 兜底：先验证（PATH 里常见卸载残留的空壳 java）
+#ifdef Q_OS_WIN
+    const QString pathJava = QStandardPaths::findExecutable(QStringLiteral("java.exe"));
+#else
+    const QString pathJava = QStandardPaths::findExecutable(QStringLiteral("java"));
+#endif
+    if (!pathJava.isEmpty() && javaExecutableWorks(pathJava))
+    {
+        QMutexLocker locker(&validatedJavaMutex());
+        validatedJavaPath() = pathJava;
+        return pathJava;
+    }
+
+    return QString();
 }
 
 QString ForgeNewInstallTask::readManifestMainClass(const QString &jarPath)

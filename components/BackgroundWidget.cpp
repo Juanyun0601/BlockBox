@@ -1,6 +1,7 @@
 #include "BackgroundWidget.h"
 
-#include "PanoramaSkyWidget.h"
+#include "PanoramaSkyRenderer.h"
+#include "utils/LowConfigMode.h"
 
 #include <QPainter>
 #include <QDebug>
@@ -15,6 +16,10 @@ BackgroundWidget::BackgroundWidget(QWidget *parent)
     , m_solidColor(Qt::white)
     , m_blurRadius(0)
 {
+    m_panorama = new PanoramaSkyRenderer;
+    // 低配设备降低旋转全景的渲染分辨率，优先保证界面流畅
+    m_panorama->setRenderLimit(LowConfigMode::instance()->isLowConfigMode() ? 900 : 1200);
+
     m_flowClock.start();
     m_flowTimer.setInterval(33); // ~30 FPS
     connect(&m_flowTimer, &QTimer::timeout, this, [this]() {
@@ -22,9 +27,15 @@ BackgroundWidget::BackgroundWidget(QWidget *parent)
             update();
     });
 
-    // 旋转全景的天空盒渲染交给 GL 子控件，仅旋转模式显示
-    m_panoramaSky = new PanoramaSkyWidget(this);
-    m_panoramaSky->hide();
+    // 旋转全景：纯 CPU 渲染 + 普通绘制，定时器只推进角度
+    m_rotateClock.start();
+    m_rotateTimer.setInterval(m_rotateIntervalMs);
+    connect(&m_rotateTimer, &QTimer::timeout, this, &BackgroundWidget::tickRotating);
+}
+
+BackgroundWidget::~BackgroundWidget()
+{
+    delete m_panorama;
 }
 
 void BackgroundWidget::setMode(Mode mode)
@@ -38,17 +49,86 @@ void BackgroundWidget::setMode(Mode mode)
         stopFlowAnimation();
     }
     if (mode == Rotating) {
-        if (!m_imagePath.isEmpty()) {
-            QImage img(m_imagePath);
-            m_panoramaSky->setPanorama(img);
-        }
-        m_panoramaSky->setGeometry(rect());
-        m_panoramaSky->show();
-        m_panoramaSky->raise();
+        applyRotatingSource();
+        startRotatingAnimation();
     } else {
-        m_panoramaSky->hide();
+        stopRotatingAnimation();
     }
     update();
+}
+
+void BackgroundWidget::setRotatingSpeed(int percent)
+{
+    const qreal scale = qBound(0, percent, 400) / 100.0;
+    if (qFuzzyCompare(m_panorama->rotationSpeedScale() + 1.0, scale + 1.0))
+        return;
+    m_panorama->setRotationSpeedScale(scale);
+    if (m_mode == Rotating)
+        update();
+}
+
+void BackgroundWidget::setDarkScrimEnabled(bool enabled)
+{
+    if (m_darkScrim == enabled)
+        return;
+    m_darkScrim = enabled;
+    update();
+}
+
+void BackgroundWidget::setPanoramaScene(const QString &scene)
+{
+    if (m_panoramaScene == scene)
+        return;
+    m_panoramaScene = scene;
+    if (m_mode == Rotating) {
+        applyRotatingSource();
+        reloadRotatingFrame();
+    }
+}
+
+// 旋转全景来源：内置场景优先，未选场景时回退到自定义图片，都没有则用默认场景
+void BackgroundWidget::applyRotatingSource()
+{
+    if (!m_panoramaScene.isEmpty()) {
+        m_panorama->setScene(m_panoramaScene);
+        return;
+    }
+    if (!m_imagePath.isEmpty()) {
+        const QImage img(m_imagePath);
+        if (!img.isNull()) {
+            m_panorama->setPanorama(img);
+            return;
+        }
+    }
+    // 既没有内置场景，也没有可用的自定义图片：改用默认场景，
+    // 否则没有任何素材，只会露出整块黑底盖住界面。
+    m_panorama->setScene(PanoramaSkyRenderer::defaultSceneName());
+}
+
+// 旋转背景的静态预览图：全景还没生成时用它兜底，避免整屏黑底
+QPixmap BackgroundWidget::rotatingPreview() const
+{
+    // 未选内置场景时优先用自定义图片
+    if (m_panoramaScene.isEmpty() && !m_pixmap.isNull())
+        return m_pixmap;
+
+    const QString scene = m_panoramaScene.isEmpty()
+                              ? PanoramaSkyRenderer::defaultSceneName()
+                              : m_panoramaScene;
+    if (m_rotatingPreviewScene == scene)
+        return m_rotatingPreview;
+
+    m_rotatingPreviewScene = scene;
+    m_rotatingPreview = QPixmap(QStringLiteral(":/Images/Panorama/%1/panorama_0.jpg").arg(scene));
+    if (m_rotatingPreview.isNull())
+        qDebug() << "[BackgroundWidget]" << "No fallback panorama tile for scene:" << scene;
+    return m_rotatingPreview;
+}
+
+void BackgroundWidget::reloadRotatingFrame()
+{
+    if (m_mode == Rotating)
+        update();
 }
 
 void BackgroundWidget::setSolidColor(const QColor &color)
@@ -62,9 +142,10 @@ void BackgroundWidget::setImage(const QString &path)
 {
     if (m_imagePath != path) {
         m_imagePath = path;
+        // 自定义图片仅在未选内置场景时生效
         if (m_mode == Rotating) {
-            QImage img(path);
-            m_panoramaSky->setPanorama(img);
+            applyRotatingSource();
+            reloadRotatingFrame();
         }
         updatePixmap();
         if (m_mode == Image || m_mode == Rotating || m_mode == Bing)
@@ -77,7 +158,7 @@ void BackgroundWidget::setBlurRadius(int radius)
     radius = qBound(0, radius, 64);
     if (m_blurRadius != radius) {
         m_blurRadius = radius;
-        m_panoramaSky->setBlurRadius(radius);
+        m_panorama->setBlurRadius(radius);
         if (!m_originalPixmap.isNull()) {
             QImage img = m_originalPixmap.toImage();
             m_pixmap = QPixmap::fromImage(blurImage(img, radius));
@@ -227,13 +308,46 @@ void BackgroundWidget::paintEvent(QPaintEvent *event)
         break;
 
     case Rotating:
-        // GL 天空盒子控件就绪前铺深色底，避免白屏闪烁
-        painter.fillRect(rect(), QColor(15, 23, 42));
+        {
+            const QImage &frame = m_panorama->render(size());
+            if (!frame.isNull()) {
+                painter.drawImage(QRect(0, 0, width(), height()), frame);
+                // 按上一帧耗时自适应刷新间隔：慢机器上宁可帧率低一点，也不要拖慢整个界面
+                const int cost = m_panorama->lastRenderCostMs();
+                const int wanted = cost >= 24 ? 66 : (cost >= 12 ? 50 : 33);
+                if (wanted != m_rotateIntervalMs) {
+                    m_rotateIntervalMs = wanted;
+                    m_rotateTimer.setInterval(wanted);
+                }
+                m_rotateDrewOnce = true;
+            } else {
+                // 还没有可用素材（或素材损坏）：用静态全景兜底，绝不露出黑底
+                m_rotateDrewOnce = false;
+                const QPixmap backdrop = rotatingPreview();
+                if (!backdrop.isNull()) {
+                    const QPixmap scaled = backdrop.scaled(size(), Qt::KeepAspectRatioByExpanding,
+                                                           Qt::SmoothTransformation);
+                    painter.drawPixmap((width() - scaled.width()) / 2,
+                                       (height() - scaled.height()) / 2, scaled);
+                } else {
+                    painter.fillRect(rect(), QColor(15, 23, 42));
+                }
+            }
+        }
         break;
 
     case Classic:
     default:
         break;
+    }
+
+    // 深色主题：亮色壁纸/流光/全景上叠暗纱，保证浅色文字与玻璃卡片可读
+    // 纯色/经典底已随主题变深，不再叠纱
+    if (m_darkScrim && (m_mode == Image || m_mode == Bing || m_mode == Rotating || m_mode == FlowLight)) {
+        if (m_mode == FlowLight)
+            painter.fillRect(rect(), QColor(8, 8, 10, 150));
+        else
+            painter.fillRect(rect(), QColor(0, 0, 0, 110));
     }
 }
 
@@ -339,12 +453,34 @@ qreal BackgroundWidget::flowPhase() const
     return m_flowClock.elapsed() / 1000.0;
 }
 
+void BackgroundWidget::startRotatingAnimation()
+{
+    m_rotateDrewOnce = false;
+    m_rotateClock.restart();
+    if (!m_rotateTimer.isActive())
+        m_rotateTimer.start(m_rotateIntervalMs);
+}
+
+void BackgroundWidget::stopRotatingAnimation()
+{
+    m_rotateTimer.stop();
+}
+
+void BackgroundWidget::tickRotating()
+{
+    if (m_mode != Rotating || !isVisible())
+        return;
+    const qint64 dt = m_rotateClock.restart();
+    const bool moved = m_panorama->advance(dt);
+    if (!moved && m_rotateDrewOnce)
+        return; // 转速为 0 或画面没变：不重绘，省电
+    update();
+}
+
 void BackgroundWidget::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    if (m_panoramaSky)
-        m_panoramaSky->setGeometry(rect());
-    if (m_mode == FlowLight)
+    if (m_mode == FlowLight || m_mode == Rotating)
         update();
 }
 
@@ -353,6 +489,7 @@ void BackgroundWidget::hideEvent(QHideEvent *event)
     QWidget::hideEvent(event);
     // 隐藏时停止定时器，避免后台持续触发浪费 CPU
     m_flowTimer.stop();
+    m_rotateTimer.stop();
 }
 
 void BackgroundWidget::showEvent(QShowEvent *event)
@@ -361,4 +498,9 @@ void BackgroundWidget::showEvent(QShowEvent *event)
     // 重新显示时恢复定时器
     if (m_flowRunning && m_mode == FlowLight)
         m_flowTimer.start();
+    if (m_mode == Rotating) {
+        m_rotateClock.restart();
+        m_rotateTimer.start(m_rotateIntervalMs);
+        update();
+    }
 }

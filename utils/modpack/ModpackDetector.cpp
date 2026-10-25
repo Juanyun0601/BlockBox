@@ -97,21 +97,19 @@ bool ZipReader::readEocd(qint64& centralDirOffset, quint16& totalEntries)
     {
       QDataStream ds(tail.mid(i, 22));
       ds.setByteOrder(QDataStream::LittleEndian);
-      ds.skipRawData(8); // skip disk numbers and entry counts on disk
+      // EOCD 布局：签名(4) + 本盘号(2) + 中央目录起始盘(2) + 本盘条目数(2)
+      //          + 总条目数(2) + 中央目录大小(4) + 中央目录偏移(4) + 注释长(2)
+      // 必须跳过前 10 字节才到「总条目数」，跳 8 会把总条目数错并进 cdSize，
+      // 导致 cdOffset 读成垃圾、整个 zip 识别失败
+      ds.skipRawData(10);
 
       quint16 entryCount = 0;
       quint32 cdSize = 0;
       quint32 cdOffset = 0;
       ds >> entryCount >> cdSize >> cdOffset;
 
-      // Also read the on-disk entry count for verification
-      QDataStream ds2(tail.mid(i + 8, 2));
-      ds2.setByteOrder(QDataStream::LittleEndian);
-      quint16 onDiskEntryCount = 0;
-      ds2 >> onDiskEntryCount;
-
       centralDirOffset = cdOffset;
-      totalEntries = qMin(onDiskEntryCount, entryCount);
+      totalEntries = entryCount;
       return true;
     }
   }
@@ -141,6 +139,8 @@ bool ZipReader::readCentralDirectory(qint64 centralDirOffset, quint16 totalEntri
     quint16 versionNeeded = 0;
     quint16 gpFlag = 0;
     quint16 compressionMethod = 0;
+    quint16 modTime = 0;
+    quint16 modDate = 0;
     quint32 crc32 = 0;
     quint32 compressedSize = 0;
     quint32 uncompressedSize = 0;
@@ -152,8 +152,10 @@ bool ZipReader::readCentralDirectory(qint64 centralDirOffset, quint16 totalEntri
     quint32 externalAttrs = 0;
     quint32 localHeaderOffset = 0;
 
+    // 中央目录条目固定 46 字节，必须完整读完，否则后续字段全部错位
     ds >> signature >> versionMadeBy >> versionNeeded >> gpFlag
        >> compressionMethod
+       >> modTime >> modDate
        >> crc32 >> compressedSize >> uncompressedSize
        >> fileNameLength >> extraFieldLength >> fileCommentLength
        >> diskNumberStart >> internalAttrs >> externalAttrs

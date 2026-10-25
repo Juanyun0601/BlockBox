@@ -31,6 +31,8 @@
 #include <QColorDialog>
 #include <QDebug>
 #include <QDir>
+#include <QEvent>
+#include <QFontMetrics>
 #include "components/AppFileDialog.h"
 #include <QFileInfo>
 #include <QFrame>
@@ -63,6 +65,30 @@
 #include "utils/ThemeManager.h"
 
 namespace {
+// Java 路径标签中间省略
+class ObwJavaPathElideFilter : public QObject
+{
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override
+    {
+        if (event->type() == QEvent::Resize) {
+            auto *label = qobject_cast<QLabel *>(obj);
+            if (label && label->width() > 40) {
+                const QString full = label->property("fullPath").toString();
+                const QString elided = QFontMetrics(label->font())
+                                           .elidedText(full, Qt::ElideMiddle,
+                                                       label->width() - 4);
+                if (elided != label->text())
+                    label->setText(elided);
+            }
+        }
+        return QObject::eventFilter(obj, event);
+    }
+};
+
 const char *kAccentNames[6] = {
     "\u7FE1\u7EFF",     // 翡翠绿
     "\u975B\u84DD",     // 靛蓝
@@ -2469,6 +2495,13 @@ void OnboardingWizard::refreshJavaList()
         info->addWidget(ver);
         QLabel *path = new QLabel(java.first, row);
         path->setObjectName(QStringLiteral("obwJavaPath"));
+        path->setWordWrap(false);
+        path->setMinimumWidth(0);
+        path->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        path->setToolTip(java.first);
+        path->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        path->setProperty("fullPath", java.first);
+        path->installEventFilter(new ObwJavaPathElideFilter(path));
         info->addWidget(path);
         lay->addLayout(info, 1);
 

@@ -121,7 +121,24 @@ public:
     void searchJavaInDirectory(const QString& dirPath, QList<JavaInfo>& javaList,
                                QSet<QString>& seenPaths, int depth, int maxDepth);
     bool validateJavaPath(const QString& path, JavaInfo& info);
-    JavaInfo findBestJavaVersion(const QString& gameVersion);
+
+    // 游戏版本 → 所需 Java 主版本区间（minJava=0 表示无下限，maxJava=999 表示无上限）
+    struct JavaRequirement
+    {
+        int minJava = 0;
+        int maxJava = 999;
+        QString rangeDesc() const
+        {
+            return (maxJava >= 999) ? QStringLiteral("Java %1+").arg(minJava)
+                                    : QStringLiteral("Java %1-%2").arg(minJava).arg(maxJava);
+        }
+    };
+    // 按版本号解析 Java 要求：支持旧规则 1.x、2026 起新规则 26.x（含
+    // 26.4-snapshot-5 这类快照/预发布版）以及旧快照 23w14a；
+    // jsonMajorHint>0 时以版本 JSON 里 javaVersion.majorVersion（官方声明）为准，
+    // 比按版本号硬编码更可靠
+    static JavaRequirement javaRequirementFor(const QString& gameVersion, int jsonMajorHint = 0);
+    JavaInfo findBestJavaVersion(const QString& gameVersion, int jsonMajorHint = 0);
 
     // Launch related methods
     // skipFileCompletion=true: 跳过文件完整性检查与补全（首次启动）

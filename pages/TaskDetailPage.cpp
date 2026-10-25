@@ -656,14 +656,15 @@ void TaskDetailPage::updateDisplay()
     {
         stepIndex = qBound(0, static_cast<int>(m_currentTask.stage), stepCount - 1);
     }
-    else if (taskType == TaskType::LoaderInstall)
-    {
-        // 加载器安装沿用实例任务的百分比预算（安装器下载 60~90、安装 90~100）
-        stepIndex = displayed >= 99.5 ? 2 : (displayed >= 90.0 ? 1 : 0);
-    }
     else
     {
-        stepIndex = displayed >= 99.5 ? stepCount - 1 : 0;
+        // 用真实进度而非动画平滑值判定阶段，阶段切换即时；
+        // 加载器安装沿用实例任务的百分比预算（安装器下载 60~90、安装 90~100）
+        const double realPercent = m_currentTask.progressDouble;
+        if (taskType == TaskType::LoaderInstall)
+            stepIndex = realPercent >= 99.5 ? 2 : (realPercent >= 90.0 ? 1 : 0);
+        else
+            stepIndex = realPercent >= 99.5 ? stepCount - 1 : 0;
     }
     stepIndex = qBound(0, stepIndex, stepCount - 1);
     m_currentStepIndex = stepIndex;

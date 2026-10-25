@@ -276,6 +276,10 @@ private:
 
     // 切换按钮图标刷新（根据主题色与展开状态）
     void updateToggleConvIcon();
+    /** 工具栏/下拉箭头等次要 SVG 的灰度：深浅主题各一套，避免写死浅色灰 */
+    static QColor mutedIconColor();
+    /** 主题切换后重刷工具栏图标颜色 */
+    void refreshToolIcons();
     void slideModeIndicator(int targetIndex); ///< 模式指示器滑动动画
     void updateWelcomeContent();              ///< 根据当前模式刷新欢迎界面文字
     void injectPromptToInput(const QString &prompt); ///< 一键注入提示词到输入框

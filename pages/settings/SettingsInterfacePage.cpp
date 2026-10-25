@@ -304,6 +304,75 @@ void SettingsPage::initInterfaceSettings()
 
     backgroundCard->addWidget(m_solidColorSection);
 
+    // --- Rotating panorama section ---
+    m_rotatingSection = new QWidget();
+    QVBoxLayout *rotatingLayout = new QVBoxLayout(m_rotatingSection);
+    rotatingLayout->setContentsMargins(0, 0, 0, 0);
+    rotatingLayout->setSpacing(0);
+
+    m_sceneCombo = new QComboBox();
+    disableWheelEffect(m_sceneCombo);
+    m_sceneCombo->addItem(tr("主世界"), QStringLiteral("overworld"));
+    m_sceneCombo->addItem(tr("下界"), QStringLiteral("nether"));
+    m_sceneCombo->addItem(tr("末地"), QStringLiteral("end"));
+    m_sceneCombo->addItem(tr("樱花"), QStringLiteral("cherry"));
+    m_sceneCombo->addItem(tr("沙漠"), QStringLiteral("desert"));
+    m_sceneCombo->addItem(tr("山地"), QStringLiteral("mountains"));
+    m_sceneCombo->addItem(tr("黑森林"), QStringLiteral("darkforest"));
+    m_sceneCombo->addItem(tr("深暗之域"), QStringLiteral("deep_dark"));
+    m_sceneCombo->addItem(tr("红树林沼泽"), QStringLiteral("wild"));
+    m_sceneCombo->insertSeparator(m_sceneCombo->count());
+    m_sceneCombo->addItem(tr("主菜单·经典"), QStringLiteral("menu_classic"));
+    m_sceneCombo->addItem(tr("主菜单·现代"), QStringLiteral("menu_modern"));
+    m_sceneCombo->addItem(tr("高山草甸"), QStringLiteral("alps_field"));
+    m_sceneCombo->addItem(tr("秋日林坡"), QStringLiteral("ahornsteig"));
+    m_sceneCombo->addItem(tr("林间公园"), QStringLiteral("autumn_forest_01"));
+    m_sceneCombo->addItem(tr("雪原桦林"), QStringLiteral("birchwood"));
+    m_sceneCombo->addItem(tr("幽谷飞瀑"), QStringLiteral("blue_grotto"));
+    m_sceneCombo->addItem(tr("海岸远眺"), QStringLiteral("dalkey_view"));
+    m_sceneCombo->addItem(tr("冬日冰河"), QStringLiteral("frozen_lake"));
+    m_sceneCombo->addItem(tr("荒漠砾原"), QStringLiteral("goegap"));
+    m_sceneCombo->addItem(tr("月夜草原"), QStringLiteral("clarens_night_01"));
+    m_sceneCombo->insertSeparator(m_sceneCombo->count());
+    m_sceneCombo->addItem(tr("自定义图片"), QString());
+    {
+        const QSignalBlocker blocker(m_sceneCombo);
+        const int sceneIdx = m_sceneCombo->findData(BackgroundManager::instance()->panoramaScene());
+        m_sceneCombo->setCurrentIndex(sceneIdx >= 0 ? sceneIdx : m_sceneCombo->count() - 1);
+    }
+
+    QHBoxLayout *sceneRow = appendSettingRow(rotatingLayout,
+        tr("全景场景"), tr("选择内置的旋转全景场景；选择「自定义图片」时使用下方路径指定的图片，未指定图片时自动使用「主世界」场景。"), QString());
+    sceneRow->addWidget(m_sceneCombo);
+
+    // 自转速度：0%~400%，100% 为默认速度
+    QSlider *speedSlider = new QSlider(Qt::Horizontal);
+    speedSlider->setObjectName("bgSpeedSlider");
+    speedSlider->setRange(0, 400);
+    speedSlider->setSingleStep(10);
+    speedSlider->setPageStep(50);
+    speedSlider->setValue(BackgroundManager::instance()->rotatingSpeed());
+    disableWheelEffect(speedSlider);
+
+    QLabel *speedValueLabel = new QLabel();
+    speedValueLabel->setFixedWidth(52);
+    speedValueLabel->setAlignment(Qt::AlignCenter);
+    speedValueLabel->setText(speedSlider->value() == 0
+                                 ? tr("静止")
+                                 : tr("%1%").arg(speedSlider->value()));
+
+    QHBoxLayout *speedRow = appendSettingRow(rotatingLayout,
+        tr("旋转速度"), tr("调整全景背景自转的快慢，调到最左侧则完全静止。"), QString(), true);
+    speedRow->addWidget(speedSlider, 1);
+    speedRow->addWidget(speedValueLabel);
+
+    connect(speedSlider, &QSlider::valueChanged, [speedValueLabel](int val) {
+        speedValueLabel->setText(val == 0 ? tr("静止") : tr("%1%").arg(val));
+        BackgroundManager::instance()->setRotatingSpeed(val);
+    });
+
+    backgroundCard->addWidget(m_rotatingSection);
+
     // --- Image section ---
     m_imageSection = new QWidget();
     QVBoxLayout *imageLayout = new QVBoxLayout(m_imageSection);
@@ -323,6 +392,14 @@ void SettingsPage::initInterfaceSettings()
     imageRow->addWidget(m_imagePathEdit, 1);
     imageRow->addWidget(m_browseImageBtn);
 
+    backgroundCard->addWidget(m_imageSection);
+
+    // --- Blur section（图片与旋转全景共用） ---
+    m_blurSection = new QWidget();
+    QVBoxLayout *blurLayout = new QVBoxLayout(m_blurSection);
+    blurLayout->setContentsMargins(0, 0, 0, 0);
+    blurLayout->setSpacing(0);
+
     QSlider *blurSlider = new QSlider(Qt::Horizontal);
     blurSlider->setObjectName("bgBlurSlider");
     blurSlider->setRange(0, 64);
@@ -335,7 +412,7 @@ void SettingsPage::initInterfaceSettings()
     int initBlur = BackgroundManager::instance()->blurRadius();
     blurValueLabel->setText(initBlur > 0 ? QString::number(initBlur) : tr("无"));
 
-    QHBoxLayout *blurRow = appendSettingRow(imageLayout,
+    QHBoxLayout *blurRow = appendSettingRow(blurLayout,
         tr("模糊程度"), tr("调整背景图片的模糊强度。"), QString(), true);
     blurRow->addWidget(blurSlider, 1);
     blurRow->addWidget(blurValueLabel);
@@ -345,7 +422,7 @@ void SettingsPage::initInterfaceSettings()
         BackgroundManager::instance()->setBlurRadius(val);
     });
 
-    backgroundCard->addWidget(m_imageSection);
+    backgroundCard->addWidget(m_blurSection);
 
     // --- Bing wallpaper section ---
     m_bingSection = new QWidget();
@@ -518,20 +595,27 @@ void SettingsPage::initInterfaceSettings()
 
     backgroundCard->addWidget(m_bingSection);
 
-    // Initial visibility based on current mode
-    int modeIdx = m_backgroundModeCombo->currentIndex();
-    m_solidColorSection->setVisible(modeIdx == BackgroundManager::SolidColor);
-    m_imageSection->setVisible(modeIdx == BackgroundManager::Image
-                            || modeIdx == BackgroundManager::Rotating);
-    m_bingSection->setVisible(modeIdx == BackgroundManager::Bing);
+    // Sections visibility (initial + on mode / scene change)
+    auto updateBackgroundSections = [this]() {
+        const int idx = m_backgroundModeCombo->currentIndex();
+        const bool rotating = idx == BackgroundManager::Rotating;
+        const bool customScene = rotating && m_sceneCombo->currentData().toString().isEmpty();
+        m_solidColorSection->setVisible(idx == BackgroundManager::SolidColor);
+        m_rotatingSection->setVisible(rotating);
+        m_imageSection->setVisible(idx == BackgroundManager::Image || customScene);
+        m_blurSection->setVisible(idx == BackgroundManager::Image || rotating);
+        m_bingSection->setVisible(idx == BackgroundManager::Bing);
+    };
+    updateBackgroundSections();
 
     // Toggle visibility on mode change
     connect(m_backgroundModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int idx) {
-        m_solidColorSection->setVisible(idx == BackgroundManager::SolidColor);
-        m_imageSection->setVisible(idx == BackgroundManager::Image
-                                || idx == BackgroundManager::Rotating);
-        m_bingSection->setVisible(idx == BackgroundManager::Bing);
+            this, [this, updateBackgroundSections](int) { updateBackgroundSections(); });
+
+    connect(m_sceneCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this, updateBackgroundSections](int) {
+        BackgroundManager::instance()->setPanoramaScene(m_sceneCombo->currentData().toString());
+        updateBackgroundSections();
     });
 
     connect(m_browseImageBtn, &QPushButton::clicked, [this]() {

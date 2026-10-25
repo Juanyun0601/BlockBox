@@ -34,6 +34,7 @@
 
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
+#include "utils/SettingsManager.h"
 #include "utils/mod/ModData.h"
 
 namespace {
@@ -156,6 +157,11 @@ void InstallInstancePage::initUI()
     m_sourceCombo->setMinimumWidth(120);
     m_sourceCombo->addItem(tr("官方源"));
     m_sourceCombo->addItem(tr("BMCL源"));
+    // 数据源跟随设置里的「原版下载源」，切换后写回设置，与版本详情页保持一致
+    const bool bmclSource =
+        SettingsManager::instance()->getDownloadSource() == DownloadSource::BMCL;
+    m_sourceCombo->setCurrentIndex(bmclSource ? 1 : 0);
+    m_currentSource = bmclSource ? QStringLiteral("bmcl") : QStringLiteral("official");
     m_filterBarLayout->addWidget(m_sourceCombo);
 
     QLabel *filterLabel = new QLabel(tr("版本类型:"), m_filterBar);
@@ -267,6 +273,8 @@ void InstallInstancePage::onSourceChanged(int id)
     } else {
         m_currentSource = "bmcl";
     }
+    SettingsManager::instance()->setDownloadSource(
+        id == 0 ? DownloadSource::Official : DownloadSource::BMCL);
     onRefreshVersions();
 }
 

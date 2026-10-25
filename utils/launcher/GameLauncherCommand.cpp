@@ -22,6 +22,74 @@
 #include "utils/SettingsManager.h"
 #include "utils/LanguageManager.h"
 
+namespace {
+
+// ── 游戏版本号规则 ────────────────────────────────────────────────────────
+// 旧规则: 1.20.1 / 1.21.11（可带 -suffix）
+// 新规则: 2026 年起官方改用「年份.序号」，如 26.1 / 26.1.2 / 26.2；
+//         快照与预发布版为 26.4-snapshot-5 / 26.3-pre-2 / 26.3-rc-1。
+// 新规则首段是年份（≥26），据此与加载器自身版本号（如 NeoForge 21.1.9）区分，
+// 避免把加载器版本误当成游戏版本。
+const QString& yearVersionCore()
+{
+    static const QString core = QStringLiteral("(?:2[6-9]|[3-9][0-9])\\.\\d+(?:\\.\\d+)?");
+    return core;
+}
+
+// 除年份规则以外的历史版本 id 形式：1.x / 23w14a / rd- / alpha / b1. 等
+const QString& legacyVersionIdAlternation()
+{
+    static const QString alt = QStringLiteral(
+        "1\\.\\d+(?:\\.\\d+)?|[a-z]+\\d+[a-z]?|\\d{2}w\\d{2}[a-z]|rd-|inf-|alpha|beta|c0\\.|b1\\.");
+    return alt;
+}
+
+// 完整版本 id（允许 -suffix）：用于 inheritsFrom / clientVersion / jar / 库名等字段
+const QRegularExpression& fullVersionIdRegex()
+{
+    static const QRegularExpression re(
+        QStringLiteral("^(?:%1|%2)(?:[\\-_].+)?$")
+            .arg(legacyVersionIdAlternation(), yearVersionCore()),
+        QRegularExpression::CaseInsensitiveOption);
+    return re;
+}
+
+// 纯版本 id（不带加载器后缀）：id 本身就是游戏版本
+const QRegularExpression& pureVersionIdRegex()
+{
+    static const QRegularExpression re(
+        QStringLiteral("^(?:%1|%2)$")
+            .arg(legacyVersionIdAlternation(), yearVersionCore()),
+        QRegularExpression::CaseInsensitiveOption);
+    return re;
+}
+
+// 新规则下的快照/预发布版 id（26.4-snapshot-5 / 26.3-pre-2 / 26.3-rc-1）本身即版本号
+const QRegularExpression& yearPrereleaseIdRegex()
+{
+    static const QRegularExpression re(
+        QStringLiteral("^%1-(?:pre|rc|snapshot)-\\d+$").arg(yearVersionCore()),
+        QRegularExpression::CaseInsensitiveOption);
+    return re;
+}
+
+// 从含加载器后缀的 id / 目录名中提取游戏版本号。
+// 负向后顾避免把加载器版本里的片段（如 21.1.9 中的 "1.1"）当成游戏版本。
+const QRegularExpression& legacyVersionExtractRegex()
+{
+    static const QRegularExpression re(QStringLiteral("(?<![\\d.])1\\.\\d+(?:\\.\\d+)?"));
+    return re;
+}
+
+const QRegularExpression& yearVersionExtractRegex()
+{
+    static const QRegularExpression re(
+        QStringLiteral("(?<![\\d.])%1").arg(yearVersionCore()));
+    return re;
+}
+
+} // namespace
+
 QJsonObject GameLauncher::readVersionJson(const QString& instancePath)
 {
     // Try multiple naming conventions for the version JSON file:
@@ -149,6 +217,10 @@ QJsonObject GameLauncher::mergeInheritsFromJson(const QString& instancePath, con
     if (!merged.contains("assets"))       merged["assets"]       = parentJson["assets"];
     if (!merged.contains("mainClass"))    merged["mainClass"]    = parentJson["mainClass"];
     if (!merged.contains("logging"))      merged["logging"]      = parentJson["logging"];
+    // javaVersion: 原版 JSON 声明的 Java 要求（Fabric/Forge 实例自身不写，
+    // 必须继承，否则启动时选不到正确的 Java）
+    if (!merged.contains("javaVersion") && parentJson.contains("javaVersion"))
+        merged["javaVersion"] = parentJson["javaVersion"];
     // minecraftArguments (legacy, < 1.13)
     if (!merged.contains("minecraftArguments") && parentJson.contains("minecraftArguments"))
         merged["minecraftArguments"] = parentJson["minecraftArguments"];
@@ -159,11 +231,9 @@ QJsonObject GameLauncher::mergeInheritsFromJson(const QString& instancePath, con
 QString GameLauncher::resolveVersionId(const QString& instancePath)
 {
     // ── 版本号正则 (对齐 ProjBobcat McVersionMatch + PCL2 格式校验) ──
-    // 匹配: 1.xx  /  1.xx.x  /  1.xx.x-suffix  /  快照(23w14a)  /  远古(rd-/inf-/alpha/beta/b1./c0.)
-    static const QRegularExpression versionPattern(
-        R"(^(1\.\d+(\.\d+)?([\-\_].+)?|[a-z]+\d+[a-z]?|rd\-|inf\-|alpha|beta|c0\.|b1\.)$)",
-        QRegularExpression::CaseInsensitiveOption
-    );
+    // 匹配: 1.xx  /  1.xx.x  /  1.xx.x-suffix  /  快照(23w14a / 26.4-snapshot-5)
+    //       远古(rd-/inf-/alpha/beta/b1./c0.)  /  新规则(26.1 / 26.1.2)
+    const QRegularExpression& versionPattern = fullVersionIdRegex();
 
     // ── 从版本 JSON 读取 ──
     QJsonObject versionJson = readVersionJson(instancePath);
@@ -290,19 +360,17 @@ QString GameLauncher::resolveVersionId(const QString& instancePath)
 
         // ── 策略7: id 本身 ──
         if (!id.isEmpty()) {
-            // Pure version (no loader suffix) - use directly
-            static const QRegularExpression pureVersion(
-                R"(^(1\.\d+(\.\d+)?|[a-z]+\d+[a-z]?|rd\-|inf\-|alpha|beta|c0\.|b1\.)$)",
-                QRegularExpression::CaseInsensitiveOption
-            );
-            if (pureVersion.match(id).hasMatch()) {
+            // 纯版本 id（不带加载器后缀，含新规则 26.1 / 26.4-snapshot-5）→ 直接使用
+            if (pureVersionIdRegex().match(id).hasMatch()
+                || yearPrereleaseIdRegex().match(id).hasMatch()) {
                 emit launchDetailAdded(QString("检测到版本: %1").arg(id));
                 return id;
             }
-            // Suffixed id like "1.20.1-forge-47.2.0" or "fabric-loader-0.15.11-1.20.1"
-            // → extract MC version part
-            static const QRegularExpression extractMCVer(R"(1\.\d+(\.\d+)?)");
-            QRegularExpressionMatch m = extractMCVer.match(id);
+            // 含加载器后缀的 id，如 "1.20.1-forge-47.2.0" / "fabric-loader-0.16.9-26.1"
+            // → 提取其中的游戏版本号（先旧规则 1.x，再新规则 26.x）
+            QRegularExpressionMatch m = legacyVersionExtractRegex().match(id);
+            if (!m.hasMatch())
+                m = yearVersionExtractRegex().match(id);
             if (m.hasMatch()) {
                 QString v = m.captured();
                 emit launchDetailAdded(QString("从 id 中提取游戏版本: %1").arg(v));
@@ -316,15 +384,21 @@ QString GameLauncher::resolveVersionId(const QString& instancePath)
         }
     }
 
-    // ── 策略8: 目录名正则回退 ──
+    // ── 策略8: 目录名正则回退（旧规则 1.x + 新规则 26.x）──
     QString dirName = QFileInfo(instancePath).fileName();
-    static const QRegularExpression dirVersionRegex("1\\.([0-9]+)(\\.[0-9]+)?");
-    QRegularExpressionMatch match = dirVersionRegex.match(dirName);
-    if (match.hasMatch()) {
-        QString version = "1." + match.captured(1)
-                        + (match.captured(2).isEmpty() ? "" : match.captured(2));
-        emit launchDetailAdded(QString("从路径名推测版本: %1").arg(version));
-        return version;
+    if (pureVersionIdRegex().match(dirName).hasMatch()
+        || yearPrereleaseIdRegex().match(dirName).hasMatch()) {
+        emit launchDetailAdded(QString("从路径名推测版本: %1").arg(dirName));
+        return dirName;
+    }
+    {
+        QRegularExpressionMatch match = legacyVersionExtractRegex().match(dirName);
+        if (!match.hasMatch())
+            match = yearVersionExtractRegex().match(dirName);
+        if (match.hasMatch()) {
+            emit launchDetailAdded(QString("从路径名推测版本: %1").arg(match.captured()));
+            return match.captured();
+        }
     }
 
     // ── 策略9: 兜底 ──
@@ -335,10 +409,7 @@ QString GameLauncher::resolveVersionId(const QString& instancePath)
 
 QString GameLauncher::resolveJarName(const QString& instancePath, const QJsonObject& versionJson)
 {
-    static const QRegularExpression versionPattern(
-        R"(^(1\.\d+(\.\d+)?([\-\_].+)?|[a-z]+\d+[a-z]?|rd\-|inf\-|alpha|beta|c0\.|b1\.)$)",
-        QRegularExpression::CaseInsensitiveOption
-    );
+    const QRegularExpression& versionPattern = fullVersionIdRegex();
 
     if (!versionJson.isEmpty()) {
         // 1) inheritsFrom → 原版jar
@@ -386,15 +457,15 @@ QString GameLauncher::resolveJarName(const QString& instancePath, const QJsonObj
         // 5) id (版本号格式则直接用，无加载器后缀)
         QString id = versionJson.value("id").toString();
         if (!id.isEmpty()) {
-            static const QRegularExpression pureVer(
-                R"(^(1\.\d+(\.\d+)?|[a-z]+\d+[a-z]?|rd\-|inf\-|alpha|beta|c0\.|b1\.)$)",
-                QRegularExpression::CaseInsensitiveOption
-            );
-            if (pureVer.match(id).hasMatch())
+            // 纯版本 id（含新规则 26.1 / 26.4-snapshot-5）
+            if (pureVersionIdRegex().match(id).hasMatch()
+                || yearPrereleaseIdRegex().match(id).hasMatch())
                 return id;
-            // 含后缀的 id（如 "1.20.1-forge-47.2.0"），提取 MC 版本
-            static const QRegularExpression extractMC(R"(1\.\d+(\.\d+)?)");
-            QRegularExpressionMatch m = extractMC.match(id);
+            // 含后缀的 id（如 "1.20.1-forge-47.2.0" / "fabric-loader-0.16.9-26.1"），
+            // 提取其中的游戏版本号（先旧规则 1.x，再新规则 26.x）
+            QRegularExpressionMatch m = legacyVersionExtractRegex().match(id);
+            if (!m.hasMatch())
+                m = yearVersionExtractRegex().match(id);
             if (m.hasMatch())
                 return m.captured();
         }

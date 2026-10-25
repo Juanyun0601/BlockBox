@@ -79,7 +79,12 @@ public:
     QList<FabricVersionInfo> getFabricVersions(const QString &mcVersion);
 
     /**
-     * @brief 下载并安装Fabric（获取版本信息 → 生成版本JSON → 下载运行库）
+     * @brief 下载并安装Fabric（单文件夹合并式安装）
+     *
+     * 与主流整合式启动器一致：一个实例只有一个版本目录 <mc>-Fabric <loader>，
+     * 目录内是合并后的完整版本 JSON（原版全部字段 + Fabric 运行库 + Knot 主类，
+     * 不含 inheritsFrom）和改名后的原版 client jar。
+     *
      * @param mcVersion Minecraft版本号
      * @param fabricVersion Fabric版本号
      * @param instancePath 实例路径（.minecraft 根目录）
@@ -198,15 +203,30 @@ private:
     QJsonObject generateVersionJson(const FabricVersionInfo &version);
 
     /**
-     * @brief 创建版本目录结构
-     * @param instancePath 实例路径
+     * @brief 阻塞拉取原版版本 JSON（本地没有原版目录时的兜底）
+     *
+     * 依次尝试 Mojang 官方清单与 BMCLAPI 镜像清单，找到目标版本后下载其版本 JSON。
+     *
      * @param mcVersion Minecraft版本号
-     * @param fabricVersion Fabric版本号
-     * @return 版本目录路径
+     * @return 原版版本JSON对象；全部源失败时返回空对象
      */
-    QString createVersionDirectory(const QString &instancePath,
-                                  const QString &mcVersion,
-                                  const QString &fabricVersion);
+    QJsonObject fetchVanillaVersionJson(const QString &mcVersion);
+
+    /**
+     * @brief 把 Fabric 配置合并进原版基准 JSON，产出合并式版本 JSON
+     *
+     * 保留原版全部字段（arguments/assetIndex/downloads/logging/javaVersion 等），
+     * 替换 mainClass 为 Fabric 的 Knot 主类，追加 Fabric 运行库，写入
+     * clientVersion 基准标记并移除 inheritsFrom。
+     *
+     * @param baseJson 原版版本JSON
+     * @param fabricJson Fabric 侧 JSON（提供 mainClass 与 libraries）
+     * @param dirName 目标版本目录名（同时作为 JSON 的 id）
+     * @param mcVersion Minecraft基准版本号
+     * @return 合并后的版本JSON对象
+     */
+    static QJsonObject mergeFabricIntoBase(const QJsonObject &baseJson, const QJsonObject &fabricJson,
+                                           const QString &dirName, const QString &mcVersion);
 
     /**
      * @brief 下载版本 JSON 中的全部 Fabric 运行库到 libraries 目录
@@ -272,10 +292,38 @@ private:
 
     /**
      * @brief 解析Fabric版本JSON响应
+     *
+     * /v2/versions/loader/<mc> 返回的条目只有 loader/intermediary/launcherMeta，
+     * 不含 game 字段（游戏版本由请求 URL 决定），因此必须用请求时的版本号兜底，
+     * 否则所有条目都会被当成不完整数据丢弃，导致「指定版本未找到」。
+     *
      * @param jsonResponse JSON响应字符串
+     * @param mcVersionFallback 请求 URL 中的 Minecraft 版本号
      * @return 版本信息列表
      */
-    QList<FabricVersionInfo> parseVersionList(const QString &jsonResponse);
+    QList<FabricVersionInfo> parseVersionList(const QString &jsonResponse,
+                                             const QString &mcVersionFallback);
+
+    /**
+     * @brief 拉取 Fabric 官方 profile/json（权威版本定义）
+     *
+     * 该接口直接返回启动所需的完整库列表（ASM/mixin/fabric-loader），
+     * 比自行拼装 launcherMeta 更可靠，官方启动器与主流第三方启动器都以它为准。
+     *
+     * @param mcVersion Minecraft 版本号
+     * @param loaderVersion Fabric Loader 版本号
+     * @return profile JSON 对象；全部源均失败时返回空对象
+     */
+    QJsonObject fetchLoaderProfile(const QString &mcVersion, const QString &loaderVersion);
+
+    /**
+     * @brief 把官方 profile JSON 转成启动器使用的版本 JSON
+     *
+     * 结构与官方 profile 一致：id/inheritsFrom/mainClass/libraries，
+     * 不写 arguments —— 启动时由 mergeInheritsFromJson 继承原版完整的 jvm/game 参数。
+     */
+    QJsonObject versionJsonFromProfile(const QJsonObject &profile, const QString &mcVersion,
+                                       const QString &loaderVersion);
 
     /**
      * @brief Maven 坐标 → 仓库相对路径

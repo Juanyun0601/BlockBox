@@ -6,8 +6,8 @@
  *
  * 基于 VoxelViewWidget 的 3D 体素方块编辑器，数据模型使用 SchematicDocument。
  * 功能：
- *   - 3D 立体查看（WASD 移动、空格升、Shift 降、左键拖动转向、滚轮前后）
- *   - 交互编辑：右键破坏、Ctrl+左键放置当前选中方块
+ *   - 3D 立体查看（WASD 移动、空格升、Shift 降、拖动转向、滚轮前后）
+ *   - 交互编辑：左键破坏、右键放置当前选中方块（「放置」工具下左键也是放置）
  *   - 方块调色板：浏览/选择投影中出现的方块进行放置
  *   - 批量操作：整块替换、全空间填充、区域填充
  *   - 图层过滤（按 Y 层突出显示）
@@ -122,6 +122,8 @@ private:
     void populatePalette();
     void applyTextureAndShapes();
     void rebuildView();
+    /** 把当前工具同步成视图的左键动作（右键始终放置） */
+    void applyToolToView();
     // 「当前方块」下拉框：显示中文名，内部保存完整方块 ID
     QString currentBlockId() const;
     void refreshCurrentBlockOptions();

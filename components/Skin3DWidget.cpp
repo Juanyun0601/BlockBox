@@ -19,6 +19,8 @@
  */
 #include "Skin3DWidget.h"
 
+#include "components/GlslCompat.h"
+
 #include "components/SkinTextureCanvas.h"
 #include "utils/SkinEditorDocument.h"
 
@@ -43,8 +45,7 @@
 //   AMBIENT=0.5, XFAC=-0.15, ZFAC=0.05
 //   顶面最亮、底面最暗、左右中等、前后较亮 —— Minecraft 经典风格
 // ============================================================
-static const char* kVertexShaderSource = R"(
-#version 330 core
+static const char* kVertexShaderSource = BLOCKBOX_GLSL_VS_HEADER R"(
 in vec3 aPosition;
 in vec3 aNormal;
 in vec2 aUv;
@@ -60,8 +61,7 @@ void main() {
 }
 )";
 
-static const char* kFragmentShaderSource = R"(
-#version 330 core
+static const char* kFragmentShaderSource = BLOCKBOX_GLSL_FS_HEADER R"(
 in vec3 vNormal;
 in vec2 vUv;
 uniform sampler2D uTex;
@@ -81,8 +81,7 @@ void main() {
 )";
 
 // 背景着色器（全屏四边形，支持渐变顶点色与图片纹理混合）
-static const char* kBgVertexShaderSource = R"(
-#version 330 core
+static const char* kBgVertexShaderSource = BLOCKBOX_GLSL_VS_HEADER R"(
 layout(location = 0) in vec2 aPos;
 layout(location = 1) in vec4 aColor;
 layout(location = 2) in vec2 aUv;
@@ -95,8 +94,7 @@ void main() {
 }
 )";
 
-static const char* kBgFragmentShaderSource = R"(
-#version 330 core
+static const char* kBgFragmentShaderSource = BLOCKBOX_GLSL_FS_HEADER R"(
 in vec4 vColor;
 in vec2 vUv;
 uniform sampler2D uImage;

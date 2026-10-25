@@ -76,6 +76,10 @@ InstanceSelectPage::InstanceSelectPage(QWidget *parent) : QWidget(parent)
     , m_addCategoryBtn(nullptr)
     , m_categoryHighlight(nullptr)
 {
+    // 未选中 SVG 图标默认灰度随明暗主题（深色底上 #666 偏暗）
+    if (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme)
+        m_iconNormalColor = QColor(QStringLiteral("#9CA3AF"));
+
     initUI();
     initLauncher();
 
@@ -474,12 +478,34 @@ InstanceInfo InstanceSelectPage::getInstanceInfo(const QFileInfo &instanceInfo)
             }
             
             // Check for loader type (Fabric, Forge, etc.)
-            if (rootObj.contains("fabricLoader")) {
+            // 先看 JSON 标记字段（兼容旧版安装器），再按 mainClass 与库坐标推断：
+            // 官方合并式版本（无 inheritsFrom，mainClass 为 Knot 等）与
+            // inheritsFrom 继承式版本都靠这条路径识别
+            const QString mainClass = rootObj.value("mainClass").toString();
+            bool hasFabric = rootObj.contains("fabricLoader")
+                             || mainClass.contains("fabricmc", Qt::CaseInsensitive);
+            bool hasQuilt = rootObj.contains("quiltLoader")
+                            || mainClass.contains("quiltmc", Qt::CaseInsensitive);
+            bool hasNeoForge = false;
+            bool hasForge = rootObj.contains("forge");
+            for (const QJsonValue &libVal : rootObj.value("libraries").toArray()) {
+                const QString libName = libVal.toObject().value("name").toString();
+                if (libName.startsWith("net.fabricmc:")) hasFabric = true;
+                else if (libName.startsWith("org.quiltmc:")) hasQuilt = true;
+                else if (libName.startsWith("net.neoforged:")) hasNeoForge = true;
+                else if (libName.startsWith("net.minecraftforge:")) hasForge = true;
+            }
+
+            if (hasFabric) {
                 info.loaderType = tr("Fabric");
-            } else if (rootObj.contains("forge")) {
-                info.loaderType = tr("Forge");
-            } else if (rootObj.contains("quiltLoader")) {
+            } else if (hasQuilt) {
                 info.loaderType = tr("Quilt");
+            } else if (hasNeoForge) {
+                info.loaderType = tr("NeoForge");
+            } else if (hasForge) {
+                info.loaderType = tr("Forge");
+            } else {
+                info.loaderType = tr("原版");
             }
             
             // Get actual version number if available

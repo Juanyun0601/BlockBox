@@ -441,6 +441,11 @@ void ModDownloadPage::loadInstances()
                 else if (lower.contains("quilt")) data.loaderType = "Quilt";
             }
 
+            // 模组实例筛选只收能装模组的实例：没有 Forge/Fabric 等加载器的原版实例，
+            // 模组装进去也不会生效，不放进「下载实例」下拉。
+            if (data.loaderType.isEmpty())
+                continue;
+
             m_instanceDataMap.insert(instancePath, data);
             m_instanceCombo->addItem(instanceName, instancePath);
         }

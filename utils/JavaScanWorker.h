@@ -1,6 +1,6 @@
 /**
  * @file   JavaScanWorker.h
- * @brief  Java 检测后台线程工作类（注册表 + 厂商目录 + 关键词 BFS 全盘）
+ * @brief  Java 检测后台线程工作类（注册表 + 厂商目录 + 启动器运行时 + 黑名单剪枝全盘 BFS）
  * @author BlockBox Team
  * @date   2026-05-22
  */
@@ -42,7 +42,7 @@ public:
      * @brief 统一快速检测（开源启动器通行做法：环境变量 → 注册表 → 厂商目录 → 启动器运行时）
      *
      * 不进入全盘深度搜索，通常数秒内返回，可同步调用（如 GameLauncher::detectJava）。
-     * doScan 只有在本方法未找到任何 Java 时才自动转入全盘 BFS 兜底。
+     * doScan 在快速检测之后总是继续全盘 BFS 深扫并合并结果。
      */
     QList<QPair<QString, QString>> runQuickScan();
 
@@ -76,8 +76,14 @@ private:
     // 扫描已知厂商安装目录（BellSoft / Zulu / AdoptOpenJDK / Microsoft / Eclipse / Semeru 等）
     void scanVendorDirectories(QList<QPair<QString, QString>>& outResults);
 
-    // 扫描 Minecraft 启动器自带的运行时
-    void scanMinecraftRuntime(QList<QPair<QString, QString>>& outResults);
+    // 扫描各启动器自带的 Java 运行时（官方启动器 / HMCL / .minecraft 及各盘根的 runtime 目录）
+    void scanLauncherRuntimes(QList<QPair<QString, QString>>& outResults);
+
+    // 扫描一个 runtime 目录：兼容 平铺(<名>/bin)、<名>/<平台>/bin、<名>/<平台>/<版本>/bin 三种布局
+    void scanRuntimeRoot(const QString& runtimeRoot, QList<QPair<QString, QString>>& outResults);
+
+    // 扫描一个 Java 库目录（HMCL/方块盒子布局）：<根>/<a>/bin 与 <根>/<a>/<b>/bin
+    void scanJavaLibraryDir(const QString& javaDir, QList<QPair<QString, QString>>& outResults);
 
     // 尝试验证并加入一个 java.exe / javaw.exe 路径
     void tryAddJava(const QString& dirPath, QList<QPair<QString, QString>>& outResults);
@@ -100,10 +106,10 @@ private:
     // 检测 Java 可执行文件的架构（通过文件名或路径推断）
     QString detectJavaArch(const QString& javaPath);
 
-    // 路径是否命中排除目录
-    bool isPathExcluded(const QString& filePath) const;
+    // 目录名是否命中全盘深扫黑名单（windows / $recycle.bin 等无关目录，命中整棵跳过）
+    bool isExcludedDirName(const QString& dirName) const;
 
-    // 目录名是否包含 Java 相关关键词（用于 BFS 剪枝）
+    // 目录名是否包含 Java 相关关键词（用于深层 BFS 剪枝）
     bool isJavaRelatedDirectory(const QString& dirName) const;
 
     // 目录名是否形如版本号（如 1.8.0_301 / 17.0.1）
@@ -112,8 +118,8 @@ private:
     QAtomicInt m_cancelled;
 
     QStringList m_drives;
-    QStringList m_excludeLower;          // 排除目录（小写）
-    QList<QString> m_keywords;           // Java 相关关键词（小写）
+    QSet<QString>     m_excludedDirNames;  // 深扫黑名单目录名（小写）
+    QList<QString>    m_keywords;          // Java 相关关键词（小写）
 
     qint64 m_scanStartTime;
     qint64 m_totalDriveMB;               // 所有盘符总容量 MB

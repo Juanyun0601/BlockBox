@@ -27,6 +27,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QUrl>
+#include <QtConcurrent>
 
 #include <zlib.h>
 
@@ -111,20 +112,17 @@ bool ZipReader::readEocd(qint64& centralDirOffset, quint16& totalEntries)
     {
       QDataStream ds(tail.mid(i, 22));
       ds.setByteOrder(QDataStream::LittleEndian);
-      ds.skipRawData(8);
+      // 必须跳过前 10 字节才到「总条目数」，跳 8 会把总条目数错并进 cdSize，
+      // 导致 cdOffset 读成垃圾、整个 zip 识别失败
+      ds.skipRawData(10);
 
       quint16 entryCount = 0;
       quint32 cdSize = 0;
       quint32 cdOffset = 0;
       ds >> entryCount >> cdSize >> cdOffset;
 
-      QDataStream ds2(tail.mid(i + 8, 2));
-      ds2.setByteOrder(QDataStream::LittleEndian);
-      quint16 onDiskEntryCount = 0;
-      ds2 >> onDiskEntryCount;
-
       centralDirOffset = cdOffset;
-      totalEntries = qMin(onDiskEntryCount, entryCount);
+      totalEntries = entryCount;
       return true;
     }
   }
@@ -154,6 +152,8 @@ bool ZipReader::readCentralDirectory(qint64 centralDirOffset, quint16 totalEntri
     quint16 versionNeeded = 0;
     quint16 gpFlag = 0;
     quint16 compressionMethod = 0;
+    quint16 modTime = 0;
+    quint16 modDate = 0;
     quint32 crc32 = 0;
     quint32 compressedSize = 0;
     quint32 uncompressedSize = 0;
@@ -165,8 +165,10 @@ bool ZipReader::readCentralDirectory(qint64 centralDirOffset, quint16 totalEntri
     quint32 externalAttrs = 0;
     quint32 localHeaderOffset = 0;
 
+    // 中央目录条目固定 46 字节，必须完整读完，否则后续字段全部错位
     ds >> signature >> versionMadeBy >> versionNeeded >> gpFlag
        >> compressionMethod
+       >> modTime >> modDate
        >> crc32 >> compressedSize >> uncompressedSize
        >> fileNameLength >> extraFieldLength >> fileCommentLength
        >> diskNumberStart >> internalAttrs >> externalAttrs
@@ -316,7 +318,6 @@ ModpackImporter::ModpackImporter(QObject* parent)
   : Task(parent)
   , m_networkManager(new QNetworkAccessManager(this))
   , m_currentModReply(nullptr)
-  , m_currentModIndex(0)
   , m_totalMods(0)
   , m_modsDownloaded(0)
   , m_modsFailed(0)
@@ -335,29 +336,32 @@ void ModpackImporter::executeTask()
   // 实例名可能来自整合包元数据/用户输入，压成合法文件夹名，杜绝路径穿越
   m_instanceName = Safety::safeFileName(m_instanceName, QStringLiteral("instance"));
 
+  // 实例列表只扫 <游戏根>/versions/* 一级目录，且版本 JSON 必须叫 <实例名>.json，
+  // 否则导入完在启动器里根本看不到（对照 InstanceSelectPage / LoaderDetailPage 约定）
+  m_gameRoot = SettingsManager::instance()->getDefaultInstancePath();
   if (m_instancePath.isEmpty())
-  {
-    // 实例列表只扫 <游戏根>/versions/* 一级目录，且版本 JSON 必须叫 <实例名>.json，
-    // 否则导入完在启动器里根本看不到（对照 InstanceSelectPage / LoaderDetailPage 约定）
-    QString basePath = SettingsManager::instance()->getDefaultInstancePath();
-    m_instancePath = basePath + "/versions/" + m_instanceName;
-  }
+    m_instancePath = m_gameRoot + "/versions/" + m_instanceName;
 
-  QDir dir;
-  if (!dir.mkpath(m_instancePath))
-  {
-    failInstall(tr("无法创建实例目录：%1").arg(m_instancePath));
-    return;
-  }
-
-  // 通用包/未知格式：没有游戏版本可下载，直接解压内容成实例
   if (m_info.gameVersion.trimmed().isEmpty())
   {
-    emitStage(tr("正在解压整合包内容..."));
-    emitProgress(40, tr("整合包未提供游戏版本，直接解压为实例"));
-    extractOverrides();
+    failInstall(tr("整合包未提供游戏版本信息，请填写游戏版本后重试"));
     return;
   }
+
+  // 目标实例已存在则拒绝，避免覆盖用户现有实例
+  if (QFile::exists(m_instancePath + "/" + m_instanceName + ".json"))
+  {
+    failInstall(tr("实例已存在：%1，请更换实例名称").arg(m_instanceName));
+    return;
+  }
+
+  // 只有主流加载器且带版本号才走加载器安装；其余（quilt/liteloader/缺版本号）
+  // 降级为原版实例，内容照常解压，用户之后可在实例页手动装加载器
+  const QString loaderLower = m_info.loaderType.toLower();
+  m_useLoader = !m_info.loaderVersion.trimmed().isEmpty()
+                && (loaderLower == QLatin1String("forge")
+                    || loaderLower == QLatin1String("fabric")
+                    || loaderLower == QLatin1String("neoforge"));
 
   emitStage(tr("正在下载 Minecraft 版本..."));
   emitProgress(0, tr("准备下载 Minecraft %1").arg(m_info.gameVersion));
@@ -375,16 +379,20 @@ void ModpackImporter::installVersion()
       disconnect(vd, &VersionDownloader::downloadCompleted, this, nullptr);
       disconnect(vd, &VersionDownloader::downloadFailed, this, nullptr);
       disconnect(vd, &VersionDownloader::downloadCancelled, this, nullptr);
+      if (!isRunning())
+        return;
 
       emitProgress(30, tr("Minecraft %1 下载完成").arg(m_info.gameVersion));
 
-      if (!m_info.loaderType.isEmpty())
+      if (m_useLoader)
       {
         emitStage(tr("正在安装加载器 %1...").arg(m_info.loaderType));
         installLoader();
       }
       else
       {
+        if (!m_info.loaderType.isEmpty())
+          emitStage(tr("跳过加载器 %1，按原版安装").arg(m_info.loaderType));
         emitStage(tr("正在下载模组..."));
         installMods();
       }
@@ -410,100 +418,205 @@ void ModpackImporter::installVersion()
       failInstall(tr("已取消"));
     });
 
-  // 版本文件必须落到 <游戏根>/versions/<实例名>（downloadVanillaTo 直写目标目录），
-  // 旧实现 downloadVanilla 会在实例目录下再拼一层 versions/<mcVer>，实例列表扫不到
-  vd->downloadVanillaTo(m_info.gameVersion, m_instancePath, m_instanceName);
+  if (m_useLoader)
+  {
+    // 有加载器：原版基准必须落到 <游戏根>/versions/<mcVer>（加载器安装器在此基础上
+    // 创建自己的版本目录，且加载器 JSON 的 inheritsFrom 也指向这里）。
+    // 最终实例目录等加载器装完后定位（见 resolveLoaderVersionDir）。
+    m_versionsBefore = QDir(m_gameRoot + "/versions")
+                           .entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    vd->downloadVanillaTo(m_info.gameVersion,
+                          m_gameRoot + "/versions/" + m_info.gameVersion,
+                          m_instanceName);
+  }
+  else
+  {
+    // 无加载器：原版直接落进实例目录，JSON 落成 <实例名>.json，实例列表可见可启动
+    vd->downloadVanillaTo(m_info.gameVersion, m_instancePath, m_instanceName);
+  }
 }
 
 void ModpackImporter::installLoader()
 {
-  QString loaderLower = m_info.loaderType.toLower();
+  const QString loaderLower = m_info.loaderType.toLower();
 
-  if (loaderLower == QStringLiteral("forge"))
-  {
-    auto* installer = ForgeInstaller::instance();
+  // 加载器完成/失败/取消后统一收尾（在 GUI 线程执行）
+  auto onLoaded = [this](bool success, const QString& error) {
+    disconnect(ForgeInstaller::instance(), nullptr, this, nullptr);
+    disconnect(FabricInstaller::instance(), nullptr, this, nullptr);
+    disconnect(NeoForgeInstaller::instance(), nullptr, this, nullptr);
+    m_activeLoaderType.clear();
+    if (!isRunning())
+      return;
+    if (m_abortRequested)
+    {
+      failInstall(tr("已取消"));
+      return;
+    }
+    if (!success)
+    {
+      failInstall(error);
+      return;
+    }
 
-    connect(installer, &ForgeInstaller::installCompleted,
-      this, [this, installer](const QString& /*taskId*/)
+    // 定位加载器版本目录 → 定为本整合包实例目录
+    const QString loaderDir = resolveLoaderVersionDir();
+    if (loaderDir.isEmpty())
+    {
+      failInstall(tr("未能定位加载器安装目录，请重试或手动安装加载器"));
+      return;
+    }
+    const QString loaderDirName = QFileInfo(loaderDir).fileName();
+    const QString targetDir = m_gameRoot + "/versions/" + m_instanceName;
+
+    if (loaderDirName == m_instanceName)
+    {
+      // 实例名恰好等于加载器目录名，直接采用
+      m_instancePath = loaderDir;
+    }
+    else if (!m_versionsBefore.contains(loaderDirName))
+    {
+      // 本次新装出的加载器目录：改名为用户实例名（目录连同内部 JSON 一起走）
+      const QString targetJson = targetDir + "/" + m_instanceName + ".json";
+      if (QFile::exists(targetJson) || QDir(targetDir).exists())
       {
-        disconnect(installer, &ForgeInstaller::installCompleted, this, nullptr);
-        disconnect(installer, &ForgeInstaller::installFailed, this, nullptr);
-
-        emitProgress(60, tr("Forge %1 安装完成").arg(m_info.loaderVersion));
-        emitStage(tr("正在下载模组..."));
-        installMods();
-      });
-
-    connect(installer, &ForgeInstaller::installFailed,
-      this, [this, installer](const QString& /*taskId*/, const QString& error)
+        failInstall(tr("实例已存在：%1，请更换实例名称").arg(m_instanceName));
+        return;
+      }
+      if (!QDir().rename(loaderDir, targetDir))
       {
-        disconnect(installer, &ForgeInstaller::installCompleted, this, nullptr);
-        disconnect(installer, &ForgeInstaller::installFailed, this, nullptr);
-        failInstall(tr("Forge 安装失败：%1").arg(error));
-      });
-
-    installer->downloadForgeInstaller(m_info.gameVersion, m_info.loaderVersion,
-                                      m_instancePath, m_instanceName);
-  }
-  else if (loaderLower == QStringLiteral("fabric"))
-  {
-    auto* installer = FabricInstaller::instance();
-
-    connect(installer, &FabricInstaller::installCompleted,
-      this, [this, installer](const QString& /*versionId*/)
+        failInstall(tr("重命名加载器版本目录失败"));
+        return;
+      }
+      // 目录改名后，内部版本 JSON 也要改成 <实例名>.json，启动器按目录名找它
+      const QStringList jsons = QDir(targetDir).entryList({"*.json"}, QDir::Files);
+      bool jsonRenamed = false;
+      for (const QString& j : jsons)
       {
-        disconnect(installer, &FabricInstaller::installCompleted, this, nullptr);
-        disconnect(installer, &FabricInstaller::installFailed, this, nullptr);
-
-        emitProgress(60, tr("Fabric %1 安装完成").arg(m_info.loaderVersion));
-        emitStage(tr("正在下载模组..."));
-        installMods();
-      });
-
-    connect(installer, &FabricInstaller::installFailed,
-      this, [this, installer](const QString& error)
+        if (QFile::rename(targetDir + "/" + j, targetJson))
+        {
+          jsonRenamed = true;
+          break;
+        }
+      }
+      if (!jsonRenamed)
       {
-        disconnect(installer, &FabricInstaller::installCompleted, this, nullptr);
-        disconnect(installer, &FabricInstaller::installFailed, this, nullptr);
-        failInstall(tr("Fabric 安装失败：%1").arg(error));
-      });
-
-    installer->downloadFabricInstaller(m_info.gameVersion, m_info.loaderVersion,
-                                       m_instancePath);
-  }
-  else if (loaderLower == QStringLiteral("neoforge"))
-  {
-    auto* installer = NeoForgeInstaller::instance();
-
-    connect(installer, &NeoForgeInstaller::installCompleted,
-      this, [this, installer](const QString& /*versionId*/)
+        failInstall(tr("重命名加载器版本信息失败"));
+        return;
+      }
+      m_instancePath = targetDir;
+    }
+    else
+    {
+      // 同版本加载器目录已被其他实例占用：复制 JSON 到独立实例目录，互不干扰
+      if (!QDir().mkpath(targetDir)
+          || QFile::exists(targetDir + "/" + m_instanceName + ".json"))
       {
-        disconnect(installer, &NeoForgeInstaller::installCompleted, this, nullptr);
-        disconnect(installer, &NeoForgeInstaller::installFailed, this, nullptr);
-
-        emitProgress(60, tr("NeoForge %1 安装完成").arg(m_info.loaderVersion));
-        emitStage(tr("正在下载模组..."));
-        installMods();
-      });
-
-    connect(installer, &NeoForgeInstaller::installFailed,
-      this, [this, installer](const QString& error)
+        failInstall(tr("无法创建实例目录：%1").arg(targetDir));
+        return;
+      }
+      if (!QFile::copy(loaderDir + "/" + loaderDirName + ".json",
+                       targetDir + "/" + m_instanceName + ".json"))
       {
-        disconnect(installer, &NeoForgeInstaller::installCompleted, this, nullptr);
-        disconnect(installer, &NeoForgeInstaller::installFailed, this, nullptr);
-        failInstall(tr("NeoForge 安装失败：%1").arg(error));
-      });
+        failInstall(tr("复制加载器版本信息失败"));
+        return;
+      }
+      m_instancePath = targetDir;
+    }
 
-    installer->downloadNeoForgeInstaller(m_info.gameVersion, m_info.loaderVersion,
-                                         m_instancePath, m_instanceName);
-  }
-  else
-  {
-    // Unknown loader type - skip loader installation
-    emitProgress(60, tr("跳过未知加载器：%1").arg(m_info.loaderType));
+    emitProgress(60, tr("%1 %2 安装完成").arg(m_info.loaderType).arg(m_info.loaderVersion));
     emitStage(tr("正在下载模组..."));
     installMods();
+  };
+
+  if (loaderLower == QLatin1String("forge"))
+  {
+    auto* installer = ForgeInstaller::instance();
+    m_activeLoaderType = QStringLiteral("forge");
+    connect(installer, &ForgeInstaller::installCompleted, this,
+            [onLoaded](const QString&) { onLoaded(true, QString()); });
+    connect(installer, &ForgeInstaller::installFailed, this,
+            [onLoaded](const QString&, const QString& error) {
+              onLoaded(false, tr("Forge 安装失败：%1").arg(error));
+            });
+    connect(installer, &ForgeInstaller::installCancelled, this,
+            [onLoaded](const QString&) { onLoaded(false, tr("已取消")); });
+    installer->downloadForgeInstaller(m_info.gameVersion, m_info.loaderVersion,
+                                      m_gameRoot, m_instanceName);
   }
+  else if (loaderLower == QLatin1String("fabric") || loaderLower == QLatin1String("quilt"))
+  {
+    auto* installer = FabricInstaller::instance();
+    m_activeLoaderType = QStringLiteral("fabric");
+    connect(installer, &FabricInstaller::installCompleted, this,
+            [onLoaded](const QString&) { onLoaded(true, QString()); });
+    connect(installer, &FabricInstaller::installFailed, this,
+            [onLoaded](const QString& error) {
+              onLoaded(false, tr("Fabric 安装失败：%1").arg(error));
+            });
+    connect(installer, &FabricInstaller::installCancelled, this,
+            [onLoaded]() { onLoaded(false, tr("已取消")); });
+    // Fabric 安装器内部是阻塞实现，放后台线程执行，避免卡死 GUI
+    const QString mc = m_info.gameVersion;
+    const QString fv = m_info.loaderVersion;
+    const QString root = m_gameRoot;
+    (void)QtConcurrent::run([installer, mc, fv, root]() {
+      installer->downloadFabricInstaller(mc, fv, root);
+    });
+  }
+  else if (loaderLower == QLatin1String("neoforge"))
+  {
+    auto* installer = NeoForgeInstaller::instance();
+    m_activeLoaderType = QStringLiteral("neoforge");
+    connect(installer, &NeoForgeInstaller::installCompleted, this,
+            [onLoaded](const QString&) { onLoaded(true, QString()); });
+    connect(installer, &NeoForgeInstaller::installFailed, this,
+            [onLoaded](const QString& error) {
+              onLoaded(false, tr("NeoForge 安装失败：%1").arg(error));
+            });
+    connect(installer, &NeoForgeInstaller::installCancelled, this,
+            [onLoaded]() { onLoaded(false, tr("已取消")); });
+    // NeoForge 安装器同样是阻塞实现
+    const QString mc = m_info.gameVersion;
+    const QString fv = m_info.loaderVersion;
+    const QString root = m_gameRoot;
+    const QString name = m_instanceName;
+    (void)QtConcurrent::run([installer, mc, fv, root, name]() {
+      installer->downloadNeoForgeInstaller(mc, fv, root, name);
+    });
+  }
+}
+
+QString ModpackImporter::resolveLoaderVersionDir() const
+{
+  const QDir vdir(m_gameRoot + "/versions");
+  const QStringList after = vdir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+
+  // 1) 本次新装出来的目录（排除原版基准目录）
+  for (const QString& name : after)
+  {
+    if (m_versionsBefore.contains(name) || name == m_info.gameVersion)
+      continue;
+    if (!QFile::exists(vdir.absoluteFilePath(name + "/" + name + ".json")))
+      continue;
+    return vdir.absoluteFilePath(name);
+  }
+
+  // 2) 同版本加载器目录已存在（被其他实例占用）：按 JSON id 含加载器版本号匹配
+  if (!m_info.loaderVersion.isEmpty())
+  {
+    for (const QString& name : after)
+    {
+      QFile f(vdir.absoluteFilePath(name + "/" + name + ".json"));
+      if (!f.open(QIODevice::ReadOnly))
+        continue;
+      const QJsonObject obj = QJsonDocument::fromJson(f.readAll()).object();
+      f.close();
+      if (obj.value("id").toString().contains(m_info.loaderVersion))
+        return vdir.absoluteFilePath(name);
+    }
+  }
+  return QString();
 }
 
 void ModpackImporter::installMods()
@@ -777,17 +890,14 @@ QString ModpackImporter::modFileName(const ModInfo& mod, const QStringList& cand
   return fileName;
 }
 
-void ModpackImporter::advanceAfterModDownload()
+// 模组下载进度：并发（NetJob）与串行（CurseForge ID）两条路径共用，
+// 只按"已完成 + 已失败"计数推进，避免并发完成把进度烧到 100%
+void ModpackImporter::reportModProgress()
 {
-  ++m_currentModIndex;
-
-  const int pctBase = 62;
-  const int pctRange = 13;
-  const int progress = pctBase + (m_currentModIndex * pctRange / m_totalMods);
-  emitProgress(progress,
-    tr("正在下载模组 (%1/%2)...").arg(m_currentModIndex).arg(m_totalMods));
-
-  downloadNextMod();
+  const int total = qMax(1, m_totalMods);
+  const int done = m_modsDownloaded + m_modsFailed;
+  const int percent = 62 + qMin(13, done * 13 / total);
+  emitProgress(percent, tr("正在下载模组 (%1/%2)...").arg(done).arg(m_totalMods));
 }
 
 void ModpackImporter::extractOverrides()
@@ -809,6 +919,10 @@ void ModpackImporter::extractOverrides()
 
   QString prefixToExtract;
   QString prefixToStrip;
+  // Modrinth：覆盖文件可能在 overrides/ 或 client-overrides/ 下，统一剥前缀
+  bool modrinthStripOverrides = false;
+  // MultiMC：本家导出用 .minecraft/，外部包常见 minecraft/，两种都认
+  bool multimcStripMinecraft = false;
 
   switch (m_info.type)
   {
@@ -818,15 +932,11 @@ void ModpackImporter::extractOverrides()
     break;
 
   case ModpackType::MultiMC:
-    prefixToExtract = "minecraft/";
-    prefixToStrip = "minecraft/";
+    multimcStripMinecraft = true;
     break;
 
   case ModpackType::Modrinth:
-    // Extract everything except the index json
-    // No prefix filter, strip nothing
-    prefixToExtract = QString();
-    prefixToStrip = QString();
+    modrinthStripOverrides = true;
     break;
 
   case ModpackType::MCBBS:
@@ -849,6 +959,7 @@ void ModpackImporter::extractOverrides()
     }
     break;
 
+  // BlockBox / Generic：文件按原始相对路径打在 zip 根，整包即覆盖内容
   default:
     break;
   }
@@ -862,23 +973,40 @@ void ModpackImporter::extractOverrides()
     if (entry.fileName.endsWith('/'))
       continue;
 
-    // Skip metadata files for Modrinth
-    if (m_info.type == ModpackType::Modrinth)
-    {
-      if (entry.fileName == "modrinth.index.json")
-        continue;
-      if (entry.fileName == "pack.mrpack")
-        continue;
-    }
-
-    // Filter by prefix if specified
-    if (!prefixToExtract.isEmpty() && !entry.fileName.startsWith(prefixToExtract))
+    // Skip metadata / index files
+    if (entry.fileName == "modrinth.index.json" || entry.fileName == "pack.mrpack"
+        || entry.fileName == "blockbox.pack.json" || entry.fileName == "mcbbs.packmeta"
+        || entry.fileName == "instance.json")
       continue;
 
-    // Determine output path
     QString relativePath = entry.fileName;
-    if (!prefixToStrip.isEmpty() && relativePath.startsWith(prefixToStrip))
-      relativePath = relativePath.mid(prefixToStrip.length());
+
+    if (multimcStripMinecraft)
+    {
+      if (relativePath.startsWith(".minecraft/"))
+        relativePath = relativePath.mid(11);
+      else if (relativePath.startsWith("minecraft/"))
+        relativePath = relativePath.mid(10);
+      else
+        continue; // mmc-pack.json / instance.cfg 等根文件不进实例目录
+    }
+    else if (modrinthStripOverrides)
+    {
+      if (relativePath.startsWith("client-overrides/"))
+        relativePath = relativePath.mid(17);
+      else if (relativePath.startsWith("overrides/"))
+        relativePath = relativePath.mid(10);
+      else
+        continue; // 只解压覆盖目录内容
+    }
+    else
+    {
+      // Filter by prefix if specified
+      if (!prefixToExtract.isEmpty() && !entry.fileName.startsWith(prefixToExtract))
+        continue;
+      if (!prefixToStrip.isEmpty() && relativePath.startsWith(prefixToStrip))
+        relativePath = relativePath.mid(prefixToStrip.length());
+    }
 
     if (relativePath.isEmpty())
       continue;
@@ -967,6 +1095,14 @@ bool ModpackImporter::abort()
   VersionDownloader* vd = VersionDownloader::instance();
   if (vd->isDownloading())
     vd->cancelDownload();
+
+  // 加载器安装阶段：取消当前活跃的安装器
+  if (m_activeLoaderType == QLatin1String("forge"))
+    ForgeInstaller::instance()->cancelInstall();
+  else if (m_activeLoaderType == QLatin1String("fabric"))
+    FabricInstaller::instance()->cancelInstall();
+  else if (m_activeLoaderType == QLatin1String("neoforge"))
+    NeoForgeInstaller::instance()->cancelInstall();
 
   return true;
 }

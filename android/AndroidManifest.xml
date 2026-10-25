@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.blockbox.launcher"
-    android:versionCode="5"
-    android:versionName="beta5"
+    android:versionCode="6"
+    android:versionName="beta5.3"
     android:installLocation="auto">
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -22,6 +22,8 @@
         android:hardwareAccelerated="true"
         android:name="org.qtproject.qt.android.bindings.QtApplication"
         android:label="BlockBox"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true"
         android:extractNativeLibs="true">
 
@@ -37,6 +39,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Qt loader 必需：主库名，缺此项 QtLoader 直接 Failed，应用无法启动 -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="BlockBoxAndroid" />
         </activity>
 
         <!-- 应用内更新：将下载的 APK 以 content:// URI 共享给系统安装器 -->

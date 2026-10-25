@@ -187,14 +187,18 @@ void FabricVersionListPage::loadFabricVersions()
 
                     FabricVersionInfo info;
                     info.fabricVersion = loaderObj["version"].toString();
+                    // 该接口不返回 game 字段，用请求时的版本号兜底，否则整张列表会被过滤成空
                     info.minecraftVersion = versionObj["game"].toString();
+                    if (info.minecraftVersion.isEmpty()) {
+                        info.minecraftVersion = m_minecraftVersion;
+                    }
                     info.hash = loaderObj["hash"].toString();
                     info.build = loaderObj["build"].toString();
 
                     QJsonObject versionInfoObj = launcherMeta["version"].toObject();
                     info.launcherMetaVersion = versionInfoObj["version"].toString();
 
-                    if (!info.fabricVersion.isEmpty() && !info.minecraftVersion.isEmpty()) {
+                    if (!info.fabricVersion.isEmpty()) {
                         m_fabricVersions.append(info);
                     }
                 }

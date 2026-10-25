@@ -86,6 +86,9 @@ void ThemeManager::loadTheme(ThemeType theme)
     applyThemeColorDefaults();
     applyCurrentThemeStyle();
     saveTheme();
+    // 默认文字色随主题变了，但 applyThemeColorDefaults 不发信号；
+    // 顶栏等 SVG 图标监听的是 textColorChanged，必须补发一次，否则切换主题后图标仍是旧灰度
+    emit textColorChanged(m_currentTextColor);
     emit themeChanged(theme);
 }
 
@@ -500,9 +503,10 @@ QMap<QString, QString> ThemeManager::buildTokenTable() const
     T["@BORDER_DEFAULT@"] = T.value("@BORDER@");
 
     // 玻璃态微透明卡片底色（页面顶部过滤条/底部翻页栏等，透出页面/自定义背景）
+    // 深色下提高不透明度：亮壁纸透过来会把浅色文字冲淡
     T["@BG_GLASS@"] = isLight ? "rgba(255, 255, 255, 0.65)"
-                    : (isDark ? "rgba(45, 45, 45, 0.65)"
-                              : "rgba(42, 42, 42, 0.65)");
+                    : (isDark ? "rgba(32, 32, 32, 0.86)"
+                              : "rgba(38, 38, 38, 0.82)");
 
     // 底部任务栏托盘：比通用玻璃更通透，叠在内容上时能自然透出下层界面
     T["@BG_GLASS_TASKBAR@"] = isLight ? "rgba(255, 255, 255, 0.42)"
@@ -680,6 +684,9 @@ void ThemeManager::applyCurrentThemeStyle() const
     if (!bgOverride.isEmpty())
         style += "\n" + bgOverride;
 
+    // 必须在背景透明规则之后：否则 aiChatMessageArea 等会被打回全透明
+    applyDarkReadableOverride(style);
+
     // 追加「已启用」插件贡献的启动器样式（放最后，可覆盖内置主题）。
     // 与主样式一致，插件 QSS 同样支持 @TOKEN@ 占位符（resolveTokens 一并解析）。
     const QStringList pluginStyles = PluginManager::instance()->activePluginStyles();
@@ -803,44 +810,101 @@ void ThemeManager::applyDarkBarOverride(QString& style) const
 /* === dark bar override (auto) === */
 TopBar {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(48, 48, 48, 0.62),
-        stop:1 rgba(40, 40, 40, 0.68));
-    border-bottom: 1px solid #444444;
+        stop:0 rgba(36, 36, 36, 0.86),
+        stop:1 rgba(28, 28, 28, 0.9));
+    border-bottom: 1px solid #4a4a4a;
 }
 SideBar {
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(42, 42, 42, 0.62),
-        stop:1 rgba(36, 36, 36, 0.68));
-    border-right: 1px solid #444444;
+        stop:0 rgba(30, 30, 30, 0.84),
+        stop:1 rgba(24, 24, 24, 0.9));
+    border-right: 1px solid #4a4a4a;
 }
 SubNavPanel {
-    background-color: rgba(45, 45, 45, 0.7);
-    border: 1px solid #444444;
+    background-color: rgba(32, 32, 32, 0.88);
+    border: 1px solid #4a4a4a;
     border-radius: 12px;
 }
 QWidget#aiChatTopBar {
-    background: rgba(42, 42, 42, 0.72);
-    border-bottom: 1px solid #444444;
+    background: rgba(28, 28, 28, 0.92);
+    border-bottom: 1px solid #4a4a4a;
 }
 QFrame#aiChatLeftPanel {
-    background-color: rgba(42, 42, 42, 0.7);
-    border: 1px solid #444444;
+    background-color: rgba(30, 30, 30, 0.9);
+    border: 1px solid #4a4a4a;
 }
 QWidget#instanceLeftSidebar {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 rgba(45, 45, 45, 0.66),
-        stop:1 rgba(42, 42, 42, 0.7));
-    border-right: 1px solid #444444;
+        stop:0 rgba(34, 34, 34, 0.88),
+        stop:1 rgba(28, 28, 28, 0.92));
+    border-right: 1px solid #4a4a4a;
 }
 QWidget#accountLeftSidebar,
 QWidget#accountRightSidebar {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 rgba(45, 45, 45, 0.66),
-        stop:1 rgba(42, 42, 42, 0.7));
-    border: 1px solid #444444;
+        stop:0 rgba(34, 34, 34, 0.88),
+        stop:1 rgba(28, 28, 28, 0.92));
+    border: 1px solid #4a4a4a;
 }
 )";
-    style += "\n" + QString(kDarkBarOverride);
+    style += "\n" + QString(kDarkBarOverride).replace(QStringLiteral("PRIMARY_COLOR"), m_currentThemeColor);
+}
+
+void ThemeManager::applyDarkReadableOverride(QString& style) const
+{
+    if (m_currentTheme == LightTheme)
+        return;
+
+    static const char* kDarkReadable = R"(
+/* === dark readable override (after bg transparency) === */
+/* 选择器要压过 BackgroundManager 的 QStackedWidget 透明规则 */
+QWidget#contentWrapper QStackedWidget > QWidget#aiChatPage {
+    background: rgba(12, 12, 12, 0.68);
+}
+QScrollArea#aiChatMessageArea,
+QScrollArea#aiChatMessageArea > QWidget,
+QScrollArea#aiChatMessageArea > QWidget > QWidget {
+    background: transparent;
+}
+QFrame#aiChatInputBox {
+    background: rgba(20, 20, 20, 0.94);
+    border: 1.5px solid #4a4a4a;
+}
+QFrame#aiChatInputBox[focused="true"] {
+    border: 1.5px solid PRIMARY_COLOR;
+}
+QFrame#aiChatUserBubble {
+    background: rgba(42, 42, 42, 0.9);
+    border: 1px solid #4a4a4a;
+}
+QFrame#aiChatAiBubble {
+    background: rgba(26, 26, 26, 0.92);
+    border: 1px solid #4a4a4a;
+}
+QPushButton#aiChatQuickBtn {
+    background: rgba(34, 34, 34, 0.92);
+    border: 1px solid #4a4a4a;
+    color: #e8e8e8;
+}
+QLabel#aiChatWelcomeTitleLabel {
+    color: #f0f0f0;
+}
+QLabel#aiChatWelcomeDescLabel {
+    color: #c8c8c8;
+}
+QWidget#pluginEmptyHost {
+    background-color: rgba(22, 22, 22, 0.88);
+    border: 1px solid #4a4a4a;
+    border-radius: 16px;
+}
+QLabel#pluginPageEmpty {
+    background: transparent;
+    border: none;
+    color: #c8c8c8;
+    padding: 36px 28px;
+}
+)";
+    style += "\n" + QString(kDarkReadable).replace(QStringLiteral("PRIMARY_COLOR"), m_currentThemeColor);
 }
 
 void ThemeManager::setTextBorderColor(const QString& color)

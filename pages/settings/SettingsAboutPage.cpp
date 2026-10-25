@@ -214,6 +214,28 @@ void SettingsPage::initAboutSettings()
     appendSettingRow(licenseCard,
         tr("开源协议"), tr("BlockBox 基于开源协议发布，并使用了以下第三方开源库，特此致谢。"));
 
+    // 本项目本体：GPL-3.0
+    QHBoxLayout *selfRow = appendSettingRow(licenseCard,
+        "BlockBox",
+        tr("启动器本体以 GNU 通用公共许可证第 3 版（GPL-3.0）发布，第三方库与素材仍遵循各自协议。"));
+    QLabel *selfValue = new QLabel("GPL-3.0", m_aboutSettings);
+    selfValue->setObjectName("settingValueLabel");
+    selfRow->addWidget(selfValue);
+    QPushButton *licenseBtn = new QPushButton(tr("查看"), m_aboutSettings);
+    licenseBtn->setObjectName("primaryButton");
+    licenseBtn->setCursor(Qt::PointingHandCursor);
+    licenseBtn->setFixedWidth(80);
+    connect(licenseBtn, &QPushButton::clicked, []() {
+        QDesktopServices::openUrl(
+            QUrl(QStringLiteral("https://github.com/Juanyun0601/BlockBox/blob/main/LICENSE")));
+    });
+    selfRow->addWidget(licenseBtn);
+
+    // GPL-3.0 要求的法律声明：版权、无担保、许可获取方式
+    appendSettingRow(licenseCard, QString(),
+        tr("Copyright (C) 2026 Juanyun0601。本程序不提供任何担保，可自由复制、修改与再发布，"
+           "但须同样以 GPL-3.0 公开源代码。"));
+
     QHBoxLayout *qtRow = appendSettingRow(licenseCard,
         "Qt", tr("跨平台 C++ 图形用户界面应用程序框架。"));
     QLabel *qtValue = new QLabel("LGPL / GPL", m_aboutSettings);
@@ -262,8 +284,12 @@ void SettingsPage::initAboutSettings()
         "GPL-3.0", "https://github.com/HMCL-dev/HMCL");
     addOpenSourceRow("PCL-CE", tr("PCL 社区开源版，参考存档设置、Mod 更新判断等。"),
         "Apache-2.0", "https://github.com/PCL-Community/PCL-CE");
-    addOpenSourceRow("Verse 启动器（VersePc2）", tr("新一代启动器，旋转全景背景的 3D 天空盒渲染移植自其开源壁纸引擎。"),
+    addOpenSourceRow("Verse 启动器（VersePc2）", tr("新一代启动器，旋转全景背景的 3D 天空盒渲染与内置全景场景素材取自其开源壁纸引擎。"),
         "GPL-3.0", "https://github.com/doujie081231/VersePc2");
+    addOpenSourceRow("Original Panorama", tr("MC 原版主菜单全景高清重制包，「主菜单·经典/现代」场景素材来源；全景图版权归 Mojang Studios 所有。"),
+        tr("未声明协议"), "https://github.com/Nixinova/Original-Panorama");
+    addOpenSourceRow("Poly Haven", tr("CC0 实景全景素材库，「高山草甸」等实景场景取自于此。"),
+        "CC0", "https://polyhaven.com/");
     addOpenSourceRow("MultiMC", tr("实例管理启动器，其下载层（多任务并发、多源回退、哈希校验、ETag 缓存、QSaveFile 原子落盘）与进度条系统（任务进度聚合、进度对话框）已整体移植进 BlockBox（Apache-2.0）。"),
         "Apache-2.0", "https://github.com/MultiMC/Launcher");
     addOpenSourceRow("PrismLauncher", tr("MultiMC 社区分支，参考 Java 扫描、内存分配、整合包格式。"),

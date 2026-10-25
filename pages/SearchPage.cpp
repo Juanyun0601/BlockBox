@@ -990,16 +990,33 @@ QStringList SearchPage::detectInstanceLoaders(const QString &instancePath) const
             continue;
 
         QJsonObject root = doc.object();
-        if (root.contains("fabricLoader") && !loaders.contains("Fabric"))
+        // 先看标记字段，再按 mainClass/库坐标推断（覆盖合并式版本 JSON）
+        const QString mainClass = root.value("mainClass").toString();
+        if ((root.contains("fabricLoader")
+             || mainClass.contains("fabricmc", Qt::CaseInsensitive))
+            && !loaders.contains("Fabric"))
             loaders.append("Fabric");
         if (root.contains("forge") && !loaders.contains("Forge"))
             loaders.append("Forge");
-        if (root.contains("quiltLoader") && !loaders.contains("Quilt"))
+        if ((root.contains("quiltLoader")
+             || mainClass.contains("quiltmc", Qt::CaseInsensitive))
+            && !loaders.contains("Quilt"))
             loaders.append("Quilt");
         // NeoForge 使用 mainClass 或 arguments 中的 neoforge 标识
-        if ((root.contains("mainClass") && root["mainClass"].toString().contains("neoforge", Qt::CaseInsensitive))
+        if ((root.contains("mainClass") && mainClass.contains("neoforge", Qt::CaseInsensitive))
             && !loaders.contains("NeoForge"))
             loaders.append("NeoForge");
+        for (const QJsonValue &libVal : root.value("libraries").toArray()) {
+            const QString libName = libVal.toObject().value("name").toString();
+            if (libName.startsWith("net.fabricmc:") && !loaders.contains("Fabric"))
+                loaders.append("Fabric");
+            if (libName.startsWith("org.quiltmc:") && !loaders.contains("Quilt"))
+                loaders.append("Quilt");
+            if (libName.startsWith("net.neoforged:") && !loaders.contains("NeoForge"))
+                loaders.append("NeoForge");
+            if (libName.startsWith("net.minecraftforge:") && !loaders.contains("Forge"))
+                loaders.append("Forge");
+        }
     }
 
     return loaders;

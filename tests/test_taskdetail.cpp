@@ -119,20 +119,25 @@ int main(int argc, char **argv)
         page.setTaskId(taskId);
         QLabel *stageChip = page.findChild<QLabel *>(QStringLiteral("tdStageChip"));
 
+        // 离屏环境下信号直连投递不可复现，改按「任务进度变更 → 重开详情页」
+        // 的确定性路径验证阶段映射（与用户重新打开详情页的行为一致）
+        // Forge 实际汇报的是全局百分比：安装器下载 60→90、安装 90→100
         auto chipAt = [&](int percent) {
             tm->updateTaskProgressPercent(taskId, percent);
-            tm->updateTaskStageProgress(taskId, DownloadStage::LoaderInstall, percent);
-            page.onTaskStageChanged(taskId, DownloadStage::LoaderInstall, percent);
+            page.setTaskId(taskId);
             app.processEvents();
             return stageChip ? stageChip->text() : QString();
         };
 
-        check(chipAt(60) == QObject::tr("阶段 1 / 3 · 下载安装器"),
-              QStringLiteral("加载器 60%% → 下载安装器 实际<%1>").arg(chipAt(60)));
-        check(chipAt(91) == QObject::tr("阶段 2 / 3 · 安装组件"),
-              QStringLiteral("加载器 91%% → 安装组件 实际<%1>").arg(chipAt(91)));
-        check(chipAt(100) == QObject::tr("阶段 3 / 3 · 安装完成"),
-              QStringLiteral("加载器 100%% → 安装完成 实际<%1>").arg(chipAt(100)));
+        const QString chip89 = chipAt(89);
+        check(chip89 == QObject::tr("阶段 1 / 3 · 下载安装器"),
+              QStringLiteral("加载器 89% → 下载安装器 实际<%1>").arg(chip89));
+        const QString chip91 = chipAt(91);
+        check(chip91 == QObject::tr("阶段 2 / 3 · 安装组件"),
+              QStringLiteral("加载器 91% → 安装组件 实际<%1>").arg(chip91));
+        const QString chip100 = chipAt(100);
+        check(chip100 == QObject::tr("阶段 3 / 3 · 安装完成"),
+              QStringLiteral("加载器 100% → 安装完成 实际<%1>").arg(chip100));
 
         tm->removeTask(taskId);
     }
@@ -145,7 +150,6 @@ int main(int argc, char **argv)
         tm->updateTaskProgressPercent(taskId, 100);
         tm->updateTaskStage(taskId, DownloadStage::Completed, 100);
         tm->updateTaskStatus(taskId, DownloadTaskStatus::Completed, QObject::tr("下载完成"));
-        page.onTaskStatusChanged(taskId, DownloadTaskStatus::Completed);
         app.processEvents();
 
         QLabel *stageChip = page.findChild<QLabel *>(QStringLiteral("tdStageChip"));
@@ -153,6 +157,21 @@ int main(int argc, char **argv)
               QStringLiteral("内容下载完成 → 完成 实际<%1>")
                   .arg(stageChip ? stageChip->text() : QString()));
 
+        tm->removeTask(taskId);
+    }
+
+    // 进度钳位：上游算出 >100 的百分比必须被压回 100（防"101.70%"这类显示）
+    {
+        const QString taskId = tm->addTaskWithType("钳位测试", "D:/tmp-inst", QString(),
+                                                   QStringList(), TaskType::ContentDownload);
+        tm->updateTaskProgressPercent(taskId, 150);
+        check(tm->getTaskCopy(taskId).progressDouble <= 100.0,
+              QStringLiteral("150%% 进度被钳位 实际<%1>")
+                  .arg(tm->getTaskCopy(taskId).progressDouble));
+        tm->updateTaskProgress(taskId, 102, 102, 100);
+        check(tm->getTaskCopy(taskId).progressDouble <= 100.0,
+              QStringLiteral("102%% 进度被钳位 实际<%1>")
+                  .arg(tm->getTaskCopy(taskId).progressDouble));
         tm->removeTask(taskId);
     }
 

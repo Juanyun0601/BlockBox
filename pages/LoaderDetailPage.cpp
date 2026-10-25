@@ -206,6 +206,13 @@ void LoaderDetailPage::initUI()
     m_sourceComboBox->setObjectName("loaderSourceCombo");
     m_sourceComboBox->addItem(tr("官方源"), "official");
     m_sourceComboBox->addItem(tr("BMCL源"), "bmcl");
+    // 默认跟随设置里的「原版下载源」，切换后写回设置，下次安装仍生效
+    m_sourceComboBox->setCurrentIndex(
+        SettingsManager::instance()->getDownloadSource() == DownloadSource::BMCL ? 1 : 0);
+    connect(m_sourceComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [](int index) {
+        SettingsManager::instance()->setDownloadSource(
+            index == 1 ? DownloadSource::BMCL : DownloadSource::Official);
+    });
     m_pathLayout->addWidget(m_sourceComboBox);
 
     m_mainLayout->addWidget(m_pathWidget);
@@ -320,7 +327,9 @@ void LoaderDetailPage::initUI()
                         m_isInstalling = false;
                         m_installButton->setEnabled(true);
                         NotificationManager::showSuccess(this,
-                            tr("Minecraft %1 已成功安装到\r\n%2").arg(m_currentVersion).arg(actualVersionPath));
+                            NotificationManager::withDetail(
+                                tr("Minecraft %1 已成功安装到\r\n%2"),
+                                m_currentVersion, actualVersionPath));
                         if (m_modifyMode)
                             emit instanceModified(m_modifyInstancePath);
                         else
@@ -343,6 +352,8 @@ void LoaderDetailPage::initUI()
                 if (m_isInstalling) return;
                 m_isInstalling = true;
                 m_installButton->setEnabled(false);
+                // 本次安装统一使用页面所选下载源：原版与 Forge/Fabric/NeoForge/OptiFine 一致
+                const bool useBmcl = m_sourceComboBox->currentData().toString() == QLatin1String("bmcl");
                 // 加载器安装器大多以「游戏根目录」为参数（内部自行拼 versions/），
                 // 只有 Forge 需要 <游戏根>/versions/<版本> 形式的实例目录；
                 // 原版基准版本必须先落到 <游戏根>/versions/<mcVersion>，加载器才能继承它
@@ -358,7 +369,7 @@ void LoaderDetailPage::initUI()
                 disconnect(VersionDownloader::instance(), &VersionDownloader::statusChanged, this, nullptr);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadProgressUpdated, this, nullptr);
                 connect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted,
-                    this, [this, instanceName, gameRoot, versionsBefore](const QString &, const QString &actualVersionPath) {
+                    this, [this, instanceName, gameRoot, versionsBefore, useBmcl](const QString &, const QString &actualVersionPath) {
                         QString mcVer = m_currentVersion;
                         // 原版基准版本目录（<游戏根>/versions/<mcVer>），Forge 安装器需要它
                         QString instPath = actualVersionPath.isEmpty()
@@ -376,7 +387,8 @@ void LoaderDetailPage::initUI()
                             m_isInstalling = false;
                             m_installButton->setEnabled(true);
                             NotificationManager::showSuccess(this,
-                                tr("Minecraft %1 与 mod 加载器已成功安装到\r\n%2").arg(mcVer).arg(instPath));
+                                NotificationManager::withDetail(
+                                    tr("Minecraft %1 与 mod 加载器已成功安装到\r\n%2"), mcVer, instPath));
                             if (m_modifyMode)
                                 finishModify();
                             else
@@ -412,11 +424,14 @@ void LoaderDetailPage::initUI()
                             const QString shownPath = installedDir.isEmpty() ? rootPath : installedDir;
                             if (failedLoaders->isEmpty()) {
                                 NotificationManager::showSuccess(this,
-                                    tr("Minecraft %1 与 mod 加载器已成功安装到\r\n%2").arg(mcVer).arg(shownPath));
+                                    NotificationManager::withDetail(
+                                        tr("Minecraft %1 与 mod 加载器已成功安装到\r\n%2"),
+                                        mcVer, shownPath));
                             } else {
                                 NotificationManager::showError(this,
-                                    tr("Minecraft %1 安装成功，但以下加载器安装失败：\r\n%2")
-                                        .arg(mcVer).arg(failedLoaders->join("\r\n")));
+                                    NotificationManager::withDetail(
+                                        tr("Minecraft %1 安装成功，但以下加载器安装失败：\r\n%2"),
+                                        mcVer, failedLoaders->join("\r\n")));
                             }
                             if (m_modifyMode) {
                                 emit instanceModified(installedDir.isEmpty() ? m_modifyInstancePath
@@ -451,6 +466,8 @@ void LoaderDetailPage::initUI()
                                         signalScope, onSuccess);
                                 connect(ForgeInstaller::instance(), &ForgeInstaller::installFailed,
                                         signalScope, onFailed);
+                                ForgeInstaller::instance()->setDownloadSource(
+                                    useBmcl ? ForgeDownloadSource::BMCL : ForgeDownloadSource::Official);
                                 ForgeInstaller::instance()->setVersionIsolationEnabled(
                                     SettingsManager::instance()->isVersionIsolationEnabled());
                                 ForgeInstaller::instance()->downloadForgeInstaller(mcVer, loader.version, rootPath, instName);
@@ -465,7 +482,7 @@ void LoaderDetailPage::initUI()
                                     checkAllComplete();
                                 };
                                 NeoForgeInstaller::instance()->setDownloadSource(
-                                    SettingsManager::instance()->getNeoForgeDownloadSource());
+                                    useBmcl ? NeoForgeDownloadSource::BMCL : NeoForgeDownloadSource::Official);
                                 connect(NeoForgeInstaller::instance(), &NeoForgeInstaller::installCompleted,
                                         signalScope, onSuccess);
                                 connect(NeoForgeInstaller::instance(), &NeoForgeInstaller::installFailed,
@@ -484,6 +501,8 @@ void LoaderDetailPage::initUI()
                                     (*pending)--;
                                     checkAllComplete();
                                 };
+                                FabricInstaller::instance()->setDownloadSource(
+                                    useBmcl ? FabricDownloadSource::BMCL : FabricDownloadSource::Official);
                                 connect(FabricInstaller::instance(), &FabricInstaller::installCompleted,
                                         signalScope, onSuccess);
                                 connect(FabricInstaller::instance(), &FabricInstaller::installFailed,
@@ -561,7 +580,7 @@ void LoaderDetailPage::initUI()
                                 checkAllComplete();
                             };
                             OptiFineInstaller::instance()->setDownloadSource(
-                                SettingsManager::instance()->getOptiFineDownloadSource());
+                                useBmcl ? OptiFineDownloadSource::BMCL : OptiFineDownloadSource::Official);
                             connect(OptiFineInstaller::instance(), &OptiFineInstaller::installCompleted,
                                     signalScope, onSuccess);
                             connect(OptiFineInstaller::instance(), &OptiFineInstaller::installFailed,

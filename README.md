@@ -1,6 +1,6 @@
 # 电脑方块盒子 BlockBox
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 **简体中文** | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [Español](README.es.md)
 
@@ -94,11 +94,13 @@ make
 
 ## 许可证
 
-本项目采用 [MIT 许可证](LICENSE) © Juanyun0601
+本项目采用 [GNU 通用公共许可证第 3 版（GPL-3.0）](LICENSE) © Juanyun0601
+
+本程序按「原样」提供，不附带任何担保；复制、修改、再发布都须遵守 GPL-3.0，修改后的衍生作品同样要以 GPL-3.0 公开源代码。
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request。
+欢迎提交 Issue 和 Pull Request。提交的代码将以 GPL-3.0 授权并入本项目。
 
 ---
 

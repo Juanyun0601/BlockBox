@@ -102,7 +102,7 @@ components/ProgressDialog.cpp \
      components/GameFloatingIcon.cpp \
      components/BedrockInstanceAssistantWindow.cpp \
      components/BackgroundWidget.cpp \
-     components/PanoramaSkyWidget.cpp \
+     components/PanoramaSkyRenderer.cpp \
      components/NewsCard.cpp \
      components/NewsDetailDialog.cpp \
      components/PerfMonitorCard.cpp \
@@ -231,6 +231,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/forge/ForgeInstaller.cpp \
     utils/forge/ForgeNewInstallTask.cpp \
     utils/forge/ForgeProfile.cpp \
+    utils/forge/LegacyForgeInstaller.cpp \
     utils/fabric/FabricInstaller.cpp \
     utils/optifine/OptiFineInstaller.cpp \
     utils/ManifestCache.cpp \
@@ -383,7 +384,7 @@ components/ProgressDialog.h \
      components/NotificationManager.h \
      components/NotificationHistoryDialog.h \
        components/BackgroundWidget.h \
-       components/PanoramaSkyWidget.h \
+       components/PanoramaSkyRenderer.h \
        components/InstanceAssistantWindow.h \
        components/GameFloatingIcon.h \
        components/BedrockInstanceAssistantWindow.h \
@@ -499,6 +500,7 @@ components/ProjectionBlockEditorDialog.h \
     utils/forge/ForgeInstaller.h \
     utils/forge/ForgeNewInstallTask.h \
     utils/forge/ForgeProfile.h \
+    utils/forge/LegacyForgeInstaller.h \
     utils/optifine/OptiFineInstaller.h \
      utils/NeoForgeInstaller.h \
      utils/LiteLoaderInstaller.h \
@@ -640,7 +642,8 @@ FORMS += \
 # 拆开后改样式只需要重编文本那一小块（约 2s）。
 RESOURCES += \
     resources.qrc \
-    resources_data.qrc
+    resources_data.qrc \
+    resources_panorama.qrc
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin

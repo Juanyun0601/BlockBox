@@ -10,7 +10,9 @@
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEvent>
 #include <QEventLoop>
+#include <QFontMetrics>
 #include "components/AppFileDialog.h"
 #include <QFileInfo>
 #include <QGroupBox>
@@ -48,6 +50,32 @@ static int javaMajorVersion(const QString& version)
     return 0;
 }
 
+namespace {
+// 路径标签中间省略：宽度变化时按 fullPath 重算
+class JavaPathElideFilter : public QObject
+{
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override
+    {
+        if (event->type() == QEvent::Resize) {
+            auto *label = qobject_cast<QLabel *>(obj);
+            if (label && label->width() > 40) {
+                const QString full = label->property("fullPath").toString();
+                const QString elided = QFontMetrics(label->font())
+                                           .elidedText(full, Qt::ElideMiddle,
+                                                       label->width() - 4);
+                if (elided != label->text())
+                    label->setText(elided);
+            }
+        }
+        return QObject::eventFilter(obj, event);
+    }
+};
+} // namespace
+
 // ────────────────────────────────────────────────────────────
 // Java 管理页初始化
 // ────────────────────────────────────────────────────────────
@@ -76,13 +104,13 @@ void SettingsPage::initJavaManagerSettings()
     toolbarLayout->setContentsMargins(0, 0, 0, 0);
     toolbarLayout->setSpacing(8);
 
-    // 「Java检测」= 原「快速检测」+「全盘扫描」合并：
-    // 先按开源启动器通行做法快速检测（环境变量/注册表/厂商目录/启动器运行时），
-    // 未找到时 JavaScanWorker 自动转入全盘深度搜索兜底
+    // 「Java检测」= 快速检测 + 全盘深扫合并：
+    // 先按开源启动器通行做法快速检测（环境变量/注册表/厂商目录/各启动器运行时目录），
+    // 随后总是继续全盘深度搜索（黑名单剪枝），把自定义路径里的 Java 一并补全
     m_javaDetectBtn = new QPushButton(tr("Java检测"), toolbar);
     m_javaDetectBtn->setObjectName("javaDetectBtn");
     m_javaDetectBtn->setCursor(Qt::PointingHandCursor);
-    m_javaDetectBtn->setToolTip(tr("从环境变量、注册表与常见安装目录检测本机 Java；未找到时自动全盘深度搜索"));
+    m_javaDetectBtn->setToolTip(tr("从环境变量、注册表、各启动器目录检测本机 Java，并全盘深度搜索自定义路径"));
     connect(m_javaDetectBtn, &QPushButton::clicked, this, &SettingsPage::onDetectJavaClicked);
 
     QPushButton *addBtn = new QPushButton(tr("手动添加"), toolbar);
@@ -224,47 +252,64 @@ QWidget* SettingsPage::createJavaItemWidget(const QString& path, const QString& 
     itemFrame->setFrameShape(QFrame::NoFrame);
 
     QHBoxLayout *itemLayout = new QHBoxLayout(itemFrame);
-    itemLayout->setContentsMargins(14, 10, 14, 10);
+    itemLayout->setContentsMargins(14, 12, 14, 12);
     itemLayout->setSpacing(12);
 
-    // 左侧：标题 + 路径 + 版本标签
+    // 左侧头像：JDK 主色 / JRE 橙色，显示主版本号
+    int major = javaMajorVersion(version);
+    const QString binDir = QFileInfo(path).absolutePath();
+    const bool isJdk = QFileInfo::exists(binDir + "/javac.exe")
+                       || QFileInfo::exists(binDir + "/javac");
+    const QString typeStr = isJdk ? QStringLiteral("JDK") : QStringLiteral("JRE");
+
+    QLabel *avatarLabel = new QLabel(
+        major > 0 ? QString::number(major) : QStringLiteral("J"), itemFrame);
+    avatarLabel->setObjectName("javaItemAvatar");
+    avatarLabel->setProperty("kind", isJdk ? "jdk" : "jre");
+    avatarLabel->setAlignment(Qt::AlignCenter);
+    avatarLabel->setFixedSize(44, 44);
+
+    // 中间信息：标题行（JDK/JRE + 版本芯片）+ 路径
     QWidget *infoWidget = new QWidget(itemFrame);
     QVBoxLayout *infoLayout = new QVBoxLayout(infoWidget);
     infoLayout->setContentsMargins(0, 0, 0, 0);
     infoLayout->setSpacing(4);
 
-    // 标题：JDK/JRE + 主版本号
-    int major = javaMajorVersion(version);
-    const QString binDir = QFileInfo(path).absolutePath();
-    QString typeStr = (QFileInfo::exists(binDir + "/javac.exe") || QFileInfo::exists(binDir + "/javac"))
-                      ? QStringLiteral("JDK") : QStringLiteral("JRE");
+    QHBoxLayout *titleRow = new QHBoxLayout();
+    titleRow->setContentsMargins(0, 0, 0, 0);
+    titleRow->setSpacing(8);
+
     QString titleStr = (major > 0)
                        ? QStringLiteral("%1 %2").arg(typeStr).arg(major)
                        : QStringLiteral("%1 %2").arg(typeStr).arg(version);
     QLabel *titleLabel = new QLabel(titleStr, infoWidget);
     titleLabel->setObjectName("javaItemTitle");
 
-    // 路径
+    QLabel *versionLabel = new QLabel(version, infoWidget);
+    versionLabel->setObjectName("javaItemVersion");
+
+    titleRow->addWidget(titleLabel);
+    titleRow->addWidget(versionLabel);
+    titleRow->addStretch();
+
     QLabel *pathLabel = new QLabel(path, infoWidget);
     pathLabel->setObjectName("javaItemPath");
     pathLabel->setWordWrap(false);
+    pathLabel->setMinimumWidth(0);
+    pathLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     pathLabel->setToolTip(path);
     pathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    pathLabel->setProperty("fullPath", path);
 
-    // 版本完整号 + 位数标签
-    QLabel *versionLabel = new QLabel(
-        QStringLiteral("%1 · %2").arg(version).arg(tr("本机")), infoWidget);
-    versionLabel->setObjectName("javaItemVersion");
-
-    infoLayout->addWidget(titleLabel);
+    infoLayout->addLayout(titleRow);
     infoLayout->addWidget(pathLabel);
-    infoLayout->addWidget(versionLabel);
+    pathLabel->installEventFilter(new JavaPathElideFilter(pathLabel));
 
-    // 右侧：操作按钮
+    // 右侧：横排操作按钮，垂直居中
     QWidget *actionsWidget = new QWidget(itemFrame);
-    QVBoxLayout *actionsLayout = new QVBoxLayout(actionsWidget);
+    QHBoxLayout *actionsLayout = new QHBoxLayout(actionsWidget);
     actionsLayout->setContentsMargins(0, 0, 0, 0);
-    actionsLayout->setSpacing(6);
+    actionsLayout->setSpacing(8);
 
     QPushButton *openFolderBtn = new QPushButton(tr("打开文件夹"), actionsWidget);
     openFolderBtn->setObjectName("javaOpenFolderBtn");
@@ -284,10 +329,10 @@ QWidget* SettingsPage::createJavaItemWidget(const QString& path, const QString& 
 
     actionsLayout->addWidget(openFolderBtn);
     actionsLayout->addWidget(removeBtn);
-    actionsLayout->addStretch();
 
+    itemLayout->addWidget(avatarLabel, 0, Qt::AlignVCenter);
     itemLayout->addWidget(infoWidget, 1);
-    itemLayout->addWidget(actionsWidget, 0, Qt::AlignTop);
+    itemLayout->addWidget(actionsWidget, 0, Qt::AlignVCenter);
 
     return itemFrame;
 }
@@ -300,6 +345,10 @@ void SettingsPage::refreshJavaList()
 {
     if (!m_javaListWidget) return;
 
+    // 空状态标签若已作为 itemWidget 挂在列表上，先改挂到页面，避免 clear 误删
+    if (m_javaEmptyLabel && m_javaEmptyLabel->parent() != this)
+        m_javaEmptyLabel->setParent(this);
+
     m_javaListWidget->clear();
 
     QList<QPair<QString, QString>> installations =
@@ -311,7 +360,7 @@ void SettingsPage::refreshJavaList()
         emptyItem->setFlags(emptyItem->flags() & ~Qt::ItemIsEnabled & ~Qt::ItemIsSelectable);
         m_javaListWidget->addItem(emptyItem);
         m_javaListWidget->setItemWidget(emptyItem, m_javaEmptyLabel);
-        emptyItem->setSizeHint(m_javaEmptyLabel->sizeHint().expandedTo(QSize(0, 80)));
+        emptyItem->setSizeHint(m_javaEmptyLabel->sizeHint().expandedTo(QSize(0, 120)));
         return;
     }
 

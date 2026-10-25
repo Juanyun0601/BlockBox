@@ -18,9 +18,31 @@
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QRegularExpression>
+#include <QThreadStorage>
 #include <QTimer>
 
 #include "utils/DownloadTaskManager.h"
+
+namespace {
+
+/**
+ * @brief 每个线程复用一个网络管理器
+ *
+ * 加载器安装跑在后台线程里，而 QNetworkAccessManager 必须与调用线程同亲和。
+ * 早先的实现每次请求都新建一个局部管理器：连接无法复用（每个库文件都要重新
+ * 握手 TLS，装 Fabric 要建几十条连接），管理器析构时还会粗暴关闭 keep-alive
+ * 的 SSL 连接，日志里因此出现 "QIODevice::read (QSslSocket): device not open"。
+ */
+QNetworkAccessManager *threadNetworkManager()
+{
+    static QThreadStorage<QNetworkAccessManager *> storage;
+    if (!storage.hasLocalData() || !storage.localData()) {
+        storage.setLocalData(new QNetworkAccessManager());
+    }
+    return storage.localData();
+}
+
+}  // namespace
 
 FabricInstaller* FabricInstaller::m_instance = nullptr;
 QMutex FabricInstaller::m_instanceMutex;
@@ -141,7 +163,7 @@ QList<FabricVersionInfo> FabricInstaller::getFabricVersions(const QString &mcVer
         const QByteArray responseData = fetchUrl(url, &ok);
 
         if (ok) {
-            versions = parseVersionList(QString::fromUtf8(responseData));
+            versions = parseVersionList(QString::fromUtf8(responseData), mcVersion);
             if (!versions.isEmpty()) {
                 emit versionListFetched(versions);
                 return versions;
@@ -156,7 +178,8 @@ QList<FabricVersionInfo> FabricInstaller::getFabricVersions(const QString &mcVer
     return versions;
 }
 
-QList<FabricVersionInfo> FabricInstaller::parseVersionList(const QString &jsonResponse)
+QList<FabricVersionInfo> FabricInstaller::parseVersionList(const QString &jsonResponse,
+                                                          const QString &mcVersionFallback)
 {
     QList<FabricVersionInfo> versions;
 
@@ -178,7 +201,11 @@ QList<FabricVersionInfo> FabricInstaller::parseVersionList(const QString &jsonRe
 
         FabricVersionInfo info;
         info.fabricVersion = loader.value("version").toString();
+        // 该接口不返回 game 字段，缺失时用请求 URL 里的版本号兜底
         info.minecraftVersion = obj.value("game").toString();
+        if (info.minecraftVersion.isEmpty()) {
+            info.minecraftVersion = mcVersionFallback;
+        }
         info.hash = loader.value("hash").toString();
         info.build = loader.value("build").toString();
         info.intermediaryMaven = obj.value("intermediary").toObject().value("maven").toString();
@@ -228,7 +255,24 @@ void FabricInstaller::downloadFabricInstaller(const QString &mcVersion, const QS
     }
 
     if (!found) {
-        emit installFailed(tr("未找到指定版本的Fabric: %1").arg(fabricVersion));
+        // 区分「列表根本没拿到」和「列表里没有这个版本」，避免把网络问题误报成版本不存在
+        if (versions.isEmpty()) {
+            emit installFailed(tr("获取Fabric版本列表失败") + QString(" (Minecraft %1)").arg(mcVersion));
+        } else {
+            QStringList available;
+            for (const FabricVersionInfo &version : versions) {
+                if (available.size() >= 3) {
+                    break;
+                }
+                if (!version.fabricVersion.isEmpty()) {
+                    available << version.fabricVersion;
+                }
+            }
+            emit installFailed(tr("未找到指定版本的Fabric: %1").arg(fabricVersion)
+                               + (available.isEmpty()
+                                      ? QString()
+                                      : QString(" (Minecraft %1: %2)").arg(mcVersion, available.join(", "))));
+        }
         m_isInstalling = false;
         return;
     }
@@ -243,15 +287,37 @@ void FabricInstaller::downloadFabricInstaller(const QString &mcVersion, const QS
 
 void FabricInstaller::installFabric(const FabricVersionInfo &version, const QString &instancePath)
 {
-    emit statusChanged(tr("正在创建版本目录..."));
-    updateTaskStatus(tr("正在创建版本目录"));
-    emit installProgressUpdated(10, tr("创建版本目录"));
+    // ── 单文件夹合并式安装（与 BakaXL 等整合式启动器一致）──
+    // 一个实例只有一个版本目录 <mc>-Fabric <loader>：目录内是合并后的完整
+    // 版本 JSON（原版全部字段 + Fabric 运行库 + Knot 主类，不含 inheritsFrom）
+    // 和改名后的原版 client jar。不再额外生成 fabric-loader-xxx 继承目录。
+    const QString versionsRoot = instancePath + "/versions";
 
-    QString versionPath = createVersionDirectory(instancePath, m_currentMcVersion, m_currentFabricVersion);
-    if (versionPath.isEmpty()) {
-        emit installFailed(tr("创建版本目录失败"));
-        m_isInstalling = false;
-        return;
+    emit statusChanged(tr("正在准备实例目录..."));
+    updateTaskStatus(tr("正在准备实例目录"));
+    emit installProgressUpdated(8, tr("准备实例目录"));
+
+    // ── 1. 原版基准 JSON：优先读本地已下载的原版目录，其次从官方/镜像源拉取 ──
+    QJsonObject baseJson;
+    bool hasLocalVanilla = false;
+    const QStringList jsonCandidates = {
+        versionsRoot + "/" + m_currentMcVersion + "/" + m_currentMcVersion + ".json",
+        versionsRoot + "/" + m_currentMcVersion + "/version.json"
+    };
+    for (const QString &candidate : jsonCandidates) {
+        QFile candidateFile(candidate);
+        if (!candidateFile.open(QIODevice::ReadOnly)) {
+            continue;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(candidateFile.readAll(), &parseError);
+        candidateFile.close();
+        if (parseError.error == QJsonParseError::NoError && doc.isObject()
+                && doc.object().value("mainClass").isString()) {
+            baseJson = doc.object();
+            hasLocalVanilla = true;
+            break;
+        }
     }
 
     if (m_isCancelled) {
@@ -259,32 +325,113 @@ void FabricInstaller::installFabric(const FabricVersionInfo &version, const QStr
         return;
     }
 
+    if (baseJson.isEmpty()) {
+        emit statusChanged(tr("正在获取原版版本信息..."));
+        updateTaskStatus(tr("正在获取原版版本信息"));
+        baseJson = fetchVanillaVersionJson(m_currentMcVersion);
+        if (baseJson.isEmpty()) {
+            emit installFailed(tr("找不到原版 Minecraft %1，无法安装 Fabric").arg(m_currentMcVersion));
+            m_isInstalling = false;
+            return;
+        }
+    }
+
+    // ── 2. 拉取 Fabric 官方 profile（权威的库列表与 Knot 主类）──
+    emit statusChanged(tr("正在获取Fabric版本信息..."));
+    updateTaskStatus(tr("正在获取Fabric版本信息"));
+    emit installProgressUpdated(15, tr("获取Fabric配置"));
+
+    QJsonObject fabricJson = versionJsonFromProfile(
+        fetchLoaderProfile(m_currentMcVersion, m_currentFabricVersion),
+        m_currentMcVersion, m_currentFabricVersion);
+    if (fabricJson.isEmpty()) {
+        fabricJson = generateVersionJson(version);
+    }
+    if (fabricJson.isEmpty()) {
+        emit installFailed(tr("获取Fabric配置失败"));
+        m_isInstalling = false;
+        return;
+    }
+
+    // ── 3. 目标目录：<mc>-Fabric <loader>；重名时追加序号 ──
+    QString dirName = QString("%1-Fabric %2").arg(m_currentMcVersion, m_currentFabricVersion);
+    QString targetDir = versionsRoot + "/" + dirName;
+    if (QDir(targetDir).exists()) {
+        for (int i = 2; QDir(targetDir).exists(); ++i) {
+            dirName = QString("%1-Fabric %2 (%3)").arg(m_currentMcVersion, m_currentFabricVersion).arg(i);
+            targetDir = versionsRoot + "/" + dirName;
+        }
+    }
+
+    // 本地原版目录存在时直接把它改名成目标目录（jar/assets 等内容随目录一起带走）；
+    // 改名失败（文件被占用等）则原位合并，仍是只有一个文件夹
+    if (hasLocalVanilla) {
+        if (!QDir(versionsRoot).rename(m_currentMcVersion, dirName)) {
+            dirName = m_currentMcVersion;
+            targetDir = versionsRoot + "/" + dirName;
+        }
+    } else {
+        QDir().mkpath(targetDir);
+    }
+
+    if (m_isCancelled) {
+        m_isInstalling = false;
+        return;
+    }
+
+    // ── 4. client jar 归位为 <目录名>.jar；缺失时按原版 downloads.client 补下 ──
+    const QString jarPath = targetDir + "/" + dirName + ".jar";
+    if (!QFile::exists(jarPath)) {
+        const QString oldJarPath = targetDir + "/" + m_currentMcVersion + ".jar";
+        if (QFile::exists(oldJarPath)) {
+            QFile::rename(oldJarPath, jarPath);
+        }
+        if (!QFile::exists(jarPath)) {
+            const QJsonObject client = baseJson.value("downloads").toObject().value("client").toObject();
+            const QString url = client.value("url").toString();
+            if (url.isEmpty()) {
+                emit installFailed(tr("找不到游戏核心文件 (%1.jar)").arg(m_currentMcVersion));
+                m_isInstalling = false;
+                return;
+            }
+            emit statusChanged(tr("正在下载游戏核心文件..."));
+            updateTaskStatus(tr("正在下载游戏核心文件"));
+            emit installProgressUpdated(25, tr("下载游戏核心文件"));
+            if (!downloadFile(url, jarPath, client.value("sha1").toString())) {
+                emit installFailed(tr("下载游戏核心文件失败"));
+                m_isInstalling = false;
+                return;
+            }
+        }
+    }
+
+    // ── 5. 生成合并后的版本 JSON 并写入 ──
     emit statusChanged(tr("正在生成版本配置..."));
     updateTaskStatus(tr("正在生成版本配置"));
-    emit installProgressUpdated(30, tr("生成版本配置"));
+    emit installProgressUpdated(35, tr("生成版本配置"));
 
-    QJsonObject versionJson = generateVersionJson(version);
-
-    QString dirName = QFileInfo(versionPath).fileName();
-    QString jsonFilePath = versionPath + "/" + dirName + ".json";
+    const QJsonObject versionJson = mergeFabricIntoBase(baseJson, fabricJson, dirName, m_currentMcVersion);
+    const QString jsonFilePath = targetDir + "/" + dirName + ".json";
     QFile jsonFile(jsonFilePath);
-
     if (!jsonFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
         emit installFailed(tr("无法创建版本配置文件"));
         m_isInstalling = false;
         return;
     }
-
-    QJsonDocument jsonDoc(versionJson);
-    jsonFile.write(jsonDoc.toJson(QJsonDocument::Indented));
+    jsonFile.write(QJsonDocument(versionJson).toJson(QJsonDocument::Indented));
     jsonFile.close();
+
+    // 原版命名的旧 JSON 已被合并 JSON 取代，清掉避免实例目录里出现两份配置
+    if (dirName != m_currentMcVersion) {
+        QFile::remove(targetDir + "/" + m_currentMcVersion + ".json");
+    }
 
     if (m_isCancelled) {
         m_isInstalling = false;
         return;
     }
 
-    // 下载 Fabric 运行库（ASM/mixin/intermediary/loader）。
+    // ── 6. 下载 Fabric 运行库（ASM/mixin/intermediary/loader）。──
     // 首次启动会跳过通用文件补全流程（skipFileCompletion=true），
     // 因此这些库必须在安装阶段全部就位，否则启动 Knot 时必然崩溃。
     emit statusChanged(tr("正在下载Fabric运行库..."));
@@ -304,7 +451,7 @@ void FabricInstaller::installFabric(const FabricVersionInfo &version, const QStr
     emit installProgressUpdated(100, tr("完成"));
 
     m_isInstalling = false;
-    emit installCompleted(QString("fabric-loader-%1-%2").arg(m_currentFabricVersion, m_currentMcVersion));
+    emit installCompleted(dirName);
 
     if (!m_currentTaskId.isEmpty()) {
         DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Completed,
@@ -312,21 +459,81 @@ void FabricInstaller::installFabric(const FabricVersionInfo &version, const QStr
     }
 }
 
-QString FabricInstaller::createVersionDirectory(const QString &instancePath,
-                                              const QString &mcVersion,
-                                              const QString &fabricVersion)
+QJsonObject FabricInstaller::fetchVanillaVersionJson(const QString &mcVersion)
 {
-    QString versionId = QString("fabric-loader-%1-%2").arg(fabricVersion, mcVersion);
-    QString versionPath = instancePath + "/versions/" + versionId;
+    // 版本清单：Mojang 官方 → BMCLAPI 镜像，哪个先成功用哪个
+    const QStringList manifests = {
+        QStringLiteral("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"),
+        QStringLiteral("https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"),
+        QStringLiteral("https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json")
+    };
 
-    QDir versionDir(versionPath);
-    if (!versionDir.exists()) {
-        if (!versionDir.mkpath(".")) {
-            return QString();
+    QString versionUrl;
+    for (const QString &manifestUrl : manifests) {
+        bool ok = false;
+        const QByteArray data = fetchUrl(manifestUrl, &ok);
+        if (!ok) {
+            continue;
+        }
+        const QJsonObject manifest = QJsonDocument::fromJson(data).object();
+        for (const QJsonValue &val : manifest.value("versions").toArray()) {
+            if (val.toObject().value("id").toString() == mcVersion) {
+                versionUrl = val.toObject().value("url").toString();
+                break;
+            }
+        }
+        if (!versionUrl.isEmpty()) {
+            break;
         }
     }
 
-    return versionPath;
+    if (versionUrl.isEmpty()) {
+        return QJsonObject();
+    }
+
+    bool ok = false;
+    const QByteArray data = fetchUrl(versionUrl, &ok);
+    if (!ok) {
+        return QJsonObject();
+    }
+    const QJsonObject json = QJsonDocument::fromJson(data).object();
+    // 基本完整性：必须带得上 mainClass/libraries，才能作为合并基准
+    if (json.isEmpty() || !json.value("mainClass").isString() || !json.contains("libraries")) {
+        return QJsonObject();
+    }
+    return json;
+}
+
+QJsonObject FabricInstaller::mergeFabricIntoBase(const QJsonObject &baseJson, const QJsonObject &fabricJson,
+                                                 const QString &dirName, const QString &mcVersion)
+{
+    // 保留原版全部字段（arguments/assetIndex/downloads/logging/javaVersion 等），
+    // 只替换主类、追加 Fabric 运行库 —— 与主流整合式启动器的合并式实例同构
+    QJsonObject merged = baseJson;
+    merged["id"] = dirName;
+    merged["clientVersion"] = mcVersion;
+    merged["mainClass"] = fabricJson.value("mainClass").toString();
+    if (merged.value("mainClass").toString().isEmpty()) {
+        merged["mainClass"] = QStringLiteral("net.fabricmc.loader.impl.launch.knot.KnotClient");
+    }
+    merged.remove("inheritsFrom");
+
+    QJsonArray libraries = baseJson.value("libraries").toArray();
+    for (const QJsonValue &libVal : fabricJson.value("libraries").toArray()) {
+        libraries.append(libVal);
+    }
+    merged["libraries"] = libraries;
+
+    if (!merged.value("type").isString()) {
+        merged["type"] = QStringLiteral("release");
+    }
+    if (merged.value("releaseTime").toString().isEmpty()) {
+        const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        merged["releaseTime"] = now;
+        merged["time"] = now;
+    }
+
+    return merged;
 }
 
 QString FabricInstaller::mavenArtifactPath(const QString &mavenName)
@@ -358,7 +565,22 @@ QJsonObject FabricInstaller::libraryToMojangFormat(const QJsonObject &fabricLib,
 
     QJsonObject artifact;
     artifact["path"] = relPath;
-    artifact["url"] = mavenBaseUrl + relPath;
+
+    // 条目自带仓库地址时：Fabric 自己的库跟随当前下载源（镜像/官方可切换），
+    // 其它仓库（如 Mojang 官方库）必须用条目地址 —— 镜像里没有这些文件
+    QString base = mavenBaseUrl;
+    const QString ownUrl = fabricLib.value("url").toString();
+    if (!ownUrl.isEmpty() && !ownUrl.contains("fabricmc.net", Qt::CaseInsensitive)) {
+        base = ownUrl;
+    }
+    if (base.isEmpty()) {
+        base = QStringLiteral("https://maven.fabricmc.net/");
+    }
+    if (!base.endsWith('/')) {
+        base += '/';
+    }
+
+    artifact["url"] = base + relPath;
     artifact["sha1"] = fabricLib.value("sha1").toString();
     if (fabricLib.contains("size")) {
         artifact["size"] = fabricLib.value("size");
@@ -371,6 +593,72 @@ QJsonObject FabricInstaller::libraryToMojangFormat(const QJsonObject &fabricLib,
     libOut["name"] = name;
     libOut["downloads"] = downloads;
     return libOut;
+}
+
+QJsonObject FabricInstaller::fetchLoaderProfile(const QString &mcVersion, const QString &loaderVersion)
+{
+    // 与版本列表一致：先走当前下载源，再依次回退，避免单个镜像缺数据导致安装失败
+    QStringList bases;
+    bases << getBaseUrl();
+    if (!bases.contains("https://bmclapi2.bangbang93.com/fabric-meta"))
+        bases << "https://bmclapi2.bangbang93.com/fabric-meta";
+    if (!bases.contains("https://meta.fabricmc.net"))
+        bases << "https://meta.fabricmc.net";
+
+    for (const QString &base : bases) {
+        const QString url = QString("%1/v2/versions/loader/%2/%3/profile/json")
+                                .arg(base, mcVersion, loaderVersion);
+        bool ok = false;
+        const QByteArray data = fetchUrl(url, &ok);
+        if (!ok) {
+            continue;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(data);
+        if (doc.isObject() && doc.object().value("libraries").isArray()) {
+            return doc.object();
+        }
+    }
+
+    return QJsonObject();
+}
+
+QJsonObject FabricInstaller::versionJsonFromProfile(const QJsonObject &profile,
+                                                    const QString &mcVersion,
+                                                    const QString &loaderVersion)
+{
+    if (!profile.value("libraries").isArray()) {
+        return QJsonObject();
+    }
+
+    const QString mavenBase = getMavenBaseUrl();
+
+    QJsonObject versionJson;
+    versionJson["id"] = QString("fabric-loader-%1-%2").arg(loaderVersion, mcVersion);
+    versionJson["type"] = "release";
+    versionJson["releaseTime"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    versionJson["time"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    versionJson["inheritsFrom"] = mcVersion;
+
+    QString mainClass = profile.value("mainClass").toString();
+    if (mainClass.isEmpty()) {
+        mainClass = QStringLiteral("net.fabricmc.loader.impl.launch.knot.KnotClient");
+    }
+    versionJson["mainClass"] = mainClass;
+
+    QJsonArray libraries;
+    for (const QJsonValue &libVal : profile.value("libraries").toArray()) {
+        QJsonObject lib = libraryToMojangFormat(libVal.toObject(), mavenBase);
+        if (!lib.isEmpty()) {
+            libraries.append(lib);
+        }
+    }
+    if (libraries.isEmpty()) {
+        return QJsonObject();
+    }
+
+    versionJson["libraries"] = libraries;
+    return versionJson;
 }
 
 QJsonObject FabricInstaller::generateVersionJson(const FabricVersionInfo &version)
@@ -452,6 +740,24 @@ QJsonObject FabricInstaller::generateVersionJson(const FabricVersionInfo &versio
         }
     }
 
+    // 兜底: 新版权 Meta 的 launcherMeta.main 为空，loader 本体不会被列出，
+    // 缺了它 classpath 里就没有 Knot 主类，启动必然失败
+    bool hasLoaderLib = false;
+    for (const QJsonValue &libVal : libraries) {
+        if (libVal.toObject().value("name").toString().startsWith("net.fabricmc:fabric-loader:")) {
+            hasLoaderLib = true;
+            break;
+        }
+    }
+    if (!hasLoaderLib) {
+        QJsonObject loaderLib;
+        loaderLib["name"] = QString("net.fabricmc:fabric-loader:%1").arg(version.fabricVersion);
+        loaderLib = libraryToMojangFormat(loaderLib, mavenBase);
+        if (!loaderLib.isEmpty()) {
+            libraries.append(loaderLib);
+        }
+    }
+
     versionJson["libraries"] = libraries;
 
     return versionJson;
@@ -490,10 +796,33 @@ bool FabricInstaller::downloadLibraries(const QJsonObject &versionJson, const QS
 
             if (needDownload) {
                 QDir().mkpath(QFileInfo(filePath).absolutePath());
-                if (!downloadFile(url, filePath, expectedSha1)) {
-                    if (failed) {
-                        *failed << (libName.isEmpty() ? relPath : libName);
+
+                // 镜像站可能缺个别文件（例如某些 Fabric 库在镜像上返回 403），
+                // 失败后换另一个 Maven 仓库再试一次，避免整个安装因单个库失败而中断
+                QStringList candidates;
+                candidates << url;
+                if (url.endsWith(relPath)) {
+                    if (!url.contains("maven.fabricmc.net")) {
+                        candidates << QStringLiteral("https://maven.fabricmc.net/") + relPath;
                     }
+                    if (!url.contains("bangbang93.com")) {
+                        candidates << QStringLiteral("https://bmclapi2.bangbang93.com/maven/") + relPath;
+                    }
+                }
+
+                bool downloaded = false;
+                for (const QString &candidate : candidates) {
+                    if (candidate.isEmpty()) {
+                        continue;
+                    }
+                    if (downloadFile(candidate, filePath, expectedSha1)) {
+                        downloaded = true;
+                        break;
+                    }
+                }
+
+                if (!downloaded && failed) {
+                    *failed << (libName.isEmpty() ? relPath : libName);
                 }
             }
         }
@@ -617,19 +946,19 @@ bool FabricInstaller::repairIncompleteVersionJson(const QString &instancePath,
                                 .arg(base, mcVersion, loaderVersion);
         bool ok = false;
 
-        // 静态方法没有单例的网络管理器，使用局部 NAM（启动流程运行在主线程）
-        QNetworkAccessManager nam;
+        // 静态方法没有单例的网络管理器，用当前线程的复用管理器
         QNetworkRequest request((QUrl(url)));
         request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
         request.setTransferTimeout(30000);
 
-        QNetworkReply *reply = nam.get(request);
+        QNetworkReply *reply = threadNetworkManager()->get(request);
         QEventLoop loop;
         QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
         loop.exec();
         ok = (reply->error() == QNetworkReply::NoError);
-        const QByteArray data = ok ? reply->readAll() : QByteArray();
-        reply->deleteLater();
+        const QByteArray data = reply->readAll();
+        reply->disconnect();
+        delete reply;
 
         if (ok) {
             QJsonDocument doc = QJsonDocument::fromJson(data);
@@ -743,18 +1072,22 @@ bool FabricInstaller::downloadFile(const QString &url, const QString &filePath,
     request.setTransferTimeout(60000);
 
     // 本函数可能在后台线程执行（加载器安装已移出 GUI 线程）。
-    // QNetworkAccessManager 必须与调用线程同亲和，这里用局部实例，
-    // 离开作用域时连同其子 reply 一起销毁，不依赖事件循环回收
-    QNetworkAccessManager nam;
-
-    QNetworkReply *reply = nam.get(request);
+    // 使用与本线程同亲和的复用管理器：连接可以复用，不必每个库文件都重新握手 TLS
+    QNetworkReply *reply = threadNetworkManager()->get(request);
     m_currentReply = reply;
+
+    // 统一收尾：先断开信号再立即销毁，避免当前线程退出时把连接遗留成
+    // 「device not open」一类的传输层告警
+    auto releaseReply = [this, reply]() {
+        reply->disconnect();
+        m_currentReply = nullptr;
+        delete reply;
+    };
 
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
         reply->abort();
-        reply->deleteLater();
-        m_currentReply = nullptr;
+        releaseReply();
         return false;
     }
 
@@ -776,11 +1109,14 @@ bool FabricInstaller::downloadFile(const QString &url, const QString &filePath,
 
     loop.exec();
 
+    // finished 之前可能有尾部数据没等 readyRead 取走，先落盘再关文件
+    if (reply->bytesAvailable() > 0) {
+        file.write(reply->readAll());
+    }
     file.close();
 
     if (m_isCancelled) {
-        reply->deleteLater();
-        m_currentReply = nullptr;
+        releaseReply();
         return false;
     }
 
@@ -791,13 +1127,11 @@ bool FabricInstaller::downloadFile(const QString &url, const QString &filePath,
         if (redirectUrl.isValid()) {
             // resolved() 同时兼容绝对与相对 Location
             const QUrl target = reply->url().resolved(redirectUrl.toUrl());
-            reply->deleteLater();
-            m_currentReply = nullptr;
+            releaseReply();
             return downloadFile(target.toString(), filePath, expectedSha1, redirectDepth + 1);
         }
 
-        reply->deleteLater();
-        m_currentReply = nullptr;
+        releaseReply();
 
         if (!expectedSha1.isEmpty()) {
             if (!verifySha1(filePath, expectedSha1)) {
@@ -808,13 +1142,11 @@ bool FabricInstaller::downloadFile(const QString &url, const QString &filePath,
 
         return true;
     } else if (error == QNetworkReply::OperationCanceledError) {
-        reply->deleteLater();
-        m_currentReply = nullptr;
+        releaseReply();
         return false;
     } else {
         QString errorString = reply->errorString();
-        reply->deleteLater();
-        m_currentReply = nullptr;
+        releaseReply();
         qWarning() << "Download failed:" << errorString;
         return false;
     }
@@ -827,22 +1159,23 @@ QByteArray FabricInstaller::fetchUrl(const QString &url, bool *ok)
     request.setHeader(QNetworkRequest::UserAgentHeader, "BlockBox/1.0");
     request.setTransferTimeout(30000);
 
-    // 可能运行在后台线程，QNAM 必须与调用线程同亲和，用局部实例
-    QNetworkAccessManager nam;
-    QNetworkReply *reply = nam.get(request);
+    // 可能运行在后台线程，使用与本线程同亲和的复用管理器
+    QNetworkReply *reply = threadNetworkManager()->get(request);
 
     QEventLoop loop;
     connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     loop.exec();
 
     bool success = (reply->error() == QNetworkReply::NoError);
-    QByteArray data = success ? reply->readAll() : QByteArray();
+    // 读完缓冲再销毁（失败时也读一遍），避免残留数据在对象析构时被丢弃
+    QByteArray data = reply->readAll();
 
     if (!success) {
         qWarning() << "Fetch failed:" << url << reply->errorString();
     }
 
-    reply->deleteLater();
+    reply->disconnect();
+    delete reply;
     if (ok) *ok = success;
     return data;
 }

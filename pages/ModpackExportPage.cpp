@@ -19,6 +19,7 @@
 #include "components/AppMessageBox.h"
 #include <QFrame>
 #include <QGridLayout>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QStyle>
 #include <QUrl>
@@ -911,9 +912,38 @@ QWidget* ModpackExportPage::createModuleSelectionPage()
 
 void ModpackExportPage::onModuleChecked(const QString& moduleId, bool checked)
 {
-  Q_UNUSED(moduleId)
-  Q_UNUSED(checked)
-  // Module selection state will be synced with Step 3's file tree in populateFileTree
+  // 同步步骤 3 文件树的勾选状态：模块取消勾选 → 其下文件一并取消；
+  // 重新勾选 → 恢复为建议默认勾选状态
+  if (!m_fileTree)
+    return;
+
+  std::function<void(QTreeWidgetItem*)> sync = [&](QTreeWidgetItem* item) {
+    if (item->childCount() == 0)
+    {
+      const QString relPath = item->data(0, Qt::UserRole).toString();
+      if (modpack::ModpackFileAdviser::getModuleForFile(relPath) == moduleId)
+      {
+        if (!checked)
+        {
+          item->setCheckState(0, Qt::Unchecked);
+        }
+        else
+        {
+          const auto suggestion =
+            modpack::ModpackFileAdviser::suggest(relPath, false);
+          item->setCheckState(0, suggestion == modpack::FileSuggestion::SUGGESTED
+                                     ? Qt::Checked
+                                     : Qt::Unchecked);
+        }
+      }
+      return;
+    }
+    for (int i = 0; i < item->childCount(); ++i)
+      sync(item->child(i));
+  };
+
+  for (int i = 0; i < m_fileTree->topLevelItemCount(); ++i)
+    sync(m_fileTree->topLevelItem(i));
 }
 
 QStringList ModpackExportPage::getSelectedModules() const
@@ -952,6 +982,9 @@ void ModpackExportPage::populateFileTree(const QString& basePath, const QString&
 
     if (entry.isDir())
     {
+      // 跳过符号链接/目录联接，避免循环引用导致无限递归栈溢出
+      if (entry.isSymLink())
+        continue;
       item->setFlags(item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
       // 递归填充子目录
       populateFileTree(entry.absoluteFilePath(), childRelativePath, item);
@@ -1071,7 +1104,16 @@ QStringList ModpackExportPage::collectSelectedFiles()
       // 叶子节点（文件）
       if (item->checkState(0) == Qt::Checked)
       {
-        files.append(item->data(0, Qt::UserRole).toString());
+        const QString relPath = item->data(0, Qt::UserRole).toString();
+        // BlockBox 格式：未勾选模块下的文件一并排除（步骤 2.5 的选择真正生效）
+        if (m_selectedFormat == "blockbox" && !m_moduleChecks.isEmpty())
+        {
+          const QString moduleId = modpack::ModpackFileAdviser::getModuleForFile(relPath);
+          if (!moduleId.isEmpty() && m_moduleChecks.contains(moduleId)
+              && !m_moduleChecks[moduleId]->isChecked())
+            return;
+        }
+        files.append(relPath);
       }
     }
     else
@@ -1351,6 +1393,20 @@ void ModpackExportPage::onExportClicked()
     exportInfo.minMemory = m_minMemorySlider->value();
     exportInfo.javaArgs = m_javaArgsEdit->text().trimmed();
     exportInfo.launchArgs = m_launchArgsEdit->text().trimmed();
+    exportInfo.forceUpdate = m_forceUpdateCheck && m_forceUpdateCheck->isChecked();
+    if (m_authlibInjectorEdit)
+      exportInfo.authlibInjectorServer = m_authlibInjectorEdit->text().trimmed();
+    for (QCheckBox* check : m_javaVersionChecks)
+    {
+      if (check && check->isChecked())
+      {
+        const QString text = check->text(); // "Java 17"
+        static const QRegularExpression numRe("\\d+");
+        const QRegularExpressionMatch m = numRe.match(text);
+        if (m.hasMatch())
+          exportInfo.supportedJavaVersions.append(m.captured(0).toInt());
+      }
+    }
   }
   else if (m_selectedFormat == "curseforge")
   {

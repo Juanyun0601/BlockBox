@@ -5,8 +5,8 @@
  * @date   2026-08-18
  *
  * 基于 QOpenGLWidget 渲染投影方块（按方块真实形状 + 材质图集 + 逐顶点环境光遮蔽）。
- * 提供自由飞行相机：WASD 水平移动、空格上升、Shift 下降、左键拖动转向，
- * 滚轮沿视线前后；以及射线拾取（右键破坏、Ctrl+左键放置）。
+ * 提供自由飞行相机：WASD 水平移动、空格上升、Shift 下降、拖动转向，
+ * 滚轮沿视线前后；以及射线拾取（左键破坏、右键放置）。
  *
  * 渲染管线要点（性能与观感）：
  *   - 只生成「看得见」的面：相邻格是不透明白色整方块时，该面直接丢弃；
@@ -106,7 +106,7 @@ public:
     /** 应用视角预设（保持当前观察中心与距离） */
     void applyViewPreset(ViewPreset preset);
 
-    /** 「贴面放置」：Ctrl+左键放到鼠标所指方块的外侧相邻格，而不是替换它 */
+    /** 「贴面放置」：右键（或放置工具左键）放到鼠标所指方块的外侧相邻格，而不是替换它 */
     void setPlaceAdjacent(bool on) { m_placeAdjacent = on; }
     bool placeAdjacent() const { return m_placeAdjacent; }
 
@@ -118,9 +118,19 @@ public:
     const QSet<int> &selectedCells() const { return m_selectedCells; }
     void clearSelection() { setSelectedCells(QSet<int>()); }
 
-    /** 选取工具：开启后，左键单击（不拖动）会发出 selectRequested，拖动仍可转向 */
-    void setSelectTool(bool on);
-    bool selectTool() const { return m_selectTool; }
+    /** 左键单击要执行的动作（由编辑器当前工具决定） */
+    enum class LeftAction {
+        Break,    ///< 破坏方块（默认，与《我的世界》一致）
+        Place,    ///< 放置当前选中方块
+        Select    ///< 选取同类方块
+    };
+
+    /**
+     * @brief 设置左键单击的动作
+     * @param action 破坏 / 放置 / 选取；右键单击始终用于放置，拖动仍是转向视角
+     */
+    void setLeftAction(LeftAction action);
+    LeftAction leftAction() const { return m_leftAction; }
 
     /**
      * @brief 设置图层过滤（Y 层），仅显示该层的方块
@@ -146,9 +156,9 @@ public:
     bool rayPick(const QPoint &pos, int &x, int &y, int &z) const;
 
 signals:
-    /** 用户请求在 (x,y,z) 放置当前选中方块（Ctrl+左键） */
+    /** 用户请求在 (x,y,z) 放置当前选中方块（右键单击，或「放置」工具下左键单击） */
     void placeRequested(int x, int y, int z);
-    /** 用户请求破坏 (x,y,z)（右键） */
+    /** 用户请求破坏 (x,y,z)（左键单击） */
     void breakRequested(int x, int y, int z);
     /** 用户以选取工具点击了 (x,y,z)（左键单击） */
     void selectRequested(int x, int y, int z);
@@ -235,6 +245,8 @@ private:
     /** 射线拾取：DDA 体素步进 + 命中格形状精测 */
     bool pickRay(const QPoint &pos, int &x, int &y, int &z, bool skipAir = false,
                  int *outNormal = nullptr) const;
+    /** 计算放置目标格：命中方块本身，或开启「贴面放置」时它朝外的相邻格 */
+    bool pickPlaceTarget(const QPoint &pos, int &x, int &y, int &z) const;
 
     // ---- 渲染缓存 ----
     void ensurePaletteCache();
@@ -318,12 +330,16 @@ private:
     bool m_dragMoved = false;
     QPoint m_pressPos;
     bool m_selectPending = false;
+    /** 按下时记下的待执行编辑：松开且未拖动才真正生效（拖动 = 转向视角） */
+    enum PendingEdit { EditNone = 0, EditBreak, EditPlace };
+    int m_pendingEdit = EditNone;
+    int m_pendingX = 0, m_pendingY = 0, m_pendingZ = 0;
     QSet<int> m_heldKeys;
     QTimer m_flyTimer;
 
     int m_hoverX = INT_MIN, m_hoverY = INT_MIN, m_hoverZ = INT_MIN;
     int m_layerFilter = -1;
     LayerMode m_layerMode = LayerMode::Single;
-    bool m_selectTool = false;
+    LeftAction m_leftAction = LeftAction::Break;
     QSet<int> m_selectedCells;
 };

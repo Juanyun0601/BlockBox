@@ -116,7 +116,6 @@ private:
   QByteArray calculateSha1(const QString& filePath) const;
   QByteArray calculateSha256(const QString& filePath) const;
   QByteArray calculateSha512(const QString& filePath) const;
-  bool isAlreadyCompressed(const QString& ext) const;
 
   QString m_instancePath;
   ExportFormat m_exportFormat;

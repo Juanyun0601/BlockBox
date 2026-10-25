@@ -7,6 +7,8 @@
 
 #include "VoxelViewWidget.h"
 
+#include "components/GlslCompat.h"
+
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QFocusEvent>
@@ -236,13 +238,14 @@ void VoxelViewWidget::setSelectedCells(const QSet<int> &cells)
     update();
 }
 
-void VoxelViewWidget::setSelectTool(bool on)
+void VoxelViewWidget::setLeftAction(LeftAction action)
 {
-    if (m_selectTool == on)
+    if (m_leftAction == action)
         return;
-    m_selectTool = on;
+    m_leftAction = action;
+    m_pendingEdit = EditNone;
     m_selectPending = false;
-    if (on)
+    if (action == LeftAction::Select)
         setCursor(Qt::PointingHandCursor);
     else
         unsetCursor();
@@ -1123,8 +1126,7 @@ void VoxelViewWidget::initializeGL()
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glClearColor(0.055f, 0.065f, 0.09f, 1.0f);
 
-    const char *vsrc = R"(
-#version 330 core
+    const char *vsrc = BLOCKBOX_GLSL_VS_HEADER R"(
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec4 aColor;
 layout(location=2) in vec2 aUV;
@@ -1153,8 +1155,7 @@ void main() {
     vTint = aTint;
 }
 )";
-    const char *fsrc = R"(
-#version 330 core
+    const char *fsrc = BLOCKBOX_GLSL_FS_HEADER R"(
 in vec2 vUV;
 in vec4 vColor;
 in float vLight;
@@ -1191,8 +1192,7 @@ void main() {
     m_program.link();
 
     // 叠加通道：选中线框 / 悬停高亮（自带颜色，线段与三角形共用）
-    const char *ovVsrc = R"(
-#version 330 core
+    const char *ovVsrc = BLOCKBOX_GLSL_VS_HEADER R"(
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec4 aColor;
 uniform mat4 uProj;
@@ -1203,8 +1203,7 @@ void main() {
     gl_Position = uProj * uView * vec4(aPos, 1.0);
 }
 )";
-    const char *ovFsrc = R"(
-#version 330 core
+    const char *ovFsrc = BLOCKBOX_GLSL_FS_HEADER R"(
 in vec4 vColor;
 out vec4 fragColor;
 void main() { fragColor = vColor; }
@@ -1214,8 +1213,7 @@ void main() { fragColor = vColor; }
     m_ovProgram.link();
 
     // 背景：竖向渐变 + 柔和暗角（不需要任何顶点缓冲）
-    const char *bgVsrc = R"(
-#version 330 core
+    const char *bgVsrc = BLOCKBOX_GLSL_VS_HEADER R"(
 out vec2 vUv;
 void main() {
     vec2 p = vec2(gl_VertexID == 1 ? 3.0 : -1.0, gl_VertexID == 2 ? 3.0 : -1.0);
@@ -1223,8 +1221,7 @@ void main() {
     gl_Position = vec4(p, 1.0, 1.0);
 }
 )";
-    const char *bgFsrc = R"(
-#version 330 core
+    const char *bgFsrc = BLOCKBOX_GLSL_FS_HEADER R"(
 in vec2 vUv;
 uniform vec3 uTop;
 uniform vec3 uBottom;
@@ -1946,44 +1943,92 @@ bool VoxelViewWidget::rayPick(const QPoint &pos, int &x, int &y, int &z) const
     return pickRay(pos, x, y, z);
 }
 
+// 放置目标：命中方块本身；开启「贴面放置」时改用它朝外的相邻格
+bool VoxelViewWidget::pickPlaceTarget(const QPoint &pos, int &x, int &y, int &z) const
+{
+    int n[3] = { 0, 0, 0 };
+    if (!pickRay(pos, x, y, z, /*skipAir=*/false, n))
+        return false;
+    // 点到空气格（「显示空气」打开时的线框）就直接填进这一格，不再往旁边偏移
+    if (m_doc && m_doc->block(x, y, z).isAir())
+        return true;
+    if (m_placeAdjacent)
+    {
+        const int tx = x + n[0], ty = y + n[1], tz = z + n[2];
+        if (m_doc && m_doc->contains(tx, ty, tz))
+        {
+            x = tx;
+            y = ty;
+            z = tz;
+        }
+    }
+    return true;
+}
+
 // ----------------------------------------------------------------- 交互
 
 void VoxelViewWidget::mousePressEvent(QMouseEvent *e)
 {
-    if (e->button() == Qt::RightButton)
+    m_pendingEdit = EditNone;
+
+    const bool left = (e->button() == Qt::LeftButton);
+    const bool right = (e->button() == Qt::RightButton);
+
+    // Ctrl+左键：立即放置（保留的快捷方式，按下即生效）
+    if (left && (e->modifiers() & Qt::ControlModifier))
     {
         int x, y, z;
-        if (pickRay(e->pos(), x, y, z))
+        if (pickPlaceTarget(e->pos(), x, y, z))
         {
-            emit breakRequested(x, y, z);
-            return;
-        }
-    }
-    else if ((e->button() == Qt::LeftButton) && (e->modifiers() & Qt::ControlModifier))
-    {
-        int x, y, z;
-        int n[3] = { 0, 0, 0 };
-        if (pickRay(e->pos(), x, y, z, false, n))
-        {
-            if (m_placeAdjacent)
-            {
-                const int tx = x + n[0], ty = y + n[1], tz = z + n[2];
-                if (m_doc && m_doc->contains(tx, ty, tz))
-                {
-                    emit placeRequested(tx, ty, tz);
-                    return;
-                }
-            }
             emit placeRequested(x, y, z);
             return;
         }
     }
+    // 左键单击：按当前工具破坏 / 放置 / 选取（拖动仍是转向视角，松开时才生效）
+    else if (left)
+    {
+        int x, y, z;
+        if (m_leftAction == LeftAction::Break)
+        {
+            // 只破坏真正能看到的方块（空气线框点了不产生空操作）
+            if (pickRay(e->pos(), x, y, z, /*skipAir=*/true))
+            {
+                m_pendingEdit = EditBreak;
+                m_pendingX = x;
+                m_pendingY = y;
+                m_pendingZ = z;
+            }
+        }
+        else if (m_leftAction == LeftAction::Place)
+        {
+            if (pickPlaceTarget(e->pos(), x, y, z))
+            {
+                m_pendingEdit = EditPlace;
+                m_pendingX = x;
+                m_pendingY = y;
+                m_pendingZ = z;
+            }
+        }
+    }
+    // 右键单击：放置当前方块（所有工具通用）
+    else if (right)
+    {
+        int x, y, z;
+        if (pickPlaceTarget(e->pos(), x, y, z))
+        {
+            m_pendingEdit = EditPlace;
+            m_pendingX = x;
+            m_pendingY = y;
+            m_pendingZ = z;
+        }
+    }
+
     setFocus(Qt::MouseFocusReason);
     m_dragging = true;
     m_lastPos = e->pos();
     m_pressPos = e->pos();
     m_dragMoved = false;
-    m_selectPending = m_selectTool && e->button() == Qt::LeftButton;
+    m_selectPending = (m_leftAction == LeftAction::Select) && left;
     setCursor(Qt::ClosedHandCursor);
 }
 
@@ -2017,17 +2062,29 @@ void VoxelViewWidget::mouseMoveEvent(QMouseEvent *e)
 void VoxelViewWidget::mouseReleaseEvent(QMouseEvent *e)
 {
     const bool selecting = m_selectPending && !m_dragMoved && e->button() == Qt::LeftButton;
+    // 拖动过 = 转向视角，不执行编辑；否则执行按下时记下的破坏 / 放置
+    const int pendingEdit = (m_dragMoved || selecting) ? EditNone : m_pendingEdit;
+    const int px = m_pendingX, py = m_pendingY, pz = m_pendingZ;
+
     m_dragging = false;
     m_selectPending = false;
+    m_pendingEdit = EditNone;
+
+    unsetCursor();
+    if (m_leftAction == LeftAction::Select)
+        setCursor(Qt::PointingHandCursor);
+
     if (selecting)
     {
         int x, y, z;
         if (pickRay(e->pos(), x, y, z, /*skipAir=*/true))
             emit selectRequested(x, y, z);
+        return;
     }
-    unsetCursor();
-    if (m_selectTool)
-        setCursor(Qt::PointingHandCursor);
+    if (pendingEdit == EditBreak)
+        emit breakRequested(px, py, pz);
+    else if (pendingEdit == EditPlace)
+        emit placeRequested(px, py, pz);
 }
 
 void VoxelViewWidget::wheelEvent(QWheelEvent *e)

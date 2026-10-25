@@ -1,6 +1,6 @@
 # BlockBox ランチャー
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 [简体中文](README.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | **日本語** | [Русский](README.ru.md) | [Español](README.es.md)
 
@@ -94,11 +94,13 @@ HarmonyOS の開発環境と Qt for HarmonyOS プラグインをインストー�
 
 ## ライセンス
 
-本プロジェクトは [MIT ライセンス](LICENSE) © Juanyun0601 の下で公開されています。
+本プロジェクトは [GNU General Public License v3.0](LICENSE) © Juanyun0601 の下で公開されています。
+
+本プログラムは「現状のまま」提供され、いかなる保証もありません。複製・改変・再配布は GPL-3.0 に従う必要があり、改変版も GPL-3.0 でソースコードを公開する必要があります。
 
 ## コントリビュート
 
-Issue と Pull Request を歓迎します。
+Issue と Pull Request を歓迎します。寄せられたコードは GPL-3.0 で本プロジェクトに取り込まれます。
 
 ---
 

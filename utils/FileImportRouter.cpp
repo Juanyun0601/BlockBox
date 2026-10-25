@@ -56,19 +56,16 @@ QStringList listZipFileNames(const QString &zipFilePath)
         {
             QDataStream ds(tail.mid(i, 22));
             ds.setByteOrder(QDataStream::LittleEndian);
-            ds.skipRawData(8);
+            // 必须跳过前 10 字节才到「总条目数」，跳 8 会把总条目数错并进 cdSize，
+            // 导致 cdOffset 读成垃圾、整个 zip 识别失败
+            ds.skipRawData(10);
             quint16 entryCount = 0;
             quint32 cdSize = 0;
             quint32 cdOffset = 0;
             ds >> entryCount >> cdSize >> cdOffset;
 
-            QDataStream ds2(tail.mid(i + 8, 2));
-            ds2.setByteOrder(QDataStream::LittleEndian);
-            quint16 onDiskEntryCount = 0;
-            ds2 >> onDiskEntryCount;
-
             centralDirOffset = cdOffset;
-            totalEntries = qMin(onDiskEntryCount, entryCount);
+            totalEntries = entryCount;
             found = true;
             break;
         }

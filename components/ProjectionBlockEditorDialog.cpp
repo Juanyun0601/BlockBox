@@ -379,11 +379,11 @@ void ProjectionBlockEditorDialog::initUI()
 
         struct ToolSpec { Glyph glyph; QString text; QString tip; };
         const QVector<ToolSpec> tools{
-            { Glyph::Cube,   tr("查看"), tr("查看与选择方块，左键单击即可选中（快捷键 1）") },
-            { Glyph::Place,  tr("放置"), tr("左键放置当前方块（快捷键 2）") },
-            { Glyph::Break,  tr("破坏"), tr("左键破坏方块（快捷键 3）") },
-            { Glyph::Fill,   tr("填充"), tr("批量填充当前方块（快捷键 4）") },
-            { Glyph::Select, tr("选取"), tr("左键单击选中同类方块（快捷键 5）") },
+            { Glyph::Cube,   tr("查看"), tr("左键破坏方块、右键放置方块；按住拖动可旋转视角（快捷键 1）") },
+            { Glyph::Place,  tr("放置"), tr("左键放置当前方块（右键在任何工具下都能放置，快捷键 2）") },
+            { Glyph::Break,  tr("破坏"), tr("左键破坏方块、右键放置方块（快捷键 3）") },
+            { Glyph::Fill,   tr("填充"), tr("左键破坏、右键放置；批量填充用右侧按钮（快捷键 4）") },
+            { Glyph::Select, tr("选取"), tr("左键单击选中同类方块（右键仍为放置，快捷键 5）") },
         };
         auto *toolGroup = new QButtonGroup(this);
         toolGroup->setExclusive(true);
@@ -444,7 +444,7 @@ void ProjectionBlockEditorDialog::initUI()
         m_placeAdjacentToggle->setChecked(true);
         m_placeAdjacentToggle->setCursor(Qt::PointingHandCursor);
         m_placeAdjacentToggle->setToolTip(
-            tr("开启后，左键会把方块放到所点方块的相邻面上；关闭则直接覆盖所点方块"));
+            tr("开启后，右键会把方块放到所点方块的相邻面上；关闭则直接覆盖所点方块"));
         toolRow->addWidget(m_placeAdjacentToggle);
 
         m_airBtn = new QToolButton(header);
@@ -723,7 +723,7 @@ void ProjectionBlockEditorDialog::initUI()
     auto *bottom = new QHBoxLayout();
     bottom->setSpacing(8);
     auto *hintLabel = new QLabel(
-        tr("左键编辑 · 右键旋转 · 滚轮缩放 · 中键平移 · WASD 移动"), this);
+        tr("左键破坏 · 右键放置 · 拖动旋转 · 滚轮缩放 · WASD 移动"), this);
     hintLabel->setObjectName(QStringLiteral("projMutedLabel"));
     bottom->addWidget(hintLabel, 1);
 
@@ -798,6 +798,9 @@ void ProjectionBlockEditorDialog::initUI()
     });
     connect(m_placeAdjacentToggle, &QToolButton::toggled,
             this, &ProjectionBlockEditorDialog::onPlaceAdjacentToggled);
+    // 开关的默认勾选发生在连接信号之前，这里补一次同步，
+    // 保证一打开编辑器「贴面放置」就真的生效（否则要手动点两次）
+    onPlaceAdjacentToggled(m_placeAdjacentToggle->isChecked());
     connect(m_saveAsBtn, &QPushButton::clicked, this, &ProjectionBlockEditorDialog::onSaveAs);
     connect(m_saveBtn, &QPushButton::clicked, this, &ProjectionBlockEditorDialog::onSaveInPlace);
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::reject);
@@ -1260,14 +1263,33 @@ void ProjectionBlockEditorDialog::setCurrentBlockId(const QString &blockId)
     m_currentBlockCombo->setToolTip(id);
 }
 
+void ProjectionBlockEditorDialog::applyToolToView()
+{
+    if (!m_view)
+        return;
+    // 左键随工具切换：放置工具左键放置、选取工具左键选取、其余工具左键破坏；
+    // 右键在任何工具下都是放置当前方块，这样「左键破坏 / 右键放置」始终可用
+    switch (m_tool)
+    {
+    case ToolPlace:
+        m_view->setLeftAction(VoxelViewWidget::LeftAction::Place);
+        break;
+    case ToolSelect:
+        m_view->setLeftAction(VoxelViewWidget::LeftAction::Select);
+        break;
+    default:
+        m_view->setLeftAction(VoxelViewWidget::LeftAction::Break);
+        break;
+    }
+}
+
 void ProjectionBlockEditorDialog::onToolChanged(int index)
 {
     const int tool = m_toolCombo->itemData(index).toInt();
     m_tool = tool;
-    // 「查看」和「选取」工具下都可以用左键单击选方块：查看工具是默认工具，
-    // 这样顶部的「选取范围」不改工具也能立刻生效，不必先切工具
-    m_view->setSelectTool(tool == ToolSelect || tool == ToolOrbit);
-    if (tool != ToolSelect && tool != ToolOrbit)
+    // 左键动作随工具切换（放置 / 选取 / 破坏），右键始终放置
+    applyToolToView();
+    if (tool != ToolSelect)
         m_view->setCursor(Qt::ArrowCursor);
     updateSelectionLabel();
     m_view->setDirty();
@@ -1382,10 +1404,10 @@ void ProjectionBlockEditorDialog::updateSelectionLabel()
     const int n = m_view ? m_view->selectedCells().size() : 0;
     if (n > 0)
         m_selectLabel->setText(tr("已选中 %1 个方块（绿色边框）").arg(n));
-    else if (m_tool == ToolSelect || m_tool == ToolOrbit)
+    else if (m_tool == ToolSelect)
         m_selectLabel->setText(tr("左键单击方块即可选中"));
     else
-        m_selectLabel->setText(tr("切到「查看」或「选取」工具后左键单击方块即可选中"));
+        m_selectLabel->setText(tr("切到「选取」工具（快捷键 5）后左键单击方块即可选中"));
     if (m_clearSelBtn)
         m_clearSelBtn->setEnabled(n > 0);
 }
@@ -1614,10 +1636,9 @@ void ProjectionBlockEditorDialog::applyEditorSettings()
         toolIndex = 3;
     m_toolCombo->setCurrentIndex(toolIndex);
     m_tool = m_toolCombo->itemData(toolIndex).toInt();
-    // setCurrentIndex 在索引没变化时不会发信号，这里显式同步一次「左键单击可选取」状态，
-    // 否则默认就是「查看」工具时，打开编辑器后点方块不会有任何反应
-    if (m_view)
-        m_view->setSelectTool(m_tool == ToolSelect || m_tool == ToolOrbit);
+    // setCurrentIndex 在索引没变化时不会发信号，这里显式同步一次左键动作，
+    // 否则默认就是「查看」工具时，打开编辑器后左键单击不会破坏方块
+    applyToolToView();
 
     // 材质开关与来源
     const bool texturesDisabled =

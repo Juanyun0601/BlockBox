@@ -1087,7 +1087,8 @@
         <location filename="../pages/AiChatPage.cpp" line="5137"/>
         <source>Minecraft %1 已下载完成<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 已下載完成</translation>
+        <translation>Minecraft %1 已下載完成<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/AiChatPage.cpp" line="5145"/>
@@ -1108,7 +1109,8 @@
         <location filename="../pages/AiChatPage.cpp" line="5206"/>
         <source>开始下载 Minecraft %1 到<byte value="xd"/>
 %2</source>
-        <translation>開始下載 Minecraft %1 到</translation>
+        <translation>開始下載 Minecraft %1 到<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/AiChatPage.cpp" line="5214"/>
@@ -12406,20 +12408,23 @@
         <location filename="../pages/LoaderDetailPage.cpp" line="323"/>
         <source>Minecraft %1 已成功安装到<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 已成功安裝到</translation>
+        <translation>Minecraft %1 已成功安裝到<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="379"/>
         <location filename="../pages/LoaderDetailPage.cpp" line="415"/>
         <source>Minecraft %1 与 mod 加载器已成功安装到<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 與 mod 載入器已成功安裝到</translation>
+        <translation>Minecraft %1 與 mod 載入器已成功安裝到<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="418"/>
         <source>Minecraft %1 安装成功，但以下加载器安装失败：<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 安裝成功，但以下載入器安裝失敗：</translation>
+        <translation>Minecraft %1 安裝成功，但以下載入器安裝失敗：<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="618"/>
@@ -24558,6 +24563,16 @@
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="215"/>
         <source>BlockBox 基于开源协议发布，并使用了以下第三方开源库，特此致谢。</source>
         <translation>BlockBox 基於開源協議發布，並使用了以下第三方開源庫，特此致謝。</translation>
+    </message>
+    <message>
+        <location filename="../pages/settings/SettingsAboutPage.cpp" line="220"/>
+        <source>启动器本体以 GNU 通用公共许可证第 3 版（GPL-3.0）发布，第三方库与素材仍遵循各自协议。</source>
+        <translation>啟動器本體以 GNU 通用公共授權條款第 3 版（GPL-3.0）發布，第三方函式庫與素材仍遵循各自授權。</translation>
+    </message>
+    <message>
+        <location filename="../pages/settings/SettingsAboutPage.cpp" line="236"/>
+        <source>Copyright (C) 2026 Juanyun0601。本程序不提供任何担保，可自由复制、修改与再发布，但须同样以 GPL-3.0 公开源代码。</source>
+        <translation>Copyright (C) 2026 Juanyun0601。本程式不提供任何擔保，可自由複製、修改與再發布，但須同樣以 GPL-3.0 公開原始碼。</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="218"/>

@@ -405,7 +405,124 @@ bool GameLauncher::validateJavaPath(const QString& path, JavaInfo& info)
     return false;
 }
 
-GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVersion)
+GameLauncher::JavaRequirement GameLauncher::javaRequirementFor(const QString& gameVersion, int jsonMajorHint)
+{
+    JavaRequirement req;
+
+    int mcMajor = 0;
+    int mcMinor = 0;
+    int mcPatch = 0;
+
+    // 旧规则 1.x（必须从开头锚定：新规则 "26.1.1" 里也含 "1.1"，
+    // 不锚定会被误判成 MC 1.1，从而错误地把上限压到 Java 8）
+    static const QRegularExpression legacyRegex(QStringLiteral(R"(^1\.([0-9]+)(?:\.([0-9]+))?)"));
+    // 新规则（2026 年起）：26.1 / 26.1.2 / 26.4-snapshot-5 / 26.3-rc-1
+    static const QRegularExpression yearRegex(QStringLiteral(R"(^([0-9]{2,})(?:\.([0-9]+))?(?:\.([0-9]+))?)"));
+    // 旧快照 23w14a（没有版本号，只能按年份粗略推断）
+    static const QRegularExpression weekSnapshotRegex(
+        QStringLiteral(R"(^([0-9]{2})w([0-9]{2})[a-z])"), QRegularExpression::CaseInsensitiveOption);
+
+    QRegularExpressionMatch m = legacyRegex.match(gameVersion);
+    if (m.hasMatch())
+    {
+        mcMajor = 1;
+        mcMinor = m.captured(1).toInt();
+        mcPatch = m.captured(2).toInt();
+    }
+    else
+    {
+        m = yearRegex.match(gameVersion);
+        if (m.hasMatch())
+        {
+            mcMajor = m.captured(1).toInt();
+            mcMinor = m.captured(2).toInt();
+            mcPatch = m.captured(3).toInt();
+        }
+    }
+
+    if (mcMajor == 1)
+    {
+        if (mcMinor <= 5)
+        {
+            // MC <= 1.5.2：旧 lwjgl 不兼容新 Java，上限 Java 8
+            req.minJava = 0;
+            req.maxJava = 8;
+        }
+        else if (mcMinor <= 12)
+        {
+            // MC 1.6 - 1.12：LaunchWrapper 假设 SystemClassLoader 是 URLClassLoader
+            // Java 9+ 会崩溃，强制上限 Java 8（HMCL LAUNCH_WRAPPER 约束）
+            req.minJava = 8;
+            req.maxJava = 8;
+        }
+        else if (mcMinor <= 16)
+        {
+            // MC 1.13 - 1.16：最低 Java 8，原版无严格上限
+            req.minJava = 8;
+            req.maxJava = 999;
+        }
+        else if (mcMinor == 17)
+        {
+            // MC 1.17：Mojang 官方要求 Java 16
+            req.minJava = 16;
+            req.maxJava = 999;
+        }
+        else if (mcMinor >= 18 && mcMinor <= 20)
+        {
+            if (mcMinor == 20 && mcPatch >= 5)
+            {
+                // MC 1.20.5+：最低 Java 21
+                req.minJava = 21;
+            }
+            else
+            {
+                // MC 1.18 - 1.20.4：最低 Java 17
+                req.minJava = 17;
+            }
+            req.maxJava = 999;
+        }
+        else
+        {
+            // MC 1.21+：最低 Java 21
+            req.minJava = 21;
+            req.maxJava = 999;
+        }
+    }
+    else if (mcMajor >= 26)
+    {
+        // 2026 年起的新版本号规则：26.1 / 26.2 / 26.3 … 官方要求 Java 25
+        req.minJava = 25;
+        req.maxJava = 999;
+    }
+    else
+    {
+        QRegularExpressionMatch wm = weekSnapshotRegex.match(gameVersion);
+        if (wm.hasMatch())
+        {
+            // 旧快照：按年份推断当时的主版本要求
+            const int year = 2000 + wm.captured(1).toInt();
+            if (year >= 2024)      req.minJava = 21;
+            else if (year >= 2022) req.minJava = 17;
+            else if (year >= 2021) req.minJava = 16;
+            else                   req.minJava = 8;
+        }
+        else
+        {
+            // 无法识别的版本号（自定义命名/整合包改名等）：按通用规则最低 Java 8
+            req.minJava = 8;
+        }
+        req.maxJava = 999;
+    }
+
+    // 版本 JSON 里的 javaVersion.majorVersion 是官方声明的最低要求，优先级最高
+    // （新规则、快照、模组版本都靠它兜底，避免按版本号硬编码判断失误）
+    if (jsonMajorHint > 0)
+        req.minJava = jsonMajorHint;
+
+    return req;
+}
+
+GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVersion, int jsonMajorHint)
 {
     JavaInfo bestJavaInfo;
 
@@ -450,107 +567,13 @@ GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVers
 
     // ── 计算该游戏版本的 Java 版本约束 [minJava, maxJava] ──
     // 参考 HMCL GameJavaVersion.getMinimumJavaVersion + JavaVersionConstraint
-    // 以及 PCL-CE ModLaunch.cs McLaunchJava 的版本阈值
-    int minJavaVersion = 0;     // 0 表示无最低限制
-    int maxJavaVersion = 999;   // 999 表示无上限
-
-    int mcMajor = 0;
-    int mcMinor = 0;
-    int mcPatch = 0;
-
-    static const QRegularExpression prefixedVersionRegex("1\\.([0-9]+)(?:\\.([0-9]+))?");
-    QRegularExpressionMatch prefixedMatch = prefixedVersionRegex.match(gameVersion);
-    if (prefixedMatch.hasMatch())
-    {
-        mcMajor = 1;
-        mcMinor = prefixedMatch.captured(1).toInt();
-        QString patchStr = prefixedMatch.captured(2);
-        mcPatch = patchStr.isEmpty() ? 0 : patchStr.toInt();
-    }
-    else
-    {
-        static const QRegularExpression plainVersionRegex("([0-9]+)(?:\\.([0-9]+))?");
-        QRegularExpressionMatch plainMatch = plainVersionRegex.match(gameVersion);
-        if (plainMatch.hasMatch())
-        {
-            mcMajor = plainMatch.captured(1).toInt();
-            QString minorStr = plainMatch.captured(2);
-            mcMinor = minorStr.isEmpty() ? 0 : minorStr.toInt();
-        }
-    }
-
-    if (mcMajor == 1)
-    {
-        if (mcMinor <= 5)
-        {
-            // MC <= 1.5.2：旧 lwjgl 不兼容新 Java，上限 Java 8
-            minJavaVersion = 0;
-            maxJavaVersion = 8;
-        }
-        else if (mcMinor <= 12)
-        {
-            // MC 1.6 - 1.12：LaunchWrapper 假设 SystemClassLoader 是 URLClassLoader
-            // Java 9+ 会崩溃，强制上限 Java 8（HMCL LAUNCH_WRAPPER 约束）
-            minJavaVersion = 8;
-            maxJavaVersion = 8;
-        }
-        else if (mcMinor <= 16)
-        {
-            // MC 1.13 - 1.16：最低 Java 8，原版无严格上限
-            minJavaVersion = 8;
-            maxJavaVersion = 999;
-        }
-        else if (mcMinor == 17)
-        {
-            // MC 1.17：Mojang 官方要求 Java 16（原代码误设为 17）
-            minJavaVersion = 16;
-            maxJavaVersion = 999;
-        }
-        else if (mcMinor >= 18 && mcMinor <= 20)
-        {
-            if (mcMinor == 20 && mcPatch >= 5)
-            {
-                // MC 1.20.5+：最低 Java 21
-                minJavaVersion = 21;
-            }
-            else
-            {
-                // MC 1.18 - 1.20.4：最低 Java 17
-                minJavaVersion = 17;
-            }
-            maxJavaVersion = 999;
-        }
-        else
-        {
-            // MC 1.21+：最低 Java 21
-            minJavaVersion = 21;
-            maxJavaVersion = 999;
-        }
-    }
-    else if (mcMajor >= 26)
-    {
-        if (mcMajor > 26 || mcMinor >= 1)
-        {
-            // MC 26.1+：最低 Java 25
-            minJavaVersion = 25;
-        }
-        else
-        {
-            minJavaVersion = 21;
-        }
-        maxJavaVersion = 999;
-    }
-    else
-    {
-        // 无法识别的版本号（快照如 23w14a 等），按通用规则：最低 Java 8
-        minJavaVersion = 8;
-        maxJavaVersion = 999;
-    }
-
-    QString rangeDesc = (maxJavaVersion == 999)
-        ? QStringLiteral("Java %1+").arg(minJavaVersion)
-        : QStringLiteral("Java %1-%2").arg(minJavaVersion).arg(maxJavaVersion);
-    emit launchDetailAdded(QString("游戏版本 %1 需要 %2").arg(gameVersion).arg(rangeDesc));
+    // 以及 PCL-CE ModLaunch.cs McLaunchJava 的版本阈值；
+    // 版本号规则（旧 1.x / 新 26.x / 快照）与官方 javaVersion 提示都在里面统一处理
+    const JavaRequirement req = javaRequirementFor(gameVersion, jsonMajorHint);
+    const int minJavaVersion = req.minJava;
+    const int maxJavaVersion = req.maxJava;
+    const QString rangeDesc = req.rangeDesc();
+    emit launchDetailAdded(QString("游戏版本 %1 需要 %2").arg(gameVersion, rangeDesc));
 
     // ── 提取 Java 主版本号的工具 lambda（修复原 split('.').first() 对 Java 8 取到 1 的 bug）──
     auto javaMajorOf = [](const QString& version) -> int {
@@ -599,6 +622,13 @@ GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVers
             bestJavaInfo = highestJava;
             emit launchDetailAdded(QString("警告: 未找到满足约束 (%1) 的 Java，使用最高版本兜底: %2 (%3)")
                 .arg(rangeDesc).arg(bestJavaInfo.version).arg(bestJavaInfo.path));
+            // 版本太低（例如新版游戏需要 Java 25，而机器上最高只有 Java 21）时明确提示
+            if (highestMajor < minJavaVersion)
+            {
+                emit launchDetailAdded(QString("警告: 当前最高 Java %1 低于所需 Java %2，"
+                                               "请安装 Java %2 或更高版本后重试")
+                    .arg(highestMajor).arg(minJavaVersion));
+            }
         }
     }
     else

@@ -1,6 +1,6 @@
 # Lanzador BlockBox
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 [简体中文](README.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | **Español**
 
@@ -94,11 +94,13 @@ Las diferencias entre plataformas se gestionan mediante compilación condicional
 
 ## Licencia
 
-Este proyecto se distribuye bajo la [licencia MIT](LICENSE) © Juanyun0601
+Este proyecto se distribuye bajo la [licencia GNU GPL v3.0](LICENSE) © Juanyun0601
+
+El programa se ofrece «tal cual», sin garantía de ningún tipo. Copiarlo, modificarlo y redistribuirlo exige cumplir la GPL-3.0, y las versiones modificadas también deben publicar su código bajo GPL-3.0.
 
 ## Contribuir
 
-Las issues y los pull requests son bienvenidos.
+Las issues y los pull requests son bienvenidos. El código aportado se incorpora al proyecto bajo GPL-3.0.
 
 ---
 

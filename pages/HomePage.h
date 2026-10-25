@@ -266,7 +266,7 @@ private:
 
   // 布局骨架
   QVBoxLayout *m_mainLayout = nullptr;         // 顶层布局
-  QWidget *m_carouselSlot = nullptr;           // 默认模式轮播容器（全宽无内边距）
+  QWidget *m_carouselSlot = nullptr;           // 默认模式轮播容器（24px 侧边距 + 24px 顶部间距）
   QVBoxLayout *m_carouselSlotLayout = nullptr;
   QWidget *m_contentArea = nullptr;            // 默认模式内容容器（带 24px 边距）
   QVBoxLayout *m_contentLayout = nullptr;

@@ -49,7 +49,10 @@ AccountManagePage::AccountManagePage(QWidget *parent) : QWidget(parent)
     m_modelActionWidget = nullptr;
     m_modelPose = SkinPose::Idle;
     m_rightWidget = nullptr;
-    m_iconNormalColor = QColor("#666666");
+    m_iconNormalColor = (ThemeManager::instance()
+                         && ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme)
+                            ? QColor(QStringLiteral("#9CA3AF"))
+                            : QColor(QStringLiteral("#666666"));
     m_iconSelectedColor = QColor("#ffffff");
 
     // 初始化皮肤下载器（必须在 initUI/loadAccounts 之前）

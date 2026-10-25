@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QString>
 
+#include "../SettingsManager.h"
+
 namespace forge {
 class ForgeDownloader;
 class ForgeNewInstallTask;
@@ -15,6 +17,7 @@ public:
     static ForgeInstaller* instance();
 
     void setCurrentTaskId(const QString &taskId);
+    void setDownloadSource(ForgeDownloadSource source);
     QString currentTaskId() const { return m_taskId; }
     void downloadForgeInstaller(const QString &mcVersion, const QString &forgeVersion,
                                 const QString &instancePath, const QString &instanceName = QString());
@@ -50,6 +53,15 @@ public:
     void onInstallerTypeDetected(int installerType);
     int detectInstallerType(const QString &jarPath);
     void detectInstallerTypeAsync(const QString &jarPath);
+    /// MultiMC 式多源回退：一个源超时/失败自动换另一个源重试，最多两轮
+    void attemptInstallerDownload();
+    /// 单轮下载的结算入口（成功直通，失败先换源重试）
+    void onInstallerDownloadAttemptDone(bool success);
+    /// MultiMC 式安装（新版安装器）：解析 profile → 跑处理器 → 生成版本 JSON → 补齐库
+    void startNewInstallTask();
+    /// MultiMC Legacy 路径（MC ≤1.5.2）：下载 universal 包合并进原版 jar + 补 FML 依赖库
+    void startLegacyInstallTask();
+    void finishLegacyInstall(const QString &error = QString());
     void runInstallerDirectly();
     QString getJavaPath();
     QString getJarToolPath();
@@ -78,6 +90,10 @@ public:
     QString m_taskId;
     bool m_isInstalling;
     bool m_versionIsolationEnabled;
+    int m_installerAttempt = 0;   ///< 安装器下载已尝试轮数（0=首选源，1=换源重试）
+    bool m_installerAttemptSettled = false; ///< 本轮下载已结算（看门狗与回调防双触发）
+    bool m_legacyMode = false;     ///< MC ≤1.5.2：无可用安装器，走 MultiMC Legacy 合并路径
+    bool m_legacySettled = false;  ///< Legacy 流程已结算（合并线程回调与取消防双触发）
 
     static ForgeInstaller *m_instance;
 };

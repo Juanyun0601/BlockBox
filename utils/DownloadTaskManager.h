@@ -9,6 +9,7 @@
 
 #include <QAtomicInt>
 #include <QList>
+#include <QRecursiveMutex>
 #include <QMap>
 #include <QMutex>
 #include <QObject>
@@ -165,7 +166,10 @@ private:
 
     static DownloadTaskManager *m_instance;
     static QMutex m_instanceMutex;
-    mutable QMutex m_tasksMutex;
+    /// 递归互斥：update* 系列在持锁状态下发出信号，同线程的页面槽函数
+    /// （详情页 updateButtons → isTaskCancellable）会再次上锁，普通
+    /// QMutex 会自死锁（多线程互斥语义不变）
+    mutable QRecursiveMutex m_tasksMutex;
     QMap<QString, DownloadTask> m_tasks;
     QAtomicInt m_nextTaskId;
 };

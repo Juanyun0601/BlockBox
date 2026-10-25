@@ -12,9 +12,11 @@
  */
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QIODevice>
 #include <QJsonDocument>
 #include <cstdio>
 
@@ -24,9 +26,14 @@
 
 #include "utils/SettingsManager.h"
 
+// 运行依赖管理器只影响「未检测到 Java」时的提示文案，探针不链接它的实现
+#include "utils/RuntimeDependencyManager.h"
+bool RuntimeDependencyManager::isSupportedPlatform() { return false; }
+
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
+    setvbuf(stdout, nullptr, _IONBF, 0); // 崩溃时也能看到已打印的进度
     std::printf("appDir: %s\n", qPrintable(QCoreApplication::applicationDirPath()));
 
     // 1) 全局 Java 设置
@@ -40,6 +47,19 @@ int main(int argc, char *argv[])
         std::printf("    path=%s\n    ver =%s  exists=%d\n",
                     qPrintable(inst.first), qPrintable(inst.second),
                     int(QFile::exists(inst.first)));
+    }
+
+    // 2b) 缓存为空时先播种一个已知 Java，避免 findBestJavaVersion 触发全盘扫描
+    //     （扫描路径与本探针要验证的版本号规则无关，且在无 GUI 环境下会崩）
+    const auto savedInstallations = installations;
+    bool seeded = false;
+    if (installations.isEmpty()) {
+        const QString knownJava = QStringLiteral("C:/Program Files/Microsoft/jdk-21.0.8.9-hotspot/bin/java.exe");
+        if (QFile::exists(knownJava)) {
+            SettingsManager::instance()->setJavaInstallations({ qMakePair(knownJava, QStringLiteral("21.0.8")) });
+            seeded = true;
+            std::printf("\n[2b] 缓存为空，已播种 Java 21.0.8 用于后续用例（结束时会还原）\n");
+        }
     }
 
     // 3) 逐个验证（含耗时 — 验证 2 秒超时是否是问题根源）
@@ -76,6 +96,44 @@ int main(int argc, char *argv[])
                     int(best.valid), qPrintable(best.version), qPrintable(best.path));
     }
 
+    // 4b) 版本号规则 → Java 要求（旧规则 1.x / 新规则 26.x / 快照 / 官方 javaVersion 提示）
+    std::printf("\n[4b] javaRequirementFor 版本号规则:\n");
+    {
+        struct Case { const char *ver; int hint; int minJ; int maxJ; };
+        static const Case cases[] = {
+            { "1.5.2",  0,  0,   8 },
+            { "1.7.10", 0,  8,   8 },
+            { "1.12.2", 0,  8,   8 },
+            { "1.16.5", 0,  8, 999 },
+            { "1.17.1", 0, 16, 999 },
+            { "1.20.4", 0, 17, 999 },
+            { "1.20.5", 0, 21, 999 },
+            { "1.21.11", 0, 21, 999 },
+            { "26.1",   0, 25, 999 },
+            { "26.1.1", 0, 25, 999 },   // 曾被 "1.1" 误判成 1.1 → 压到 Java 8
+            { "26.1.2", 0, 25, 999 },
+            { "26.2",   0, 25, 999 },
+            { "26.4-snapshot-5", 0, 25, 999 },
+            { "26.3-rc-1",       0, 25, 999 },
+            { "23w14a", 0, 17, 999 },
+            { "1.12.2", 8,  8,   8 },
+            { "1.21.11", 21, 21, 999 },
+            { "26.1.1", 25, 25, 999 },
+            { "自定义整合包", 0, 8, 999 },
+        };
+        int pass = 0, fail = 0;
+        for (const Case &c : cases) {
+            const GameLauncher::JavaRequirement req =
+                GameLauncher::javaRequirementFor(QString::fromUtf8(c.ver), c.hint);
+            const bool ok = (req.minJava == c.minJ && req.maxJava == c.maxJ);
+            std::printf("    %-18s hint=%-2d => %-9s %s\n", c.ver, c.hint,
+                        qPrintable(req.rangeDesc()), ok ? "OK" : "MISMATCH");
+            if (ok) ++pass; else ++fail;
+        }
+        std::printf("    %s (pass=%d fail=%d)\n",
+                    fail == 0 ? "[PASS] 全部通过" : "[FAIL] 存在不一致", pass, fail);
+    }
+
     // 5) 兜底检测
     std::printf("\n[5] detectJava():\n");
     {
@@ -83,17 +141,6 @@ int main(int argc, char *argv[])
         GameLauncher::JavaInfo info = GameLauncher::instance()->detectJava();
         std::printf("    => valid=%d version='%s' path='%s'  耗时=%lldms\n",
                     int(info.valid), qPrintable(info.version), qPrintable(info.path), t.elapsed());
-    }
-
-    // 5b) findAllJavaInstallations — 设置页 Java 下拉框的数据源
-    std::printf("\n[5b] findAllJavaInstallations()（设置页下拉框数据源）:\n");
-    {
-        QElapsedTimer t; t.start();
-        const auto list = GameLauncher::instance()->findAllJavaInstallations();
-        std::printf("    共 %d 个 Java (耗时 %lldms):\n", list.size(), t.elapsed());
-        for (const auto &j : list) {
-            std::printf("    - Java %s  %s\n", qPrintable(j.version), qPrintable(j.path));
-        }
     }
 
     // 6) preCheck 同款校验（指定的 javaPath 非空时）
@@ -140,6 +187,57 @@ int main(int argc, char *argv[])
                                             : "    [FAIL] classpath 缺失客户端 JAR");
         const int mcIdx = args.indexOf(QStringLiteral("net.fabricmc.loader.impl.launch.knot.KnotClient"));
         std::printf("    mainClass: %s\n", mcIdx >= 0 ? "KnotClient (Fabric)" : "其他");
+    }
+
+    // 7b) 新版本号规则（26.x）的 resolveVersionId 解析（合成版本 JSON，不依赖真实实例）
+    std::printf("\n[7b] resolveVersionId 新版本号规则:\n");
+    {
+        const QString root = QDir::tempPath() + QStringLiteral("/blockbox_ver_probe");
+        QDir(root).removeRecursively();
+        QDir().mkpath(root);
+        struct Case { const char *dirName; const char *json; const char *expect; };
+        static const Case cases[] = {
+            { "26.1", "{\"id\":\"26.1\",\"javaVersion\":{\"component\":\"java-runtime-epsilon\",\"majorVersion\":25},\"assetIndex\":{\"id\":\"30\"}}", "26.1" },
+            { "26.1.1", "{\"id\":\"26.1.1\",\"javaVersion\":{\"majorVersion\":25}}", "26.1.1" },
+            { "26.4-snapshot-5", "{\"id\":\"26.4-snapshot-5\",\"javaVersion\":{\"majorVersion\":25}}", "26.4-snapshot-5" },
+            { "fabric-26.1", "{\"id\":\"fabric-loader-0.16.9-26.1\",\"inheritsFrom\":\"26.1\"}", "26.1" },
+            { "fabric-noloader", "{\"id\":\"26.1-Fabric 0.16.9\"}", "26.1" },
+            { "forge-1.21.11", "{\"id\":\"1.21.11-forge-54.1.0\"}", "1.21.11" },
+            { "1.21.11", "{\"id\":\"1.21.11\"}", "1.21.11" },
+        };
+        int pass = 0, fail = 0;
+        GameLauncher *gl = GameLauncher::instance();
+        for (const Case &c : cases) {
+            const QString dir = root + QLatin1Char('/') + QString::fromUtf8(c.dirName);
+            QDir().mkpath(dir);
+            QFile f(dir + QLatin1Char('/') + QString::fromUtf8(c.dirName) + QStringLiteral(".json"));
+            if (f.open(QIODevice::WriteOnly)) { f.write(c.json); f.close(); }
+            const QString got = gl->resolveVersionId(dir);
+            const bool ok = (got == QString::fromUtf8(c.expect));
+            std::printf("    %-16s => %-16s %s\n", c.dirName, qPrintable(got), ok ? "OK" : "MISMATCH");
+            if (ok) ++pass; else ++fail;
+        }
+        QDir(root).removeRecursively();
+        std::printf("    %s (pass=%d fail=%d)\n",
+                    fail == 0 ? "[PASS] 全部通过" : "[FAIL] 存在不一致", pass, fail);
+    }
+
+    // 5b) findAllJavaInstallations — 设置页 Java 下拉框的数据源
+    //     （放在最后：无 GUI 环境下这一步的扫描路径可能崩，别挡住前面的用例）
+    std::printf("\n[5b] findAllJavaInstallations()（设置页下拉框数据源）:\n");
+    {
+        QElapsedTimer t; t.start();
+        const auto list = GameLauncher::instance()->findAllJavaInstallations();
+        std::printf("    共 %d 个 Java (耗时 %lldms):\n", list.size(), t.elapsed());
+        for (const auto &j : list) {
+            std::printf("    - Java %s  %s\n", qPrintable(j.version), qPrintable(j.path));
+        }
+    }
+
+    // 还原 2b 播种的 Java 缓存
+    if (seeded) {
+        SettingsManager::instance()->setJavaInstallations(savedInstallations);
+        std::printf("\n[2b] 已还原原 Java 缓存（%d 项）\n", int(savedInstallations.size()));
     }
 
     std::printf("\nDONE\n");

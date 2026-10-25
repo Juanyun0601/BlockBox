@@ -38,6 +38,11 @@ SubNavPanel::SubNavPanel(QWidget *parent)
     if (themeColor.isValid())
         m_iconSelectedColor = themeColor;
 
+    // 未选中 SVG 图标默认灰度随明暗主题
+    m_iconNormalColor = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme)
+                            ? QColor(QStringLiteral("#9CA3AF"))
+                            : QColor(QStringLiteral("#666666"));
+
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged, this, [this](const QString &color) {
         QColor c(color);
         if (c.isValid())
@@ -47,9 +52,14 @@ SubNavPanel::SubNavPanel(QWidget *parent)
             setSelectedChild(m_currentChildIndex);
     });
 
-    // 明暗主题切换：搜索框图标与占位提示的灰度需要重新取
+    // 明暗主题切换：搜索框图标、未选中导航 SVG 与占位提示的灰度都要重新取
     connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ThemeManager::ThemeType) {
+        m_iconNormalColor = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme)
+                                ? QColor(QStringLiteral("#9CA3AF"))
+                                : QColor(QStringLiteral("#666666"));
         updateSearchChrome();
+        if (isVisible())
+            setSelectedChild(m_currentChildIndex);
     });
 
     // 悬浮气泡外阴影

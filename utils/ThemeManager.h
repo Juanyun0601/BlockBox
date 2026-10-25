@@ -446,6 +446,13 @@ private:
     void applyDarkBarOverride(QString& style) const;
 
     /**
+     * @brief 深色主题下保证聊天主区/输入框/空状态在亮壁纸上仍可读
+     * 必须在 BackgroundManager::backgroundStyleSheet() 之后追加，
+     * 否则会被其中的 QScrollArea 全透明规则覆盖回去。
+     */
+    void applyDarkReadableOverride(QString& style) const;
+
+    /**
      * @brief 使用当前主题状态重新构建并应用完整样式表
      * 统一入口：加载 -> token 解析 -> 侧边栏覆盖 -> 背景覆盖 -> setStyleSheet
      */

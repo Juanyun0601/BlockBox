@@ -1087,7 +1087,8 @@ Only enable this if you trust the current task. Enable it?</translation>
         <location filename="../pages/AiChatPage.cpp" line="5137"/>
         <source>Minecraft %1 已下载完成<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 has been downloaded</translation>
+        <translation>Minecraft %1 has been downloaded<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/AiChatPage.cpp" line="5145"/>
@@ -1108,7 +1109,8 @@ Only enable this if you trust the current task. Enable it?</translation>
         <location filename="../pages/AiChatPage.cpp" line="5206"/>
         <source>开始下载 Minecraft %1 到<byte value="xd"/>
 %2</source>
-        <translation>Starting download of Minecraft %1 to </translation>
+        <translation>Starting download of Minecraft %1 to<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/AiChatPage.cpp" line="5214"/>
@@ -12406,20 +12408,23 @@ Link: %2</translation>
         <location filename="../pages/LoaderDetailPage.cpp" line="323"/>
         <source>Minecraft %1 已成功安装到<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 was installed successfully to</translation>
+        <translation>Minecraft %1 was installed successfully to<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="379"/>
         <location filename="../pages/LoaderDetailPage.cpp" line="415"/>
         <source>Minecraft %1 与 mod 加载器已成功安装到<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 and the mod loader were installed successfully to</translation>
+        <translation>Minecraft %1 and the mod loader were installed successfully to<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="418"/>
         <source>Minecraft %1 安装成功，但以下加载器安装失败：<byte value="xd"/>
 %2</source>
-        <translation>Minecraft %1 installed successfully, but the following loaders failed to install:</translation>
+        <translation>Minecraft %1 installed successfully, but the following loaders failed to install:<byte value="xd"/>
+%2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="618"/>
@@ -24805,6 +24810,16 @@ Click "Java Detection" or "Manual Add" above to detect Java.</translation>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="215"/>
         <source>BlockBox 基于开源协议发布，并使用了以下第三方开源库，特此致谢。</source>
         <translation>BlockBox is released under an open source license and uses the following third-party open source libraries. Our thanks to them.</translation>
+    </message>
+    <message>
+        <location filename="../pages/settings/SettingsAboutPage.cpp" line="220"/>
+        <source>启动器本体以 GNU 通用公共许可证第 3 版（GPL-3.0）发布，第三方库与素材仍遵循各自协议。</source>
+        <translation>The launcher itself is released under the GNU General Public License v3.0 (GPL-3.0); third-party libraries and assets keep their own licenses.</translation>
+    </message>
+    <message>
+        <location filename="../pages/settings/SettingsAboutPage.cpp" line="236"/>
+        <source>Copyright (C) 2026 Juanyun0601。本程序不提供任何担保，可自由复制、修改与再发布，但须同样以 GPL-3.0 公开源代码。</source>
+        <translation>Copyright (C) 2026 Juanyun0601. This program comes with absolutely no warranty. You may copy, modify and redistribute it freely, but derivative works must also release their source code under GPL-3.0.</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="218"/>

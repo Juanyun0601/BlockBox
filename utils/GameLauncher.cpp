@@ -150,8 +150,14 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
         // ── 从版本 JSON 中读取实际版本号（而非靠路径正则猜测）──
         QString gameVersion = resolveVersionId(config.instancePath);
 
+        // 版本 JSON 的 javaVersion.majorVersion 是官方声明的最低 Java 要求，
+        // 新版本号规则（26.x）与快照都以此为准，缺失时回退到按版本号推算
+        const int jsonJavaMajor =
+            m_cachedMergedJson.value(QStringLiteral("javaVersion")).toObject()
+                             .value(QStringLiteral("majorVersion")).toInt();
+
         // Find best Java version for the game version
-        JavaInfo bestJavaInfo = findBestJavaVersion(gameVersion);
+        JavaInfo bestJavaInfo = findBestJavaVersion(gameVersion, jsonJavaMajor);
 
         if (bestJavaInfo.valid) {
             javaPath = bestJavaInfo.path;

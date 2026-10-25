@@ -30,7 +30,6 @@
 #include <QStandardPaths>
 #include <functional>
 
-const int VersionDownloader::MAX_CONCURRENT_DOWNLOADS;
 #include "SettingsManager.h"
 
 #include "utils/ManifestCache.h"
@@ -46,7 +45,6 @@ VersionDownloader::VersionDownloader()
     , m_totalBytes(0)
     , m_downloadedBytes(0)
     , m_clientJarSize(0)
-    , m_activeDownloadCount(0)
     , m_lastSpeedBytes(0)
     , m_lastSpeedTime(0)
 {
@@ -138,8 +136,6 @@ void VersionDownloader::cancelDownload()
     m_totalBytes = 0;
     m_downloadedBytes = 0;
     m_clientJarSize = 0;
-    m_pendingDownloads.clear();
-    m_pendingAssets.clear();
 
     abortAllActiveReplies();
 
@@ -166,6 +162,13 @@ void VersionDownloader::pauseDownload()
     {
         QMutexLocker locker(&m_stateMutex);
         m_isPaused = true;
+    }
+
+    // MultiMC 进度逻辑：中止阶段作业，已完成文件保留在完成集合中，
+    // 恢复时重新扫描磁盘续传
+    if (m_phaseJob)
+    {
+        m_phaseJob->abort();
     }
 
     if (!m_currentTaskId.isEmpty())
@@ -196,14 +199,15 @@ void VersionDownloader::resumeDownload()
     switch (m_currentPhase)
     {
     case DownloadPhase::ClientJar:
-        // 分段下载客户端 JAR 时被暂停：分段已被丢弃，重新发起网络下载
+        // 客户端 JAR 被暂停：重新发起网络下载（复用扫描会在磁盘上找到已完成文件）
         downloadClientJarFromNetwork();
         break;
     case DownloadPhase::Libraries:
-        processLibraryQueue();
+        // 重新扫描磁盘：已完成的文件（完成集合）跳过，剩余重建阶段作业
+        startLibrariesDownload();
         break;
     case DownloadPhase::Assets:
-        processAssetQueue();
+        startAssetsDownload();
         break;
     default:
         break;
@@ -256,8 +260,13 @@ void VersionDownloader::abortAllActiveReplies()
         if (job)
             job->abort();
     }
-    m_activeFileProgress.clear();
-    m_activeDownloadCount = 0;
+    if (m_phaseJob)
+    {
+        const NetJob::Ptr phaseJob = m_phaseJob;
+        m_phaseJob.reset();
+        phaseJob->abort();
+    }
+    m_phaseActionReceived.clear();
 }
 
 void VersionDownloader::failDownload(const QString &error)
@@ -266,8 +275,6 @@ void VersionDownloader::failDownload(const QString &error)
     // 任务失败：在途复用扫描结果作废
     ++m_reuseScanId;
     abortAllActiveReplies();
-    m_pendingDownloads.clear();
-    m_pendingAssets.clear();
 
     if (!m_currentTaskId.isEmpty())
     {
@@ -524,7 +531,6 @@ void VersionDownloader::downloadClientJarFromNetwork()
 
     // MultiMC net 层传输：Download + FileSink + SHA1 校验，
     // BMCL 源携带官方地址作回退，无需再分段
-    m_activeDownloadCount++;
     downloadSingleFile(clientUrl, clientJarPath, m_clientJarSize, m_clientJarSha1,
                        m_clientJarFallbackUrl, true);
 }
@@ -612,14 +618,9 @@ void VersionDownloader::downloadSingleFile(const QString &url, const QString &fi
 
     connect(dl.get(), &NetAction::netActionProgress, this,
             [this, filePath](int, qint64 bytesReceived, qint64) {
-        m_activeFileProgress[filePath] = bytesReceived;
-        qint64 totalInFlight = 0;
-        for (auto it = m_activeFileProgress.constBegin();
-             it != m_activeFileProgress.constEnd(); ++it)
-        {
-            totalInFlight += it.value();
-        }
-        updateTaskProgress(m_downloadedBytes + totalInFlight, m_totalBytes);
+        // 单文件路径（客户端 JAR / 日志配置）：按字节直接汇报
+        if (filePath.endsWith(QStringLiteral(".jar")))
+            updateTaskProgress(m_downloadedBytes + bytesReceived, m_totalBytes);
     });
 
     // 单文件一个 NetJob：MultiMC 语义下由 NetJob 负责重试（3 次、带退避）
@@ -668,76 +669,180 @@ void VersionDownloader::downloadLogConfigs()
     if (QFile::exists(logConfigPath))
         return;
 
-    m_activeDownloadCount++;
+    // 该文件不在 calculateTotalSize 的估算里，计入总量避免进度越界
+    m_totalBytes += clientLogSize;
     downloadSingleFile(clientLogUrl, logConfigPath, clientLogSize, clientLogSha1,
                        QString(), false);
 }
 
 void VersionDownloader::onNetFileSucceeded(const NetFileParams &params)
 {
-    m_activeDownloadCount--;
-    m_activeFileProgress.remove(params.filePath);
+    addCompletedFile(params.filePath, params.fileSize);
 
+    // 暂停中：只记账，不推进阶段（恢复时重扫磁盘续传）
+    if (m_isPaused) return;
     if (!m_isDownloading) return;
 
-    m_downloadedBytes += params.fileSize;
-    updateTaskProgress(m_downloadedBytes, m_totalBytes);
+    // 百分比由阶段作业的聚合进度负责，这里不按字节重算，避免进度回跳
 
     if (params.isClientJar)
     {
         proceedAfterClientJar();
-        return;
     }
-
-    if (m_currentPhase == DownloadPhase::Libraries)
-        processLibraryQueue();
-    else if (m_currentPhase == DownloadPhase::Assets)
-        processAssetQueue();
+    // 其余单文件（日志配置）不影响阶段推进：所属阶段的 NetJob 自行聚合进度
 }
 
 void VersionDownloader::onNetFileFailed(const NetFileParams &params)
 {
-    m_activeDownloadCount--;
-    m_activeFileProgress.remove(params.filePath);
+    if (m_isPaused || !m_isDownloading) return;
 
-    if (m_isPaused)
+    if (params.isClientJar)
     {
-        // 暂停：非客户端 JAR 的文件恢复后重新入队；客户端 JAR 由恢复路径整体重下
-        if (!params.isClientJar)
-            requeuePendingFile(params);
+        failDownload(tr("下载失败 (已重试多次): %1").arg(QFileInfo(params.filePath).fileName()));
         return;
     }
-    if (!m_isDownloading) return;
-
-    failDownload(tr("下载失败 (已重试多次): %1").arg(QFileInfo(params.filePath).fileName()));
+    // 日志配置属于锦上添花的文件：失败不阻塞安装，仅提示
+    emit statusChanged(tr("日志配置下载失败，已跳过：%1")
+                           .arg(QFileInfo(params.filePath).fileName()));
 }
 
 void VersionDownloader::onNetFileAborted(const NetFileParams &params)
 {
-    m_activeDownloadCount--;
-    m_activeFileProgress.remove(params.filePath);
-
-    if (m_isPaused)
-    {
-        if (!params.isClientJar)
-            requeuePendingFile(params);
-        return;
-    }
-    // 运行中 abort 只发生在任务取消/失败：abortAllActiveReplies 已完成清理
+    Q_UNUSED(params);
+    // 暂停/取消路径：abortAllActiveReplies 与恢复重扫已完成清理
 }
 
-void VersionDownloader::requeuePendingFile(const NetFileParams &params)
+// ── 阶段作业：MultiMC 进度逻辑 ──
+// 库/资源各自装进一个 NetJob：NetJob 按文件数等权聚合（每个文件 0~1000），
+// 在途文件按字节占比折算，进度由 NetJob 自己维护，这里只做权重包络映射
+void VersionDownloader::startPhaseJob(const QList<PendingDownload> &files, DownloadPhase phase)
 {
-    PendingDownload pending;
-    pending.url = params.url;
-    pending.filePath = params.filePath;
-    pending.fileSize = params.fileSize;
-    pending.expectedHash = params.expectedHash;
-    pending.fallbackUrl = params.fallbackUrl;
-    if (m_currentPhase == DownloadPhase::Assets)
-        m_pendingAssets.enqueue(pending);
-    else
-        m_pendingDownloads.enqueue(pending);
+    if (files.isEmpty())
+        return; // 调用方已处理空列表
+
+    m_phaseJobPhase = phase;
+
+    auto job = NetJob::Ptr(new NetJob(phase == DownloadPhase::Libraries
+                                          ? tr("下载依赖库") : tr("下载资源文件"),
+                                      Net::networkAccessManager()));
+
+    for (const PendingDownload &dl : files)
+    {
+        auto dlAction = Net::Download::makeFile(QUrl(dl.url), dl.filePath);
+        if (!dl.fallbackUrl.isEmpty() && dl.fallbackUrl != dl.url)
+            dlAction->addUrlFallback(QUrl(dl.fallbackUrl));
+        if (!dl.expectedHash.isEmpty())
+        {
+            dlAction->addValidator(new Net::ChecksumValidator(
+                QCryptographicHash::Sha1, QByteArray::fromHex(dl.expectedHash.toLatin1())));
+        }
+
+        const QString fileName = QFileInfo(dl.filePath).fileName();
+        NetAction *actionPtr = dlAction.get();
+        connect(actionPtr, &NetAction::netActionProgress, this,
+                [this, actionPtr, fileName, dl](int, qint64 received, qint64) {
+            m_phaseActionReceived[actionPtr] = received;
+            DownloadTaskManager::instance()->updateTaskFileProgress(
+                m_currentTaskId, fileName, received, dl.fileSize);
+            reportPhaseProgress(false);
+        });
+        connect(actionPtr, &NetAction::succeeded, this, [this, actionPtr, dl](int) {
+            m_phaseActionReceived.remove(actionPtr);
+            addCompletedFile(dl.filePath, dl.fileSize);
+            reportPhaseProgress(true);
+        });
+        connect(actionPtr, &NetAction::failed, this, [this, actionPtr](int) {
+            m_phaseActionReceived.remove(actionPtr);
+        });
+
+        job->addNetAction(dlAction);
+    }
+
+    connect(job.get(), &Task::progress, this,
+            [this](qint64, qint64) { reportPhaseProgress(false); });
+    connect(job.get(), &Task::finished, this, [this, job]() {
+        onPhaseJobFinished(job);
+    });
+
+    m_phaseJob = job;
+    job->start();
+}
+
+void VersionDownloader::addCompletedFile(const QString &filePath, qint64 fileSize)
+{
+    if (m_completedFiles.contains(filePath))
+        return;
+    m_completedFiles.insert(filePath);
+    m_downloadedBytes += fileSize;
+}
+
+void VersionDownloader::reportPhaseProgress(bool force)
+{
+    if (!m_phaseJob || m_currentTaskId.isEmpty())
+        return;
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (!force && now - m_lastProgressReportMs < 150)
+        return;
+    m_lastProgressReportMs = now;
+
+    const qint64 current = m_phaseJob->getProgress();
+    const qint64 total = m_phaseJob->getTotalProgress();
+    if (total <= 0)
+        return;
+
+    const double jobPct = qBound(0.0, current * 100.0 / total, 100.0);
+
+    // 阶段权重包络（HMCL 式）：依赖库 25~60、资源文件 60~80
+    int startPercent = 0;
+    int weight = 0;
+    if (m_phaseJobPhase == DownloadPhase::Libraries)   { startPercent = 25; weight = 35; }
+    else if (m_phaseJobPhase == DownloadPhase::Assets) { startPercent = 60; weight = 20; }
+    else return;
+
+    const int global = qBound(0, startPercent + static_cast<int>(weight * jobPct / 100.0), 100);
+
+    qint64 inFlight = 0;
+    for (auto it = m_phaseActionReceived.constBegin();
+         it != m_phaseActionReceived.constEnd(); ++it)
+    {
+        inFlight += it.value();
+    }
+
+    DownloadTaskManager::instance()->updateTaskProgress(
+        m_currentTaskId, global, m_downloadedBytes + inFlight, m_totalBytes);
+}
+
+void VersionDownloader::onPhaseJobFinished(const NetJob::Ptr &job)
+{
+    if (m_phaseJob == job)
+        m_phaseJob.reset();
+    m_phaseActionReceived.clear();
+
+    if (!m_isDownloading)
+        return; // 已取消：abortAllActiveReplies 已清理
+    if (job->wasAborted())
+        return; // 暂停：恢复时重扫磁盘续传
+
+    if (!job->wasSuccessful())
+    {
+        const QStringList failed = job->getFailedFiles();
+        failDownload(tr("下载失败 (已重试多次): %1")
+                         .arg(failed.isEmpty() ? tr("未知文件")
+                                               : QFileInfo(failed.first()).fileName()));
+        return;
+    }
+
+    if (m_phaseJobPhase == DownloadPhase::Libraries)
+    {
+        DownloadTaskManager::instance()->updateTaskStage(m_currentTaskId, DownloadStage::Assets);
+        m_currentPhase = DownloadPhase::Assets;
+        startAssetsDownload();
+    }
+    else if (m_phaseJobPhase == DownloadPhase::Assets)
+    {
+        completeDownload();
+    }
 }
 
 
@@ -779,6 +884,7 @@ void VersionDownloader::startLibrariesDownload()
                     dl.url = artifact["url"].toString();
                     dl.filePath = librariesPath + "/" + artifact["path"].toString();
                     dl.fileSize = artifact["size"].toVariant().toLongLong();
+                    dl.expectedHash = artifact["sha1"].toString();
 
                     if (m_downloadSource == BMCL)
                     {
@@ -818,12 +924,16 @@ void VersionDownloader::startLibraryScan(QList<PendingDownload> all, const QStri
     emit statusChanged(tr("正在检查本地已有文件（复用）..."));
     updateTaskStatus(tr("正在检查本地已有文件"));
 
-    QThreadPool::globalInstance()->start([this, scanId, all, bases, librariesPath]() {
+    const QSet<QString> completedSnapshot = m_completedFiles;
+    QThreadPool::globalInstance()->start([this, scanId, all, bases, librariesPath, completedSnapshot]() {
         QList<PendingDownload> remaining;
         qint64 reusedBytes = 0;
 
         for (const PendingDownload &dl : all)
         {
+            // 本次任务已完成（暂停恢复重扫）：字节已计入，直接跳过
+            if (completedSnapshot.contains(dl.filePath))
+                continue;
             // 相对 libraries 目录的路径（如 com/google/guava/.../guava.jar）
             QString rel = dl.filePath;
             if (rel.startsWith(librariesPath + "/"))
@@ -853,6 +963,7 @@ void VersionDownloader::applyLibraryScanResult(QList<PendingDownload> remaining,
 {
     if (scanId != m_reuseScanId || !m_isDownloading) return;
     if (m_currentPhase != DownloadPhase::Libraries) return;
+    if (m_isPaused) return; // 恢复时重新进入阶段（重扫磁盘）
 
     if (reusedBytes > 0)
     {
@@ -860,10 +971,7 @@ void VersionDownloader::applyLibraryScanResult(QList<PendingDownload> remaining,
         updateTaskProgress(m_downloadedBytes, m_totalBytes);
     }
 
-    m_pendingDownloads.clear();
-    for (const PendingDownload &dl : remaining)
-        m_pendingDownloads.enqueue(dl);
-    if (m_pendingDownloads.isEmpty())
+    if (remaining.isEmpty())
     {
         DownloadTaskManager::instance()->updateTaskStage(m_currentTaskId, DownloadStage::Assets);
         m_currentPhase = DownloadPhase::Assets;
@@ -871,38 +979,8 @@ void VersionDownloader::applyLibraryScanResult(QList<PendingDownload> remaining,
         return;
     }
 
-    emit statusChanged(tr("正在下载 %1 个依赖库...").arg(m_pendingDownloads.size()));
-
-    int concurrent = qMin(effectiveConcurrentLimit(), m_pendingDownloads.size());
-    for (int i = 0; i < concurrent; ++i)
-    {
-        processLibraryQueue();
-    }
-}
-
-void VersionDownloader::processLibraryQueue()
-{
-    if (m_currentPhase != DownloadPhase::Libraries) return;
-    if (m_isPaused) return;
-
-    if (m_pendingDownloads.isEmpty())
-    {
-        if (m_activeDownloadCount == 0)
-        {
-            DownloadTaskManager::instance()->updateTaskStage(m_currentTaskId, DownloadStage::Assets);
-            m_currentPhase = DownloadPhase::Assets;
-            startAssetsDownload();
-        }
-        return;
-    }
-
-    while (m_activeDownloadCount < effectiveConcurrentLimit() && !m_pendingDownloads.isEmpty())
-    {
-        PendingDownload dl = m_pendingDownloads.dequeue();
-        m_activeDownloadCount++;
-        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash,
-                           dl.fallbackUrl);
-    }
+    emit statusChanged(tr("正在下载 %1 个依赖库...").arg(remaining.size()));
+    startPhaseJob(remaining, DownloadPhase::Libraries);
 }
 
 void VersionDownloader::startAssetsDownload()
@@ -1052,12 +1130,16 @@ void VersionDownloader::startAssetScan(QList<PendingDownload> all, const QString
     emit statusChanged(tr("正在检查本地已有文件（复用）..."));
     updateTaskStatus(tr("正在检查本地已有文件"));
 
-    QThreadPool::globalInstance()->start([this, scanId, all, bases, assetsPath]() {
+    const QSet<QString> completedSnapshot = m_completedFiles;
+    QThreadPool::globalInstance()->start([this, scanId, all, bases, assetsPath, completedSnapshot]() {
         QList<PendingDownload> remaining;
         qint64 reusedBytes = 0;
 
         for (const PendingDownload &dl : all)
         {
+            // 本次任务已完成（暂停恢复重扫）：字节已计入，直接跳过
+            if (completedSnapshot.contains(dl.filePath))
+                continue;
             // 资源以内容寻址存储：objects/<hash前2位>/<hash>，路径即内容标识，
             // 大小一致即可视为同内容（参考 PCL2 的按大小跳过策略）
             QString rel = dl.filePath;
@@ -1087,29 +1169,21 @@ void VersionDownloader::applyAssetScanResult(QList<PendingDownload> remaining, q
 {
     if (scanId != m_reuseScanId || !m_isDownloading) return;
     if (m_currentPhase != DownloadPhase::Assets) return;
+    if (m_isPaused) return; // 恢复时重新进入阶段（重扫磁盘）
 
     if (reusedBytes > 0)
     {
         m_downloadedBytes += reusedBytes;
         updateTaskProgress(m_downloadedBytes, m_totalBytes);
     }
-
-    m_pendingAssets.clear();
-    for (const PendingDownload &dl : remaining)
-        m_pendingAssets.enqueue(dl);
-    if (m_pendingAssets.isEmpty())
+    if (remaining.isEmpty())
     {
         completeDownload();
         return;
     }
 
-    emit statusChanged(tr("正在下载 %1 个资源文件...").arg(m_pendingAssets.size()));
-
-    int concurrent = qMin(effectiveConcurrentLimit(), m_pendingAssets.size());
-    for (int i = 0; i < concurrent; ++i)
-    {
-        processAssetQueue();
-    }
+    emit statusChanged(tr("正在下载 %1 个资源文件...").arg(remaining.size()));
+    startPhaseJob(remaining, DownloadPhase::Assets);
 }
 
 void VersionDownloader::completeDownload()
@@ -1121,29 +1195,6 @@ void VersionDownloader::completeDownload()
     emit downloadCompleted(m_currentVersionId, getActualVersionPath());
     DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Completed, tr("下载完成"));
     DownloadTaskManager::instance()->updateTaskStage(m_currentTaskId, DownloadStage::Completed, 100);
-}
-
-void VersionDownloader::processAssetQueue()
-{
-    if (m_currentPhase != DownloadPhase::Assets) return;
-    if (m_isPaused) return;
-
-    if (m_pendingAssets.isEmpty())
-    {
-        if (m_activeDownloadCount == 0)
-        {
-            completeDownload();
-        }
-        return;
-    }
-
-    while (m_activeDownloadCount < effectiveConcurrentLimit() && !m_pendingAssets.isEmpty())
-    {
-        PendingDownload dl = m_pendingAssets.dequeue();
-        m_activeDownloadCount++;
-        downloadSingleFile(dl.url, dl.filePath, dl.fileSize, dl.expectedHash,
-                           dl.fallbackUrl);
-    }
 }
 
 QStringList VersionDownloader::buildReuseBases() const
@@ -1225,11 +1276,6 @@ QString VersionDownloader::getClientDownloadUrl(const QJsonObject &versionManife
 
 /* 依赖库/资源的并发下载上限：BMCLAPI 对单 IP 并发限流严格（429），
  * 用低并发换成功率；官方源维持原有高并发 */
-int VersionDownloader::effectiveConcurrentLimit() const
-{
-    return (m_downloadSource == BMCL) ? 8 : MAX_CONCURRENT_DOWNLOADS;
-}
-
 void VersionDownloader::calculateTotalSize(const QJsonObject &versionManifest)
 {
     if (versionManifest.contains("downloads"))
@@ -1287,7 +1333,7 @@ void VersionDownloader::updateTaskProgress(qint64 bytesReceived, qint64 bytesTot
 {
     if (m_currentTaskId.isEmpty() || bytesTotal <= 0) return;
 
-    int percent = static_cast<int>((bytesReceived * 100) / bytesTotal);
+    int percent = qBound(0, static_cast<int>((bytesReceived * 100) / bytesTotal), 100);
     DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, percent);
 }
 

@@ -494,6 +494,10 @@ AiChatPage::~AiChatPage()
 
 void AiChatPage::initUI()
 {
+    setObjectName(QStringLiteral("aiChatPage"));
+    // 深色 + 自定义背景时页面自身提供暗色底，避免消息区全透明
+    setAttribute(Qt::WA_StyledBackground, true);
+
     auto *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
@@ -607,7 +611,7 @@ void AiChatPage::initUI()
     // 收起按钮（与 SubNavPanel 的 subNavCollapseBtn 一致）
     auto *collapseBtn = new QPushButton(panelHeader);
     collapseBtn->setObjectName("subNavCollapseBtn");
-    collapseBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/chevron_left.svg", QColor("#888888"), 16));
+    collapseBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/chevron_left.svg", mutedIconColor(), 16));
     collapseBtn->setIconSize(QSize(16, 16));
     collapseBtn->setFixedSize(24, 24);
     collapseBtn->setCursor(Qt::PointingHandCursor);
@@ -786,7 +790,7 @@ void AiChatPage::initUI()
     m_modelBtn->setToolTip(tr("选择本次对话使用的模型"));
     m_modelBtn->setText(tr("选择模型"));
     m_modelBtn->setIcon(IconHelper::loadColoredIcon(
-        ":/Images/Icons/arrow_down_triangle.svg", QColor("#8b8b8b"), 12));
+        ":/Images/Icons/arrow_down_triangle.svg", mutedIconColor(), 12));
     m_modelBtn->setIconSize(QSize(10, 10));
     m_modelBtn->setLayoutDirection(Qt::RightToLeft);
 
@@ -800,7 +804,7 @@ void AiChatPage::initUI()
                                   "可不选，也可选择已绑定的文件夹，或绑定新文件夹。"));
     m_workspaceBtn->setText(tr("工作区: 不选"));
     m_workspaceBtn->setIcon(IconHelper::loadColoredIcon(
-        ":/Images/Icons/arrow_down_triangle.svg", QColor("#8b8b8b"), 12));
+        ":/Images/Icons/arrow_down_triangle.svg", mutedIconColor(), 12));
     m_workspaceBtn->setIconSize(QSize(10, 10));
     m_workspaceBtn->setLayoutDirection(Qt::RightToLeft);
 
@@ -811,7 +815,7 @@ void AiChatPage::initUI()
     m_thinkingEffortCombo->setFixedHeight(28);
     m_thinkingEffortCombo->setToolTip(tr("思考强度：关闭后不输出思考过程，"
                                          "低/中/高控制推理深度（对支持思考的模型生效）。"));
-    QIcon brainIcon = IconHelper::loadColoredIcon(":/Images/Icons/brain.svg", QColor("#64748b"), 14);
+    QIcon brainIcon = IconHelper::loadColoredIcon(":/Images/Icons/brain.svg", mutedIconColor(), 14);
     m_thinkingEffortCombo->addItem(brainIcon, tr("思考: 关闭"), 0);
     m_thinkingEffortCombo->addItem(brainIcon, tr("思考: 低"), 1);
     m_thinkingEffortCombo->addItem(brainIcon, tr("思考: 中"), 2);
@@ -837,7 +841,7 @@ void AiChatPage::initUI()
     m_referenceBtn->setCursor(Qt::PointingHandCursor);
     m_referenceBtn->setFlat(true);
     m_referenceBtn->setFixedSize(30, 30);
-    m_referenceBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/link.svg", QColor("#64748b"), 16));
+    m_referenceBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/link.svg", mutedIconColor(), 16));
     m_referenceBtn->setIconSize(QSize(16, 16));
     m_referenceBtn->setToolTip(tr("引用实例或本地磁盘中的模组、资源包、光影包、投影、存档、数据包、"
                                   "网页或任意文件，作为本次消息的上下文。"));
@@ -848,7 +852,7 @@ void AiChatPage::initUI()
     m_promptOptimizeBtn->setCursor(Qt::PointingHandCursor);
     m_promptOptimizeBtn->setFlat(true);
     m_promptOptimizeBtn->setFixedSize(30, 30);
-    m_promptOptimizeBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/sparkles.svg", QColor("#64748b"), 16));
+    m_promptOptimizeBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/sparkles.svg", mutedIconColor(), 16));
     m_promptOptimizeBtn->setIconSize(QSize(16, 16));
     m_promptOptimizeBtn->setEnabled(false);
     m_promptOptimizeBtn->setToolTip(tr("用 AI 优化输入框中的提示词草稿"));
@@ -859,7 +863,7 @@ void AiChatPage::initUI()
     m_systemPromptBtn->setCursor(Qt::PointingHandCursor);
     m_systemPromptBtn->setFlat(true);
     m_systemPromptBtn->setFixedSize(30, 30);
-    m_systemPromptBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/clipboard.svg", QColor("#64748b"), 16));
+    m_systemPromptBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/clipboard.svg", mutedIconColor(), 16));
     m_systemPromptBtn->setIconSize(QSize(16, 16));
     m_systemPromptBtn->setToolTip(tr("从提示词库中选择系统提示词（可多选）"));
 
@@ -869,7 +873,7 @@ void AiChatPage::initUI()
     m_skillBtn->setCursor(Qt::PointingHandCursor);
     m_skillBtn->setFlat(true);
     m_skillBtn->setFixedSize(30, 30);
-    m_skillBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/bolt.svg", QColor("#64748b"), 16));
+    m_skillBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/bolt.svg", mutedIconColor(), 16));
     m_skillBtn->setIconSize(QSize(16, 16));
     m_skillBtn->setToolTip(tr("管理 AI 技能：导入、启用/禁用、删除。技能可扩展 AI 助手的工具能力。"));
 
@@ -1173,11 +1177,13 @@ void AiChatPage::initConnections()
         switchToMode(1);
     });
 
-    // 主题色变化时刷新切换按钮图标颜色
+    // 主题色/明暗切换时刷新工具栏 SVG 图标颜色
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
             this, [this]() { updateToggleConvIcon(); });
     connect(ThemeManager::instance(), &ThemeManager::textColorChanged,
-            this, [this]() { updateToggleConvIcon(); });
+            this, [this]() { updateToggleConvIcon(); refreshToolIcons(); });
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, [this](ThemeManager::ThemeType) { refreshToolIcons(); });
 
     // Ctrl+Enter 也发送
     connect(m_inputEdit, &QTextEdit::textChanged, this, [this]() {
@@ -2236,8 +2242,45 @@ void AiChatPage::updateToggleConvIcon()
     // 收起态使用次要灰，展开态使用主题强调色
     QColor color = m_convListExpanded
                        ? QColor(ThemeManager::instance()->currentThemeColor())
-                       : QColor("#888888");
+                       : mutedIconColor();
     m_toggleConvBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/list_view.svg", color, 20));
+}
+
+QColor AiChatPage::mutedIconColor()
+{
+    const bool dark = ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme;
+    return dark ? QColor(QStringLiteral("#9CA3AF")) : QColor(QStringLiteral("#64748B"));
+}
+
+void AiChatPage::refreshToolIcons()
+{
+    const QColor muted = mutedIconColor();
+    if (m_modelBtn)
+        m_modelBtn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/arrow_down_triangle.svg", muted, 12));
+    if (m_workspaceBtn)
+        m_workspaceBtn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/arrow_down_triangle.svg", muted, 12));
+    if (m_referenceBtn)
+        m_referenceBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/link.svg", muted, 16));
+    if (m_promptOptimizeBtn)
+        m_promptOptimizeBtn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/sparkles.svg", muted, 16));
+    if (m_systemPromptBtn)
+        m_systemPromptBtn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/clipboard.svg", muted, 16));
+    if (m_skillBtn)
+        m_skillBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/bolt.svg", muted, 16));
+
+    // 思考强度下拉的脑图标
+    if (m_thinkingEffortCombo)
+    {
+        QIcon brainIcon = IconHelper::loadColoredIcon(":/Images/Icons/brain.svg", muted, 14);
+        for (int i = 0; i < m_thinkingEffortCombo->count(); ++i)
+            m_thinkingEffortCombo->setItemIcon(i, brainIcon);
+    }
+
+    updateToggleConvIcon();
 }
 
 void AiChatPage::onToggleConvList()
@@ -5134,7 +5177,8 @@ void AiChatPage::triggerInstanceDownload(const QString &versionId, const QString
             if (ldType.isEmpty() || ldType == QStringLiteral("none"))
             {
                 NotificationManager::showSuccess(this,
-                    tr("Minecraft %1 已下载完成\r\n%2").arg(mcVer, actualVersionPath));
+                    NotificationManager::withDetail(
+                        tr("Minecraft %1 已下载完成\r\n%2"), mcVer, actualVersionPath));
                 return;
             }
 
@@ -5203,7 +5247,8 @@ void AiChatPage::triggerInstanceDownload(const QString &versionId, const QString
     VersionDownloader::instance()->downloadVanilla(versionId, instancePath, instanceName, loaderMeta);
 
     NotificationManager::showInfo(this,
-        tr("开始下载 Minecraft %1 到\r\n%2").arg(versionId, instancePath));
+        NotificationManager::withDetail(
+            tr("开始下载 Minecraft %1 到\r\n%2"), versionId, instancePath));
 }
 
 void AiChatPage::onUserQuestionAsked(const QString &question, const QStringList &options,

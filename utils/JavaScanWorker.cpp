@@ -1,12 +1,13 @@
 /**
  * @file   JavaScanWorker.cpp
- * @brief  Java 检测后台线程工作类（注册表 + 厂商目录 + Minecraft 运行时 + 关键词 BFS 全盘）
+ * @brief  Java 检测后台线程工作类（注册表 + 厂商目录 + 启动器运行时 + 黑名单剪枝全盘 BFS）
  * @author BlockBox Team
  * @date   2026-05-22
  */
 
 #include "utils/JavaScanWorker.h"
 
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -26,6 +27,15 @@
 #include <windows.h>
 #endif
 
+// 全盘深扫的最大目录深度（防止病态嵌套拖垮扫描）
+static const int kMaxScanDepth = 12;
+
+// 顶层自由深入的深度：前 3 层不管目录名是什么都进入。
+// 用户常把启动器/JDK 放在中文或自定义命名的目录下（如 "D:\系统迁移勿删\.hmcl"），
+// 这些目录名不含任何 Java 关键词，关键词白名单剪枝会把它们整棵误剪掉；
+// 顶层放开 + 深层再剪枝，能同时保住覆盖面与速度
+static const int kFreeDescendDepth = 3;
+
 // ────────────────────────────────────────────────────────────
 // 构造 / 析构
 // ────────────────────────────────────────────────────────────
@@ -41,15 +51,35 @@ JavaScanWorker::JavaScanWorker(QObject* parent)
     // 移动端：扫描系统与沙盒内的固定目录（鸿蒙同样是 musl/ohos 布局，
     // 可执行文件名是 java 而不是 java.exe）
     m_drives << "/system/bin" << "/data/data" << "/storage/emulated/0";
-    m_excludeLower.clear();
 #else
-    m_drives << "C:/" << "D:/" << "E:/";
-    m_excludeLower << "windows" << "programdata" << "$recycle.bin"
-                   << "system volume information" << "recovery"
-                   << "msocache" << "perflogs";
+    // 桌面端：动态枚举本机所有就绪的盘符（不再硬编码 C/D/E，
+    // Java 装在 F 盘、G 盘等也能扫到；空光驱/未就绪的可移动盘会被跳过）
+    const QFileInfoList rootDrives = QDir::drives();
+    for (const QFileInfo& root : rootDrives) {
+        const QString path = root.absoluteFilePath();  // 形如 "C:/"
+        QStorageInfo si(path);
+        if (!si.isValid() || !si.isReady() || si.bytesTotal() <= 0)
+            continue;
+        m_drives << path;
+    }
+    if (m_drives.isEmpty())
+        m_drives << QStringLiteral("C:/");
 #endif
 
-    // Java 相关关键词，用于 BFS 剪枝（目录名包含这些词才继续深入）
+    // 全盘深扫黑名单（按目录名精确匹配，命中即整棵跳过）：
+    // 与"关键词白名单"相反的黑名单策略——除明确无关的大目录外全部深入，
+    // 保证自定义命名目录（中文文件夹、任意层级）里的 Java 不被误剪
+    m_excludedDirNames
+        << "windows" << "windows.old" << "$recycle.bin" << "system volume information"
+        << "msocache" << "perflogs" << "recovery" << "programdata"
+        << "config.msi" << "windowsapps" << "steamapps"
+        << "node_modules" << ".git" << ".svn" << ".hg"
+        << "__pycache__" << "site-packages"
+        << "temp" << "tmp" << "cache" << "caches" << ".cache"
+        << "logs" << "crashdumps" << "vendor" << "venv" << ".venv"
+        << "target";
+
+    // Java 相关关键词，用于深扫时深层 BFS 剪枝（目录名包含这些词才继续深入）
     // 综合 PCL-CE / ProjBobcat 的关键词集合
     m_keywords
         << "java" << "jdk" << "jre" << "jvm"
@@ -57,6 +87,7 @@ JavaScanWorker::JavaScanWorker(QObject* parent)
         << "temurin" << "zulu" << "azul" << "bellsoft" << "liberica"
         << "microsoft" << "semeru" << "corretto" << "amazon"
         << "eclipse" << "kona" << "dragonwell" << "sapmachine"
+        << "graalvm" << "bisheng"
         << "runtime" << "environment" << "env"
         << "x64" << "x86_64" << "amd64" << "arm64" << "aarch64"
         << "minecraft" << "mojang" << "mc" << "game"
@@ -64,7 +95,9 @@ JavaScanWorker::JavaScanWorker(QObject* parent)
         << "jdks" << "javanw" << "javapath"
         // 深度搜索需要逐层进入的系统/用户目录名（Java 常装在这些层级之下）
         << "program files" << "users" << "appdata" << "programs"
-        << "scoop" << "gradle" << "jetbrains" << "toolbox" << "jbr";
+        << "scoop" << "gradle" << "jetbrains" << "toolbox" << "jbr"
+        // JDK 的 bin 目录与其他工具的安装结构（bin/apps/current 层）
+        << "bin" << "apps" << "current";
 }
 
 JavaScanWorker::~JavaScanWorker() {}
@@ -101,7 +134,7 @@ QList<QPair<QString, QString>> JavaScanWorker::runQuickScan()
     if (isCancelled()) return results;
     scanVendorDirectories(results);
     if (isCancelled()) return results;
-    scanMinecraftRuntime(results);
+    scanLauncherRuntimes(results);
     return results;
 }
 
@@ -698,7 +731,8 @@ void JavaScanWorker::scanVendorDirectories(QList<QPair<QString, QString>>& outRe
         // IntelliJ IDEA 下载的 JDK
         QDir jdksDir(userHome + "/.jdks");
         if (jdksDir.exists()) {
-            const QFileInfoList subdirs = jdksDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+            const QFileInfoList subdirs = jdksDir.entryInfoList(
+                QDir::Dirs | QDir::NoDotAndDotDot);
             for (const QFileInfo& subdir : subdirs) {
                 if (isCancelled()) return;
                 tryAddJava(subdir.absoluteFilePath() + "/bin", outResults);
@@ -709,7 +743,8 @@ void JavaScanWorker::scanVendorDirectories(QList<QPair<QString, QString>>& outRe
         QString gradleUserHome = qEnvironmentVariable("GRADLE_USER_HOME", userHome + "/.gradle");
         QDir gradleJdksDir(gradleUserHome + "/jdks");
         if (gradleJdksDir.exists()) {
-            const QFileInfoList subdirs = gradleJdksDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+            const QFileInfoList subdirs = gradleJdksDir.entryInfoList(
+                QDir::Dirs | QDir::NoDotAndDotDot);
             for (const QFileInfo& subdir : subdirs) {
                 if (isCancelled()) return;
                 tryAddJava(subdir.absoluteFilePath() + "/bin", outResults);
@@ -722,73 +757,131 @@ void JavaScanWorker::scanVendorDirectories(QList<QPair<QString, QString>>& outRe
 }
 
 // ────────────────────────────────────────────────────────────
-// 扫描 Minecraft 启动器自带的 Java 运行时
+// 扫描各启动器自带的 Java 运行时
+//   覆盖：官方启动器（商店版/桌面版）、HMCL、.minecraft（含各盘根与便携目录）
 // ────────────────────────────────────────────────────────────
 
-void JavaScanWorker::scanMinecraftRuntime(QList<QPair<QString, QString>>& outResults)
+void JavaScanWorker::scanRuntimeRoot(const QString& runtimeRoot,
+                                     QList<QPair<QString, QString>>& outResults)
 {
-    // Minecraft 官方启动器在以下位置预装 Java 运行时:
-    //   %LOCALAPPDATA%/Packages/.../LocalCache/Local/runtime
-    //   %ProgramFiles(x86)%/Minecraft Launcher/runtime
-    //   %APPDATA%/.minecraft/runtime
-    QStringList runtimeRoots;
+    QDir rootDir(runtimeRoot);
+    if (!rootDir.exists()) return;
 
-    QString localAppData = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    if (!localAppData.isEmpty()) {
-        runtimeRoots << localAppData + "/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local/runtime";
-    }
-
-    QString programFilesX86 = QProcessEnvironment::systemEnvironment().value("ProgramFiles(x86)");
-    if (!programFilesX86.isEmpty()) {
-        runtimeRoots << programFilesX86 + "/Minecraft Launcher/runtime";
-    }
-
-    QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (!appData.isEmpty()) {
-        // .minecraft 通常在 %APPDATA%\.minecraft
-        QDir adDir(appData);
-        adDir.cdUp();
-        runtimeRoots << adDir.absolutePath() + "/.minecraft/runtime";
-    }
-
-    for (const QString& root : runtimeRoots) {
+    // 兼容三种目录层级（不同启动器下载的 Mojang 运行时布局不一）：
+    //   1. runtime/<名称>/bin                    —— HMCL / PCL 等第三方启动器（平铺）
+    //   2. runtime/<名称>/<平台>/bin
+    //   3. runtime/<名称>/<平台>/<版本>/bin       —— 官方启动器
+    const QFileInfoList runtimeNames = rootDir.entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo& runtimeName : runtimeNames) {
         if (isCancelled()) return;
-        QDir rootDir(root);
-        if (!rootDir.exists()) continue;
 
-        // runtime/<runtime-name>/<platform>/<version>/bin/java.exe
-        const QFileInfoList runtimeNames = rootDir.entryInfoList(
+        tryAddJava(runtimeName.absoluteFilePath() + "/bin", outResults);
+
+        const QFileInfoList platforms = QDir(runtimeName.absoluteFilePath()).entryInfoList(
             QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const QFileInfo& runtimeName : runtimeNames) {
+        for (const QFileInfo& platform : platforms) {
             if (isCancelled()) return;
-            QDir runtimeDir(runtimeName.absoluteFilePath());
 
-            // 可能直接是 platform 子目录，也可能多一层 version
-            const QFileInfoList platforms = runtimeDir.entryInfoList(
+            tryAddJava(platform.absoluteFilePath() + "/bin", outResults);
+
+            const QFileInfoList versions = QDir(platform.absoluteFilePath()).entryInfoList(
                 QDir::Dirs | QDir::NoDotAndDotDot);
-            for (const QFileInfo& platform : platforms) {
+            for (const QFileInfo& version : versions) {
                 if (isCancelled()) return;
-                QDir platformDir(platform.absoluteFilePath());
-
-                // platform/<version>/bin/java.exe
-                const QFileInfoList versions = platformDir.entryInfoList(
-                    QDir::Dirs | QDir::NoDotAndDotDot);
-                for (const QFileInfo& version : versions) {
-                    if (isCancelled()) return;
-                    tryAddJava(version.absoluteFilePath() + "/bin", outResults);
-                }
-
-                // 兜底：platform/bin/java.exe
-                tryAddJava(platform.absoluteFilePath() + "/bin", outResults);
+                tryAddJava(version.absoluteFilePath() + "/bin", outResults);
             }
         }
     }
+}
 
-    qDebug() << "[JavaScanWorker] Minecraft 运行时扫描完成，累计发现" << outResults.size() << "个 Java";
+void JavaScanWorker::scanJavaLibraryDir(const QString& javaDir,
+                                        QList<QPair<QString, QString>>& outResults)
+{
+    QDir dir(javaDir);
+    if (!dir.exists()) return;
+
+    // 兼容两种布局：
+    //   <根>/<id>/bin                 —— 方块盒子 / HMCL 旧版
+    //   <根>/<平台>/<运行时>/bin      —— HMCL（windows-x86_64/mojang-java-runtime-*）
+    const QFileInfoList subs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo& sub : subs) {
+        if (isCancelled()) return;
+
+        tryAddJava(sub.absoluteFilePath() + "/bin", outResults);
+
+        const QFileInfoList subs2 = QDir(sub.absoluteFilePath()).entryInfoList(
+            QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QFileInfo& sub2 : subs2) {
+            if (isCancelled()) return;
+            tryAddJava(sub2.absoluteFilePath() + "/bin", outResults);
+        }
+    }
+}
+
+void JavaScanWorker::scanLauncherRuntimes(QList<QPair<QString, QString>>& outResults)
+{
+    const QProcessEnvironment sysEnv = QProcessEnvironment::systemEnvironment();
+    const QString localAppData = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    const QString userHome = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    const QString appDir = QCoreApplication::applicationDirPath();
+
+    // %APPDATA%（Roaming）：AppDataLocation 形如 .../Roaming/<应用名>，上退一级
+    QString roaming;
+    const QString appDataLoc = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (!appDataLoc.isEmpty()) {
+        QDir adDir(appDataLoc);
+        if (adDir.cdUp())
+            roaming = QDir(adDir.absolutePath()).absolutePath();
+    }
+
+    // ── 1. .minecraft/runtime（官方与第三方启动器都会在此放运行时）──
+    QStringList runtimeRoots;
+    // 官方启动器 商店版：LocalCache/Local/runtime
+    if (!localAppData.isEmpty())
+        runtimeRoots << localAppData + "/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local/runtime";
+    // 官方启动器 桌面版
+    const QString pfX86 = sysEnv.value("ProgramFiles(x86)");
+    if (!pfX86.isEmpty())
+        runtimeRoots << pfX86 + "/Minecraft Launcher/runtime";
+    // .minecraft 的常见位置：Roaming、用户主目录、各盘根目录、启动器程序目录（便携模式）
+    if (!roaming.isEmpty())
+        runtimeRoots << roaming + "/.minecraft/runtime";
+    if (!userHome.isEmpty())
+        runtimeRoots << userHome + "/.minecraft/runtime";
+    if (!appDir.isEmpty())
+        runtimeRoots << appDir + "/.minecraft/runtime";
+    for (const QString& drive : m_drives)
+        runtimeRoots << drive + ".minecraft/runtime";
+
+    for (const QString& root : runtimeRoots) {
+        if (isCancelled()) return;
+        scanRuntimeRoot(root, outResults);
+    }
+
+    // ── 2. HMCL 的 Java 目录：.hmcl/java/<平台>/<运行时>/bin ──
+    // HMCL 数据目录可能在 %APPDATA%、用户主目录、各盘根或程序目录（便携模式）
+    QStringList hmclRoots;
+    if (!roaming.isEmpty()) hmclRoots << roaming + "/.hmcl";
+    if (!userHome.isEmpty()) hmclRoots << userHome + "/.hmcl";
+    if (!appDir.isEmpty()) hmclRoots << appDir + "/.hmcl";
+    for (const QString& drive : m_drives)
+        hmclRoots << drive + ".hmcl";
+
+    for (const QString& root : hmclRoots) {
+        if (isCancelled()) return;
+        scanJavaLibraryDir(root + "/java", outResults);
+    }
+
+    // ── 3. 方块盒子自己下载的 Java（默认位置）：AppDataLocation/java/<id>/bin ──
+    if (!appDataLoc.isEmpty())
+        scanJavaLibraryDir(appDataLoc + "/java", outResults);
+
+    qDebug() << "[JavaScanWorker] 启动器运行时扫描完成，累计发现" << outResults.size() << "个 Java";
 }
 
 // ────────────────────────────────────────────────────────────
-// 主入口
+// 主入口：快速检测 → 全盘深扫（总是执行并合并，保证自定义路径也能找到）
 // ────────────────────────────────────────────────────────────
 
 void JavaScanWorker::doScan()
@@ -809,7 +902,7 @@ void JavaScanWorker::doScan()
 
     for (const QString& d : m_drives) {
         QStorageInfo si(d);
-        if (si.isValid() && si.bytesTotal() > 0) {
+        if (si.isValid() && si.isReady() && si.bytesTotal() > 0) {
             drives.append({d, si.bytesTotal()});
             totalBytes += si.bytesTotal();
         }
@@ -826,8 +919,8 @@ void JavaScanWorker::doScan()
     int totalMB = (int)(m_totalDriveMB > INT_MAX ? INT_MAX : m_totalDriveMB);
     QList<QPair<QString, QString>> allResults;
 
-    // ── 阶段 1：统一快速检测（环境变量、注册表、厂商目录、Minecraft 运行时）──
-    // 这些路径几乎覆盖 95% 的用户场景，可在数秒内完成
+    // ── 阶段 1：快速检测（环境变量、注册表、厂商目录、启动器运行时）──
+    // 几秒内完成，先把绝大多数用户的 Java 找出来
     emit scanProgress(
         QStringLiteral("正在检测环境变量、注册表与常见安装目录..."),
         0, -1, 0, totalMB, 0
@@ -836,26 +929,27 @@ void JavaScanWorker::doScan()
     scanEnvironmentVariables(allResults);
     if (!isCancelled()) scanRegistry(allResults);
     if (!isCancelled()) scanVendorDirectories(allResults);
-    if (!isCancelled()) scanMinecraftRuntime(allResults);
+    if (!isCancelled()) scanLauncherRuntimes(allResults);
 
     int totalFound = allResults.size();
 
-    // ── 快速检测已找到 Java（或用户已取消）→ 直接结束，不再全盘深度搜索 ──
-    if (totalFound > 0 || isCancelled()) {
+    if (isCancelled()) {
         emit scanProgress(
-            QStringLiteral("检测完成，共发现 %1 个 Java").arg(totalFound),
+            QStringLiteral("已取消检测，共发现 %1 个 Java").arg(totalFound),
             100, 0, totalMB, totalMB, totalFound
         );
         emit scanFinished(allResults);
         return;
     }
 
+    // ── 阶段 2：全盘深扫（黑名单剪枝 BFS）──
+    // 不再"快速检测找到就跳过深扫"：Java 分散装在多个自定义路径（其他启动器目录、
+    // 中文文件夹等）时，快速检测只能找到其中一部分，必须深扫补全
     emit scanProgress(
-        QStringLiteral("快速检测未发现 Java，正在全盘深度搜索..."),
+        QStringLiteral("快速检测发现 %1 个 Java，正在全盘深度搜索其余位置...").arg(totalFound),
         5, -1, 0, totalMB, totalFound
     );
 
-    // ── 阶段 2：全盘 BFS（关键词剪枝）—— 作为兜底，捕获用户放在自定义路径的 Java ──
     qint64 cumulativeBytes = 0;
     int    totalDrives = drives.size();
 
@@ -876,10 +970,11 @@ void JavaScanWorker::doScan()
         );
 
         QList<QPair<QString, QString>> driveResults;
-        int found = scanDrive(info.drive, info.bytes,
-                              cumulativeBytes, driveBasePercent,
-                              drivePercentShare, totalFound, driveResults);
-        totalFound += found;
+        // 注意：totalFound 由 scanDrive 内部通过引用同步累加（供进度显示），
+        // 这里不能再 += found，否则"已发现"计数会双倍虚增
+        scanDrive(info.drive, info.bytes,
+                  cumulativeBytes, driveBasePercent,
+                  drivePercentShare, totalFound, driveResults);
         allResults.append(driveResults);
 
         cumulativeBytes += info.bytes;
@@ -890,20 +985,21 @@ void JavaScanWorker::doScan()
         int endPercent = qMin(99, 5 + (int)(cumulativeBytes * 95 / totalBytes));
         scannedMB = (int)(cumulativeBytes / (1024 * 1024));
         emit scanProgress(
-            QStringLiteral("%1 盘搜索完成 (发现 %2 个)").arg(info.drive).arg(found),
+            QStringLiteral("%1 盘搜索完成 (累计发现 %2 个)").arg(info.drive).arg(totalFound),
             endPercent, -1, scannedMB, totalMB, totalFound
         );
     }
 
     // ── 完成 ──
     if (!isCancelled()) {
-        emit scanProgress(QStringLiteral("扫描完成"), 100, 0, totalMB, totalMB, totalFound);
+        emit scanProgress(QStringLiteral("检测完成，共发现 %1 个 Java").arg(totalFound),
+                          100, 0, totalMB, totalMB, totalFound);
     }
     emit scanFinished(allResults);
 }
 
 // ────────────────────────────────────────────────────────────
-// 单盘扫描
+// 单盘扫描：黑名单剪枝的全盘 BFS
 // ────────────────────────────────────────────────────────────
 
 int JavaScanWorker::scanDrive(const QString& drive, qint64 driveBytes,
@@ -913,17 +1009,21 @@ int JavaScanWorker::scanDrive(const QString& drive, qint64 driveBytes,
 {
     qint64 driveStart = QDateTime::currentMSecsSinceEpoch();
 
-    int totalMB   = (int)(m_totalDriveMB > INT_MAX ? INT_MAX : m_totalDriveMB);
-    int fileCount = 0;
-    int found     = 0;
-    int lastEmit  = 0;
+    int totalMB  = (int)(m_totalDriveMB > INT_MAX ? INT_MAX : m_totalDriveMB);
+    int dirCount = 0;
+    int found    = 0;
+    int lastEmit = 0;
     qint64 lastEmitTime = driveStart;
 
     // —— 基于盘大小的粗略时间估算 (用于进度条动画) ——
-    // 假设 2000 MB/s 的扫描速率
     qint64 estimatedDriveMs = qMax((qint64)2000, driveBytes / (2000LL * 1024));
 
-    // BFS 目录队列，避免 QDirIterator::hasNext() 在巨量文件下阻塞取消
+    // 黑名单剪枝的全盘 BFS（HMCL/PCL 全盘搜索的通行做法）：
+    //   1) 只跳过明确无关的目录（windows / $recycle.bin / 缓存等），
+    //      其余目录全部有机会进入——用户自定义的中文目录（如 "系统迁移勿删"）
+    //      不含 Java 关键词，按旧的白名单剪枝会被整棵误剪掉
+    //   2) 顶层 4 层自由深入，更深层按关键词/版本号剪枝，兼顾覆盖面与速度
+    //   3) 符号链接/联接点不进入，避免目录环造成死循环
     // 队列元素：pair<目录路径, 当前深度>
     QQueue<QPair<QString, int>> dirQueue;
     dirQueue.enqueue(qMakePair(drive, 0));
@@ -932,55 +1032,151 @@ int JavaScanWorker::scanDrive(const QString& drive, qint64 driveBytes,
         if (isCancelled()) break;
 
         auto head = dirQueue.dequeue();
-        QString dirPath = head.first;
-        int depth = head.second;
+        const QString dirPath = head.first;
+        const int depth = head.second;
+
+#ifndef Q_OS_WIN
         QDir dir(dirPath);
         if (!dir.exists()) continue;
+#endif
 
-        // 目录级排除（加 / 让 isPathExcluded 能匹配到尾部）
-        if (isPathExcluded(dirPath + QStringLiteral("/"))) continue;
+        dirCount++;
 
-        // 列出当前目录下的 java.exe / javaw.exe（纯文件名匹配，无 stat）
-        const QStringList javaFiles = dir.entryList(
-            QStringList() << QStringLiteral("java.exe") << QStringLiteral("javaw.exe"),
-            QDir::Files | QDir::NoDotAndDotDot | QDir::Readable);
+        // 进度发射（每 30 个目录或每 500ms）
+        qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (dirCount - lastEmit >= 30 || now - lastEmitTime >= 500) {
+            lastEmit = dirCount;
+            lastEmitTime = now;
 
-        for (const QString& fileName : javaFiles) {
-            fileCount++;
-            QString filePath = dir.absoluteFilePath(fileName);
+            qint64 elapsed = now - driveStart;
+            int drivePercent = qBound(0, (int)(elapsed * 100 / estimatedDriveMs), 99);
+            int overallPercent = driveBasePercent + drivePercentShare * drivePercent / 100;
+            overallPercent = qBound(driveBasePercent, overallPercent, 99);
+            if (overallPercent < m_lastPercent) overallPercent = m_lastPercent;
+            m_lastPercent = overallPercent;
 
-            // 进度发射（每 3 个文件或每 800ms）
-            qint64 now = QDateTime::currentMSecsSinceEpoch();
-            if (fileCount - lastEmit >= 3 || now - lastEmitTime >= 800) {
-                lastEmit = fileCount;
-                lastEmitTime = now;
+            qint64 cumBytes = cumulativeBytes + driveBytes * drivePercent / 100;
+            int scannedMB = (int)(cumBytes / (1024 * 1024));
 
-                qint64 elapsed = now - driveStart;
-                int drivePercent = qBound(0, (int)(elapsed * 100 / estimatedDriveMs), 99);
-                int overallPercent = driveBasePercent + drivePercentShare * drivePercent / 100;
-                overallPercent = qBound(driveBasePercent, overallPercent, 99);
-                if (overallPercent < m_lastPercent) overallPercent = m_lastPercent;
-                m_lastPercent = overallPercent;
-
-                qint64 cumBytes = cumulativeBytes + driveBytes * drivePercent / 100;
-                int scannedMB = (int)(cumBytes / (1024 * 1024));
-
-                int eta = -1;
-                if (overallPercent > 0) {
-                    qint64 totalElapsed = now - m_scanStartTime;
-                    qint64 totalEst = totalElapsed * 100 / overallPercent;
-                    eta = qMax(0, (int)((totalEst - totalElapsed) / 60000));
-                }
-
-                emit scanProgress(filePath, overallPercent, eta, scannedMB, totalMB, totalFound);
+            int eta = -1;
+            if (overallPercent > 0) {
+                qint64 totalElapsed = now - m_scanStartTime;
+                qint64 totalEst = totalElapsed * 100 / overallPercent;
+                eta = qMax(0, (int)((totalEst - totalElapsed) / 60000));
             }
 
+            emit scanProgress(dirPath, overallPercent, eta, scannedMB, totalMB, totalFound);
+        }
+
+        if (isCancelled()) break;
+
+        // 单次枚举同时拿子目录与 java 可执行文件
+        QStringList subdirs;         // 子目录名（待筛选入队）
+        QStringList javaCandidates;  // 本目录下的 java 可执行文件名
+
+#ifdef Q_OS_WIN
+        // Windows：原生 FindFirstFileW 单次遍历（比 QDir::entryInfoList 少一层
+        // 对象分配，百万级目录下差距明显）；重解析点（符号链接/联接点）直接跳过，
+        // 用户目录下大量 "Application Data" 类联接环不会拖慢或绕死扫描
+        WIN32_FIND_DATAW fd;
+        const QString pattern = dirPath.endsWith(QLatin1Char('/'))
+                ? dirPath + QLatin1Char('*')
+                : dirPath + QStringLiteral("/*");
+        HANDLE hFind = FindFirstFileW(
+            reinterpret_cast<const wchar_t*>(pattern.utf16()), &fd);
+        if (hFind == INVALID_HANDLE_VALUE)
+            continue;
+        do {
+            const wchar_t* fn = fd.cFileName;
+            if (fn[0] == L'.' && (fn[1] == L'\0' || (fn[1] == L'.' && fn[2] == L'\0')))
+                continue;  // "." / ".."
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+                continue;  // 符号链接/联接点，避免目录环
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                subdirs << QString::fromWCharArray(fn);
+            } else if (wcscmp(fn, L"java.exe") == 0 || wcscmp(fn, L"javaw.exe") == 0) {
+                javaCandidates << QString::fromWCharArray(fn);
+            }
+        } while (FindNextFileW(hFind, &fd));
+        FindClose(hFind);
+#else
+        const QFileInfoList entries = dir.entryInfoList(
+            QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+        for (const QFileInfo& entry : entries) {
+            if (entry.isDir()) {
+                if (entry.isSymLink()) continue;  // 符号链接不进入，避免目录环
+                subdirs << entry.fileName();
+            } else {
+                const QString fn = entry.fileName();
+#if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
+                if (fn.compare(QLatin1String("java"), Qt::CaseInsensitive) == 0)
+                    javaCandidates << fn;
+#else
+                if (fn.compare(QLatin1String("java"), Qt::CaseInsensitive) == 0
+                        || fn.compare(QLatin1String("java.exe"), Qt::CaseInsensitive) == 0
+                        || fn.compare(QLatin1String("javaw.exe"), Qt::CaseInsensitive) == 0)
+                    javaCandidates << fn;
+#endif
+            }
+        }
+#endif
+
+        if (isCancelled()) break;
+
+        // 同一目录下的 java.exe / javaw.exe（移动端 java）是同一个安装：
+        // 只保留一个，优先 java.exe（与 tryAddJava 的偏好一致），避免重复列出
+        if (javaCandidates.size() > 1) {
+            bool hasJavaExe = false, hasPlainJava = false;
+            for (const QString& n : javaCandidates) {
+                if (n.compare(QLatin1String("java.exe"), Qt::CaseInsensitive) == 0)
+                    hasJavaExe = true;
+                else if (n.compare(QLatin1String("java"), Qt::CaseInsensitive) == 0)
+                    hasPlainJava = true;
+            }
+            const bool preferJavaExe = hasJavaExe || (!hasPlainJava);
+            QString chosen;
+            for (const QString& n : javaCandidates) {
+                const bool isExe = n.compare(QLatin1String("java.exe"), Qt::CaseInsensitive) == 0;
+                const bool isPlain = n.compare(QLatin1String("java"), Qt::CaseInsensitive) == 0;
+                if (preferJavaExe == isExe || (!preferJavaExe && isPlain)) {
+                    chosen = n;
+                    break;
+                }
+            }
+            if (!chosen.isEmpty()) {
+                javaCandidates.clear();
+                javaCandidates << chosen;
+            }
+        }
+
+        // ── 子目录：黑名单 + 深度策略决定是否入队 ──
+        for (const QString& name : subdirs) {
+            if (isExcludedDirName(name)) continue;
+
+            const int childDepth = depth + 1;
+            if (childDepth > kMaxScanDepth) continue;
+
+            // 顶层自由深入；更深层按关键词/版本号剪枝
+            if (childDepth <= kFreeDescendDepth
+                    || isJavaRelatedDirectory(name) || isVersionLikeDirectory(name)) {
+                const QString childPath = dirPath.endsWith(QLatin1Char('/'))
+                        ? dirPath + name
+                        : dirPath + QLatin1Char('/') + name;
+                dirQueue.enqueue(qMakePair(childPath, childDepth));
+            }
+        }
+
+        // ── 文件：验证并加入 java.exe / javaw.exe（移动端为 java）──
+        for (const QString& name : javaCandidates) {
+            if (isCancelled()) break;
+
             // 去重
-            QString absPath = QDir::toNativeSeparators(filePath);
+            const QString absPath = QDir::toNativeSeparators(
+                dirPath.endsWith(QLatin1Char('/'))
+                        ? dirPath + name
+                        : dirPath + QLatin1Char('/') + name);
             if (m_seenPaths.contains(absPath)) continue;
             m_seenPaths.insert(absPath);
-
-            if (isCancelled()) break;
 
             QString version;
             if (validateJavaPath(absPath, version)) {
@@ -990,44 +1186,22 @@ int JavaScanWorker::scanDrive(const QString& drive, qint64 driveBytes,
                 qDebug() << "[JavaScanWorker] 发现 Java:" << version << "@" << absPath;
             }
         }
-
-        if (isCancelled()) break;
-
-        // 最大深度 8 层，避免无限递归
-        if (depth >= 8) continue;
-
-        // 列出子目录，按关键词剪枝（参考 PCL-CE/ProjBobcat）
-        // 仅当目录名包含 Java 相关关键词或形如版本号时才入队
-        // 这样可以跳过 99% 不相关的目录，大幅加速扫描
-        //
-        // 用户层级放宽：C:\Users 与其下的配置目录（dp、AppData 等）名字本身
-        // 不含 Java 关键词，但其下才会有 scoop/.gradle/.jdks/Programs 等安装，
-        // 这两层直接全量入队，更深层级仍按关键词剪枝
-        const QString dirLower = dir.absolutePath().toLower();
-        static const QRegularExpression profileRe(
-            QStringLiteral("^[a-z]:[/\\\\]users[/\\\\][^/\\\\]+$"));
-        const bool allowAllChildren =
-            dirLower.endsWith(QLatin1String("/users")) ||
-            dirLower.endsWith(QLatin1String("\\users")) ||
-            profileRe.match(dirLower).hasMatch() ||
-            dirLower.endsWith(QLatin1String("/appdata")) ||
-            dirLower.endsWith(QLatin1String("\\appdata"));
-
-        const QStringList subdirs = dir.entryList(
-            QDir::Dirs | QDir::NoDotAndDotDot);
-
-        for (const QString& name : subdirs) {
-            if (allowAllChildren || isJavaRelatedDirectory(name) || isVersionLikeDirectory(name)) {
-                dirQueue.enqueue(qMakePair(dir.absoluteFilePath(name), depth + 1));
-            }
-        }
     }
 
     return found;
 }
 
 // ────────────────────────────────────────────────────────────
-// 关键词剪枝
+// 目录名黑名单（全盘深扫剪枝）
+// ────────────────────────────────────────────────────────────
+
+bool JavaScanWorker::isExcludedDirName(const QString& dirName) const
+{
+    return m_excludedDirNames.contains(dirName.toLower());
+}
+
+// ────────────────────────────────────────────────────────────
+// 关键词剪枝（深层 BFS）
 // ────────────────────────────────────────────────────────────
 
 bool JavaScanWorker::isJavaRelatedDirectory(const QString& dirName) const
@@ -1035,7 +1209,7 @@ bool JavaScanWorker::isJavaRelatedDirectory(const QString& dirName) const
     if (dirName.isEmpty()) return false;
     QString lower = dirName.toLower();
 
-    // 排除常见无关目录名
+    // 排除常见无关目录名（黑名单在入队前已拦截，这里兜底排除同名变体）
     if (lower == "temp" || lower == "tmp" || lower == "cache" ||
         lower == "logs" || lower == "crashdumps" || lower == "node_modules" ||
         lower == "__pycache__" || lower == ".git" || lower == ".svn" ||
@@ -1218,18 +1392,4 @@ bool JavaScanWorker::validateJavaPathDetailed(const QString& path, JavaInstallIn
 
     outInfo.valid = true;
     return true;
-}
-
-// ────────────────────────────────────────────────────────────
-// 路径排除
-// ────────────────────────────────────────────────────────────
-
-bool JavaScanWorker::isPathExcluded(const QString& filePath) const
-{
-    QString lower = filePath.toLower();
-    for (const QString& excl : m_excludeLower) {
-        if (lower.contains("/" + excl + "/") || lower.contains("\\" + excl + "\\"))
-            return true;
-    }
-    return false;
 }

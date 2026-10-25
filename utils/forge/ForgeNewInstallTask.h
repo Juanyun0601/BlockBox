@@ -21,6 +21,7 @@
 namespace forge {
 
 struct ForgeProcessor;
+class ForgeDownloader;
 
 class ForgeNewInstallTask : public QObject
 {
@@ -33,6 +34,9 @@ public:
     void execute();
     void cancel();
     void setTaskId(const QString &taskId);
+
+    /// 本次安装生成的版本 id（versions/ 下的目录名），未生成时为空
+    QString writtenVersionId() const { return m_writtenVersionId; }
 
 signals:
     void progressUpdated(const QString &stage, int percent);
@@ -56,7 +60,9 @@ private:
     void runProcessorsAsync();
     void onRunProcessorsDone(bool success, const QString &error);
     void generateVersionJson();
+    /// MultiMC 行为：把最终版本 JSON 里的库全部下载到游戏根 libraries/（含 SHA1 校验）
     void downloadRemainingLibraries();
+    void finishPostExecute();
     void cleanupTempFiles();
 
     QString getLibraryPath(const QString &libraryName);
@@ -76,6 +82,11 @@ private:
     int m_processorTotal;
     int m_processorDone;
     QString m_taskId;
+    /// 生成的版本 JSON 信息（剩余库下载要用）
+    QString m_writtenVersionJsonPath;
+    QString m_writtenVersionId;
+    /// 剩余库批量下载器（cancel 时一并中止）
+    ForgeDownloader *m_libDownloader = nullptr;
 };
 
 } // namespace forge

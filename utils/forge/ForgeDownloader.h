@@ -25,6 +25,14 @@ enum class DownloadSource
   Auto
 };
 
+/// 单个待下载文件：候选地址 + 落盘路径 + 可选 SHA1 校验
+struct ForgeFileDownload
+{
+  QStringList urls;
+  QString filePath;
+  QString expectedSha1;
+};
+
 class ForgeDownloader : public QObject
 {
   Q_OBJECT
@@ -45,6 +53,11 @@ public:
                     const QString &expectedSha1 = QString(), int maxRetries = 3);
 
   void downloadFiles(const QVector<QPair<QStringList, QString>> &tasks,
+                     const std::function<void(int completed, int total)> &progressCallback,
+                     const std::function<void(bool allSuccess, const QStringList &failed)> &completionCallback);
+
+  /// MultiMC 式批量下载：一个 NetJob 内 6 路并发，逐文件可挂 SHA1 校验
+  void downloadFiles(const QVector<ForgeFileDownload> &tasks,
                      const std::function<void(int completed, int total)> &progressCallback,
                      const std::function<void(bool allSuccess, const QStringList &failed)> &completionCallback);
 

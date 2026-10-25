@@ -1,6 +1,6 @@
 # BlockBox Launcher
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 [简体中文](README.md) | [繁體中文](README.zh-TW.md) | **English** | [日本語](README.ja.md) | [Русский](README.ru.md) | [Español](README.es.md)
 
@@ -94,11 +94,13 @@ Cross-platform differences are handled with conditional compilation: the `WINDOW
 
 ## License
 
-This project is released under the [MIT License](LICENSE) © Juanyun0601
+This project is released under the [GNU General Public License v3.0](LICENSE) © Juanyun0601
+
+The program comes with ABSOLUTELY NO WARRANTY. Copying, modifying and redistributing it must follow GPL-3.0, and modified versions must also publish their source code under GPL-3.0.
 
 ## Contributing
 
-Issues and pull requests are welcome.
+Issues and pull requests are welcome. Contributed code is licensed into this project under GPL-3.0.
 
 ---
 

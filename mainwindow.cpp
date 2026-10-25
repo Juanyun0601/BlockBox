@@ -247,6 +247,23 @@ MainWindow::MainWindow(QWidget *parent)
         ThemeManager::instance()->applyThemeColor();
     });
 
+    // 深色主题下给壁纸叠暗纱，切换主题时立即跟随
+    auto syncDarkScrim = [this]() {
+        if (!m_backgroundWidget)
+            return;
+        m_backgroundWidget->setDarkScrimEnabled(
+            ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
+    };
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged, this,
+            [syncDarkScrim](ThemeManager::ThemeType) { syncDarkScrim(); });
+    syncDarkScrim();
+
+    // 转速只是天空盒的内部参数，单独响应即可，不必重建整套样式表
+    connect(BackgroundManager::instance(), &BackgroundManager::rotatingSpeedChanged, this,
+            [this](int percent) {
+                m_backgroundWidget->setRotatingSpeed(percent);
+            });
+
     updateBackgroundWidget();
 
     // 自动登录：从保存的账户文件中恢复默认账户
@@ -1284,6 +1301,8 @@ void MainWindow::updateBackgroundWidget()
     BackgroundManager *bg = BackgroundManager::instance();
     m_backgroundWidget->setMode(static_cast<BackgroundWidget::Mode>(bg->currentMode()));
     m_backgroundWidget->setBlurRadius(bg->blurRadius());
+    m_backgroundWidget->setRotatingSpeed(bg->rotatingSpeed());
+    m_backgroundWidget->setPanoramaScene(bg->panoramaScene());
     if (bg->currentMode() == BackgroundManager::SolidColor) {
         m_backgroundWidget->setSolidColor(QColor(bg->solidColor()));
     } else if (bg->currentMode() == BackgroundManager::Image
