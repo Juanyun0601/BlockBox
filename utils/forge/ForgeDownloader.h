@@ -15,6 +15,7 @@
 #include <functional>
 
 #include "../net/NetJob.h"
+#include "ForgeProfile.h"
 
 namespace forge {
 
@@ -42,11 +43,17 @@ public:
 
   void setDownloadSource(DownloadSource source);
   DownloadSource downloadSource() const;
+  /// 选择主 Maven 仓库：Forge 走 maven.minecraftforge.net，NeoForge 走 maven.neoforged.net
+  void setMavenFamily(InstallerFamily family);
+  InstallerFamily mavenFamily() const;
   /// MultiMC 的 NetJob 内部固定 6 路并发；此设置保留接口供上层调用
   void setMaxConcurrency(int max);
 
   QStringList getCandidateUrls(const QString &path);
   QStringList getInstallerCandidateUrls(const QString &mcVersion, const QString &forgeVersion);
+  QStringList getNeoForgeInstallerCandidateUrls(const QString &neoForgeVersion);
+  /// 安装配置里写死了绝对下载地址时，按「镜像优先/官方优先」生成候选列表
+  QStringList getCandidateUrlsForRemote(const QString &absoluteUrl);
 
   void downloadFile(const QStringList &candidateUrls, const QString &filePath,
                     const std::function<void(bool success)> &callback,
@@ -69,6 +76,7 @@ signals:
 
 private:
   DownloadSource m_downloadSource;
+  InstallerFamily m_mavenFamily = InstallerFamily::Forge;
   int m_maxConcurrency = 6;
   QList<NetJob::Ptr> m_activeJobs;
 };

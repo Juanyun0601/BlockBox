@@ -18,7 +18,21 @@ namespace forge {
 
 static const QString BMCL_BASE = QStringLiteral("https://bmclapi2.bangbang93.com");
 static const QString FORGE_MAVEN = QStringLiteral("https://maven.minecraftforge.net");
+static const QString NEOFORGE_MAVEN = QStringLiteral("https://maven.neoforged.net/releases");
 static const QString MINECRAFT_LIBRARIES = QStringLiteral("https://libraries.minecraft.net");
+
+// BMCLAPI 只代理固定几个上游仓库，把安装配置里写死的绝对地址换成镜像地址。
+// 认不出来的主机返回空串，调用方会退回原地址
+static QString bmclMirrorFor(const QString &url)
+{
+  if (url.startsWith(NEOFORGE_MAVEN + "/"))
+    return BMCL_BASE + "/maven/" + url.mid(NEOFORGE_MAVEN.length() + 1);
+  if (url.startsWith(FORGE_MAVEN + "/"))
+    return BMCL_BASE + "/maven/" + url.mid(FORGE_MAVEN.length() + 1);
+  if (url.startsWith(MINECRAFT_LIBRARIES + "/"))
+    return BMCL_BASE + "/maven/" + url.mid(MINECRAFT_LIBRARIES.length() + 1);
+  return QString();
+}
 
 ForgeDownloader::ForgeDownloader(QObject *parent)
   : QObject(parent)
@@ -41,6 +55,16 @@ DownloadSource ForgeDownloader::downloadSource() const
   return m_downloadSource;
 }
 
+void ForgeDownloader::setMavenFamily(InstallerFamily family)
+{
+  m_mavenFamily = family;
+}
+
+InstallerFamily ForgeDownloader::mavenFamily() const
+{
+  return m_mavenFamily;
+}
+
 void ForgeDownloader::setMaxConcurrency(int max)
 {
   // MultiMC 的 NetJob 内部以 6 个并发 part 为上限，这里仅记录设置
@@ -50,19 +74,47 @@ void ForgeDownloader::setMaxConcurrency(int max)
 QStringList ForgeDownloader::getCandidateUrls(const QString &path)
 {
   QStringList urls;
-  QString primarySource = (m_downloadSource == DownloadSource::Official) ? FORGE_MAVEN : BMCL_BASE;
+  const bool official = (m_downloadSource == DownloadSource::Official);
+  const QString primaryMaven = (m_mavenFamily == InstallerFamily::NeoForge) ? NEOFORGE_MAVEN : FORGE_MAVEN;
+  const QString secondaryMaven = (m_mavenFamily == InstallerFamily::NeoForge) ? FORGE_MAVEN : NEOFORGE_MAVEN;
 
-  if (primarySource == FORGE_MAVEN)
+  if (official)
   {
-    urls << FORGE_MAVEN + "/" + path;
+    urls << primaryMaven + "/" + path;
+    urls << secondaryMaven + "/" + path;
     urls << MINECRAFT_LIBRARIES + "/" + path;
     urls << BMCL_BASE + "/maven/" + path;
   }
   else
   {
     urls << BMCL_BASE + "/maven/" + path;
-    urls << FORGE_MAVEN + "/" + path;
+    urls << primaryMaven + "/" + path;
+    urls << secondaryMaven + "/" + path;
     urls << MINECRAFT_LIBRARIES + "/" + path;
+  }
+
+  return urls;
+}
+
+QStringList ForgeDownloader::getCandidateUrlsForRemote(const QString &absoluteUrl)
+{
+  if (absoluteUrl.isEmpty())
+    return QStringList();
+
+  QStringList urls;
+  const QString mirrored = bmclMirrorFor(absoluteUrl);
+
+  if (m_downloadSource == DownloadSource::Official)
+  {
+    urls << absoluteUrl;
+    if (!mirrored.isEmpty() && mirrored != absoluteUrl)
+      urls << mirrored;
+  }
+  else
+  {
+    if (!mirrored.isEmpty())
+      urls << mirrored;
+    urls << absoluteUrl;
   }
 
   return urls;
@@ -101,7 +153,27 @@ QStringList ForgeDownloader::getInstallerCandidateUrls(const QString &mcVersion,
   return urls;
 }
 
-// 把候选地址装进一个 Download 动作：首个作主地址，其余作回退，
+QStringList ForgeDownloader::getNeoForgeInstallerCandidateUrls(const QString &neoForgeVersion)
+{
+  // NeoForge 安装包不走 forge/download 那套参数，官方地址与 BMCL 地址格式不同，
+  // 两边都放进候选列表：首选源在前，另一个作回退
+  const QString mavenPath = "net/neoforged/neoforge/" + neoForgeVersion +
+                            "/neoforge-" + neoForgeVersion + "-installer.jar";
+  const QString mavenUrl = NEOFORGE_MAVEN + "/" + mavenPath;
+  const QString bmclUrl = BMCL_BASE + "/neoforge/version/" + neoForgeVersion + "/download/installer.jar";
+  const QString bmclMavenUrl = BMCL_BASE + "/maven/" + mavenPath;
+
+  QStringList urls;
+  if (m_downloadSource == DownloadSource::Official)
+  {
+    urls << mavenUrl << bmclUrl << bmclMavenUrl;
+  }
+  else
+  {
+    urls << bmclUrl << bmclMavenUrl << mavenUrl;
+  }
+  return urls;
+}
 // 失败按顺序换源；expectedSha1 非空时挂 SHA1 校验
 static Net::Download::Ptr makeDownload(const QStringList &candidateUrls, const QString &filePath,
                                        const QString &expectedSha1)

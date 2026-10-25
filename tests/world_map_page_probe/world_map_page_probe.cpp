@@ -13,6 +13,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDialog>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -32,6 +33,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QVBoxLayout>
 #include <QVector>
@@ -49,6 +51,7 @@
 #include "utils/Saves/LevelDatEditor.h"
 #include "utils/WorldMap/StructureFinder.h"
 #include "utils/WorldMap/StructureIcons.h"
+#include "utils/WorldMap/StructureLoot.h"
 #include "utils/WorldMap/SeedTerrainRenderer.h"
 
 namespace {
@@ -1131,6 +1134,9 @@ int main(int argc, char **argv)
                 }
                 expect(copyBtn && wikiBtn && doneBtn,
                        "popup has copy/wiki/done buttons");
+                QDir().mkpath(QStringLiteral("D:/BlockBox/_out"));
+                popup->grab().save(QStringLiteral(
+                    "D:/BlockBox/_out/struct_popup_actions.png"));
                 if (wikiBtn)
                 {
                     const QUrl u = wikiBtn->property("wikiUrl").toUrl();
@@ -1200,8 +1206,234 @@ int main(int argc, char **argv)
                     expect(page.structureDoneCount() == 0, "done count back to 0");
                 }
 
-                popup->close();
-                QApplication::processEvents();
+                // 详情按钮 → 居中结构详情弹窗（简介 / 预览 / 战利品三页占位）
+                QPushButton *detailBtn = nullptr;
+                for (QPushButton *b : popup->findChildren<QPushButton *>())
+                    if (b->objectName()
+                        == QStringLiteral("worldMapStructDetail"))
+                    {
+                        detailBtn = b;
+                        break;
+                    }
+                expect(detailBtn != nullptr,
+                       "structure popup has detail button");
+                if (detailBtn)
+                {
+                    expect(detailBtn->property("structIdx").toInt() == mtype,
+                           "detail button carries structure index");
+                    detailBtn->click();
+                    QApplication::processEvents();
+                    expect(page.findChild<QWidget *>(
+                               QStringLiteral("worldMapStructPopup"))
+                               == nullptr,
+                           "detail click closes structure popup");
+
+                    auto *dlg = page.findChild<QDialog *>(
+                        QStringLiteral("structDetailDialog"));
+                    expect(dlg != nullptr, "detail button opens detail dialog");
+                    if (dlg)
+                    {
+                        expect(dlg->windowTitle()
+                                   == QString::fromUtf8(def.displayName),
+                               "detail dialog titled with structure name");
+
+                        auto *tabs = dlg->findChild<QTabWidget *>(
+                            QStringLiteral("structDetailTabs"));
+                        expect(tabs != nullptr,
+                               "detail dialog has tab widget");
+                        if (tabs)
+                        {
+                            QStringList gotTabs;
+                            for (int i = 0; i < tabs->count(); ++i)
+                                gotTabs << tabs->tabText(i);
+                            std::fprintf(stderr, "  detail tabs: %s\n",
+                                         gotTabs.join(QLatin1Char('/'))
+                                             .toUtf8().constData());
+                            expect(gotTabs
+                                       == QStringList({QStringLiteral("简介"),
+                                                       QStringLiteral("预览"),
+                                                       QStringLiteral("战利品")}),
+                                   "detail tabs are 简介 / 预览 / 战利品");
+                            expect(tabs->currentIndex() == 0,
+                                   "detail dialog opens on 简介 page");
+
+                            // 简介页：展示当前结构的信息行（名称 / 维度 / 坐标）
+                            {
+                                QWidget *intro = tabs->widget(0);
+                                expect(intro != nullptr,
+                                       "intro page exists");
+                                QStringList keys;
+                                QStringList values;
+                                if (intro)
+                                {
+                                    for (QLabel *lab :
+                                         intro->findChildren<QLabel *>())
+                                    {
+                                        if (lab->objectName()
+                                            == QStringLiteral(
+                                                "structDetailIntroKey"))
+                                            keys << lab->text();
+                                        else if (lab->objectName()
+                                                 == QStringLiteral(
+                                                     "structDetailIntroValue"))
+                                            values << lab->text();
+                                    }
+                                }
+                                std::fprintf(stderr,
+                                             "  intro keys: %s\n",
+                                             keys.join(QLatin1Char('/'))
+                                                 .toUtf8().constData());
+                                std::fprintf(stderr,
+                                             "  intro values: %s\n",
+                                             values.join(QLatin1Char('|'))
+                                                 .toUtf8().constData());
+                                expect(keys.contains(QStringLiteral("名称")),
+                                       "intro shows structure name row");
+                                expect(keys.contains(QStringLiteral("维度")),
+                                       "intro shows dimension row");
+                                expect(keys.contains(QStringLiteral("坐标")),
+                                       "intro shows coord row");
+                                expect(values.contains(
+                                           QString::fromUtf8(def.displayName)),
+                                       "intro name matches structure");
+                                int coordIdx = keys.indexOf(
+                                    QStringLiteral("坐标"));
+                                if (coordIdx >= 0 && coordIdx < values.size())
+                                    expect(values.at(coordIdx).contains(
+                                               QStringLiteral("X"))
+                                           && values.at(coordIdx).contains(
+                                               QStringLiteral("Z")),
+                                           "intro coord shows X and Z");
+                                else
+                                    expect(false,
+                                           "intro coord shows X and Z");
+
+                                // 战利品：有数据的结构应有芯片标签
+                                // （探针走概览：打开详情时页面可能无种子）
+                                const StructureLoot::Result loot =
+                                    StructureLoot::rollLoot(
+                                        QLatin1String(def.key), 12345, false,
+                                        0, 0);
+                                QLabel *lootSection =
+                                    intro->findChild<QLabel *>(
+                                        QStringLiteral(
+                                            "structDetailLootSection"));
+                                const QList<QLabel *> lootChips =
+                                    intro->findChildren<QLabel *>(
+                                        QStringLiteral(
+                                            "structDetailLootChip"));
+                                std::fprintf(stderr,
+                                             "  loot section=%s chips=%d\n",
+                                             lootSection
+                                                 ? lootSection->text()
+                                                       .toUtf8()
+                                                       .constData()
+                                                 : "(none)",
+                                             lootChips.size());
+                                if (!loot.stacks.isEmpty())
+                                {
+                                    expect(lootSection != nullptr,
+                                           "intro has loot section title");
+                                    expect(lootChips.size()
+                                               == loot.stacks.size(),
+                                           "intro loot chip count matches table");
+                                    // 概览回退：芯片应含第一项物品名
+                                    bool hasKeyItem = false;
+                                    for (QLabel *chip : lootChips)
+                                        if (chip->text().contains(
+                                                loot.stacks.first().name))
+                                            hasKeyItem = true;
+                                    expect(hasKeyItem,
+                                           "intro loot chips include table items");
+                                }
+                                else
+                                {
+                                    expect(lootChips.isEmpty(),
+                                           "no loot chips when table empty");
+                                }
+
+                                // 种子掷取：结果应稳定且带数量
+                                {
+                                    const StructureLoot::Result a =
+                                        StructureLoot::rollLoot(
+                                            QLatin1String(def.key), 42, true,
+                                            100, -200);
+                                    const StructureLoot::Result b =
+                                        StructureLoot::rollLoot(
+                                            QLatin1String(def.key), 42, true,
+                                            100, -200);
+                                    expect(a.fromSeed == b.fromSeed
+                                               && a.chests == b.chests
+                                               && a.stacks.size()
+                                                      == b.stacks.size(),
+                                           "seeded loot is deterministic");
+                                    if (a.fromSeed && !a.stacks.isEmpty())
+                                        expect(a.stacks.first().count >= 1,
+                                               "seeded loot stack has count");
+                                }
+                            }
+
+                            // 预览 / 战利品仍是占位
+                            for (int i = 1; i < tabs->count(); ++i)
+                            {
+                                tabs->setCurrentIndex(i);
+                                QApplication::processEvents();
+                                expect(tabs->currentIndex() == i,
+                                       "can switch detail page");
+                                QLabel *hint = tabs->widget(i)
+                                    ? tabs->widget(i)->findChild<QLabel *>(
+                                          QStringLiteral(
+                                              "structDetailPlaceholderHint"))
+                                    : nullptr;
+                                std::fprintf(stderr, "  page %d hint: %s\n", i,
+                                             hint ? hint->text().toUtf8().constData()
+                                                  : "(none)");
+                                expect(hint != nullptr && !hint->text().isEmpty(),
+                                       "placeholder page shows hint text");
+                            }
+                            tabs->setCurrentIndex(0);
+                            QApplication::processEvents();
+                        }
+
+                        // 卡片居中：卡片中心与窗口中心偏差要小
+                        QWidget *card = dlg->findChild<QWidget *>(
+                            QStringLiteral("structDetailCard"));
+                        expect(card != nullptr,
+                               "detail dialog has centered card");
+                        if (card)
+                        {
+                            const QRect g = card->geometry();
+                            const int dx = std::abs((g.left() + g.right()) / 2
+                                                    - dlg->width() / 2);
+                            const int dy = std::abs((g.top() + g.bottom()) / 2
+                                                    - dlg->height() / 2);
+                            std::fprintf(stderr,
+                                         "  card center offset: %d,%d\n", dx,
+                                         dy);
+                            expect(dx <= 8 && dy <= 12,
+                                   "detail card is centered in dialog");
+                        }
+
+                        QDir().mkpath(QStringLiteral("D:/BlockBox/_out"));
+                        dlg->grab().save(QStringLiteral(
+                            "D:/BlockBox/_out/struct_detail_dialog.png"));
+
+                        dlg->reject();
+                        QApplication::processEvents();
+                        expect(page.findChild<QDialog *>(
+                                   QStringLiteral("structDetailDialog"))
+                                   == nullptr,
+                               "detail dialog closes on reject");
+                    }
+                }
+
+                // 详情点过之后小窗已被 Qt::Popup 收掉，这里只收拾还活着的
+                if (QWidget *still = page.findChild<QWidget *>(
+                        QStringLiteral("worldMapStructPopup")))
+                {
+                    still->close();
+                    QApplication::processEvents();
+                }
             }
 
             // ③ 缩小到方块不可辨 → 只画稀有结构（不许一个都不画）

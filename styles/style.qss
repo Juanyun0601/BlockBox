@@ -2832,28 +2832,80 @@ QPushButton#carouselCtaBtn:hover {
     background: @BG_HOVER@;
 }
 
+/* 首页轮播指示点：浮在封面图之上，与皮肤面板底部模式切换条同一水平位置 */
+QWidget#carouselDotsPill {
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 8px;
+}
+
 QPushButton#carouselDot {
-    background: @BLACK_RGBA_64@;
+    background: rgba(255, 255, 255, 0.55);
     border: none;
-    border-radius: 1px;
-    min-width: 2px;
-    max-width: 2px;
-    min-height: 2px;
-    max-height: 2px;
+    border-radius: 3px;
+    min-width: 5px;
+    max-width: 5px;
+    min-height: 5px;
+    max-height: 5px;
     margin: 0;
 }
 
-QPushButton#carouselDot[active="true"] {
-    background: @PRIMARY@;
-    min-width: 2px;
-    max-width: 2px;
-    min-height: 2px;
-    max-height: 2px;
-    border-radius: 1px;
+QPushButton#carouselDot:hover {
+    background: rgba(255, 255, 255, 0.9);
 }
 
-QPushButton#carouselDot:hover {
-    background: @BLACK_RGBA_115@;
+QPushButton#carouselDot[active="true"] {
+    background: #ffffff;
+    min-width: 5px;
+    max-width: 5px;
+    min-height: 5px;
+    max-height: 5px;
+    border-radius: 3px;
+}
+
+/* 首页公告栏（封面图 + 皮肤模型下方）：文字来自官网 announcement.json */
+QWidget#homeAnnouncementBar {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+QWidget#homeAnnounceBadge {
+    background: @PRIMARY_BG@;
+    border-radius: 8px;
+}
+
+QLabel#homeAnnounceBadgeText {
+    background: transparent;
+    color: @PRIMARY_TEXT@;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QLabel#homeAnnounceText {
+    background: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+}
+
+QLabel#homeAnnounceText[hovered="true"] {
+    color: @PRIMARY@;
+}
+
+QLabel#homeAnnouncePage {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QPushButton#homeAnnounceNav {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
+}
+
+QPushButton#homeAnnounceNav:hover {
+    background: @BG_HOVER@;
 }
 
 QPushButton#carouselArrowBtn {
@@ -13763,6 +13815,197 @@ QPushButton#worldMapStructAction:hover {
 
 QPushButton#worldMapStructAction:pressed {
     background-color: @BG_DISABLED@;
+}
+
+
+/* 小窗里的「详情」按钮：主色高亮，和其余动作按钮区分开 */
+QPushButton#worldMapStructDetail {
+    background-color: @PRIMARY@;
+    border: 1px solid @PRIMARY_DARK@;
+    border-radius: 7px;
+    padding: 4px 12px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+
+QPushButton#worldMapStructDetail:hover {
+    background-color: @PRIMARY_HOVER@;
+}
+
+
+QPushButton#worldMapStructDetail:pressed {
+    background-color: @PRIMARY_DARK@;
+}
+
+
+/* —— 结构详情弹窗（小窗「详情」） —— */
+QWidget#structDetailCard {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 18px;
+}
+
+
+QLabel#structDetailTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 16px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+}
+
+
+QPushButton#structDetailClose {
+    background-color: transparent;
+    border: none;
+    border-radius: 14px;
+    color: @TEXT_SECONDARY@;
+    font-size: 16px;
+    padding: 0;
+}
+
+
+QPushButton#structDetailClose:hover {
+    background-color: @DANGER_BG@;
+    color: @DANGER_TEXT@;
+}
+
+
+QTabWidget#structDetailTabs::pane {
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+    background-color: @BG_CARD@;
+}
+
+
+QWidget#structDetailPage {
+    background-color: transparent;
+    border: none;
+}
+
+
+QLabel#structDetailPlaceholderTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 15px;
+    font-weight: 600;
+    background: transparent;
+    border: none;
+}
+
+
+QLabel#structDetailPlaceholderHint {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+
+/* —— 结构详情：简介页信息 —— */
+QLabel#structDetailRareChip {
+    background-color: @PRIMARY_BG@;
+    color: @PRIMARY_TEXT@;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 8px;
+    background-clip: padding-box;
+}
+
+
+QLabel#structDetailIntroSection {
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+}
+
+
+QLabel#structDetailIntroKey {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+
+QLabel#structDetailIntroValue {
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    background: transparent;
+    border: none;
+}
+
+
+QLabel#structDetailLootSection {
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+    margin-top: 10px;
+}
+
+
+QWidget#structDetailLootWrap {
+    background: transparent;
+    border: none;
+}
+
+
+QLabel#structDetailLootChip {
+    background-color: @BG_MUTED@;
+    color: @TEXT_PRIMARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 3px 10px;
+    font-size: 12px;
+}
+
+
+QLabel#structDetailLootNote {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+    margin-top: 4px;
+}
+
+
+QFrame#structDetailIntroSep {
+    color: @BORDER@;
+    background: transparent;
+    border: none;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+
+
+QLabel#structDetailIntroTip {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+
+QPushButton#structDetailWikiBtn {
+    background-color: @BG_MUTED@;
+    color: @TEXT_PRIMARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 0 14px;
+    font-size: 12px;
+}
+
+
+QPushButton#structDetailWikiBtn:hover {
+    background-color: @PRIMARY_BG@;
+    color: @PRIMARY_TEXT@;
+    border-color: @PRIMARY@;
 }
 
 

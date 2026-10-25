@@ -49,14 +49,22 @@
 
 namespace forge {
 
+// 安装配置里的坐标有时带 "@jar" 后缀（表示扩展名），查表时统一去掉
+static QString normalizeCoordinate(const QString &name)
+{
+    const int atIndex = name.lastIndexOf('@');
+    return atIndex > 0 ? name.left(atIndex) : name;
+}
+
 ForgeNewInstallTask::ForgeNewInstallTask(const QString &installerJarPath, const QString &instancePath,
-                                         QObject *parent)
+                                         QObject *parent, InstallerFamily family)
     : QObject(parent)
     , m_installerJarPath(installerJarPath)
     , m_instancePath(instancePath)
     , m_cancelled(false)
     , m_processorTotal(0)
     , m_processorDone(0)
+    , m_family(family)
 {
 }
 
@@ -89,6 +97,12 @@ void ForgeNewInstallTask::cancel()
 void ForgeNewInstallTask::setTaskId(const QString &taskId)
 {
     m_taskId = taskId;
+}
+
+void ForgeNewInstallTask::setDownloadSource(DownloadSource source)
+{
+    m_sourceOverride = source;
+    m_hasSourceOverride = true;
 }
 
 void ForgeNewInstallTask::preExecute()
@@ -146,6 +160,35 @@ void ForgeNewInstallTask::preExecute()
         }
 
         m_profile = ForgeInstallProfile::fromJson(doc.object());
+
+        // 安装配置里每个库都自带下载地址与校验值（NeoForge 的库全部指向
+        // maven.neoforged.net），先记下来，后面按下载源换成镜像候选
+        for (const QJsonValue &libValue : m_profile.libraries)
+        {
+            if (!libValue.isObject())
+            {
+                continue;
+            }
+            const QJsonObject libObj = libValue.toObject();
+            const QString name = libObj["name"].toString();
+            if (name.isEmpty())
+            {
+                continue;
+            }
+            const QJsonObject artifact =
+                libObj["downloads"].toObject()["artifact"].toObject();
+            const QString url = artifact["url"].toString();
+            const QString sha1 = artifact["sha1"].toString();
+            const QString key = normalizeCoordinate(name);
+            if (!url.isEmpty())
+            {
+                m_profileLibUrls.insert(key, url);
+            }
+            if (!sha1.isEmpty())
+            {
+                m_profileLibSha1.insert(key, sha1);
+            }
+        }
 
         // Progress update: install profile parsed
         QMetaObject::invokeMethod(this, [this]()
@@ -222,7 +265,14 @@ void ForgeNewInstallTask::preExecute()
         }
         extractDir.mkpath(".");
 
-        if (!JarUtils::extractJarDirectory(installerJarPath, "maven", tempExtractDir))
+        // Forge 安装包内嵌 maven/ 目录，NeoForge 安装包不内嵌（依赖全部在线下载），
+        // 没有该目录时跳过而不是当成失败
+        const bool hasEmbeddedMaven = !JarUtils::listEntriesInJar(installerJarPath, "maven/").isEmpty();
+        if (!hasEmbeddedMaven)
+        {
+            qDebug() << "[ForgeNewInstallTask]" << "No embedded maven directory in installer, skipping";
+        }
+        else if (!JarUtils::extractJarDirectory(installerJarPath, "maven", tempExtractDir))
         {
             qWarning() << "[ForgeNewInstallTask]" << "Failed to extract maven directory from installer";
             QMetaObject::invokeMethod(this, [this]()
@@ -582,7 +632,7 @@ void ForgeNewInstallTask::downloadProcessorDependencies()
     }
 
     QString librariesPath = m_instancePath + "/libraries";
-    QVector<QPair<QStringList, QString>> tasks;
+    QVector<ForgeFileDownload> tasks;
 
     for (const QString &libName : libNames)
     {
@@ -598,18 +648,19 @@ void ForgeNewInstallTask::downloadProcessorDependencies()
             continue;
         }
 
-        ForgeDownloader downloader;
-        ForgeDownloadSource source = SettingsManager::instance()->getForgeDownloadSource();
-        downloader.setDownloadSource(
-            source == ForgeDownloadSource::Official ? DownloadSource::Official : DownloadSource::BMCL);
-
-        QStringList urls = downloader.getCandidateUrls(path);
-        if (urls.isEmpty())
+        // 安装配置里写明了地址的库（NeoForge 全部如此）优先用它，
+        // 按下载源换成镜像；没有地址的再按 Maven 坐标拼候选
+        const QString key = normalizeCoordinate(libName);
+        ForgeFileDownload task;
+        task.filePath = filePath;
+        task.expectedSha1 = m_profileLibSha1.value(key);
+        task.urls = libraryCandidateUrls(libName, m_profileLibUrls.value(key));
+        if (task.urls.isEmpty())
         {
             continue;
         }
 
-        tasks.append({urls, filePath});
+        tasks.append(task);
     }
 
     if (tasks.isEmpty())
@@ -619,9 +670,8 @@ void ForgeNewInstallTask::downloadProcessorDependencies()
     }
 
     ForgeDownloader *batchDownloader = new ForgeDownloader(this);
-    ForgeDownloadSource source = SettingsManager::instance()->getForgeDownloadSource();
-    batchDownloader->setDownloadSource(
-        source == ForgeDownloadSource::Official ? DownloadSource::Official : DownloadSource::BMCL);
+    batchDownloader->setDownloadSource(downloadSource());
+    batchDownloader->setMavenFamily(m_family);
 
     connect(batchDownloader, &ForgeDownloader::downloadBytesProgress, this,
             [this](qint64 bytesReceived, qint64 bytesTotal)
@@ -1302,14 +1352,27 @@ void ForgeNewInstallTask::generateVersionJson()
         forgeVersion = forgeVersion.mid(fullPrefix.length());
     }
 
+    const QString defaultMainClass =
+        (m_family == InstallerFamily::NeoForge)
+            ? QStringLiteral("cpw.mods.bootstraplauncher.BootstrapLauncher")
+            : QStringLiteral("cpw.mods.modlauncher.Launcher");
+    auto defaultVersionId = [this, mcVersion, forgeVersion]() -> QString
+    {
+        if (m_family == InstallerFamily::NeoForge)
+        {
+            return forgeVersion.startsWith(QLatin1String("neoforge"))
+                       ? forgeVersion
+                       : QStringLiteral("neoforge-%1").arg(forgeVersion);
+        }
+        return QStringLiteral("%1-forge-%2").arg(mcVersion, forgeVersion);
+    };
+
     if (versionJson.isEmpty())
     {
-        QString forgeVersionId = QString("%1-forge-%2").arg(mcVersion, forgeVersion);
-
-        versionJson["id"] = forgeVersionId;
+        versionJson["id"] = defaultVersionId();
         versionJson["inheritsFrom"] = mcVersion;
         versionJson["type"] = "release";
-        versionJson["mainClass"] = "cpw.mods.modlauncher.Launcher";
+        versionJson["mainClass"] = defaultMainClass;
 
         QJsonArray libraries;
         QJsonObject forgeLib;
@@ -1328,7 +1391,7 @@ void ForgeNewInstallTask::generateVersionJson()
         QString versionId = versionJson["id"].toString();
         if (versionId.isEmpty())
         {
-            versionJson["id"] = QString("%1-forge-%2").arg(mcVersion, forgeVersion);
+            versionJson["id"] = defaultVersionId();
         }
 
         if (!versionJson.contains("inheritsFrom"))
@@ -1338,7 +1401,7 @@ void ForgeNewInstallTask::generateVersionJson()
 
         if (!versionJson.contains("mainClass"))
         {
-            versionJson["mainClass"] = "cpw.mods.modlauncher.Launcher";
+            versionJson["mainClass"] = defaultMainClass;
         }
 
         QJsonDocument doc(versionJson);
@@ -1380,6 +1443,7 @@ void ForgeNewInstallTask::generateVersionJson()
         versionJson["libraries"] = libraries;
     }
 
+
     QString versionId = versionJson["id"].toString();
     QString versionDir = m_instancePath + "/versions/" + versionId;
     QString versionJsonPath = versionDir + "/" + versionId + ".json";
@@ -1405,14 +1469,18 @@ void ForgeNewInstallTask::generateVersionJson()
     m_writtenVersionJsonPath = versionJsonPath;
 
     // 官方安装器行为：把原版客户端 JAR 拷成 versions/<id>/<id>.jar，
-    // 启动时 classpath 与 ignoreList 里的 ${version_name}.jar 都指向它
-    const QString vanillaJar = m_instancePath + "/versions/" + mcVersion + "/" + mcVersion + ".jar";
-    const QString targetJar = versionDir + "/" + versionId + ".jar";
-    if (QFile::exists(vanillaJar) && !QFile::exists(targetJar))
+    // 启动时 classpath 与 ignoreList 里的 ${version_name}.jar 都指向它。
+    // NeoForge 的补丁客户端由 FML 自己从库目录按坐标加载（不能塞进版本 JSON 的
+    // libraries，否则会被当成开发环境里的合并包），这里只需让游戏本体认领到版本 JAR
     {
-        if (!QFile::copy(vanillaJar, targetJar))
+        const QString vanillaJar = m_instancePath + "/versions/" + mcVersion + "/" + mcVersion + ".jar";
+        const QString targetJar = versionDir + "/" + versionId + ".jar";
+        if (QFile::exists(vanillaJar) && !QFile::exists(targetJar))
         {
-            qWarning() << "[ForgeNewInstallTask]" << "Failed to copy vanilla jar to" << targetJar;
+            if (!QFile::copy(vanillaJar, targetJar))
+            {
+                qWarning() << "[ForgeNewInstallTask]" << "Failed to copy vanilla jar to" << targetJar;
+            }
         }
     }
 }
@@ -1441,9 +1509,8 @@ void ForgeNewInstallTask::downloadRemainingLibraries()
     QString librariesPath = m_instancePath + "/libraries";
 
     ForgeDownloader sourceProvider;
-    ForgeDownloadSource source = SettingsManager::instance()->getForgeDownloadSource();
-    sourceProvider.setDownloadSource(
-        source == ForgeDownloadSource::Official ? DownloadSource::Official : DownloadSource::BMCL);
+    sourceProvider.setDownloadSource(downloadSource());
+    sourceProvider.setMavenFamily(m_family);
 
     QVector<ForgeFileDownload> tasks;
     int reusedCount = 0;
@@ -1501,9 +1568,16 @@ void ForgeNewInstallTask::downloadRemainingLibraries()
         task.filePath = filePath;
         task.expectedSha1 = expectedSha1;
 
-        // 按下载源排好的多源候选优先（BMCL 源时国内镜像在前），
-        // 官方精确文件地址殿后兜底；重复地址去重
-        const QStringList candidates = sourceProvider.getCandidateUrls(relPath);
+        // 本机生成的库（补丁后的客户端 JAR）没有下载地址，文件已在前面写好
+        if (directUrl.isEmpty() && !QFile::exists(filePath))
+        {
+            qWarning() << "[ForgeNewInstallTask]" << "Generated library missing:" << filePath;
+            continue;
+        }
+
+        // 安装配置里写明的绝对地址优先（按下载源换成镜像），
+        // 再补上按 Maven 坐标拼出的多源候选；重复地址去重
+        const QStringList candidates = sourceProvider.getCandidateUrlsForRemote(directUrl);
         for (const QString &url : candidates)
         {
             if (!task.urls.contains(url))
@@ -1511,9 +1585,13 @@ void ForgeNewInstallTask::downloadRemainingLibraries()
                 task.urls.append(url);
             }
         }
-        if (!directUrl.isEmpty() && !task.urls.contains(directUrl))
+        const QStringList pathCandidates = sourceProvider.getCandidateUrls(relPath);
+        for (const QString &url : pathCandidates)
         {
-            task.urls.append(directUrl);
+            if (!task.urls.contains(url))
+            {
+                task.urls.append(url);
+            }
         }
         if (task.urls.isEmpty())
         {
@@ -1538,9 +1616,8 @@ void ForgeNewInstallTask::downloadRemainingLibraries()
         m_libDownloader->deleteLater();
     }
     m_libDownloader = new ForgeDownloader(this);
-    ForgeDownloadSource source2 = SettingsManager::instance()->getForgeDownloadSource();
-    m_libDownloader->setDownloadSource(
-        source2 == ForgeDownloadSource::Official ? DownloadSource::Official : DownloadSource::BMCL);
+    m_libDownloader->setDownloadSource(downloadSource());
+    m_libDownloader->setMavenFamily(m_family);
 
     const int totalTasks = tasks.size();
     connect(m_libDownloader, &ForgeDownloader::downloadBytesProgress, this,
@@ -1590,28 +1667,64 @@ void ForgeNewInstallTask::cleanupTempFiles()
 
 QString ForgeNewInstallTask::getLibraryPath(const QString &libraryName)
 {
-    QStringList parts = libraryName.split(':');
-    if (parts.size() < 3)
+    // "group:artifact:version[:classifier][@ext]" —— NeoForge 的坐标经常带
+    // classifier 和 @zip/@txt 扩展名（如 neoform 的 mappings-merged@txt），
+    // 简单按 ':' 切分会把扩展名算进 classifier
+    ForgeArtifact artifact = ForgeArtifact::fromName(libraryName);
+    if (artifact.group.isEmpty() || artifact.artifact.isEmpty() || artifact.version.isEmpty())
     {
         return QString();
     }
+    return artifact.toPath();
+}
 
-    QString group = QString(parts[0]).replace('.', '/');
-    QString artifact = parts[1];
-    QString version = parts[2];
-    QString classifier = parts.size() > 3 ? "-" + parts[3] : "";
-
-    QString extension = "jar";
-    int atIndex = version.indexOf('@');
-    if (atIndex != -1)
+DownloadSource ForgeNewInstallTask::downloadSource() const
+{
+    if (m_hasSourceOverride)
     {
-        extension = version.mid(atIndex + 1);
-        version = version.left(atIndex);
+        return m_sourceOverride;
     }
 
-    return QString("%1/%2/%3/%2-%3%4.%5")
-           .arg(group, artifact, version, classifier, extension);
+    if (m_family == InstallerFamily::NeoForge)
+    {
+        return SettingsManager::instance()->getNeoForgeDownloadSource() == NeoForgeDownloadSource::Official
+                   ? DownloadSource::Official
+                   : DownloadSource::BMCL;
+    }
+
+    return SettingsManager::instance()->getForgeDownloadSource() == ForgeDownloadSource::Official
+               ? DownloadSource::Official
+               : DownloadSource::BMCL;
 }
+
+QStringList ForgeNewInstallTask::libraryCandidateUrls(const QString &libraryName,
+                                                      const QString &explicitUrl)
+{
+    ForgeDownloader provider;
+    provider.setDownloadSource(downloadSource());
+    provider.setMavenFamily(m_family);
+
+    QStringList urls;
+    if (!explicitUrl.isEmpty())
+    {
+        urls = provider.getCandidateUrlsForRemote(explicitUrl);
+    }
+
+    const QString path = getLibraryPath(libraryName);
+    if (!path.isEmpty())
+    {
+        for (const QString &url : provider.getCandidateUrls(path))
+        {
+            if (!urls.contains(url))
+            {
+                urls.append(url);
+            }
+        }
+    }
+
+    return urls;
+}
+
 
 namespace {
 
@@ -1870,3 +1983,6 @@ QString ForgeNewInstallTask::calculateSha1(const QString &filePath)
 }
 
 } // namespace forge
+
+
+

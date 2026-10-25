@@ -15,8 +15,11 @@ SOURCES += world_map_page_probe.cpp \
            ../../pages/WorldMapPage.cpp \
            ../../utils/WorldMap/WorldMapRenderer.cpp \
            ../../utils/WorldMap/SeedTerrainRenderer.cpp \
+           ../../utils/WorldMap/CavePredictor.cpp \
            ../../utils/WorldMap/StructureFinder.cpp \
            ../../utils/WorldMap/StructureIcons.cpp \
+           ../../utils/WorldMap/StructureLoot.cpp \
+           ../../utils/WorldMap/McRandom.cpp \
            ../../utils/WorldMap/BiomeCatalog.cpp \
            ../../utils/WorldMap/BiomeName.cpp \
            ../../utils/WorldMap/OreFinder.cpp \
@@ -24,6 +27,9 @@ SOURCES += world_map_page_probe.cpp \
            ../../utils/Schematic/NbtCodec.cpp \
            ../../utils/Saves/LevelDatEditor.cpp \
            ../../utils/IconHelper.cpp \
+           ../../layouts/FlowLayout.cpp \
+           ../../components/StructureDetailDialog.cpp \
+           ../../components/AppDialogBase.cpp \
            ../../platform.cpp \
            ../../third_party/cubiomes/noise.c \
            ../../third_party/cubiomes/biomes.c \
@@ -37,14 +43,20 @@ SOURCES += world_map_page_probe.cpp \
 HEADERS += ../../pages/WorldMapPage.h \
            ../../utils/WorldMap/WorldMapRenderer.h \
            ../../utils/WorldMap/SeedTerrainRenderer.h \
+           ../../utils/WorldMap/CavePredictor.h \
            ../../utils/WorldMap/StructureFinder.h \
            ../../utils/WorldMap/StructureIcons.h \
+           ../../utils/WorldMap/StructureLoot.h \
+           ../../utils/WorldMap/McRandom.h \
            ../../utils/WorldMap/BiomeCatalog.h \
            ../../utils/WorldMap/BiomeName.h \
            ../../utils/WorldMap/OreFinder.h \
            ../../utils/JarUtils.h \
            ../../utils/Schematic/NbtCodec.h \
            ../../utils/Saves/LevelDatEditor.h \
+           ../../layouts/FlowLayout.h \
+           ../../components/StructureDetailDialog.h \
+           ../../components/AppDialogBase.h \
            fake/utils/ThemeManager.h \
            fake/utils/SettingsManager.h \
            fake/components/AppFileDialog.h \

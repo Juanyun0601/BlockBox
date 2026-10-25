@@ -13,6 +13,8 @@ SOURCES += \
     $$ROOT/utils/forge/ForgeDownloader.cpp \
     $$ROOT/utils/forge/ForgeNewInstallTask.cpp \
     $$ROOT/utils/forge/ForgeProfile.cpp \
+    $$ROOT/utils/forge/LegacyForgeInstaller.cpp \
+    $$ROOT/utils/forge/LoaderVersionDir.cpp \
     $$ROOT/utils/net/Download.cpp \
     $$ROOT/utils/net/FileSink.cpp \
     $$ROOT/utils/net/HttpMetaCache.cpp \
@@ -32,6 +34,8 @@ HEADERS += \
     $$ROOT/utils/forge/ForgeDownloader.h \
     $$ROOT/utils/forge/ForgeNewInstallTask.h \
     $$ROOT/utils/forge/ForgeProfile.h \
+    $$ROOT/utils/forge/LegacyForgeInstaller.h \
+    $$ROOT/utils/forge/LoaderVersionDir.h \
     $$ROOT/utils/JarUtils.h \
     $$ROOT/utils/Safety.h \
     $$ROOT/utils/DownloadTaskManager.h \
@@ -49,3 +53,5 @@ HEADERS += \
 
 INCLUDEPATH += $$ROOT $$ROOT/utils
 DEFINES += WINDOWS_OS
+LIBS += -lz
+

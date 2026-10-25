@@ -10,6 +10,7 @@
 #include <QObject>
 #include <QString>
 #include <QJsonObject>
+#include <QHash>
 #include <QMap>
 #include <QString>
 #include <QVector>
@@ -22,21 +23,26 @@ namespace forge {
 
 struct ForgeProcessor;
 class ForgeDownloader;
+enum class DownloadSource;
 
 class ForgeNewInstallTask : public QObject
 {
     Q_OBJECT
 public:
     ForgeNewInstallTask(const QString &installerJarPath, const QString &instancePath,
-                        QObject *parent = nullptr);
+                        QObject *parent = nullptr,
+                        InstallerFamily family = InstallerFamily::Forge);
     ~ForgeNewInstallTask();
 
     void execute();
     void cancel();
     void setTaskId(const QString &taskId);
+    /// 覆盖下载源（不设则按加载器读取设置里的下载源）
+    void setDownloadSource(DownloadSource source);
 
     /// 本次安装生成的版本 id（versions/ 下的目录名），未生成时为空
     QString writtenVersionId() const { return m_writtenVersionId; }
+    InstallerFamily family() const { return m_family; }
 
 signals:
     void progressUpdated(const QString &stage, int percent);
@@ -72,6 +78,11 @@ private:
     QString parseLiteral(const QString &literal, const QMap<QString, QString> &vars);
     QString calculateSha1(const QString &filePath);
 
+    /// 当前下载源（Forge / NeoForge 各有一套设置项）
+    DownloadSource downloadSource() const;
+    /// 单个库的候选下载地址：安装配置里带绝对地址时按下载源决定镜像顺序
+    QStringList libraryCandidateUrls(const QString &libraryName, const QString &explicitUrl);
+
     QString m_installerJarPath;
     QString m_instancePath;
     QString m_tempDir;
@@ -82,6 +93,13 @@ private:
     int m_processorTotal;
     int m_processorDone;
     QString m_taskId;
+    /// 安装配置里各库自带的下载地址与校验值（坐标 → url / sha1）
+    QHash<QString, QString> m_profileLibUrls;
+    QHash<QString, QString> m_profileLibSha1;
+    InstallerFamily m_family;
+    /// 下载源覆盖（安装页选择的源优先于全局设置）
+    bool m_hasSourceOverride = false;
+    DownloadSource m_sourceOverride = DownloadSource{};
     /// 生成的版本 JSON 信息（剩余库下载要用）
     QString m_writtenVersionJsonPath;
     QString m_writtenVersionId;

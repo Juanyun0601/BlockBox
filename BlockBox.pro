@@ -104,6 +104,7 @@ components/ProgressDialog.cpp \
      components/BackgroundWidget.cpp \
      components/PanoramaSkyRenderer.cpp \
      components/NewsCard.cpp \
+     components/HomeAnnouncementBar.cpp \
      components/NewsDetailDialog.cpp \
      components/PerfMonitorCard.cpp \
      components/PerformanceDetailDialog.cpp \
@@ -112,6 +113,7 @@ components/ProgressDialog.cpp \
      components/CommandPackManagerDialog.cpp \
      components/CommandPackEditor.cpp \
      components/ResourceReferenceDialog.cpp \
+     components/StructureDetailDialog.cpp \
      components/FavoriteFolderDialog.cpp \
      components/ContentViewSwitch.cpp \
      components/SourceSwitchBar.cpp \
@@ -187,6 +189,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/SystemInfo.cpp \
     utils/UpdateChecker.cpp \
     utils/news/NewsFeed.cpp \
+    utils/news/AnnouncementFeed.cpp \
     utils/RuntimeArchive.cpp \
     utils/RuntimeDependencyManager.cpp \
     utils/HarmonyBridge.cpp \
@@ -232,6 +235,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/forge/ForgeNewInstallTask.cpp \
     utils/forge/ForgeProfile.cpp \
     utils/forge/LegacyForgeInstaller.cpp \
+    utils/forge/LoaderVersionDir.cpp \
     utils/fabric/FabricInstaller.cpp \
     utils/optifine/OptiFineInstaller.cpp \
     utils/ManifestCache.cpp \
@@ -301,8 +305,11 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/ServersDatIO.cpp \
     utils/WorldMap/WorldMapRenderer.cpp \
     utils/WorldMap/SeedTerrainRenderer.cpp \
+    utils/WorldMap/CavePredictor.cpp \
     utils/WorldMap/StructureFinder.cpp \
     utils/WorldMap/StructureIcons.cpp \
+    utils/WorldMap/StructureLoot.cpp \
+    utils/WorldMap/McRandom.cpp \
     utils/WorldMap/BiomeCatalog.cpp \
     utils/WorldMap/BiomeName.cpp \
     utils/WorldMap/OreFinder.cpp \
@@ -389,6 +396,7 @@ components/ProgressDialog.h \
        components/GameFloatingIcon.h \
        components/BedrockInstanceAssistantWindow.h \
        components/NewsCard.h \
+     components/HomeAnnouncementBar.h \
      components/NewsDetailDialog.h \
       components/PerfMonitorCard.h \
       components/PerformanceDetailDialog.h \
@@ -396,6 +404,7 @@ components/ProgressDialog.h \
       components/LocalModelDialog.h \
       components/CommandPackManagerDialog.h \
       components/CommandPackEditor.h \
+       components/StructureDetailDialog.h \
        components/ResourceReferenceDialog.h \
         components/FavoriteFolderDialog.h \
          components/ContentViewSwitch.h \
@@ -445,6 +454,7 @@ components/ProjectionBlockEditorDialog.h \
     utils/SystemInfo.h \
     utils/UpdateChecker.h \
     utils/news/NewsFeed.h \
+    utils/news/AnnouncementFeed.h \
     utils/RuntimeArchive.h \
     utils/RuntimeDependencyManager.h \
     utils/HarmonyBridge.h \
@@ -501,6 +511,7 @@ components/ProjectionBlockEditorDialog.h \
     utils/forge/ForgeNewInstallTask.h \
     utils/forge/ForgeProfile.h \
     utils/forge/LegacyForgeInstaller.h \
+    utils/forge/LoaderVersionDir.h \
     utils/optifine/OptiFineInstaller.h \
      utils/NeoForgeInstaller.h \
      utils/LiteLoaderInstaller.h \
@@ -595,8 +606,11 @@ pages/ProjectionManagePage.h \
     utils/ServersDatIO.h \
     utils/WorldMap/WorldMapRenderer.h \
     utils/WorldMap/SeedTerrainRenderer.h \
+    utils/WorldMap/CavePredictor.h \
     utils/WorldMap/StructureFinder.h \
     utils/WorldMap/StructureIcons.h \
+    utils/WorldMap/StructureLoot.h \
+    utils/WorldMap/McRandom.h \
     utils/WorldMap/BiomeCatalog.h \
     utils/WorldMap/BiomeName.h \
     utils/WorldMap/OreFinder.h \

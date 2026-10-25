@@ -23,8 +23,38 @@
 #include <QTimer>
 #include <QUuid>
 #include <QUrl>
+#include <QThread>
+#include <QtConcurrent/QtConcurrent>
 
 #include "DownloadTaskManager.h"
+#include "forge/ForgeDownloader.h"
+#include "forge/ForgeNewInstallTask.h"
+#include "forge/LoaderVersionDir.h"
+
+namespace {
+
+// 调用方可能传游戏根目录，也可能传 versions/<版本> 版本的实例目录
+QString resolveMinecraftRootPath(const QString &instancePath)
+{
+    const QString path = QDir::cleanPath(QDir::fromNativeSeparators(instancePath));
+    if (path.isEmpty())
+    {
+        return path;
+    }
+
+    const QFileInfo info(path);
+    if (info.absoluteDir().dirName().compare(QStringLiteral("versions"), Qt::CaseInsensitive) == 0)
+    {
+        return QDir::cleanPath(info.absolutePath() + QStringLiteral("/.."));
+    }
+    if (info.fileName().compare(QStringLiteral("versions"), Qt::CaseInsensitive) == 0)
+    {
+        return info.absolutePath();
+    }
+    return path;
+}
+
+} // namespace
 
 NeoForgeInstaller* NeoForgeInstaller::m_instance = nullptr;
 QMutex NeoForgeInstaller::m_instanceMutex;
@@ -36,6 +66,7 @@ NeoForgeInstaller::NeoForgeInstaller()
     , m_isInstalling(false)
     , m_isCancelled(false)
     , m_isDownloadPhase(true)
+    , m_taskStarted(false)
     , m_totalBytes(0)
     , m_downloadedBytes(0)
 {
@@ -102,21 +133,30 @@ void NeoForgeInstaller::updateTaskStatus(const QString &status)
 
 QString NeoForgeInstaller::getNeoForgeDownloadUrl(const QString &forgeVersion)
 {
-    switch (m_downloadSource) {
-    case NeoForgeDownloadSource::BMCL:
-        return QString("https://bmclapi2.bangbang93.com/neoforge/version/%1/download/installer.jar")
-               .arg(forgeVersion);
-    case NeoForgeDownloadSource::Official:
-    default:
-        return QString("https://maven.neoforged.net/releases/net/neoforged/neoforge/%1/neoforge-%2-installer.jar")
-               .arg(forgeVersion, forgeVersion);
-    }
+    forge::ForgeDownloader provider;
+    provider.setDownloadSource(m_downloadSource == NeoForgeDownloadSource::Official
+                                   ? forge::DownloadSource::Official
+                                   : forge::DownloadSource::BMCL);
+    provider.setMavenFamily(forge::InstallerFamily::NeoForge);
+    const QStringList candidates = provider.getNeoForgeInstallerCandidateUrls(forgeVersion);
+    return candidates.isEmpty() ? QString() : candidates.first();
+}
+
+QStringList NeoForgeInstaller::installerCandidateUrls() const
+{
+    forge::ForgeDownloader provider;
+    provider.setDownloadSource(m_downloadSource == NeoForgeDownloadSource::Official
+                                   ? forge::DownloadSource::Official
+                                   : forge::DownloadSource::BMCL);
+    provider.setMavenFamily(forge::InstallerFamily::NeoForge);
+    return provider.getNeoForgeInstallerCandidateUrls(m_currentForgeVersion);
 }
 
 void NeoForgeInstaller::downloadNeoForgeInstaller(const QString &mcVersion, const QString &forgeVersion,
                                                    const QString &instancePath, const QString &instanceName)
 {
-    if (m_isInstalling) {
+    if (m_isInstalling)
+    {
         emit installFailed(tr("安装器正忙，请等待当前任务完成"));
         return;
     }
@@ -126,14 +166,19 @@ void NeoForgeInstaller::downloadNeoForgeInstaller(const QString &mcVersion, cons
     m_currentInstancePath = instancePath;
     m_isInstalling = true;
     m_isCancelled = false;
+    m_taskStarted = false;
+    m_lastDownloadError.clear();
     m_totalBytes = 0;
     m_downloadedBytes = 0;
 
-    if (m_currentTaskId.isEmpty()) {
+    if (m_currentTaskId.isEmpty())
+    {
         QString taskName = instanceName;
-        if (taskName.isEmpty()) {
+        if (taskName.isEmpty())
+        {
             taskName = instancePath.split("/").last();
-            if (taskName.isEmpty()) {
+            if (taskName.isEmpty())
+            {
                 taskName = QString("NeoForge %1").arg(forgeVersion);
             }
         }
@@ -151,176 +196,220 @@ void NeoForgeInstaller::downloadNeoForgeInstaller(const QString &mcVersion, cons
 
     m_tempDir = QDir::tempPath() + "/BlockBox_NeoForge_" + QUuid::createUuid().toString(QUuid::WithoutBraces);
     QDir tempDir(m_tempDir);
-    if (!tempDir.exists()) {
+    if (!tempDir.exists())
+    {
         tempDir.mkpath(".");
     }
 
-    QString downloadUrl = getNeoForgeDownloadUrl(forgeVersion);
-    QString installerPath = m_tempDir + "/neoforge-installer.jar";
+    m_installerPath = m_tempDir + "/neoforge-installer.jar";
 
     emit statusChanged(tr("正在下载NeoForge安装包..."));
     updateTaskStatus(tr("正在下载安装包"));
 
     m_isDownloadPhase = true;
 
-    if (!downloadFile(downloadUrl, installerPath)) {
-        emit installFailed(tr("下载NeoForge安装包失败"));
+    // 安装包下载（含多源回退）放后台线程：调用方既可能是界面线程，
+    // 也可能已经是安装页拉起的后台线程
+    (void)QtConcurrent::run([this]() { runDownloadPhase(); });
+}
+
+void NeoForgeInstaller::runDownloadPhase()
+{
+    const QStringList candidates = installerCandidateUrls();
+    bool downloaded = false;
+
+    for (const QString &url : candidates)
+    {
+        if (m_isCancelled)
+        {
+            return;
+        }
+
+        qDebug() << "[NeoForgeInstaller] 尝试安装包地址:" << url;
+        if (downloadFile(url, m_installerPath))
+        {
+            downloaded = true;
+            break;
+        }
+    }
+
+    if (m_isCancelled)
+    {
+        return;
+    }
+
+    if (!downloaded)
+    {
         m_isInstalling = false;
         cleanupTempFiles();
+        if (!m_currentTaskId.isEmpty())
+        {
+            DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Failed,
+                                                              tr("安装失败"));
+        }
+        emit installFailed(m_lastDownloadError.isEmpty()
+                               ? tr("下载NeoForge安装包失败")
+                               : tr("下载NeoForge安装包失败：%1").arg(m_lastDownloadError));
         return;
     }
 
-    if (m_isCancelled) {
-        m_isInstalling = false;
-        return;
-    }
-
-    installNeoForge(installerPath, instancePath);
+    // 安装任务里会创建 QObject（父对象在对象所属线程），必须回到该线程启动
+    QMetaObject::invokeMethod(this, [this]() { installNeoForge(m_installerPath, m_currentInstancePath); },
+                              Qt::QueuedConnection);
 }
 
 void NeoForgeInstaller::installNeoForge(const QString &installerPath, const QString &instancePath)
 {
-    emit statusChanged(tr("正在启动NeoForge安装程序..."));
-    updateTaskStatus(tr("正在启动NeoForge安装程序"));
-    emit installProgressUpdated(10, tr("启动安装程序"));
+    if (QThread::currentThread() != thread())
+    {
+        QMetaObject::invokeMethod(this, [this, installerPath, instancePath]() {
+            installNeoForge(installerPath, instancePath);
+        }, Qt::QueuedConnection);
+        return;
+    }
 
+    if (m_isCancelled)
+    {
+        return;
+    }
+
+    m_installerPath = installerPath;
+    m_currentInstancePath = instancePath;
+    startInstallTask();
+}
+
+void NeoForgeInstaller::startInstallTask()
+{
     m_isDownloadPhase = false;
-    DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 30);
+    m_taskStarted = true;
 
-    QString javaPath = getJavaPath();
-    if (javaPath.isEmpty()) {
-        emit installFailed(tr("未找到Java运行环境"));
-        m_isInstalling = false;
-        return;
+    // 官方安装程序要求目录里有 launcher_profiles.json，且只能产出官方布局；
+    // 这里改成 MultiMC 同款做法：直接解析 install_profile、跑处理器、自己写版本 JSON
+    emit statusChanged(tr("正在解析NeoForge安装信息..."));
+    updateTaskStatus(tr("正在解析安装配置"));
+    emit installProgressUpdated(0, tr("正在解析安装配置"));
+    if (!m_currentTaskId.isEmpty())
+    {
+        DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 60);
     }
 
-    if (m_isCancelled) {
-        m_isInstalling = false;
-        return;
+    const QString gameRoot = resolveMinecraftRootPath(m_currentInstancePath);
+
+    if (m_installTask)
+    {
+        m_installTask->deleteLater();
+        m_installTask = nullptr;
     }
+    m_installTask = new forge::ForgeNewInstallTask(m_installerPath, gameRoot, this,
+                                                   forge::InstallerFamily::NeoForge);
+    // 安装页上选的下载源优先于全局设置
+    m_installTask->setDownloadSource(m_downloadSource == NeoForgeDownloadSource::Official
+                                         ? forge::DownloadSource::Official
+                                         : forge::DownloadSource::BMCL);
 
-    emit statusChanged(tr("正在运行NeoForge安装程序..."));
-    updateTaskStatus(tr("正在运行NeoForge安装程序"));
-    emit installProgressUpdated(30, tr("运行安装程序"));
+    connect(m_installTask, &forge::ForgeNewInstallTask::progressUpdated, this,
+            [this](const QString &stage, int percent)
+            {
+                emit statusChanged(stage);
+                emit installProgressUpdated(percent, stage);
+                updateTaskStatus(stage);
+                if (!m_currentTaskId.isEmpty())
+                {
+                    // 安装器阶段整体落在 60%→100%
+                    DownloadTaskManager::instance()->updateTaskProgressPercent(
+                        m_currentTaskId, 60 + percent * 40 / 100);
+                }
+            });
 
-    // 本函数运行在后台线程（加载器安装已移出 GUI 线程），进程与等待循环都
-    // 留在当前线程内；结果通过信号排队送回 GUI 线程
-    QProcess process;
-    process.setProcessChannelMode(QProcess::MergedChannels);
+    connect(m_installTask, &forge::ForgeNewInstallTask::completed, this,
+            [this](bool success, const QString &error)
+            {
+                m_isInstalling = false;
+                m_taskStarted = false;
 
-    connect(&process, &QProcess::readyReadStandardOutput, [this, &process]() {
-        QString output = QString::fromUtf8(process.readAllStandardOutput());
-        qDebug() << "[NeoForgeInstaller]" << output.trimmed();
+                const QString versionId =
+                    m_installTask ? m_installTask->writtenVersionId() : QString();
+                if (m_installTask)
+                {
+                    m_installTask->deleteLater();
+                    m_installTask = nullptr;
+                }
 
-        if (output.contains("Installing")) {
-            emit installProgressUpdated(50, tr("正在安装NeoForge..."));
-            updateTaskStatus(tr("正在安装NeoForge"));
-        }
-    });
+                // 处理器/解压线程此时都已结束，删安装包是安全的
+                cleanupTempFiles();
 
-    QStringList args;
-    args << "-jar" << installerPath << "--installClient" << instancePath;
+                if (m_isCancelled)
+                {
+                    return; // 取消信号已经发过
+                }
 
-    process.start(javaPath, args);
+                if (success)
+                {
+                    // 原版基准目录并进生成的 NeoForge 目录：版本 JAR 改由实例目录提供，
+                    // FML 的 ignoreList 才认领得到它（否则原版 JAR 会被当成普通模块，
+                    // 与补丁客户端的包导出冲突，启动直接 ResolutionException）
+                    if (!versionId.isEmpty())
+                    {
+                        forge::consolidateLoaderVersionDir(resolveMinecraftRootPath(m_currentInstancePath),
+                                                           m_currentMcVersion, versionId, false);
+                    }
+                    emit installProgressUpdated(100, tr("安装完成"));
+                    if (!m_currentTaskId.isEmpty())
+                    {
+                        DownloadTaskManager::instance()->updateTaskStatus(
+                            m_currentTaskId, DownloadTaskStatus::Completed, tr("安装完成"));
+                        DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 100);
+                    }
+                    emit installCompleted(versionId);
+                }
+                else
+                {
+                    if (!m_currentTaskId.isEmpty())
+                    {
+                        DownloadTaskManager::instance()->updateTaskStatus(
+                            m_currentTaskId, DownloadTaskStatus::Failed, tr("安装失败"));
+                    }
+                    emit installFailed(error);
+                }
+            });
 
-    if (!process.waitForStarted(10000)) {
-        emit installFailed(tr("无法启动NeoForge安装程序"));
-        m_isInstalling = false;
-        return;
-    }
-
-    QEventLoop loop;
-    QTimer timeoutTimer;
-    timeoutTimer.setSingleShot(true);
-    connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    connect(&process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            &loop, &QEventLoop::quit);
-    // 安装期间 GUI 侧的取消只置位标志，这里轮询到后主动结束等待并杀进程
-    QTimer cancelPoll;
-    connect(&cancelPoll, &QTimer::timeout, &loop, [this, &loop]() {
-        if (m_isCancelled) {
-            loop.quit();
-        }
-    });
-    timeoutTimer.start(10 * 60 * 1000);
-    cancelPoll.start(500);
-    loop.exec();
-    cancelPoll.stop();
-    timeoutTimer.stop();
-
-    if (m_isCancelled) {
-        if (process.state() != QProcess::NotRunning) {
-            process.kill();
-            process.waitForFinished(1000);
-        }
-        m_isInstalling = false;
-        return;
-    }
-
-    if (process.state() != QProcess::NotRunning) {
-        process.kill();
-        process.waitForFinished(1000);
-        emit installFailed(tr("NeoForge安装超时（超过10分钟）"));
-        m_isInstalling = false;
-
-        if (!m_currentTaskId.isEmpty()) {
-            DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Failed,
-                                                              tr("安装失败"));
-        }
-        return;
-    }
-
-    if (process.exitCode() == 0) {
-        emit installProgressUpdated(90, tr("安装完成"));
-        updateTaskStatus(tr("安装完成"));
-        DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 90);
-
-        cleanupTempFiles();
-
-        m_isInstalling = false;
-
-        QString versionId = m_currentMcVersion + "-NeoForge" + m_currentForgeVersion;
-        emit installProgressUpdated(100, tr("安装完成"));
-        emit installCompleted(versionId);
-
-        if (!m_currentTaskId.isEmpty()) {
-            DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Completed,
-                                                               tr("安装完成"));
-            DownloadTaskManager::instance()->updateTaskProgressPercent(m_currentTaskId, 100);
-        }
-    } else {
-        m_isInstalling = false;
-        emit installFailed(tr("NeoForge安装程序异常退出（错误码: %1）").arg(process.exitCode()));
-
-        if (!m_currentTaskId.isEmpty()) {
-            DownloadTaskManager::instance()->updateTaskStatus(m_currentTaskId, DownloadTaskStatus::Failed,
-                                                               tr("安装失败"));
-        }
-    }
+    m_installTask->execute();
 }
 
 void NeoForgeInstaller::cancelInstall()
 {
-    if (!m_isInstalling) {
+    if (!m_isInstalling && !m_taskStarted)
+    {
         return;
     }
 
     m_isCancelled = true;
     m_isInstalling = false;
 
-    // reply 可能存活在执行安装的后台线程，跨线程直接 abort 不安全；
-    // 通过排队调用投递到 reply 所属线程执行。安装进程则由后台线程内的
-    // 取消轮询（每 0.5 秒）发现标志后自行结束，不在这里跨线程操作
-    if (m_currentReply) {
+    // reply 可能存活在下载后台线程，跨线程直接 abort 不安全，排队投递过去；
+    // 安装任务只打取消标记，由任务自己在处理器/解压收尾后结束
+    if (m_currentReply)
+    {
         QMetaObject::invokeMethod(m_currentReply, &QNetworkReply::abort, Qt::QueuedConnection);
         m_currentReply = nullptr;
     }
 
-    if (!m_currentTaskId.isEmpty()) {
+    if (m_installTask)
+    {
+        m_installTask->cancel();
+    }
+
+    if (!m_currentTaskId.isEmpty())
+    {
         DownloadTaskManager::instance()->cancelTask(m_currentTaskId);
     }
 
-    cleanupTempFiles();
+    // 安装任务仍在跑时不能删临时目录（任务还在读安装包），
+    // 交给任务的完成回调统一清理
+    if (!m_taskStarted)
+    {
+        cleanupTempFiles();
+    }
 
     emit installCancelled();
 }
@@ -337,8 +426,10 @@ bool NeoForgeInstaller::downloadFile(const QString &url, const QString &filePath
         return false;
     }
 
-    if (redirectDepth > 10) {
-        emit installFailed(tr("下载重定向次数过多"));
+    if (redirectDepth > 10)
+    {
+        m_lastDownloadError = tr("重定向次数过多");
+        qWarning() << "[NeoForgeInstaller]" << m_lastDownloadError << url;
         return false;
     }
 
@@ -367,7 +458,8 @@ bool NeoForgeInstaller::downloadFile(const QString &url, const QString &filePath
 
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
-        emit installFailed(tr("无法创建文件: %1").arg(filePath));
+        m_lastDownloadError = tr("无法创建文件: %1").arg(filePath);
+        qWarning() << "[NeoForgeInstaller]" << m_lastDownloadError;
         reply->abort();
         reply->deleteLater();
         m_currentReply = nullptr;
@@ -416,7 +508,8 @@ bool NeoForgeInstaller::downloadFile(const QString &url, const QString &filePath
         }
 
         QString errorMsg = reply->errorString();
-        emit installFailed(tr("下载文件失败: %1").arg(errorMsg));
+        m_lastDownloadError = errorMsg;
+        qWarning() << "[NeoForgeInstaller]" << "下载失败:" << url << errorMsg;
         reply->deleteLater();
         m_currentReply = nullptr;
         return false;
@@ -428,7 +521,8 @@ bool NeoForgeInstaller::downloadFile(const QString &url, const QString &filePath
     if (!expectedSha1.isEmpty()) {
         QString actualSha1 = calculateSha1(filePath);
         if (actualSha1.toLower() != expectedSha1.toLower()) {
-            emit installFailed(tr("文件SHA1校验失败: %1").arg(filePath));
+            m_lastDownloadError = tr("文件SHA1校验失败: %1").arg(filePath);
+            qWarning() << "[NeoForgeInstaller]" << m_lastDownloadError;
             QFile::remove(filePath);
             return false;
         }
@@ -485,3 +579,5 @@ QString NeoForgeInstaller::getJavaPath() const
 
     return javaPath;
 }
+
+

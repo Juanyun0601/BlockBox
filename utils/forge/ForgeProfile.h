@@ -17,6 +17,18 @@
 namespace forge {
 
 /**
+ * @brief 安装器所属的加载器家族
+ *
+ * Forge 与 NeoForge 的 install_profile 结构一致，差异只在版本号命名、
+ * Maven 仓库与最终版本 JSON 需要补的加载器库。
+ */
+enum class InstallerFamily
+{
+    Forge,
+    NeoForge
+};
+
+/**
  * @brief Maven坐标工件描述
  */
 struct ForgeArtifact

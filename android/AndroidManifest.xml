@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.blockbox.launcher"
-    android:versionCode="6"
-    android:versionName="beta5.3"
+    android:versionCode="7"
+    android:versionName="beta6"
     android:installLocation="auto">
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -27,12 +27,14 @@
         android:requestLegacyExternalStorage="true"
         android:extractNativeLibs="true">
 
+        <!-- 移动端默认横屏：界面按宽屏排版，竖屏空间过于局促；
+             sensorLandscape 仍允许左右两个横屏方向随重力翻转 -->
         <activity
             android:name="org.qtproject.qt.android.bindings.QtActivity"
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
             android:label="BlockBox"
             android:launchMode="singleTop"
-            android:screenOrientation="unspecified"
+            android:screenOrientation="sensorLandscape"
             android:theme="@style/AppTheme"
             android:exported="true">
             <intent-filter>

@@ -13,6 +13,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -586,6 +587,23 @@ QStringList GameLauncher::buildClasspath(const QString& instancePath, const QJso
     }
     classpath.reserve(allLibraries.size() + 1);
 
+    // ── 同一个库只保留最后出现的那个版本 ──
+    // PCL/HMCL 等启动器整合出来的实例 JSON 里，同一个 group:artifact 常被重复列出
+    // 不同版本（例如 asm 9.6 与 asm 9.8）。两份都塞进 classpath 后，Fabric 的
+    // verifyClasspath 会直接判定"duplicate ASM classes found on classpath"并拒绝启动。
+    // 与原版/PCL 语义一致：后面的条目覆盖前面的（子版本覆盖父版本）。
+    // 键里保留 classifier（第 4 段），否则 `lwjgl` 与 `lwjgl:natives-windows`
+    // 会被误判成同一个库，把 natives 从 classpath 里挤掉。
+    QHash<QString, int> classpathIndexByKey;
+    const int classpathBaseSize = classpath.size();
+    const auto libraryKey = [](const QString& mavenName) -> QString {
+        const QStringList parts = mavenName.split(QLatin1Char(':'));
+        if (parts.size() < 3)
+            return QString();
+        return parts[0] + QLatin1Char(':') + parts[1]
+             + (parts.size() >= 4 ? (QLatin1Char(':') + parts[3]) : QString());
+    };
+
     for (const QJsonValue& libValue : allLibraries)
     {
         QJsonObject lib = libValue.toObject();
@@ -650,7 +668,20 @@ QStringList GameLauncher::buildClasspath(const QString& instancePath, const QJso
 
         if (!libPath.isEmpty() && QFile::exists(libPath))
         {
-            classpath << libPath;
+            // 同一 group:artifact(:classifier) 只保留最后一个版本，见上方说明
+            const QString key = libraryKey(lib["name"].toString());
+            const auto existing = key.isEmpty() ? classpathIndexByKey.constEnd()
+                                                : classpathIndexByKey.constFind(key);
+            if (existing != classpathIndexByKey.constEnd() && existing.value() >= classpathBaseSize)
+            {
+                classpath[existing.value()] = libPath;
+            }
+            else
+            {
+                classpath << libPath;
+                if (!key.isEmpty())
+                    classpathIndexByKey.insert(key, classpath.size() - 1);
+            }
         }
         else if (!libPath.isEmpty())
         {
@@ -688,6 +719,13 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
 
     // ── 解析版本名 ──
     QString versionName = resolveJarName(instancePath, rawVersionJson);
+    // ${version_name} 的语义是"版本 id"：Forge 用它拼出 -DignoreList 里的客户端 JAR 名
+    // （...,${version_name}.jar）。resolveJarName 对 Forge/NeoForge 实例常只返回原版
+    // 版本号（如 1.20.1），名字对不上就没人"认领"客户端 JAR，Forge 会把它当普通 mod
+    // 去扫描 → 模块名冲突 ResolutionException，启动即崩。优先用 JSON 里的 id。
+    QString launchVersionName = mergedJson.value(QStringLiteral("id")).toString();
+    if (launchVersionName.isEmpty())
+        launchVersionName = versionName;
 
     // ── 基础 JVM 参数 ──
     // 参考 HMCL/PCL 标准做法：UTF-8 编码确保中文标题正常显示
@@ -764,7 +802,18 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
             emit launchDetailAdded(QString("资产目录回退到共享目录: %1").arg(assetsPath));
         }
     }
+    // 库目录：版本隔离时通常是 <版本目录>/libraries，但 PCL/HMCL/官方安装器把
+    // 库下在共享 <minecraft>/libraries 时版本目录下根本没有 libraries。
+    // Forge 的 -p 模块路径与 -DlibraryDirectory 都靠 ${library_directory} 展开，
+    // 指向不存在的目录会让 securejarhandler 退化成普通 classpath 类
+    // （Unknown module → java.lang.invoke 未开放 → UnionFileSystem 初始化直接崩）。
     QString librariesPath = basePath + "/libraries";
+    QString sharedLibrariesPath = QFileInfo(instancePath).dir().absolutePath() + "/../libraries";
+    if (!QDir(librariesPath).exists() && QDir(sharedLibrariesPath).exists())
+    {
+        librariesPath = sharedLibrariesPath;
+        emit launchDetailAdded(QString("库目录回退到共享目录: %1").arg(librariesPath));
+    }
     QDir nativesDir(nativesPath);
     if (!nativesDir.exists()) nativesDir.mkpath(".");
 
@@ -954,6 +1003,7 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
         // ── 占位符替换（参考 HMCL 使用 Map<placeholder,value> 批量替换）──
         // 预计算 classpath 字符串，避免循环内重复 join
         const QString classpathStr = classpath.join(classpathSeparator);
+        static const QString kLibraryDirPh = QStringLiteral("${library_directory}");
         for (int i = 0; i < args.size(); i++)
         {
             QString& arg = args[i];
@@ -961,7 +1011,7 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
             if (!arg.contains(QLatin1Char('$')))
                 continue;
 
-            arg.replace(QLatin1String("${version_name}"), versionName);
+            arg.replace(QLatin1String("${version_name}"), launchVersionName);
             arg.replace(QLatin1String("${game_directory}"), basePath);
             arg.replace(QLatin1String("${assets_root}"), assetsPath);
             arg.replace(QLatin1String("${assets_index_name}"), assetIndex);
@@ -973,10 +1023,39 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
             arg.replace(QLatin1String("${user_properties}"), QStringLiteral("{}"));
             arg.replace(QLatin1String("${version_type}"), QStringLiteral("release"));
             arg.replace(QLatin1String("${natives_directory}"), nativesPath);
-            arg.replace(QLatin1String("${library_directory}"), librariesPath);
             arg.replace(QLatin1String("${launcher_name}"), QStringLiteral("BlockBox"));
             arg.replace(QLatin1String("${launcher_version}"), QStringLiteral("1.0"));
+            // 分隔符要在库目录之前替换：Forge 的 -p 是"分隔符拼接的多条目列表"，
+            // 需要逐条目判断该库到底落在隔离目录还是共享目录
             arg.replace(QLatin1String("${classpath_separator}"), classpathSeparator);
+            if (arg.contains(kLibraryDirPh))
+            {
+                QStringList pieces = arg.split(classpathSeparator);
+                for (QString& piece : pieces)
+                {
+                    const int ph = piece.indexOf(kLibraryDirPh);
+                    if (ph < 0)
+                        continue;
+                    // 占位符后面紧跟的是该库的相对路径（形如 /cpw/mods/xxx/1.0/x.jar），
+                    // 用它判断这条库的真实位置，避免整条 -p 都指向不存在的目录
+                    const QString relPath = piece.mid(ph + kLibraryDirPh.size());
+                    QString root = librariesPath;
+                    if (!QFileInfo::exists(root + relPath)
+                        && sharedLibrariesPath != librariesPath
+                        && QFileInfo::exists(sharedLibrariesPath + relPath))
+                        root = sharedLibrariesPath;
+                    // 单独一条 -DlibraryDirectory 没有相对路径：NeoForge 会拿它去
+                    // 找补丁后的客户端与 universal 包，这些是安装器写进共享库目录的；
+                    // 版本隔离时实例目录只有原版库，得改指共享目录
+                    if (relPath.isEmpty()
+                        && sharedLibrariesPath != librariesPath
+                        && QDir(sharedLibrariesPath + QStringLiteral("/net/neoforged")).exists()
+                        && !QDir(librariesPath + QStringLiteral("/net/neoforged")).exists())
+                        root = sharedLibrariesPath;
+                    piece.replace(kLibraryDirPh, root);
+                }
+                arg = pieces.join(classpathSeparator);
+            }
             arg.replace(QLatin1String("${classpath}"), classpathStr);
             arg.replace(QLatin1String("${clientid}"), QStringLiteral("0"));
             arg.replace(QLatin1String("${auth_xuid}"), QStringLiteral("0"));
@@ -1012,8 +1091,35 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
         args << "--userType" << userType;
     }
 
+    // ── 补全缺失的标准启动参数 ──
+    // 新版 Forge / NeoForge 的官方 install_profile（以及部分第三方工具生成的扁平化
+    // JSON）只写自己的 --launchTarget 之类参数，原版必需的 --username / --accessToken /
+    // --version 一概没有，游戏主类解析参数时直接抛
+    // "Missing required option(s) [accessToken, version]" 退出。
+    // 这里按"缺什么补什么"兜底：已经有的不重复追加（重复会让 jopt-simple 报错）。
+    {
+        const auto addIfMissing = [&args](const QString& option, const QString& value) {
+            if (!args.contains(option))
+                args << option << value;
+        };
+        addIfMissing(QStringLiteral("--username"), authPlayerName);
+        addIfMissing(QStringLiteral("--version"), launchVersionName);
+        addIfMissing(QStringLiteral("--gameDir"), basePath);
+        addIfMissing(QStringLiteral("--assetsDir"), assetsPath);
+        addIfMissing(QStringLiteral("--assetIndex"), assetIndex);
+        addIfMissing(QStringLiteral("--uuid"), authUuid);
+        addIfMissing(QStringLiteral("--accessToken"), authToken);
+        addIfMissing(QStringLiteral("--userType"), userType);
+        addIfMissing(QStringLiteral("--versionType"), QStringLiteral("release"));
+    }
+
     // ── 窗口大小 ──
-    if (!config.windowWidth.isEmpty() && !config.windowHeight.isEmpty()) {
+    // 版本 JSON 的 arguments.game 里通常已带 has_custom_resolution 规则（--width/
+    // --height 已经加过一次），这里再补一遍就成了重复选项：jopt-simple 取单个值时
+    // 直接抛 MultipleArgumentsForOptionException，Forge 的早期窗口初始化会当场
+    // 崩溃（1.20.1 表现为 fmlearlydisplay 抛异常后进程退出）。故仅在 JSON 未提供时补。
+    if (!args.contains(QStringLiteral("--width"))
+        && !config.windowWidth.isEmpty() && !config.windowHeight.isEmpty()) {
         args << "--width" << config.windowWidth;
         args << "--height" << config.windowHeight;
     }

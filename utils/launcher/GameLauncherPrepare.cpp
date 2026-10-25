@@ -566,6 +566,12 @@ void GameLauncher::downloadMissingFiles(const QString& instancePath)
         } else {
             libPath = QFileInfo(instancePath).dir().absolutePath() + "/../libraries";
         }
+        // 版本目录下没有 libraries 时（库放在共享目录）不要把整套库再下载一遍
+        if (!QDir(libPath).exists()) {
+            const QString sharedLibraries = QFileInfo(instancePath).dir().absolutePath() + "/../libraries";
+            if (QDir(sharedLibraries).exists())
+                libPath = sharedLibraries;
+        }
 
         if (versionJson.contains("libraries") && versionJson["libraries"].isArray()) {
             QJsonArray libs = versionJson["libraries"].toArray();
@@ -1136,6 +1142,14 @@ bool GameLauncher::extractNatives(const QString& instancePath)
     else
     {
         librariesPath = QFileInfo(instancePath).dir().absolutePath() + "/../libraries";
+    }
+    // 与 buildClasspath 保持一致：版本目录下没有 libraries（PCL/HMCL/官方安装器
+    // 把库下在共享目录）时回退共享库目录，否则这里的 natives 会全部"库文件缺失"
+    if (!QDir(librariesPath).exists())
+    {
+        const QString sharedLibraries = QFileInfo(instancePath).dir().absolutePath() + "/../libraries";
+        if (QDir(sharedLibraries).exists())
+            librariesPath = sharedLibraries;
     }
 
     emit launchDetailAdded(QString("需要处理的库文件数量: %1").arg(libraries.size()));

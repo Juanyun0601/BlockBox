@@ -52,6 +52,8 @@
 
 #include "components/AppFileDialog.h"
 #include "components/NotificationManager.h"
+#include "components/StructureDetailDialog.h"
+#include "utils/WorldMap/StructureLoot.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/WorldMap/BiomeCatalog.h"
@@ -2088,8 +2090,23 @@ void WorldMapPage::setCurrentSave(const QString &saveFolderPath, const QString &
     // 种子与版本 → 结构位置预测 + 未加载地形的种子预测（cubiomes）
     m_hasSeed = saveInfo.has_value() && saveInfo->hasSeed;
     m_seed = m_hasSeed ? quint64(saveInfo->seed) : 0;
-    m_mcVersion = StructureFinder::versionToInt(
-        saveInfo.has_value() ? saveInfo->versionName : QString());
+    const QString verName =
+        saveInfo.has_value() ? saveInfo->versionName : QString();
+    m_mcVersion = StructureFinder::versionToInt(verName);
+    {
+        // 解析次版本号：1.20.5 → 20；26.x → 26
+        const QStringList parts = verName.split(QLatin1Char('.'));
+        if (parts.size() >= 2)
+        {
+            bool okMajor = false, okMinor = false;
+            const int major = parts[0].toInt(&okMajor);
+            const int minor = parts[1].toInt(&okMinor);
+            if (okMajor && okMinor)
+                m_mcMinor = major > 1 ? major : minor;
+        }
+    }
+    StructureLoot::setClientJar(BiomeName::findClientJar(
+        m_instancePath));
     if (m_seedBtn)
     {
         // 读不出种子或版本的存档没法预测，开关禁用并强制关闭
@@ -3182,7 +3199,8 @@ void WorldMapPage::showStructurePopup(const QPoint &globalPos, int structIdx,
             QLatin1String(d.wikiTitle), QLatin1String(d.itemTitle),
             QLatin1String(d.envSprite), 20),
         QString::fromUtf8(d.displayName), x, kNoY, z,
-        QLatin1String(d.wikiTitle), WorldMapView::doneKey(structIdx, x, z));
+        QLatin1String(d.wikiTitle), WorldMapView::doneKey(structIdx, x, z),
+        structIdx);
 }
 
 void WorldMapPage::showOrePopup(const QPoint &globalPos, int ore, qint64 x, qint64 y,
@@ -3199,15 +3217,40 @@ void WorldMapPage::showOrePopup(const QPoint &globalPos, int ore, qint64 x, qint
                                             x, z));
 }
 
+void WorldMapPage::showStructureDetail(int structIdx, qint64 x, qint64 z)
+{
+    const auto &defs = StructureFinder::allStructures();
+    if (structIdx < 0 || structIdx >= defs.size())
+        return;
+    const auto &d = defs.at(structIdx);
+
+    auto *dlg = new StructureDetailDialog(
+        QString::fromUtf8(d.displayName), QLatin1String(d.wikiTitle),
+        StructureIcons::pixmap(
+            structIdx, QLatin1String(d.key),
+            QString(QChar::fromLatin1(d.displayName[0])),
+            QLatin1String(d.wikiTitle), QLatin1String(d.itemTitle),
+            QLatin1String(d.envSprite), 28),
+        QLatin1String(d.key), x, z, true,
+        m_dimCombo ? m_dimCombo->currentText() : QString(),
+        d.rare,
+        StructureLoot::rollLoot(QLatin1String(d.key), m_seed,
+                                m_hasSeed, x, z, m_mcMinor),
+        this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose, true);
+    dlg->show();
+}
+
 /**
  * 地图信息小窗：结构与矿物共用同一套内容（图标 + 名称 + 坐标 + 复制 / 百科 /
  * 完成标记）。完成标记写的是同一个「已完成」集合，矿物用 kOreDoneTypeBase
  * 偏移类型，标记过的矿点会和结构一样压暗。
+ * 结构（structIdx ≥ 0）额外多一个「详情」按钮，打开居中的结构详情弹窗。
  */
 void WorldMapPage::showMapPointPopup(const QPoint &globalPos, const QPixmap &icon,
                                      const QString &title, qint64 x, qint64 y,
                                      qint64 z, const QString &wikiTitle,
-                                     const QString &doneKey)
+                                     const QString &doneKey, int structIdx)
 {
     if (!m_view)
         return;
@@ -3245,9 +3288,26 @@ void WorldMapPage::showMapPointPopup(const QPoint &globalPos, const QPixmap &ico
     coordLabel->setObjectName(QStringLiteral("worldMapStructCoord"));
     lay->addWidget(coordLabel);
 
-    // 操作行：复制坐标 / 查看百科 / 标记为已完成
+    // 操作行：详情（仅结构） / 复制坐标 / 查看百科 / 标记为已完成
     auto *btnRow = new QHBoxLayout;
     btnRow->setSpacing(6);
+
+    if (structIdx >= 0)
+    {
+        auto *detailBtn = new QPushButton(tr("详情"), pop);
+        detailBtn->setObjectName(QStringLiteral("worldMapStructDetail"));
+        detailBtn->setCursor(Qt::PointingHandCursor);
+        detailBtn->setProperty("structIdx", structIdx);
+        detailBtn->setToolTip(tr("查看该结构的简介、预览与战利品"));
+        QObject::connect(detailBtn, &QPushButton::clicked, detailBtn,
+                         [this, structIdx, x, z]() {
+            // Qt::Popup 会抢鼠标抓取，先收掉小窗再开居中的详情弹窗
+            if (m_structPopup)
+                m_structPopup->close();
+            showStructureDetail(structIdx, x, z);
+        });
+        btnRow->addWidget(detailBtn);
+    }
 
     const QString coordText = hasY
         ? QStringLiteral("%1, %2, %3").arg(x).arg(y).arg(z)
@@ -3711,6 +3771,8 @@ void WorldMapPage::setInstancePath(const QString &instancePath)
     if (m_instancePath == instancePath)
         return;
     m_instancePath = instancePath;
+    // 结构战利品表优先从客户端 JAR 读（版本对齐）
+    StructureLoot::setClientJar(BiomeName::findClientJar(instancePath));
     // 换实例：丢弃上个实例的中文群系表，后台重新解析当前实例 lang
     m_biomeNames.zh.clear();
     m_biomeNames.en.clear();

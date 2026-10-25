@@ -29,6 +29,7 @@ class QStackedWidget;
 class Skin3DWidget;
 class CarouselView;
 class HomeSkinPanel;
+class HomeAnnouncementBar;
 struct InstanceFolderInfo;
 
 struct RecentPlayEntry
@@ -153,6 +154,8 @@ private:
   void updateCarousel();
   void setCarouselIndex(int index);
   void updateCarouselHeight();
+  // 公告栏（封面图 + 皮肤模型下方，内容来自官网 announcement.json）
+  HomeAnnouncementBar *m_announcementBar = nullptr;
   // 轮播右侧皮肤面板
   HomeSkinPanel *m_skinPanel = nullptr;
   Skin3DWidget *m_skin3D = nullptr;

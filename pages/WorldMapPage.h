@@ -343,13 +343,17 @@ private:
                             qint64 x, qint64 z);
     /** 点击地图矿物点：弹同一个信息窗（多带一个 Y，矿物类型不同） */
     void showOrePopup(const QPoint &globalPos, int ore, qint64 x, qint64 y, qint64 z);
+    /** 小窗「详情」：弹居中的结构详情弹窗（简介 / 预览 / 战利品） */
+    void showStructureDetail(int structIdx, qint64 x, qint64 z);
     /**
      * 地图信息小窗（结构与矿物共用）：图标 + 名称 + 坐标 + 复制 / 百科 / 完成标记。
      * @param y 为 kNoY（INT_MIN）时坐标只显示 X / Z（结构不知道具体高度）
+     * @param structIdx allStructures() 下标；≥0 时多给一个「详情」按钮（仅结构）
      */
     void showMapPointPopup(const QPoint &globalPos, const QPixmap &icon,
                            const QString &title, qint64 x, qint64 y, qint64 z,
-                           const QString &wikiTitle, const QString &doneKey);
+                           const QString &wikiTitle, const QString &doneKey,
+                           int structIdx = -1);
     /** 完成标记写入 QSettings（按存档路径分桶） */
     void persistStructDone() const;
     /** 读当前存档的完成标记到内存并同步到画布 */
@@ -369,6 +373,7 @@ private:
     /** 种子与版本（cubiomes 版本号；0 = 读不出，不算结构） */
     quint64 m_seed = 0;
     int m_mcVersion = 0;
+    int m_mcMinor = 21; ///< MC 次版本（16/18/20/21…），战利品随机源代际用
     bool m_hasSeed = false;
     /** 未加载区域的种子预测开关（QSettings 持久化；无种子时禁用） */
     bool m_seedPreviewOn = true;

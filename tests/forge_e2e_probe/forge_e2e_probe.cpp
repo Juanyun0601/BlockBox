@@ -132,7 +132,11 @@ int main(int argc, char *argv[])
             const QString mc = obj.value(QStringLiteral("mainClass")).toString();
             logLine("JSON", QString("id=%1 inheritsFrom=%2 mainClass=%3 libraries=%4")
                        .arg(id, inh, mc).arg(obj.value(QStringLiteral("libraries")).toArray().size()));
-            if (id.isEmpty() || inh.isEmpty() || mc.isEmpty()) ok = false;
+            // 安装收尾会把原版目录并进来（自包含，inheritsFrom 被去掉），
+            // 所以 inheritsFrom 为空时用 clientVersion 判定合并是否生效
+            const bool selfContained =
+                !obj.value(QStringLiteral("clientVersion")).toString().isEmpty();
+            if (id.isEmpty() || mc.isEmpty() || (inh.isEmpty() && !selfContained)) ok = false;
 
             // patched client jar 必须存在（binarypatcher 产物）
             const QString patched = gameRoot + QStringLiteral("/libraries/net/minecraftforge/forge/%1-%2/forge-%1-%2-client.jar")

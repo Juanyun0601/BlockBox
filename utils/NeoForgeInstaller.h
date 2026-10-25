@@ -17,8 +17,14 @@
 #include <QObject>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
 
 #include "SettingsManager.h"
+
+namespace forge
+{
+class ForgeNewInstallTask;
+}
 
 /**
  * @brief NeoForge安装器类
@@ -58,8 +64,11 @@ public:
 
     /**
      * @brief 安装NeoForge
+     *
+     * 不再调用官方安装程序，改为解析安装包内的 install_profile（MultiMC 同款做法：
+     * 按配置补齐库、执行安装处理器、生成版本 JSON），因此不需要先跑一次 Java 安装器
      * @param installerPath 安装包路径
-     * @param instancePath 实例路径
+     * @param instancePath 游戏根目录
      */
     void installNeoForge(const QString &installerPath, const QString &instancePath);
 
@@ -173,6 +182,13 @@ private:
      */
     QString getJavaPath() const;
 
+    /// 安装包下载阶段（后台线程）
+    void runDownloadPhase();
+    /// 进入解析/处理器安装阶段（必须在对象所属线程执行）
+    void startInstallTask();
+    /// 按下载源排好的安装包候选地址（官方 Maven / BMCLAPI 镜像）
+    QStringList installerCandidateUrls() const;
+
     QNetworkAccessManager *m_networkManager;
     NeoForgeDownloadSource m_downloadSource;
     QNetworkReply *m_currentReply;
@@ -185,6 +201,12 @@ private:
     QString m_currentInstancePath;
     QString m_currentTaskId;
     QString m_tempDir;
+    QString m_installerPath;
+    /// 最近一次下载失败的原因（多源回退时只记录，等全部候选失败再上报）
+    QString m_lastDownloadError;
+    /// MultiMC 式安装任务：解析 profile → 跑处理器 → 生成版本 JSON → 补齐库
+    forge::ForgeNewInstallTask *m_installTask = nullptr;
+    std::atomic<bool> m_taskStarted;
 
     qint64 m_totalBytes;
     qint64 m_downloadedBytes;

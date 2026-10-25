@@ -21,5 +21,25 @@
         <file>resources/ai_agent_tools.json</file>
         <!-- 入站答题题库 -->
         <file>resources/quiz/quiz_bank.txt</file>
+        <!-- 结构箱战利品表（原版 data/minecraft/loot_table/chests/*） -->
+        <file>utils/WorldMap/loot_tables/abandoned_mineshaft.json</file>
+        <file>utils/WorldMap/loot_tables/ancient_city.json</file>
+        <file>utils/WorldMap/loot_tables/ancient_city_ice_box.json</file>
+        <file>utils/WorldMap/loot_tables/bastion_hoglin_stable.json</file>
+        <file>utils/WorldMap/loot_tables/bastion_other.json</file>
+        <file>utils/WorldMap/loot_tables/bastion_treasure.json</file>
+        <file>utils/WorldMap/loot_tables/buried_treasure.json</file>
+        <file>utils/WorldMap/loot_tables/desert_pyramid.json</file>
+        <file>utils/WorldMap/loot_tables/end_city_treasure.json</file>
+        <file>utils/WorldMap/loot_tables/jungle_temple.json</file>
+        <file>utils/WorldMap/loot_tables/nether_bridge.json</file>
+        <file>utils/WorldMap/loot_tables/ruined_portal.json</file>
+        <file>utils/WorldMap/loot_tables/shipwreck_map.json</file>
+        <file>utils/WorldMap/loot_tables/shipwreck_supply.json</file>
+        <file>utils/WorldMap/loot_tables/shipwreck_treasure.json</file>
+        <file>utils/WorldMap/loot_tables/stronghold_corridor.json</file>
+        <file>utils/WorldMap/loot_tables/stronghold_crossing.json</file>
+        <file>utils/WorldMap/loot_tables/stronghold_library.json</file>
+        <file>utils/WorldMap/loot_tables/woodland_mansion.json</file>
     </qresource>
 </RCC>

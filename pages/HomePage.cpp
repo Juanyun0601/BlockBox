@@ -12,12 +12,14 @@
 #include "components/NewsCard.h"
 #include "components/NewsDetailDialog.h"
 #include "components/Skin3DWidget.h"
+#include "components/HomeAnnouncementBar.h"
 #include "utils/DownloadTaskManager.h"
 #include "utils/DownloadUtils.h"
 #include "utils/SkinDownloader.h"
 #include "utils/SystemInfo.h"
 #include "utils/mod/ModData.h"
 #include "utils/news/NewsFeed.h"
+#include "utils/news/AnnouncementFeed.h"
 
 #include <algorithm>
 #include <QAbstractAnimation>
@@ -123,6 +125,14 @@ static constexpr qreal kHeroRadius = 16.0;
 // 轮播右侧皮肤预览面板固定宽度 / 与轮播的间距
 static constexpr int kSkinPanelWidth = 220;
 static constexpr int kHeroSpacing = 16;
+// 皮肤面板底部「默认/经典」切换条中心距面板底部的距离（32px 高的一半 + 3px 外边距 + 1px 描边内缩），
+// 轮播指示点浮层据此对齐到同一水平线
+static constexpr int kSkinModeSwitchCenterOffset = 20;
+// 轮播指示点浮层：胶囊高 16px、指示点 5px，底部留白由上面这一行中心位置反推
+static constexpr int kCarouselDotsPillHeight = 16;
+static constexpr int kCarouselDotSize = 5;
+static constexpr int kCarouselDotsBottomGap =
+    kSkinModeSwitchCenterOffset - kCarouselDotsPillHeight / 2;
 
 // 主题卡片底色（与 style.qss 中 @BG_CARD@ 的取值保持一致）
 static QColor homeCardBackgroundColor()
@@ -1029,16 +1039,20 @@ QWidget* HomePage::createCarouselSection()
 
   if (!m_carouselPaths.isEmpty())
   {
-    // 指示点（相对轮播区居中：右侧让出皮肤面板 + 间距的宽度）
-    auto *dotsLayout = new QHBoxLayout();
-    dotsLayout->setAlignment(Qt::AlignCenter);
-    dotsLayout->setSpacing(6);
-    dotsLayout->setContentsMargins(0, 0, kSkinPanelWidth + kHeroSpacing, 0);
+    // 指示点浮层：直接叠在封面图之上（不再单独占一行），
+    // 垂直中心与右侧皮肤面板底部的「默认/经典」切换条对齐，两者落在同一水平线上
+    auto *dotsPill = new QWidget(m_carouselView);
+    dotsPill->setObjectName("carouselDotsPill");
+    dotsPill->setAttribute(Qt::WA_StyledBackground, true);
+    dotsPill->setFixedHeight(kCarouselDotsPillHeight);
+    auto *dotsLayout = new QHBoxLayout(dotsPill);
+    dotsLayout->setContentsMargins(7, 0, 7, 0);   // 胶囊左右留白
+    dotsLayout->setSpacing(5);
     for (int i = 0; i < m_carouselPaths.size(); ++i)
     {
-      auto *dot = new QPushButton();
+      auto *dot = new QPushButton(dotsPill);
       dot->setObjectName("carouselDot");
-      dot->setFixedSize(2, 2);
+      dot->setFixedSize(kCarouselDotSize, kCarouselDotSize);
       dot->setCursor(Qt::PointingHandCursor);
       int index = i;
       QObject::connect(dot, &QPushButton::clicked, [this, index]()
@@ -1048,7 +1062,13 @@ QWidget* HomePage::createCarouselSection()
       dotsLayout->addWidget(dot);
       m_carouselDots.append(dot);
     }
-    vlay->addLayout(dotsLayout);
+
+    // 浮层布局挂在轮播视图上：底部留白把胶囊压到图底部，横向居中
+    auto *dotsOverlay = new QVBoxLayout(m_carouselView);
+    dotsOverlay->setContentsMargins(0, 0, 0, kCarouselDotsBottomGap);
+    dotsOverlay->setSpacing(0);
+    dotsOverlay->addStretch(1);
+    dotsOverlay->addWidget(dotsPill, 0, Qt::AlignHCenter);
 
     // 初始显示第一张
     setCarouselIndex(0);
@@ -1062,6 +1082,11 @@ QWidget* HomePage::createCarouselSection()
     });
     m_carouselTimer->start();
   }
+
+  // ── 公告栏：官网 announcement.json 的最新公告，多条可分批切换 ──
+  // 放在封面 + 皮肤模型下方、其余卡片之前，没有公告时自行隐藏
+  m_announcementBar = new HomeAnnouncementBar(container);
+  vlay->addWidget(m_announcementBar);
 
   return container;
 }
@@ -1439,7 +1464,6 @@ void HomePage::setCarouselIndex(int index)
   {
     bool active = (i == index);
     m_carouselDots[i]->setProperty("active", active ? "true" : "false");
-    m_carouselDots[i]->setFixedSize(2, 2);
     m_carouselDots[i]->style()->unpolish(m_carouselDots[i]);
     m_carouselDots[i]->style()->polish(m_carouselDots[i]);
   }
@@ -1740,6 +1764,8 @@ void HomePage::showEvent(QShowEvent *event)
   refreshSkinPanel();
   // 官方新闻：数据过期（默认 30 分钟）时顺手更新一次，新鲜则直接复用缓存
   NewsFeed::instance()->refresh(false);
+  // 官网公告：公告栏首次显示时自己是隐藏的（等数据），这里统一拉起一次请求
+  AnnouncementFeed::instance()->refresh(false);
 }
 
 /* 最近游玩卡片构建（一行四个横排；parent 为挂载图层） */

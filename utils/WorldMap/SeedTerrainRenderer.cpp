@@ -28,6 +28,8 @@
 #include "biomenoise.h"  // initSurfaceNoise / Range / sampleBiomeNoise
 #include "noise.h"       // sampleDoublePerlin（方块级高度用）
 
+#include "CavePredictor.h"
+
 // getSpline 在 biomenoise.c 里是非 static 的，头文件未导出；本地声明即可链接
 extern "C" float getSpline(const Spline *sp, const float *vals);
 
@@ -528,6 +530,9 @@ QImage renderRegionTile(int regionX, int regionZ,
                                                   : QStringLiteral("stone");
 
     // ┌─ 采样栅格上着色（基础色 + 高度明暗 + 坡度阴影 / 地形图）──
+    // 高度切片下的地下预测：1.18+ 主世界把实心截断里被洞穴掏空的位置画成暗洞
+    const bool cavePredict = yLimited && cdim == DIM_OVERWORLD
+                             && CavePredictor::supported(mc);
     QVector<QRgb> cell(grid * grid, 0);
     for (int r = 0; r < grid; ++r)
     {
@@ -549,11 +554,26 @@ QImage renderRegionTile(int regionX, int regionZ,
             // 预测地表高于设定 Y：截断落入固体内部（含海床），按材质兜底；
             // 水底低于截断面时走 waterTop，水面同样下沉到截断 Y
             bool solidCut = false;
+            bool caveCut = false;
+            bool lavaCut = false;
             if (yLimited && yRaw > float(maxSurfaceY))
             {
                 solidCut = true;
                 base = WorldMapRenderer::blockColor(cutSolid);
+                if (cavePredict)
+                {
+                    const int bx = rx1 + c * 512 / grid;
+                    const int bz = rz1 + r * 512 / grid;
+                    const CavePredictor::Cell cell = CavePredictor::sampleAt(
+                        seed, bx, maxSurfaceY, bz, double(yRaw));
+                    caveCut = (cell != CavePredictor::Cell::Solid);
+                    lavaCut = (cell == CavePredictor::Cell::Lava);
+                    if (lavaCut)
+                        base = WorldMapRenderer::blockColor(QStringLiteral("lava"));
+                }
             }
+            // 洞穴掏空处整体压暗，读作"这里大概有洞"；岩浆保持亮橙
+            const qreal k = (caveCut && !lavaCut) ? 0.45 : 1.0;
             const bool waterPix = !solidCut && (cdim == DIM_OVERWORLD)
                 && isOceanic(ids[i]) && yRaw < float(seaLevel)
                 && h < seaLevel;
@@ -578,11 +598,11 @@ QImage renderRegionTile(int regionX, int regionZ,
 
                 cell[i] = qRgba(
                     waterPix ? col.red()
-                             : std::clamp(int(col.red() * hs), 0, 255),
+                             : std::clamp(int(col.red() * hs * k), 0, 255),
                     waterPix ? col.green()
-                             : std::clamp(int(col.green() * hs), 0, 255),
+                             : std::clamp(int(col.green() * hs * k), 0, 255),
                     waterPix ? col.blue()
-                             : std::clamp(int(col.blue() * hs), 0, 255),
+                             : std::clamp(int(col.blue() * hs * k), 0, 255),
                     255);
                 continue;
             }
@@ -597,7 +617,7 @@ QImage renderRegionTile(int regionX, int regionZ,
             {
                 const qreal t = std::clamp(
                     (qreal(h) - minY) / qreal(std::max(1, maxY - minY)), 0.0, 1.0);
-                const int v = std::clamp(int((56 + 180 * t) * slope), 0, 255);
+                const int v = std::clamp(int((56 + 180 * t) * slope * k), 0, 255);
                 cell[i] = qRgba(v, v, v, 255);
                 continue;
             }
@@ -607,7 +627,7 @@ QImage renderRegionTile(int regionX, int regionZ,
             if (waterPix)
                 col = deepenWater(col, waterTop - h);
 
-            const qreal f = heightFactor(h, minY, maxY) * slope;
+            const qreal f = heightFactor(h, minY, maxY) * slope * k;
             cell[i] = qRgba(std::clamp(int(col.red() * f), 0, 255),
                             std::clamp(int(col.green() * f), 0, 255),
                             std::clamp(int(col.blue() * f), 0, 255), 255);

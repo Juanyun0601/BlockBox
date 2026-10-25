@@ -3,6 +3,7 @@
 #include "ForgeNewInstallTask.h"
 #include "ForgeProfile.h"
 #include "LegacyForgeInstaller.h"
+#include "LoaderVersionDir.h"
 
 #include <QDebug>
 #include <QDateTime>
@@ -13,6 +14,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QDirIterator>
 #include <QSet>
 #include <QStandardPaths>
 #include <QUuid>
@@ -25,43 +27,9 @@
 
 ForgeInstaller *ForgeInstaller::m_instance = nullptr;
 
-// 兼容两种调用方传入的路径：<root>/versions/<versionId> 形式的版本目录，
-// 或者直接是包含 versions/、libraries/ 的游戏根目录
-static QString resolveMinecraftRoot(const QString &instancePath)
-{
-    const QString path = QDir::cleanPath(QDir::fromNativeSeparators(instancePath));
-    if (path.isEmpty())
-        return path;
-
-    const QFileInfo info(path);
-    // 版本目录：上一级就是 versions
-    if (info.absoluteDir().dirName().compare(QStringLiteral("versions"), Qt::CaseInsensitive) == 0)
-        return QDir::cleanPath(info.absolutePath() + QStringLiteral("/.."));
-    // 传进来的就是 versions 目录
-    if (info.fileName().compare(QStringLiteral("versions"), Qt::CaseInsensitive) == 0)
-        return info.absolutePath();
-    // 否则认为已经是游戏根目录
-    return path;
-}
-
-// 读取版本目录里的版本 JSON（<目录名>/<目录名>.json，回退 version.json），失败返回空对象
-static QJsonObject readVersionJsonFromDir(const QString &versionDir)
-{
-    const QString dirName = QFileInfo(versionDir).fileName();
-    const QStringList candidates{versionDir + "/" + dirName + ".json",
-                                 versionDir + "/version.json"};
-    for (const QString &path : candidates)
-    {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly))
-            continue;
-        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-        file.close();
-        if (doc.isObject())
-            return doc.object();
-    }
-    return QJsonObject();
-}
+using forge::consolidateLoaderVersionDir;
+using forge::readVersionJsonFromDir;
+using forge::resolveMinecraftRoot;
 
 // 官方老安装器自己决定版本目录名（新老格式不一），安装刚结束时
 // 扫描 versions/ 找出它新建的 Forge 目录：名称含 forge、关联当前原版、JSON 最新
@@ -95,98 +63,6 @@ static QString findInstallerCreatedVersionId(const QString &gameRoot, const QStr
         }
     }
     return best;
-}
-
-// 把原版基准目录合进 Forge 版本目录，让实例自包含、versions/ 下只留一个文件夹：
-// 1) 原版 JSON 按 mergeInheritsFromJson 的同套规则并进 Forge JSON，去掉 inheritsFrom；
-// 2) 老安装器不往实例目录放客户端 jar 的，补拷一份 <mc>.jar；
-// 3) 原版目录仅在「没有其他实例仍在继承」且「目录里没有存档/mod 等用户数据」时回收。
-// 任一前置条件不满足就保持原状（两份目录照旧能跑），不影响安装成败。
-static void consolidateForgeVersionDir(const QString &gameRoot, const QString &mcVersion,
-                                       const QString &versionId, bool copyVanillaJar)
-{
-    const QString versionsDirPath = gameRoot + "/versions";
-    const QString childDir = versionsDirPath + "/" + versionId;
-    const QString parentDir = versionsDirPath + "/" + mcVersion;
-
-    const QJsonObject child = readVersionJsonFromDir(childDir);
-    if (child.isEmpty() || child.value("inheritsFrom").toString() != mcVersion)
-        return; // 没有 inheritsFrom：实例本就不依赖原版目录，无需合并
-    const QJsonObject parent = readVersionJsonFromDir(parentDir);
-    if (parent.isEmpty())
-        return; // 原版 JSON 缺失：保留两份，实例还能靠原版目录启动
-
-    QJsonObject merged = child;
-
-    // 老安装器路径没有客户端 jar：去掉继承后必须有本体才能启动
-    if (copyVanillaJar && !QFile::exists(childDir + "/" + mcVersion + ".jar"))
-    {
-        const QString parentJar = parentDir + "/" + mcVersion + ".jar";
-        if (QFile::exists(parentJar))
-            QFile::copy(parentJar, childDir + "/" + mcVersion + ".jar");
-    }
-
-    // libraries：原版在前、Forge 在后（与启动时 mergeInheritsFromJson 的顺序一致）
-    {
-        QJsonArray libraries = parent.value("libraries").toArray();
-        for (const QJsonValue &lib : child.value("libraries").toArray())
-            libraries.append(lib);
-        merged["libraries"] = libraries;
-    }
-    // arguments：子优先，缺失的顶层键从原版补
-    {
-        const QJsonObject parentArgs = parent.value("arguments").toObject();
-        QJsonObject childArgs = merged.value("arguments").toObject();
-        if (!parentArgs.isEmpty())
-        {
-            if (!childArgs.contains("jvm") && parentArgs.contains("jvm"))
-                childArgs["jvm"] = parentArgs["jvm"];
-            if (!childArgs.contains("game") && parentArgs.contains("game"))
-                childArgs["game"] = parentArgs["game"];
-            merged["arguments"] = childArgs;
-        }
-    }
-    for (const char *key : {"assetIndex", "assets", "mainClass", "logging",
-                            "minecraftArguments", "javaVersion", "downloads"})
-    {
-        const QLatin1String k(key);
-        if (!merged.contains(k) && parent.contains(k))
-            merged[k] = parent.value(k);
-    }
-    // 自包含标识：clientVersion 供实例列表显示原版版本号；
-    // jar 指向实例目录里的 <mc>.jar（legacy/老安装器路径的 jar 就叫这个名）
-    merged["clientVersion"] = mcVersion;
-    if (QFile::exists(childDir + "/" + mcVersion + ".jar"))
-        merged["jar"] = mcVersion;
-    merged.remove("inheritsFrom");
-
-    QFile out(childDir + "/" + versionId + ".json");
-    if (!out.open(QIODevice::WriteOnly))
-        return;
-    out.write(QJsonDocument(merged).toJson());
-    out.close();
-
-    // 其他实例仍在继承这个原版 → 原版目录保留
-    const QDir versionsRoot(versionsDirPath);
-    for (const QFileInfo &sub : versionsRoot.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
-    {
-        if (sub.fileName() == versionId || sub.fileName() == mcVersion)
-            continue;
-        if (readVersionJsonFromDir(sub.absoluteFilePath())
-                .value("inheritsFrom")
-                .toString() == mcVersion)
-            return;
-    }
-    // 原版目录里出现非标准文件（版本隔离产生的存档/设置/mod 等用户数据）→ 保留
-    const QSet<QString> allowed{mcVersion + ".jar", mcVersion + ".json", QStringLiteral("version.json"),
-                                 mcVersion + "-natives", QStringLiteral(".merge-tmp.jar")};
-    for (const QFileInfo &entry : QDir(parentDir).entryInfoList(
-             QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden))
-    {
-        if (!allowed.contains(entry.fileName()))
-            return;
-    }
-    QDir(parentDir).removeRecursively();
 }
 
 ForgeInstaller* ForgeInstaller::instance()
@@ -606,7 +482,7 @@ void ForgeInstaller::finishLegacyInstall(const QString &error)
     }
 
     // 原版基准目录并进 Legacy Forge 目录，versions/ 下只留一个文件夹
-    consolidateForgeVersionDir(resolveMinecraftRoot(m_instancePath), m_mcVersion,
+    consolidateLoaderVersionDir(resolveMinecraftRoot(m_instancePath), m_mcVersion,
                                m_mcVersion + "-forge-" + m_forgeVersion, false);
 
     emit installProgress(m_taskId, tr("Forge安装完成"), 100);
@@ -716,7 +592,7 @@ void ForgeInstaller::runInstallerDirectly()
             // 原版基准目录并进安装器生成的 Forge 目录，versions/ 下只留一个文件夹
             const QString createdVersionId = findInstallerCreatedVersionId(minecraftDir, m_mcVersion);
             if (!createdVersionId.isEmpty())
-                consolidateForgeVersionDir(minecraftDir, m_mcVersion, createdVersionId, true);
+                consolidateLoaderVersionDir(minecraftDir, m_mcVersion, createdVersionId, true);
             emit installProgress(m_taskId, tr("Forge安装完成"), 100);
             DownloadTaskManager::instance()->updateTaskStatus(m_taskId, DownloadTaskStatus::Completed,
                                                               tr("Forge安装完成"));
@@ -783,7 +659,7 @@ void ForgeInstaller::onNewInstallCompleted(bool success, const QString &error)
     {
         // 原版基准目录并进生成的 Forge 目录，versions/ 下只留一个文件夹
         if (!writtenVersionId.isEmpty())
-            consolidateForgeVersionDir(resolveMinecraftRoot(m_instancePath), m_mcVersion,
+            consolidateLoaderVersionDir(resolveMinecraftRoot(m_instancePath), m_mcVersion,
                                        writtenVersionId, false);
         emit installProgress(m_taskId, tr("Forge安装完成"), 100);
             DownloadTaskManager::instance()->updateTaskStatus(m_taskId, DownloadTaskStatus::Completed,
@@ -1386,3 +1262,4 @@ bool ForgeInstaller::isInstalling() const
 {
     return m_isInstalling;
 }
+

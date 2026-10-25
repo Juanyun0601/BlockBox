@@ -4,6 +4,7 @@
         <!-- 图片资源：改动很少、体积大。文本/数据类资源请放到 resources_data.qrc，
              这样改 QSS、翻译、JSON 时不必重新编译这一大块。 -->
         <file>Images/Icons/back.svg</file>
+        <file>Images/Icons/announce.svg</file>
         <file>Images/Icons/pose_idle.svg</file>
         <file>Images/Icons/pose_wave.svg</file>
         <file>Images/Icons/pose_walk.svg</file>
