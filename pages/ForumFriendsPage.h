@@ -76,13 +76,27 @@ private:
     void sendCurrentMessage();
     void loadOlderMessages();
     void detachSearchEdit();
+    void refreshInputSize();
+    QWidget *makeDateChip(qint64 seconds);
+
+    // ── 图片 / 引用 / 撤回 / 表情 ──
+    void setReplyTarget(int messageId, const QString &preview, bool mine);
+    void clearReplyTarget();
+    void showMessageMenu(int messageId, const QPoint &globalPos);
+    void showImagePreview(const QString &imagePath);
+    void pickAndSendImage();
+    void sendImageFromPath(const QString &filePath);
+    void toggleEmojiPopup();
+    void buildEmojiPopup();
+    QString messagePreview(const ForumChatMessage &message) const;
 
     void setStatus(const QString &text, bool error = false);
     QString peerStatusText(const ForumFriendInfo &peer) const;
     void runSearch(const QString &keyword);
 
-    // ── 左栏 ──
+    // ── 左栏（近似子导航面板：头部 + 胶囊页签 + 分组标题 + 条目列表）──
     QLabel *m_statusLabel = nullptr;
+    QLabel *m_sideGroupTitle = nullptr;   ///< 分组标题（好友 · N / 申请 · N / 添加好友）
     QPushButton *m_refreshButton = nullptr;
     QPushButton *m_friendsTabButton = nullptr;
     QPushButton *m_requestsTabButton = nullptr;
@@ -94,7 +108,7 @@ private:
 
     // ── 右栏（聊天面板）──
     QWidget *m_chatCard = nullptr;
-    QLabel *m_chatEmpty = nullptr;
+    QWidget *m_chatEmpty = nullptr;        ///< 未选会话时的占位（图标 + 说明）
     QWidget *m_chatMain = nullptr;
     QWidget *m_chatAvatarSlot = nullptr;   ///< 会话头像槽位（头像是异步加载的，按需重建）
     QLabel *m_chatName = nullptr;
@@ -106,6 +120,7 @@ private:
     QWidget *m_msgsContainer = nullptr;
     QVBoxLayout *m_msgsLayout = nullptr;
     QTextEdit *m_chatInput = nullptr;
+    QLabel *m_charCounter = nullptr;       ///< 字数统计（接近上限时出现）
     QPushButton *m_sendButton = nullptr;
 
     // ── 状态 ──
@@ -119,4 +134,15 @@ private:
     bool m_pollBusy = false;
     QTimer m_pollTimer;
     QTimer m_searchTimer;
+
+    // ── 图片 / 引用 / 表情 ──
+    QPushButton *m_emojiButton = nullptr;
+    QPushButton *m_imageButton = nullptr;
+    QWidget *m_replyBar = nullptr;
+    QLabel *m_replyLabel = nullptr;
+    QPushButton *m_replyCancelButton = nullptr;
+    int m_replyTo = 0;                   ///< 正在引用的消息 id（0 = 没有）
+    QString m_replyPreview;
+    bool m_replyMine = false;
+    QWidget *m_emojiPopup = nullptr;     ///< 表情弹窗（懒创建，Qt::Popup）
 };

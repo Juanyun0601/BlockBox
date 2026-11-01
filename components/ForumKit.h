@@ -66,6 +66,18 @@ public:
     /** 当前封面路径 */
     QString coverPath() const { return m_path; }
 
+    /**
+     * @brief 显示宽高比（宽 / 高），默认 3:1
+     *
+     * 和网页版、上传时的裁剪比例保持一致：横幅高度跟着卡片宽度走，
+     * 3:1 的封面原样铺满，不再因为固定高度被上下裁掉一截。
+     */
+    void setAspectRatio(qreal ratio);
+    qreal aspectRatio() const { return m_aspectRatio; }
+
+    bool hasHeightForWidth() const override;
+    int heightForWidth(int width) const override;
+
 protected:
     void paintEvent(QPaintEvent *event) override;
 
@@ -73,6 +85,7 @@ private:
     QString m_path;
     QImage m_image;
     int m_radius = 16;
+    qreal m_aspectRatio = 3.0;
 };
 
 /** 单行省略文本标签 */

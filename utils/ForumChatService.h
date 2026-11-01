@@ -15,6 +15,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QNetworkAccessManager>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -37,6 +38,7 @@ struct ForumFriendInfo
     int unread = 0;            ///< 对方发来的未读私信数
     qint64 lastMessageAt = 0;  ///< 最后一条私信时间（0 = 还没聊过）
     QString lastMessageBody;   ///< 最后一条私信内容
+    QString lastMessageKind;   ///< text / image / withdrawn（预览用）
     bool lastMessageMine = false; ///< 最后一条是不是我发的
 
     bool isValid() const { return id > 0; }
@@ -65,10 +67,18 @@ struct ForumFriendSnapshot
 struct ForumChatMessage
 {
     int id = 0;
-    QString body;
-    bool mine = false;       ///< 是不是我发的
+    QString kind;          ///< text / image / withdrawn（撤回占位）
+    QString body;          ///< 文字内容（图片消息的附言；withdrawn 时为空）
+    QString image;         ///< 站内图片路径（kind=image 时有效），如 /uploads/img-1-xx.png
+    int replyTo = 0;       ///< 引用的消息 id（0 = 没有引用）
+    QString replyBody;     ///< 被引用消息的摘要（服务端处理好：[图片]/[已撤回]/截断文字）
+    bool replyMine = false;///< 被引用的消息是不是自己发的
+    bool mine = false;     ///< 是不是我发的
     qint64 createdAt = 0;
-    bool read = false;       ///< 对方是否已读（自己发的消息才有意义）
+    bool read = false;     ///< 对方是否已读（自己发的消息才有意义）
+
+    bool isImage() const { return kind == QStringLiteral("image") && !image.isEmpty(); }
+    bool isWithdrawn() const { return kind == QStringLiteral("withdrawn"); }
 
     bool isValid() const { return id > 0; }
 };
@@ -134,9 +144,23 @@ public:
                        std::function<void(const ForumChatHistory &)> onOk,
                        FailHandler onFail = nullptr);
 
-    void sendMessage(int userId, const QString &body,
+    /** 发一条文字消息；replyTo > 0 表示引用会话里的某条消息 */
+    void sendMessage(int userId, const QString &body, int replyTo,
                      std::function<void(const ForumChatMessage &)> onOk,
                      FailHandler onFail = nullptr);
+
+    /**
+     * 发一张图片消息：先传到站内图床再发消息，两步都走完才回调 onOk。
+     * 超大图会先在本地缩到 1600px、压到 4 MB 以内。
+     */
+    void sendImageMessage(int userId, const QString &filePath, const QString &caption, int replyTo,
+                          std::function<void(const ForumChatMessage &)> onOk,
+                          FailHandler onFail = nullptr);
+
+    /** 撤回自己 10 分钟内发出的消息（服务端会变成「已撤回」占位） */
+    void withdrawMessage(int messageId,
+                         std::function<void()> onOk,
+                         FailHandler onFail = nullptr);
 
     /**
      * 轻量轮询：角标数 + 会话列表 + 当前聊天的新消息。
@@ -153,4 +177,13 @@ private:
 
     static ForumFriendInfo parsePeer(const QJsonObject &object);
     static ForumChatMessage parseMessage(const QJsonObject &object);
+
+    /** 把本地图片压缩到论坛图床的限制内（≤4MB、最长边 1600px），返回编码好的字节 */
+    static bool prepareImagePayload(const QString &filePath, QByteArray &data, QString &mime, QString &error);
+    void postMessage(int userId, const QJsonObject &payload,
+                     std::function<void(const ForumChatMessage &)> onOk, FailHandler onFail);
+    void uploadImage(const QByteArray &data, const QString &mime,
+                     std::function<void(const QString &url)> onOk, FailHandler onFail);
+
+    QNetworkAccessManager *m_network = nullptr;
 };

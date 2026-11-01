@@ -56,6 +56,10 @@ struct ModInfo {
     QString mcmodUrl;
     QString versionRange;
     QString modType;
+    // 内容类型键：mod / modpack / resourcepack / shader / datapack / world
+    // 由下载源解析结果时按 CurseForge classId、Modrinth project_type 填入；
+    // 全局搜索要把两类来源混在一个列表里，靠它区分「模组 / 整合包 / 光影包…」
+    QString contentKind;
     QDateTime dateModified;
     QDateTime datePublished;
     qint64 downloadCount = 0;

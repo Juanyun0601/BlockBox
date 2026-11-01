@@ -1114,37 +1114,9 @@ void SettingsManager::setExperimentalMap3dEnabled(bool enabled)
     emit experimentalMap3dChanged(enabled);
 }
 
-bool SettingsManager::isExperimentalForumAccountEnabled() const
-{
-    return m_settings->value("experimental/forumAccount", false).toBool();
-}
-
-void SettingsManager::setExperimentalForumAccountEnabled(bool enabled)
-{
-    if (isExperimentalForumAccountEnabled() == enabled)
-        return;
-
-    m_settings->setValue("experimental/forumAccount", enabled);
-    emit experimentalForumAccountChanged(enabled);
-}
-
-bool SettingsManager::isExperimentalCommunityEnabled() const
-{
-    return m_settings->value("experimental/community", false).toBool();
-}
-
-void SettingsManager::setExperimentalCommunityEnabled(bool enabled)
-{
-    if (isExperimentalCommunityEnabled() == enabled)
-        return;
-
-    m_settings->setValue("experimental/community", enabled);
-    emit experimentalCommunityChanged(enabled);
-}
-
 QString SettingsManager::defaultForumBaseUrl()
 {
-    return QStringLiteral("https://forum.blockbox.cc.cd");
+    return QStringLiteral("https://forum.mcblockbox.top");
 }
 
 QString SettingsManager::normalizeForumUrl(const QString &url)
@@ -1153,7 +1125,7 @@ QString SettingsManager::normalizeForumUrl(const QString &url)
     if (value.isEmpty())
         return defaultForumBaseUrl();
 
-    // 允许用户只填 forum.blockbox.cc.cd 或 127.0.0.1:3210，自动补协议
+    // 允许用户只填 forum.mcblockbox.top 或 127.0.0.1:3210，自动补协议
     if (!value.contains(QStringLiteral("://")))
         value.prepend(QStringLiteral("https://"));
 

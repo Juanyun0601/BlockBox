@@ -9,7 +9,6 @@
 #include <algorithm>
 
 #include <QDateTime>
-#include <QDesktopServices>
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
@@ -59,8 +58,7 @@ namespace
 {
 
 constexpr int kAvatarSize = 76;
-/** 资料卡顶部封面横幅高度（宽随卡片伸缩，图片按比例铺满裁切） */
-constexpr int kCoverHeight = 132;
+/** 资料卡顶部封面横幅：高度跟着卡片宽度走（3:1），和网页版、裁剪比例一致 */
 /** 角色卡片封面统一高度（卡片等高，瀑布流按等宽等高排布） */
 constexpr int kCharacterCoverHeight = 190;
 
@@ -400,7 +398,6 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
     applyTheme();
     renderProfile();
     renderContentArea();
-    updateFooterNote();
 
     // 论坛账号状态
     connect(m_service, &ForumAccountService::userChanged, this, [this](const ForumUser &user) {
@@ -470,7 +467,6 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
     // 论坛地址 / 主题变化
     connect(SettingsManager::instance(), &SettingsManager::forumBaseUrlChanged, this,
             [this](const QString &) {
-                updateFooterNote();
                 if (m_service->hasSession())
                     refreshAccount();
             });
@@ -554,54 +550,6 @@ void ForumAccountPage::buildUi()
     contentLayout->addWidget(m_viewStack, 0);
     contentLayout->addStretch(1);
 
-    // ── 页脚：论坛地址 + 快捷入口 ──
-    auto *footer = new QFrame(content);
-    footer->setObjectName(QStringLiteral("fbFooter"));
-    auto *footerLayout = new QHBoxLayout(footer);
-    footerLayout->setContentsMargins(14, 10, 12, 10);
-    footerLayout->setSpacing(8);
-
-    m_footerNote = new QLabel(footer);
-    m_footerNote->setObjectName(QStringLiteral("fbNote"));
-    m_footerNote->setWordWrap(true);
-    m_footerNote->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    m_footerNote->setOpenExternalLinks(true);
-    footerLayout->addWidget(m_footerNote, 1);
-
-    // 论坛主页 / 论坛设置（原来在页面顶栏，那条栏去掉后挪到这里）
-    auto *openForumBtn = new QPushButton(tr("打开论坛"), footer);
-    openForumBtn->setObjectName(QStringLiteral("fbBtnGhost"));
-    openForumBtn->setFixedHeight(30);
-    openForumBtn->setCursor(Qt::PointingHandCursor);
-    openForumBtn->setToolTip(tr("在浏览器里打开方块盒子论坛"));
-    connect(openForumBtn, &QPushButton::clicked, this, [this]() {
-        QDesktopServices::openUrl(QUrl(m_service->baseUrl()));
-    });
-    footerLayout->addWidget(openForumBtn);
-
-    auto *forumSettingsBtn = new QPushButton(tr("论坛设置"), footer);
-    forumSettingsBtn->setObjectName(QStringLiteral("fbBtnGhost"));
-    forumSettingsBtn->setFixedHeight(30);
-    forumSettingsBtn->setCursor(Qt::PointingHandCursor);
-    forumSettingsBtn->setToolTip(tr("去 设置 → 高级设置 修改论坛地址"));
-    connect(forumSettingsBtn, &QPushButton::clicked, this,
-            [this]() { emit openAdvancedSettingsRequested(); });
-    footerLayout->addWidget(forumSettingsBtn);
-
-    // 一键退回经典账户管理页（论坛账号之外的游戏账户仍在那边管理）
-    auto *classicBtn = new QPushButton(tr("切换回经典界面"), footer);
-    classicBtn->setObjectName(QStringLiteral("fbBtnGhost"));
-    classicBtn->setFixedHeight(30);
-    classicBtn->setCursor(Qt::PointingHandCursor);
-    classicBtn->setToolTip(tr("回到原来的账户管理页（管理 Minecraft 账户）"));
-    connect(classicBtn, &QPushButton::clicked, this, []() {
-        if (SettingsManager::instance())
-            SettingsManager::instance()->setExperimentalForumAccountEnabled(false);
-    });
-    footerLayout->addWidget(classicBtn);
-
-    contentLayout->addWidget(footer);
-
     m_scroll->setWidget(content);
 }
 
@@ -628,7 +576,7 @@ QWidget *ForumAccountPage::buildProfileCard(QWidget *parent)
 
     // 封面横幅：贴在卡片顶部，顶部两角跟着卡片圆角一起裁
     m_coverBanner = new ForumKit::CoverBanner(m_profileCard);
-    m_coverBanner->setFixedHeight(kCoverHeight);
+    m_coverBanner->setAspectRatio(3.0);
     m_coverBanner->setRadius(16);
     outer->addWidget(m_coverBanner);
 
@@ -896,6 +844,59 @@ QWidget *ForumAccountPage::buildCharactersContent(QWidget *parent)
     auto *layout = new QVBoxLayout(m_charactersPage);
     layout->setContentsMargins(14, 14, 14, 16);
     layout->setSpacing(10);
+
+    // 顶部提示 + 「添加角色」/「制作皮肤」：账户的增删和皮肤都在这一页完成
+    auto *header = new QWidget(m_charactersPage);
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(0, 0, 0, 0);
+    headerLayout->setSpacing(10);
+    // 不用 makeMutedLabel：那个默认自动换行，配合右侧按钮会被压成两行
+    auto *hint = new QLabel(tr("点卡片切换当前账户，双击看账户详情"), header);
+    hint->setObjectName(QStringLiteral("fbNote"));
+    headerLayout->addWidget(hint);
+    headerLayout->addStretch();
+
+    auto *skinBtn = new QPushButton(tr("制作皮肤"), header);
+    skinBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    skinBtn->setFixedHeight(30);
+    skinBtn->setCursor(Qt::PointingHandCursor);
+    skinBtn->setToolTip(tr("为当前角色制作或更换皮肤"));
+    connect(skinBtn, &QPushButton::clicked, this, [this]() {
+        QString accountName;
+        QString accountType;
+        if (SettingsManager::instance())
+        {
+            const QList<AccountInfo> accounts = SettingsManager::instance()->getAccounts();
+            const AccountInfo *current = nullptr;
+            for (const AccountInfo &account : accounts)
+            {
+                if (account.isDefault)
+                {
+                    current = &account;
+                    break;
+                }
+            }
+            if (!current && !accounts.isEmpty())
+                current = &accounts.first();
+            if (current)
+            {
+                accountName = current->username;
+                accountType = accountTypeText(*current);
+            }
+        }
+        emit skinEditorRequested(accountName, accountType);
+    });
+    headerLayout->addWidget(skinBtn);
+
+    auto *addBtn = new QPushButton(tr("添加角色"), header);
+    addBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    addBtn->setFixedHeight(30);
+    addBtn->setCursor(Qt::PointingHandCursor);
+    addBtn->setToolTip(tr("添加离线、微软正版或第三方账户"));
+    connect(addBtn, &QPushButton::clicked, this, [this]() { emit addGameAccountRequested(); });
+    headerLayout->addWidget(addBtn);
+
+    layout->addWidget(header);
 
     // 瀑布流布局直接装在容器控件上（与内容列表页的用法一致）
     auto *container = new QWidget(m_charactersPage);
@@ -1382,7 +1383,7 @@ QPushButton#fbDangerGhost {
 }
 QPushButton#fbDangerGhost:hover { background: %DANGER_SOFT%; color: %DANGER%; border-color: transparent; }
 
-QFrame#fbCard, QFrame#fbProfileCard, QFrame#fbFooter {
+QFrame#fbCard, QFrame#fbProfileCard {
     background: %CARD%;
     border: 1px solid %LINE%;
     border-radius: 16px;
@@ -1857,7 +1858,6 @@ void ForumAccountPage::refreshAccount()
 
     m_service->refreshProfile();
     renderProfile();
-    updateFooterNote();
     renderContentArea();
 
     if (m_service->isLoggedIn())
@@ -1945,7 +1945,7 @@ void ForumAccountPage::renderProfile()
 
     m_statBookmarks->setText(QString::number(m_bookmarkTotal));
 
-    // 本地游戏账户数量（论坛账号之外的 Minecraft 账户仍由经典界面管理）
+    // 本地游戏账户数量（论坛账号之外的 Minecraft 账户在「角色」页管理）
     if (m_statGameAccounts && SettingsManager::instance())
     {
         const QList<AccountInfo> accounts = SettingsManager::instance()->getAccounts();
@@ -2210,19 +2210,17 @@ void ForumAccountPage::reloadCharacters()
         emptyLayout->addWidget(title);
 
         auto *hint = makeMutedLabel(
-            tr("离线、微软正版和第三方账户都在经典账户管理页里添加；加好之后回来这里就能像卡片一样切换。"),
+            tr("离线、微软正版和第三方账户都可以直接加进来；加好之后这里就能像卡片一样切换。"),
             empty, "fbEmpty");
         emptyLayout->addWidget(hint);
 
-        auto *addBtn = new QPushButton(tr("去添加游戏账户"), empty);
+        auto *addBtn = new QPushButton(tr("添加角色"), empty);
         addBtn->setObjectName(QStringLiteral("fbBtnPrimary"));
         addBtn->setFixedHeight(34);
         addBtn->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
         addBtn->setCursor(Qt::PointingHandCursor);
-        connect(addBtn, &QPushButton::clicked, this, []() {
-            if (SettingsManager::instance())
-                SettingsManager::instance()->setExperimentalForumAccountEnabled(false);
-        });
+        connect(addBtn, &QPushButton::clicked, this,
+                [this]() { emit addGameAccountRequested(); });
         emptyLayout->addWidget(addBtn);
 
         m_charactersLayout->addWidget(empty);
@@ -2791,7 +2789,7 @@ void ForumAccountPage::executeDetailAction()
     }
     else if (action == QStringLiteral("open_skin_editor"))
     {
-        emit skinEditorRequested();
+        emit skinEditorRequested(m_detailAccountName, m_detailAccountType);
     }
 }
 
@@ -3744,20 +3742,6 @@ void ForumAccountPage::fillSettingsForm()
         m_emailEdit->setText(user.email);
     if (m_bioEdit)
         m_bioEdit->setPlainText(user.bio);
-}
-
-void ForumAccountPage::updateFooterNote()
-{
-    if (!m_footerNote)
-        return;
-
-    const QString url = m_service->baseUrl();
-    const QString link = QStringLiteral("<a href=\"%1\" style=\"color:%2;text-decoration:none;\">%1</a>")
-                             .arg(url.toHtmlEscaped(), currentPalette().brand);
-    m_footerNote->setText(
-        tr("账户来自方块盒子论坛 %1 · 这是实验性界面，图片、排序等细节可能和网页版略有出入；"
-           "可在 设置 → 高级设置 → 实验性内容 里关闭。")
-            .arg(link));
 }
 
 void ForumAccountPage::setTabHint(const QString &text)

@@ -313,32 +313,8 @@ public:
     void setExperimentalMap3dEnabled(bool enabled);
 
     /**
-     * @brief 是否开启「论坛账户管理界面」实验性功能
-     * @return 开启时账户管理页改用与方块盒子论坛一致的新界面，并可直接登录论坛账号
-     */
-    bool isExperimentalForumAccountEnabled() const;
-
-    /**
-     * @brief 开启或关闭「论坛账户管理界面」实验性功能
-     * @param enabled 是否开启
-     */
-    void setExperimentalForumAccountEnabled(bool enabled);
-
-    /**
-     * @brief 是否开启「社区」实验性功能
-     * @return 开启时左侧导航栏显示「社区」页（方块盒子论坛首页）
-     */
-    bool isExperimentalCommunityEnabled() const;
-
-    /**
-     * @brief 开启或关闭「社区」实验性功能
-     * @param enabled 是否开启
-     */
-    void setExperimentalCommunityEnabled(bool enabled);
-
-    /**
      * @brief 方块盒子论坛的访问地址（默认官方站点，可改成本地服务方便测试）
-     * @return 规范化后的地址，例如 https://forum.blockbox.cc.cd
+     * @return 规范化后的地址，例如 https://forum.mcblockbox.top
      */
     QString forumBaseUrl() const;
 
@@ -360,10 +336,6 @@ signals:
     void experimentalBedrockChanged(bool enabled);
     /** 实验性功能「存档地图立体视图」开关状态变化 */
     void experimentalMap3dChanged(bool enabled);
-    /** 实验性功能「论坛账户管理界面」开关状态变化 */
-    void experimentalForumAccountChanged(bool enabled);
-    /** 实验性功能「社区」开关状态变化 */
-    void experimentalCommunityChanged(bool enabled);
     /** 论坛地址被修改 */
     void forumBaseUrlChanged(const QString &url);
 

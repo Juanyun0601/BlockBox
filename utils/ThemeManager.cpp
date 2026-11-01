@@ -833,6 +833,10 @@ QFrame#aiChatLeftPanel {
     background-color: rgba(30, 30, 30, 0.9);
     border: 1px solid #4a4a4a;
 }
+QFrame#forumSidePanel {
+    background-color: rgba(30, 30, 30, 0.9);
+    border: 1px solid #4a4a4a;
+}
 QWidget#instanceLeftSidebar {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 rgba(34, 34, 34, 0.88),

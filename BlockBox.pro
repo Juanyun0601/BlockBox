@@ -157,7 +157,7 @@ pages/settings/SettingsAdvancedPage.cpp \
      pages/settings/SettingsAboutPage.cpp \
      pages/InstanceSelectPage.cpp \
     pages/LanTransferPage.cpp \
-    pages/AccountManagePage.cpp \
+    pages/AddAccountDialog.cpp \
     pages/ForumAccountPage.cpp \
     pages/AiChatPage.cpp \
      pages/InstanceManagePage.cpp \
@@ -467,7 +467,7 @@ components/ProjectionBlockEditorDialog.h \
     pages/SettingsPage.h \
     pages/InstanceSelectPage.h \
     pages/LanTransferPage.h \
-    pages/AccountManagePage.h \
+    pages/AddAccountDialog.h \
     pages/ForumAccountPage.h \
     pages/AiChatPage.h \
     pages/MicrosoftLoginDialog.h \

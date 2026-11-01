@@ -1,152 +1,160 @@
 #ifndef SEARCHPAGE_H
 #define SEARCHPAGE_H
 
-#include <QComboBox>
-#include <QEvent>
-#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
-#include <QScrollArea>
-#include <QVBoxLayout>
-#include <QWidget>
 #include <QList>
-#include <QGridLayout>
 #include <QNetworkAccessManager>
+#include <QScrollArea>
+#include <QSet>
 #include <QTimer>
+#include <QVBoxLayout>
+#include <QVector>
+#include <QWidget>
 
+#include "utils/ForumContentService.h"
 #include "utils/content/ContentData.h"
 #include "utils/mod/CurseForgeAPI.h"
+#include "utils/mod/ModData.h"
 #include "utils/mod/ModrinthAPI.h"
-
-struct SearchResultItem {
-    QString title;
-    QString subtitle;
-    QString description;
-    QString iconText;
-
-    enum Type { TypeInstance, TypeSettings, TypeResource, TypeContentList, TypeAiChat, TypeExternalSearch, TypeOnlineResource, TypeFavorite, TypeTask } type;
-    QString instancePath;
-    int settingsTabIndex = -1;
-    ContentType resourceType = ContentType::Mod;
-
-    // For online resource results
-    QString onlineSource;
-    QString onlineId;
-    QString onlineIconUrl;
-    QString onlineAuthor;
-    QString onlineVersion;
-
-    // Richer metadata for the card display (prototype-style)
-    QString sourceLabel;        // "CurseForge" / "Modrinth" / "本地" / "收藏夹" / "任务" / "设置"
-    QString mcVersion;          // 游戏版本，如 1.20.1
-    QString loader;             // 加载器，如 Fabric
-    QString updatedText;        // 更新时间展示文本
-    qint64 downloadCount = -1;  // 下载量（-1 表示不展示）
-    double rating = -1.0;       // 评分（-1 表示不展示）
-    qint64 followers = -1;      // 关注数（-1 表示不展示）
-    QStringList tags;           // 展示用标签
-
-    // For favorite results
-    QString favoriteItemId;
-    QString favoriteFolderId;
-
-    // For task results
-    QString taskId;
-};
 
 class SearchQueryResolver;
 
+/**
+ * @brief 搜索页单条结果：在线资源（CurseForge / Modrinth）或论坛帖子
+ *
+ * 两种来源共用同一张卡片（模组卡片样式），差异只在图标、类型标签、
+ * 右侧统计数字与点击后的去向。
+ */
+struct SearchResultItem
+{
+    enum Kind
+    {
+        OnlineResource,
+        ForumThread
+    };
+
+    Kind kind = OnlineResource;
+
+    QString title;         ///< 标题（在线资源优先中文名）
+    QString summary;       ///< 模组简介 / 帖子命中片段（单行展示）
+    QString sourceLabel;   ///< CurseForge / Modrinth / 双源 / 社区
+    QString kindLabel;     ///< 模组 / 整合包 / 光影包…（空表示不显示）
+    QStringList chips;     ///< 版本 / 加载器 / 板块 / 时间等附加信息
+
+    // ── 在线资源 ──
+    ModInfo modInfo;
+    ContentType contentType = ContentType::Mod;
+    QString iconUrl;
+    qint64 downloadCount = -1;
+
+    // ── 论坛帖子 ──
+    int threadId = 0;
+    int replies = -1;
+    int views = -1;
+};
+
+/**
+ * @brief 全局搜索页（2026-11 改版）
+ *
+ * 页面上只有一个搜索框：输入关键词后列出在线资源（CurseForge / Modrinth）
+ * 与方块盒子论坛的帖子，卡片样式与「下载模组」等页的模组卡片一致。
+ * 中文关键词会先解析成英文名再查下载源，论坛则直接用原文检索。
+ */
 class SearchPage : public QWidget
 {
     Q_OBJECT
 
 public:
     explicit SearchPage(QWidget *parent = nullptr);
-    ~SearchPage();
+    ~SearchPage() override;
 
+    /** 进入搜索页时聚焦输入框并全选，方便直接覆盖输入 */
     void setSearchFocus();
+    /** 清空关键词与结果，回到未搜索状态 */
     void clearSearch();
-    void setFilter(int index);
 
 signals:
-    void navigateToInstance(const QString &instancePath);
-    void navigateToSettings(int tabIndex);
-    void navigateToResource(ContentType type);
-    void navigateToAiChat();
+    /** 点开在线资源：跳转资源详情页 */
     void navigateToResourceDetail(const ModInfo &info, ContentType contentType);
-    void navigateToFavorites();
-    void navigateToTaskList();
-    void navigateToInstallInstance();
-    void navigateToModpackImport();
+    /** 点开论坛帖子：跳转帖子详情页 */
+    void navigateToForumThread(int threadId);
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
     void initUI();
     void initAPIs();
     void applyMCIMSetting();
-    QWidget* createSearchBar();
-    QWidget* createHotSearchBar();
-    QWidget* createFilterBar();
-    QWidget* createResultsArea();
-    QWidget* createResultsToolbar();
-    void onFilterChanged(int index);
-    void onSubFilterChanged(int index);
+    QWidget *createSearchBar();
+    QWidget *createResultsArea();
+
+    // 搜索流程
     void performSearch(const QString &keyword);
-    QList<SearchResultItem> searchAll(const QString &keyword);
-    QList<SearchResultItem> searchInstances(const QString &keyword);
-    QList<SearchResultItem> searchSettings(const QString &keyword);
-    QList<SearchResultItem> searchResourceFiles(const QString &keyword, ContentType type);
-    QList<SearchResultItem> searchAi(const QString &keyword);
-    QList<SearchResultItem> searchExternal(const QString &keyword);
-    QList<SearchResultItem> searchFavorites(const QString &keyword);
-    QList<SearchResultItem> searchTasks(const QString &keyword);
-    QStringList detectInstanceLoaders(const QString &instancePath) const;
-    void sortResults(QList<SearchResultItem> &results);
-    void showResults(const QList<SearchResultItem> &results);
-    void appendResultWidgets(const QList<SearchResultItem> &results, int baseIndex, int insertPos = -1, bool addOnlineSep = true);
-    void appendOnlineResults(const QList<SearchResultItem> &newResults, const QString &sourceName);
-    void clearResults();
-    void onResultClicked(int index);
-    bool eventFilter(QObject *obj, QEvent *event) override;
-    void openExternalUrl(const QString &url);
-    void retranslatePlaceholder();
-    QString typeBadgeText(const SearchResultItem &item) const;
-    QString sourceLabelFor(const SearchResultItem &item) const;
-    QWidget* buildResultCard(const SearchResultItem &item, int index, const QColor &themeColor);
+    void onQueryResolved(quint64 requestId, const QString &keyword);
+    void startOnlineSearch(const QString &query);
+    void startForumSearch(const QString &query);
+    void onCurseforgeSearchCompleted(const ModSearchResult &result);
+    void onModrinthSearchCompleted(const ModSearchResult &result);
+    void onCurseforgeSearchFailed();
+    void onModrinthSearchFailed();
+    void appendMergedOnlineResults();
+    void finishSearch();
 
-    QLineEdit *m_searchInput;
-    QComboBox *m_filterCombo;
-    QComboBox *m_subFilterCombo;
+    // 结果渲染
+    void resetResults();
+    void clearResultWidgets();
+    void appendOnlineResults(const QList<ModInfo> &mods);
+    void appendForumResults(const QVector<ForumThreadInfo> &threads);
+    QWidget *buildResultCard(const SearchResultItem &item, int index);
+    QPixmap makeLetterIcon(const QString &text, const QColor &c1, const QColor &c2, int size) const;
+    void loadCardIcon(QLabel *label, const QString &iconUrl);
+    void refreshSectionTitles();
+    void updateEmptyState();
+    void onCardActivated(int index);
+    QString highlightKeyword(const QString &text) const;
 
-    QWidget *m_hotSearchBar;
-    QComboBox *m_sortCombo;
+    // 顶部
+    QLineEdit *m_searchInput = nullptr;
+    QLabel *m_idleHint = nullptr;
 
-    QScrollArea *m_resultsScroll;
-    QWidget *m_resultsContainer;
-    QVBoxLayout *m_resultsLayout;
-    QLabel *m_resultsTitle;
-    QLabel *m_noResultsLabel;
+    // 结果区
+    QWidget *m_resultsPanel = nullptr;
+    QScrollArea *m_resultsScroll = nullptr;
+    QWidget *m_resultsContainer = nullptr;
+    QVBoxLayout *m_resultsLayout = nullptr;
+    QLabel *m_onlineHeader = nullptr;
+    QWidget *m_onlineContainer = nullptr;
+    QVBoxLayout *m_onlineLayout = nullptr;
+    QLabel *m_forumHeader = nullptr;
+    QWidget *m_forumContainer = nullptr;
+    QVBoxLayout *m_forumLayout = nullptr;
+    QLabel *m_statusLabel = nullptr;
+    QLabel *m_emptyLabel = nullptr;
 
-    // Online resource search
-    CurseForgeAPI *m_curseforgeAPI;
-    ModrinthAPI *m_modrinthAPI;
-    QNetworkAccessManager *m_networkManager;
-    QString m_pendingOnlineKeyword;
-    ContentType m_pendingOnlineType;
-    int m_onlineSearchPendingCount;
-    QTimer *m_onlineSearchTimer;
-    SearchQueryResolver *m_queryResolver;
-    quint64 m_onlineQueryToken;    // 中文解析请求序号，用于丢弃过期结果
+    // 搜索源
+    CurseForgeAPI *m_curseforgeAPI = nullptr;
+    ModrinthAPI *m_modrinthAPI = nullptr;
+    SearchQueryResolver *m_queryResolver = nullptr;
+    QNetworkAccessManager *m_networkManager = nullptr;
+    QTimer *m_debounceTimer = nullptr;
 
-    QList<SearchResultItem> m_currentResults;
-    int m_currentFilter;
-    int m_currentSubFilter;
-    QString m_currentKeyword;
+    // 当前查询
+    quint64 m_queryToken = 0;   ///< 每次搜索自增，用于丢弃过期回包
+    bool m_searchActive = false;///< 本轮搜索是否还在等回包
+    int m_pendingRequests = 0;  ///< 尚未回包的请求数（关键词解析 + 两个下载源 + 论坛）
+    QString m_rawKeyword;       ///< 用户输入原文（论坛检索 / 结果高亮）
+    QString m_onlineKeyword;    ///< 解析后的英文检索词（下载源用）
+    QList<SearchResultItem> m_items;
+    QSet<QString> m_seenKeys;   ///< source:id 去重，跨源合并后只显示一张卡片
 
-    static constexpr const char *MCIM_BASE = "https://mod.mcimirror.top";
-    static constexpr const char *CF_BASE = "https://api.curseforge.com";
-    static constexpr const char *MODRINTH_BASE = "https://api.modrinth.com";
-    static const char *const kHotSearches[];
+    // 在线资源
+    int m_onlinePending = 0;    ///< 两个下载源还差几个回包（0 表示已收尾）
+    bool m_curseforgeFailed = false;
+    bool m_modrinthFailed = false;
+    QList<ModInfo> m_curseforgeMods;
+    QList<ModInfo> m_modrinthMods;
 };
 
 #endif // SEARCHPAGE_H

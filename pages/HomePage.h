@@ -113,6 +113,8 @@ signals:
   // 小卡片快捷跳转
   /** 请求打开账号管理页 */
   void accountManageRequested();
+  /** 首页「添加首个账户」：直接打开添加账户页 */
+  void addFirstAccountRequested();
   /** 请求打开 AI 助手页 */
   void aiChatRequested();
   /** 请求打开搜索页 */

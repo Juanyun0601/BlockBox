@@ -24,6 +24,15 @@ public:
                     int pageSize = 20, const QString &sortField = "relevance",
                     const QString &sortOrder = "desc");
 
+    /**
+     * @brief 不限项目类型搜索（模组 / 整合包 / 资源包 / 光影 / 数据包混在一起返回）
+     *
+     * 不带 project_type facet，每条结果的真实类型见 ModInfo::contentKind，
+     * 供全局搜索页把不同内容类型的在线资源并入同一个列表。
+     */
+    void searchAllProjectTypes(const QString &query, int page = 0, int pageSize = 20,
+                               const QString &sortField = "relevance");
+
     void getCategories();
     void fetchModDetail(const QString &modId);
 
@@ -93,6 +102,11 @@ private slots:
     void onDetailReplyFinished();
 
 private:
+    /** searchMods / searchAllProjectTypes 的公共实现；projectType 为空表示跨类型搜索 */
+    void startSearch(const QString &query, const QString &gameVersion,
+                     const QString &categoryId, int page, int pageSize,
+                     const QString &sortField, const QString &projectType);
+
     void abortReply(QNetworkReply *&reply);
     void fetchModVersions(const QString &modId);
     /** 解析项目对象（/v2/project/{id} 与 /v2/projects 返回的结构一致） */

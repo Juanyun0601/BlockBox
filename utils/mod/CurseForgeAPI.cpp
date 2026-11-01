@@ -64,6 +64,23 @@ void appendGameVersions(const QJsonArray &array, QStringList &out)
     }
 }
 
+// CurseForge classId → 启动器内容类型键（与 Modrinth 的 project_type 用同一套词）
+// 全局搜索会跨 classId 搜索，卡片要按这里的键显示「模组 / 整合包 / 光影包…」；
+// 返回空表示不是启动器认识的内容类型（如 Bukkit 插件），调用方应跳过
+QString contentKindForClassId(const QJsonValue &value)
+{
+    const int classId = value.toVariant().toInt();
+    switch (classId) {
+    case 6:    return QStringLiteral("mod");
+    case 12:   return QStringLiteral("resourcepack");
+    case 4471: return QStringLiteral("modpack");
+    case 6552: return QStringLiteral("shader");
+    case 4546: return QStringLiteral("datapack");
+    case 17:   return QStringLiteral("world");
+    default:   return QString();
+    }
+}
+
 } // namespace
 
 CurseForgeAPI::CurseForgeAPI(QObject *parent)
@@ -629,6 +646,7 @@ void CurseForgeAPI::parseAddon(const QJsonObject &obj, ModInfo &info)
     info.id = QString::number(obj["id"].toInt());
     info.name = obj["name"].toString();
     info.description = obj["summary"].toString();
+    info.contentKind = contentKindForClassId(obj["classId"]);
     {
         // authors / latestFiles 可能为空，空数组调用 first() 会崩溃
         const QJsonArray authors = obj["authors"].toArray();

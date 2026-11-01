@@ -188,7 +188,7 @@ void SettingsPage::initAdvancedSettings()
 
     QHBoxLayout *forumRow = appendSettingRow(forumCard,
         tr("论坛地址"),
-        tr("左侧导航栏「社区」页会读取这个地址的板块、最新讨论和热门标签（社区需先在下方「实验性内容」里打开）；论坛账户也走这个地址。"),
+        tr("左侧导航栏「社区」页会读取这个地址的板块、最新讨论和热门标签；论坛账户也走这个地址。"),
         tr("默认是官方论坛 %1。测试本地服务时填 http://127.0.0.1:3210 这样的地址即可，"
            "协议可以不写，结尾的斜杠会被自动去掉。")
             .arg(SettingsManager::defaultForumBaseUrl()));
@@ -250,34 +250,6 @@ void SettingsPage::initAdvancedSettings()
 
     connect(map3dCheck, &CustomCheckBox::toggled, [](bool checked) {
         SettingsManager::instance()->setExperimentalMap3dEnabled(checked);
-    });
-
-    CustomCheckBox *forumAccountCheck = new CustomCheckBox();
-    forumAccountCheck->setChecked(SettingsManager::instance()->isExperimentalForumAccountEnabled());
-
-    QHBoxLayout *forumAccountRow = appendSettingRow(experimentalCard,
-        tr("论坛账户管理界面"),
-        tr("开启后账户管理页换成和方块盒子论坛一样的界面，可以直接登录论坛账号。"),
-        tr("这是新界面的尝鲜版本，还在打磨细节；关掉就回到原来的账户管理页，游戏账户照常可用。"),
-        true);
-    forumAccountRow->addWidget(forumAccountCheck);
-
-    connect(forumAccountCheck, &CustomCheckBox::toggled, [](bool checked) {
-        SettingsManager::instance()->setExperimentalForumAccountEnabled(checked);
-    });
-
-    CustomCheckBox *communityCheck = new CustomCheckBox();
-    communityCheck->setChecked(SettingsManager::instance()->isExperimentalCommunityEnabled());
-
-    QHBoxLayout *communityRow = appendSettingRow(experimentalCard,
-        tr("社区"),
-        tr("开启后左侧导航栏会多出「社区」页，里面是方块盒子论坛的首页。"),
-        tr("社区页还在打磨中，板块、帖子等细节可能和论坛网页版有些出入；关闭后导航栏不显示「社区」。"),
-        true);
-    communityRow->addWidget(communityCheck);
-
-    connect(communityCheck, &CustomCheckBox::toggled, [](bool checked) {
-        SettingsManager::instance()->setExperimentalCommunityEnabled(checked);
     });
 
     // ── 占位伸缩，保持内容顶部对齐 ──

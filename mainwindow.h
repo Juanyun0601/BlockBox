@@ -28,7 +28,6 @@ class SideBar;
 class InstanceAssistantWindow;
 class GameFloatingIcon;
 class InstanceSelectPage;
-class AccountManagePage;
 class ForumAccountPage;
 class LaunchDetailsPage;
 class InstallInstancePage;
@@ -155,7 +154,6 @@ private slots:
     void onForumNotificationsClicked();
     /** 顶栏「聊天」：打开论坛好友与私信页 */
     void onForumChatClicked();
-    void onAddAccountPageOpened();
     void onAccountManagePageOpened();
     void onTopBarBackClicked();
     void onSearchClicked();
@@ -227,12 +225,10 @@ private:
 
     InstanceSelectPage *m_instanceSelectPage;
     InstanceAssistantWindow *m_instanceAssistantWindow = nullptr;
-    AccountManagePage *m_accountManagePage;
-    /** 账户管理页的实验性界面（与方块盒子论坛账号打通） */
+    /** 账户管理页界面（与方块盒子论坛账号打通，桌面端唯一的账户页） */
     ForumAccountPage *m_forumAccountPage = nullptr;
-    /** 账户管理页容器：经典界面与实验性界面各占一页，切换只换显示不销毁 */
-    QStackedWidget *m_accountUiStack = nullptr;
-    LaunchDetailsPage *m_launchDetailsPage;
+    /** 账户管理页容器（入场动画作用在内层页面，故保留一层 QStackedWidget） */
+    QStackedWidget *m_accountUiStack = nullptr;    LaunchDetailsPage *m_launchDetailsPage;
     InstallInstancePage *m_installInstancePage;
     LoaderDetailPage *m_loaderDetailPage;
     ForgeVersionListPage *m_forgeVersionListPage;
@@ -294,6 +290,9 @@ private:
      */
     QString m_gameAccountName;
     QPixmap m_gameAccountAvatar;
+    /** 从论坛账户详情进入皮肤编辑器时要应用的账户（一次性，用后清空） */
+    QString m_pendingSkinEditorAccount;
+    QString m_pendingSkinEditorAccountType;
     bool m_launchRetryAttempted = false; // 标记本次启动是否已执行过"补全文件后重试"，避免无限重试
     bool m_launchRetryPending = false;  // 标记重试已调度但尚未执行（防止重复 gameCrashed 信号清除任务）
 
@@ -349,12 +348,10 @@ private:
 
     void initInstanceSelectPage();
     void initAccountManagePage();
-    /** 经典账户管理页（按需创建，创建后常驻） */
-    void buildClassicAccountManagePage();
-    /** 实验性账户管理页：论坛账户界面（按需创建，创建后常驻） */
+    /** 论坛账户管理页：账户管理页的唯一界面（按需创建，创建后常驻） */
     void buildForumAccountManagePage();
-    /** 实验性「论坛账户管理界面」开关变化时切换显示 */
-    void switchAccountUiMode();
+    /** 「添加角色」弹窗：离线 / 微软正版 / 第三方添加游戏账户 */
+    void openAddAccountDialog();
     void initLaunchDetailsPage();
     void initInstallInstancePage();
     void initLoaderDetailPage();

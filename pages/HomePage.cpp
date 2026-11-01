@@ -1232,7 +1232,7 @@ QWidget* HomePage::createSkinPanel()
   d->setWordWrap(true);
   bl->addWidget(d);
 
-  connect(m_skinAddBtn, &QPushButton::clicked, this, &HomePage::accountManageRequested);
+  connect(m_skinAddBtn, &QPushButton::clicked, this, &HomePage::addFirstAccountRequested);
   defaultLayout->addWidget(m_skinAddBtn, 1);
   m_skinPageStack->addWidget(defaultPage);
 

@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QContextMenuEvent>
+#include <QCursor>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
@@ -322,6 +323,13 @@ void ForumThreadDetailPage::renderHero()
     title->setWordWrap(true);
     title->setTextInteractionFlags(Qt::TextSelectableByMouse);
     titleRow->addWidget(title, 1);
+
+    auto *shareButton = new QPushButton(tr("分享"), m_heroCard);
+    shareButton->setObjectName(QStringLiteral("forumShareButton"));
+    shareButton->setCursor(Qt::PointingHandCursor);
+    shareButton->setFixedHeight(28);
+    connect(shareButton, &QPushButton::clicked, this, &ForumThreadDetailPage::shareThread);
+    titleRow->addWidget(shareButton, 0, Qt::AlignTop);
 
     m_bookmarkButton = new QPushButton(m_info.bookmarked ? tr("★ 已收藏") : tr("☆ 收藏"),
                                        m_heroCard);
@@ -1255,6 +1263,26 @@ void ForumThreadDetailPage::copyPostLink(const ForumPost &post)
         QStringLiteral("%1/thread.html?id=%2#post-%3").arg(base).arg(m_threadId).arg(post.id);
     QApplication::clipboard()->setText(url);
     NotificationManager::showSuccess(this, tr("楼层链接已复制"));
+}
+
+void ForumThreadDetailPage::shareThread()
+{
+    QString base = ForumAccountService::instance()->baseUrl();
+    while (base.endsWith(QLatin1Char('/')))
+        base.chop(1);
+    const QString url = QStringLiteral("%1/thread.html?id=%2").arg(base).arg(m_threadId);
+
+    auto *button = qobject_cast<QPushButton *>(sender());
+    QWidget *anchor = button ? static_cast<QWidget *>(button) : this;
+    QMenu menu(anchor);
+    menu.addAction(tr("复制链接"), this, [this]() { copyThreadLink(); });
+    menu.addAction(tr("复制标题和链接"), this, [this, url]() {
+        QApplication::clipboard()->setText(
+            QStringLiteral("%1\n%2").arg(m_info.title, url));
+        NotificationManager::showSuccess(this, tr("标题和链接已复制，去聊天窗口粘贴给朋友吧"));
+    });
+    menu.exec(button ? button->mapToGlobal(QPoint(0, button->height() + 4))
+                     : QCursor::pos());
 }
 
 // ────────────────────────────────────────────────────────────── 楼层编辑 / 删除 / 举报

@@ -7,7 +7,14 @@
 
 #include "ForumChatService.h"
 
+#include <QBuffer>
+#include <QFile>
+#include <QImageReader>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonParseError>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QUrlQuery>
 
 ForumChatService *ForumChatService::instance()
@@ -38,7 +45,12 @@ ForumChatMessage ForumChatService::parseMessage(const QJsonObject &object)
 {
     ForumChatMessage message;
     message.id = object.value(QStringLiteral("id")).toInt();
+    message.kind = object.value(QStringLiteral("kind")).toString(QStringLiteral("text"));
     message.body = object.value(QStringLiteral("body")).toString();
+    message.image = object.value(QStringLiteral("image")).toString();
+    message.replyTo = object.value(QStringLiteral("reply_to")).toInt();
+    message.replyBody = object.value(QStringLiteral("reply_body")).toString();
+    message.replyMine = object.value(QStringLiteral("reply_mine")).toInt() != 0;
     message.mine = object.value(QStringLiteral("mine")).toBool();
     message.createdAt = static_cast<qint64>(object.value(QStringLiteral("created_at")).toDouble());
     message.read = object.value(QStringLiteral("read_at")).toDouble() > 0;
@@ -66,6 +78,7 @@ void ForumChatService::fetchFriends(std::function<void(const ForumFriendSnapshot
                 if (!last.isEmpty())
                 {
                     peer.lastMessageBody = last.value(QStringLiteral("body")).toString();
+                    peer.lastMessageKind = last.value(QStringLiteral("kind")).toString(QStringLiteral("text"));
                     peer.lastMessageAt =
                         static_cast<qint64>(last.value(QStringLiteral("created_at")).toDouble());
                     peer.lastMessageMine = last.value(QStringLiteral("mine")).toBool();
@@ -226,18 +239,160 @@ void ForumChatService::fetchMessages(int userId, int beforeId,
         std::move(onFail));
 }
 
-void ForumChatService::sendMessage(int userId, const QString &body,
+void ForumChatService::sendMessage(int userId, const QString &body, int replyTo,
                                    std::function<void(const ForumChatMessage &)> onOk,
                                    FailHandler onFail)
 {
     QJsonObject payload;
+    payload.insert(QStringLiteral("kind"), QStringLiteral("text"));
     payload.insert(QStringLiteral("body"), body);
+    if (replyTo > 0)
+        payload.insert(QStringLiteral("reply_to"), replyTo);
+    postMessage(userId, payload, std::move(onOk), std::move(onFail));
+}
+
+void ForumChatService::withdrawMessage(int messageId, std::function<void()> onOk, FailHandler onFail)
+{
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("DELETE"), QStringLiteral("/api/messages/%1").arg(messageId), {},
+        [onOk](const QJsonObject &) {
+            if (onOk)
+                onOk();
+        },
+        std::move(onFail));
+}
+
+void ForumChatService::postMessage(int userId, const QJsonObject &payload,
+                                   std::function<void(const ForumChatMessage &)> onOk,
+                                   FailHandler onFail)
+{
     ForumAccountService::instance()->sendJson(
         QByteArrayLiteral("POST"), QStringLiteral("/api/messages/%1").arg(userId), payload,
         [this, onOk](const QJsonObject &root) {
             const ForumChatMessage message = parseMessage(root.value(QStringLiteral("message")).toObject());
             if (onOk)
                 onOk(message);
+        },
+        std::move(onFail));
+}
+
+bool ForumChatService::prepareImagePayload(const QString &filePath, QByteArray &data, QString &mime,
+                                           QString &error)
+{
+    QImageReader reader(filePath);
+    QImage image = reader.read();
+    if (image.isNull())
+    {
+        error = QObject::tr("打不开这张图片，换个文件试试");
+        return false;
+    }
+    // 最长边 1600，够聊天看了
+    if (image.width() > 1600 || image.height() > 1600)
+        image = image.scaled(1600, 1600, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+    // 有透明通道用 PNG，否则用 JPEG 逐级压到 4 MB 以内（论坛图床上限）
+    const bool hasAlpha = image.hasAlphaChannel();
+    QBuffer buffer(&data);
+    buffer.open(QIODevice::WriteOnly);
+    if (hasAlpha)
+    {
+        image.save(&buffer, "PNG");
+        mime = QStringLiteral("image/png");
+    }
+    else
+    {
+        int quality = 88;
+        while (quality >= 40)
+        {
+            data.clear();
+            buffer.seek(0);
+            image.save(&buffer, "JPEG", quality);
+            mime = QStringLiteral("image/jpeg");
+            if (data.size() <= 3500 * 1024)
+                break;
+            quality -= 12;
+        }
+    }
+    if (data.isEmpty() || data.size() > 4 * 1024 * 1024)
+    {
+        error = QObject::tr("这张图片压不进 4 MB 的图床限制，换一张试试");
+        return false;
+    }
+    return true;
+}
+
+void ForumChatService::uploadImage(const QByteArray &data, const QString &mime,
+                                   std::function<void(const QString &url)> onOk, FailHandler onFail)
+{
+    if (!m_network)
+        m_network = new QNetworkAccessManager(this);
+
+    QNetworkRequest request{QUrl(ForumAccountService::instance()->absoluteUrl(QStringLiteral("/api/upload")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, mime);
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BlockBoxLauncher"));
+    request.setRawHeader("Accept", "application/json");
+    request.setTransferTimeout(30000);
+    const QString token = ForumAccountService::instance()->token();
+    if (!token.isEmpty())
+        request.setRawHeader("Cookie", QStringLiteral("bbf_sid=%1").arg(token).toUtf8());
+
+    QNetworkReply *reply = m_network->post(request, data);
+    QObject::connect(reply, &QNetworkReply::finished, reply,
+                     [reply, onOk, onFail]() {
+                         reply->deleteLater();
+                         const QByteArray raw = reply->readAll();
+                         if (reply->error() != QNetworkReply::NoError)
+                         {
+                             // 论坛的错误体里带着中文原因，优先透传
+                             QJsonParseError parseError{};
+                             const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
+                             QString message = parseError.error == QJsonParseError::NoError
+                                                   ? doc.object().value(QStringLiteral("error")).toString()
+                                                   : QString();
+                             if (message.isEmpty())
+                                 message = QObject::tr("图片上传失败，请稍后再试");
+                             if (onFail)
+                                 onFail(message, reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt());
+                             return;
+                         }
+                         const QJsonDocument doc = QJsonDocument::fromJson(raw);
+                         const QString url = doc.object().value(QStringLiteral("url")).toString();
+                         if (url.isEmpty())
+                         {
+                             if (onFail)
+                                 onFail(QObject::tr("图片上传失败，请稍后再试"), 0);
+                             return;
+                         }
+                         if (onOk)
+                             onOk(url);
+                     });
+}
+
+void ForumChatService::sendImageMessage(int userId, const QString &filePath, const QString &caption,
+                                        int replyTo,
+                                        std::function<void(const ForumChatMessage &)> onOk,
+                                        FailHandler onFail)
+{
+    QByteArray data;
+    QString mime;
+    QString error;
+    if (!prepareImagePayload(filePath, data, mime, error))
+    {
+        if (onFail)
+            onFail(error, 0);
+        return;
+    }
+    uploadImage(
+        data, mime,
+        [this, userId, caption, replyTo, onOk, onFail](const QString &url) {
+            QJsonObject payload;
+            payload.insert(QStringLiteral("kind"), QStringLiteral("image"));
+            payload.insert(QStringLiteral("image"), url);
+            if (!caption.isEmpty())
+                payload.insert(QStringLiteral("body"), caption);
+            if (replyTo > 0)
+                payload.insert(QStringLiteral("reply_to"), replyTo);
+            postMessage(userId, payload, std::move(onOk), std::move(onFail));
         },
         std::move(onFail));
 }
@@ -269,6 +424,7 @@ void ForumChatService::poll(int peerId, int afterId,
                 if (!last.isEmpty())
                 {
                     peer.lastMessageBody = last.value(QStringLiteral("body")).toString();
+                    peer.lastMessageKind = last.value(QStringLiteral("kind")).toString(QStringLiteral("text"));
                     peer.lastMessageAt =
                         static_cast<qint64>(last.value(QStringLiteral("created_at")).toDouble());
                     peer.lastMessageMine = last.value(QStringLiteral("mine")).toBool();

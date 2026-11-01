@@ -25,7 +25,7 @@
 #include "utils/GameLauncher.h"
 #include "pages/AiChatPage.h"
 #include "pages/JavaDownloadPage.h"
-#include "pages/AccountManagePage.h"
+#include "pages/AddAccountDialog.h"
 #include "pages/ForumAccountPage.h"
 #include "pages/ForgeVersionListPage.h"
 #include "pages/HomePage.h"
@@ -158,8 +158,11 @@ void MainWindow::initEssentialPages()
             QDesktopServices::openUrl(QUrl::fromLocalFile(savePath));
         }
     });
-    // 首页账号卡片 / 轮播右侧皮肤区「添加首个账户」→ 账户管理页
+    // 首页账号卡片 → 账户管理页（论坛账户界面）
     connect(homePage, &HomePage::accountManageRequested, this, &MainWindow::showAccountManagePage);
+    // 首页轮播右侧「添加首个账户」→ 直接打开「添加角色」弹窗
+    connect(homePage, &HomePage::addFirstAccountRequested, this,
+            &MainWindow::openAddAccountDialog);
     // 首页「官方新闻 · 查看全部」→ 软件内置新闻列表页
     connect(homePage, &HomePage::newsPageRequested, this, &MainWindow::showNewsPage);
     // 经典模式皮肤面板：启动游戏 / 实例选择 / 实例设置 / 实例助手
@@ -541,7 +544,7 @@ void MainWindow::initAccountManagePage()
     if (m_pageInitialized[PageIndex::AccountManagePage]) { return; }
     PerformanceMonitor::instance()->startMeasurement("账户管理页初始化");
 
-    // 容器：经典界面与实验性论坛界面各占一页，切换时只换显示，不销毁页面
+    // 容器：只放论坛账户界面（保留这一层，页面切换动画的入场效果要作用在内层页面上）
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::AccountManagePage));
     m_accountUiStack = new QStackedWidget(this);
     m_accountUiStack->setObjectName(QStringLiteral("accountUiStack"));
@@ -549,54 +552,27 @@ void MainWindow::initAccountManagePage()
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::AccountManagePage), m_accountUiStack);
     delete placeholder;
 
-    // 按实验性开关决定先建哪个界面，另一个等切换时按需创建
-    const bool experimental = SettingsManager::instance()
-                              && SettingsManager::instance()->isExperimentalForumAccountEnabled();
-    if (experimental)
-        buildForumAccountManagePage();
-    else
-        buildClassicAccountManagePage();
-
-    QWidget *firstPage = experimental ? static_cast<QWidget *>(m_forumAccountPage)
-                                      : static_cast<QWidget *>(m_accountManagePage);
-    if (firstPage)
-        m_accountUiStack->setCurrentWidget(firstPage);
+    buildForumAccountManagePage();
+    if (m_forumAccountPage)
+        m_accountUiStack->setCurrentWidget(m_forumAccountPage);
 
     m_pageInitialized[PageIndex::AccountManagePage] = true;
     PerformanceMonitor::instance()->endMeasurement("账户管理页初始化");
 }
 
-void MainWindow::buildClassicAccountManagePage()
+void MainWindow::openAddAccountDialog()
 {
-    if (!m_accountUiStack || m_accountManagePage) { return; }
-
-    m_accountManagePage = new AccountManagePage(this);
-    m_accountUiStack->addWidget(m_accountManagePage);
-    connect(m_accountManagePage, &AccountManagePage::backToMainRequested, this, &MainWindow::onBackToMain);
-    connect(m_accountManagePage, &AccountManagePage::accountSelected, this, [this](const QString &accountName) {
-        // 只更新启动用的游戏账户；顶栏若正在展示方块盒子账户，显示保持不变
-        m_gameAccountName = accountName;
-        syncTopBarAccount();
+    // 「添加角色」：离线 / 微软正版 / 第三方三种方式都在一个弹窗里，加完直接刷新角色页
+    auto *dialog = new AddAccountDialog(this);
+    connect(dialog, &AddAccountDialog::accountAdded, this, [this](const QString &accountName) {
+        Q_UNUSED(accountName);
+        // 新账户加完就是默认账户：顶栏跟着换，角色页重新拉一遍卡片
+        restoreDefaultAccount();
+        if (m_forumAccountPage)
+            m_forumAccountPage->refreshAccount();
     });
-    // 账户皮肤加载后，将皮肤头部裁剪头像同步到顶栏账户头像
-    connect(m_accountManagePage, &AccountManagePage::accountSkinUpdated, this, [this](const QPixmap &avatar) {
-        m_gameAccountAvatar = avatar;
-        syncTopBarAccount();
-    });
-    // 账户管理页左侧"皮肤制作"按钮 → 进入皮肤编辑页
-    connect(m_accountManagePage, &AccountManagePage::skinEditorRequested, this, &MainWindow::onSkinEditorClicked);
-    // 面包屑跟随页面：账户管理 / 添加账户
-    connect(m_accountManagePage, &AccountManagePage::accountManagePageOpened,
-            this, &MainWindow::onAccountManagePageOpened);
-    connect(m_accountManagePage, &AccountManagePage::addAccountPageOpened,
-            this, &MainWindow::onAddAccountPageOpened);
-    // 皮肤编辑页可能先于经典账户页创建：这里补建「应用到账户」的信号连接
-    if (m_skinEditorPage)
-    {
-        connect(m_skinEditorPage, &SkinEditorPage::skinAppliedToAccount,
-                m_accountManagePage, &AccountManagePage::refreshSkinForAccount,
-                Qt::UniqueConnection);
-    }
+    dialog->exec();
+    dialog->deleteLater();
 }
 
 void MainWindow::buildForumAccountManagePage()
@@ -629,45 +605,25 @@ void MainWindow::buildForumAccountManagePage()
                 syncTopBarAccount();
             });
 
-    // 账户详情页里的「打开皮肤编辑器」
+    // 账户详情页里的「打开皮肤编辑器」：带上详情页当前账户，应用时不会落到别的账户上
     connect(m_forumAccountPage, &ForumAccountPage::skinEditorRequested, this,
-            &MainWindow::onSkinEditorClicked);
+            [this](const QString &accountName, const QString &accountType) {
+                m_pendingSkinEditorAccount = accountName;
+                m_pendingSkinEditorAccountType = accountType;
+                onSkinEditorClicked();
+            });
 
-    // 页内「论坛设置」：跳到 设置 → 高级设置（与社区页的论坛设置入口一致）
-    connect(m_forumAccountPage, &ForumAccountPage::openAdvancedSettingsRequested, this, [this]() {
-        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    // 皮肤编辑页可能先于论坛账户页创建：这里补建「应用后刷新」的信号连接
+    if (m_skinEditorPage)
+    {
+        connect(m_skinEditorPage, &SkinEditorPage::skinAppliedToAccount,
+                m_forumAccountPage, &ForumAccountPage::refreshAccount,
+                Qt::UniqueConnection);
+    }
 
-        m_topBar->setInstanceSelectSelected(false);
-        m_topBar->setInstanceSettingsSelected(false);
-        m_topBar->setAccountSelected(false);
-        m_topBar->setSettingsTitle();
-
-        m_sideBar->setSelectedIndex(2);
-        m_subNavPanel->showForParent(2, false);
-        ensurePageInitialized(PageIndex::SettingsPage);
-        animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, 2);
-        m_lastSidebarIndex = 2;
-        onChildNavClicked(2, 5);
-        m_subNavPanel->setSelectedChild(5);
-    });
-}
-
-void MainWindow::switchAccountUiMode()
-{
-    QMutexLocker locker(&m_initMutex);
-    if (!m_pageInitialized[PageIndex::AccountManagePage] || !m_accountUiStack) { return; }
-
-    const bool experimental = SettingsManager::instance()
-                              && SettingsManager::instance()->isExperimentalForumAccountEnabled();
-    if (experimental)
-        buildForumAccountManagePage();
-    else
-        buildClassicAccountManagePage();
-
-    QWidget *target = experimental ? static_cast<QWidget *>(m_forumAccountPage)
-                                   : static_cast<QWidget *>(m_accountManagePage);
-    if (target)
-        m_accountUiStack->setCurrentWidget(target);
+    // 角色页「添加角色」/ 空态按钮：弹出添加账户弹窗
+    connect(m_forumAccountPage, &ForumAccountPage::addGameAccountRequested,
+            this, &MainWindow::openAddAccountDialog);
 }
 
 void MainWindow::initLaunchDetailsPage()
@@ -987,8 +943,6 @@ void MainWindow::showInstanceSelectPage()
 void MainWindow::showAccountManagePage()
 {
     ensurePageInitialized(PageIndex::AccountManagePage);
-    // 每次进入都同步一次，确保和实验性开关当前状态一致
-    switchAccountUiMode();
     setSideBarVisible(false);
     m_topBar->setAccountManageTitle();
     m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::AccountManagePage));
@@ -997,7 +951,6 @@ void MainWindow::showAccountManagePage()
 void MainWindow::openForumAccountLogin()
 {
     showAccountManagePage();
-    // 实验性论坛账户界面关着时没有登录表单可展示，就停在账户页
     if (m_forumAccountPage)
         m_forumAccountPage->openLoginForm();
 }
@@ -1101,54 +1054,13 @@ void MainWindow::initSearchPage()
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::SearchPage), m_searchPage);
     delete placeholder;
 
-    connect(m_searchPage, &SearchPage::navigateToInstance, this, [this](const QString &path) {
-        onInstanceSelected(path);
-        m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceSelectPage));
-    });
-    connect(m_searchPage, &SearchPage::navigateToSettings, this, [this](int tabIndex) {
-        ensurePageInitialized(PageIndex::SettingsPage);
-        m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::SettingsPage));
-        m_subNavPanel->showForParent(2);
-        onSettingsNavItemClicked(tabIndex);
-    });
-    connect(m_searchPage, &SearchPage::navigateToResource, this, [this](ContentType type) {
-        showContentDownloadPage(type);
-    });
-    connect(m_searchPage, &SearchPage::navigateToAiChat, this, [this]() {
-        ensurePageInitialized(PageIndex::AiChatPage);
-        setSideBarVisible(false);
-        m_topBar->setTitle(tr("AI 助手"));
-        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
-        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
-        m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::AiChatPage));
-    });
     connect(m_searchPage, &SearchPage::navigateToResourceDetail, this, [this](const ModInfo &info, ContentType contentType) {
         showContentDetailPage(info, contentType);
     });
-    connect(m_searchPage, &SearchPage::navigateToFavorites, this, [this]() {
-        showFavoritesPage(QString());
-    });
-    connect(m_searchPage, &SearchPage::navigateToTaskList, this, [this]() {
-        showTaskListPage();
-    });
-    connect(m_searchPage, &SearchPage::navigateToInstallInstance, this, [this]() {
-        // 进入资源页安装新实例（等价于点击资源页左侧导航"安装新实例"）
-        m_sideBar->setSelectedIndex(1);
-        m_subNavPanel->showForParent(1);
-        m_subNavPanel->setSelectedChild(0);
-        ensurePageInitialized(PageIndex::InstallInstancePage);
-        setSideBarVisible(true);
-        m_topBar->setTitle(tr("资源>安装新实例"));
-        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
-        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
-        m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstallInstancePage));
-    });
-    connect(m_searchPage, &SearchPage::navigateToModpackImport, this, [this]() {
-        // 进入资源页导入整合包
-        m_sideBar->setSelectedIndex(1);
-        m_subNavPanel->showForParent(1);
-        m_subNavPanel->setSelectedChild(2);
-        showModpackImportPage();
+    // 搜索页里的社区帖子直接在启动器内打开帖子详情；返回键回到搜索页（搜索状态保留）
+    connect(m_searchPage, &SearchPage::navigateToForumThread, this, [this](int threadId) {
+        m_forumReturnAction = [this]() { showSearchPage(); };
+        showForumThread(threadId);
     });
 
     m_pageInitialized[PageIndex::SearchPage] = true;
@@ -1166,19 +1078,6 @@ void MainWindow::showSearchPage()
     m_topBar->setTitle(tr("搜索"));
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
-
-    // 根据来源页面自动选中对应的搜索筛选器：
-    // 资源页(1)→资源筛选(2)，设置页(2)→设置筛选(3)，AI助手页(3)→AI助手筛选(4)，首页(0)→全部(0)
-    int targetFilter = 0;
-    switch (m_lastSidebarIndex)
-    {
-    case 0: targetFilter = 0; break; // 首页 → 全部
-    case 1: targetFilter = 2; break; // 资源 → 资源
-    case 2: targetFilter = 3; break; // 设置 → 设置
-    case 3: targetFilter = 4; break; // AI 助手 → AI 助手
-    default: targetFilter = 0; break;
-    }
-    m_searchPage->setFilter(targetFilter);
 
     m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::SearchPage));
     m_searchPage->setSearchFocus();
@@ -1296,10 +1195,10 @@ void MainWindow::initSkinEditorPage()
     delete placeholder;
     connect(m_skinEditorPage, &SkinEditorPage::backToMainRequested, this, &MainWindow::onBackToMain);
     // 应用皮肤到账户后，刷新账户管理页的皮肤显示（若账户页已初始化）
-    if (m_accountManagePage)
+    if (m_forumAccountPage)
     {
         connect(m_skinEditorPage, &SkinEditorPage::skinAppliedToAccount,
-                m_accountManagePage, &AccountManagePage::refreshSkinForAccount,
+                m_forumAccountPage, &ForumAccountPage::refreshAccount,
                 Qt::UniqueConnection);
     }
     m_pageInitialized[PageIndex::SkinEditorPage] = true;
@@ -1317,10 +1216,13 @@ void MainWindow::showSkinEditorPage()
     {
         m_skinEditorPage->initializeDefault();
     }
-    // 将当前选中账户信息传入皮肤编辑页，支持"应用到账户"功能
-    if (m_accountManagePage)
-        m_skinEditorPage->applyToAccount(m_accountManagePage->currentAccountName(),
-                                         m_accountManagePage->currentAccountType());
+    // 目标账户：从角色页 / 账户详情进来时带上那个账户
+    const QString targetName = m_pendingSkinEditorAccount;
+    const QString targetType = m_pendingSkinEditorAccountType;
+    m_pendingSkinEditorAccount.clear();
+    m_pendingSkinEditorAccountType.clear();
+    if (!targetName.isEmpty())
+        m_skinEditorPage->applyToAccount(targetName, targetType);
 }
 
 void MainWindow::initPluginPage()

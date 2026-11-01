@@ -54,6 +54,21 @@ void ModrinthAPI::searchMods(const QString &query, const QString &gameVersion,
                               const QString &sortOrder)
 {
     Q_UNUSED(sortOrder);
+    startSearch(query, gameVersion, categoryId, page, pageSize, sortField, m_projectType);
+}
+
+void ModrinthAPI::searchAllProjectTypes(const QString &query, int page, int pageSize,
+                                        const QString &sortField)
+{
+    // 不传 project_type facet：一次拿到模组 / 整合包 / 资源包 / 光影 / 数据包混合结果，
+    // 各项的实际类型在搜索回包的 project_type 字段里（见 onSearchReplyFinished）
+    startSearch(query, QString(), QString(), page, pageSize, sortField, QString());
+}
+
+void ModrinthAPI::startSearch(const QString &query, const QString &gameVersion,
+                              const QString &categoryId, int page, int pageSize,
+                              const QString &sortField, const QString &projectType)
+{
     QUrl url(m_baseUrl + "/v2/search");
     QUrlQuery urlQuery;
     if (!query.isEmpty())
@@ -69,13 +84,16 @@ void ModrinthAPI::searchMods(const QString &query, const QString &gameVersion,
     sortMap["date_created"] = "newest";
     urlQuery.addQueryItem("index", sortMap.value(sortField, "relevance"));
 
+    // facets 为空时整段不传，接口就会跨项目类型搜索
     QStringList facets;
-    facets << QString("[\"project_type:%1\"]").arg(m_projectType);
+    if (!projectType.isEmpty())
+        facets << QString("[\"project_type:%1\"]").arg(projectType);
     if (!gameVersion.isEmpty())
         facets << QString("[\"versions:%1\"]").arg(gameVersion);
     if (!categoryId.isEmpty())
         facets << QString("[\"categories:%1\"]").arg(categoryId);
-    urlQuery.addQueryItem("facets", "[" + facets.join(",") + "]");
+    if (!facets.isEmpty())
+        urlQuery.addQueryItem("facets", "[" + facets.join(",") + "]");
 
     url.setQuery(urlQuery);
 
@@ -164,6 +182,8 @@ void ModrinthAPI::onSearchReplyFinished()
         }
         info.pageUrl = QString("https://modrinth.com/mod/%1").arg(obj["slug"].toString());
         info.source = "modrinth";
+        // 真实项目类型：不带 project_type facet 的搜索要靠它区分卡片类型
+        info.contentKind = obj["project_type"].toString();
         info.downloadCount = obj["downloads"].toInt();
         info.followers = obj["follows"].toInt();
         info.latestVersion = obj["latest_version"].toString();
@@ -266,6 +286,7 @@ void ModrinthAPI::parseProjectObject(const QJsonObject &obj, ModInfo &info)
     info.iconUrl = obj["icon_url"].toString();
     info.pageUrl = QString("https://modrinth.com/mod/%1").arg(obj["slug"].toString());
     info.source = "modrinth";
+    info.contentKind = obj["project_type"].toString();
     info.downloadCount = obj["downloads"].toInt();
     info.followers = obj["followers"].toInt();
 

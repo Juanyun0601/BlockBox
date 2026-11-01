@@ -55,7 +55,6 @@
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
 #include "utils/ThemeManager.h"
-#include "pages/AccountManagePage.h"
 #include "pages/ForumAccountPage.h"
 #include "pages/ForgeVersionListPage.h"
 #include "pages/HomePage.h"
@@ -149,7 +148,6 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
     , m_instanceSelectPage(nullptr)
     , m_instanceAssistantWindow(nullptr)
-    , m_accountManagePage(nullptr)
     , m_launchDetailsPage(nullptr)
     , m_installInstancePage(nullptr)
     , m_loaderDetailPage(nullptr)
@@ -234,8 +232,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_topBar, &TopBar::accountManageClicked, this, &MainWindow::onAccountManageClicked);
     connect(m_topBar, &TopBar::launchGameClicked, this, qOverload<>(&MainWindow::onLaunchGameClicked));
     connect(m_topBar, &TopBar::searchClicked, this, &MainWindow::onSearchClicked);
-    // 顶栏「系统消息 / 聊天」快捷卡：随论坛实验功能开关显示
-    m_topBar->setForumCardVisible(SettingsManager::instance()->isExperimentalCommunityEnabled());
+    // 顶栏「系统消息 / 聊天」快捷卡：社区为常驻功能，始终显示
+    m_topBar->setForumCardVisible(true);
     connect(m_topBar, &TopBar::forumNotificationsClicked, this, &MainWindow::onForumNotificationsClicked);
     connect(m_topBar, &TopBar::forumChatClicked, this, &MainWindow::onForumChatClicked);
     // Connect game edition switch (Java版 / 基岩版)
@@ -254,25 +252,6 @@ MainWindow::MainWindow(QWidget *parent)
             NotificationManager::showInfo(this, tr("已关闭基岩版实验性功能，已切回 Java 版"));
         }
     });
-
-    // 账户管理页的实验性界面：开关一改就切换显示，下次进入立即生效
-    connect(SettingsManager::instance(), &SettingsManager::experimentalForumAccountChanged, this,
-            [this](bool enabled) {
-                switchAccountUiMode();
-                NotificationManager::showInfo(this, enabled ? tr("账户管理页已切换为论坛账户界面")
-                                                            : tr("账户管理页已恢复经典界面"));
-            });
-
-    // 社区页同属实验性内容：开关切换后重建侧边栏；关闭时若正停在社区页则退回首页
-    connect(SettingsManager::instance(), &SettingsManager::experimentalCommunityChanged, this,
-            [this](bool enabled) {
-                m_topBar->setForumCardVisible(enabled);
-                m_sideBar->refreshNavStructure();
-                if (!enabled && m_communityPage && m_stackedWidget->currentWidget() == m_communityPage)
-                    onBackToMain();
-                NotificationManager::showInfo(this, enabled ? tr("已开启社区实验性功能，左侧导航栏已显示「社区」")
-                                                            : tr("已关闭社区实验性功能，已从左侧导航栏移除"));
-            });
 
     connect(m_taskBar, &TaskBar::showTaskListPageRequested, this, &MainWindow::onShowTaskListPageRequested);
     connect(m_taskBar, &TaskBar::taskDetailRequested, this, &MainWindow::onTaskDetailRequested);
@@ -315,6 +294,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 自动登录：从保存的账户文件中恢复默认账户
     restoreDefaultAccount();
+
+    // 上次登录过方块盒子账户的话，启动后先用本地会话静默恢复登录：
+    // 令牌还有效就继续用（顺带刷新昵称、头像和未读通知），
+    // 已经失效交给 sessionExpired 把界面退回未登录；
+    // 断网时保留上次的登录状态，不弹错误打扰用户。
+    if (forumAccount->hasSession())
+        forumAccount->refreshProfile();
 
     // 加载保存的实例路径
     loadCurrentInstancePath();
@@ -424,7 +410,7 @@ void MainWindow::initUI()
         QWidget *current = m_stackedWidget->currentWidget();
         if (current)
         {
-            // 账户管理页是经典 / 实验性两个界面的容器，入场动画要作用在内层页面上
+            // 账户管理页是论坛账户 / 经典两个界面的容器，入场动画要作用在内层页面上
             QWidget *contentPage = current;
             if (m_accountUiStack && current == m_accountUiStack && m_accountUiStack->currentWidget())
                 contentPage = m_accountUiStack->currentWidget();
@@ -434,10 +420,6 @@ void MainWindow::initUI()
             // 原因：PageTransitionAnimator 的 FadeSlideUp 动画期间会给页面应用 QGraphicsOpacityEffect，
             // 该 effect 会破坏其子 QOpenGLWidget (Skin3DWidget) 的 GL 渲染。
             // 动画结束后 effect 被移除，但 Skin3DWidget 不会自动重绘，需手动触发。
-            if (m_accountManagePage && contentPage == m_accountManagePage)
-            {
-                m_accountManagePage->refreshSkin3DWidget();
-            }
             if (current == m_skinEditorPage && m_skinEditorPage)
             {
                 m_skinEditorPage->refreshSkin3DPreview();
@@ -1546,18 +1528,6 @@ void MainWindow::dropEvent(QDropEvent *event)
     UpdateChecker::instance()->installExternalPackage(this, packages.first());
 }
 
-void MainWindow::onAddAccountPageOpened()
-{
-    // 面包屑跟随页面：方块盒子 > 账户管理 > 添加账户
-    if (m_topBar)
-    {
-        m_topBar->setAddAccountTitle();
-    }
-    // 页面内没有返回按钮，顶栏返回键负责回到账户列表（同一 PageIndex 的内层切换）
-    m_previousPage = PageIndex::AccountManagePage;
-    m_hasPreviousPage = true;
-}
-
 void MainWindow::onAccountManagePageOpened()
 {
     if (m_topBar)
@@ -1568,7 +1538,7 @@ void MainWindow::onAccountManagePageOpened()
 
 void MainWindow::onTopBarBackClicked()
 {
-    // 实验性账户管理页的登录 / 注册子视图：先退回账户总览，不离开页面
+    // 论坛账户界面的登录 / 注册子视图：先退回账户总览，不离开页面
     if (m_forumAccountPage && m_accountUiStack &&
         m_accountUiStack->currentWidget() == m_forumAccountPage && m_stackedWidget &&
         m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::AccountManagePage) &&
@@ -1580,11 +1550,6 @@ void MainWindow::onTopBarBackClicked()
     if (m_hasPreviousPage) {
         PageIndex target = m_previousPage;
         m_hasPreviousPage = false;
-        // 添加账户是账户管理页的内层页面：只切回账户列表，侧栏保持隐藏、标题与账户按钮状态不变
-        if (target == PageIndex::AccountManagePage && m_accountManagePage) {
-            m_accountManagePage->onBackToAccountList();
-            return;
-        }
         setSideBarVisible(true);
         m_topBar->setMainTitle();
         m_subNavPanel->hidePanel();

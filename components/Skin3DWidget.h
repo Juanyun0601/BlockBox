@@ -15,7 +15,7 @@
  * 离线皮肤目录：Images/Skins/{username}.png（相对路径）
  * 兼容正版/第三方账户皮肤（通过 SkinDownloader）
  *
- * 接口与 SkinEditorPage / AccountManagePage 已有调用保持兼容：
+ * 接口与 SkinEditorPage / ForumAccountPage 已有调用保持兼容：
  *   - setSkin(QImage)
  *   - setBackgroundColor(QColor)
  */

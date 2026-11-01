@@ -1,6 +1,6 @@
 /**
  * @file   ForumAccountPage.h
- * @brief  账户管理页（实验性·论坛账户版）
+ * @brief  账户管理页（论坛账户版）
  * @author BlockBox Team
  * @date   2026-10-31
  *
@@ -11,10 +11,9 @@
  *   资料卡：封面横幅 + 头像 + 名称（未登录时显示「未登录」）+ 简介 + 数据 + 右侧登录、注册
  *   内容卡：角色（游戏账户瀑布流）/ 我的主题 / 我的回复 / 我的收藏 / 账号设置
  *   登录卡：与论坛登录页同款的「登录 / 注册新账号」表单
- *   页脚：论坛地址 + 打开论坛 / 论坛设置 / 切换回经典界面
  *
- * 原来的账户管理页（AccountManagePage）保持不变，本页只作为实验性功能，
- * 在 设置 → 高级设置 → 实验性内容 里开关。
+ * 这是账户管理页的唯一界面：添加游戏账户走角色页右上角的「添加角色」弹窗，
+ * 皮肤在「制作皮肤」里编辑，桌面端不再保留旧的经典账户管理页。
  */
 #pragma once
 
@@ -87,7 +86,9 @@ public:
 signals:
     void backToMainRequested();
     void accountManagePageOpened();
-    void openAdvancedSettingsRequested();
+
+    /** 角色页「添加角色」/ 空态按钮：弹出添加账户弹窗 */
+    void addGameAccountRequested();
 
     /** 点击自己的主题 / 回复 / 收藏 / 通知：在启动器内打开帖子详情 */
     void threadOpenRequested(int threadId);
@@ -102,8 +103,8 @@ signals:
      */
     void gameAccountSelected(const QString &accountName, const QPixmap &avatar);
 
-    /** 账户详情页里点「打开皮肤编辑器」 */
-    void skinEditorRequested();
+    /** 账户详情页里点「打开皮肤编辑器」：带上该账户，应用皮肤时不会落到别的账户上 */
+    void skinEditorRequested(const QString &accountName, const QString &accountType);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -227,7 +228,6 @@ private:
     void renderRows(QVBoxLayout *layout, const QJsonArray &items, int kind);
     void loadTabData();
     void fillSettingsForm();
-    void updateFooterNote();
 
     // ── 账号操作 ──
     void saveProfileForm();
@@ -324,9 +324,6 @@ private:
     int m_bookmarkSubTab = BookmarkResourceTab;
     QHash<QString, QPixmap> m_contentIconCache;   // 资源图标 URL → 缩略图缓存
     QString m_loadedAvatarPath;
-
-    // 页脚
-    QLabel *m_footerNote = nullptr;
 
     // 账号设置
     QLineEdit *m_displayNameEdit = nullptr;

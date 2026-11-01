@@ -1,4 +1,4 @@
-﻿#include "ModData.h"
+#include "ModData.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -43,6 +43,7 @@ QJsonObject modInfoToJson(const ModInfo &info)
     obj["mcmodUrl"] = info.mcmodUrl;
     obj["versionRange"] = info.versionRange;
     obj["modType"] = info.modType;
+    obj["contentKind"] = info.contentKind;
     obj["dateModified"] = info.dateModified.toSecsSinceEpoch();
     obj["datePublished"] = info.datePublished.toSecsSinceEpoch();
     obj["downloadCount"] = static_cast<qint64>(info.downloadCount);
@@ -96,6 +97,7 @@ ModInfo modInfoFromJson(const QJsonObject &obj)
     info.mcmodUrl = obj["mcmodUrl"].toString();
     info.versionRange = obj["versionRange"].toString();
     info.modType = obj["modType"].toString();
+    info.contentKind = obj["contentKind"].toString();
     info.dateModified = QDateTime::fromSecsSinceEpoch(obj["dateModified"].toInteger());
     info.datePublished = QDateTime::fromSecsSinceEpoch(obj["datePublished"].toInteger());
     info.downloadCount = static_cast<qint64>(obj["downloadCount"].toDouble());

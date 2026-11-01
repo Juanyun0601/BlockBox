@@ -65,7 +65,7 @@ void ForumUserProfilePage::buildUi()
     cardLayout->setSpacing(0);
 
     m_coverBanner = new ForumKit::CoverBanner(m_profileCard);
-    m_coverBanner->setFixedHeight(96);
+    m_coverBanner->setAspectRatio(3.0);
     m_coverBanner->setRadius(14);
     cardLayout->addWidget(m_coverBanner);
 

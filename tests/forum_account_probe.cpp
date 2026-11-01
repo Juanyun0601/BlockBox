@@ -1,6 +1,6 @@
 /**
  * @file   forum_account_probe.cpp
- * @brief  实验性「论坛账户管理界面」视觉 / 行为探针
+ * @brief  账户管理页「论坛账户界面」视觉 / 行为探针
  *
  * 直接实例化 ForumAccountPage，按参数截取不同状态：
  *   guest     未登录总览（名称应为「未登录」，右侧有登录 / 注册）
@@ -412,8 +412,7 @@ int main(int argc, char **argv)
     const QStringList appKeys = {QStringLiteral("theme"), QStringLiteral("themeColor")};
     const QStringList forumKeys = {
         QStringLiteral("forum/baseUrl"),        QStringLiteral("forum/sessionToken"),
-        QStringLiteral("forum/sessionBaseUrl"), QStringLiteral("forum/cachedUser"),
-        QStringLiteral("experimental/forumAccount")};
+        QStringLiteral("forum/sessionBaseUrl"), QStringLiteral("forum/cachedUser")};
 
     QMap<QString, QVariant> appBackup;
     for (const QString &key : appKeys)
@@ -464,7 +463,6 @@ int main(int argc, char **argv)
 
     // 指向测试论坛，并清掉上一轮残留的会话
     forumSettings.setValue(QStringLiteral("forum/baseUrl"), effectiveBaseUrl);
-    forumSettings.setValue(QStringLiteral("experimental/forumAccount"), true);
     forumSettings.remove(QStringLiteral("forum/sessionToken"));
     forumSettings.remove(QStringLiteral("forum/sessionBaseUrl"));
     forumSettings.remove(QStringLiteral("forum/cachedUser"));

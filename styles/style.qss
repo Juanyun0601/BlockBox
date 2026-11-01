@@ -223,21 +223,25 @@ QWidget#forumQuickCard:hover {
     border-color: @BORDER_STRONG@;
 }
 
+/* 纯图标按钮：无文字，内边距归零让 18px 图标居中 */
 QPushButton#forumNotifyButton,
 QPushButton#forumChatButton {
     background: transparent;
     border: none;
     border-radius: 8px;
     color: @TEXT_SECONDARY@;
-    font-size: 12px;
-    padding: 4px 8px;
-    spacing: 4px;
+    padding: 0px;
 }
 
 QPushButton#forumNotifyButton:hover,
 QPushButton#forumChatButton:hover {
     background: @BG_HOVER@;
     color: @PRIMARY@;
+}
+
+QPushButton#forumNotifyButton:pressed,
+QPushButton#forumChatButton:pressed {
+    background: @BG_PRESSED@;
 }
 
 QWidget#editionCard {
@@ -6034,6 +6038,59 @@ QPushButton#searchResultActionBtn:hover {
     color: @TEXT_ON_PRIMARY@;
 }
 
+/* ---------- 搜索页（单一搜索框） ---------- */
+/* 结果面板：分区标题与卡片共用一块玻璃底板，背景图再花也能看清 */
+QWidget#searchResultsPanel {
+    background-color: @BG_GLASS@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+}
+
+/* 唯一的搜索框：整页只保留它一个输入控件，做得比列表页搜索框更大更聚焦 */
+QLineEdit#searchHeroInput {
+    background-color: @BG_CARD@;
+    border: 2px solid @BORDER_STRONG@;
+    border-radius: 16px;
+    padding: 12px 20px;
+    font-size: 15px;
+    color: @TEXT_PRIMARY@;
+}
+
+QLineEdit#searchHeroInput:hover {
+    border: 2px solid @BORDER_HOVER@;
+}
+
+QLineEdit#searchHeroInput:focus {
+    border: 2px solid @PRIMARY@;
+}
+
+/* 未输入关键词时的弱提示 */
+QLabel#searchIdleHint {
+    background-color: transparent;
+    color: @TEXT_TERTIARY@;
+    border: none;
+    font-size: 12px;
+}
+
+/* 结果分区标题（在线资源 / 社区讨论） */
+QLabel#searchSectionTitle {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    border: none;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 14px 2px 8px 2px;
+}
+
+/* 结果区底部状态：正在搜索 / 部分来源不可用 */
+QLabel#searchStatusLabel {
+    background-color: transparent;
+    color: @TEXT_TERTIARY@;
+    border: none;
+    font-size: 12px;
+    padding: 16px 0 8px 0;
+}
+
 /* ============================================================
  * Section 24. AccountManagePage 补充样式
  * ============================================================ */
@@ -6154,7 +6211,8 @@ QPushButton#accountAddBtn:pressed {
 }
 
 /* 侧栏「皮肤制作」按�?�?玻璃次级按钮 */
-QPushButton#accountSkinBtn {
+QPushButton#accountSkinBtn,
+QPushButton#accountForumUiBtn {
     background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
     border-radius: 10px;
@@ -6164,7 +6222,8 @@ QPushButton#accountSkinBtn {
     text-align: left;
 }
 
-QPushButton#accountSkinBtn:hover {
+QPushButton#accountSkinBtn:hover,
+QPushButton#accountForumUiBtn:hover {
     background-color: @BG_HOVER@;
     border: 1px solid @BORDER_STRONG@;
     color: @TEXT_PRIMARY@;
@@ -15957,6 +16016,21 @@ QPushButton#forumBookmarkButton[active="true"] {
     color: @TEXT_ACCENT@;
 }
 
+QPushButton#forumShareButton {
+    background: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 12px;
+}
+
+QPushButton#forumShareButton:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
 QFrame#forumPost {
     background: @BG_CARD@;
     border: 1px solid @BORDER@;
@@ -16239,14 +16313,140 @@ QLabel#forumUnreadBadge {
     padding: 1px 7px;
 }
 
+/* ── 左栏：与侧边栏子导航面板同款（玻璃底气泡 + 头部 + 分组标题 + 条目） ── */
+QFrame#forumSidePanel {
+    background-color: rgba(255, 255, 255, 0.7);
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+}
+
+QFrame#forumSidePanel > QWidget {
+    background: transparent;
+}
+
+QLabel#forumSideTitle {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 800;
+}
+
+/* 分组标题：与子导航面板的分组标题同款，左侧缩进对齐条目文字 */
+QLabel#forumSideGroupTitle {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 4px 14px 4px 20px;
+}
+
+/* 页签胶囊：好友 / 申请 / 添加好友 */
+QWidget#forumSideTabs {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+}
+
+QPushButton#forumSideTab {
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0 4px;
+}
+
+QPushButton#forumSideTab:hover {
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#forumSideTab:checked {
+    background-color: @BG_CARD@;
+    color: @PRIMARY@;
+    font-weight: 700;
+}
+
+/* 列表条目：子导航条目观感（透明底 + 悬停淡底 + 选中主色渐变） */
+QFrame#forumSideRow {
+    background: transparent;
+    border: none;
+    border-radius: 10px;
+}
+
+QFrame#forumSideRow:hover {
+    background-color: @BLACK_RGBA_0.06@;
+}
+
+QFrame#forumSideRow[selected="true"] {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 @PRIMARY_RGBA_20@,
+        stop:1 @PRIMARY_RGBA_8@);
+}
+
+QFrame#forumSideRow[selected="true"] QLabel#forumRowTitle {
+    color: @PRIMARY@;
+}
+
+QLabel#forumSideStatus {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    padding: 0 16px 6px 16px;
+}
+
+/* 列表滚动区跟随面板底色 */
+QScrollArea#forumSideScroll {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#forumSideScroll > QWidget,
+QScrollArea#forumSideScroll > QWidget > QWidget {
+    background: transparent;
+}
+
+QScrollArea#forumSideScroll QScrollBar:vertical {
+    background: transparent;
+    width: 6px;
+    margin: 4px 2px;
+}
+
+QScrollArea#forumSideScroll QScrollBar::handle:vertical {
+    background: @BLACK_RGBA_0.13@;
+    border-radius: 3px;
+    min-height: 30px;
+}
+
+QScrollArea#forumSideScroll QScrollBar::handle:vertical:hover {
+    background: @BLACK_RGBA_0.25@;
+}
+
+QScrollArea#forumSideScroll QScrollBar::add-line:vertical,
+QScrollArea#forumSideScroll QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollArea#forumSideScroll QScrollBar::add-page:vertical,
+QScrollArea#forumSideScroll QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+/* ── 右栏：聊天区不再套大卡片，直接铺在页面上，只用细分隔线分区 ── */
+QWidget#forumChatStage {
+    background: transparent;
+    border: none;
+}
+
 QWidget#forumChatHead {
-    background: @BG_SECONDARY@;
-    border-bottom: 1px solid @BORDER@;
+    background: transparent;
+    border-bottom: 1px solid @BORDER_LIGHT@;
 }
 
 QWidget#forumChatComposer {
-    background: @BG_SECONDARY@;
-    border-top: 1px solid @BORDER@;
+    background: transparent;
+    border-top: 1px solid @BORDER_LIGHT@;
 }
 
 QTextEdit#forumChatInput {
@@ -16262,22 +16462,84 @@ QTextEdit#forumChatInput:focus {
     border: 1px solid @PRIMARY@;
 }
 
-QLabel#forumChatBubbleMine {
+QFrame#forumChatBubbleMine {
     background: @PRIMARY_BG_SOFT@;
     border: 1px solid @PRIMARY_MEDIUM@;
-    border-radius: 12px;
-    color: @TEXT_PRIMARY@;
-    font-size: 13px;
-    line-height: 1.5;
-    padding: 8px 12px;
+    border-radius: 13px;
+    border-bottom-right-radius: 4px;
 }
 
-QLabel#forumChatBubbleTheirs {
-    background: @BG_SECONDARY@;
+QFrame#forumChatBubbleTheirs {
+    background: @BG_HOVER@;
     border: 1px solid @BORDER@;
-    border-radius: 12px;
+    border-radius: 13px;
+    border-bottom-left-radius: 4px;
+}
+
+QFrame#forumChatBubbleMine QLabel,
+QFrame#forumChatBubbleTheirs QLabel {
+    background: transparent;
+    border: none;
     color: @TEXT_PRIMARY@;
     font-size: 13px;
-    line-height: 1.5;
-    padding: 8px 12px;
+}
+
+QLabel#forumChatQuote {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    padding: 2px 0 2px 8px;
+}
+
+QFrame#forumChatImageFrame {
+    background: @BG_HOVER@;
+    border: 1px solid @BORDER@;
+    border-radius: 13px;
+    border-bottom-left-radius: 4px;
+}
+
+QLabel#forumChatWithdraw {
+    background: @BG_SECONDARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    padding: 2px 12px;
+    margin: 2px auto 0;
+}
+
+QWidget#forumChatReplyBar {
+    background: transparent;
+    border-top: 1px solid @BORDER_LIGHT@;
+}
+
+QPushButton#forumChatToolButton {
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    padding: 0;
+}
+
+QPushButton#forumChatToolButton:hover {
+    background: @BG_HOVER@;
+}
+
+QPushButton#forumChatToolButton:disabled {
+    color: @TEXT_DISABLED@;
+}
+
+QLabel#forumChatDateChip {
+    background: @BG_SECONDARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    padding: 2px 12px;
+    margin: 4px auto 0;
+}
+
+QLabel#forumOnlineDot {
+    background: @SUCCESS@;
+    border: 2px solid @BG_CARD@;
+    border-radius: 6px;
 }

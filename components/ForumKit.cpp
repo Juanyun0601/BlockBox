@@ -159,8 +159,31 @@ QLabel *makeBadge(QWidget *parent, const QString &text, bool warn)
 CoverBanner::CoverBanner(QWidget *parent)
     : QWidget(parent)
 {
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    // 高度由 width / 3 推出来，交给布局按 heightForWidth 排
+    QSizePolicy policy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    policy.setHeightForWidth(true);
+    setSizePolicy(policy);
     setAttribute(Qt::WA_OpaquePaintEvent, false);
+}
+
+void CoverBanner::setAspectRatio(qreal ratio)
+{
+    const qreal next = ratio > 0.01 ? ratio : 3.0;
+    if (qFuzzyCompare(m_aspectRatio, next))
+        return;
+    m_aspectRatio = next;
+    updateGeometry();
+    update();
+}
+
+bool CoverBanner::hasHeightForWidth() const
+{
+    return true;
+}
+
+int CoverBanner::heightForWidth(int width) const
+{
+    return qMax(1, qRound(qMax(0, width) / m_aspectRatio));
 }
 
 void CoverBanner::setRadius(int radius)

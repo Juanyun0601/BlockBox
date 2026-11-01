@@ -589,20 +589,25 @@ QWidget* TopBar::createForumCard()
     layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(2);
 
-    m_forumNotifyBtn = new QPushButton(tr("系统消息"), card);
+    // 顶栏只保留图标：文字仅作为悬停提示与无障碍名称，不再占按钮宽度
+    m_forumNotifyBtn = new QPushButton(card);
     m_forumNotifyBtn->setObjectName("forumNotifyButton");
     m_forumNotifyBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/topbar_notify.svg"));
-    m_forumNotifyBtn->setIconSize(QSize(16, 16));
+    m_forumNotifyBtn->setIconSize(QSize(18, 18));
+    m_forumNotifyBtn->setFixedSize(28, 28);
     m_forumNotifyBtn->setCursor(Qt::PointingHandCursor);
-    m_forumNotifyBtn->setToolTip(tr("论坛通知"));
+    m_forumNotifyBtn->setToolTip(tr("系统消息"));
+    m_forumNotifyBtn->setAccessibleName(tr("系统消息"));
     m_forumNotifyBtn->setFlat(true);
 
-    m_forumChatBtn = new QPushButton(tr("聊天"), card);
+    m_forumChatBtn = new QPushButton(card);
     m_forumChatBtn->setObjectName("forumChatButton");
     m_forumChatBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/topbar_chat.svg"));
-    m_forumChatBtn->setIconSize(QSize(16, 16));
+    m_forumChatBtn->setIconSize(QSize(18, 18));
+    m_forumChatBtn->setFixedSize(28, 28);
     m_forumChatBtn->setCursor(Qt::PointingHandCursor);
-    m_forumChatBtn->setToolTip(tr("论坛好友与私信"));
+    m_forumChatBtn->setToolTip(tr("好友与私信"));
+    m_forumChatBtn->setAccessibleName(tr("聊天"));
     m_forumChatBtn->setFlat(true);
 
     layout->addWidget(m_forumNotifyBtn);

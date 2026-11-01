@@ -532,9 +532,7 @@ void SideBar::buildNavStructure()
         m_parentItems.append(plugin);
     }
 
-    // 社区 - 方块盒子论坛首页，无子项
-    // 属于实验性内容：默认不在侧边栏显示，需在 设置 → 高级设置 → 实验性内容 里开启
-    if (settings->isExperimentalCommunityEnabled())
+    // 社区 - 方块盒子论坛首页，无子项（常驻显示）
     {
         NavItem community;
         community.text = tr("社区");

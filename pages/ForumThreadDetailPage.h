@@ -121,6 +121,7 @@ private:
     void submitReply();
     void copyThreadLink();
     void copyPostLink(const ForumPost &post);
+    void shareThread();
     void toggleBookmark();
     void togglePin();
     void toggleLock();
