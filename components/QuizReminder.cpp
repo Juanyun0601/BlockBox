@@ -19,6 +19,7 @@
 
 #include "NotificationManager.h"
 #include "QuizDialog.h"
+#include "utils/ForumAccountService.h"
 #include "utils/QuizBank.h"
 #include "utils/ThemeManager.h"
 
@@ -82,7 +83,7 @@ void QuizReminder::initUI()
     layout->addWidget(titleLabel);
 
     QLabel *detailLabel = new QLabel(
-        tr("随机抽 %1 题、每题 %2 分，达到 %3 分即可通过。答错会显示正确答案。")
+        tr("答题通过后才能发帖和评论。随机抽 %1 题、每题 %2 分，达到 %3 分即通过，答错会显示正确答案。")
             .arg(QuizBank::kExamQuestionCount)
             .arg(QuizBank::kPointsPerQuestion)
             .arg(QuizBank::kPassScore),
@@ -130,7 +131,8 @@ void QuizReminder::initUI()
 
 void QuizReminder::showReminder()
 {
-    if (QuizBank::hasPassed())
+    // 本机或账号任一边已通过（答题跟着账号走）就不再提醒
+    if (ForumAccountService::instance()->hasPassedQuiz())
     {
         hide();
         return;
@@ -180,9 +182,20 @@ void QuizReminder::onStartClicked()
 
     QWidget *host = window();
     QuizDialog dialog(host);
-    const bool accepted = (dialog.exec() == QDialog::Accepted);
+    // 弹窗里点「去登录」：原样转给外面，由主窗口打开账号页的登录表单
+    bool goToLogin = false;
+    connect(&dialog, &QuizDialog::loginRequested, this, [&goToLogin]() { goToLogin = true; });
+    connect(&dialog, &QuizDialog::loginRequested, this, &QuizReminder::loginRequested);
+    dialog.exec();
 
-    if (accepted || QuizBank::hasPassed())
+    if (goToLogin)
+    {
+        // 用户去登录了，不再弹回提醒；登录后可从设置或下次启动再答题
+        deleteLater();
+        return;
+    }
+
+    if (ForumAccountService::instance()->hasPassedQuiz())
     {
         if (host)
         {

@@ -343,7 +343,7 @@ void ThemeManager::preloadThemeFiles()
     if (!style.isEmpty()) {
         m_themeCache[":/styles/style.qss"] = style;
     }
-    qDebug() << "[ThemeManager]" << "Style file loaded:" << style.size() << "bytes";
+    qDebug() << "[ThemeManager]" << "样式文件已加载：" << style.size() << "bytes";
 }
 
 QString ThemeManager::loadThemeFromFileInternal(const QString& filePath) const
@@ -354,7 +354,7 @@ QString ThemeManager::loadThemeFromFileInternal(const QString& filePath) const
         themeFile.close();
         return style;
     }
-    qDebug() << "[ThemeManager]" << "Failed to load style file:" << filePath;
+    qDebug() << "[ThemeManager]" << "样式文件加载失败：" << filePath;
     return "";
 }
 

@@ -37,27 +37,46 @@ QString readVersionJsonId(const QString &instancePath)
     return QString();
 }
 
-/** 从 lang JSON 提取 biome.* 键 → "minecraft:plains" 形式的映射 */
-void mergeLangObject(const QJsonObject &obj, QHash<QString, QString> &names)
+/** 从 lang JSON 提取 biome.* / item.* 键 → "minecraft:xxx" 形式的映射 */
+void mergeLangObject(const QJsonObject &obj, QHash<QString, QString> &names,
+                     QHash<QString, QString> *items)
 {
     for (auto it = obj.constBegin(); it != obj.constEnd(); ++it)
     {
         const QString key = it.key();
         const QString value = it.value().toString();
-        if (value.isEmpty() || !key.startsWith(QStringLiteral("biome.")))
+        if (value.isEmpty())
             continue;
-        // biome.<ns>.<id> → 资源名 minecraft:<id>
-        const int firstDot = key.indexOf(QLatin1Char('.'));
-        const int secondDot = key.indexOf(QLatin1Char('.'), firstDot + 1);
-        if (secondDot <= firstDot + 1)
-            continue;
-        const QString ns = key.mid(firstDot + 1, secondDot - firstDot - 1);
-        const QString id = key.mid(secondDot + 1);
-        if (id.isEmpty())
-            continue;
-        const QString resource = ns + QLatin1Char(':') + id;
-        if (!names.contains(resource))
-            names.insert(resource, value);
+        if (key.startsWith(QStringLiteral("biome.")))
+        {
+            // biome.<ns>.<id> → 资源名 minecraft:<id>
+            const int firstDot = key.indexOf(QLatin1Char('.'));
+            const int secondDot = key.indexOf(QLatin1Char('.'), firstDot + 1);
+            if (secondDot <= firstDot + 1)
+                continue;
+            const QString ns = key.mid(firstDot + 1, secondDot - firstDot - 1);
+            const QString id = key.mid(secondDot + 1);
+            if (id.isEmpty())
+                continue;
+            const QString resource = ns + QLatin1Char(':') + id;
+            if (!names.contains(resource))
+                names.insert(resource, value);
+        }
+        else if (items && key.startsWith(QStringLiteral("item.")))
+        {
+            // item.<ns>.<id> → 资源名 minecraft:<id>
+            const int firstDot = key.indexOf(QLatin1Char('.'));
+            const int secondDot = key.indexOf(QLatin1Char('.'), firstDot + 1);
+            if (secondDot <= firstDot + 1)
+                continue;
+            const QString ns = key.mid(firstDot + 1, secondDot - firstDot - 1);
+            const QString id = key.mid(secondDot + 1);
+            if (id.isEmpty())
+                continue;
+            const QString resource = ns + QLatin1Char(':') + id;
+            if (!items->contains(resource))
+                items->insert(resource, value);
+        }
     }
 }
 
@@ -128,7 +147,8 @@ InstanceNames loadFromInstance(const QString &instancePath)
     if (jar.isEmpty())
         return names;
 
-    auto applyLang = [&jar](const QString &entry, QHash<QString, QString> &out) {
+    auto applyLang = [&jar](const QString &entry, QHash<QString, QString> &out,
+                            QHash<QString, QString> *items) {
         QByteArray data;
         if (!JarUtils::extractFromJarToMemory(jar, entry, data))
             return;
@@ -136,10 +156,12 @@ InstanceNames loadFromInstance(const QString &instancePath)
         const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
         if (parseError.error != QJsonParseError::NoError || !doc.isObject())
             return;
-        mergeLangObject(doc.object(), out);
+        mergeLangObject(doc.object(), out, items);
     };
-    applyLang(QStringLiteral("assets/minecraft/lang/zh_cn.json"), names.zh);
-    applyLang(QStringLiteral("assets/minecraft/lang/en_us.json"), names.en);
+    applyLang(QStringLiteral("assets/minecraft/lang/zh_cn.json"), names.zh,
+              &names.itemsZh);
+    applyLang(QStringLiteral("assets/minecraft/lang/en_us.json"), names.en,
+              &names.itemsEn);
     return names;
 }
 

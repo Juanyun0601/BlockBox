@@ -56,6 +56,13 @@ void SettingsPage::initGlobalGameSettings()
     QComboBox *javaPathCombo = new QComboBox();
     javaPathCombo->setObjectName("javaPathCombo");
     disableWheelEffect(javaPathCombo);
+    // Java 路径可能很长：下拉框不再按最长文本撑宽，超长文本显示省略号，
+    // 否则设置页主栏的最小宽度会被路径顶到接近窗口宽度，窄窗口下出现横向滚动
+    javaPathCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    javaPathCombo->setMinimumContentsLength(18);
+    connect(javaPathCombo, &QComboBox::currentTextChanged, javaPathCombo, [javaPathCombo](const QString &text) {
+        javaPathCombo->setToolTip(text);
+    });
 
     javaPathCombo->addItem(tr("自动选择合适的Java"), "auto");
 
@@ -75,6 +82,7 @@ void SettingsPage::initGlobalGameSettings()
     } else {
         javaPathCombo->setCurrentIndex(0);
     }
+    javaPathCombo->setToolTip(javaPathCombo->currentText());
 
     // 本地还没有 Java 缓存时，在后台补扫一次并回填下拉框：
     // 扫描会启动 java -version 进程、耗时可达数十秒，放到线程池执行不阻塞界面
@@ -102,7 +110,7 @@ void SettingsPage::initGlobalGameSettings()
         QString selectedJavaPath = javaPathCombo->itemData(index).toString();
         SettingsManager *settings = SettingsManager::instance();
         settings->setJavaPath(selectedJavaPath);
-        qDebug() << "[SettingsPage]" << "Saved Java path:" << selectedJavaPath;
+        qDebug() << "[SettingsPage]" << "已保存 Java 路径:" << selectedJavaPath;
     });
     connect(javaBrowseBtn, &QPushButton::clicked, [=]() {
         QString javaPath = AppFileDialog::getOpenFileName(this, tr("选择Java可执行文件"), QCoreApplication::applicationDirPath(), tr("可执行文件 (*.exe)"));

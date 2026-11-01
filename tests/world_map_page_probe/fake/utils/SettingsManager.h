@@ -33,8 +33,23 @@ public:
         m_mapIconStyle = style;
     }
 
+    // ── 实验性功能（探针桩：进程内标志位，与真 SettingsManager 同名同义） ──
+    bool isExperimentalMap3dEnabled() const { return m_map3dExperimental; }
+    void setExperimentalMap3dEnabled(bool enabled)
+    {
+        if (m_map3dExperimental == enabled)
+            return;
+        m_map3dExperimental = enabled;
+        emit experimentalMap3dChanged(enabled);
+    }
+
+signals:
+    /** 实验性功能「存档地图立体视图」开关状态变化 */
+    void experimentalMap3dChanged(bool enabled);
+
 private:
     MapStructureIconStyle m_mapIconStyle = MapStructureIconStyle::Icon;
+    bool m_map3dExperimental = false;
 };
 
 #endif // SETTINGSMANAGER_H

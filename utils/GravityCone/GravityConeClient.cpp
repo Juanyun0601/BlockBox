@@ -288,7 +288,7 @@ void GravityConeClient::onProcessFinished(int exitCode, QProcess::ExitStatus sta
 {
     Q_UNUSED(exitCode);
     Q_UNUSED(status);
-    qDebug() << "GravityCone process exited";
+    qDebug() << "GravityCone 进程已退出";
 
     m_statusTimer.stop();
     m_waitingForReady = false;
@@ -306,7 +306,7 @@ void GravityConeClient::onProcessFinished(int exitCode, QProcess::ExitStatus sta
 
 void GravityConeClient::onProcessErrorOccurred(QProcess::ProcessError error)
 {
-    qDebug() << "GravityCone process error:" << error;
+    qDebug() << "GravityCone 进程出错：" << error;
     if (error == QProcess::FailedToStart) {
         m_waitingForReady = false;
         setErrorMessage(tr("无法启动 GravityCone 进程"));
@@ -337,7 +337,7 @@ void GravityConeClient::sendRequest(const QString &method, const QJsonObject &pa
                                     const QString &reqKind)
 {
     if (!m_process || m_process->state() == QProcess::NotRunning) {
-        qWarning() << "GravityCone process not running, ignore request:" << method;
+        qWarning() << "GravityCone 进程未运行，忽略请求：" << method;
         return;
     }
 
@@ -740,7 +740,7 @@ void GravityConeClient::loadBuiltinVersionInfo()
 {
     QFile f(QStringLiteral(":/resources/gravitycone_version.json"));
     if (!f.open(QIODevice::ReadOnly)) {
-        qWarning() << "Cannot load builtin gravitycone_version.json";
+        qWarning() << "无法加载内置 gravitycone_version.json";
         return;
     }
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
@@ -899,7 +899,7 @@ void GravityConeClient::downloadRelease(const QString &version)
         connect(reply, &QNetworkReply::finished, this, [this, reply, archivePath, version, taskId, index, tryDownload]() {
             reply->deleteLater();
             if (reply->error() != QNetworkReply::NoError) {
-                qWarning() << "Download source" << index << "failed:" << reply->errorString();
+                qWarning() << "下载源" << index << "失败：" << reply->errorString();
                 (*tryDownload)(index + 1);
                 return;
             }

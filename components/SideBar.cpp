@@ -425,6 +425,11 @@ void SideBar::buildNavStructure()
         screenshot.iconPath = ":/Images/Icons/screenshot.svg";
         resourceSection.children.append(screenshot);
 
+        NavItem recordings;
+        recordings.text = tr("录像");
+        recordings.iconPath = ":/Images/Icons/nav_recording.svg";
+        resourceSection.children.append(recordings);
+
         NavItem mods;
         mods.text = tr("模组");
         mods.iconPath = ":/Images/Icons/nav_mods.svg";
@@ -525,6 +530,17 @@ void SideBar::buildNavStructure()
         plugin.children.append(toolSection);
 
         m_parentItems.append(plugin);
+    }
+
+    // 社区 - 方块盒子论坛首页，无子项
+    // 属于实验性内容：默认不在侧边栏显示，需在 设置 → 高级设置 → 实验性内容 里开启
+    if (settings->isExperimentalCommunityEnabled())
+    {
+        NavItem community;
+        community.text = tr("社区");
+        community.iconPath = ":/Images/Icons/nav_forum.svg";
+        community.isParentItem = true;
+        m_parentItems.append(community);
     }
 }
 

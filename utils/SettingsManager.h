@@ -24,9 +24,10 @@ struct AccountInfo {
     QString serverUrl; // 第三方服务器URL，离线账户为空
     bool isDefault;
     
-    // Microsoft账户相关信息
-    QString accessToken; // Microsoft访问令牌
+    // Microsoft / 第三方账户相关信息
+    QString accessToken; // Microsoft访问令牌 / 第三方认证访问令牌
     QString refreshToken; // Microsoft刷新令牌
+    QString clientToken; // 第三方认证客户端令牌（刷新令牌时要用同一个）
     QString uuid; // 用户UUID
     QString skinUrl; // 皮肤URL
     
@@ -118,6 +119,13 @@ public:
      * @return 是否真的写入成功（同名已存在或磁盘写入失败时返回 false，调用方需据此提示用户）
      */
     bool addAccount(const QString &username, const QString &type, const QString &serverUrl, bool isDefault = false);
+    /**
+     * @brief 添加第三方（Yggdrasil）账户，连同登录拿到的令牌、角色 UUID、皮肤地址一起存
+     * @return 是否真的写入成功（同名已存在或磁盘写入失败时返回 false）
+     */
+    bool addThirdPartyAccount(const QString &username, const QString &type, const QString &serverUrl,
+                              const QString &accessToken, const QString &clientToken,
+                              const QString &uuid, const QString &skinUrl, bool isDefault = false);
     void addMicrosoftAccount(const QString &username, const QString &accessToken, const QString &refreshToken, const QString &uuid, const QString &skinUrl, bool isDefault = false);
     void removeAccount(const QString &username);
     void setDefaultAccount(const QString &username);
@@ -279,9 +287,85 @@ public:
      */
     void setTranslationConfig(const TranslationConfig &config);
 
+    // 实验性功能（默认全部关闭）
+    /**
+     * @brief 是否开启「基岩版」实验性功能
+     * @return 开启时顶栏显示 Java 版 / 基岩版 切换入口
+     */
+    bool isExperimentalBedrockEnabled() const;
+
+    /**
+     * @brief 开启或关闭「基岩版」实验性功能
+     * @param enabled 是否开启
+     */
+    void setExperimentalBedrockEnabled(bool enabled);
+
+    /**
+     * @brief 是否开启「存档地图立体视图」实验性功能
+     * @return 开启时存档地图页工具栏显示「3D」开关
+     */
+    bool isExperimentalMap3dEnabled() const;
+
+    /**
+     * @brief 开启或关闭「存档地图立体视图」实验性功能
+     * @param enabled 是否开启
+     */
+    void setExperimentalMap3dEnabled(bool enabled);
+
+    /**
+     * @brief 是否开启「论坛账户管理界面」实验性功能
+     * @return 开启时账户管理页改用与方块盒子论坛一致的新界面，并可直接登录论坛账号
+     */
+    bool isExperimentalForumAccountEnabled() const;
+
+    /**
+     * @brief 开启或关闭「论坛账户管理界面」实验性功能
+     * @param enabled 是否开启
+     */
+    void setExperimentalForumAccountEnabled(bool enabled);
+
+    /**
+     * @brief 是否开启「社区」实验性功能
+     * @return 开启时左侧导航栏显示「社区」页（方块盒子论坛首页）
+     */
+    bool isExperimentalCommunityEnabled() const;
+
+    /**
+     * @brief 开启或关闭「社区」实验性功能
+     * @param enabled 是否开启
+     */
+    void setExperimentalCommunityEnabled(bool enabled);
+
+    /**
+     * @brief 方块盒子论坛的访问地址（默认官方站点，可改成本地服务方便测试）
+     * @return 规范化后的地址，例如 https://forum.blockbox.cc.cd
+     */
+    QString forumBaseUrl() const;
+
+    /**
+     * @brief 设置论坛地址；传空字符串表示恢复默认
+     * @param url 论坛根地址，可省略协议与结尾斜杠
+     */
+    void setForumBaseUrl(const QString &url);
+
+    /** 官方论坛默认地址 */
+    static QString defaultForumBaseUrl();
+    /** 补全协议、去掉结尾斜杠、空值回落默认 */
+    static QString normalizeForumUrl(const QString &url);
+
 signals:
     void downloadSourceChanged(DownloadSource source);
     void accountsChanged();
+    /** 实验性功能「基岩版」开关状态变化 */
+    void experimentalBedrockChanged(bool enabled);
+    /** 实验性功能「存档地图立体视图」开关状态变化 */
+    void experimentalMap3dChanged(bool enabled);
+    /** 实验性功能「论坛账户管理界面」开关状态变化 */
+    void experimentalForumAccountChanged(bool enabled);
+    /** 实验性功能「社区」开关状态变化 */
+    void experimentalCommunityChanged(bool enabled);
+    /** 论坛地址被修改 */
+    void forumBaseUrlChanged(const QString &url);
 
 private:
     bool saveAccountsToSettings(const QList<AccountInfo>& accounts);

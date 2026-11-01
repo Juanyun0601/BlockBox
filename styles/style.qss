@@ -211,6 +211,35 @@ QWidget#accountCard:hover {
 }
 
 /* 顶栏版本切换卡片 �?玻璃�?+ 版本色边框（Java 翠绿 / 基岩青） */
+/* 顶栏论坛快捷卡（系统消息 / 聊天） */
+QWidget#forumQuickCard {
+    background-color: @BG_GLASS@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 12px;
+}
+
+QWidget#forumQuickCard:hover {
+    background-color: @BG_HOVER@;
+    border-color: @BORDER_STRONG@;
+}
+
+QPushButton#forumNotifyButton,
+QPushButton#forumChatButton {
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    padding: 4px 8px;
+    spacing: 4px;
+}
+
+QPushButton#forumNotifyButton:hover,
+QPushButton#forumChatButton:hover {
+    background: @BG_HOVER@;
+    color: @PRIMARY@;
+}
+
 QWidget#editionCard {
     background-color: @BG_GLASS@;
     border: 1px solid rgba(16, 185, 129, 0.35);
@@ -2862,6 +2891,18 @@ QPushButton#carouselDot[active="true"] {
     border-radius: 3px;
 }
 
+/* 设置 → 界面设置 → 首页轮播图：已添加图片的缩略图（点击可移除） */
+QToolButton#carouselThumb {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 0;
+}
+
+QToolButton#carouselThumb:hover {
+    border: 1px solid @PRIMARY@;
+}
+
 /* 首页公告栏（封面图 + 皮肤模型下方）：文字来自官网 announcement.json */
 QWidget#homeAnnouncementBar {
     background: @BG_CARD@;
@@ -3287,6 +3328,11 @@ QLabel#thinkingStatusText[type="success"] {
     color: @SUCCESS@;
 }
 
+/* 思考收尾后状态文字改为思考用时，弱化为三级文字色 */
+QLabel#thinkingStatusText[type="muted"] {
+    color: @TEXT_TERTIARY@;
+}
+
 QLabel#thinkingPreview {
     font-size: 12px;
     color: @TEXT_TERTIARY@;
@@ -3295,7 +3341,7 @@ QLabel#thinkingPreview {
 
 QLabel#thinkingContent {
     font-size: 13px;
-    color: @WARNING_TEXT_DARK@;
+    color: @TEXT_SECONDARY@;
     background: transparent;
 }
 
@@ -3309,7 +3355,7 @@ QTextEdit#thinkingStreamContent:disabled {
     border-radius: 0;
     padding: 0;
     font-size: 13px;
-    color: @WARNING_TEXT_DARK@;
+    color: @TEXT_SECONDARY@;
     selection-background-color: @PRIMARY_RGBA_38@;
     selection-color: @TEXT_PRIMARY@;
 }
@@ -3549,6 +3595,99 @@ QPushButton#refCancelBtn {
 }
 
 QPushButton#refCancelBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_STRONG@;
+    color: @TEXT_PRIMARY@;
+}
+
+/* 文件操作步骤弹窗 */
+QWidget#fileOpDialogCard {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 20px;
+}
+
+QWidget#fileOpDialogTitleBar {
+    background-color: transparent;
+    border-bottom: 1px solid @BORDER_LIGHT@;
+    min-height: 40px;
+    max-height: 40px;
+}
+
+QLabel#fileOpDialogTitle {
+    background-color: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    border: none;
+}
+
+QLabel#fileOpHintLabel, QLabel#fileOpFilterLabel, QLabel#fileOpCountLabel {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    border: none;
+}
+
+QLabel#fileOpEmptyHint {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+    border: none;
+    padding: 24px;
+}
+
+QComboBox#fileOpSessionCombo, QComboBox#fileOpFilterCombo {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 6px 12px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    min-height: 22px;
+}
+
+QComboBox#fileOpSessionCombo:hover, QComboBox#fileOpFilterCombo:hover {
+    border: 1px solid @BORDER_STRONG@;
+}
+
+QListWidget#fileOpStepList {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+    padding: 6px;
+    outline: none;
+}
+
+QListWidget#fileOpStepList::item {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+QListWidget#fileOpStepList::item:hover {
+    background-color: @BG_HOVER@;
+}
+
+QListWidget#fileOpStepList::item:selected {
+    background-color: @PRIMARY_BG@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#fileOpCloseBtn {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    padding: 7px 22px;
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+QPushButton#fileOpCloseBtn:hover {
     background-color: @BG_HOVER@;
     border: 1px solid @BORDER_STRONG@;
     color: @TEXT_PRIMARY@;
@@ -4036,6 +4175,25 @@ QPushButton#downloadSearchBtn:hover {
 
 QPushButton#modSearchBtn:pressed,
 QPushButton#downloadSearchBtn:pressed {
+    background-color: @PRIMARY_PRESSED@;
+}
+
+/* 本地资源页空状态「快速安装对应模组」按钮（光影包 / 投影 / 录像） */
+QPushButton#quickInstallBtn {
+    background-color: @PRIMARY@;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 20px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#quickInstallBtn:hover {
+    background-color: @PRIMARY_HOVER@;
+}
+
+QPushButton#quickInstallBtn:pressed {
     background-color: @PRIMARY_PRESSED@;
 }
 
@@ -6387,6 +6545,27 @@ QLabel#loginStatusPill {
     color: @TEXT_TERTIARY@;
 }
 
+/* 连通状态：在线 */
+QLabel#loginStatusPill[pillState="ok"] {
+    background-color: @PRIMARY_BG_SOFT@;
+    border: 1px solid @SUCCESS@;
+    color: @SUCCESS@;
+}
+
+/* 连通状态：连不上 / 不是认证服务器 */
+QLabel#loginStatusPill[pillState="error"] {
+    background-color: @DANGER_BG@;
+    border: 1px solid @DANGER@;
+    color: @DANGER_TEXT@;
+}
+
+/* 连通状态：检测中 */
+QLabel#loginStatusPill[pillState="busy"] {
+    background-color: @WARNING_BG@;
+    border: 1px solid @WARNING@;
+    color: @WARNING_TEXT@;
+}
+
 /* 表单提示条（能力 / 限制说明） */
 QLabel#loginHint {
     background-color: @WARNING_BG@;
@@ -7980,12 +8159,11 @@ QLabel#javaListTitle {
     padding-left: 10px;
 }
 
-/* ── 列表面板 ── */
+/* ── 列表面板：不再画容器卡片，Java 卡片直接铺在页面上（避免卡片套卡片） ── */
 QListWidget#javaListWidget {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 14px;
-    padding: 8px;
+    background-color: transparent;
+    border: none;
+    padding: 0;
     outline: none;
 }
 QListWidget#javaListWidget::item {
@@ -11393,21 +11571,24 @@ QLabel#agentToolStepName {
     background-color: transparent;
 }
 
-QLabel#agentToolStepStatusText {
+/* 过程行左侧状态图标：运行中为旋转点阵，结束定格 ✓ / ✗（观感参考 opencode） */
+QLabel#agentStepGlyph {
+    font-family: "Segoe UI Symbol", "Segoe UI", Consolas, sans-serif;
     font-size: 12px;
     background-color: transparent;
+    color: @TEXT_TERTIARY@;
 }
 
-QLabel#agentToolStepStatusText[type="success"] {
+QLabel#agentStepGlyph[state="running"] {
+    color: @TEXT_SECONDARY@;
+}
+
+QLabel#agentStepGlyph[state="success"] {
     color: @SUCCESS@;
 }
 
-QLabel#agentToolStepStatusText[type="danger"] {
+QLabel#agentStepGlyph[state="danger"] {
     color: @DANGER@;
-}
-
-QLabel#agentToolStepStatusText[type="info"] {
-    color: @WARNING@;
 }
 
 QLabel#agentToolStepDuration {
@@ -11437,10 +11618,12 @@ QLabel#agentToolStepDiffDel {
     background-color: transparent;
 }
 
+/* 展开详情：左侧竖线缩进，与思考内容块保持同一种观感 */
 QWidget#agentToolStepDetails {
     background-color: transparent;
     border: none;
-    padding: 2px 0 2px 20px;
+    border-left: 2px solid @BORDER@;
+    padding: 2px 0 2px 16px;
 }
 
 QLabel#agentToolStepArgs {
@@ -12459,6 +12642,13 @@ QLabel#obwImportedBadge {
     font-size: 12px;
     font-weight: 600;
     padding: 4px 0;
+}
+/* 卡片里的按钮更紧凑：两张并排才放得下，卡片宽度不会被按钮顶宽 */
+QFrame#obwLauncherCard QPushButton#obwBtnPrimary,
+QFrame#obwLauncherCard QPushButton#obwBtnSecondary {
+    padding: 7px 10px;
+    min-width: 0;
+    font-size: 12px;
 }
 
 /* --- 50.8 通用按钮 --- */
@@ -13773,7 +13963,14 @@ QScrollArea#worldMapStructScroll QScrollBar::sub-page:horizontal {
 
 
 /* —— 结构信息弹窗 — */
+/* 外层是透明无边框窗口（只负责定位与点外部关闭），圆角卡片在 #worldMapStructCard 上 */
 QWidget#worldMapStructPopup {
+    background: transparent;
+    border: none;
+}
+
+
+QWidget#worldMapStructCard {
     background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
     border-radius: 10px;
@@ -13847,6 +14044,12 @@ QWidget#structDetailCard {
     border-radius: 18px;
 }
 
+/* 全屏预览时卡片铺满整个窗口，圆角与描边一起去掉，才像整屏画面 */
+QWidget#structDetailCard[fs="true"] {
+    border: none;
+    border-radius: 0;
+}
+
 
 QLabel#structDetailTitle {
     color: @TEXT_PRIMARY@;
@@ -13854,22 +14057,6 @@ QLabel#structDetailTitle {
     font-weight: 700;
     background: transparent;
     border: none;
-}
-
-
-QPushButton#structDetailClose {
-    background-color: transparent;
-    border: none;
-    border-radius: 14px;
-    color: @TEXT_SECONDARY@;
-    font-size: 16px;
-    padding: 0;
-}
-
-
-QPushButton#structDetailClose:hover {
-    background-color: @DANGER_BG@;
-    color: @DANGER_TEXT@;
 }
 
 
@@ -13886,7 +14073,12 @@ QWidget#structDetailPage {
 }
 
 
-QLabel#structDetailPlaceholderTitle {
+QWidget#structDetailPreviewPage {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#structPreviewVariant {
     color: @TEXT_PRIMARY@;
     font-size: 15px;
     font-weight: 600;
@@ -13894,10 +14086,167 @@ QLabel#structDetailPlaceholderTitle {
     border: none;
 }
 
-
-QLabel#structDetailPlaceholderHint {
+QLabel#structPreviewStats {
     color: @TEXT_TERTIARY@;
     font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+QLabel#structPreviewHint {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+}
+
+/* —— 结构详情：预览页层数条 —— */
+QWidget#structPreviewLayerBar {
+    background: transparent;
+    border: none;
+}
+
+QLabel#structPreviewLayerLabel {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+QLabel#structPreviewLayerValue {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+/* 层数步进的方形按钮：用 QToolButton，避免命中
+   「QDialog QPushButton { min-width: 80px }」被拉成长条；
+   min/max 也写死一层，防止别的规则再来改尺寸 */
+QToolButton#structPreviewStepBtn {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    font-size: 14px;
+    padding: 0;
+    min-width: 24px;
+    max-width: 24px;
+    min-height: 24px;
+    max-height: 24px;
+}
+
+QToolButton#structPreviewStepBtn:hover {
+    background-color: @BG_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+QToolButton#structPreviewStepBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+QToolButton#structPreviewStepBtn:disabled {
+    color: @TEXT_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+    background-color: transparent;
+}
+
+/* 滑块其余部分沿用全局 QSlider 样式，这里只给凹槽一条可见的底色 */
+QSlider#structPreviewLayerSlider::groove:horizontal {
+    height: 4px;
+    background-color: @BORDER@;
+    border: none;
+    border-radius: 2px;
+}
+
+/* 聚焦时全局样式会给凹槽套一圈主题色边框，在这条细轨上显得像个框，改淡一点 */
+QSlider#structPreviewLayerSlider:focus::groove {
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 2px;
+}
+
+QToolButton#structPreviewBelowToggle {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+QToolButton#structPreviewBelowToggle:hover {
+    border-color: @BORDER_STRONG@;
+    color: @TEXT_PRIMARY@;
+    background-color: @BG_HOVER@;
+}
+
+QToolButton#structPreviewBelowToggle:checked {
+    background-color: @PRIMARY_RGBA_20@;
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+QToolButton#structPreviewBelowToggle:disabled {
+    color: @TEXT_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+    background-color: transparent;
+}
+
+/* 预览页「高亮藏宝箱」：选中时用琥珀色，和层数控制区分开 */
+QToolButton#structPreviewChestToggle {
+    background-color: transparent;
+    color: @TEXT_SECONDARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+QToolButton#structPreviewChestToggle:hover {
+    border-color: @WARNING@;
+    color: @WARNING_TEXT_DARK@;
+    background-color: @WARNING_RGBA_26@;
+}
+
+QToolButton#structPreviewChestToggle:checked {
+    background-color: @WARNING_RGBA_26@;
+    border-color: @WARNING@;
+    color: @WARNING_TEXT_DARK@;
+}
+
+QToolButton#structPreviewChestToggle:disabled {
+    color: @TEXT_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+    background-color: transparent;
+}
+
+/* 预览页「全屏」：实心主色小按钮，和上面几个描边开关区分开 */
+QToolButton#structPreviewFullscreenBtn {
+    background-color: @PRIMARY@;
+    color: @TEXT_ON_PRIMARY@;
+    border: 1px solid @PRIMARY_DARK@;
+    border-radius: 6px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QToolButton#structPreviewFullscreenBtn:hover {
+    background-color: @PRIMARY_HOVER@;
+}
+
+QToolButton#structPreviewFullscreenBtn:pressed {
+    background-color: @PRIMARY_DARK@;
+}
+
+QToolButton#structPreviewFullscreenBtn:disabled {
+    background-color: @BG_DISABLED@;
+    color: @TEXT_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+}
+
+/* 全屏预览时卡片铺满窗口，标题行整个藏起来 */
+QWidget#structDetailTitleBar {
     background: transparent;
     border: none;
 }
@@ -13956,13 +14305,55 @@ QWidget#structDetailLootWrap {
 }
 
 
-QLabel#structDetailLootChip {
+QWidget#structDetailLootCats {
+    background: transparent;
+    border: none;
+}
+
+
+QPushButton#structDetailLootCat {
     background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 999px;
+    color: @TEXT_TERTIARY@;
+    padding: 3px 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+
+QPushButton#structDetailLootCat:hover {
+    border-color: @PRIMARY@;
     color: @TEXT_PRIMARY@;
+}
+
+
+QPushButton#structDetailLootCat:checked {
+    background-color: @PRIMARY_BG@;
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+    font-weight: 600;
+}
+
+
+QWidget#structDetailLootChip {
+    background-color: @BG_MUTED@;
     border: 1px solid @BORDER@;
     border-radius: 8px;
-    padding: 3px 10px;
+}
+
+
+QLabel#structDetailLootName {
+    color: @TEXT_PRIMARY@;
     font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+
+QLabel#structDetailLootIcon {
+    background: transparent;
+    border: none;
 }
 
 
@@ -13972,6 +14363,66 @@ QLabel#structDetailLootNote {
     background: transparent;
     border: none;
     margin-top: 4px;
+}
+
+
+QLabel#structDetailLootMeta {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+    margin-top: 2px;
+}
+
+
+
+/* 战利品预测页滚动区（条目多时滚动查看） */
+QScrollArea#structDetailLootScroll {
+    background-color: transparent;
+    border: none;
+}
+
+QScrollArea#structDetailLootScroll > QWidget > QWidget {
+    background-color: transparent;
+}
+/* 战利品预测：口径说明 / 汇总 / 概率标签 / 必出高亮 */
+QLabel#structDetailLootHint {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+    margin-top: 2px;
+}
+
+QLabel#structDetailLootSummary {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+    margin-top: 6px;
+}
+
+QLabel#structDetailLootChance {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    background: transparent;
+    border: none;
+}
+
+QLabel#structDetailLootChance[guaranteed="true"] {
+    color: @PRIMARY@;
+    font-weight: 700;
+}
+
+QWidget#structDetailLootChip[guaranteed="true"] {
+    background-color: @PRIMARY_BG@;
+    border-color: @PRIMARY@;
+}
+QLabel#structDetailLootEmpty {
+    color: @TEXT_TERTIARY@;
+    font-size: 13px;
+    background: transparent;
+    border: none;
 }
 
 
@@ -14113,6 +14564,150 @@ QPushButton#worldMapPopupOreAll:pressed,
 QPushButton#worldMapPopupOreClear:pressed {
     background-color: @BG_PRESSED@;
     border: 1px solid @BORDER_HOVER@;
+}
+
+
+/* —— 标记点编辑弹窗（右键「添加标记点」） —— */
+QWidget#worldMapMarkerEditPopup {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 16px;
+}
+
+/* 关闭 ×：与内容弹窗的关闭按钮同款 */
+QPushButton#worldMapMarkerEditClose {
+    background-color: transparent;
+    border: none;
+    border-radius: 14px;
+    color: @TEXT_SECONDARY@;
+    font-size: 16px;
+    padding: 0;
+}
+
+QPushButton#worldMapMarkerEditClose:hover {
+    background-color: @DANGER_BG@;
+    color: @DANGER_TEXT@;
+}
+
+QPushButton#worldMapMarkerEditClose:pressed {
+    background-color: @DANGER_BORDER@;
+    color: @DANGER_TEXT@;
+}
+
+QLabel#worldMapMarkerTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 15px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+}
+
+/* 坐标输入框：与坐标跳转输入框同款 */
+QLineEdit#worldMapMarkerCoordEdit {
+    background-color: @BG_BASE@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    padding: 3px 8px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    selection-background-color: @PRIMARY@;
+    selection-color: @TEXT_ON_PRIMARY@;
+}
+
+QLineEdit#worldMapMarkerCoordEdit:focus {
+    border: 1px solid @PRIMARY@;
+    background-color: @BG_CARD@;
+}
+
+/* 名称输入框：与内容弹窗搜索框同款观感 */
+QLineEdit#worldMapMarkerEdit {
+    background-color: @BG_BASE@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    padding: 7px 12px;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    selection-background-color: @PRIMARY@;
+    selection-color: @TEXT_ON_PRIMARY@;
+}
+
+QLineEdit#worldMapMarkerEdit:focus {
+    border: 1px solid @PRIMARY@;
+    background-color: @BG_CARD@;
+}
+
+/* 图标预设按钮：选中态用主色描边圈出来 */
+QPushButton#worldMapMarkerIconBtn {
+    background-color: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+    padding: 0;
+}
+
+QPushButton#worldMapMarkerIconBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_HOVER@;
+}
+
+QPushButton#worldMapMarkerIconBtn:checked {
+    background-color: @PRIMARY_BG@;
+    border: 2px solid @PRIMARY@;
+}
+
+/* 底部「取消」：普通描边按钮 */
+QPushButton#worldMapMarkerCancel {
+    background-color: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 5px 14px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+}
+
+QPushButton#worldMapMarkerCancel:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_HOVER@;
+}
+
+QPushButton#worldMapMarkerCancel:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+/* 底部「保存」：主色高亮（与结构小窗「详情」同款） */
+QPushButton#worldMapMarkerSave {
+    background-color: @PRIMARY@;
+    border: 1px solid @PRIMARY_DARK@;
+    border-radius: 8px;
+    padding: 5px 16px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#worldMapMarkerSave:hover {
+    background-color: @PRIMARY_HOVER@;
+}
+
+QPushButton#worldMapMarkerSave:pressed {
+    background-color: @PRIMARY_DARK@;
+}
+
+/* 底部「删除」（仅编辑已有标记时出现）：红色警示但不抢保存的戏 */
+QPushButton#worldMapMarkerDelete {
+    background-color: transparent;
+    border: 1px solid @DANGER_BORDER@;
+    border-radius: 8px;
+    padding: 5px 14px;
+    color: @DANGER_TEXT@;
+    font-size: 12px;
+}
+
+QPushButton#worldMapMarkerDelete:hover {
+    background-color: @DANGER_BG@;
+}
+
+QPushButton#worldMapMarkerDelete:pressed {
+    background-color: @DANGER_BORDER@;
 }
 
 QListWidget#worldMapPopupList {
@@ -14847,4 +15442,842 @@ QDialog#localCategoryDialog QPushButton#primaryButton:hover {
 
 QDialog#localCategoryDialog QPushButton#primaryButton:pressed {
     background-color: @PRIMARY_PRESSED@;
+}
+
+
+/* ─── 社区页（方块盒子论坛首页） ─── */
+QFrame#communityHero {
+    border-radius: 18px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                stop:0 @PRIMARY_DARK@, stop:0.55 @PRIMARY@, stop:1 @PRIMARY_LIGHT@);
+}
+
+QLabel#communityHeroTitle {
+    color: #ffffff;
+    font-size: 23px;
+    font-weight: 800;
+}
+
+QLabel#communityHeroSub {
+    color: rgba(255, 255, 255, 0.90);
+    font-size: 13px;
+}
+
+QLabel#communityHeroMeta {
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 12px;
+}
+
+QPushButton#communityHeroButton {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    border-radius: 8px;
+    padding: 4px 14px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#communityHeroButton:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+QPushButton#communityHeroButton:pressed {
+    background: rgba(255, 255, 255, 0.36);
+}
+
+QPushButton#communityHeroButton:disabled {
+    color: rgba(255, 255, 255, 0.55);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+QFrame#communityCard {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+QLabel#communitySectionTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 15px;
+    font-weight: 800;
+}
+
+QLabel#communityMuted {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QLabel#communityStatValue {
+    color: @TEXT_PRIMARY@;
+    font-size: 22px;
+    font-weight: 800;
+}
+
+QFrame#communityStatDivider {
+    background: @BORDER@;
+    border: none;
+}
+
+QFrame#communityDivider {
+    background: @BORDER_LIGHT@;
+    border: none;
+}
+
+QFrame#communityBoardCard {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 12px;
+}
+
+QFrame#communityBoardCard:hover {
+    background: @BG_MUTED@;
+    border-color: @BORDER@;
+}
+
+QLabel#communityBoardIcon {
+    background: @BG_MUTED@;
+    border-radius: 10px;
+    font-size: 18px;
+}
+
+QLabel#communityBoardName {
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QLabel#communityBoardCount {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QFrame#communityThreadRow {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+}
+
+QFrame#communityThreadRow:hover {
+    background: @BG_MUTED@;
+}
+
+QLabel#communityThreadTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#communityThreadCount {
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QPushButton#communityTag {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+    padding: 3px 12px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#communityTag:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+/* ─── 论坛深度集成：帖子详情 / 主题列表 / 发帖 / 用户主页 ─── */
+QFrame#forumCard {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+QFrame#forumHeaderCard {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+QFrame#forumThreadRow {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+}
+
+QFrame#forumThreadRow:hover {
+    background: @BG_MUTED@;
+    border-color: @BORDER_HOVER@;
+}
+
+QLabel#forumSectionTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 15px;
+    font-weight: 800;
+}
+
+QLabel#forumMuted {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QLabel#forumStatus {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QLabel#forumThreadTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 19px;
+    font-weight: 800;
+}
+
+QLabel#forumRowTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 600;
+    background: transparent;
+}
+
+QLabel#forumFloorNo {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#forumAuthorName {
+    background: transparent;
+    border: none;
+    color: @PRIMARY@;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: left;
+    padding: 0;
+}
+
+QPushButton#forumAuthorName:hover {
+    color: @PRIMARY_HOVER@;
+}
+
+QPushButton#forumBoardLink {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    padding: 1px 10px;
+}
+
+QPushButton#forumBoardLink:hover {
+    color: @PRIMARY@;
+    border-color: @PRIMARY@;
+}
+
+QLabel#forumBadge {
+    background: @PRIMARY_BG_SOFT@;
+    color: @PRIMARY@;
+    border: none;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 8px;
+}
+
+QLabel#forumBadgeWarn {
+    background: @WARNING_BG@;
+    color: @WARNING_TEXT@;
+    border: none;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 8px;
+}
+
+QPushButton#forumGhostButton {
+    background: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 14px;
+}
+
+QPushButton#forumGhostButton:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+QPushButton#forumGhostButton:disabled {
+    color: @TEXT_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+}
+
+QPushButton#forumPrimaryButton {
+    background: @PRIMARY@;
+    border: none;
+    border-radius: 8px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 3px 18px;
+}
+
+QPushButton#forumPrimaryButton:hover {
+    background: @PRIMARY_HOVER@;
+}
+
+QPushButton#forumPrimaryButton:pressed {
+    background: @PRIMARY_PRESSED@;
+}
+
+QPushButton#forumPrimaryButton:disabled {
+    background: @BG_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+
+QPushButton#forumLikeButton {
+    background: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    padding: 2px 10px;
+}
+
+QPushButton#forumLikeButton[likedState="on"] {
+    background: @PRIMARY_BG_SOFT@;
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+    font-weight: 700;
+}
+
+QPushButton#forumLikeButton:hover {
+    border-color: @PRIMARY@;
+}
+
+QPushButton#forumLikeButton:pressed {
+    background: @PRIMARY_BG_SOFT@;
+}
+
+QPushButton#forumSortButton {
+    background: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    padding: 1px 12px;
+}
+
+QPushButton#forumSortButton:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+QPushButton#forumSortButton:checked {
+    background: @PRIMARY_BG_SOFT@;
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+    font-weight: 700;
+}
+
+QPushButton#forumPageButton {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    padding: 2px 14px;
+}
+
+QPushButton#forumPageButton:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+QPushButton#forumPageButton:disabled {
+    color: @TEXT_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+    background: transparent;
+}
+
+QPushButton#forumTagChip {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    padding: 1px 10px;
+}
+
+QPushButton#forumTagChip:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+QLabel#forumRowCount {
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 800;
+}
+
+QLabel#forumAvatar {
+    background: @PRIMARY@;
+    color: @TEXT_ON_PRIMARY@;
+    font-weight: 700;
+}
+
+QLineEdit#forumField,
+QPlainTextEdit#forumReplyEdit {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    padding: 6px 10px;
+}
+
+QLineEdit#forumField:focus,
+QPlainTextEdit#forumReplyEdit:focus {
+    border-color: @PRIMARY@;
+    background: @BG_CARD@;
+}
+
+QLineEdit#forumSearchEdit {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    padding: 4px 10px;
+}
+
+QLineEdit#forumSearchEdit:focus {
+    border-color: @PRIMARY@;
+    background: @BG_CARD@;
+}
+
+QLabel#forumReplyTarget {
+    background: @PRIMARY_BG_SOFT@;
+    color: @PRIMARY@;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+}
+
+QLabel#forumStatValue {
+    color: @TEXT_PRIMARY@;
+    font-size: 18px;
+    font-weight: 800;
+}
+
+/* ─── 帖子详情页：版面与网页版 thread.html 对齐 ─── */
+QFrame#forumHero {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+}
+
+QPushButton#forumCrumb {
+    background: transparent;
+    border: none;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0;
+    text-align: left;
+}
+
+QPushButton#forumCrumb:hover {
+    color: @PRIMARY@;
+}
+
+QLabel#forumCrumbSep,
+QLabel#forumCrumbCurrent {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QPushButton#forumBoardChip {
+    background: @PRIMARY_RGBA_26@;
+    border: none;
+    border-radius: 11px;
+    color: @TEXT_ACCENT@;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 0 10px;
+}
+
+QPushButton#forumBoardChip:hover {
+    background: @PRIMARY_RGBA_38@;
+    color: @PRIMARY_DARK@;
+}
+
+QPushButton#forumMetaAuthor {
+    background: transparent;
+    border: none;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 0;
+    text-align: left;
+}
+
+QPushButton#forumMetaAuthor:hover {
+    color: @PRIMARY@;
+}
+
+QLabel#forumMetaDot {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QPushButton#forumBookmarkButton {
+    background: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 12px;
+}
+
+QPushButton#forumBookmarkButton:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+QPushButton#forumBookmarkButton[active="true"] {
+    background: @PRIMARY_RGBA_26@;
+    border-color: @PRIMARY@;
+    color: @TEXT_ACCENT@;
+}
+
+QFrame#forumPost {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+}
+
+QFrame#forumPost[op="true"] {
+    border-color: @PRIMARY_LIGHT@;
+}
+
+/* 已删除楼层：虚线框 + 灰字，和网页版一致 */
+QFrame#forumPost[deleted="true"] {
+    border-style: dashed;
+    border-color: @BORDER_DASHED@;
+    background: @BG_MUTED@;
+}
+
+QLabel#forumDeletedMark {
+    color: @TEXT_TERTIARY@;
+    font-size: 13px;
+    font-style: italic;
+}
+
+QLabel#forumPostCounts {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+}
+
+QPushButton#forumPostName {
+    background: transparent;
+    border: none;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 800;
+    padding: 0;
+}
+
+QPushButton#forumPostName:hover {
+    color: @PRIMARY@;
+}
+
+QLabel#forumPostTime {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#forumEditMark {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 6px;
+    padding: 0 5px;
+}
+
+QPushButton#forumAct {
+    background: transparent;
+    border: none;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0 6px;
+}
+
+QPushButton#forumAct:hover {
+    color: @PRIMARY@;
+}
+
+QPushButton#forumAct[danger="true"] {
+    color: @DANGER@;
+}
+
+QPushButton#forumAct[danger="true"]:hover {
+    background: @DANGER_BG@;
+    border-radius: 6px;
+    color: @DANGER@;
+}
+
+QPushButton#forumAct[liked="true"] {
+    color: @PRIMARY@;
+    font-weight: 700;
+}
+
+QWidget#forumChild {
+    background: transparent;
+    border-top: 1px dashed @BORDER_LIGHT@;
+}
+
+QWidget#forumChild[first="true"] {
+    border-top: none;
+}
+
+QWidget#forumChildrenMore {
+    background: transparent;
+    border-top: 1px dashed @BORDER_LIGHT@;
+}
+
+QLabel#forumChildTime {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+}
+
+QPushButton#forumChildrenToggle {
+    background: transparent;
+    border: none;
+    color: @PRIMARY@;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 8px 0 2px;
+}
+
+QPushButton#forumChildrenToggle:hover {
+    color: @PRIMARY_HOVER@;
+}
+
+QFrame#forumComposer {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+}
+
+QLabel#forumComposerTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 800;
+}
+
+QLabel#forumComposerHint,
+QLabel#forumComposerCount {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+}
+
+QFrame#forumReplyTargetBar {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 10px;
+}
+
+QFrame#forumReplyTargetBar QLabel#forumReplyTarget {
+    background: transparent;
+    color: @TEXT_SECONDARY@;
+    font-weight: 600;
+    padding: 0;
+}
+
+QPushButton#forumReplyTargetClear {
+    background: transparent;
+    border: none;
+    color: @TEXT_SECONDARY@;
+    font-size: 11px;
+    padding: 0 4px;
+}
+
+QPushButton#forumReplyTargetClear:hover {
+    color: @PRIMARY@;
+}
+
+QFrame#forumRailCard {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+QLabel#forumRailTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+QLabel#forumRailKey {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+}
+
+QLabel#forumRailValue {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QPushButton#forumRailLink {
+    background: transparent;
+    border: none;
+    color: @PRIMARY@;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0;
+    text-align: left;
+}
+
+QPushButton#forumRailLink:hover {
+    color: @PRIMARY_HOVER@;
+}
+
+QLabel#forumRailNote {
+    background: @WARNING_BG@;
+    border-radius: 8px;
+    color: @WARNING_TEXT@;
+    font-size: 11px;
+    padding: 6px 8px;
+}
+
+QPushButton#forumRailButton {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#forumRailButton:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+QFrame#forumStatBox {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 10px;
+}
+
+QFrame#forumStatBox QLabel#forumStatValue {
+    font-size: 16px;
+}
+
+QLabel#forumRailEmpty {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QFrame#forumRailThread {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+QFrame#forumRailThread:hover {
+    background: @BG_MUTED@;
+    border-radius: 8px;
+}
+
+QLabel#forumRailThreadTitle {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#forumRailThreadMeta {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+}
+
+QLabel#forumRailTip {
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+}
+
+QLabel#fbUnreadBadge {
+    background: @DANGER@;
+    color: #ffffff;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 8px;
+}
+
+/* ============================================================
+   论坛好友与私信页
+   ============================================================ */
+
+QLabel#forumUnreadBadge {
+    background: @DANGER@;
+    color: #ffffff;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 7px;
+}
+
+QWidget#forumChatHead {
+    background: @BG_SECONDARY@;
+    border-bottom: 1px solid @BORDER@;
+}
+
+QWidget#forumChatComposer {
+    background: @BG_SECONDARY@;
+    border-top: 1px solid @BORDER@;
+}
+
+QTextEdit#forumChatInput {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    padding: 6px 8px;
+}
+
+QTextEdit#forumChatInput:focus {
+    border: 1px solid @PRIMARY@;
+}
+
+QLabel#forumChatBubbleMine {
+    background: @PRIMARY_BG_SOFT@;
+    border: 1px solid @PRIMARY_MEDIUM@;
+    border-radius: 12px;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 8px 12px;
+}
+
+QLabel#forumChatBubbleTheirs {
+    background: @BG_SECONDARY@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 8px 12px;
 }

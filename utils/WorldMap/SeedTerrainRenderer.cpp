@@ -29,6 +29,8 @@
 #include "noise.h"       // sampleDoublePerlin（方块级高度用）
 
 #include "CavePredictor.h"
+#include "MushroomPredictor.h"
+#include "TreePredictor.h"
 
 // getSpline 在 biomenoise.c 里是非 static 的，头文件未导出；本地声明即可链接
 extern "C" float getSpline(const Spline *sp, const float *vals);
@@ -87,6 +89,12 @@ Generator *generatorFor(int mc, quint64 seed, int dim, SurfaceNoise **snOut)
 /**
  * 群系 id → 地表代表方块颜色（复用 blockColor，保证与真实地图同调色板）。
  * 变异群系（id+128）先折叠回基础群系。返回无效 QColor 表示该处无地表（虚空）。
+ *
+ * 树林类群系这里取的是**地面色**（草方块绿），不是树冠色：树冠由
+ * TreePredictor 与 MushroomPredictor 在方块级叠加（见下方 canopyPass），两层合起来才是俯视看到的
+ * 样子。若整片群系直接刷成树叶绿，未加载区就会比已加载区的草方块暗一大截，
+ * 接缝处一条明显的深绿边界 —— 这正是"未加载区块的群系绿和已加载区块的
+ * 草方块绿对不上"的来源。
  */
 QColor biomeBaseColor(int id)
 {
@@ -108,21 +116,18 @@ QColor biomeBaseColor(int id)
         return blockColor(QStringLiteral("water"));
     case frozen_river:
         return blockColor(QStringLiteral("ice"));
-    // ── 温带陆地 ──
+    // ── 温带陆地（树林类一律取地面色，树叶交给树冠预测叠加）──
     case plains: case sunflower_plains: case meadow:
-        return blockColor(QStringLiteral("grass_block"));
     case forest: case wooded_hills: case flower_forest:
-        return blockColor(QStringLiteral("oak_leaves"));
     case birch_forest: case birch_forest_hills:
     case tall_birch_forest: case tall_birch_hills:   // 含别名 old_growth_birch_forest/hills
-        return blockColor(QStringLiteral("birch_leaves"));
     case dark_forest: case dark_forest_hills: case pale_garden:
-        return blockColor(QStringLiteral("dark_oak_leaves"));
+        return blockColor(QStringLiteral("grass_block"));
     case swamp: case swamp_hills: case mangrove_swamp:
-        return blockColor(QStringLiteral("moss_block"));
+        return blockColor(QStringLiteral("grass_block"));
     // ── 针叶林 ──
     case taiga: case taiga_hills: case taiga_mountains:
-        return blockColor(QStringLiteral("spruce_leaves"));
+        return blockColor(QStringLiteral("grass_block"));
     case snowy_taiga: case snowy_taiga_hills: case snowy_taiga_mountains:
         return blockColor(QStringLiteral("snow_block"));
     case giant_tree_taiga: case giant_tree_taiga_hills:   // 含别名 old_growth_pine_taiga
@@ -131,9 +136,8 @@ QColor biomeBaseColor(int id)
     // ── 丛林 ──
     case jungle: case jungle_hills: case jungle_edge:
     case modified_jungle: case modified_jungle_edge:
-        return blockColor(QStringLiteral("jungle_leaves"));
     case bamboo_jungle: case bamboo_jungle_hills:
-        return blockColor(QStringLiteral("bamboo"));
+        return blockColor(QStringLiteral("grass_block"));
     // sparse_jungle 是 jungle_edge 的别名（同值），已并入上方 jungle_edge 分支
     // ── 沙漠 / 恶地 ──
     case desert: case desert_hills: case desert_lakes:
@@ -149,8 +153,8 @@ QColor biomeBaseColor(int id)
     case mountains: case mountain_edge: case gravelly_mountains:
     case modified_gravelly_mountains: case stone_shore: case stony_peaks:
         return blockColor(QStringLiteral("stone"));
-    case wooded_mountains:
-        return blockColor(QStringLiteral("spruce_leaves"));
+    case wooded_mountains:                    // 风袭森林：地面同样是草方块
+        return blockColor(QStringLiteral("grass_block"));
     case grove: case snowy_slopes: case snowy_mountains:
     case ice_spikes: case snowy_tundra:
         return blockColor(QStringLiteral("snow_block"));
@@ -196,6 +200,43 @@ QColor biomeBaseColor(int id)
     if (isMesa(id))
         return blockColor(QStringLiteral("red_sand"));
     return blockColor(QStringLiteral("grass_block"));
+}
+
+/**
+ * 雪地群系：地面盖雪，树冠顶上同样会落一层雪。
+ * 判定与 biomeBaseColor 的雪块分支保持一致（1.18+ 的新群系 id 不在 128 段折叠里）。
+ */
+bool biomeSnowCovered(int id)
+{
+    if (id >= 128 && id < 168)
+        id -= 128;
+
+    switch (id)
+    {
+    case snowy_taiga: case snowy_taiga_hills: case snowy_taiga_mountains:
+    case snowy_tundra: case snowy_mountains: case snowy_beach:
+    case ice_spikes: case grove: case snowy_slopes:
+    case jagged_peaks: case frozen_peaks:
+        return true;
+    default:
+        break;
+    }
+    return isSnowy(id) != 0;
+}
+
+/**
+ * 树冠顶面落雪后的颜色：原版「冰冻顶层」按 MOTION_BLOCKING 高度补雪，树叶顶也是
+ * 这一层的“表面”，所以雪地里的树俯视是盖着雪的白，只在边缘透出一点针叶绿。
+ * @param leaf   树叶本色
+ * @param snow   雪块颜色（与地面雪同一色）
+ * @param green  叶色透过比例（0 = 纯雪白，1 = 纯树叶）
+ */
+QColor snowCappedLeaf(const QColor &leaf, const QColor &snow, qreal green)
+{
+    const qreal w = 1.0 - green;
+    return QColor(int(std::lround(leaf.red() * green + snow.red() * w)),
+                  int(std::lround(leaf.green() * green + snow.green() * w)),
+                  int(std::lround(leaf.blue() * green + snow.blue() * w)));
 }
 
 /** 高度明暗系数（0.72 ~ 1.16），与真实地表图同一公式 */
@@ -276,7 +317,7 @@ QImage renderRegionTile(int regionX, int regionZ,
                         WorldMapRenderer::Dimension dim,
                         WorldMapRenderer::ShadeMode mode,
                         quint64 seed, int mc, int outSize,
-                        int maxSurfaceY)
+                        int maxSurfaceY, QImage *outHeight)
 {
     if (mc == MC_UNDEF || outSize < 4 || outSize > 512)
         return QImage();
@@ -521,6 +562,68 @@ QImage renderRegionTile(int regionX, int regionZ,
     const qreal kSlope = 0.010 / stepBlocks;
     // 高度限制：截断面之上的预测地表削掉，与真实地表同一套语义
     const bool yLimited = (maxSurfaceY >= 0);
+    const auto clampY = [yLimited, maxSurfaceY](float y) {
+        return (yLimited && y > float(maxSurfaceY)) ? float(maxSurfaceY) : y;
+    };
+
+    // ── 树冠 / 蘑菇伞盖预测：只在方块级（放大后的）主世界叠加 ──
+    // 概览瓦片一格 4~16 方块，树冠还不到一格，画出来只是噪点；高度切片看的是
+    // 地下剖面，长树反而假。树与蘑菇的位置由世界种子决定，与真实地表同源
+    const bool treePass = blockLevel && !yLimited && cdim == DIM_OVERWORLD
+                          && TreePredictor::supported(mc);
+    // 蘑菇岛的巨型蘑菇位置可以逐方块还原（见 MushroomPredictor）
+    const bool mushroomPass = blockLevel && !yLimited && cdim == DIM_OVERWORLD
+                              && MushroomPredictor::supported(mc);
+    const bool canopyPass = treePass || mushroomPass;
+    QVector<qint16> canopyTop;
+    QVector<quint8> canopyKind;
+    QColor leafColor[TreePredictor::KindCount];
+    QColor capColor[MushroomPredictor::KindCount];
+    if (canopyPass)
+    {
+        canopyTop.fill(TreePredictor::kNoCanopy, grid * grid);
+        canopyKind.fill(quint8(0), grid * grid);
+        if (treePass)
+        {
+            TreePredictor::overlayCanopy(canopyTop, canopyKind, rx1, rz1, grid,
+                                         seed, mc, ids, ys);
+            for (int k = 0; k < TreePredictor::KindCount; ++k)
+                leafColor[k] = WorldMapRenderer::blockColor(
+                    TreePredictor::leafBlockName(k));
+            // 苍白橡树的叶子是灰绿带霜的，色表里只有普通树叶色，单独补
+            leafColor[TreePredictor::PaleOak] = QColor(0x9F, 0xB4, 0x93);
+        }
+        if (mushroomPass)
+        {
+            MushroomPredictor::overlayCaps(canopyTop, canopyKind, rx1, rz1,
+                                           grid, seed, mc, ids, ys);
+            // 伞盖顶面配色（红伞偏砖红、棕伞偏棕，与游戏内贴图观感一致）
+            capColor[MushroomPredictor::Red] = QColor(0xC4, 0x46, 0x3C);
+            capColor[MushroomPredictor::Brown] = QColor(0x8B, 0x5C, 0x38);
+        }
+    }
+    // 伞盖/树冠顶面配色：蘑菇用 kKindBase 之后的编码，避免与树种混用
+    const auto canopyColorAt = [&](int idx) -> QColor {
+        const quint8 k = canopyKind[idx];
+        if (k >= MushroomPredictor::kKindBase)
+            return capColor[std::min<int>(k - MushroomPredictor::kKindBase,
+                                          MushroomPredictor::KindCount - 1)];
+        if (treePass)
+            return leafColor[k];
+        return QColor(); // 理论上不会走到：没有树冠通道时不会写入树种编码
+    };
+    // 坡度/邻域高度按"看到的那一层"取：有树冠取树冠顶，否则取地表
+    const auto effTop = [&](int idx) -> qreal {
+        if (canopyPass && canopyTop[idx] != TreePredictor::kNoCanopy)
+            return qreal(canopyTop[idx]);
+        return qreal(int(std::lround(clampY(ys[idx]))));
+    };
+    // 树冠顶面高度（越界按无树冠处理，区域接缝处不会出现假边缘）
+    const auto canopyAt = [&](int rr, int cc) -> qint16 {
+        if (!canopyPass || rr < 0 || rr >= grid || cc < 0 || cc >= grid)
+            return TreePredictor::kNoCanopy;
+        return canopyTop[rr * grid + cc];
+    };
     // 切进水柱时可见水面下沉到截断 Y；未限制或截断在海平面之上则仍是海平面
     const int waterTop =
         yLimited ? std::min(seaLevel, maxSurfaceY) : seaLevel;
@@ -533,7 +636,13 @@ QImage renderRegionTile(int regionX, int regionZ,
     // 高度切片下的地下预测：1.18+ 主世界把实心截断里被洞穴掏空的位置画成暗洞
     const bool cavePredict = yLimited && cdim == DIM_OVERWORLD
                              && CavePredictor::supported(mc);
+    // 雪地树冠顶上的那层雪：取雪层方块的颜色，与已加载区块里"树顶那一格是雪"同色
+    const QColor canopySnow = WorldMapRenderer::blockColor(QStringLiteral("snow"));
     QVector<QRgb> cell(grid * grid, 0);
+    // 立体视图用：与 cell 对齐的地表高度（水面取水面高度，不是水底）
+    QVector<qint16> cellH;
+    if (outHeight)
+        cellH.fill(std::numeric_limits<qint16>::min(), grid * grid);
     for (int r = 0; r < grid; ++r)
     {
         for (int c = 0; c < grid; ++c)
@@ -543,12 +652,29 @@ QImage renderRegionTile(int regionX, int regionZ,
             if (!base.isValid())
                 continue; // 虚空保持透明
 
-            const float yRaw = ys[i];
-            // 邻居高度也按上限截断：截断平台上山体阴影变平，边缘才有小台阶
-            const auto clampY = [yLimited, maxSurfaceY](float y) {
-                return (yLimited && y > float(maxSurfaceY)) ? float(maxSurfaceY)
-                                                            : y;
-            };
+            // 树冠：俯视看到的是树冠顶面，底色换成树叶、高度取树冠顶；
+            // 高度图要看地表高程，不掺树高
+            const bool canopy =
+                canopyPass && canopyTop[i] != TreePredictor::kNoCanopy
+                && mode != WorldMapRenderer::ShadeMode::Height;
+            qreal mottle = 1.0;
+            if (canopy)
+            {
+                base = canopyColorAt(i);
+                // 雪地群系：树叶顶上落着雪（原版冰冻顶层按 MOTION_BLOCKING 取表面，
+                // 树冠就是表面），俯视是盖雪的白，只透出一点针叶绿 —— 否则雪地里
+                // 一片纯绿的树冠会像凭空贴上去的贴片
+                if (treePass && canopyKind[i] < MushroomPredictor::kKindBase
+                    && biomeSnowCovered(ids[i]))
+                    base = snowCappedLeaf(base, canopySnow, 0.20);
+                // 叶面细碎明暗：按方块坐标哈希，稳定的树冠颗粒感
+                const int bx = rx1 + c * 512 / grid;
+                const int bz = rz1 + r * 512 / grid;
+                mottle = 0.9 + 0.2
+                    * double(TreePredictor::cellNoise(bx, bz, seed) & 0xFF) / 255.0;
+            }
+
+            const float yRaw = canopy ? float(canopyTop[i]) : ys[i];
             const int h = int(std::lround(clampY(yRaw)));
 
             // 预测地表高于设定 Y：截断落入固体内部（含海床），按材质兜底；
@@ -577,10 +703,58 @@ QImage renderRegionTile(int regionX, int regionZ,
             const bool waterPix = !solidCut && (cdim == DIM_OVERWORLD)
                 && isOceanic(ids[i]) && yRaw < float(seaLevel)
                 && h < seaLevel;
+            // 立体视图高度：水面记水面高度（与真实地表图一致），其余记地表 Y
+            if (outHeight)
+                cellH[i] = qint16(waterPix ? waterTop : h);
+
+            // ── 树冠立体感：顶面提亮、轮廓压暗、东南向投影 ──
+            // 光照方向与地形图的山体阴影一致（自西北来），树才不像贴片
+            qreal treeShade = 1.0;
+            if (canopyPass && mode != WorldMapRenderer::ShadeMode::Height)
+            {
+                const qint16 me = canopyAt(r, c);
+                if (me == TreePredictor::kNoCanopy)
+                {
+                    const bool west = canopyAt(r, c - 1) != TreePredictor::kNoCanopy;
+                    const bool north = canopyAt(r - 1, c) != TreePredictor::kNoCanopy;
+                    const bool northWest = canopyAt(r - 1, c - 1)
+                        != TreePredictor::kNoCanopy;
+                    if (!waterPix && (west || north || northWest))
+                        treeShade = 0.88;
+                }
+                else
+                {
+                    // 顶面接光略亮；比四邻低一圈的是树冠外沿，压暗出球形轮廓
+                    const auto lowerThan = [&](int rr, int cc) {
+                        if (rr < 0 || rr >= grid || cc < 0 || cc >= grid)
+                            return false;
+                        return canopyTop[rr * grid + cc] < me;
+                    };
+                    const bool rim = lowerThan(r - 1, c) || lowerThan(r + 1, c)
+                                     || lowerThan(r, c - 1) || lowerThan(r, c + 1);
+                    treeShade = rim ? 0.90 : 1.04;
+                }
+            }
 
             // ── 地形图：分层设色 + 山体阴影（与真实地表同一套公式）──
             if (mode == WorldMapRenderer::ShadeMode::Terrain)
             {
+                if (canopy)
+                {
+                    // 树冠保留叶色，只叠山体阴影，不按海拔重新分层设色
+                    const qreal cl = (c > 0) ? effTop(i - 1) : yRaw;
+                    const qreal cr = (c + 1 < grid) ? effTop(i + 1) : yRaw;
+                    const qreal cu = (r > 0) ? effTop(i - grid) : yRaw;
+                    const qreal cd = (r + 1 < grid) ? effTop(i + grid) : yRaw;
+                    const qreal hs = WorldMapRenderer::terrainHillshade(
+                        (cr - cl) * 0.5 / stepBlocks,
+                        (cd - cu) * 0.5 / stepBlocks);
+                    const qreal f = hs * mottle * treeShade;
+                    cell[i] = qRgba(std::clamp(int(base.red() * f), 0, 255),
+                                    std::clamp(int(base.green() * f), 0, 255),
+                                    std::clamp(int(base.blue() * f), 0, 255), 255);
+                    continue;
+                }
                 const qreal hl = (c > 0) ? clampY(ys[i - 1]) : yRaw;
                 const qreal hrr = (c + 1 < grid) ? clampY(ys[i + 1]) : yRaw;
                 const qreal hu = (r > 0) ? clampY(ys[i - grid]) : yRaw;
@@ -598,18 +772,18 @@ QImage renderRegionTile(int regionX, int regionZ,
 
                 cell[i] = qRgba(
                     waterPix ? col.red()
-                             : std::clamp(int(col.red() * hs * k), 0, 255),
+                             : std::clamp(int(col.red() * hs * k * treeShade), 0, 255),
                     waterPix ? col.green()
-                             : std::clamp(int(col.green() * hs * k), 0, 255),
+                             : std::clamp(int(col.green() * hs * k * treeShade), 0, 255),
                     waterPix ? col.blue()
-                             : std::clamp(int(col.blue() * hs * k), 0, 255),
+                             : std::clamp(int(col.blue() * hs * k * treeShade), 0, 255),
                     255);
                 continue;
             }
 
-            qint16 hr = qint16(h), hd = qint16(h);
-            if (c + 1 < grid) hr = qint16(int(std::lround(clampY(ys[i + 1]))));
-            if (r + 1 < grid) hd = qint16(int(std::lround(clampY(ys[i + grid]))));
+            // 邻域高度也取"看到的那一层"：树冠边缘有起伏，不像贴片
+            const qint16 hr = (c + 1 < grid) ? qint16(effTop(i + 1)) : qint16(h);
+            const qint16 hd = (r + 1 < grid) ? qint16(effTop(i + grid)) : qint16(h);
             const qreal slope = std::clamp(
                 1.0 + kSlope * ((qreal(h) - hr) + (qreal(h) - hd)), 0.55, 1.45);
 
@@ -627,7 +801,8 @@ QImage renderRegionTile(int regionX, int regionZ,
             if (waterPix)
                 col = deepenWater(col, waterTop - h);
 
-            const qreal f = heightFactor(h, minY, maxY) * slope * k;
+            const qreal f =
+                heightFactor(h, minY, maxY) * slope * k * mottle * treeShade;
             cell[i] = qRgba(std::clamp(int(col.red() * f), 0, 255),
                             std::clamp(int(col.green() * f), 0, 255),
                             std::clamp(int(col.blue() * f), 0, 255), 255);
@@ -645,7 +820,28 @@ QImage renderRegionTile(int regionX, int regionZ,
         for (int x = 0; x < outSize; ++x)
             dst[x] = src[std::min(x * grid / outSize, grid - 1)];
     }
+
+    // 立体视图高度图：同一套最近邻映射，保证与颜色图严格对齐
+    if (outHeight)
+    {
+        QImage hImg(outSize, outSize, QImage::Format_Grayscale16);
+        if (!hImg.isNull())
+        {
+            for (int y = 0; y < outSize; ++y)
+            {
+                const int sr = std::min(y * grid / outSize, grid - 1);
+                quint16 *dst = reinterpret_cast<quint16 *>(hImg.scanLine(y));
+                const qint16 *src = cellH.constData() + sr * grid;
+                for (int x = 0; x < outSize; ++x)
+                    dst[x] = quint16(src[std::min(x * grid / outSize, grid - 1)]);
+            }
+        }
+        *outHeight = hImg;
+    }
     return img;
 }
 
 } // namespace SeedTerrainRenderer
+
+
+

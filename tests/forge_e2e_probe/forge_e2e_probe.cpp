@@ -144,6 +144,35 @@ int main(int argc, char *argv[])
             if (QFile::exists(patched))
                 logLine("OK  ", QString("patched client jar: %1 bytes").arg(QFileInfo(patched).size()));
             else { logLine("MISS", patched); ok = false; }
+
+            // 版本 JSON 声明的 forge-<v>.jar 没有下载地址、只能由安装包内嵌库解出来。
+            // 缺了它启动时 ModLauncher 会报 Cannot find launch target fmlclient 直接退出，
+            // 所以这里必须真实存在（回归守卫）。
+            const QString forgeRel = QStringLiteral("net/minecraftforge/forge/%1-%2/forge-%1-%2.jar")
+                                         .arg(mcVersion, forgeVersion);
+            bool declared = false;
+            const QJsonArray libs = obj.value(QStringLiteral("libraries")).toArray();
+            for (const QJsonValue &lv : libs)
+            {
+                const QJsonObject art = lv.toObject().value(QStringLiteral("downloads")).toObject()
+                                            .value(QStringLiteral("artifact")).toObject();
+                if (art.value(QStringLiteral("path")).toString() == forgeRel)
+                {
+                    declared = true;
+                    break;
+                }
+            }
+            if (declared)
+            {
+                const QString forgeJar = gameRoot + QStringLiteral("/libraries/") + forgeRel;
+                if (QFile::exists(forgeJar))
+                    logLine("OK  ", QString("forge core jar: %1 bytes").arg(QFileInfo(forgeJar).size()));
+                else { logLine("MISS", forgeJar); ok = false; }
+            }
+            else
+            {
+                logLine("WARN", QString("版本 JSON 未声明 %1（非 1.13~1.15 老式安装器时可忽略）").arg(forgeRel));
+            }
         }
 
         logLine(ok ? "PASS" : "FAIL", ok ? QStringLiteral("端到端安装成功，产物齐全")

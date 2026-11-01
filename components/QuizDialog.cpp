@@ -19,6 +19,7 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
+#include "utils/ForumAccountService.h"
 #include "utils/ThemeManager.h"
 
 namespace {
@@ -259,6 +260,69 @@ void QuizDialog::initUI()
     m_stack->addWidget(examPage);
     m_stack->addWidget(resultPage);
 
+    // ── 未登录提示页（答题已绑定账号） ────────────────────────
+    QWidget *loginPage = new QWidget(m_stack);
+    QVBoxLayout *loginLayout = new QVBoxLayout(loginPage);
+    loginLayout->setContentsMargins(0, 0, 0, 0);
+    loginLayout->setSpacing(10);
+
+    loginLayout->addStretch(1);
+
+    QLabel *loginTitle = new QLabel(tr("先登录，再答题"), loginPage);
+    loginTitle->setAlignment(Qt::AlignCenter);
+    loginTitle->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 16px; font-weight: 700;").arg(m_textColor));
+    loginLayout->addWidget(loginTitle);
+
+    QLabel *loginHint = new QLabel(
+        tr("入站答题已和方块盒子账号绑定：答题通过后，这个账号才能发帖和评论。\n登录账号后回来答题，成绩不会丢失。"),
+        loginPage);
+    loginHint->setAlignment(Qt::AlignCenter);
+    loginHint->setWordWrap(true);
+    loginHint->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 12px;").arg(m_subColor));
+    loginLayout->addWidget(loginHint);
+
+    loginLayout->addStretch(1);
+
+    QHBoxLayout *loginBtnRow = new QHBoxLayout();
+    loginBtnRow->setContentsMargins(0, 0, 0, 0);
+    loginBtnRow->setSpacing(12);
+    loginBtnRow->addStretch(1);
+
+    QPushButton *loginCancelButton = new QPushButton(tr("关闭"), loginPage);
+    loginCancelButton->setCursor(Qt::PointingHandCursor);
+    loginCancelButton->setMinimumHeight(34);
+    loginCancelButton->setStyleSheet(
+        QStringLiteral("QPushButton { background-color: transparent; color: %1;"
+                       " border: 1px solid %2; border-radius: 10px; padding: 7px 20px;"
+                       " font-size: 13px; }"
+                       "QPushButton:hover { background-color: %3; }")
+            .arg(m_textColor, m_cardBorder, m_accentSoft));
+    connect(loginCancelButton, &QPushButton::clicked, this, &QDialog::reject);
+    loginBtnRow->addWidget(loginCancelButton);
+
+    m_loginButton = new QPushButton(tr("去登录"), loginPage);
+    m_loginButton->setCursor(Qt::PointingHandCursor);
+    m_loginButton->setMinimumHeight(34);
+    m_loginButton->setMinimumWidth(120);
+    m_loginButton->setStyleSheet(
+        QStringLiteral("QPushButton { background-color: %1; color: #ffffff; border: none;"
+                       " border-radius: 10px; padding: 7px 20px; font-size: 13px;"
+                       " font-weight: 600; }"
+                       "QPushButton:hover { background-color: %2; }")
+            .arg(m_accentColor, rgbaOf(m_accentColor, 220)));
+    connect(m_loginButton, &QPushButton::clicked, this, [this]() {
+        emit loginRequested();
+        accept();
+    });
+    loginBtnRow->addWidget(m_loginButton);
+
+    loginBtnRow->addStretch(1);
+    loginLayout->addLayout(loginBtnRow);
+
+    m_stack->addWidget(loginPage);
+
     card->setStyleSheet(
         QStringLiteral("QWidget#blockQuizCard { background-color: %1;"
                        " border: 1px solid %2; border-radius: 16px; }")
@@ -307,6 +371,13 @@ void QuizDialog::setOptionState(int index, const QString &state)
 
 void QuizDialog::startExam()
 {
+    // 答题已和账号绑定：没登录先引导登录，不进入答题页
+    if (!ForumAccountService::instance()->isLoggedIn())
+    {
+        m_stack->setCurrentIndex(2);
+        return;
+    }
+
     m_questions = QuizBank::pickExamQuestions();
     m_current = 0;
     m_selected = -1;
@@ -376,7 +447,11 @@ void QuizDialog::onSubmitClicked()
             m_score = m_correctCount * QuizBank::kPointsPerQuestion;
             m_passed = (m_score >= QuizBank::kPassScore);
             if (m_passed)
+            {
                 QuizBank::markPassed(m_score);
+                // 成绩同步到论坛账号：发帖 / 评论资格跟着账号走
+                ForumAccountService::instance()->reportQuizPass(m_score);
+            }
             showResultPage(m_passed);
             return;
         }
@@ -431,7 +506,7 @@ void QuizDialog::showResultPage(bool passed)
     if (passed)
     {
         m_resultLabel->setText(tr("恭喜，已通过入站答题"));
-        m_resultDetailLabel->setText(tr("现在可以正常使用方块盒子启动器了。"));
+        m_resultDetailLabel->setText(tr("这个账号现在可以发帖和评论了，成绩在网页论坛同样生效。"));
     }
     else
     {

@@ -230,7 +230,7 @@ void ForgeNewInstallTask::preExecute()
             }
             else
             {
-                qWarning() << "[ForgeNewInstallTask]" << "Failed to extract version.json from installer";
+                qWarning() << "[ForgeNewInstallTask]" << "无法从安装包解压 version.json";
             }
         }
 
@@ -270,11 +270,11 @@ void ForgeNewInstallTask::preExecute()
         const bool hasEmbeddedMaven = !JarUtils::listEntriesInJar(installerJarPath, "maven/").isEmpty();
         if (!hasEmbeddedMaven)
         {
-            qDebug() << "[ForgeNewInstallTask]" << "No embedded maven directory in installer, skipping";
+            qDebug() << "[ForgeNewInstallTask]" << "安装包内没有内嵌 maven 目录，跳过";
         }
         else if (!JarUtils::extractJarDirectory(installerJarPath, "maven", tempExtractDir))
         {
-            qWarning() << "[ForgeNewInstallTask]" << "Failed to extract maven directory from installer";
+            qWarning() << "[ForgeNewInstallTask]" << "无法从安装包解压 maven 目录";
             QMetaObject::invokeMethod(this, [this]()
             {
                 emit completed(false, tr("无法提取内嵌库文件，请确保已安装JDK"));
@@ -282,7 +282,8 @@ void ForgeNewInstallTask::preExecute()
             return;
         }
 
-        QString extractedMavenPath = tempExtractDir + "/maven";
+        // extractJarDirectory 会把 maven/ 目录里的内容直接解到 tempExtractDir 根下（不再保留 maven 这一层）
+        QString extractedMavenPath = tempExtractDir;
         QDir mavenDir(extractedMavenPath);
         if (mavenDir.exists())
         {
@@ -320,15 +321,15 @@ void ForgeNewInstallTask::preExecute()
                 }
                 else
                 {
-                    qWarning() << "[ForgeNewInstallTask]" << "Failed to copy library:" << relativePath;
+                    qWarning() << "[ForgeNewInstallTask]" << "复制库文件失败:" << relativePath;
                 }
             }
 
-            qDebug() << "[ForgeNewInstallTask]" << "Copied" << copiedCount << "embedded libraries";
+            qDebug() << "[ForgeNewInstallTask]" << "已复制" << copiedCount << "个内嵌库文件";
         }
         else
         {
-            qWarning() << "[ForgeNewInstallTask]" << "No maven directory found after extraction";
+            qWarning() << "[ForgeNewInstallTask]" << "解压后未找到 maven 目录";
         }
 
         QDir(tempExtractDir).removeRecursively();
@@ -502,21 +503,21 @@ void ForgeNewInstallTask::extractVersionJson()
 
     if (jsonEntry.isEmpty())
     {
-        qDebug() << "[ForgeNewInstallTask]" << "No version.json path in profile, skipping";
+        qDebug() << "[ForgeNewInstallTask]" << "安装配置中没有 version.json 路径，跳过";
         return;
     }
 
     QString versionJsonPath = m_tempDir + "/version.json";
     if (!JarUtils::extractFromJar(m_installerJarPath, jsonEntry, versionJsonPath))
     {
-        qWarning() << "[ForgeNewInstallTask]" << "Failed to extract version.json from installer";
+        qWarning() << "[ForgeNewInstallTask]" << "无法从安装包解压 version.json";
         return;
     }
 
     QFile file(versionJsonPath);
     if (!file.open(QIODevice::ReadOnly))
     {
-        qWarning() << "[ForgeNewInstallTask]" << "Failed to read extracted version.json";
+        qWarning() << "[ForgeNewInstallTask]" << "无法读取解压后的 version.json";
         return;
     }
 
@@ -548,19 +549,13 @@ void ForgeNewInstallTask::copyEmbeddedLibraries()
 
     if (!JarUtils::extractJarDirectory(m_installerJarPath, "maven", tempExtractDir))
     {
-        qWarning() << "[ForgeNewInstallTask]" << "Failed to extract maven directory from installer";
+        qWarning() << "[ForgeNewInstallTask]" << "无法从安装包解压 maven 目录";
         emit completed(false, tr("无法提取内嵌库文件，请确保已安装JDK"));
         return;
     }
 
-    QString extractedMavenPath = tempExtractDir + "/maven";
-    QDir mavenDir(extractedMavenPath);
-    if (!mavenDir.exists())
-    {
-        qWarning() << "[ForgeNewInstallTask]" << "No maven directory found after extraction";
-        QDir(tempExtractDir).removeRecursively();
-        return;
-    }
+    // extractJarDirectory 会把 maven/ 目录里的内容直接解到 tempExtractDir 根下（不再保留 maven 这一层）
+    QString extractedMavenPath = tempExtractDir;
 
     QStringList jarFiles;
     QDirIterator it(extractedMavenPath,
@@ -570,6 +565,13 @@ void ForgeNewInstallTask::copyEmbeddedLibraries()
     while (it.hasNext())
     {
         jarFiles.append(it.next());
+    }
+
+    if (jarFiles.isEmpty())
+    {
+        qWarning() << "[ForgeNewInstallTask]" << "解压后未找到内嵌库文件";
+        QDir(tempExtractDir).removeRecursively();
+        return;
     }
 
     int copiedCount = 0;
@@ -596,13 +598,13 @@ void ForgeNewInstallTask::copyEmbeddedLibraries()
         }
         else
         {
-            qWarning() << "[ForgeNewInstallTask]" << "Failed to copy library:" << relativePath;
+            qWarning() << "[ForgeNewInstallTask]" << "复制库文件失败:" << relativePath;
         }
     }
 
     QDir(tempExtractDir).removeRecursively();
 
-    qDebug() << "[ForgeNewInstallTask]" << "Copied" << copiedCount << "embedded libraries";
+    qDebug() << "[ForgeNewInstallTask]" << "已复制" << copiedCount << "个内嵌库文件";
 }
 
 void ForgeNewInstallTask::downloadProcessorDependencies()
@@ -695,7 +697,7 @@ void ForgeNewInstallTask::downloadProcessorDependencies()
         {
             batchDownloader->deleteLater();
             if (!allSuccess) {
-                qWarning() << "[ForgeNewInstallTask]" << "Some processor dependencies failed to download:" << failed;
+                qWarning() << "[ForgeNewInstallTask]" << "部分处理器依赖下载失败:" << failed;
                 emit completed(false, tr("处理器依赖下载失败: %1").arg(failed.join(", ")));
             }
             else
@@ -857,7 +859,7 @@ void ForgeNewInstallTask::runProcessors()
 
         if (skipProcessor)
         {
-            qDebug() << "[ForgeNewInstallTask]" << "Skipping processor (outputs exist):" << processor.jar;
+            qDebug() << "[ForgeNewInstallTask]" << "跳过处理器（输出已存在）:" << processor.jar;
             m_processorDone++;
             int percent = 40 + (m_processorDone * 30 / m_processorTotal);
             emit progressUpdated(tr("正在执行安装处理器"), percent);
@@ -901,7 +903,7 @@ void ForgeNewInstallTask::runProcessors()
             {
                 mainClass = "net.minecraftforge.installertools.ConsoleTool";
             }
-            qDebug() << "[ForgeNewInstallTask]" << "Using fallback Main-Class for" << processor.jar << ":" << mainClass;
+            qDebug() << "[ForgeNewInstallTask]" << "为" << processor.jar << "使用备用 Main-Class:" << mainClass;
         }
 
         QStringList classpath;
@@ -963,9 +965,9 @@ void ForgeNewInstallTask::runProcessors()
         }
 
         QProcess process;
-        qDebug() << "[ForgeNewInstallTask]" << "Executing processor:" << processor.jar;
-        qDebug() << "[ForgeNewInstallTask]" << "Working directory:" << m_instancePath;
-        qDebug() << "[ForgeNewInstallTask]" << "Command:" << javaPath << args.join(" ");
+        qDebug() << "[ForgeNewInstallTask]" << "正在执行安装处理器:" << processor.jar;
+        qDebug() << "[ForgeNewInstallTask]" << "工作目录:" << m_instancePath;
+        qDebug() << "[ForgeNewInstallTask]" << "命令:" << javaPath << args.join(" ");
 
         process.setWorkingDirectory(m_instancePath);
         process.start(javaPath, args);
@@ -986,7 +988,7 @@ void ForgeNewInstallTask::runProcessors()
         if (process.exitCode() != 0)
         {
             QString errorOutput = QString::fromUtf8(process.readAllStandardError());
-            qWarning() << "[ForgeNewInstallTask]" << "Processor failed:" << processor.jar << errorOutput;
+            qWarning() << "[ForgeNewInstallTask]" << "处理器执行失败:" << processor.jar << errorOutput;
             emit completed(false, tr("处理器执行失败: %1\n%2").arg(processor.jar, errorOutput));
             return;
         }
@@ -1112,7 +1114,7 @@ void ForgeNewInstallTask::runProcessorsAsync()
 
             if (skipProcessor)
             {
-                qDebug() << "[ForgeNewInstallTask]" << "Skipping processor (outputs exist):" << processor.jar;
+                qDebug() << "[ForgeNewInstallTask]" << "跳过处理器（输出已存在）:" << processor.jar;
                 processorDone++;
                 int percent = 40 + (processorDone * 30 / processorTotal);
                 QMetaObject::invokeMethod(this, [this, percent, taskId]()
@@ -1149,7 +1151,7 @@ void ForgeNewInstallTask::runProcessorsAsync()
                 }
                 else
                 {
-                    qDebug() << "[ForgeNewInstallTask]" << "Using fallback Main-Class for" << processor.jar << ":" << mainClass;
+                    qDebug() << "[ForgeNewInstallTask]" << "为" << processor.jar << "使用备用 Main-Class:" << mainClass;
                 }
             }
 
@@ -1214,9 +1216,9 @@ void ForgeNewInstallTask::runProcessorsAsync()
             QProcess process;
             // 合并输出：部分工具把错误打到 stdout，只看 stderr 会拿到空信息
             process.setProcessChannelMode(QProcess::MergedChannels);
-            qDebug() << "[ForgeNewInstallTask]" << "Executing processor:" << processor.jar;
-            qDebug() << "[ForgeNewInstallTask]" << "Working directory:" << instancePath;
-            qDebug() << "[ForgeNewInstallTask]" << "Command:" << javaPath << args.join(" ");
+            qDebug() << "[ForgeNewInstallTask]" << "正在执行安装处理器:" << processor.jar;
+            qDebug() << "[ForgeNewInstallTask]" << "工作目录:" << instancePath;
+            qDebug() << "[ForgeNewInstallTask]" << "命令:" << javaPath << args.join(" ");
 
             process.setWorkingDirectory(instancePath);
             process.start(javaPath, args);
@@ -1245,8 +1247,8 @@ void ForgeNewInstallTask::runProcessorsAsync()
             if (process.exitCode() != 0)
             {
                 QString errorOutput = QString::fromUtf8(process.readAll());
-                qWarning() << "[ForgeNewInstallTask]" << "Processor failed:" << processor.jar
-                           << "exit code:" << process.exitCode() << errorOutput;
+                qWarning() << "[ForgeNewInstallTask]" << "处理器执行失败:" << processor.jar
+                           << "退出码:" << process.exitCode() << errorOutput;
                 QString error = tr("处理器执行失败 (退出码 %1): %2\n%3")
                                     .arg(process.exitCode())
                                     .arg(processor.jar, errorOutput.left(800));
@@ -1479,7 +1481,7 @@ void ForgeNewInstallTask::generateVersionJson()
         {
             if (!QFile::copy(vanillaJar, targetJar))
             {
-                qWarning() << "[ForgeNewInstallTask]" << "Failed to copy vanilla jar to" << targetJar;
+                qWarning() << "[ForgeNewInstallTask]" << "无法复制原版 jar 到" << targetJar;
             }
         }
     }
@@ -1571,7 +1573,7 @@ void ForgeNewInstallTask::downloadRemainingLibraries()
         // 本机生成的库（补丁后的客户端 JAR）没有下载地址，文件已在前面写好
         if (directUrl.isEmpty() && !QFile::exists(filePath))
         {
-            qWarning() << "[ForgeNewInstallTask]" << "Generated library missing:" << filePath;
+            qWarning() << "[ForgeNewInstallTask]" << "本机生成的库文件缺失:" << filePath;
             continue;
         }
 
@@ -1602,7 +1604,7 @@ void ForgeNewInstallTask::downloadRemainingLibraries()
 
     if (reusedCount > 0)
     {
-        qDebug() << "[ForgeNewInstallTask]" << "Reused" << reusedCount << "existing libraries";
+        qDebug() << "[ForgeNewInstallTask]" << "命中缓存，复用" << reusedCount << "个已有库文件";
     }
 
     if (tasks.isEmpty())
@@ -1644,7 +1646,7 @@ void ForgeNewInstallTask::downloadRemainingLibraries()
         {
             if (!allSuccess)
             {
-                qWarning() << "[ForgeNewInstallTask]" << "Some libraries failed to download:" << failed;
+                qWarning() << "[ForgeNewInstallTask]" << "部分库文件下载失败:" << failed;
                 emit completed(false, tr("库文件下载失败: %1").arg(failed.join(", ")));
                 return;
             }
@@ -1891,14 +1893,14 @@ QString ForgeNewInstallTask::readManifestMainClass(const QString &jarPath)
     QString tempManifest = QDir::tempPath() + "/blockbox_manifest_" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".tmp";
     if (!JarUtils::extractFromJar(jarPath, "META-INF/MANIFEST.MF", tempManifest))
     {
-        qWarning() << "[ForgeNewInstallTask]" << "Failed to extract MANIFEST.MF from:" << jarPath;
+        qWarning() << "[ForgeNewInstallTask]" << "无法从以下文件解压 MANIFEST.MF:" << jarPath;
         return QString();
     }
 
     QFile file(tempManifest);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
     {
-        qWarning() << "[ForgeNewInstallTask]" << "Failed to read extracted MANIFEST.MF";
+        qWarning() << "[ForgeNewInstallTask]" << "无法读取解压后的 MANIFEST.MF";
         QFile::remove(tempManifest);
         return QString();
     }
@@ -1920,7 +1922,7 @@ QString ForgeNewInstallTask::readManifestMainClass(const QString &jarPath)
 
     if (!mainClass.isEmpty())
     {
-        qDebug() << "[ForgeNewInstallTask]" << "Read Main-Class from manifest:" << mainClass;
+        qDebug() << "[ForgeNewInstallTask]" << "从 MANIFEST 读取到 Main-Class:" << mainClass;
     }
 
     return mainClass;

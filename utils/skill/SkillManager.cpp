@@ -696,7 +696,7 @@ QString SkillManager::executeScriptTool(const SkillInfo &info, const SkillTool &
             continue;
         if (isCmdScript && val.contains(QRegularExpression(QStringLiteral("[&|<>^%\"\\r\\n]"))))
         {
-            qWarning() << "[SkillManager] Argument contains cmd metacharacters, passed via SKILL_ARGS only:"
+            qWarning() << "[SkillManager] 参数包含 cmd 元字符，仅通过 SKILL_ARGS 传入："
                        << it.key();
             continue;
         }

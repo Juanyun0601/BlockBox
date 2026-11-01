@@ -283,7 +283,7 @@ void TerracottaClient::launchProcess()
 void TerracottaClient::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 {
     Q_UNUSED(status);
-    qDebug() << "Terracotta process exited with code" << exitCode;
+    qDebug() << "Terracotta 进程已退出，退出码：" << exitCode;
 
     // 参考 Terracotta main.rs / lock_windows.rs：
     // Terracotta --hmcl 模式下会启动 --hmcl2 子进程作为实际 daemon，然后 wrapper 退出。
@@ -292,7 +292,7 @@ void TerracottaClient::onProcessFinished(int exitCode, QProcess::ExitStatus stat
     //
     // 情况1：端口还未读取，进程已退出（secondary 模式写端口文件后退出）
     if (m_serverPort == 0 && m_portFileTimer.isActive()) {
-        qDebug() << "Process exited before port read. Continuing to poll port file (secondary mode).";
+        qDebug() << "端口未读取进程已退出，继续轮询端口文件（次要模式）。";
         QTimer::singleShot(10000, this, [this]() {
             if (m_serverPort == 0) {
                 m_portFileTimer.stop();
@@ -307,8 +307,8 @@ void TerracottaClient::onProcessFinished(int exitCode, QProcess::ExitStatus stat
     // daemon（可能是本实例的 --hmcl2 子进程，也可能是系统已有的 daemon）仍在运行。
     // 不清除端口、不改变状态，继续通过 HTTP 轮询检测 daemon 可用性。
     // 参考 HMCL：HMCL 根本不跟踪进程，只通过端口文件和 HTTP 轮询判断状态。
-    qDebug() << "Wrapper process exited after port was read. Daemon should still be running on port"
-             << m_serverPort << "- continuing to poll.";
+    qDebug() << "端口已读取，包装进程已退出。守护进程应仍在端口"
+             << m_serverPort << "上运行，继续轮询。";
     m_portFileTimer.stop();
     // 不停止 m_pollTimer，不清除 m_serverPort，不改变状态
     // 如果 daemon 确实不可用，fetchState 的连续错误计数器会检测到并切换状态
@@ -316,7 +316,7 @@ void TerracottaClient::onProcessFinished(int exitCode, QProcess::ExitStatus stat
 
 void TerracottaClient::onProcessErrorOccurred(QProcess::ProcessError error)
 {
-    qDebug() << "Terracotta process error:" << error;
+    qDebug() << "Terracotta 进程错误：" << error;
     if (error == QProcess::FailedToStart) {
         m_portFileTimer.stop();
         setErrorMessage(tr("无法启动 Terracotta 进程"));
@@ -384,9 +384,9 @@ void TerracottaClient::fetchState()
             // HTTP 请求失败 — daemon 可能已停止
             // 参考 HMCL：连续多次失败后认为 daemon 不可用，重置状态
             m_consecutiveErrors++;
-            qDebug() << "State poll failed, consecutive errors:" << m_consecutiveErrors;
+            qDebug() << "状态轮询失败，连续错误次数：" << m_consecutiveErrors;
             if (m_consecutiveErrors >= 10) {
-                qDebug() << "Daemon appears to be dead. Resetting to NotInstalled.";
+                qDebug() << "守护进程似乎已停止，重置为未安装状态。";
                 m_pollTimer.stop();
                 m_serverPort = 0;
                 m_lastStateIndex = -1;
@@ -471,7 +471,7 @@ void TerracottaClient::handleStateResponse(const QByteArray &data)
         m_exceptionType = static_cast<ExceptionType>(type);
         setState(State::Exception);
     } else {
-        qDebug() << "Unknown Terracotta state:" << stateStr;
+        qDebug() << "未知的 Terracotta 状态：" << stateStr;
     }
 
     // 更新数据
@@ -496,7 +496,7 @@ void TerracottaClient::callApi(const QString &path)
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
-            qDebug() << "Terracotta API call failed:" << reply->errorString();
+            qDebug() << "Terracotta API 调用失败：" << reply->errorString();
         }
         // 立即触发状态刷新
         QTimer::singleShot(100, this, &TerracottaClient::fetchState);
@@ -740,7 +740,7 @@ void TerracottaClient::loadBuiltinVersionInfo()
     // 参考 HMCL TerracottaMetadata：从内置资源读取版本配置（无需网络请求）
     QFile f(QStringLiteral(":/resources/terracotta_version.json"));
     if (!f.open(QIODevice::ReadOnly)) {
-        qWarning() << "Cannot load builtin terracotta_version.json";
+        qWarning() << "无法加载内置 terracotta_version.json";
         return;
     }
     QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
@@ -915,7 +915,7 @@ void TerracottaClient::downloadRelease(const QString &version)
         connect(reply, &QNetworkReply::finished, this, [this, reply, archivePath, version, taskId, index, tryDownload]() {
             reply->deleteLater();
             if (reply->error() != QNetworkReply::NoError) {
-                qWarning() << "Download source" << index << "failed:" << reply->errorString();
+                qWarning() << "下载源" << index << "失败：" << reply->errorString();
                 // 尝试下一个镜像源
                 (*tryDownload)(index + 1);
                 return;

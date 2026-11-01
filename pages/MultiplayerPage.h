@@ -11,13 +11,18 @@
  * 支持可切换的联机核心：
  *   陶瓦联机（Terracotta）：建房/加房/邀请码/玩家列表
  *   红石联机（Hongshi）：中转节点 + 本地端口 → 隧道地址联机
+ *   樱花联机（SakuraFrp）：访问密钥 + 隧道 ID → frpc 隧道地址联机
+ *   OpenFrp 联机：访问密钥 + 隧道 ID → frpc 隧道地址联机
  */
 
 #pragma once
 
+#include "utils/frp/FrpManager.h"
+
 #include <QComboBox>
 #include <QDateTime>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
@@ -43,6 +48,8 @@ private:
     void buildRoomPage(QWidget *page);
     void buildHongshiHomePage(QWidget *page);
     void buildHongshiTunnelPage(QWidget *page);
+    void buildFrpHomePage(QWidget *page);
+    void buildFrpRoomPage(QWidget *page);
 
     void applyThemeStyles();
     void refreshPage();          ///< 根据当前核心/状态切换页面/刷新内容
@@ -53,8 +60,17 @@ private:
     void refreshHongshiInstallStatus(); ///< 刷新红石内核安装/下载状态
     void refreshTunnelStatusBar();   ///< 刷新红石隧道时间
     void populateNodeCombo();    ///< 填充红石节点下拉框
+    void refreshFrpPage();           ///< 刷新 frp 服务商联机页面
+    void refreshFrpInstallStatus();  ///< 刷新 frpc 安装/下载状态
+    void refreshFrpStatusBar();      ///< 刷新 frp 隧道时间与地址
+    void updateFrpDesc();            ///< 按当前服务商刷新说明/表单内容
+    void startFrpTunnel();           ///< 校验表单后启动 frpc 隧道
+    void openFrpPanel();             ///< 打开当前服务商官网面板
+    void pickFrpcManually();         ///< 手动选择 frpc 程序导入
 
     bool hongshiActive() const;  ///< 当前是否选择红石联机核心
+    bool frpActive() const;      ///< 当前是否选择 frp 服务商核心（樱花/OpenFrp）
+    FrpManager::Provider frpProvider() const; ///< 当前 frp 服务商
     void onCoreChanged(int index);
 
     /// 弹出对话框提示（非左下卡片）
@@ -65,9 +81,33 @@ private:
     HongshiClient *m_hongshi;
     QStackedWidget *m_stack;
 
+    // ---- frp 服务商联机：首页控件 ----
+    QWidget *m_frpHomePage;
+    QLabel *m_frpStatusLabel;     ///< frpc 安装/下载状态
+    QLabel *m_frpDescLabel;       ///< 服务商说明（按核心切换内容）
+    QLabel *m_frpKeyHint;         ///< 访问密钥字段标签
+    QLineEdit *m_frpKeyEdit;      ///< 访问密钥
+    QLabel *m_frpIdHint;          ///< 隧道 ID 字段标签
+    QLineEdit *m_frpIdEdit;       ///< 隧道 ID
+    QLabel *m_frpHintLabel;       ///< 获取指引提示
+    QWidget *m_frpLinkRow;        ///< 打开面板 / 手动选择 frpc 小按钮行
+    QPushButton *m_frpPanelBtn;   ///< 打开官网面板
+    QPushButton *m_frpPickBtn;    ///< 手动选择 frpc
+    QPushButton *m_frpStartBtn;   ///< 启动隧道
+
+    // ---- frp 服务商联机：房间页控件 ----
+    QWidget *m_frpRoomPage;
+    QLabel *m_frpLatencyLabel;    ///< 顶部隧道状态与联机时间
+    QLabel *m_frpAddrLabel;       ///< 大字：远程连接地址
+    QPushButton *m_frpCopyBtn;    ///< 复制连接地址
+    QLabel *m_frpRoomHint;        ///< 联机指引提示
+    QPushButton *m_frpStopBtn;    ///< 停止联机
+
+    QDateTime m_frpEnterTime;     ///< 启动隧道时间
+
     // ---- 顶部核心选择栏 ----
     QWidget *m_topBarContainer;   ///< 核心选择 + 更新按钮容器
-    QComboBox *m_coreCombo;       ///< 联机核心切换（0 陶瓦 / 1 红石）
+    QComboBox *m_coreCombo;       ///< 联机核心切换（0 陶瓦 / 1 红石 / 2 樱花 / 3 OpenFrp）
     QPushButton *m_updateBtn;     ///< 更新联机核心按钮
 
     // ---- 陶瓦联机：首页控件 ----

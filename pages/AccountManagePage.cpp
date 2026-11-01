@@ -37,10 +37,42 @@
 #include "utils/SkinDownloader.h"
 #include "utils/ThemeManager.h"
 
+namespace {
+
+/**
+ * 更新认证服务器状态徽标（未检测 / 检测中 / 在线 / 无法连接）。
+ *
+ * 文案每次都改，但样式只在状态真的变了才重新 polish——否则每检测一次都要重算
+ * 整条样式规则，切换登录方式时能看出卡顿。
+ */
+void setAuthServerPill(QLabel *pill, const char *state, const QString &text,
+                       const QString &tooltip = QString())
+{
+    if (!pill)
+        return;
+
+    pill->setText(text);
+    pill->setToolTip(tooltip);
+
+    if (pill->property("pillState").toString() == QLatin1String(state))
+        return;
+
+    pill->setProperty("pillState", QLatin1String(state));
+    if (QStyle *style = pill->style())
+    {
+        style->unpolish(pill);
+        style->polish(pill);
+    }
+    pill->update();
+}
+
+}  // namespace
+
 AccountManagePage::AccountManagePage(QWidget *parent) : QWidget(parent)
 {
     m_currentAccountName = "未登录";
     m_currentAccountType = "离线";
+    m_currentServerUrl.clear();
     m_currentUuid.clear();
     m_currentSkinUrl.clear();
     m_isDefaultAccount = false;
@@ -825,9 +857,10 @@ void AccountManagePage::initLoginPage()
     // Add option to add custom server
     serverComboBox->addItem(tr("添加自定义服务器"), "custom");
 
-    QLabel *serverStatusLabel = new QLabel(tr("未检测"));
+    QLabel *serverStatusLabel = new QLabel(m_thirdPartyLoginTab);
     serverStatusLabel->setObjectName("loginStatusPill");
     serverStatusLabel->setAlignment(Qt::AlignCenter);
+    setAuthServerPill(serverStatusLabel, "unknown", tr("未检测"));
 
     QWidget *serverFieldEditor = new QWidget(m_thirdPartyLoginTab);
     QHBoxLayout *serverFieldRow = new QHBoxLayout(serverFieldEditor);
@@ -864,75 +897,165 @@ void AccountManagePage::initLoginPage()
     thirdPartyLoginBtn->setCursor(Qt::PointingHandCursor);
     thirdPartyLayout->addWidget(thirdPartyLoginBtn);
     
-    // Connect server selection change
-    connect(serverComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int) {
-        QString serverUrl = serverComboBox->currentData().toString();
-        if (serverUrl == "custom") {
-            // Show dialog to add custom server
-            QDialog customServerDialog(this);
-            customServerDialog.setWindowTitle(tr("添加自定义服务器"));
-            customServerDialog.resize(400, 200);
-            
-            QVBoxLayout *dialogLayout = new QVBoxLayout(&customServerDialog);
-            
-            QLabel *nameLabel = new QLabel(tr("服务器名称："));
-            dialogLayout->addWidget(nameLabel);
-            QLineEdit *nameInput = new QLineEdit();
-            dialogLayout->addWidget(nameInput);
-            
-            QLabel *urlLabel = new QLabel(tr("服务器 URL："));
-            dialogLayout->addWidget(urlLabel);
-            QLineEdit *urlInput = new QLineEdit();
-            urlInput->setPlaceholderText("例如：https://littleskin.cn/api/yggdrasil/");
-            dialogLayout->addWidget(urlInput);
-            
-            QHBoxLayout *buttonLayout = new QHBoxLayout();
-            QPushButton *cancelBtn = new QPushButton(tr("取消"));
-            cancelBtn->setObjectName("cancelButton");
-            QPushButton *okBtn = new QPushButton(tr("确定"));
-            okBtn->setObjectName("okBtn");
-            buttonLayout->addStretch();
-            buttonLayout->addWidget(cancelBtn);
-            buttonLayout->addWidget(okBtn);
-            dialogLayout->addLayout(buttonLayout);
-            
-            connect(cancelBtn, &QPushButton::clicked, &customServerDialog, &QDialog::reject);
-            connect(okBtn, &QPushButton::clicked, &customServerDialog, &QDialog::accept);
-            
-            if (customServerDialog.exec() == QDialog::Accepted) {
-                QString customName = nameInput->text().trimmed();
-                QString customUrl = urlInput->text().trimmed();
-                
-                if (!customName.isEmpty() && !customUrl.isEmpty()) {
-                    // Add custom server to settings
-                    if (SettingsManager::instance())
-                    {
-                        SettingsManager::instance()->addAuthServer(customUrl, customName);
-                    }
-                    
-                    // Update server combo box
-                    serverComboBox->insertItem(serverComboBox->count() - 1, customName, customUrl);
-                    serverComboBox->setCurrentIndex(serverComboBox->count() - 2);
-                }
-            } else {
-                // Reset to previous selection
-                if (serverComboBox->count() > 1) {
-                    serverComboBox->setCurrentIndex(0);
-                }
+    // 服务器连通性检测：以前这里写死一秒后显示"在线"，服务器根本连不上也照样显示在线
+    const auto checkCurrentServer = [serverComboBox, serverStatusLabel]() {
+        const QString serverUrl = serverComboBox->currentData().toString();
+        if (serverUrl.isEmpty() || serverUrl == QLatin1String("custom"))
+        {
+            setAuthServerPill(serverStatusLabel, "unknown", tr("未检测"));
+            return;
+        }
+        setAuthServerPill(serverStatusLabel, "busy", tr("检测中..."));
+        if (AuthManager::instance())
+        {
+            AuthManager::instance()->checkAuthServer(serverUrl);
+        }
+    };
+
+    // 添加自定义认证服务器：地址先规范化（补协议 / 补 /api/yggdrasil/ / 去掉误粘贴的端点地址），
+    // 存进去之前就纠正，省得之后拿着一条用不了的地址去登录
+    const auto addCustomServer = [this, serverComboBox, checkCurrentServer]() {
+        QDialog customServerDialog(this);
+        customServerDialog.setWindowTitle(tr("添加自定义服务器"));
+        customServerDialog.resize(420, 240);
+
+        QVBoxLayout *dialogLayout = new QVBoxLayout(&customServerDialog);
+
+        QLabel *nameLabel = new QLabel(tr("服务器名称："), &customServerDialog);
+        dialogLayout->addWidget(nameLabel);
+        QLineEdit *nameInput = new QLineEdit(&customServerDialog);
+        nameInput->setPlaceholderText(tr("例如 我的皮肤站"));
+        dialogLayout->addWidget(nameInput);
+
+        QLabel *urlLabel = new QLabel(tr("服务器地址："), &customServerDialog);
+        dialogLayout->addWidget(urlLabel);
+        QLineEdit *urlInput = new QLineEdit(&customServerDialog);
+        urlInput->setPlaceholderText("例如：https://littleskin.cn/api/yggdrasil/");
+        dialogLayout->addWidget(urlInput);
+
+        QLabel *urlHint = new QLabel(
+            tr("填 Yggdrasil API 根地址（authlib-injector 里那个地址）；只填域名会自动补成 /api/yggdrasil/。"),
+            &customServerDialog);
+        urlHint->setWordWrap(true);
+        dialogLayout->addWidget(urlHint);
+
+        QHBoxLayout *buttonLayout = new QHBoxLayout();
+        QPushButton *cancelBtn = new QPushButton(tr("取消"), &customServerDialog);
+        cancelBtn->setObjectName("cancelButton");
+        QPushButton *okBtn = new QPushButton(tr("确定"), &customServerDialog);
+        okBtn->setObjectName("okBtn");
+        buttonLayout->addStretch();
+        buttonLayout->addWidget(cancelBtn);
+        buttonLayout->addWidget(okBtn);
+        dialogLayout->addLayout(buttonLayout);
+
+        connect(cancelBtn, &QPushButton::clicked, &customServerDialog, &QDialog::reject);
+        connect(okBtn, &QPushButton::clicked, &customServerDialog, &QDialog::accept);
+
+        if (customServerDialog.exec() != QDialog::Accepted)
+        {
+            return;
+        }
+
+        const QString normalizedUrl = AuthManager::normalizeAuthServerUrl(urlInput->text());
+        if (normalizedUrl.isEmpty())
+        {
+            NotificationManager::showError(
+                this, tr("服务器地址无效，请填写形如 https://littleskin.cn/api/yggdrasil/ 的地址"));
+            return;
+        }
+
+        // 名称留空时用域名兜底，避免列表里出现一行空白项
+        QString serverName = nameInput->text().trimmed();
+        if (serverName.isEmpty())
+        {
+            serverName = QUrl(normalizedUrl).host();
+        }
+
+        if (SettingsManager::instance())
+        {
+            SettingsManager::instance()->addAuthServer(normalizedUrl, serverName);
+        }
+
+        // addAuthServer 对重复地址会直接忽略，这里按地址查一遍，避免下拉框里加出两条一样的
+        int targetIndex = -1;
+        for (int i = 0; i < serverComboBox->count(); ++i)
+        {
+            const QString itemUrl = AuthManager::normalizeAuthServerUrl(serverComboBox->itemData(i).toString());
+            if (!itemUrl.isEmpty() && itemUrl == normalizedUrl)
+            {
+                targetIndex = i;
+                break;
             }
-        } else if (!serverUrl.isEmpty()) {
-            // Update server status
-            serverStatusLabel->setText(tr("检测中..."));
-            
-            // TODO: Implement actual server status check
-            // For now, just simulate a successful check
-            QTimer::singleShot(1000, [=]() {
-                serverStatusLabel->setText(tr("在线"));
-            });
-        } else {
-            serverStatusLabel->setText(tr("未检测"));
+        }
+        if (targetIndex < 0)
+        {
+            targetIndex = serverComboBox->count() - 1;  // 插在"添加自定义服务器"之前
+            serverComboBox->insertItem(targetIndex, serverName, normalizedUrl);
+        }
+        if (serverComboBox->currentIndex() == targetIndex)
+        {
+            checkCurrentServer();  // 索引没变不会触发 currentIndexChanged，手动检测一次
+        }
+        else
+        {
+            serverComboBox->setCurrentIndex(targetIndex);
+        }
+    };
+
+    // Connect server selection change
+    connect(serverComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [serverComboBox, addCustomServer, checkCurrentServer](int index) {
+        if (serverComboBox->currentData().toString() != QLatin1String("custom"))
+        {
+            // 记住最近一次选中的真实服务器，弹窗取消后好退回这里
+            serverComboBox->setProperty("lastRealIndex", index);
+            checkCurrentServer();
+            return;
+        }
+
+        addCustomServer();
+
+        // 弹窗被取消：当前项还停在"添加自定义服务器"上，退回上一个真实服务器
+        if (serverComboBox->currentData().toString() == QLatin1String("custom"))
+        {
+            const int previous = serverComboBox->property("lastRealIndex").toInt();
+            if (previous >= 0 && previous < serverComboBox->count()
+                && serverComboBox->itemData(previous).toString() != QLatin1String("custom"))
+            {
+                serverComboBox->setCurrentIndex(previous);
+            }
         }
     });
+
+    // 切到第三方页时顺手测一次，进页面就能看到服务器通不通
+    connect(m_loginTabWidget, &QTabWidget::currentChanged, this, [checkCurrentServer](int index) {
+        if (index == 2)
+        {
+            checkCurrentServer();
+        }
+    });
+
+    // 检测结果回填到徽标（只认当前选中服务器，换过服务器后旧结果直接丢弃）
+    if (AuthManager::instance())
+    {
+        connect(AuthManager::instance(), &AuthManager::authServerStatusChecked, this,
+                [serverComboBox, serverStatusLabel](const QString &serverUrl, bool online,
+                                                    const QString &detail) {
+            if (serverComboBox->currentData().toString() != serverUrl)
+            {
+                return;
+            }
+            if (online)
+            {
+                setAuthServerPill(serverStatusLabel, "ok", tr("在线"), detail);
+            }
+            else
+            {
+                setAuthServerPill(serverStatusLabel, "error", tr("无法连接"), detail);
+            }
+        });
+    }
     
     // 保存当前输入控件的指针，以便在槽函数中使用
     QLineEdit *usernameInputPtr = thirdPartyUsernameInput;
@@ -940,29 +1063,51 @@ void AccountManagePage::initLoginPage()
     QPushButton *loginBtnPtr = thirdPartyLoginBtn;
     QComboBox *serverComboBoxPtr = serverComboBox;
     QLabel *statusLabelPtr = serverStatusLabel;
-    
-    // 连接认证成功信号
+
+    // 连接认证成功信号（username 为服务器返回的正式角色名）
     if (AuthManager::instance())
     {
-        connect(AuthManager::instance(), &AuthManager::authenticationSucceeded, this, [=](const QString &username, const QString &serverUrl) {
+        connect(AuthManager::instance(), &AuthManager::authenticationSucceeded, this,
+                [=](const QString &username, const QString &serverUrl, const QString &uuid,
+                    const QString &accessToken, const QString &clientToken, const QString &skinUrl) {
         // 恢复按钮状态
         loginBtnPtr->setText(tr("登录"));
         loginBtnPtr->setEnabled(true);
-        
-        // 获取服务器名称
-        QString serverName = serverComboBoxPtr->currentText();
-        
-        // 检查是否账户已存在
-        if (SettingsManager::instance() && SettingsManager::instance()->accountExists(username)) {
-            NotificationManager::showError(this, tr("该用户名已存在"));
-            return;
+
+        // 账户类型记成服务器名：列表里一眼就能看出是哪个皮肤站的号（地址对不上时退回域名）
+        QString serverName = QUrl(serverUrl).host();
+        for (int i = 0; i < serverComboBoxPtr->count(); ++i)
+        {
+            const QString itemUrl =
+                AuthManager::normalizeAuthServerUrl(serverComboBoxPtr->itemData(i).toString());
+            if (!itemUrl.isEmpty() && itemUrl == serverUrl)
+            {
+                serverName = serverComboBoxPtr->itemText(i);
+                break;
+            }
         }
-        
-        // 添加第三方账户
+
+        // 检查是否账户已存在（角色名不分大小写，与写入时的判重保持一致）
+        if (SettingsManager::instance())
+        {
+            const QList<AccountInfo> accounts = SettingsManager::instance()->getAccounts();
+            for (const AccountInfo &account : accounts)
+            {
+                if (account.username.compare(username, Qt::CaseInsensitive) == 0)
+                {
+                    NotificationManager::showError(
+                        this, tr("账户列表里已经有叫 %1 的账户了，请先删掉再添加").arg(username));
+                    return;
+                }
+            }
+        }
+
+        // 添加第三方账户（连同令牌、角色 UUID 和皮肤地址一起存，登录状态才算真的带过来）
         bool created = false;
         if (SettingsManager::instance())
         {
-            created = SettingsManager::instance()->addAccount(username, serverName, serverUrl, true);
+            created = SettingsManager::instance()->addThirdPartyAccount(
+                username, serverName, serverUrl, accessToken, clientToken, uuid, skinUrl, true);
         }
 
         if (!created)
@@ -974,15 +1119,15 @@ void AccountManagePage::initLoginPage()
         // 切换回账户列表并重新加载账户
         m_stackedWidget->setCurrentWidget(m_accountManageWidget);
         loadAccounts();
-        
-        NotificationManager::showSuccess(this, tr("第三方账户登录成功"));
-        
+
+        NotificationManager::showSuccess(this, tr("第三方账户登录成功：%1").arg(username));
+
         // 清空输入字段
         usernameInputPtr->clear();
         passwordInputPtr->clear();
     });
     }
-    
+
     // 连接认证失败信号
     if (AuthManager::instance())
     {
@@ -990,33 +1135,33 @@ void AccountManagePage::initLoginPage()
         // 恢复按钮状态
         loginBtnPtr->setText(tr("登录"));
         loginBtnPtr->setEnabled(true);
-        
+
         // 显示错误信息
         NotificationManager::showError(this, errorMessage);
     });
     }
-    
+
     // Connect third party login button
     connect(thirdPartyLoginBtn, &QPushButton::clicked, [=]() {
         QString username = thirdPartyUsernameInput->text().trimmed();
         QString password = thirdPartyPasswordInput->text();
         QString serverUrl = serverComboBox->currentData().toString();
-        
+
         if (username.isEmpty() || password.isEmpty()) {
             NotificationManager::showError(this, tr("用户名和密码不能为空"));
             return;
         }
-        
-        if (serverUrl == "custom") {
-            NotificationManager::showError(this, tr("请选择一个有效的服务器"));
+
+        if (serverUrl.isEmpty() || serverUrl == QLatin1String("custom")) {
+            NotificationManager::showError(this, tr("请先选择或添加一个认证服务器"));
             return;
         }
-        
-        // 显示加载状态
+
+        // 显示加载状态（连通性徽标只管服务器通不通，认证进度看按钮）
         thirdPartyLoginBtn->setText(tr("登录中..."));
         thirdPartyLoginBtn->setEnabled(false);
-        statusLabelPtr->setText(tr("认证中..."));
-        
+        statusLabelPtr->setToolTip(tr("正在向 %1 验证账号").arg(QUrl(serverUrl).host()));
+
         // 开始认证
         if (AuthManager::instance())
         {
@@ -1240,12 +1385,14 @@ void AccountManagePage::updateCurrentAccountInfo(const QString &accountName, con
     m_accountTypeLabel->setText(accountType);
 
     // 账户类型彩色圆点：微软=蓝 / 第三方=紫 / 离线=琥珀
+    // 第三方账户的类型字段存的是皮肤站名（如 LittleSkin），所以按认证地址判断，
+    // 以前按文字匹配"第三方"永远不成立，皮肤站账户一直被当成离线账户显示成琥珀色
     if (m_accountTypeDot)
     {
         QColor dotColor("#F59E0B");
-        if (accountType.contains(tr("微软")))
+        if (accountType.contains(QLatin1String("Microsoft")) || accountType.contains(tr("微软")))
             dotColor = QColor("#00A4EF");
-        else if (accountType.contains(tr("第三方")))
+        else if (!m_currentServerUrl.isEmpty())
             dotColor = QColor("#8B5CF6");
         m_accountTypeDot->setStyleSheet(QString("background-color: %1; border-radius: 4px;").arg(dotColor.name()));
     }
@@ -1269,31 +1416,33 @@ void AccountManagePage::onAccountItemClicked(QPushButton *btn)
     QString skinUrl = btn->property("skinUrl").toString();
     QString uuid = btn->property("uuid").toString();
 
-    // Update current account info
-    updateCurrentAccountInfo(accountName, accountType, isDefault);
-
-    // Update member variables
+    // Update member variables（先更新，updateCurrentAccountInfo 要用 m_currentServerUrl 判断类型）
     m_currentAccountName = accountName;
     m_currentAccountType = accountType;
+    m_currentServerUrl = serverUrl;
     m_currentUuid = uuid;
     m_currentSkinUrl = skinUrl;
     m_isDefaultAccount = isDefault;
 
+    // Update current account info
+    updateCurrentAccountInfo(accountName, accountType, isDefault);
+
     // Emit account selected signal
     emit accountSelected(accountName);
 
-    // 多来源优先级加载链路：UUID > URL > 本地离线文件 > 默认皮肤
+    // 多来源优先级加载链路：服务器直给皮肤地址 > UUID(Crafatar) > 本地离线文件 > 默认皮肤
+    // 第三方账户（皮肤站）的皮肤只有服务器知道地址，Crafatar 上没有，所以有 skinUrl 就先用它
     if (m_skin3DWidget)
     {
-        if (!uuid.isEmpty() && m_skinDownloader)
+        if (!skinUrl.isEmpty() && m_skinDownloader)
         {
-            // 优先级 1：通过 UUID 调用 Crafatar API 下载正版/第三方账户皮肤
-            m_skinDownloader->downloadSkinByUuid(uuid);
-        }
-        else if (!skinUrl.isEmpty() && m_skinDownloader)
-        {
-            // 优先级 2：通过用户名 URL 下载第三方账户皮肤
+            // 优先级 1：用认证服务器返回的皮肤地址下载（第三方账户）
             m_skinDownloader->downloadSkin(accountName, skinUrl);
+        }
+        else if (!uuid.isEmpty() && m_skinDownloader)
+        {
+            // 优先级 2：通过 UUID 调用 Crafatar API 下载正版账户皮肤
+            m_skinDownloader->downloadSkinByUuid(uuid);
         }
         else
         {
@@ -1350,6 +1499,7 @@ void AccountManagePage::onLogoutClicked()
         // Reset current account info
         m_currentAccountName = "未登录";
         m_currentAccountType = "离线";
+        m_currentServerUrl.clear();
         m_currentUuid.clear();
         m_currentSkinUrl.clear();
         m_isDefaultAccount = false;
@@ -1526,7 +1676,7 @@ void AccountManagePage::onLoginMethodChanged(int index)
 {
     // 切换登录方式后收缩/撑开卡片，避免短表单留下空白
     updateLoginColumnHeight();
-    qDebug() << "[AccountManagePage]" << "Login method changed to:" << index;
+    qDebug() << "[AccountManagePage]" << "登录方式已改为:" << index;
 }
 
 void AccountManagePage::onBackToAccountList()

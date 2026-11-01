@@ -12,6 +12,11 @@ HEADERS  += ../utils/WorldMap/WorldMapRenderer.h \
 SOURCES  += world_map_probe.cpp \
             ../utils/WorldMap/WorldMapRenderer.cpp \
             ../utils/WorldMap/SeedTerrainRenderer.cpp \
+            ../utils/WorldMap/TreePredictor.cpp \
+            ../utils/WorldMap/TreeGen.cpp \
+            ../utils/WorldMap/MushroomPredictor.cpp \
+            ../utils/WorldMap/McRandom.cpp \
+            ../utils/WorldMap/CavePredictor.cpp \
             ../utils/Schematic/NbtCodec.cpp \
             ../third_party/cubiomes/noise.c \
             ../third_party/cubiomes/biomes.c \

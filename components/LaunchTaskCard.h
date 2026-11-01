@@ -32,6 +32,7 @@ public:
     ~LaunchTaskCard();
 
     void setStatus(LaunchStatus status);
+    LaunchStatus status() const { return m_status; }
     void setProgress(int progress);
     void setMessage(const QString &message);
     void addDetail(const QString &detail);

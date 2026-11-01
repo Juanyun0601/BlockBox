@@ -233,7 +233,7 @@ void MultiThreadDownloader::mergeSegments()
 
     cleanup();
 
-    qDebug() << "[MultiThreadDownloader] Download completed:" << m_savePath;
+    qDebug() << "[MultiThreadDownloader] 下载完成：" << m_savePath;
     emit downloadCompleted(m_taskId, m_savePath);
 }
 
@@ -252,7 +252,7 @@ void MultiThreadDownloader::failDownload(const QString &error)
 {
     m_cancelled = true;
     cleanup();
-    qWarning() << "[MultiThreadDownloader] Failed:" << error;
+    qWarning() << "[MultiThreadDownloader] 下载失败：" << error;
     emit downloadFailed(m_taskId, error);
 }
 

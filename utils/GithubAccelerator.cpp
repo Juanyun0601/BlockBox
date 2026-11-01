@@ -134,6 +134,6 @@ QString GithubAccelerator::accelerateUrl(const QString &originalUrl) const
     }
 
     QString accelerated = proxy + originalUrl;
-    qDebug() << "[GithubAccelerator] Accelerated:" << originalUrl << "->" << accelerated;
+    qDebug() << "[GithubAccelerator] 已加速：" << originalUrl << "->" << accelerated;
     return accelerated;
 }

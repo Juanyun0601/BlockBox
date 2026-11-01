@@ -20,6 +20,7 @@
 #include "components/QuizDialog.h"
 #include "pages/OnboardingWizard.h"
 #include "platform.h"
+#include "utils/ForumAccountService.h"
 #include "utils/QuizBank.h"
 #include "utils/SettingsManager.h"
 #include "utils/UpdateChecker.h"
@@ -375,13 +376,15 @@ void SettingsPage::initGeneralSettings()
     QVBoxLayout *quizCard = createSettingsCard(layout, tr("入站答题"));
 
     QPushButton *startQuizBtn = new QPushButton(
-        QuizBank::hasPassed() ? tr("再答一次") : tr("开始答题"));
+        ForumAccountService::instance()->hasPassedQuiz() ? tr("再答一次") : tr("开始答题"));
     startQuizBtn->setObjectName("historyBtn");
     startQuizBtn->setCursor(Qt::PointingHandCursor);
     connect(startQuizBtn, &QPushButton::clicked, this, [this, startQuizBtn]() {
         QWidget *host = window();
         QuizDialog dialog(host);
-        if (dialog.exec() == QDialog::Accepted) {
+        dialog.exec();
+        // 只有真通过了（而不是弹窗里点了「去登录」）才提示成功
+        if (ForumAccountService::instance()->hasPassedQuiz()) {
             startQuizBtn->setText(tr("再答一次"));
             if (host)
                 NotificationManager::showSuccess(
@@ -390,7 +393,7 @@ void SettingsPage::initGeneralSettings()
     });
 
     QHBoxLayout *quizRow = appendSettingRow(quizCard,
-        tr("入站答题"), tr("从题库随机抽 50 题，每题 2 分，达到 80 分即通过；答错会显示正确答案与解析。"), QString(), true);
+        tr("入站答题"), tr("从题库随机抽 50 题，每题 2 分，达到 80 分即通过；答错会显示正确答案与解析。答题通过后这个账号才能发帖和评论。"), QString(), true);
     quizRow->addWidget(startQuizBtn);
 
     // ── 提示信息 ──

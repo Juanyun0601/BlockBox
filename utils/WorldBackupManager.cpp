@@ -523,7 +523,7 @@ bool WorldBackupManager::autoBackupBeforeLaunch(const QString &instancePath,
     disconnect(c2);
     m_busy = false;
     if (failed > 0) {
-        qWarning() << "[WorldBackupManager]" << "auto backup batch finished with" << failed << "failures";
+        qWarning() << "[WorldBackupManager]" << "自动备份批量完成，失败" << failed << "次";
     }
     return backed > 0;
 }
@@ -545,7 +545,7 @@ void WorldBackupManager::runAutoBackupBatch(const QString &instancePath, const Q
             emit backupFinished(instancePath, name, true, QString(), true);
         } else {
             ++failed;
-            qWarning() << "[WorldBackupManager]" << "auto backup failed:" << name << error;
+            qWarning() << "[WorldBackupManager]" << "自动备份失败：" << name << error;
             emit backupFinished(instancePath, name, false, error, true);
         }
     }

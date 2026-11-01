@@ -5,9 +5,11 @@
 #include <QFrame>
 #include <QGraphicsDropShadowEffect>
 #include <QGraphicsOpacityEffect>
+#include <QPointer>
 #include <QPropertyAnimation>
 #include <QScrollBar>
 #include <QSpacerItem>
+#include <QTimer>
 
 #include "utils/VersionDownloader.h"
 
@@ -16,6 +18,12 @@ namespace {
 constexpr int kFloatMarginX = 16;
 constexpr int kFloatMarginTop = 6;
 constexpr int kFloatMarginBottom = 24;
+
+// 失败卡片停留时长：足够看清红色「失败」与失败原因，又不至于一直挂在任务栏上
+constexpr int kFailedCardLingerMs = 10000;
+constexpr int kFailedLaunchLingerMs = 12000;
+// 鼠标停在卡片上时延后再关，避免用户正读错误信息时卡片突然消失
+constexpr int kHoverDeferMs = 1500;
 } // namespace
 
 TaskBar::TaskBar(QWidget *parent)
@@ -30,12 +38,19 @@ TaskBar::TaskBar(QWidget *parent)
     , m_countBadge(nullptr)
     , m_launchTaskCard(nullptr)
     , m_hasLaunchCard(false)
+    , m_launchDismissTimer(nullptr)
     , m_exitAnim(nullptr)
     , m_exitAnimRunning(false)
 {
     // 悬浮叠层：不参与父布局，靠几何定位压在内容上方
     if (parent)
         parent->installEventFilter(this);
+
+    // 启动失败/异常退出的卡片不长期驻留：停留一段时间后自动收起
+    m_launchDismissTimer = new QTimer(this);
+    m_launchDismissTimer->setSingleShot(true);
+    connect(m_launchDismissTimer, &QTimer::timeout, this, &TaskBar::onLaunchCardDismissTimeout);
+
     initUI();
     initDownloadTaskManager();
     setVisible(false);
@@ -232,6 +247,10 @@ void TaskBar::updateVisibility()
 
 void TaskBar::showLaunchTaskCard(bool show)
 {
+    // 卡片显隐由调用方决定，自动收起定时器随之作废（失败状态会重新排期）
+    if (m_launchDismissTimer)
+        m_launchDismissTimer->stop();
+
     m_hasLaunchCard = show;
     m_launchTaskCard->setVisible(show);
     m_launchTaskCard->setFixedSize(260, 48);
@@ -276,6 +295,34 @@ void TaskBar::updateLaunchTaskStatus(LaunchTaskCard::LaunchStatus status)
     if (m_launchTaskCard) {
         m_launchTaskCard->setStatus(status);
     }
+
+    if (!m_launchDismissTimer || !m_launchTaskCard)
+        return;
+
+    if (status == LaunchTaskCard::Failed || status == LaunchTaskCard::Stopped) {
+        // 启动失败 / 异常退出：先留着让用户看到，过一会儿自动收起，不长期占住任务栏
+        m_launchDismissTimer->start(kFailedLaunchLingerMs);
+    } else {
+        // 重新启动、运行中、空闲：撤销待执行的收起
+        m_launchDismissTimer->stop();
+    }
+}
+
+void TaskBar::onLaunchCardDismissTimeout()
+{
+    if (!m_launchTaskCard || !m_hasLaunchCard)
+        return;
+
+    // 鼠标停在启动卡片上时延后收起，避免用户正在看失败信息时卡片突然消失
+    if (m_launchTaskCard->isVisible() && m_launchTaskCard->underMouse()) {
+        m_launchDismissTimer->start(kHoverDeferMs);
+        return;
+    }
+
+    // 状态可能已被再次切换（例如自动重试），只在仍处于终态时收起
+    const LaunchTaskCard::LaunchStatus status = m_launchTaskCard->status();
+    if (status == LaunchTaskCard::Failed || status == LaunchTaskCard::Stopped)
+        showLaunchTaskCard(false);
 }
 
 void TaskBar::updateLaunchTaskProgress(int progress)
@@ -324,6 +371,10 @@ void TaskBar::onTaskAdded(const QString &taskId)
     anim->setEndValue(finalGeo);
     anim->setEasingCurve(QEasingCurve::OutCubic);
     anim->start(QAbstractAnimation::DeleteWhenStopped);
+
+    // 防御：若卡片创建时任务已经是失败态（如将来支持恢复历史任务），同样安排自动收起
+    if (task.status == DownloadTaskStatus::Failed)
+        scheduleDownloadCardDismissal(taskId, kFailedCardLingerMs);
 }
 
 void TaskBar::onTaskProgressUpdated(const QString &taskId, double progress)
@@ -354,41 +405,102 @@ void TaskBar::onTaskStageChanged(const QString &taskId, DownloadStage stage, int
     }
 }
 
+void TaskBar::fadeOutAndRemoveDownloadCard(const QString &taskId)
+{
+    if (!m_downloadTaskCards.contains(taskId))
+        return;
+
+    cancelDownloadCardDismissal(taskId);
+    QPointer<DownloadTaskCard> card = m_downloadTaskCards.take(taskId);
+
+    QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(card);
+    card->setGraphicsEffect(effect);
+
+    QPropertyAnimation *anim = new QPropertyAnimation(effect, "opacity");
+    anim->setDuration(400);
+    anim->setStartValue(1.0);
+    anim->setEndValue(0.0);
+    anim->setEasingCurve(QEasingCurve::InCubic);
+    // 以 this（TaskBar）为 context：若 TaskBar 先销毁则自动断开，避免悬挂 this。
+    // card 也可能已被提前删除，故用 QPointer 防护。
+    connect(anim, &QPropertyAnimation::finished, this, [this, card]() {
+        if (!card) return;
+        m_cardsLayout->removeWidget(card);
+        card->hide();
+        card->deleteLater();
+        updateVisibility();
+    });
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void TaskBar::scheduleDownloadCardDismissal(const QString &taskId, int delayMs)
+{
+    cancelDownloadCardDismissal(taskId);
+
+    QTimer *timer = new QTimer(this);
+    timer->setSingleShot(true);
+    timer->setInterval(delayMs);
+    connect(timer, &QTimer::timeout, this, [this, taskId, timer]() {
+        // 鼠标停在卡片上说明用户正在看失败原因，先不关，稍后再试
+        DownloadTaskCard *card = m_downloadTaskCards.value(taskId, nullptr);
+        if (card && card->isVisible() && card->underMouse()) {
+            timer->start(kHoverDeferMs);
+            return;
+        }
+        m_cardDismissTimers.remove(taskId);
+        timer->deleteLater();
+        fadeOutAndRemoveDownloadCard(taskId);
+    });
+
+    m_cardDismissTimers.insert(taskId, timer);
+    timer->start();
+}
+
+void TaskBar::cancelDownloadCardDismissal(const QString &taskId)
+{
+    QTimer *timer = m_cardDismissTimers.take(taskId);
+    if (!timer)
+        return;
+    timer->stop();
+    timer->deleteLater();
+}
+
 void TaskBar::onTaskStatusChanged(const QString &taskId, DownloadTaskStatus status)
 {
-    Q_UNUSED(status);
-    if (m_downloadTaskCards.contains(taskId)) {
-        DownloadTask task = DownloadTaskManager::instance()->getTaskCopy(taskId);
-        m_downloadTaskCards[taskId]->updateFromTask(task);
-
-        if (task.status == DownloadTaskStatus::Completed || task.status == DownloadTaskStatus::Cancelled) {
-            DownloadTaskCard *card = m_downloadTaskCards[taskId];
-            m_downloadTaskCards.remove(taskId);
-
-            QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(card);
-            card->setGraphicsEffect(effect);
-
-            QPropertyAnimation *anim = new QPropertyAnimation(effect, "opacity");
-            anim->setDuration(400);
-            anim->setStartValue(1.0);
-            anim->setEndValue(0.0);
-            anim->setEasingCurve(QEasingCurve::InCubic);
-            // 以 this（TaskBar）为 context：若 TaskBar 先销毁则自动断开，避免悬挂 this。
-            // card 可能因其他原因被删除，故 capture 时同时用 QPointer 防护。
-            connect(anim, &QPropertyAnimation::finished, this, [this, card]() {
-                if (!card) return;
-                m_cardsLayout->removeWidget(card);
-                card->hide();
-                card->deleteLater();
-                updateVisibility();
-            });
-            anim->start(QAbstractAnimation::DeleteWhenStopped);
+    if (!m_downloadTaskCards.contains(taskId)) {
+        // 失败卡片已自动收起，任务又被重新拉起（例如在详情页点重试）：重新挂回任务栏
+        if (status == DownloadTaskStatus::Queued ||
+            status == DownloadTaskStatus::Downloading ||
+            status == DownloadTaskStatus::Paused) {
+            onTaskAdded(taskId);
         }
+        return;
+    }
+
+    DownloadTask task = DownloadTaskManager::instance()->getTaskCopy(taskId);
+    m_downloadTaskCards[taskId]->updateFromTask(task);
+
+    switch (task.status) {
+    case DownloadTaskStatus::Completed:
+    case DownloadTaskStatus::Cancelled:
+        // 正常结束/取消：立即淡出移除
+        fadeOutAndRemoveDownloadCard(taskId);
+        break;
+    case DownloadTaskStatus::Failed:
+        // 失败不立刻消失（让用户看到红色「失败」和原因），但也不许永远挂着：
+        // 停留几秒后自动淡出，避免底部任务栏被清不掉的失败卡片长期占住
+        scheduleDownloadCardDismissal(taskId, kFailedCardLingerMs);
+        break;
+    default:
+        // 失败后重试、重新排队、暂停/继续：撤销待执行的自动消失
+        cancelDownloadCardDismissal(taskId);
+        break;
     }
 }
 
 void TaskBar::onTaskRemoved(const QString &taskId)
 {
+    cancelDownloadCardDismissal(taskId);
     if (m_downloadTaskCards.contains(taskId)) {
         DownloadTaskCard *card = m_downloadTaskCards[taskId];
         m_cardsLayout->removeWidget(card);

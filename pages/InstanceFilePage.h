@@ -78,6 +78,11 @@ signals:
     void saveConvertRequested(const QString &saveName);
     /** 请求打开指定光影包的光影设置页（仅 ShaderPack 类型触发） */
     void shaderSettingsRequested(const QString &packPath);
+    /**
+     * 空状态「快速安装光影模组」：请求安装光影加载器（仅 ShaderPack 类型触发）
+     * @param modKey 需要安装的模组标识，主窗口按实例加载器决定具体装哪个
+     */
+    void quickInstallModRequested(const QString &modKey);
     /** 卡片点击「问问AI」：请求跳转 AI 助手并引用该本地资源 */
     void askAiRequested(const ResourceReference &ref);
 
@@ -133,6 +138,13 @@ private:
     void setDropHighlight(bool on);
     void showLoading(bool show);
     void showEmptyHint(bool show);
+    /**
+     * @brief 空状态提示与「快速安装」按钮的统一入口
+     * @param text             提示文字
+     * @param show             是否显示空状态容器
+     * @param allowQuickInstall 是否同时显示「快速安装光影模组」按钮
+     */
+    void applyEmptyState(const QString &text, bool show, bool allowQuickInstall);
     void applyFilterAndSearch();
     QWidget *createFileCard(const QString &filePath, const QString &fileName,
                             qint64 fileSize, const QDateTime &lastModified);
@@ -187,6 +199,8 @@ private:
     int m_viewMode;                    // ContentViewSwitch::ViewMode
     BlurLoadingOverlay *m_loadingOverlay;
     QLabel *m_emptyLabel;
+    QWidget *m_emptyWidget;            // 空状态容器（提示 + 快速安装按钮）
+    QPushButton *m_quickInstallBtn;    // 空状态「快速安装光影模组」（仅光影包类型）
     QPushButton *m_downloadSearchBtn;
 
     // 本地资源分类筛选（按实例、按资源类型独立）

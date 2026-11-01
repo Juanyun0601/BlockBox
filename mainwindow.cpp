@@ -56,6 +56,7 @@
 #include "utils/BingWallpaperManager.h"
 #include "utils/ThemeManager.h"
 #include "pages/AccountManagePage.h"
+#include "pages/ForumAccountPage.h"
 #include "pages/ForgeVersionListPage.h"
 #include "pages/HomePage.h"
 #include "pages/InstallInstancePage.h"
@@ -79,6 +80,9 @@
 #include "pages/FavoritesPage.h"
 #include "pages/SkinEditorPage.h"
 #include "pages/PluginPage.h"
+#include "pages/CommunityForumPage.h"
+#include "utils/ForumAccountService.h"
+#include "utils/ForumImageStore.h"
 #include "components/CreatePluginDialog.h"
 #include "utils/plugin/PluginManager.h"
 #include "utils/plugin/PluginSafetyGuard.h"
@@ -88,6 +92,7 @@
 #include "utils/PerformanceMonitor.h"
 #include "platform.h"
 #include "utils/SettingsManager.h"
+#include "utils/McimHelper.h"
 #include "utils/SkinDownloader.h"
 #include "utils/net/NetJob.h"
 #include "utils/net/Download.h"
@@ -200,6 +205,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_pageInitialized[PageIndex::ModpackExportPageIndex] = false;
     m_pageInitialized[PageIndex::AiChatPage] = false;
     m_pageInitialized[PageIndex::SkinEditorPage] = false;
+    m_pageInitialized[PageIndex::CommunityPage] = false;
 
     initUI();
     initPages();
@@ -228,11 +234,45 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_topBar, &TopBar::accountManageClicked, this, &MainWindow::onAccountManageClicked);
     connect(m_topBar, &TopBar::launchGameClicked, this, qOverload<>(&MainWindow::onLaunchGameClicked));
     connect(m_topBar, &TopBar::searchClicked, this, &MainWindow::onSearchClicked);
+    // 顶栏「系统消息 / 聊天」快捷卡：随论坛实验功能开关显示
+    m_topBar->setForumCardVisible(SettingsManager::instance()->isExperimentalCommunityEnabled());
+    connect(m_topBar, &TopBar::forumNotificationsClicked, this, &MainWindow::onForumNotificationsClicked);
+    connect(m_topBar, &TopBar::forumChatClicked, this, &MainWindow::onForumChatClicked);
     // Connect game edition switch (Java版 / 基岩版)
+    // 基岩版属于实验性内容：未在设置中开启时，顶栏不显示版本切换入口
+    m_topBar->setEditionSwitchVisible(SettingsManager::instance()->isExperimentalBedrockEnabled());
     connect(m_topBar, &TopBar::editionSwitched, this, [this](bool javaEdition) {
+        if (!SettingsManager::instance()->isExperimentalBedrockEnabled())
+            return;
         m_topBar->setJavaEdition(javaEdition);
         NotificationManager::showInfo(this, javaEdition ? tr("已切换到 Java 版") : tr("已切换到基岩版"));
     });
+    connect(SettingsManager::instance(), &SettingsManager::experimentalBedrockChanged, this, [this](bool enabled) {
+        m_topBar->setEditionSwitchVisible(enabled);
+        if (!enabled && !m_topBar->isJavaEdition()) {
+            m_topBar->setJavaEdition(true);
+            NotificationManager::showInfo(this, tr("已关闭基岩版实验性功能，已切回 Java 版"));
+        }
+    });
+
+    // 账户管理页的实验性界面：开关一改就切换显示，下次进入立即生效
+    connect(SettingsManager::instance(), &SettingsManager::experimentalForumAccountChanged, this,
+            [this](bool enabled) {
+                switchAccountUiMode();
+                NotificationManager::showInfo(this, enabled ? tr("账户管理页已切换为论坛账户界面")
+                                                            : tr("账户管理页已恢复经典界面"));
+            });
+
+    // 社区页同属实验性内容：开关切换后重建侧边栏；关闭时若正停在社区页则退回首页
+    connect(SettingsManager::instance(), &SettingsManager::experimentalCommunityChanged, this,
+            [this](bool enabled) {
+                m_topBar->setForumCardVisible(enabled);
+                m_sideBar->refreshNavStructure();
+                if (!enabled && m_communityPage && m_stackedWidget->currentWidget() == m_communityPage)
+                    onBackToMain();
+                NotificationManager::showInfo(this, enabled ? tr("已开启社区实验性功能，左侧导航栏已显示「社区」")
+                                                            : tr("已关闭社区实验性功能，已从左侧导航栏移除"));
+            });
 
     connect(m_taskBar, &TaskBar::showTaskListPageRequested, this, &MainWindow::onShowTaskListPageRequested);
     connect(m_taskBar, &TaskBar::taskDetailRequested, this, &MainWindow::onTaskDetailRequested);
@@ -266,6 +306,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     updateBackgroundWidget();
 
+    // 方块盒子账户 ⇄ 顶栏账户卡片：登录后顶栏展示社区账户的头像与昵称
+    auto *forumAccount = ForumAccountService::instance();
+    connect(forumAccount, &ForumAccountService::userChanged, this,
+            [this](const ForumUser &) { syncTopBarAccount(); });
+    connect(forumAccount, &ForumAccountService::sessionExpired, this,
+            [this]() { syncTopBarAccount(); });
+
     // 自动登录：从保存的账户文件中恢复默认账户
     restoreDefaultAccount();
 
@@ -289,7 +336,7 @@ MainWindow::~MainWindow()
 void MainWindow::initUI()
 {
     // 开始测量UI初始化时间
-    PerformanceMonitor::instance()->startMeasurement("UI Initialization");
+    PerformanceMonitor::instance()->startMeasurement("界面初始化");
 
     // Set window properties
     setWindowTitle(tr(""));
@@ -377,12 +424,17 @@ void MainWindow::initUI()
         QWidget *current = m_stackedWidget->currentWidget();
         if (current)
         {
-            animateContentEntrance(current);
+            // 账户管理页是经典 / 实验性两个界面的容器，入场动画要作用在内层页面上
+            QWidget *contentPage = current;
+            if (m_accountUiStack && current == m_accountUiStack && m_accountUiStack->currentWidget())
+                contentPage = m_accountUiStack->currentWidget();
+
+            animateContentEntrance(contentPage);
             // 页面切换动画结束后，强制刷新含 Skin3DWidget 的页面的 3D 皮肤控件
             // 原因：PageTransitionAnimator 的 FadeSlideUp 动画期间会给页面应用 QGraphicsOpacityEffect，
             // 该 effect 会破坏其子 QOpenGLWidget (Skin3DWidget) 的 GL 渲染。
             // 动画结束后 effect 被移除，但 Skin3DWidget 不会自动重绘，需手动触发。
-            if (current == m_accountManagePage && m_accountManagePage)
+            if (m_accountManagePage && contentPage == m_accountManagePage)
             {
                 m_accountManagePage->refreshSkin3DWidget();
             }
@@ -444,7 +496,7 @@ void MainWindow::initUI()
             this, &MainWindow::onFavoritesChanged);
 
     // 结束测量UI初始化时间
-    PerformanceMonitor::instance()->endMeasurement("UI Initialization");
+    PerformanceMonitor::instance()->endMeasurement("界面初始化");
 }
 
 void MainWindow::animatedSwitchToPage(PageIndex index)
@@ -591,9 +643,39 @@ void MainWindow::onSideBarItemClicked(int parentIndex)
         ensurePageInitialized(PageIndex::SettingsPage);
         animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, parentIndex);
         onChildNavClicked(2, 0);
+    } else if (parentIndex == 6) { // 社区（方块盒子论坛）
+        m_subNavPanel->hidePanel();
+        ensurePageInitialized(PageIndex::CommunityPage);
+        animatedSwitchToPageDirectional(PageIndex::CommunityPage, m_lastSidebarIndex, parentIndex);
+        m_topBar->setTitle(tr("社区"));
+        m_topBar->setAccountCardVisible(true);
+        m_topBar->setWindowControlCardVisible(true);
+        if (m_communityPage) {
+            m_communityPage->refresh();
+        }
     }
 
     m_lastSidebarIndex = parentIndex;
+}
+
+void MainWindow::openInterfaceSettings()
+{
+    // 与点击侧边栏「设置」保持一致：切换页面、展开设置子导航，再定位到「界面设置」
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setSettingsTitle();
+
+    m_sideBar->setSelectedIndex(2);
+    m_subNavPanel->showForParent(2, false);
+    ensurePageInitialized(PageIndex::SettingsPage);
+    animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, 2);
+    m_lastSidebarIndex = 2;
+    onChildNavClicked(2, 1);
+    m_subNavPanel->setSelectedChild(1);
 }
 
 void MainWindow::onParentNavClicked(int parentIndex)
@@ -637,6 +719,16 @@ void MainWindow::onParentNavClicked(int parentIndex)
         animatedSwitchToPageDirectional(PageIndex::PluginPage, m_lastSidebarIndex, parentIndex);
         if (m_pluginPage) {
             m_pluginPage->showOverview();
+        }
+    } else if (parentIndex == 6) { // 社区（方块盒子论坛）
+        m_subNavPanel->hidePanel();
+        ensurePageInitialized(PageIndex::CommunityPage);
+        animatedSwitchToPageDirectional(PageIndex::CommunityPage, m_lastSidebarIndex, parentIndex);
+        m_topBar->setTitle(tr("社区"));
+        m_topBar->setAccountCardVisible(true);
+        m_topBar->setWindowControlCardVisible(true);
+        if (m_communityPage) {
+            m_communityPage->refresh();
         }
     }
 
@@ -771,6 +863,7 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
             tr("实例管理>服务器"),
             tr("实例管理>投影"),
             tr("实例管理>截图"),
+            tr("实例管理>录像"),
             tr("实例管理>模组"),
             tr("实例管理>资源包"),
             tr("实例管理>光影包"),
@@ -969,7 +1062,7 @@ void MainWindow::onSettingsNavItemClicked(int index)
 void MainWindow::onResourcesNavItemClicked(int index)
 {
     // Handle resources navigation item clicks
-    qDebug() << "[MainWindow]" << "Resources nav item clicked:" << index;
+    qDebug() << "[MainWindow]" << "资源导航项已点击：" << index;
     
     if (index == 0) { // Install new instance
         ensurePageInitialized(PageIndex::InstallInstancePage);
@@ -1271,6 +1364,26 @@ void MainWindow::onSkinEditorClicked()
     showSkinEditorPage();
 }
 
+void MainWindow::onForumNotificationsClicked()
+{
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    m_topBar->setAccountSelected(false);
+    showAccountManagePage();
+    if (m_forumAccountPage)
+        m_forumAccountPage->openNotificationsTab();
+}
+
+void MainWindow::onForumChatClicked()
+{
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    m_topBar->setAccountSelected(false);
+    // 从顶栏进来没有「上一个论坛页」可回，返回键回主页
+    m_forumReturnAction = [this]() { onBackToMain(); };
+    showForumFriends();
+}
+
 void MainWindow::onSearchClicked()
 {
     showSearchPage();
@@ -1455,6 +1568,15 @@ void MainWindow::onAccountManagePageOpened()
 
 void MainWindow::onTopBarBackClicked()
 {
+    // 实验性账户管理页的登录 / 注册子视图：先退回账户总览，不离开页面
+    if (m_forumAccountPage && m_accountUiStack &&
+        m_accountUiStack->currentWidget() == m_forumAccountPage && m_stackedWidget &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::AccountManagePage) &&
+        m_forumAccountPage->returnToOverview())
+    {
+        return;
+    }
+
     if (m_hasPreviousPage) {
         PageIndex target = m_previousPage;
         m_hasPreviousPage = false;
@@ -1603,18 +1725,83 @@ void MainWindow::loadCurrentInstancePath()
 
 void MainWindow::restoreDefaultAccount()
 {
+    m_gameAccountName.clear();
+    m_gameAccountAvatar = QPixmap();
+
     AccountInfo defaultAccount = SettingsManager::instance()->getDefaultAccount();
     if (!defaultAccount.username.isEmpty())
     {
-        m_topBar->setAccountName(defaultAccount.username);
+        m_gameAccountName = defaultAccount.username;
         // 顶栏头像：截取默认账户皮肤头部正面（圆角由 TopBar 内部处理）
         const QImage skin = SkinDownloader::loadSkinForAccount(defaultAccount.username, defaultAccount.uuid);
         const QImage head = SkinDownloader::cropHeadPortrait(skin);
         if (!head.isNull())
         {
-            m_topBar->setAccountAvatar(QPixmap::fromImage(head));
+            m_gameAccountAvatar = QPixmap::fromImage(head);
         }
     }
+
+    syncTopBarAccount();
+}
+
+void MainWindow::syncTopBarAccount()
+{
+    if (!m_topBar)
+        return;
+
+    ForumAccountService *forum = ForumAccountService::instance();
+
+    // 已登录方块盒子账户：顶栏账户卡片展示社区身份（昵称 + 头像）
+    QString forumName;
+    if (forum->isLoggedIn())
+    {
+        const ForumUser user = forum->user();
+        forumName = user.displayName.trimmed();
+        if (forumName.isEmpty())
+            forumName = user.username.trimmed();
+    }
+
+    if (!forumName.isEmpty())
+    {
+        m_topBar->setAccountName(forumName);
+        m_topBar->setAccountToolTip(tr("方块盒子账户"));
+        // 头像下载完成前先用首字母占位，避免卡片空一块
+        m_topBar->setAccountAvatarPlaceholder(forumName);
+        loadTopBarForumAvatar(forum->user().avatar);
+        return;
+    }
+
+    // 未登录方块盒子账户：保持原来的游戏账户展示
+    m_topBar->setAccountName(m_gameAccountName.isEmpty() ? tr("未登录") : m_gameAccountName);
+    m_topBar->setAccountToolTip(tr("账户管理"));
+    if (m_gameAccountAvatar.isNull())
+        m_topBar->clearAccountAvatar();
+    else
+        m_topBar->setAccountAvatar(m_gameAccountAvatar);
+}
+
+void MainWindow::loadTopBarForumAvatar(const QString &avatarPath)
+{
+    if (avatarPath.trimmed().isEmpty())
+        return;
+
+    ForumAccountService *service = ForumAccountService::instance();
+    const int userId = service->user().id;
+    const QString url = service->absoluteUrl(avatarPath);
+    if (url.isEmpty())
+        return;
+
+    // 上次可能因为断网失败被记成“不再重试”，登录 / 刷新时重新给一次机会
+    ForumImageStore::instance()->clearFailures();
+    ForumImageStore::instance()->requestImage(url, [this, userId](const QImage &image) {
+        ForumAccountService *current = ForumAccountService::instance();
+        // 下载期间换了账户或退出了，别把旧头像盖到新账户上
+        if (!current->isLoggedIn() || current->user().id != userId)
+            return;
+        if (image.isNull())
+            return; // 失败时保留首字母占位
+        m_topBar->setAccountAvatar(QPixmap::fromImage(image));
+    });
 }
 
 void MainWindow::initGameLauncher()
@@ -1642,7 +1829,7 @@ void MainWindow::initGameLauncher()
 void MainWindow::onLaunchStatusChanged(int status)
 {
     // Update UI based on launch status if needed
-    qDebug() << "[MainWindow]" << "Launch status changed:" << status;
+    qDebug() << "[MainWindow]" << "启动状态已变更：" << status;
     
     LaunchTaskCard::LaunchStatus ls = LaunchTaskCard::Idle;
     if (m_taskBar) {
@@ -1747,7 +1934,7 @@ void MainWindow::onFileCompletionFinished(bool success)
 
 void MainWindow::onErrorReportGenerated(const QString& report)
 {
-    qDebug() << "[MainWindow]" << "Error report generated:" << report;
+    qDebug() << "[MainWindow]" << "已生成错误报告：" << report;
     // Show error report in a message box or add to launch details
     if (m_taskBar) {
         m_taskBar->addLaunchTaskDetail("错误分析鎶ュ憡:");
@@ -1788,7 +1975,7 @@ void MainWindow::toggleGameAssistantOverlay()
 
 void MainWindow::onGameStarted()
 {
-    qDebug() << "[MainWindow]" << "Game started successfully";
+    qDebug() << "[MainWindow]" << "游戏已成功启动";
 #ifdef Q_OS_ANDROID
     // 游戏启动成功：显示游戏内悬浮图标（实例助手入口）
     if (m_gameFloatingIcon) {
@@ -1813,7 +2000,7 @@ void MainWindow::onGameStarted()
 
 void MainWindow::onGameStopped(int exitCode)
 {
-    qDebug() << "[MainWindow]" << "Game stopped with exit code:" << exitCode;
+    qDebug() << "[MainWindow]" << "游戏已停止，退出码：" << exitCode;
 
 #ifdef Q_OS_ANDROID
     // 游戏退出：隐藏游戏内悬浮图标与实例助手侧栏
@@ -1873,7 +2060,7 @@ void MainWindow::onGameStopped(int exitCode)
 
 void MainWindow::onGameCrashed(const QString &error)
 {
-    qDebug() << "[MainWindow]" << "Game crashed:" << error;
+    qDebug() << "[MainWindow]" << "游戏崩溃：" << error;
 
 #ifdef Q_OS_ANDROID
     // 游戏崩溃：隐藏游戏内悬浮图标与实例助手侧栏
@@ -1888,7 +2075,7 @@ void MainWindow::onGameCrashed(const QString &error)
     // 重试已调度但尚未执行时，忽略重复的 gameCrashed 信号
     // （QProcess 崩溃时 onProcessError 和 onProcessFinished 都会触发 gameCrashed）
     if (m_launchRetryPending) {
-        qDebug() << "[MainWindow]" << "Retry already pending, ignoring duplicate gameCrashed signal";
+        qDebug() << "[MainWindow]" << "重试已在等待中，忽略重复的 gameCrashed 信号";
         return;
     }
 
@@ -1897,7 +2084,7 @@ void MainWindow::onGameCrashed(const QString &error)
     if (!m_launchRetryAttempted && !m_gameLauncher->wasGameStartedSuccessfully()) {
         m_launchRetryAttempted = true;
         m_launchRetryPending = true;
-        qDebug() << "[MainWindow]" << "Launch-time crash detected, retrying with file completion...";
+        qDebug() << "[MainWindow]" << "检测到启动期崩溃，正在补全文件并重试...";
 
         NotificationManager::showInfo(this, tr("游戏启动失败，正在检查文件完整性并重新启动..."));
 
@@ -1912,7 +2099,7 @@ void MainWindow::onGameCrashed(const QString &error)
 
             GameLauncher::LaunchConfig config;
             config.instancePath = m_currentInstancePath;
-            config.accountName = m_topBar->accountName().isEmpty() ? "Player" : m_topBar->accountName();
+            config.accountName = m_gameAccountName.isEmpty() ? "Player" : m_gameAccountName;
 
             SettingsManager *settings = SettingsManager::instance();
             config.javaPath = settings->getJavaPath();
@@ -1961,7 +2148,7 @@ void MainWindow::onGameCrashed(const QString &error)
 
 void MainWindow::onLaunchTaskCardClicked()
 {
-    qDebug() << "[MainWindow]" << "Launch task card clicked";
+    qDebug() << "[MainWindow]" << "启动任务卡片已点击";
     // Here you can add additional functionality when the task card is clicked
     // For example, show more detailed information or open a separate window
 }
@@ -1995,7 +2182,7 @@ void MainWindow::onLaunchGameClicked()
 
     GameLauncher::LaunchConfig config;
     config.instancePath = m_currentInstancePath;
-    config.accountName = m_topBar->accountName().isEmpty() ? "Player" : m_topBar->accountName();
+    config.accountName = m_gameAccountName.isEmpty() ? "Player" : m_gameAccountName;
 
     SettingsManager *settings = SettingsManager::instance();
     // 统计该实例的启动次数（概览页「启动次数」卡片展示）
@@ -2061,7 +2248,7 @@ void MainWindow::launchGameWithExtraArgs(const QStringList &extraGameArgs)
 
     GameLauncher::LaunchConfig config;
     config.instancePath = m_currentInstancePath;
-    config.accountName = m_topBar->accountName().isEmpty() ? "Player" : m_topBar->accountName();
+    config.accountName = m_gameAccountName.isEmpty() ? "Player" : m_gameAccountName;
 
     SettingsManager *settings = SettingsManager::instance();
     // 统计该实例的启动次数（概览页「启动次数」卡片展示）
@@ -2157,7 +2344,7 @@ void MainWindow::onShaderSettingsOpened()
     connect(m_topBar, &TopBar::backClicked, this, [this]() {
         // 返回光影包列表
         if (m_instanceManagePage)
-            m_instanceManagePage->setCurrentTab(11);
+            m_instanceManagePage->setCurrentTab(12);
         m_topBar->setTitle(tr("实例管理>光影包"));
         // 恢复主流程返回行为
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
@@ -2176,7 +2363,7 @@ void MainWindow::onProjectionEditOpened()
     connect(m_topBar, &TopBar::backClicked, this, [this]() {
         // 返回投影列表
         if (m_instanceManagePage)
-            m_instanceManagePage->setCurrentTab(11);
+            m_instanceManagePage->setCurrentTab(7);
         m_topBar->setTitle(tr("实例管理>蓝图"));
         // 恢复主流程返回行为
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
@@ -2260,7 +2447,7 @@ void MainWindow::onVersionSelected(const QString &versionId, const QString &vers
 
 void MainWindow::onBackToInstallPage()
 {
-    qDebug() << "[MainWindow]" << "Back to install page";
+    qDebug() << "[MainWindow]" << "返回安装页面";
     
     ensurePageInitialized(PageIndex::InstallInstancePage);
     
@@ -2303,7 +2490,7 @@ void MainWindow::onViewAllVersions(const QString &loaderName, const QString &min
 
 void MainWindow::onBackToLoaderDetail()
 {
-    qDebug() << "[MainWindow]" << "Back to loader detail page";
+    qDebug() << "[MainWindow]" << "返回加载器详情页";
     
     // 纭?繚椤甸潰宸插垵濮嬪寲
     ensurePageInitialized(PageIndex::LoaderDetailPage);
@@ -3206,6 +3393,119 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
         depInfo.name = tr("前置: %1").arg(dep.name);
         onCardDownloadRequested(depInfo, contentType, depth + 1, targetGameVersion, targetLoader);
     }
+}
+
+namespace {
+
+/** 实例加载器名（Fabric / Forge / NeoForge / Quilt）→ Modrinth 加载器标识 */
+QString loaderFacetName(const QString &loader)
+{
+    const QString lower = loader.toLower();
+    if (lower == QStringLiteral("fabric") || lower == QStringLiteral("quilt")
+        || lower == QStringLiteral("forge") || lower == QStringLiteral("neoforge"))
+        return lower;
+    return QString();
+}
+
+} // namespace
+
+void MainWindow::onQuickInstallModRequested(const QString &modKey)
+{
+    if (m_currentInstancePath.isEmpty())
+    {
+        NotificationManager::showError(this, tr("请先选择一个实例，再安装模组"));
+        return;
+    }
+
+    const QString loader = loaderFacetName(m_currentInstanceLoader);
+    if (loader.isEmpty())
+    {
+        NotificationManager::showError(this,
+            tr("当前实例是原版（未安装模组加载器），无法加载模组。"
+               "请先给实例安装 Fabric / Forge / NeoForge 再使用该功能"));
+        return;
+    }
+
+    // 按页面的需求选定要装的模组（Modrinth 项目 slug）
+    QString slug;
+    QString displayName;
+    if (modKey == QLatin1String("shader_loader"))
+    {
+        // Iris 支持 Fabric / Quilt / NeoForge，Forge 上对应的是 Oculus
+        const bool isForge = (loader == QLatin1String("forge"));
+        slug = isForge ? QStringLiteral("oculus") : QStringLiteral("iris");
+        displayName = isForge ? QStringLiteral("Oculus") : QStringLiteral("Iris Shaders");
+    }
+    else if (modKey == QLatin1String("projection"))
+    {
+        slug = QStringLiteral("litematica");
+        displayName = QStringLiteral("Litematica");
+    }
+    else if (modKey == QLatin1String("replaymod"))
+    {
+        slug = QStringLiteral("replaymod");
+        displayName = QStringLiteral("Replay Mod");
+    }
+    else if (modKey == QLatin1String("flashback"))
+    {
+        slug = QStringLiteral("flashback");
+        displayName = QStringLiteral("Flashback");
+    }
+    else
+    {
+        return;
+    }
+
+    auto *api = new ModrinthAPI(this);
+    api->setBaseUrl(McimHelper::modrinthApiBaseUrl());
+
+    const QString gameVersion = m_currentInstanceVersion;
+    const QString loaderLabel = m_currentInstanceLoader;
+    // 兜底：装不成时带用户去下载页按名称自己挑（例如 NeoForge 上的第三方移植版本）
+    const QString fallbackKeyword = displayName;
+
+    connect(api, &ModrinthAPI::modDetailReceived, this,
+        [this, api, loader, gameVersion, loaderLabel, displayName, fallbackKeyword](const ModInfo &detail)
+    {
+        api->deleteLater();
+
+        // 装之前先确认真有适配当前实例的版本，避免把不兼容的 jar 塞进 mods 目录
+        bool compatible = false;
+        for (const ModVersionFile &vf : detail.versionFiles)
+        {
+            if (matchesLoader(vf, loader) && matchesGameVersion(vf, gameVersion))
+            {
+                compatible = true;
+                break;
+            }
+        }
+        if (!compatible)
+        {
+            NotificationManager::showInfo(this,
+                tr("%1 暂无适配当前实例（%2 · %3）的版本，已打开下载页，可挑选其它同类模组")
+                    .arg(displayName, gameVersion, loaderLabel));
+            showModDownloadPage();
+            if (m_modDownloadPage)
+                m_modDownloadPage->setSearchText(fallbackKeyword);
+            return;
+        }
+
+        ModInfo target = detail;
+        if (target.name.isEmpty())
+            target.name = displayName;
+        // 后续下载/前置递归由 onCardDownloadRequested 统一走「一键安装」流程（自带提示）
+        onCardDownloadRequested(target, ContentType::Mod);
+    });
+
+    connect(api, &ModrinthAPI::modDetailFailed, this,
+        [this, api, displayName](const QString &error)
+    {
+        api->deleteLater();
+        NotificationManager::showError(this,
+            tr("获取 %1 信息失败：%2").arg(displayName, error));
+    });
+
+    api->fetchModDetail(slug);
 }
 
 void MainWindow::onClipboardLinkDetected(const ClipboardLinkInfo &info)

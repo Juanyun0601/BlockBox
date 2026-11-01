@@ -53,19 +53,22 @@ quint64 Xoroshiro::nextLong()
 
 int Xoroshiro::nextInt(int bound)
 {
-    if (bound <= 0)
+    if (bound <= 1)
         return 0;
     // 与 Minecraft RandomSource.nextInt 一致：nextBits(31) + 拒绝采样
-    const int bits = int(nextLong() >> 33);
+    int bits = int(nextLong() >> 33);
     if ((bound & -bound) == bound)
         return int((qint64(bound) * qint64(bits)) >> 31);
-    for (;;)
+    for (int attempt = 0; attempt < 64; ++attempt)
     {
-        const int i = int(nextLong() >> 33);
-        int j = i - (i % bound) + bound;
+        const int i = bits;
+        const int m = i % bound;
+        const int j = i - m + bound;
         if (j >= 0)
-            return j;
+            return m; // 与 java.util.Random 一样返回余数区间
+        bits = int(nextLong() >> 33);
     }
+    return 0;
 }
 
 int Xoroshiro::nextIntBetween(int lo, int hi)

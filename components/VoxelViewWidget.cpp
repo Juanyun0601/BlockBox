@@ -9,6 +9,7 @@
 
 #include "components/GlslCompat.h"
 
+#include <QCursor>
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QFocusEvent>
@@ -154,6 +155,8 @@ VoxelViewWidget::VoxelViewWidget(QWidget *parent)
     connect(&m_flyTimer, &QTimer::timeout, this, [this]() {
         applyFlyKeys(0.016f);
     });
+
+    m_clock.start();
 }
 
 VoxelViewWidget::~VoxelViewWidget()
@@ -166,6 +169,7 @@ VoxelViewWidget::~VoxelViewWidget()
 void VoxelViewWidget::setDocument(SchematicDocument *doc)
 {
     m_doc = doc;
+    m_highlightCells.clear();   // 换文档后旧格索引失效
     m_paletteCacheValid = false;
     m_paletteCache.clear();
     if (!m_eyeValid)
@@ -202,16 +206,19 @@ void VoxelViewWidget::setShowAir(bool show)
 
 void VoxelViewWidget::setLayerFilter(int layer)
 {
-    if (m_layerFilter == layer)
-        return;
-    m_layerFilter = layer;
-    rebuild();
+    setLayerView(layer, m_layerMode);
 }
 
 void VoxelViewWidget::setLayerMode(LayerMode mode)
 {
-    if (m_layerMode == mode)
+    setLayerView(m_layerFilter, mode);
+}
+
+void VoxelViewWidget::setLayerView(int layer, LayerMode mode)
+{
+    if (m_layerFilter == layer && m_layerMode == mode)
         return;
+    m_layerFilter = layer;
     m_layerMode = mode;
     rebuild();
 }
@@ -238,6 +245,15 @@ void VoxelViewWidget::setSelectedCells(const QSet<int> &cells)
     update();
 }
 
+void VoxelViewWidget::setHighlightCells(const QSet<int> &cells)
+{
+    if (m_highlightCells == cells)
+        return;
+    m_highlightCells = cells;
+    rebuildHighlightGeometry();
+    update();
+}
+
 void VoxelViewWidget::setLeftAction(LeftAction action)
 {
     if (m_leftAction == action)
@@ -258,6 +274,7 @@ void VoxelViewWidget::rebuild()
     buildGeometry();
     rebuildSelectionGeometry();
     rebuildHoverGeometry();
+    rebuildHighlightGeometry();
     update();
 }
 
@@ -271,12 +288,12 @@ QVector3D VoxelViewWidget::lookForward() const
 
 QVector3D VoxelViewWidget::eyePosition() const
 {
-    return m_orbitCenter - lookForward() * m_orbitDist;
+    return m_eyePos;
 }
 
 QVector3D VoxelViewWidget::lookTarget() const
 {
-    return m_orbitCenter;
+    return m_eyePos + lookForward() * qMax(1.0f, m_viewDist);
 }
 
 void VoxelViewWidget::resetView()
@@ -294,9 +311,8 @@ void VoxelViewWidget::resetView()
                               + float(m_doc->sizeZ()) * m_doc->sizeZ());
         radius = qMax(radius, 4.0f);
     }
-    m_orbitCenter = center;
-    m_orbitDist = radius / qSin(qDegreesToRadians(22.5f)) * 0.95f;
-    m_orbitDist = qBound(4.0f, m_orbitDist, 6000.0f);
+    m_viewDist = qBound(4.0f, radius / qSin(qDegreesToRadians(22.5f)) * 0.95f, 6000.0f);
+    m_eyePos = center - lookForward() * m_viewDist;
     m_eyeValid = true;
     update();
 }
@@ -325,12 +341,13 @@ void VoxelViewWidget::focusOnCells(const QSet<int> &cells)
     }
     if (minX > maxX)
         return;
-    m_orbitCenter = QVector3D((minX + maxX + 1) * 0.5f, (minY + maxY + 1) * 0.5f,
-                              (minZ + maxZ + 1) * 0.5f);
+    const QVector3D center((minX + maxX + 1) * 0.5f, (minY + maxY + 1) * 0.5f,
+                           (minZ + maxZ + 1) * 0.5f);
     const float radius = 0.5f * qSqrt(float(maxX - minX + 1) * (maxX - minX + 1)
                                       + float(maxY - minY + 1) * (maxY - minY + 1)
                                       + float(maxZ - minZ + 1) * (maxZ - minZ + 1));
-    m_orbitDist = qBound(2.0f, radius / qSin(qDegreesToRadians(22.5f)) * 1.05f, 6000.0f);
+    m_viewDist = qBound(2.0f, radius / qSin(qDegreesToRadians(22.5f)) * 1.05f, 6000.0f);
+    m_eyePos = center - lookForward() * m_viewDist;
     m_eyeValid = true;
     update();
 }
@@ -339,18 +356,28 @@ void VoxelViewWidget::focusAll()
 {
     if (!m_doc || !m_doc->isLoaded())
         return;
-    QVector3D center(m_doc->sizeX() * 0.5f, m_doc->sizeY() * 0.5f, m_doc->sizeZ() * 0.5f);
-    const float radius = qMax(4.0f, 0.5f * qSqrt(float(m_doc->sizeX()) * m_doc->sizeX()
-                                                 + float(m_doc->sizeY()) * m_doc->sizeY()
-                                                 + float(m_doc->sizeZ()) * m_doc->sizeZ()));
-    m_orbitCenter = center;
-    m_orbitDist = qBound(3.0f, radius / qSin(qDegreesToRadians(22.5f)) * 0.95f, 6000.0f);
+    const float sx = float(m_doc->sizeX());
+    const float sy = float(m_doc->sizeY());
+    const float sz = float(m_doc->sizeZ());
+    QVector3D center(sx * 0.5f, sy * 0.5f, sz * 0.5f);
+    // 取景距离按“水平方向 XZ 对角线、竖直方向高度”分别算，再按视口宽高比取大的那个。
+    // 早先直接用整个模型的对角线，扁平的建筑（村庄、遗迹）会被推得很远、小得看不清。
+    const float aspect = float(qMax(1, width())) / float(qMax(1, height()));
+    const float tanV = qTan(qDegreesToRadians(22.5f)); // 与 perspective(45) 对应
+    const float halfH = 0.5f * qSqrt(sx * sx + sz * sz);
+    const float halfV = 0.5f * qMax(sy, 1.0f);
+    const float distH = halfH / qMax(0.05f, tanV * aspect);
+    const float distV = halfV / tanV;
+    m_viewDist = qBound(3.0f, qMax(distH, distV) * 1.35f, 6000.0f);
+    m_eyePos = center - lookForward() * m_viewDist;
     m_eyeValid = true;
     update();
 }
 
 void VoxelViewWidget::applyViewPreset(ViewPreset preset)
 {
+    // 只换观察方向：取景中心与距离保持不变，视点绕到该方向对应的一侧
+    const QVector3D center = m_eyePos + lookForward() * m_viewDist;
     switch (preset)
     {
     case ViewPreset::Iso:    m_yaw = 0.6f;  m_pitch = -0.35f; break;
@@ -361,6 +388,7 @@ void VoxelViewWidget::applyViewPreset(ViewPreset preset)
     case ViewPreset::Top:    m_yaw = 0.0f;  m_pitch = float(-M_PI_2); break;
     case ViewPreset::Bottom: m_yaw = 0.0f;  m_pitch = float(M_PI_2);  break;
     }
+    m_eyePos = center - lookForward() * m_viewDist;
     m_eyeValid = true;
     update();
 }
@@ -375,9 +403,36 @@ void VoxelViewWidget::lookBy(float dYaw, float dPitch)
 
 void VoxelViewWidget::moveEye(const QVector3D &delta)
 {
-    m_orbitCenter += delta;
+    m_eyePos += delta;
     m_eyeValid = true;
     update();
+}
+
+void VoxelViewWidget::setLookSensitivity(float sensitivity)
+{
+    m_lookSensitivity = qBound(0.0f, sensitivity, 1.0f);
+}
+
+float VoxelViewWidget::mouseLookRadiansPerPixel() const
+{
+    // 《我的世界》原版的灵敏度曲线：滑块 0..1 先映射到 0.2..0.8，再取三次方。
+    // 默认 0.5 时约 0.15°/像素，和游戏默认手感接近。
+    const float f = 0.2f + m_lookSensitivity * 0.6f;
+    return qDegreesToRadians(f * f * f * 1.2f);
+}
+
+void VoxelViewWidget::endLookCapture(bool restoreCursorToPress)
+{
+    if (restoreCursorToPress && m_lookActive && isVisible())
+    {
+        // 指针从视口中心还原到按下处，避免用户松手后找不到鼠标
+        QCursor::setPos(mapToGlobal(m_pressPos));
+    }
+    m_lookActive = false;
+    m_dragging = false;
+    unsetCursor();
+    if (m_leftAction == LeftAction::Select)
+        setCursor(Qt::PointingHandCursor);
 }
 
 bool VoxelViewWidget::isFlyKey(int qtKey) const
@@ -392,6 +447,7 @@ bool VoxelViewWidget::isFlyKey(int qtKey) const
     case Qt::Key_E:
     case Qt::Key_Space:
     case Qt::Key_Shift:
+    case Qt::Key_Control:
         return true;
     default:
         return false;
@@ -406,8 +462,13 @@ void VoxelViewWidget::applyFlyKeys(float dt)
         return;
     }
 
-    // 速度随观察距离缩放：无论放大到方块级还是退到全景，手感一致
-    const float speed = qMax(2.0f, m_orbitDist * 0.55f) * dt;
+    // 《我的世界》式移动：W/S 沿视线方向飞（抬头就往上飞），A/D 水平横移，
+    // 空格上升、Shift 下降；双击 W 或按住 Ctrl 疾跑（速度 ×2）。
+    // 基础速度随取景距离放大，远景下拖动不会慢得难受。
+    const float baseSpeed = 10.92f * qBound(1.0f, m_viewDist / 40.0f, 6.0f);
+    const bool sprint = m_sprintLatch || m_heldKeys.contains(Qt::Key_Control);
+    const float speed = baseSpeed * (sprint ? 2.0f : 1.0f) * dt;
+
     const QVector3D fwd = lookForward();
     QVector3D flat = QVector3D(fwd.x(), 0.0f, fwd.z());
     if (flat.lengthSquared() < 1e-8f)
@@ -417,9 +478,9 @@ void VoxelViewWidget::applyFlyKeys(float dt)
 
     QVector3D move(0, 0, 0);
     if (m_heldKeys.contains(Qt::Key_W))
-        move += flat * speed;
+        move += fwd * speed;
     if (m_heldKeys.contains(Qt::Key_S))
-        move -= flat * speed;
+        move -= fwd * speed;
     if (m_heldKeys.contains(Qt::Key_D))
         move += right * speed;
     if (m_heldKeys.contains(Qt::Key_A))
@@ -441,79 +502,273 @@ QColor VoxelViewWidget::colorForName(const QString &blockName)
     int slash = n.indexOf(QLatin1Char(':'));
     if (slash >= 0)
         n = n.mid(slash + 1);
-    if (n == QLatin1String("air"))
+    if (n.isEmpty())
+        return QColor(120, 120, 120);
+
+    // 染色系方块（羊毛 / 地毯 / 旗帜 / 染色玻璃 / 陶瓦 / 床 / 蜡烛…）按名称里的
+    // 颜色词着色，否则白旗帜、红羊毛会被统一染成同一种颜色
+    static const struct { const char *token; int r, g, b; } kDyeColors[] = {
+        { "light_gray", 142, 142, 135 }, { "light_blue", 58, 175, 217 },
+        { "white", 233, 236, 236 },      { "orange", 240, 118, 19 },
+        { "magenta", 189, 68, 179 },     { "yellow", 248, 198, 40 },
+        { "lime", 112, 185, 26 },        { "pink", 238, 141, 172 },
+        { "gray", 62, 68, 71 },          { "cyan", 21, 119, 136 },
+        { "purple", 121, 42, 172 },      { "blue", 53, 57, 157 },
+        { "brown", 114, 71, 40 },        { "green", 84, 109, 27 },
+        { "red", 160, 39, 34 },          { "black", 26, 26, 26 },
+    };
+    // 陶瓦是「灰扑扑的染色黏土」，比羊毛混凝土暗得多，单独一套色；
+    // 带釉陶瓦仍是鲜艳色，继续用上面那套
+    static const struct { const char *token; int r, g, b; } kTerracottaColors[] = {
+        { "light_gray", 135, 106, 97 },  { "light_blue", 113, 108, 137 },
+        { "white", 209, 178, 161 },      { "orange", 161, 83, 37 },
+        { "magenta", 149, 88, 108 },     { "yellow", 186, 133, 35 },
+        { "lime", 103, 117, 52 },        { "pink", 160, 77, 78 },
+        { "gray", 57, 42, 35 },          { "cyan", 86, 91, 91 },
+        { "purple", 118, 70, 86 },       { "blue", 74, 59, 91 },
+        { "brown", 77, 51, 35 },         { "green", 76, 83, 42 },
+        { "red", 143, 61, 46 },          { "black", 37, 22, 16 },
+    };
+    static const char *const kDyeFamilies[] = {
+        "wool", "carpet", "banner", "concrete", "terracotta", "stained_glass",
+        "bed", "candle", "shulker_box", "glazed_terracotta", "concrete_powder"
+    };
+    for (const char *family : kDyeFamilies)
+    {
+        if (!n.contains(QLatin1String(family)))
+            continue;
+        const bool plainTerracotta = n.contains(QLatin1String("terracotta"))
+            && !n.contains(QLatin1String("glazed"));
+        for (int ci = 0; ci < 16; ++ci)
+        {
+            const char *token = plainTerracotta ? kTerracottaColors[ci].token : kDyeColors[ci].token;
+            if (!n.contains(QLatin1String(token)))
+                continue;
+            return plainTerracotta ? QColor(kTerracottaColors[ci].r, kTerracottaColors[ci].g,
+                                            kTerracottaColors[ci].b)
+                                   : QColor(kDyeColors[ci].r, kDyeColors[ci].g, kDyeColors[ci].b);
+        }
+        break;
+    }
+
+    // 楼梯 / 台阶 / 墙 / 栅栏 / 门 等派生方块直接沿用主体材质的颜色，
+    // 否则「深板岩楼梯」「下界砖台阶」这类会被统一染成灰色，和游戏差很远
+    static const char *const kShapeSuffixes[] = {
+        "_hanging_sign", "_pressure_plate", "_fence_gate", "_trapdoor", "_stairs", "_button",
+        "_carpet", "_fence", "_wall", "_door", "_pane", "_bars", "_sign", "_slab"
+    };
+    for (const char *suffix : kShapeSuffixes)
+    {
+        const QLatin1String sfx(suffix);
+        if (n.endsWith(sfx) && n.size() > sfx.size())
+        {
+            n.chop(sfx.size());
+            break;
+        }
+    }
+
+    if (n == QLatin1String("air") || n == QLatin1String("cave_air")
+            || n == QLatin1String("void_air") || n == QLatin1String("structure_void"))
         return QColor(0, 0, 0, 0);
-    if (n.contains(QStringLiteral("water"), Qt::CaseInsensitive))
-        return QColor(38, 96, 200, 235);
-    if (n.contains(QStringLiteral("lava")))
-        return QColor(230, 110, 30);
-    if (n.contains(QStringLiteral("glass")) || n.contains(QStringLiteral("sea_lantern"))
-            || n.contains(QStringLiteral("lantern")))
-        return QColor(190, 230, 255, 200);
-    if (n.contains(QStringLiteral("wood")) || n.contains(QStringLiteral("log")) ||
-        n.contains(QStringLiteral("planks")) || n.contains(QStringLiteral("bamboo")) ||
-        n.contains(QStringLiteral("door")) || n.contains(QStringLiteral("trapdoor")))
-        return QColor(150, 110, 60);
-    if (n.contains(QStringLiteral("fence_gate")))
-        return QColor(140, 100, 55);
-    if (n.contains(QStringLiteral("fence")))
-        return QColor(160, 130, 80);
-    if (n.contains(QStringLiteral("cobblestone_wall")) || n.contains(QStringLiteral("mossy_cobblestone_wall")))
-        return QColor(130, 130, 130);
-    if (n.contains(QStringLiteral("brick_wall")))
-        return QColor(170, 100, 80);
-    if (n.contains(QStringLiteral("stone_brick_wall")) || n.contains(QStringLiteral("mossy_stone_brick_wall")))
-        return QColor(140, 140, 140);
-    if (n.contains(QStringLiteral("nether_brick_wall")))
-        return QColor(80, 40, 50);
-    if (n.contains(QStringLiteral("prismarine_wall")))
-        return QColor(100, 140, 130);
-    if (n.contains(QStringLiteral("red_sandstone_wall")))
-        return QColor(190, 120, 70);
-    if (n.contains(QStringLiteral("sandstone_wall")))
-        return QColor(210, 190, 140);
-    if (n.contains(QStringLiteral("end_stone_brick_wall")))
-        return QColor(220, 210, 150);
-    if (n.contains(QStringLiteral("blackstone_wall")))
-        return QColor(50, 45, 50);
-    if (n.contains(QStringLiteral("polished_blackstone_wall")) || n.contains(QStringLiteral("polished_blackstone_brick_wall")))
-        return QColor(45, 40, 45);
-    if (n.contains(QStringLiteral("wall")))
-        return QColor(150, 150, 150);
-    if (n.contains(QStringLiteral("stone")) || n.contains(QStringLiteral("brick")) ||
-        n.contains(QStringLiteral("smooth")) || n.contains(QStringLiteral("andesite")) ||
-        n.contains(QStringLiteral("diorite")) || n.contains(QStringLiteral("granite")) ||
-        n.contains(QStringLiteral("cobble")))
-        return QColor(150, 150, 150);
-    if (n.contains(QStringLiteral("dirt")) || n.contains(QStringLiteral("sand")) ||
-        n.contains(QStringLiteral("gravel")) || n.contains(QStringLiteral("clay")))
-        return QColor(160, 130, 70);
-    if (n.contains(QStringLiteral("grass")) || n.contains(QStringLiteral("leaf")))
-        return QColor(90, 160, 70);
-    if (n.contains(QStringLiteral("redstone")) || n.contains(QStringLiteral("torch")) ||
-        n.contains(QStringLiteral("lamp")) || n.contains(QStringLiteral("lever")) ||
-        n.contains(QStringLiteral("button")))
-        return QColor(220, 60, 40);
-    if (n.contains(QStringLiteral("chest")) || n.contains(QStringLiteral("barrel")) ||
-        n.contains(QStringLiteral("furnace")) || n.contains(QStringLiteral("cart")))
-        return QColor(120, 90, 50);
-    if (n.contains(QStringLiteral("bed")))
-        return QColor(240, 230, 210);
-    if (n.contains(QStringLiteral("carpet")) || n.contains(QStringLiteral("wool")))
-        return QColor(220, 180, 200);
-    if (n.contains(QStringLiteral("slab")) || n.contains(QStringLiteral("stairs")))
-        return QColor(180, 180, 190);
-    if (n.contains(QStringLiteral("candle")))
-        return QColor(245, 225, 180);
-    if (n.contains(QStringLiteral("gilded")) || n.contains(QStringLiteral("gold")))
-        return QColor(230, 200, 60);
-    if (n.contains(QStringLiteral("iron")) || n.contains(QStringLiteral("copper")))
-        return QColor(170, 170, 180);
-    if (n.contains(QStringLiteral("coal")) || n.contains(QStringLiteral("obsidian")))
-        return QColor(40, 40, 45);
-    if (n.contains(QStringLiteral("diamond")))
-        return QColor(80, 220, 200);
-    return QColor(90, 130, 220);
+    // 常见方块的平均贴图色（由细到粗排列，命中第一条即返回）。
+    // 顺序是关键：含「砖」的要排在通用石头前，含「红石」的要排在通用石头前。
+    struct Rule
+    {
+        const char *token;
+        int r, g, b, a;
+    };
+    static const Rule kRules[] = {
+        // 液体与半透明
+        { "nether_portal", 120, 60, 190, 200 },
+        { "lava", 230, 110, 30, 255 },
+        { "water", 38, 96, 200, 235 },
+        { "glass", 206, 233, 247, 225 },
+        // 冰雪与晶体
+        { "blue_ice", 120, 165, 240, 235 },
+        { "packed_ice", 140, 180, 250, 235 },
+        { "ice", 155, 195, 245, 220 },
+        { "snow", 246, 248, 252, 255 },
+        { "amethyst", 133, 97, 191, 220 },
+        { "bone", 228, 224, 205, 255 },
+        { "calcite", 223, 224, 220, 255 },
+        { "dripstone", 152, 120, 96, 255 },
+        { "tuff", 108, 109, 102, 255 },
+        // 末地与深渊
+        { "end_stone_brick", 218, 215, 158, 255 },
+        { "end_stone", 219, 222, 158, 255 },
+        { "end_rod", 240, 240, 225, 255 },
+        { "purpur", 169, 125, 169, 255 },
+        { "chorus", 110, 80, 105, 255 },
+        { "sculk", 12, 32, 34, 255 },
+        { "crying_obsidian", 40, 24, 62, 255 },
+        { "obsidian", 22, 20, 32, 255 },
+        { "bedrock", 85, 85, 85, 255 },
+        { "deepslate_tiles", 58, 58, 62, 255 },
+        { "deepslate_brick", 66, 66, 70, 255 },
+        { "cobbled_deepslate", 77, 77, 80, 255 },
+        { "deepslate", 74, 74, 79, 255 },
+        // 下界
+        { "netherrack", 97, 38, 38, 255 },
+        { "nether_brick", 44, 21, 26, 255 },
+        { "nether_wart", 118, 20, 20, 255 },
+        { "magma", 142, 62, 31, 255 },
+        { "soul_sand", 82, 62, 50, 255 },
+        { "soul_soil", 78, 58, 46, 255 },
+        { "soul_torch", 90, 200, 210, 255 },
+        { "soul_lantern", 96, 205, 214, 255 },
+        { "soul_campfire", 96, 190, 200, 255 },
+        { "soul_fire", 80, 190, 205, 255 },
+        { "gilded", 246, 208, 61, 255 },
+        { "blackstone", 60, 50, 58, 255 },
+        { "basalt", 82, 80, 86, 255 },
+        // 石质
+        { "prismarine", 100, 150, 140, 255 },
+        { "mud_brick", 137, 103, 79, 255 },
+        { "packed_mud", 142, 106, 79, 255 },
+        { "stone_brick", 122, 121, 122, 255 },
+        { "red_sandstone", 181, 97, 31, 255 },
+        { "sandstone", 216, 203, 155, 255 },
+        { "red_nether_brick", 88, 32, 32, 255 },
+        { "redstone", 175, 24, 5, 255 },
+        { "cobblestone", 127, 127, 127, 255 },
+        { "granite", 149, 103, 85, 255 },
+        { "diorite", 188, 188, 191, 255 },
+        { "andesite", 136, 136, 137, 255 },
+        { "smooth_stone", 158, 158, 158, 255 },
+        { "brick", 150, 97, 83, 255 },
+        { "stone", 125, 125, 125, 255 },
+        { "quartz", 236, 229, 222, 255 },
+        { "terracotta", 152, 94, 67, 255 },
+        { "mud", 60, 57, 60, 255 },
+        // 沙土
+        { "red_sand", 188, 102, 33, 255 },
+        { "suspicious_sand", 220, 208, 165, 255 },
+        { "sand", 219, 207, 163, 255 },
+        { "suspicious_gravel", 140, 136, 136, 255 },
+        { "gravel", 132, 127, 127, 255 },
+        { "clay", 160, 167, 178, 255 },
+        { "coarse_dirt", 122, 90, 62, 255 },
+        { "rooted_dirt", 130, 100, 78, 255 },
+        { "podzol", 110, 80, 45, 255 },
+        { "mycelium", 140, 120, 130, 255 },
+        { "farmland", 110, 80, 55, 255 },
+        { "dirt", 134, 96, 67, 255 },
+        // 植被
+        { "leaves", 70, 130, 50, 255 },
+        { "sapling", 60, 110, 40, 255 },
+        { "mangrove_roots", 90, 65, 50, 255 },
+        { "azalea", 110, 150, 80, 255 },
+        { "potted_", 148, 98, 68, 255 },
+        { "flower_pot", 148, 98, 68, 255 },
+        { "flower", 170, 60, 80, 255 },
+        { "fern", 90, 140, 55, 255 },
+        { "short_grass", 95, 159, 53, 255 },
+        { "grass", 95, 159, 53, 255 },
+        { "kelp", 70, 130, 60, 255 },
+        { "seagrass", 60, 130, 70, 255 },
+        { "vine", 70, 120, 45, 255 },
+        { "moss_block", 60, 90, 40, 255 },
+        { "moss_carpet", 60, 90, 40, 255 },
+        { "lily_pad", 60, 120, 50, 255 },
+        { "cactus", 70, 120, 50, 255 },
+        { "dead_bush", 130, 100, 55, 255 },
+        { "pumpkin", 200, 130, 50, 255 },
+        { "melon", 110, 160, 60, 255 },
+        { "hay", 166, 132, 26, 255 },
+        { "wheat", 160, 170, 70, 255 },
+        // 金属与矿物
+        { "oxidized_copper", 82, 162, 132, 255 },
+        { "weathered_copper", 108, 153, 110, 255 },
+        { "exposed_copper", 161, 125, 103, 255 },
+        { "copper", 192, 107, 79, 255 },
+        { "gold", 246, 208, 61, 255 },
+        { "iron", 220, 220, 220, 255 },
+        { "diamond", 98, 219, 214, 255 },
+        { "emerald", 41, 201, 100, 255 },
+        { "lapis", 38, 97, 156, 255 },
+        { "coal", 40, 40, 45, 255 },
+        // 木质
+        { "pale_oak", 200, 196, 186, 255 },
+        { "dark_oak", 66, 43, 20, 255 },
+        { "spruce", 114, 84, 48, 255 },
+        { "birch", 193, 179, 124, 255 },
+        { "jungle", 160, 115, 80, 255 },
+        { "acacia", 168, 90, 50, 255 },
+        { "mangrove", 117, 54, 48, 255 },
+        { "cherry", 225, 181, 172, 255 },
+        { "crimson", 127, 58, 86, 255 },
+        { "warped", 43, 120, 110, 255 },
+        { "bamboo", 192, 173, 80, 255 },
+        { "oak", 162, 130, 78, 255 },
+        { "planks", 150, 110, 60, 255 },
+        { "log", 120, 92, 52, 255 },
+        { "hyphae", 127, 58, 86, 255 },
+        { "stem", 120, 92, 52, 255 },
+        { "wood", 150, 110, 60, 255 },
+        { "scaffolding", 170, 140, 80, 255 },
+        { "ladder", 150, 120, 70, 255 },
+        // 装饰与家具
+        { "bookshelf", 150, 110, 70, 255 },
+        { "chest", 120, 90, 50, 255 },
+        { "barrel", 130, 100, 60, 255 },
+        { "furnace", 110, 110, 110, 255 },
+        { "crafting_table", 150, 110, 70, 255 },
+        { "loom", 150, 120, 90, 255 },
+        { "cartography", 150, 120, 90, 255 },
+        { "smithing", 90, 90, 95, 255 },
+        { "stonecutter", 160, 160, 160, 255 },
+        { "cauldron", 70, 70, 78, 255 },
+        { "anvil", 70, 70, 78, 255 },
+        { "brewing", 150, 120, 90, 255 },
+        { "enchanting", 60, 45, 80, 255 },
+        { "bedrock", 85, 85, 85, 255 },
+        { "bed", 200, 60, 60, 255 },
+        { "wool", 225, 225, 225, 255 },
+        { "carpet", 225, 225, 225, 255 },
+        { "candle", 245, 225, 180, 255 },
+        { "sea_lantern", 200, 230, 220, 255 },
+        { "lantern", 255, 200, 110, 255 },
+        { "glowstone", 255, 220, 150, 255 },
+        { "shroomlight", 255, 170, 80, 255 },
+        { "froglight", 230, 220, 180, 255 },
+        { "redstone_lamp", 200, 170, 90, 255 },
+        { "campfire", 120, 85, 55, 255 },
+        { "torch", 255, 200, 90, 255 },
+        { "fire", 255, 168, 62, 255 },
+        { "chain", 110, 110, 120, 255 },
+        { "rail", 150, 150, 155, 255 },
+        { "cobweb", 235, 235, 235, 200 },
+        { "tnt", 200, 50, 40, 255 },
+        { "sponge", 200, 200, 90, 255 },
+        { "conduit", 140, 210, 200, 255 },
+        { "beacon", 120, 220, 230, 200 },
+        { "bell", 230, 190, 70, 255 },
+        { "banner", 200, 60, 60, 255 },
+        { "pot", 170, 110, 90, 255 },
+        { "jukebox", 110, 80, 55, 255 },
+        { "note_block", 110, 80, 55, 255 },
+        { "target", 230, 210, 180, 255 },
+        { "honey", 240, 170, 50, 255 },
+        { "slime", 120, 190, 110, 200 },
+        { "trial_spawner", 70, 60, 90, 255 },
+        { "vault", 90, 80, 70, 255 },
+        { "candle", 245, 225, 180, 255 },
+    };
+    for (const Rule &rule : kRules)
+    {
+        if (n.contains(QLatin1String(rule.token)))
+            return QColor(rule.r, rule.g, rule.b, rule.a);
+    }
+
+    // 未收录的方块：按名字散列出一个稳定色（不使用 qHash，保证跨进程一致），
+    // 避免整片结构被染成同一种颜色
+    quint32 hash = 2166136261u;
+    for (const QChar ch : n)
+        hash = (hash ^ quint32(ch.unicode())) * 16777619u;
+    const int hue = int(hash % 360u);
+    const int sat = 30 + int((hash >> 8) % 55u);
+    const int val = 135 + int((hash >> 16) % 60u);
+    return QColor::fromHsv(hue, sat, val);
 }
 
 QColor VoxelViewWidget::blockColorOf(const QString &blockName)
@@ -575,6 +830,8 @@ void VoxelViewWidget::ensurePaletteCache()
             pr.color.setAlpha(51);          // 空气轮廓：淡淡一层
             RenderBox box;                  // 默认整格
             box.fullCube = true;
+            for (int f = 0; f < 6; ++f)
+                box.face[f].present = true;  // 空气轮廓六个面都要画
             pr.boxes.append(box);
             pr.fullCube = true;
             pr.opaque = false;
@@ -622,6 +879,10 @@ void VoxelViewWidget::ensurePaletteCache()
                 allFull = false;
 
             // 每面贴图/UV（优先该面模型纹理，其次方块基础贴图，最后颜色回退）
+            // 模型只渲染它显式列出的面（与游戏一致）：灯笼这种「顶盖只写了 5 个面、
+            // 顶部十字贴片只写了 2 个面」的模型，补出来的面不但白占顶点，
+            // 还会和真正相邻的面重叠在一起（顶盖底面 vs 灯身顶面）而闪面。
+            const bool modelHasFaces = !sb.faces.isEmpty();
             for (int f = 0; f < 6; ++f)
             {
                 QString texKey;
@@ -634,7 +895,10 @@ void VoxelViewWidget::ensurePaletteCache()
                         break;
                     }
                 }
+                if (!sface && modelHasFaces)
+                    continue;
                 RenderFace &rf = rb.face[f];
+                rf.present = true;   // 模型没写 faces 的元素才走「整格六面」保底
                 if (sface)
                 {
                     texKey = sface->texture;
@@ -649,8 +913,6 @@ void VoxelViewWidget::ensurePaletteCache()
                         rf.tint[2] = uchar(tc.blue());
                     }
                 }
-                if (sface)
-                    texKey = sface->texture;
                 int tile = -1;
                 bool ok = false;
                 if (texAvail)
@@ -922,18 +1184,32 @@ void VoxelViewWidget::buildGeometry()
                 const uchar ca = uchar(pr.color.alpha());
                 if (!pr.tinted)
                 {
-                    cr = qBound<uchar>(0, uchar(cr * jitter), 255);
-                    cg = qBound<uchar>(0, uchar(cg * jitter), 255);
-                    cb = qBound<uchar>(0, uchar(cb * jitter), 255);
+                    // 注意：必须先在浮点域夹到 0..255 再转 uchar，
+                    // 否则像雪块(246) 乘 1.05 得 258 会溢出回卷成 2，渲染出怪色薄片
+                    cr = uchar(qBound(0.0f, float(cr) * jitter, 255.0f));
+                    cg = uchar(qBound(0.0f, float(cg) * jitter, 255.0f));
+                    cb = uchar(qBound(0.0f, float(cb) * jitter, 255.0f));
                 }
 
                 for (const RenderBox &box : pr.boxes)
                 {
+                    // 零厚度元素的退化面（灯笼顶部十字贴片、链子、平面植物）没有面积，
+                    // 画出来只是白占顶点，这里按面积提前丢掉
+                    const float ex = box.to[0] - box.from[0];
+                    const float ey = box.to[1] - box.from[1];
+                    const float ez = box.to[2] - box.from[2];
                     for (int f = 0; f < 6; ++f)
                     {
                         const int axis = kFaceAxis[f];
                         const int sign = kFaceSign[f];
                         const RenderFace &rf = box.face[f];
+
+                        // 模型没声明这一面就整个不画（原版也只渲染 elements 里列出的面）
+                        if (!rf.present)
+                            continue;
+                        const float faceArea = (axis == 0) ? ey * ez : (axis == 1 ? ex * ez : ex * ey);
+                        if (faceArea < 1e-6f)
+                            continue;
 
                         // ---- 背面剔除：面贴格子边界、模型声明了 cullface、且邻居是不透明整方块 ----
                         bool onBoundary = false;
@@ -1029,7 +1305,12 @@ void VoxelViewWidget::buildGeometry()
                             const float kx = corner[0], ky = corner[1], kz = corner[2];
                             float fu, fv;
                             if (f == 0 || f == 1)      { fu = kz;          fv = 1.0f - ky; }
-                            else if (f == 2)           { fu = 1.0f - kx;   fv = kz; }
+                            // 顶面：原版是「U 随 +X、V 随 +Z」（贴图按从上方看的样子平铺，
+                            // 左上角对西北）。这里以前把 U 反了，凡是左右不对称的顶面贴图
+                            // 都会镜像——弯曲铁轨最明显：shape=south_east 的贴图弧线其实从
+                            // 南边西侧进、东边北侧出，U 一反就成了从南边东侧进、西边出，
+                            // 弯道看着就是「斜着拧过去」的一团，和游戏里对不上。
+                            else if (f == 2)           { fu = kx;          fv = kz; }
                             else if (f == 3)           { fu = kx;          fv = 1.0f - kz; }
                             else                       { fu = kx;          fv = 1.0f - ky; }
                             if (rf.useTex)
@@ -1191,7 +1472,8 @@ void main() {
     m_program.addShaderFromSourceCode(QOpenGLShader::Fragment, fsrc);
     m_program.link();
 
-    // 叠加通道：选中线框 / 悬停高亮（自带颜色，线段与三角形共用）
+    // 叠加通道：选中线框 / 悬停高亮 / 藏宝箱高亮（自带颜色，线段与三角形共用）
+    // uAlpha：整体透明度倍率，高亮通道用它把「被墙挡住的轮廓」画成半透明
     const char *ovVsrc = BLOCKBOX_GLSL_VS_HEADER R"(
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec4 aColor;
@@ -1205,8 +1487,9 @@ void main() {
 )";
     const char *ovFsrc = BLOCKBOX_GLSL_FS_HEADER R"(
 in vec4 vColor;
+uniform float uAlpha;
 out vec4 fragColor;
-void main() { fragColor = vColor; }
+void main() { fragColor = vec4(vColor.rgb, vColor.a * uAlpha); }
 )";
     m_ovProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, ovVsrc);
     m_ovProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, ovFsrc);
@@ -1251,10 +1534,15 @@ void main() {
     m_hoverVbo.create();
     m_hoverVbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
 
+    m_hiVao.create();
+    m_hiVbo.create();
+    m_hiVbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+
     m_glReady = true;
     m_uploadDirty = true;
     m_selUploadDirty = true;
     m_hoverUploadDirty = true;
+    m_hiUploadDirty = true;
     m_atlasDirty = true;
 }
 
@@ -1421,9 +1709,83 @@ void VoxelViewWidget::appendCellLines(int cellIndex, const QVector<RenderBox> &b
     }
 }
 
-void VoxelViewWidget::rebuildSelectionGeometry()
+void VoxelViewWidget::appendCellFaces(int cellIndex, const QVector<RenderBox> &boxes,
+                                      uchar r, uchar g, uchar b, uchar a,
+                                      QByteArray *outData) const
 {
-    m_selData.clear();
+    if (!m_doc || boxes.isEmpty())
+        return;
+
+    const int layer = m_doc->layerSize();
+    const int sx = m_doc->sizeX();
+    const int y = cellIndex / layer;
+    const int rem = cellIndex % layer;
+    const int z = rem / sx;
+    const int x = rem % sx;
+
+    static const float kCorner[8][3] = {
+        {0,0,0},{1,0,0},{0,1,0},{1,1,0},
+        {0,0,1},{1,0,1},{0,1,1},{1,1,1}
+    };
+    static const int kQuad[6][4] = {
+        {1,5,7,3},{0,4,6,2},{3,7,6,2},{0,1,5,4},{4,5,7,6},{0,1,3,2}
+    };
+
+    const float eps = 0.003f;
+    const qsizetype at = outData->size();
+    // 每个盒子 6 个面 × 6 个顶点 × 16 字节
+    const qsizetype needBytes = qsizetype(boxes.size()) * 6 * 6 * 16;
+    try
+    {
+        outData->resize(int(at + needBytes));
+    }
+    catch (const std::bad_alloc &)
+    {
+        return;
+    }
+    uchar *p = reinterpret_cast<uchar *>(outData->data()) + at;
+
+    for (const RenderBox &box : boxes)
+    {
+        const float cx = (box.from[0] + box.to[0]) * 0.5f;
+        const float cy = (box.from[1] + box.to[1]) * 0.5f;
+        const float cz = (box.from[2] + box.to[2]) * 0.5f;
+        float w[8][3];
+        for (int c = 0; c < 8; ++c)
+        {
+            float lx = box.from[0] + (box.to[0] - box.from[0]) * kCorner[c][0];
+            float ly = box.from[1] + (box.to[1] - box.from[1]) * kCorner[c][1];
+            float lz = box.from[2] + (box.to[2] - box.from[2]) * kCorner[c][2];
+            // 先按盒心微微外扩，再套用模型旋转：外壳比方块本体大一圈才不会 z-fighting
+            lx += (lx >= cx ? eps : -eps);
+            ly += (ly >= cy ? eps : -eps);
+            lz += (lz >= cz ? eps : -eps);
+            if (box.rotated)
+                rotatePoint3(lx, ly, lz, box.rotOrigin[0], box.rotOrigin[1], box.rotOrigin[2],
+                             box.rotAngle, box.rotAxis);
+            if (box.yaw)
+                rotatePoint3(lx, ly, lz, 0.5f, 0.5f, 0.5f, float(box.yaw), 1);
+            w[c][0] = float(x) + lx;
+            w[c][1] = float(y) + ly;
+            w[c][2] = float(z) + lz;
+        }
+        for (int f = 0; f < 6; ++f)
+        {
+            const int *idx = kQuad[f];
+            static const int order[6] = { 0, 1, 2, 0, 2, 3 };
+            for (int v = 0; v < 6; ++v)
+            {
+                const float *pos = w[idx[order[v]]];
+                std::memcpy(p, pos, 12);
+                p[12] = r; p[13] = g; p[14] = b; p[15] = a;
+                p += 16;
+            }
+        }
+    }
+}
+
+void VoxelViewWidget::rebuildSelectionGeometry()
+{    m_selData.clear();
     m_selVertexCount = 0;
     m_selUploadDirty = true;
 
@@ -1550,6 +1912,84 @@ void VoxelViewWidget::rebuildHoverGeometry()
     update();
 }
 
+void VoxelViewWidget::rebuildHighlightGeometry()
+{
+    m_hiData.clear();
+    m_hiTriVerts = 0;
+    m_hiLineVerts = 0;
+    m_hiUploadDirty = true;
+
+    if (!m_doc || !m_doc->isLoaded() || m_highlightCells.isEmpty())
+        return;
+    ensurePaletteCache();
+
+    const int vol = m_doc->volume();
+    const int layer = m_doc->layerSize();
+    const LayerMode mode = m_layerMode;
+    const int filter = m_layerFilter;
+    const bool allowAll = (mode == LayerMode::All) || (filter < 0);
+
+    // 只看某一层 / 此层以下时，高亮跟着同样的可见范围走：
+    // 否则被层过滤藏起来的宝箱会以「透视轮廓」浮在图里，反而看不懂
+    const auto cellVisible = [&](int cell) -> bool {
+        if (cell < 0 || cell >= vol)
+            return false;
+        if (allowAll)
+            return true;
+        const int y = cell / layer;
+        return mode == LayerMode::Single ? (y == filter) : (y <= filter);
+    };
+
+    const int kMaxHighlightCells = 8192;
+    int used = 0;
+    try
+    {
+        // 第一段：淡金填充（只在能看到的地方叠一层暖色，让宝箱从同色调木头里跳出来）
+        for (int cell : m_highlightCells)
+        {
+            if (used >= kMaxHighlightCells)
+                break;
+            if (!cellVisible(cell))
+                continue;
+            const int p = m_doc->paletteIndexAt(cell);
+            if (p < 0 || p >= m_paletteCache.size())
+                continue;
+            const PaletteRender &pr = m_paletteCache.at(p);
+            if (pr.isAir)
+                continue;
+            appendCellFaces(cell, pr.boxes, 255, 184, 54, 56, &m_hiData);
+            ++used;
+        }
+        m_hiTriVerts = int(m_hiData.size() / 16);
+
+        // 第二段：琥珀金描边；绘制时会再以半透明画一遍「透视」轮廓
+        used = 0;
+        for (int cell : m_highlightCells)
+        {
+            if (used >= kMaxHighlightCells)
+                break;
+            if (!cellVisible(cell))
+                continue;
+            const int p = m_doc->paletteIndexAt(cell);
+            if (p < 0 || p >= m_paletteCache.size())
+                continue;
+            const PaletteRender &pr = m_paletteCache.at(p);
+            if (pr.isAir)
+                continue;
+            appendCellLines(cell, pr.boxes, 255, 196, 72, &m_hiData);
+            ++used;
+        }
+        m_hiLineVerts = int(m_hiData.size() / 16) - m_hiTriVerts;
+    }
+    catch (const std::bad_alloc &)
+    {
+        m_hiData.clear();
+        m_hiTriVerts = 0;
+        m_hiLineVerts = 0;
+    }
+    update();
+}
+
 void VoxelViewWidget::uploadSelectionGeometry()
 {
     m_selUploadDirty = false;
@@ -1589,6 +2029,27 @@ void VoxelViewWidget::uploadHoverGeometry()
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, 16, reinterpret_cast<void *>(12));
     m_hoverVao.release();
+}
+
+void VoxelViewWidget::uploadHighlightGeometry()
+{
+    m_hiUploadDirty = false;
+    if (!m_glReady)
+        return;
+    if (m_hiData.isEmpty())
+    {
+        m_hiTriVerts = 0;
+        m_hiLineVerts = 0;
+        return;
+    }
+    m_hiVbo.bind();
+    m_hiVbo.allocate(m_hiData.constData(), int(m_hiData.size()));
+    m_hiVao.bind();
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 16, reinterpret_cast<void *>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, 16, reinterpret_cast<void *>(12));
+    m_hiVao.release();
 }
 
 void VoxelViewWidget::ensureBackgroundResources()
@@ -1650,7 +2111,7 @@ void VoxelViewWidget::paintGL()
         m_program.setUniformValue("uAtlas", 0);
         m_program.setUniformValue("uProj", proj);
         m_program.setUniformValue("uView", view);
-        const float fogEnd = qMax(64.0f, m_orbitDist * 2.2f);
+        const float fogEnd = qMax(64.0f, m_viewDist * 2.2f);
         m_program.setUniformValue("uFogColor", QVector3D(0.06f, 0.07f, 0.10f));
         m_program.setUniformValue("uFogStart", fogEnd * 0.35f);
         m_program.setUniformValue("uFogEnd", fogEnd);
@@ -1679,16 +2140,66 @@ void VoxelViewWidget::paintGL()
     // ---- 叠加通道 ----
     if (m_ovProgram.isLinked())
     {
+        // 只混合颜色、不写 alpha：QOpenGLWidget 的帧缓冲 alpha 会参与和下层
+        // 页面的合成，半透明线框若把 alpha 拉低，线头处会透出下面地图的绿/蓝
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+
         if (m_hoverUploadDirty)
             uploadHoverGeometry();
         if (m_selUploadDirty)
             uploadSelectionGeometry();
+        if (m_hiUploadDirty)
+            uploadHighlightGeometry();
+
+        // 高亮格（藏宝箱）：先以无深度测试的半透明轮廓「透」出来，
+        // 再按正常深度画淡金填充与亮边；被方块包住的宝箱只剩透视轮廓
+        if (m_hiData.size() > 0 && m_hiVao.isCreated())
+        {
+            m_ovProgram.bind();
+            m_ovProgram.setUniformValue("uProj", proj);
+            m_ovProgram.setUniformValue("uView", view);
+            m_hiVao.bind();
+
+            if (m_hiLineVerts > 0)
+            {
+                m_ovProgram.setUniformValue("uAlpha", 0.36f);
+                glDisable(GL_DEPTH_TEST);
+                glDepthMask(GL_FALSE);
+                glLineWidth(1.3f);
+                glDrawArrays(GL_LINES, m_hiTriVerts, m_hiLineVerts);
+                glLineWidth(1.0f);
+                glDepthMask(GL_TRUE);
+                glEnable(GL_DEPTH_TEST);
+            }
+
+            m_ovProgram.setUniformValue("uAlpha", 1.0f);
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(-1.0f, -1.0f);
+            glDepthMask(GL_FALSE);
+            if (m_hiTriVerts > 0)
+                glDrawArrays(GL_TRIANGLES, 0, m_hiTriVerts);
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            glDepthMask(GL_TRUE);
+            if (m_hiLineVerts > 0)
+            {
+                glDepthFunc(GL_LEQUAL);
+                glLineWidth(2.2f);
+                glDrawArrays(GL_LINES, m_hiTriVerts, m_hiLineVerts);
+                glLineWidth(1.0f);
+                glDepthFunc(GL_LESS);
+            }
+            glEnable(GL_CULL_FACE);
+            m_hiVao.release();
+            m_ovProgram.release();
+        }
 
         if (m_hoverData.size() > 0 && m_hoverVao.isCreated())
         {
             m_ovProgram.bind();
             m_ovProgram.setUniformValue("uProj", proj);
             m_ovProgram.setUniformValue("uView", view);
+            m_ovProgram.setUniformValue("uAlpha", 1.0f);
             m_hoverVao.bind();
             glDisable(GL_CULL_FACE);        // 悬停填充是半透明外壳，两面都画
             glEnable(GL_POLYGON_OFFSET_FILL);
@@ -1716,6 +2227,7 @@ void VoxelViewWidget::paintGL()
             m_ovProgram.bind();
             m_ovProgram.setUniformValue("uProj", proj);
             m_ovProgram.setUniformValue("uView", view);
+            m_ovProgram.setUniformValue("uAlpha", 1.0f);
             glDepthFunc(GL_LEQUAL);
             glLineWidth(1.8f);
             m_selVao.bind();
@@ -1725,6 +2237,7 @@ void VoxelViewWidget::paintGL()
             glDepthFunc(GL_LESS);
             m_ovProgram.release();
         }
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
     m_needsRepaint = false;
 }
@@ -2025,25 +2538,16 @@ void VoxelViewWidget::mousePressEvent(QMouseEvent *e)
 
     setFocus(Qt::MouseFocusReason);
     m_dragging = true;
-    m_lastPos = e->pos();
     m_pressPos = e->pos();
     m_dragMoved = false;
+    m_lookActive = false;
     m_selectPending = (m_leftAction == LeftAction::Select) && left;
     setCursor(Qt::ClosedHandCursor);
 }
 
 void VoxelViewWidget::mouseMoveEvent(QMouseEvent *e)
 {
-    if (m_dragging)
-    {
-        const int dx = e->pos().x() - m_lastPos.x();
-        const int dy = e->pos().y() - m_lastPos.y();
-        if ((e->pos() - m_pressPos).manhattanLength() > 4)
-            m_dragMoved = true;
-        lookBy(dx * 0.008f, dy * 0.008f);
-        m_lastPos = e->pos();
-    }
-    else
+    if (!m_dragging)
     {
         int x, y, z;
         if (pickRay(e->pos(), x, y, z))
@@ -2056,23 +2560,55 @@ void VoxelViewWidget::mouseMoveEvent(QMouseEvent *e)
             setHover(INT_MIN, INT_MIN, INT_MIN);
             setCursor(Qt::ArrowCursor);
         }
+        return;
     }
+
+    if (!m_lookActive)
+    {
+        // 按下后移动超过阈值才进入「转向视角」，轻点不会误转
+        if ((e->pos() - m_pressPos).manhattanLength() <= 4)
+            return;
+        m_lookActive = true;
+        m_dragMoved = true;
+        setCursor(Qt::BlankCursor);
+        m_lookAnchor = rect().center();
+        QCursor::setPos(mapToGlobal(m_lookAnchor));
+        return;
+    }
+
+    // 指针锁在视口中心：每帧按相对位移转身，再拉回中心，可以无限转
+    const QPoint delta = e->pos() - m_lookAnchor;
+    // 高 DPI 下回中后读回的坐标可能差 1 像素，忽略这种回声，避免视角自转
+    if (qAbs(delta.x()) <= 1 && qAbs(delta.y()) <= 1)
+        return;
+
+    const float radPerPx = mouseLookRadiansPerPixel();
+    const float dy = m_invertLookY ? -delta.y() : delta.y();
+    lookBy(delta.x() * radPerPx, dy * radPerPx);
+    QCursor::setPos(mapToGlobal(m_lookAnchor));
 }
 
 void VoxelViewWidget::mouseReleaseEvent(QMouseEvent *e)
 {
-    const bool selecting = m_selectPending && !m_dragMoved && e->button() == Qt::LeftButton;
+    const bool selecting = m_selectPending && !m_dragMoved && !m_lookActive
+                           && e->button() == Qt::LeftButton;
     // 拖动过 = 转向视角，不执行编辑；否则执行按下时记下的破坏 / 放置
-    const int pendingEdit = (m_dragMoved || selecting) ? EditNone : m_pendingEdit;
+    const int pendingEdit = (m_dragMoved || m_lookActive || selecting) ? EditNone : m_pendingEdit;
     const int px = m_pendingX, py = m_pendingY, pz = m_pendingZ;
 
-    m_dragging = false;
+    if (m_lookActive)
+    {
+        endLookCapture(true);
+    }
+    else
+    {
+        m_dragging = false;
+        unsetCursor();
+        if (m_leftAction == LeftAction::Select)
+            setCursor(Qt::PointingHandCursor);
+    }
     m_selectPending = false;
     m_pendingEdit = EditNone;
-
-    unsetCursor();
-    if (m_leftAction == LeftAction::Select)
-        setCursor(Qt::PointingHandCursor);
 
     if (selecting)
     {
@@ -2089,11 +2625,19 @@ void VoxelViewWidget::mouseReleaseEvent(QMouseEvent *e)
 
 void VoxelViewWidget::wheelEvent(QWheelEvent *e)
 {
-    // 围绕观察中心缩放（比「沿视线平移」更容易控制远近）
+    // 沿视线前后推进 / 后退（第一人称下比绕中心缩放更直观）
     const float steps = e->angleDelta().y() / 120.0f;
-    m_orbitDist = qBound(1.2f, m_orbitDist * qPow(0.86f, steps), 6000.0f);
+    if (qFuzzyIsNull(steps))
+    {
+        e->ignore();
+        return;
+    }
+    const float distance = qBound(0.6f, m_viewDist * 0.12f, 16.0f) * steps;
+    m_eyePos += lookForward() * distance;
+    m_viewDist = qBound(1.2f, m_viewDist - distance, 6000.0f);
     m_eyeValid = true;
     update();
+    e->accept();
 }
 
 void VoxelViewWidget::leaveEvent(QEvent *e)
@@ -2109,7 +2653,17 @@ void VoxelViewWidget::keyPressEvent(QKeyEvent *e)
     if (isFlyKey(e->key()))
     {
         if (!e->isAutoRepeat())
+        {
+            // 双击 W 疾跑（与《我的世界》一致）；按住 Ctrl 同样疾跑
+            if (e->key() == Qt::Key_W)
+            {
+                const qint64 now = m_clock.elapsed();
+                if (m_lastWTapMs > 0 && now - m_lastWTapMs <= 350)
+                    m_sprintLatch = true;
+                m_lastWTapMs = now;
+            }
             m_heldKeys.insert(e->key());
+        }
         if (!m_flyTimer.isActive())
             m_flyTimer.start();
         e->accept();
@@ -2123,7 +2677,14 @@ void VoxelViewWidget::keyReleaseEvent(QKeyEvent *e)
     if (isFlyKey(e->key()))
     {
         if (!e->isAutoRepeat())
+        {
+            if (e->key() == Qt::Key_W)
+            {
+                m_sprintLatch = false;
+                m_lastWTapMs = 0;
+            }
             m_heldKeys.remove(e->key());
+        }
         if (m_heldKeys.isEmpty())
             m_flyTimer.stop();
         e->accept();
@@ -2136,6 +2697,10 @@ void VoxelViewWidget::focusOutEvent(QFocusEvent *e)
 {
     m_heldKeys.clear();
     m_flyTimer.stop();
+    m_sprintLatch = false;
+    m_lastWTapMs = 0;
+    if (m_lookActive)
+        endLookCapture(false);
     QOpenGLWidget::focusOutEvent(e);
 }
 
@@ -2163,6 +2728,10 @@ void VoxelViewWidget::destroyGL()
         m_hoverVbo.destroy();
     if (m_hoverVao.isCreated())
         m_hoverVao.destroy();
+    if (m_hiVbo.isCreated())
+        m_hiVbo.destroy();
+    if (m_hiVao.isCreated())
+        m_hiVao.destroy();
     if (m_bgProgram.isLinked())
         m_bgProgram.removeAllShaders();
     if (m_bgVao.isCreated())
@@ -2170,7 +2739,12 @@ void VoxelViewWidget::destroyGL()
     m_selVertexCount = 0;
     m_hoverTriVerts = 0;
     m_hoverLineVerts = 0;
+    m_hiTriVerts = 0;
+    m_hiLineVerts = 0;
     m_bgReady = false;
     m_glReady = false;
     doneCurrent();
 }
+
+
+

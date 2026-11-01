@@ -8,7 +8,8 @@
  * 部分设置。功能参考开源启动器 PCL-CE 的存档设置页（PageInstanceSavesInfo）：
  *   - 信息展示：版本、种子、最后游玩时间、出生点、游戏模式、游玩时长
  *   - 可编辑项：世界名称、游戏模式、允许作弊、难度、锁定难度、
- *               极限模式、游戏内时间、出生点坐标
+ *               极限模式、游戏内时间、出生点坐标、游戏规则
+ *     （死亡不掉落、昼夜更替等常用规则，支持搜索过滤与恢复默认值）
  *
  * 本页嵌入实例管理页（InstanceManagePage）的内容栈中，通过
  * setCurrentSave() 指定要查看的存档。修改通过 LevelDatEditor 原子写入 level.dat。
@@ -21,6 +22,8 @@
 
 #include <QWidget>
 #include <QString>
+#include <QMap>
+#include <QVector>
 
 #include "utils/Saves/LevelDatEditor.h"
 
@@ -31,6 +34,7 @@ class QComboBox;
 class QLineEdit;
 class QSpinBox;
 class QGridLayout;
+class QVBoxLayout;
 
 /**
  * @brief 存档设置页面
@@ -67,10 +71,30 @@ private slots:
     void onOpenChunkbaseClicked();///< 在 Chunkbase 中查看种子
     void onOpenMinecraftSearchClicked();///< 在 MinecraftSearch 中查看此种子地图
     void onHardcoreToggled();     ///< 极限模式/锁定难度复选框变化
+    void onRuleSearchChanged(const QString &text); ///< 按名称/ID 过滤游戏规则
+    void onRulesResetClicked();   ///< 游戏规则恢复默认值
 
 private:
+    /** 页面上的一条游戏规则控件（布尔规则用复选框，数值规则用输入框） */
+    struct RuleControl
+    {
+        QString id;             ///< 规则 ID（如 keepInventory）
+        QString zh;             ///< 中文名（显示用）
+        QString group;          ///< 所属分组名
+        QString defaultValue;   ///< 游戏默认值（"true"/"false" 或数字字符串）
+        bool numeric = false;   ///< 是否为数值规则
+        QCheckBox *check = nullptr; ///< 布尔规则复选框
+        QSpinBox *spin = nullptr;   ///< 数值规则输入框
+        QLineEdit *text = nullptr;  ///< 文本规则输入框（其他规则：模组/数据包添加）
+        QWidget *row = nullptr;     ///< 数值/文本规则的整行容器；布尔规则即复选框本身
+    };
+
     void initUI();
+    void buildRulesCard(QWidget *contentWidget, QVBoxLayout *layout, const QFont &headerFont);
     void loadSaveInfo();
+    void loadRuleValues();
+    void loadOtherRules();
+    void setRulesEnabled(bool enabled);
     void addInfoRow(const QString &head, QWidget *content);
     void refreshSpawnSpinEnable();
     void refreshHardcoreState();
@@ -119,4 +143,13 @@ private:
     QPushButton *m_minecraftSearchBtn;
     QPushButton *m_saveBtn;
     QPushButton *m_openFolderBtn;
+
+    // 游戏规则区
+    QVector<RuleControl> m_rules;           ///< 全部可编辑规则控件
+    QVector<RuleControl> m_otherRules;      ///< 其他规则控件（模组/数据包添加，随存档动态生成）
+    QMap<QString, QString> m_ruleBaseline;  ///< 载入时的规则值（文件缺省项用游戏默认值）
+    QMap<QString, QLabel *> m_groupHeaders; ///< 分组名 → 分组标题（过滤时隐藏空组）
+    QLineEdit *m_ruleSearchEdit = nullptr;  ///< 规则搜索框
+    QPushButton *m_rulesResetBtn = nullptr; ///< 「恢复默认值」按钮
+    QVBoxLayout *m_otherRulesLayout = nullptr; ///< 其他规则的行容器布局
 };

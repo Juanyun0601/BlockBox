@@ -297,6 +297,28 @@ void SchematicDocument::clear()
     m_indices.clear();
 }
 
+bool SchematicDocument::createEmpty(int sizeX, int sizeY, int sizeZ)
+{
+    if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0)
+        return false;
+    m_loaded = false;
+    m_filePath.clear();
+    m_name.clear();
+    m_author.clear();
+    m_description.clear();
+    m_version = 6;
+    m_minecraftDataVersion = 0;
+    m_originX = m_originY = m_originZ = 0;
+    m_sizeX = sizeX;
+    m_sizeY = sizeY;
+    m_sizeZ = sizeZ;
+    m_palette.clear();
+    m_palette.append(SchematicBlockState{ QStringLiteral("minecraft:air"), {} });
+    m_indices.fill(0, volume());
+    m_loaded = true;
+    return true;
+}
+
 // ============================================================================
 // 几何查询
 // ============================================================================

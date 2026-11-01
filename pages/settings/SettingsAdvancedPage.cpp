@@ -11,6 +11,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTextEdit>
@@ -19,9 +20,31 @@
 
 #include "components/AppFileDialog.h"
 #include "components/CustomCheckBox.h"
+#include "components/FileOpStepsDialog.h"
 #include "components/OutlinedLabel.h"
 #include "platform.h"
 #include "utils/LauncherLogger.h"
+#include "utils/SettingsManager.h"
+
+namespace {
+
+// 在路径的分隔符/连接符后插入零宽空格，让 QLabel 能在路径中间折行：
+// 否则日志路径这种超长“单词”会把设置页主栏的最小宽度顶宽
+QString breakablePathText(const QString &path)
+{
+    const QString native = QDir::toNativeSeparators(path);
+    QString result;
+    result.reserve(native.size() * 2);
+    for (const QChar ch : native) {
+        result.append(ch);
+        if (ch == QLatin1Char('\\') || ch == QLatin1Char('/') || ch == QLatin1Char('-')
+            || ch == QLatin1Char('_') || ch == QLatin1Char('.'))
+            result.append(QChar(0x200B));
+    }
+    return result;
+}
+
+} // namespace
 
 void SettingsPage::initAdvancedSettings()
 {
@@ -89,8 +112,8 @@ void SettingsPage::initAdvancedSettings()
 
     QHBoxLayout *logFileRow = appendSettingRow(runtimeLogCard,
         tr("日志文件"),
-        tr("当前日志：%1").arg(QDir::toNativeSeparators(LauncherLogger::logFilePath())),
-        tr("反馈问题时把导出的日志一并附上，问题会更容易定位。"), true);
+        tr("当前日志：%1").arg(breakablePathText(LauncherLogger::logFilePath())),
+        tr("反馈问题时把导出的日志一并附上；点「操作步骤」可查看日志里整理出的文件操作过程。"), true);
 
     QPushButton *openLogDirBtn = new QPushButton(tr("打开文件夹"), m_advancedSettings);
     openLogDirBtn->setObjectName("primaryButton");
@@ -103,6 +126,17 @@ void SettingsPage::initAdvancedSettings()
         QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
     });
     logFileRow->addWidget(openLogDirBtn);
+
+    QPushButton *opStepsBtn = new QPushButton(tr("操作步骤"), m_advancedSettings);
+    opStepsBtn->setObjectName("primaryButton");
+    opStepsBtn->setCursor(Qt::PointingHandCursor);
+    opStepsBtn->setFixedWidth(96);
+    opStepsBtn->setToolTip(tr("从运行日志整理下载、复制、解压等文件操作步骤，仅供查看"));
+    connect(opStepsBtn, &QPushButton::clicked, this, [this]() {
+        FileOpStepsDialog dlg(this);
+        dlg.exec();
+    });
+    logFileRow->addWidget(opStepsBtn);
 
     QPushButton *exportLogBtn = new QPushButton(tr("导出日志"), m_advancedSettings);
     exportLogBtn->setObjectName("primaryButton");
@@ -141,6 +175,110 @@ void SettingsPage::initAdvancedSettings()
     QHBoxLayout *processCheckRow = appendSettingRow(processCheckCard,
         tr("启动前检查相关进程"), tr("游戏启动前检测并提示可能冲突的进程。"), QString(), true);
     processCheckRow->addWidget(processCheckCheck);
+
+    // ── 方块盒子论坛 ──
+    QVBoxLayout *forumCard = createSettingsCard(layout, tr("方块盒子论坛"));
+
+    QLineEdit *forumUrlEdit = new QLineEdit(m_advancedSettings);
+    forumUrlEdit->setObjectName(QStringLiteral("forumUrlEdit"));
+    forumUrlEdit->setText(SettingsManager::instance()->forumBaseUrl());
+    forumUrlEdit->setPlaceholderText(SettingsManager::defaultForumBaseUrl());
+    forumUrlEdit->setMinimumWidth(240);
+    forumUrlEdit->setToolTip(tr("默认 %1，可以改成自己的服务器地址").arg(SettingsManager::defaultForumBaseUrl()));
+
+    QHBoxLayout *forumRow = appendSettingRow(forumCard,
+        tr("论坛地址"),
+        tr("左侧导航栏「社区」页会读取这个地址的板块、最新讨论和热门标签（社区需先在下方「实验性内容」里打开）；论坛账户也走这个地址。"),
+        tr("默认是官方论坛 %1。测试本地服务时填 http://127.0.0.1:3210 这样的地址即可，"
+           "协议可以不写，结尾的斜杠会被自动去掉。")
+            .arg(SettingsManager::defaultForumBaseUrl()));
+    forumRow->addWidget(forumUrlEdit, 1);
+
+    QPushButton *resetForumBtn = new QPushButton(tr("恢复默认"), m_advancedSettings);
+    resetForumBtn->setObjectName("primaryButton");
+    resetForumBtn->setCursor(Qt::PointingHandCursor);
+    resetForumBtn->setFixedWidth(96);
+    forumRow->addWidget(resetForumBtn);
+
+    QPushButton *openForumBtn = new QPushButton(tr("打开"), m_advancedSettings);
+    openForumBtn->setObjectName("primaryButton");
+    openForumBtn->setCursor(Qt::PointingHandCursor);
+    openForumBtn->setFixedWidth(72);
+    forumRow->addWidget(openForumBtn);
+
+    // 编辑框失焦 / 回车时保存并回填规范化后的地址
+    connect(forumUrlEdit, &QLineEdit::editingFinished, this, [forumUrlEdit]() {
+        SettingsManager::instance()->setForumBaseUrl(forumUrlEdit->text());
+        forumUrlEdit->setText(SettingsManager::instance()->forumBaseUrl());
+    });
+
+    connect(resetForumBtn, &QPushButton::clicked, this, [forumUrlEdit]() {
+        SettingsManager::instance()->setForumBaseUrl(QString());
+        forumUrlEdit->setText(SettingsManager::instance()->forumBaseUrl());
+    });
+
+    connect(openForumBtn, &QPushButton::clicked, this, [forumUrlEdit]() {
+        QDesktopServices::openUrl(QUrl(SettingsManager::normalizeForumUrl(forumUrlEdit->text())));
+    });
+
+    // ── 实验性内容 ──
+    QVBoxLayout *experimentalCard = createSettingsCard(layout, tr("实验性内容"));
+
+    CustomCheckBox *bedrockCheck = new CustomCheckBox();
+    bedrockCheck->setChecked(SettingsManager::instance()->isExperimentalBedrockEnabled());
+
+    QHBoxLayout *bedrockRow = appendSettingRow(experimentalCard,
+        tr("基岩版"),
+        tr("开启后顶栏会显示 Java 版 / 基岩版 切换入口。"),
+        tr("基岩版相关功能仍在开发中，部分页面可能还不完整；关闭后启动器只显示 Java 版。"),
+        true);
+    bedrockRow->addWidget(bedrockCheck);
+
+    connect(bedrockCheck, &CustomCheckBox::toggled, [](bool checked) {
+        SettingsManager::instance()->setExperimentalBedrockEnabled(checked);
+    });
+
+    CustomCheckBox *map3dCheck = new CustomCheckBox();
+    map3dCheck->setChecked(SettingsManager::instance()->isExperimentalMap3dEnabled());
+
+    QHBoxLayout *map3dRow = appendSettingRow(experimentalCard,
+        tr("存档地图立体视图"),
+        tr("开启后存档地图页会多一个「3D」开关，把同一片地表按高度立起来看。"),
+        tr("立体视图仍在打磨中，大存档拖动视角时可能偶尔掉帧；关闭后地图页只保留俯视图。"),
+        true);
+    map3dRow->addWidget(map3dCheck);
+
+    connect(map3dCheck, &CustomCheckBox::toggled, [](bool checked) {
+        SettingsManager::instance()->setExperimentalMap3dEnabled(checked);
+    });
+
+    CustomCheckBox *forumAccountCheck = new CustomCheckBox();
+    forumAccountCheck->setChecked(SettingsManager::instance()->isExperimentalForumAccountEnabled());
+
+    QHBoxLayout *forumAccountRow = appendSettingRow(experimentalCard,
+        tr("论坛账户管理界面"),
+        tr("开启后账户管理页换成和方块盒子论坛一样的界面，可以直接登录论坛账号。"),
+        tr("这是新界面的尝鲜版本，还在打磨细节；关掉就回到原来的账户管理页，游戏账户照常可用。"),
+        true);
+    forumAccountRow->addWidget(forumAccountCheck);
+
+    connect(forumAccountCheck, &CustomCheckBox::toggled, [](bool checked) {
+        SettingsManager::instance()->setExperimentalForumAccountEnabled(checked);
+    });
+
+    CustomCheckBox *communityCheck = new CustomCheckBox();
+    communityCheck->setChecked(SettingsManager::instance()->isExperimentalCommunityEnabled());
+
+    QHBoxLayout *communityRow = appendSettingRow(experimentalCard,
+        tr("社区"),
+        tr("开启后左侧导航栏会多出「社区」页，里面是方块盒子论坛的首页。"),
+        tr("社区页还在打磨中，板块、帖子等细节可能和论坛网页版有些出入；关闭后导航栏不显示「社区」。"),
+        true);
+    communityRow->addWidget(communityCheck);
+
+    connect(communityCheck, &CustomCheckBox::toggled, [](bool checked) {
+        SettingsManager::instance()->setExperimentalCommunityEnabled(checked);
+    });
 
     // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();

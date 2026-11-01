@@ -137,13 +137,13 @@ bool HttpMetaCache::updateEntry(MetaEntryPtr stale_entry)
 {
     if (!m_entries.contains(stale_entry->baseId))
     {
-        qCritical() << "Cannot add entry with unknown base: "
+        qCritical() << "无法添加未知缓存目录的条目："
                      << stale_entry->baseId.toLocal8Bit();
         return false;
     }
     if (stale_entry->stale)
     {
-        qCritical() << "Cannot add stale entry: " << stale_entry->getFullPath().toLocal8Bit();
+        qCritical() << "无法添加过期条目：" << stale_entry->getFullPath().toLocal8Bit();
         return false;
     }
     m_entries[stale_entry->baseId].entry_list[stale_entry->relativePath] = stale_entry;
@@ -281,6 +281,6 @@ void HttpMetaCache::SaveNow()
     QJsonDocument doc(toplevel);
     if (!FS::write(m_index_file, doc.toJson()))
     {
-        qWarning() << "Failed to save HttpMetaCache index to" << m_index_file;
+        qWarning() << "无法写入 HttpMetaCache 索引：" << m_index_file;
     }
 }

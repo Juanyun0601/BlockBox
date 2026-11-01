@@ -5,6 +5,8 @@
              这样改 QSS、翻译、JSON 时不必重新编译这一大块。 -->
         <file>Images/Icons/back.svg</file>
         <file>Images/Icons/announce.svg</file>
+        <file>Images/Icons/topbar_notify.svg</file>
+        <file>Images/Icons/topbar_chat.svg</file>
         <file>Images/Icons/pose_idle.svg</file>
         <file>Images/Icons/pose_wave.svg</file>
         <file>Images/Icons/pose_walk.svg</file>
@@ -24,6 +26,7 @@
         <file>Images/Icons/export.svg</file>
         <file>Images/Icons/server.svg</file>
         <file>Images/Icons/screenshot.svg</file>
+        <file>Images/Icons/nav_recording.svg</file>
         <file>Images/Icons/nav_home.svg</file>
         <file>Images/Icons/side_back.svg</file>
         <file>Images/Icons/restore_prev.svg</file>
@@ -106,6 +109,8 @@
         <file>Images/Icons/uv_overlay.svg</file>
 
         <file>Images/Icons/nav_ai.svg</file>
+        <!-- 社区（方块盒子论坛）导航图标 -->
+        <file>Images/Icons/nav_forum.svg</file>
         <!-- Plugin icons -->
         <file>Images/Icons/nav_plugin.svg</file>
         <file>Images/Icons/plugin.svg</file>

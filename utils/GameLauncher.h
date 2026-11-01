@@ -140,6 +140,10 @@ public:
     static JavaRequirement javaRequirementFor(const QString& gameVersion, int jsonMajorHint = 0);
     JavaInfo findBestJavaVersion(const QString& gameVersion, int jsonMajorHint = 0);
 
+    // 读 java.exe 同目录 server/jvm.dll 的 PE 头判断 JVM 位数：64 / 32；
+    // 读不到（例如 Oracle javapath 这类转发存根、或只给了 "java"）返回 0
+    static int javaBitness(const QString& javaExe);
+
     // Launch related methods
     // skipFileCompletion=true: 跳过文件完整性检查与补全（首次启动）
     // skipFileCompletion=false: 执行文件完整性检查并补全缺失文件（启动失败重试时使用）

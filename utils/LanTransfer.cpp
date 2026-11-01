@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file   LanTransfer.cpp
  * @brief  局域网互传：设备发现 + 文件/目录收发服务实现
  * @author BlockBox Team
@@ -107,7 +107,7 @@ void LanTransfer::startService()
     if (!m_server->listen(QHostAddress::AnyIPv4, kServicePort)
         && !m_server->listen(QHostAddress::AnyIPv4, 0))
     {
-        qWarning() << "[LanTransfer] listen failed:" << m_server->errorString();
+        qWarning() << "[LanTransfer] 监听失败：" << m_server->errorString();
         return;
     }
 
@@ -193,7 +193,7 @@ void LanTransfer::ensureUdpSocket()
                      QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint))
     {
         // 绑定失败时仍然可以发送探测广播，只是收不到他机应答
-        qWarning() << "[LanTransfer] udp bind failed:" << m_udp->errorString();
+        qWarning() << "[LanTransfer] UDP 绑定失败：" << m_udp->errorString();
     }
 
     if (!m_broadcastTimer)

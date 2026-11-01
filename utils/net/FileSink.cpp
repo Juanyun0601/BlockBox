@@ -28,14 +28,14 @@ JobStatus FileSink::init(QNetworkRequest& request)
     // create a new save file and open it for writing
     if (!FS::ensureFilePathExists(m_filename))
     {
-        qCritical() << "Could not create folder for " + m_filename;
+        qCritical() << "无法创建文件夹：" + m_filename;
         return Job_Failed;
     }
     wroteAnyData = false;
     m_output_file.reset(new QSaveFile(m_filename));
     if (!m_output_file->open(QIODevice::WriteOnly))
     {
-        qCritical() << "Could not open " + m_filename + " for writing";
+        qCritical() << "无法打开写入：" + m_filename;
         return Job_Failed;
     }
 
@@ -53,7 +53,7 @@ JobStatus FileSink::write(QByteArray& data)
 {
     if (!writeAllValidators(data) || m_output_file->write(data) != data.size())
     {
-        qCritical() << "Failed writing into " + m_filename;
+        qCritical() << "写入失败：" + m_filename;
         m_output_file->cancelWriting();
         m_output_file.reset();
         wroteAnyData = false;
@@ -92,7 +92,7 @@ JobStatus FileSink::finalize(QNetworkReply& reply)
         // nothing went wrong...
         if (!m_output_file->commit())
         {
-            qCritical() << "Failed to commit changes to " << m_filename;
+            qCritical() << "无法写入最终文件：" << m_filename;
             m_output_file->cancelWriting();
             return Job_Failed;
         }

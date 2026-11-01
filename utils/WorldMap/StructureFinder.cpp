@@ -108,6 +108,18 @@ int versionToInt(const QString &mcVersion)
     if (major > 1)
         return MC_1_21; // 更高的主版本按最新已知处理
 
+    // 1.21 的小版本之间群系与特征都有增补（1.21.2 起多了苍白之园等），
+    // 按补丁号细分，让种子预测与结构列表贴近玩家实际版本。
+    if (minor == 21)
+    {
+        const int patch = parts.size() > 2 ? parts[2].toInt() : 0;
+        if (patch >= 4)
+            return MC_NEWEST;   // 1.21.4 起（冬季更新）
+        if (patch >= 2)
+            return MC_1_21_3;   // 1.21.2 / 1.21.3
+        return MC_1_21_1;       // 1.21 / 1.21.1
+    }
+
     switch (minor)
     {
     case 0:  return MC_1_0;
@@ -131,7 +143,7 @@ int versionToInt(const QString &mcVersion)
     case 18: return MC_1_18;
     case 19: return MC_1_19;
     case 20: return MC_1_20;
-    case 21: return MC_1_21;
+    case 21: return MC_1_21_1; // 已在上方按补丁号细分，这里只是兜底
     default: return minor > 21 ? MC_1_21 : MC_UNDEF;
     }
 }

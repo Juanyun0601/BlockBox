@@ -40,6 +40,18 @@ int extractMultipleFromJarToMemory(const QString &jarPath,
                                    const QStringList &entryPaths,
                                    QMap<QString, QByteArray> &results);
 
+/**
+ * @brief 把 JAR 中某个目录下的内容解压到 destDir
+ *
+ * 无论走哪个后端（进程内解析 / jar 工具 / PowerShell / unzip / Python），
+ * 成功后 dirPath 这一层都会被打平：内容直接落在 destDir 根下，
+ * 调用方按「相对 dirPath 的路径」即可定位文件。
+ *
+ * @param jarPath JAR 文件路径
+ * @param dirPath JAR 内目录（如 "maven"），不带结尾斜杠
+ * @param destDir 目标目录
+ * @return 是否解压成功
+ */
 bool extractJarDirectory(const QString &jarPath, const QString &dirPath, const QString &destDir);
 
 /**

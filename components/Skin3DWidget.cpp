@@ -614,17 +614,17 @@ void Skin3DWidget::buildBackgroundResources()
   {
     if (!m_bgProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, kBgVertexShaderSource))
     {
-      qWarning("[Skin3DWidget] Background vertex shader compilation failed: %s", qPrintable(m_bgProgram.log()));
+      qWarning("[Skin3DWidget] 背景顶点着色器编译失败: %s", qPrintable(m_bgProgram.log()));
     }
     if (!m_bgProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, kBgFragmentShaderSource))
     {
-      qWarning("[Skin3DWidget] Background fragment shader compilation failed: %s", qPrintable(m_bgProgram.log()));
+      qWarning("[Skin3DWidget] 背景片元着色器编译失败: %s", qPrintable(m_bgProgram.log()));
     }
     m_bgProgram.bindAttributeLocation("aPos", 0);
     m_bgProgram.bindAttributeLocation("aColor", 1);
     if (!m_bgProgram.link())
     {
-      qWarning("[Skin3DWidget] Background shader linking failed: %s", qPrintable(m_bgProgram.log()));
+      qWarning("[Skin3DWidget] 背景着色器链接失败: %s", qPrintable(m_bgProgram.log()));
       return;
     }
   }
@@ -821,11 +821,11 @@ void Skin3DWidget::initializeGL()
   // 编译着色器
   if (!m_program.addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShaderSource))
   {
-    qWarning("[Skin3DWidget] Vertex shader compilation failed: %s", qPrintable(m_program.log()));
+    qWarning("[Skin3DWidget] 顶点着色器编译失败: %s", qPrintable(m_program.log()));
   }
   if (!m_program.addShaderFromSourceCode(QOpenGLShader::Fragment, kFragmentShaderSource))
   {
-    qWarning("[Skin3DWidget] Fragment shader compilation failed: %s", qPrintable(m_program.log()));
+    qWarning("[Skin3DWidget] 片元着色器编译失败: %s", qPrintable(m_program.log()));
   }
   // 显式绑定 attribute location（必须在 link() 之前）
   m_program.bindAttributeLocation("aPosition", 0);
@@ -833,7 +833,7 @@ void Skin3DWidget::initializeGL()
   m_program.bindAttributeLocation("aUv", 2);
   if (!m_program.link())
   {
-    qWarning("[Skin3DWidget] Shader linking failed: %s", qPrintable(m_program.log()));
+    qWarning("[Skin3DWidget] 着色器链接失败: %s", qPrintable(m_program.log()));
   }
 
   // 启用深度测试与背面剔除

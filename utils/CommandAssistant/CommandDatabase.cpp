@@ -140,13 +140,13 @@ bool CommandDatabase::load()
     QFile file(QStringLiteral(":/resources/command_database.json"));
     if (!file.exists())
     {
-        qWarning() << "CommandDatabase: resource file not found:"
+        qWarning() << "CommandDatabase: 资源文件不存在："
                    << ":/resources/command_database.json";
         return false;
     }
     if (!file.open(QIODevice::ReadOnly))
     {
-        qWarning() << "CommandDatabase: failed to open resource file:" << file.errorString();
+        qWarning() << "CommandDatabase: 打开资源文件失败：" << file.errorString();
         return false;
     }
 
@@ -157,7 +157,7 @@ bool CommandDatabase::load()
     const QJsonDocument doc = QJsonDocument::fromJson(rawData, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject())
     {
-        qWarning() << "CommandDatabase: JSON parse failed:" << parseError.errorString();
+        qWarning() << "CommandDatabase: JSON 解析失败：" << parseError.errorString();
         m_loaded = false;
         return false;
     }
@@ -196,12 +196,12 @@ bool CommandDatabase::loadFromFile(const QString &filePath)
     QFile file(filePath);
     if (!file.exists())
     {
-        qWarning() << "CommandDatabase: file not found:" << filePath;
+        qWarning() << "CommandDatabase: 文件不存在：" << filePath;
         return false;
     }
     if (!file.open(QIODevice::ReadOnly))
     {
-        qWarning() << "CommandDatabase: failed to open file:" << file.errorString();
+        qWarning() << "CommandDatabase: 打开文件失败：" << file.errorString();
         return false;
     }
 
@@ -212,7 +212,7 @@ bool CommandDatabase::loadFromFile(const QString &filePath)
     const QJsonDocument doc = QJsonDocument::fromJson(rawData, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject())
     {
-        qWarning() << "CommandDatabase: JSON parse failed:" << parseError.errorString();
+        qWarning() << "CommandDatabase: JSON 解析失败：" << parseError.errorString();
         m_loaded = false;
         return false;
     }

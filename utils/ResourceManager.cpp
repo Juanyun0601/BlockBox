@@ -45,9 +45,9 @@ ResourceManager::ResourceManager(QObject *parent)
     m_lowConfigModeEnabled = LowConfigMode::instance()->isLowConfigMode();
     updateCacheCleanupTimer();
 
-    qDebug() << "[ResourceManager]" << "ResourceManager initialized:";
-    qDebug() << "[ResourceManager]" << "  - Low Config Mode:" << m_lowConfigModeEnabled;
-    qDebug() << "[ResourceManager]" << "  - High Priority Icons:" << m_highPriorityIcons.size();
+    qDebug() << "[ResourceManager]" << "资源管理器已初始化:";
+    qDebug() << "[ResourceManager]" << "  - 低配置模式:" << m_lowConfigModeEnabled;
+    qDebug() << "[ResourceManager]" << "  - 高优先级图标数:" << m_highPriorityIcons.size();
 }
 
 ResourceManager::~ResourceManager()
@@ -313,7 +313,7 @@ bool ResourceManager::isResourcesLoaded() const
 
 void ResourceManager::preloadResourcesInternal()
 {
-    qDebug() << "[ResourceManager]" << "Preloading high-priority resources...";
+    qDebug() << "[ResourceManager]" << "正在预加载高优先级资源...";
 
     // 只预加载高优先级图标（关键资源）
     QList<IconType> highPriorityIcons = {
@@ -333,9 +333,9 @@ void ResourceManager::preloadResourcesInternal()
         QMutexLocker locker(&m_mutex);
         m_resourcesLoaded = true;
 
-        qDebug() << "[ResourceManager]" << "Resources preloaded:"
-                 << "Icons:" << m_iconCache.size()
-                 << "Pixmaps:" << m_pixmapCache.size();
+        qDebug() << "[ResourceManager]" << "资源预加载完成:"
+                 << "图标:" << m_iconCache.size()
+                 << "位图:" << m_pixmapCache.size();
     }
 }
 
@@ -354,7 +354,7 @@ void ResourceManager::clearCache()
     locker.unlock();
     initializeHighPriorityResources();
 
-    qDebug() << "[ResourceManager]" << "ResourceManager: All caches cleared";
+    qDebug() << "[ResourceManager]" << "已清理全部缓存";
 
     emit cacheCleared();
 }
@@ -390,9 +390,9 @@ void ResourceManager::clearLowPriorityCache()
         m_pixmapPriorityMap.remove(path);
     }
 
-    qDebug() << "[ResourceManager]" << "ResourceManager: Cleared low priority cache -"
-             << "Icons removed:" << iconsToRemove.size()
-             << "Pixmaps removed:" << pixmapsToRemove.size();
+    qDebug() << "[ResourceManager]" << "已清理低优先级缓存 -"
+             << "移除图标:" << iconsToRemove.size()
+             << "移除位图:" << pixmapsToRemove.size();
 }
 
 void ResourceManager::clearMediumPriorityCache()
@@ -426,9 +426,9 @@ void ResourceManager::clearMediumPriorityCache()
         m_pixmapPriorityMap.remove(path);
     }
 
-    qDebug() << "[ResourceManager]" << "ResourceManager: Cleared medium priority cache -"
-             << "Icons removed:" << iconsToRemove.size()
-             << "Pixmaps removed:" << pixmapsToRemove.size();
+    qDebug() << "[ResourceManager]" << "已清理中优先级缓存 -"
+             << "移除图标:" << iconsToRemove.size()
+             << "移除位图:" << pixmapsToRemove.size();
 }
 
 void ResourceManager::clearUnusedResources()
@@ -462,9 +462,9 @@ void ResourceManager::clearUnusedResources()
         m_pixmapPriorityMap.remove(path);
     }
 
-    qDebug() << "[ResourceManager]" << "ResourceManager: Cleared unused resources (kept high priority) -"
-             << "Icons removed:" << iconsToRemove.size()
-             << "Pixmaps removed:" << pixmapsToRemove.size();
+    qDebug() << "[ResourceManager]" << "已清理未使用资源（保留高优先级） -"
+             << "移除图标:" << iconsToRemove.size()
+             << "移除位图:" << pixmapsToRemove.size();
 }
 
 int ResourceManager::getIconCacheSize() const
@@ -495,14 +495,14 @@ void ResourceManager::setMaxIconCacheSize(int maxItems)
 {
     QMutexLocker locker(&m_mutex);
     m_iconCache.setMaxCost(maxItems);
-    qDebug() << "[ResourceManager]" << "ResourceManager: Icon cache max size set to" << maxItems;
+    qDebug() << "[ResourceManager]" << "图标缓存上限已设为" << maxItems;
 }
 
 void ResourceManager::setMaxPixmapCacheSize(int maxItems)
 {
     QMutexLocker locker(&m_mutex);
     m_pixmapCache.setMaxCost(maxItems);
-    qDebug() << "[ResourceManager]" << "ResourceManager: Pixmap cache max size set to" << maxItems;
+    qDebug() << "[ResourceManager]" << "位图缓存上限已设为" << maxItems;
 }
 
 void ResourceManager::setLowConfigModeEnabled(bool enabled)
@@ -511,7 +511,7 @@ void ResourceManager::setLowConfigModeEnabled(bool enabled)
     m_lowConfigModeEnabled = enabled;
 
     if (oldValue != enabled) {
-        qDebug() << "[ResourceManager]" << "ResourceManager: Low config mode changed to" << enabled;
+        qDebug() << "[ResourceManager]" << "低配置模式已改为" << enabled;
 
         // 更新缓存清理定时器
         updateCacheCleanupTimer();
@@ -543,10 +543,10 @@ void ResourceManager::updateCacheCleanupTimer()
     if (m_lowConfigModeEnabled) {
         // 低配置模式下，每30秒清理一次缓存
         m_cacheCleanupTimer->start(30000);
-        qDebug() << "[ResourceManager]" << "ResourceManager: Cache cleanup timer started (30s interval)";
+        qDebug() << "[ResourceManager]" << "缓存清理定时器已启动（30秒间隔）";
     } else {
         m_cacheCleanupTimer->stop();
-        qDebug() << "[ResourceManager]" << "ResourceManager: Cache cleanup timer stopped";
+        qDebug() << "[ResourceManager]" << "缓存清理定时器已停止";
     }
 }
 
@@ -554,13 +554,13 @@ void ResourceManager::onPeriodicCacheCleanup()
 {
     // 低配置模式下的定期缓存清理
     if (m_lowConfigModeEnabled) {
-        qDebug() << "[ResourceManager]" << "ResourceManager: Performing periodic cache cleanup (low config mode)";
+        qDebug() << "[ResourceManager]" << "正在执行定期缓存清理（低配置模式）";
         clearLowPriorityCache();
 
         // 如果内存压力较大，也清理中优先级资源
         qint64 memoryUsage = getEstimatedMemoryUsage();
         if (memoryUsage > 5 * 1024 * 1024) { // 超过5MB
-            qDebug() << "[ResourceManager]" << "ResourceManager: Memory pressure detected, clearing medium priority cache";
+            qDebug() << "[ResourceManager]" << "检测到内存压力，正在清理中优先级缓存";
             clearMediumPriorityCache();
         }
     }

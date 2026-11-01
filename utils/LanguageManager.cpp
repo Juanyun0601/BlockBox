@@ -121,7 +121,7 @@ void LanguageManager::setLanguageInternal(Language lang)
 
         emit languageChanged();
     } else {
-        qWarning() << "[LanguageManager] Failed to load:" << translationFileName;
+        qWarning() << "[LanguageManager] 加载失败：" << translationFileName;
     }
 }
 

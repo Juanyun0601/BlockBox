@@ -370,6 +370,7 @@ private:
     QString m_currentContent;
     QString m_currentReasoning;
     QElapsedTimer m_requestTimer; ///< 请求耗时计时
+    QElapsedTimer m_thinkingElapsedTimer; ///< 思考用时计时（思考行收尾后显示）
     QWidget* m_currentAiBubble;
     QWidget* m_currentThinkingBubble;
     QWidget* m_currentThinkingContent;

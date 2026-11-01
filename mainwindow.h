@@ -13,6 +13,9 @@
 #include <QShortcut>
 #include <QStringList>
 #include <QPointer>
+#include <QPixmap>
+
+#include <functional>
 
 #include "utils/DownloadTaskManager.h"
 #include "utils/content/ContentData.h"
@@ -26,6 +29,7 @@ class InstanceAssistantWindow;
 class GameFloatingIcon;
 class InstanceSelectPage;
 class AccountManagePage;
+class ForumAccountPage;
 class LaunchDetailsPage;
 class InstallInstancePage;
 class LoaderDetailPage;
@@ -50,6 +54,13 @@ class FavoritesPage;
 class SkinEditorPage;
 class PluginPage;
 class NewsPage;
+class CommunityForumPage;
+class ForumThreadDetailPage;
+class ForumThreadListPage;
+class ForumComposerPage;
+class ForumUserProfilePage;
+class ForumFriendsPage;
+class FeedbackPage;
 struct ModInfo;
 struct ModVersionFile;
 class GameLauncher;
@@ -100,7 +111,14 @@ enum class PageIndex {
     FavoritesPage = 23,
     SkinEditorPage = 24,
     PluginPage = 25,
-    NewsPage = 26
+    NewsPage = 26,
+    CommunityPage = 27,
+    ForumThreadDetailPage = 28,
+    ForumThreadListPage = 29,
+    ForumComposerPage = 30,
+    ForumUserProfilePage = 31,
+    FeedbackPage = 32,
+    ForumFriendsPage = 33
 };
 
 class MainWindow : public QMainWindow
@@ -114,9 +132,14 @@ public:
     /// 刷新首页「最近游玩」区域（实例文件夹在启动后被添加时调用）
     void refreshHomeRecentPlays();
 
+    /// 打开账号页并切到论坛登录表单（答题弹窗「去登录」等外部入口用）
+    Q_INVOKABLE void openForumAccountLogin();
+
 private slots:
     void onSideBarItemClicked(int parentIndex);
     void onParentNavClicked(int parentIndex);
+    /** 跳到「设置 → 界面设置」（首页空态轮播卡片被点击时调用） */
+    void openInterfaceSettings();
     void onChildNavClicked(int parentIndex, int childIndex);
     void onSettingsNavItemClicked(int index);
     void onResourcesNavItemClicked(int index);
@@ -128,6 +151,10 @@ private slots:
     void onInstanceInstalled(const QString &instancePath);
     void onAccountManageClicked();
     void onSkinEditorClicked();
+    /** 顶栏「系统消息」：跳到论坛账户页的通知页签 */
+    void onForumNotificationsClicked();
+    /** 顶栏「聊天」：打开论坛好友与私信页 */
+    void onForumChatClicked();
     void onAddAccountPageOpened();
     void onAccountManagePageOpened();
     void onTopBarBackClicked();
@@ -201,6 +228,10 @@ private:
     InstanceSelectPage *m_instanceSelectPage;
     InstanceAssistantWindow *m_instanceAssistantWindow = nullptr;
     AccountManagePage *m_accountManagePage;
+    /** 账户管理页的实验性界面（与方块盒子论坛账号打通） */
+    ForumAccountPage *m_forumAccountPage = nullptr;
+    /** 账户管理页容器：经典界面与实验性界面各占一页，切换只换显示不销毁 */
+    QStackedWidget *m_accountUiStack = nullptr;
     LaunchDetailsPage *m_launchDetailsPage;
     InstallInstancePage *m_installInstancePage;
     LoaderDetailPage *m_loaderDetailPage;
@@ -225,6 +256,18 @@ private:
     SkinEditorPage *m_skinEditorPage = nullptr;
     PluginPage *m_pluginPage = nullptr;
     NewsPage *m_newsPage = nullptr;
+    CommunityForumPage *m_communityPage = nullptr;
+    /** 论坛深度集成四页：帖子详情 / 主题列表（板块·搜索·标签）/ 发帖 / 用户主页 */
+    ForumThreadDetailPage *m_forumThreadDetailPage = nullptr;
+    ForumThreadListPage *m_forumThreadListPage = nullptr;
+    ForumComposerPage *m_forumComposerPage = nullptr;
+    ForumUserProfilePage *m_forumUserProfilePage = nullptr;
+    /** 论坛好友与私信页 */
+    ForumFriendsPage *m_forumFriendsPage = nullptr;
+    /** 软件内反馈页（设置 > 关于 的意见反馈入口），提交走论坛账号 */
+    FeedbackPage *m_feedbackPage = nullptr;
+    /** 论坛内层页（详情 / 发帖 / 用户主页）的返回动作，由进入入口决定 */
+    std::function<void()> m_forumReturnAction;
 
     ClipboardMonitor *m_clipboardMonitor = nullptr;
     bool m_clipboardDialogOpen = false; ///< 剪贴板确认框是否已弹出（防剪贴板变化重入叠加弹窗）
@@ -244,6 +287,13 @@ private:
     QString m_currentInstancePath;
     QString m_currentInstanceVersion;
     QString m_currentInstanceLoader;
+    /**
+     * 当前用于启动游戏的账户名 / 头像。
+     * 顶栏账户卡片登录方块盒子账户后会改成显示社区账户，
+     * 所以启动参数不能再从顶栏取名字，统一用这里保存的游戏账户。
+     */
+    QString m_gameAccountName;
+    QPixmap m_gameAccountAvatar;
     bool m_launchRetryAttempted = false; // 标记本次启动是否已执行过"补全文件后重试"，避免无限重试
     bool m_launchRetryPending = false;  // 标记重试已调度但尚未执行（防止重复 gameCrashed 信号清除任务）
 
@@ -299,6 +349,12 @@ private:
 
     void initInstanceSelectPage();
     void initAccountManagePage();
+    /** 经典账户管理页（按需创建，创建后常驻） */
+    void buildClassicAccountManagePage();
+    /** 实验性账户管理页：论坛账户界面（按需创建，创建后常驻） */
+    void buildForumAccountManagePage();
+    /** 实验性「论坛账户管理界面」开关变化时切换显示 */
+    void switchAccountUiMode();
     void initLaunchDetailsPage();
     void initInstallInstancePage();
     void initLoaderDetailPage();
@@ -318,6 +374,35 @@ private:
     void initSkinEditorPage();
     void initPluginPage();
     void initNewsPage();
+    void initCommunityPage();
+    void initForumThreadDetailPage();
+    void initForumThreadListPage();
+    void initForumComposerPage();
+    void initForumUserProfilePage();
+    void initFeedbackPage();
+    void initForumFriendsPage();
+    // ── 论坛深度集成：内层页的打开与返回 ──
+    void showForumThread(int threadId);
+    void showForumBoard(const QString &slug, const QString &boardName);
+    void showForumSearch(const QString &query);
+    void showForumTag(const QString &tag);
+    void showForumComposer(const QString &preselectSlug = QString());
+    void showForumUserProfile(int userId);
+    void showFeedbackPage();
+    /** 打开好友与私信页；userId > 0 时直接和这个人开聊天 */
+    void showForumFriends(int userId = 0);
+    void onForumPageBack();
+    /** 内层页的纯展示（不重新加载数据），互跳返回时用 */
+    void presentForumThreadDetail();
+    void presentForumThreadList();
+    void presentForumComposer();
+    void presentForumUserProfile();
+    void presentFeedbackPage();
+    void presentForumFriends();
+    /** 回到社区页（恢复侧边栏选中与顶栏标题） */
+    void returnToCommunityPage();
+    /** 回到「设置 > 关于」（反馈页的返回落点） */
+    void returnToSettingsAbout();
     void initSettingsPage();
     void showJavaDownloadPage();
     void showFavoritesPage(const QString &folderId);
@@ -380,6 +465,13 @@ private:
     void saveCurrentInstancePath();
     void loadCurrentInstancePath();
     void restoreDefaultAccount();
+    /**
+     * @brief 刷新顶栏账户卡片：已登录方块盒子账户时显示该账户的昵称与头像，
+     *        未登录时回落到当前游戏账户（启动游戏始终使用游戏账户，与顶栏显示无关）
+     */
+    void syncTopBarAccount();
+    /** 下载方块盒子账户头像并更新顶栏（下载失败时保留首字母占位图） */
+    void loadTopBarForumAvatar(const QString &avatarPath);
     QString findFirstVersionInGameRoot(const QString &gameRootPath) const;
     void onModDownloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile);
     void onContentDownloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile, ContentType contentType);
@@ -396,6 +488,14 @@ private:
     void onCardDownloadRequested(const ModInfo &modInfo, ContentType contentType, int depth = 0,
                                  const QString &gameVersion = QString(),
                                  const QString &loader = QString());
+    /**
+     * @brief 本地资源页空状态「快速安装对应模组」：按实例加载器挑选并安装推荐模组
+     * @param modKey 模组标识：shader_loader（光影加载器）/ projection（投影）/ replaymod / flashback
+     *
+     * 光影按加载器分流（Fabric / Quilt / NeoForge 装 Iris，Forge 装 Oculus）；
+     * 安装前先确认存在适配当前实例版本与加载器的文件，没有就说明原因并引导到下载页。
+     */
+    void onQuickInstallModRequested(const QString &modKey);
     void onClipboardLinkDetected(const ClipboardLinkInfo &info);
 
     static constexpr int kMaxCardDownloadDepth = 3; ///< 一键下载递归前置的最大深度，防止循环依赖

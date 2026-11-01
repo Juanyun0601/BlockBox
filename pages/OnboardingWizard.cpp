@@ -8,7 +8,9 @@
  *   0. 语言设置（多语言页面，选定语言前展示多语提示）
  *   1. 下载源选择【仅选择繁體中文时出现，由用户决定官方源 / BMCL 镜像源】
  *   2. 引导方式（手动填写 / 从现有启动器导入 / 跳过）
- *   3. 分支 A：导入启动器（PCL / PCL CE、HMCL、MultiMC、BaKa XL）
+ *   3. 分支 A：导入启动器
+ *      桌面：PCL / PCL CE、HMCL、MultiMC、BaKa XL
+ *      安卓：FCL、Zalith Launcher 2（ZL2）、PojavLauncher、本机其他游戏目录
  *      分支 B：账户管理（微软 / 离线 / 正版）
  *   4. Java 运行时管理（轻量扫描 + 官方下载入口）【仅手动填写】
  *   5. 实例文件夹管理（添加 / 默认）【仅手动填写】
@@ -16,6 +18,8 @@
  * 完成页：汇总本次引导完成的配置
  * 说明：从现有启动器导入时自动带回 Java 与实例文件夹，故跳过第 4、5 步。
  *   导入流程：语言 → [下载源] → 引导方式 → 导入启动器 → 样式设置 → 完成。
+ *   安卓这套启动器的账户存在各自的应用私有目录里，系统不允许别的应用读取，
+ *   所以安卓端导入只带游戏目录与版本，账户需要在方块盒子里重新登录。
  * 下载源联动：选择非中文（English / Español）时自动切到官方源；选择繁體中文时
  *   插入「下载源选择」步骤，由用户自行决定。
  *
@@ -589,8 +593,12 @@ void OnboardingWizard::buildStep1()
         { MethodImport,
           QStringLiteral("I"),
           tr("\u4ECE\u73B0\u6709\u542F\u52A8\u5668\u5BFC\u5165"),
-          tr("\u81EA\u52A8\u8BC6\u522B\u7535\u8111\u4E0A\u5DF2\u5B89\u88C5\u7684\u542F\u52A8\u5668\uFF0C\u4E00\u952E\u8FC1\u79FB\u8D26\u6237\u4E0E\u7248\u672C\u3002"),
-          tr("\u652F\u6301 PCL \u00B7 HMCL \u00B7 MultiMC \u7B49") },
+          LauncherImporter::isAndroidTarget()
+              ? tr("\u81EA\u52A8\u8BC6\u522B\u624B\u673A\u91CC\u5DF2\u5B89\u88C5\u7684\u542F\u52A8\u5668\uFF0C\u4E00\u952E\u628A\u7248\u672C\u4E0E\u6E38\u620F\u76EE\u5F55\u5E26\u8FC7\u6765\u3002")
+              : tr("\u81EA\u52A8\u8BC6\u522B\u7535\u8111\u4E0A\u5DF2\u5B89\u88C5\u7684\u542F\u52A8\u5668\uFF0C\u4E00\u952E\u8FC1\u79FB\u8D26\u6237\u4E0E\u7248\u672C\u3002"),
+          LauncherImporter::isAndroidTarget()
+              ? tr("\u652F\u6301 FCL \u00B7 ZL2 \u00B7 Pojav \u7B49")
+              : tr("\u652F\u6301 PCL \u00B7 HMCL \u00B7 MultiMC \u7B49") },
         { MethodSkip,
           QStringLiteral("S"),
           tr("\u8DF3\u8FC7"),
@@ -698,54 +706,80 @@ void OnboardingWizard::buildStep2Import()
     title->setObjectName(QStringLiteral("obwPageTitle"));
     lay->addWidget(title);
 
+    // 启动器列表随平台变化：桌面是 PCL / HMCL / MultiMC / BakaXL，
+    // 安卓是 FCL / ZL2 / PojavLauncher / 本机其他目录
+    const bool androidTarget = LauncherImporter::isAndroidTarget();
+    m_launcherKeys = LauncherImporter::supportedKeys();
+
     QLabel *desc = new QLabel(
-        tr("\u6B63\u5728\u626B\u63CF\u4F60\u7684\u7535\u8111\uFF0C\u9009\u62E9\u8981\u5BFC\u5165\u7684\u542F\u52A8\u5668\uFF0C\u5C06\u8FC1\u79FB\u5176\u4E2D\u7684\u8D26\u6237\u3001\u7248\u672C\u4E0E\u8BBE\u7F6E\u3002"), page);
+        androidTarget
+            ? tr("\u6B63\u5728\u626B\u63CF\u624B\u673A\u5B58\u50A8\u91CC\u7684\u542F\u52A8\u5668\u4E0E\u6E38\u620F\u76EE\u5F55\uFF0C\u9009\u62E9\u8981\u5BFC\u5165\u7684\u6765\u6E90\uFF0C\u628A\u7248\u672C\u3001\u6E38\u620F\u76EE\u5F55\u4E0E\u80FD\u8BFB\u5230\u7684\u8D26\u6237\u5E26\u8FC7\u6765\u3002")
+            : tr("\u6B63\u5728\u626B\u63CF\u4F60\u7684\u7535\u8111\uFF0C\u9009\u62E9\u8981\u5BFC\u5165\u7684\u542F\u52A8\u5668\uFF0C\u5C06\u8FC1\u79FB\u5176\u4E2D\u7684\u8D26\u6237\u3001\u7248\u672C\u3001Java\u3001\u7B2C\u4E09\u65B9\u767B\u5F55\u670D\u4E0E\u4E0B\u8F7D\u8BBE\u7F6E\u3002"), page);
     desc->setObjectName(QStringLiteral("obwPageDesc"));
     desc->setWordWrap(true);
     lay->addWidget(desc);
     lay->addSpacing(8);
 
-    m_launcherKeys = { QStringLiteral("pcl"), QStringLiteral("hmcl"), QStringLiteral("multimc"), QStringLiteral("baka") };
-
-    // 真实检测各启动器（参考 HMCL/PCL2/MultiMC/BakaXL 数据目录）
-    const QList<LauncherDetect> detects = LauncherImporter::detectAll();
-    auto findDetect = [&detects](const QString &key) -> const LauncherDetect & {
-        for (const LauncherDetect &d : detects)
-            if (d.key == key)
-                return d;
-        static const LauncherDetect emptyDetect;
-        return emptyDetect;
-    };
-
     struct LauncherDef {
         QString display, alias, desc, gradient;
         char letter;
-        bool detected;
-        QString detectedPath;
     };
-    const QVector<LauncherDef> defs = {
-        { QStringLiteral("PCL"), QStringLiteral("PCL CE"),
-          tr("Plain Craft Launcher \u00B7 \u56FD\u5185\u6700\u6D41\u884C\u7684\u8F7B\u91CF\u542F\u52A8\u5668"),
-          QStringLiteral("#F59E0B,#B45309"), 'P', findDetect(QStringLiteral("pcl")).detected,
-          findDetect(QStringLiteral("pcl")).dataDir },
-        { QStringLiteral("HMCL"), QStringLiteral("Hello Minecraft!"),
-          tr("Hello Minecraft! Launcher \u00B7 \u5F00\u6E90\u8DE8\u5E73\u53F0\u542F\u52A8\u5668"),
-          QStringLiteral("#6366F1,#4338CA"), 'H', findDetect(QStringLiteral("hmcl")).detected,
-          findDetect(QStringLiteral("hmcl")).dataDir },
-        { QStringLiteral("MultiMC"), QStringLiteral("Prism"),
-          tr("MultiMC / Prism Launcher \u00B7 \u5F00\u6E90\u5B9E\u4F8B\u7BA1\u7406\u542F\u52A8\u5668"),
-          QStringLiteral("#10B981,#047857"), 'M', findDetect(QStringLiteral("multimc")).detected,
-          findDetect(QStringLiteral("multimc")).dataDir },
-        { QStringLiteral("BaKa XL"), QString(),
-          tr("BakaXL \u00B7 \u6CE8\u91CD\u6613\u7528\u6027\u7684\u542F\u52A8\u5668"),
-          QStringLiteral("#EC4899,#BE185D"), 'B', findDetect(QStringLiteral("baka")).detected,
-          findDetect(QStringLiteral("baka")).dataDir },
+    const auto defFor = [](const QString &key) -> LauncherDef {
+        if (key == QStringLiteral("fcl")) {
+            return { QStringLiteral("FCL"), QStringLiteral("Fold Craft Launcher"),
+                     tr("Fold Craft Launcher \u00B7 \u5B89\u5353\u4E0A\u6700\u5E38\u7528\u7684 Java \u7248\u542F\u52A8\u5668"),
+                     QStringLiteral("#F59E0B,#B45309"), 'F' };
+        }
+        if (key == QStringLiteral("zl2")) {
+            return { QStringLiteral("ZL2"), QStringLiteral("Zalith Launcher 2"),
+                     tr("Zalith Launcher 2 \u00B7 \u57FA\u4E8E Pojav \u6838\u5FC3\u7684\u65B0\u7248\u542F\u52A8\u5668"),
+                     QStringLiteral("#8B5CF6,#5B21B6"), 'Z' };
+        }
+        if (key == QStringLiteral("pojav")) {
+            return { QStringLiteral("Pojav"), QStringLiteral("PojavLauncher"),
+                     tr("PojavLauncher \u00B7 \u8001\u724C\u5B89\u5353\u542F\u52A8\u5668\uFF0C\u6E38\u620F\u76EE\u5F55\u5728 games/PojavLauncher"),
+                     QStringLiteral("#0EA5E9,#0369A1"), 'P' };
+        }
+        if (key == QStringLiteral("other")) {
+            return { QStringLiteral("\u5176\u4ED6\u76EE\u5F55"), QString(),
+                     tr("\u624B\u52A8\u653E\u8FDB\u6765\u7684\u3001\u65E7\u542F\u52A8\u5668\u7559\u4E0B\u7684\u6E38\u620F\u76EE\u5F55\uFF0C\u81EA\u52A8\u627E\u51FA\u6765\u4E00\u8D77\u5BFC\u5165"),
+                     QStringLiteral("#64748B,#334155"), 'O' };
+        }
+        if (key == QStringLiteral("pcl")) {
+            return { QStringLiteral("PCL"), QStringLiteral("PCL CE"),
+                     tr("Plain Craft Launcher \u00B7 \u56FD\u5185\u6700\u6D41\u884C\u7684\u8F7B\u91CF\u542F\u52A8\u5668"),
+                     QStringLiteral("#F59E0B,#B45309"), 'P' };
+        }
+        if (key == QStringLiteral("hmcl")) {
+            return { QStringLiteral("HMCL"), QStringLiteral("Hello Minecraft!"),
+                     tr("Hello Minecraft! Launcher \u00B7 \u5F00\u6E90\u8DE8\u5E73\u53F0\u542F\u52A8\u5668"),
+                     QStringLiteral("#6366F1,#4338CA"), 'H' };
+        }
+        if (key == QStringLiteral("multimc")) {
+            return { QStringLiteral("MultiMC"), QStringLiteral("Prism"),
+                     tr("MultiMC / Prism Launcher \u00B7 \u5F00\u6E90\u5B9E\u4F8B\u7BA1\u7406\u542F\u52A8\u5668"),
+                     QStringLiteral("#10B981,#047857"), 'M' };
+        }
+        if (key == QStringLiteral("baka")) {
+            return { QStringLiteral("BaKa XL"), QString(),
+                     tr("BakaXL \u00B7 \u6CE8\u91CD\u6613\u7528\u6027\u7684\u542F\u52A8\u5668"),
+                     QStringLiteral("#EC4899,#BE185D"), 'B' };
+        }
+        return { key, QString(), QString(), QStringLiteral("#64748B,#334155"), 'L' };
     };
 
     QHBoxLayout *cards = new QHBoxLayout();
     cards->setSpacing(14);
-    for (int i = 0; i < defs.size(); ++i) {
-        const LauncherDef &def = defs.at(i);
+    cards->addStretch(0); // 两侧留白：卡片固定宽度后整体居中
+    m_launcherCardsLayout = cards;
+    m_launcherCards.clear();
+    m_launcherActions.clear();
+    m_launcherStatus.clear();
+    m_launcherStatusText.clear();
+    m_launcherImportBtn.clear();
+    for (int i = 0; i < m_launcherKeys.size(); ++i) {
+        const QString key = m_launcherKeys.at(i);
+        const LauncherDef def = defFor(key);
         QFrame *card = new QFrame(page);
         card->setObjectName(QStringLiteral("obwLauncherCard"));
         card->setMinimumHeight(200);
@@ -788,56 +822,175 @@ void OnboardingWizard::buildStep2Import()
         QHBoxLayout *statusLay = new QHBoxLayout(statusBox);
         statusLay->setSpacing(6);
         statusLay->setContentsMargins(10, 5, 10, 5);
-        m_launcherStatus[i] = new QLabel(QStringLiteral("\u25CF"), statusBox);
-        m_launcherStatus[i]->setObjectName(QStringLiteral("obwLauncherStatus"));
-        m_launcherStatus[i]->setFixedSize(8, 8);
-        m_launcherStatus[i]->setAlignment(Qt::AlignCenter);
-        m_launcherStatusText[i] = new QLabel(statusBox);
-        m_launcherStatusText[i]->setObjectName(QStringLiteral("obwLauncherStatusText"));
-        statusLay->addWidget(m_launcherStatus[i]);
-        statusLay->addWidget(m_launcherStatusText[i], 1);
+        m_launcherStatus.append(new QLabel(QStringLiteral("\u25CF"), statusBox));
+        QLabel *statusDot = m_launcherStatus.last();
+        statusDot->setObjectName(QStringLiteral("obwLauncherStatus"));
+        statusDot->setFixedSize(8, 8);
+        statusDot->setAlignment(Qt::AlignCenter);
+        m_launcherStatusText.append(new QLabel(statusBox));
+        QLabel *statusText = m_launcherStatusText.last();
+        statusText->setObjectName(QStringLiteral("obwLauncherStatusText"));
+        statusText->setWordWrap(true); // 检测摘要可能换行
+        // 预留两行高度：各张卡高度一致，检测结果不会把卡片撑得参差不齐
+        statusText->setMinimumHeight(QFontMetrics(statusText->font()).lineSpacing() * 2 + 2);
+        statusLay->addWidget(statusDot);
+        statusLay->addWidget(statusText, 1);
         clay->addWidget(statusBox);
 
-        if (def.detected) {
-            const LauncherDetect &det = findDetect(m_launcherKeys.at(i));
-            m_launcherStatus[i]->setProperty("state", QStringLiteral("found"));
-            m_launcherStatusText[i]->setText(tr("\u5DF2\u68C0\u6D4B\u5230 \u00B7 ")
-                                             + (det.detail.isEmpty() ? def.detectedPath : det.detail));
-        } else {
-            m_launcherStatus[i]->setProperty("state", QStringLiteral("missing"));
-            m_launcherStatusText[i]->setText(tr("\u672A\u68C0\u6D4B\u5230\u5B89\u88C5"));
-        }
+        // 首次检测放到页面显示后异步做（要扫盘，不能卡住向导打开）
+        statusDot->setProperty("state", QStringLiteral("scanning"));
+        statusText->setText(tr("\u6B63\u5728\u68C0\u6D4B\u2026"));
 
-        m_launcherActions[i] = new QWidget(card);
-        m_launcherActions[i]->setObjectName(QStringLiteral("obwLauncherActions"));
-        QHBoxLayout *aLay = new QHBoxLayout(m_launcherActions[i]);
+        QWidget *actions = new QWidget(card);
+        m_launcherActions.append(actions);
+        actions->setObjectName(QStringLiteral("obwLauncherActions"));
+        QHBoxLayout *aLay = new QHBoxLayout(actions);
         aLay->setContentsMargins(0, 4, 0, 0);
         aLay->setSpacing(8);
 
-        const QString key = m_launcherKeys.at(i);
-        QPushButton *scanBtn = new QPushButton(tr("\u91CD\u65B0\u68C0\u6D4B"), m_launcherActions[i]);
+        QPushButton *scanBtn = new QPushButton(tr("\u91CD\u65B0\u68C0\u6D4B"), actions);
         scanBtn->setObjectName(QStringLiteral("obwBtnSecondary"));
         scanBtn->setCursor(Qt::PointingHandCursor);
-        QPushButton *importBtn = new QPushButton(tr("\u5BFC\u5165"), m_launcherActions[i]);
+        QPushButton *importBtn = new QPushButton(tr("\u5BFC\u5165"), actions);
         importBtn->setObjectName(QStringLiteral("obwBtnPrimary"));
         importBtn->setCursor(Qt::PointingHandCursor);
         connect(scanBtn, &QPushButton::clicked, this, [this, key]() { onLauncherScan(key); });
         connect(importBtn, &QPushButton::clicked, this, [this, key]() { onLauncherImport(key); });
+        m_launcherImportBtn.append(importBtn);
+        importBtn->setEnabled(false);
+        importBtn->setToolTip(tr("\u6B63\u5728\u68C0\u6D4B\u542F\u52A8\u5668\u2026"));
         aLay->addWidget(scanBtn, 1);
         aLay->addWidget(importBtn, 1);
-        clay->addWidget(m_launcherActions[i]);
+        clay->addWidget(actions);
         clay->addStretch();
 
-        cards->addWidget(card, 1);
+        m_launcherCards.append(card);
+        cards->addWidget(card, 0);
     }
+    cards->addStretch(0);
     lay->addLayout(cards, 1);
 
+    // 页面构建完后异步检测（detectOne 内部有 30 秒缓存，多张卡只扫一次盘）
+    QTimer::singleShot(0, this, [this]() { refreshLauncherCards(); });
+
     QLabel *tip = new QLabel(
-        tr("\u5BFC\u5165\u4E0D\u4F1A\u4FEE\u6539\u6216\u5220\u9664\u539F\u542F\u52A8\u5668\u4E2D\u7684\u4EFB\u4F55\u6570\u636E\uFF0C\u4EC5\u8BFB\u53D6\u5E76\u590D\u5236\u5230\u65B9\u5757\u76D2\u5B50\u7684\u76EE\u5F55\u4E2D\u3002"), page);
+        androidTarget
+            ? tr("\u5BFC\u5165\u53EA\u4F1A\u8BFB\u53D6\u5E76\u63A5\u7BA1\u6E38\u620F\u76EE\u5F55\u3001\u7248\u672C\u4E0E\u8D26\u6237\u6587\u4EF6\uFF08\u6709\u7684\u8BDD\uFF09\uFF0C\u4E0D\u4F1A\u4FEE\u6539\u6216\u5220\u9664\u539F\u542F\u52A8\u5668\u7684\u6570\u636E\uFF1B\u624B\u673A\u4E0A\u9700\u8981\u7ED9\u65B9\u5757\u76D2\u5B50\u300C\u6240\u6709\u6587\u4EF6\u8BBF\u95EE\u300D\u6743\u9650\u624D\u8BFB\u5F97\u5230\u5176\u4ED6\u542F\u52A8\u5668\u7684\u76EE\u5F55\uFF1BZL2 \u82E5\u7528\u9ED8\u8BA4\u76EE\u5F55\uFF08Android/data \u5185\uFF09\u9700\u5148\u5728 ZL2 \u91CC\u6539\u5230\u5171\u4EAB\u5B58\u50A8\u3002")
+            : tr("\u5BFC\u5165\u53EA\u4F1A\u8BFB\u53D6\u5E76\u63A5\u7BA1\u542F\u52A8\u5668\u91CC\u7684\u8D26\u6237\u3001\u7248\u672C\u3001Java\u3001\u767B\u5F55\u670D\u4E0E\u4E0B\u8F7D\u3001\u5185\u5B58\u8BBE\u7F6E\uFF0C\u4E0D\u4F1A\u4FEE\u6539\u6216\u5220\u9664\u539F\u542F\u52A8\u5668\u7684\u4EFB\u4F55\u6570\u636E\u3002"), page);
     tip->setObjectName(QStringLiteral("obwTip"));
+    tip->setWordWrap(true);
     lay->addWidget(tip);
 
     m_stack->addWidget(page);
+
+    // 页面首次显示后按可用宽度定死每张卡的宽度
+    QTimer::singleShot(0, this, [this]() { updateLauncherCardWidths(); });
+}
+
+void OnboardingWizard::updateLauncherCardWidths()
+{
+    if (!m_launcherCardsLayout || m_launcherCards.isEmpty())
+        return;
+    QWidget *page = m_launcherCardsLayout->parentWidget();
+    if (!page)
+        return;
+
+    int available = page->width();
+    if (QLayout *pageLayout = page->layout()) {
+        const QMargins margins = pageLayout->contentsMargins();
+        available -= margins.left() + margins.right();
+    }
+    if (available <= 0)
+        return;
+
+    // 目标宽度 236（各张卡固定等宽）；放不下时最小 190——横屏手机四张卡刚好排得下，
+    // 按钮文字（「重新检测」「导入」）在这个宽度下也不会被截断
+    const int spacing = m_launcherCardsLayout->spacing();
+    int width = (available - spacing * (m_launcherCards.size() - 1)) / m_launcherCards.size();
+    width = qBound(190, qMin(width, 236), 236);
+    for (QWidget *card : std::as_const(m_launcherCards)) {
+        if (card->width() != width)
+            card->setFixedWidth(width);
+    }
+}
+
+void OnboardingWizard::refreshLauncherCards()
+{
+    for (int i = 0; i < m_launcherKeys.size(); ++i)
+        applyLauncherDetect(i, LauncherImporter::detectOne(m_launcherKeys.at(i)));
+}
+
+void OnboardingWizard::applyLauncherDetect(int idx, const LauncherDetect &det)
+{
+    QLabel *statusDot = m_launcherStatus.value(idx);
+    QLabel *statusText = m_launcherStatusText.value(idx);
+    if (idx < 0 || idx >= m_launcherKeys.size() || !statusDot || !statusText)
+        return;
+    const QString key = m_launcherKeys.at(idx);
+    const bool found = det.detected;
+    const bool imported = m_imported.contains(key);
+
+    statusDot->setProperty("state", found ? QStringLiteral("found")
+                                          : QStringLiteral("missing"));
+    statusText->setProperty("state", found ? QStringLiteral("found")
+                                           : QStringLiteral("missing"));
+    // 卡片里只放两三行摘要，完整情况（目录、Java、登录服、下载源、内存）放 tooltip，避免撑破卡片
+    QStringList brief;
+    if (found) {
+        if (det.accountCount > 0)
+            brief << tr("%1 个账户").arg(det.accountCount);
+        if (det.versionCount > 0)
+            brief << tr("%1 个版本").arg(det.versionCount);
+        if (det.accountCount <= 0 && det.versionCount <= 0)
+            brief << (det.detail.isEmpty() ? tr("可导入") : det.detail);
+    }
+    statusText->setText(
+        found ? ((imported ? tr("\u2714 \u5DF2\u5BFC\u5165") : tr("\u5DF2\u68C0\u6D4B\u5230"))
+                     + (brief.isEmpty() ? QString() : QStringLiteral(" \u00B7 ") + brief.join(QStringLiteral(" \u00B7 "))))
+              : tr("\u672A\u68C0\u6D4B\u5230\u5B89\u88C5"));
+
+    {
+        QStringList tip;
+        if (found) {
+            if (!det.detail.isEmpty())
+                tip << det.detail;
+            if (!det.dataDir.isEmpty())
+                tip << tr("启动器目录：%1").arg(QDir::toNativeSeparators(det.dataDir));
+            for (int i = 0; i < det.gameDirs.size(); ++i)
+                tip << tr("游戏目录 %1：%2").arg(i + 1).arg(QDir::toNativeSeparators(det.gameDirs.at(i)));
+            for (const QString &java : det.javaPaths)
+                tip << tr("Java：%1").arg(QDir::toNativeSeparators(java));
+            for (const LauncherAuthServer &server : det.authServers)
+                tip << tr("第三方登录：%1（%2）").arg(server.name, server.url);
+            if (det.downloadSource == 1)
+                tip << tr("下载源：镜像");
+            else if (det.downloadSource == 0)
+                tip << tr("下载源：官方");
+            if (det.downloadThreads > 0)
+                tip << tr("下载线程：%1").arg(det.downloadThreads);
+            if (det.javaMaxMemoryMb > 0)
+                tip << tr("内存上限：%1 MB").arg(det.javaMaxMemoryMb);
+            if (det.autoMemoryKnown && det.autoMemory)
+                tip << tr("内存：自动分配");
+        }
+        statusText->setToolTip(tip.join(QLatin1Char('\n')));
+    }
+
+    QPushButton *importBtn = m_launcherImportBtn.value(idx);
+    if (importBtn) {
+        importBtn->setEnabled(found && !imported);
+        if (imported)
+            importBtn->setToolTip(tr("\u5DF2\u4ECE\u8BE5\u542F\u52A8\u5668\u5BFC\u5165\u5B8C\u6210"));
+        else
+            importBtn->setToolTip(
+                found ? tr("\u5BFC\u5165\u8BE5\u542F\u52A8\u5668\u7684\u8D26\u6237\u3001\u7248\u672C\u3001Java\u3001\u767B\u5F55\u670D\u4E0E\u4E0B\u8F7D\u8BBE\u7F6E")
+                      : tr("\u672A\u68C0\u6D4B\u5230\u8BE5\u542F\u52A8\u5668"));
+    }
+
+    for (QLabel *label : { statusDot, statusText }) {
+        label->style()->unpolish(label);
+        label->style()->polish(label);
+    }
 }
 
 /* ============================================================
@@ -1857,6 +2010,11 @@ void OnboardingWizard::showStep(int logicalStep)
     m_stack->setCurrentIndex(stackIndexForStep(logicalStep));
     syncStepper();
     updateFooterState();
+    // 进入导入页后再量一次宽度（此时页面已经真正完成布局）
+    if (m_launcherCardsLayout && m_pages.size() > 3
+        && m_stack->currentWidget() == m_pages.at(3)) {
+        QTimer::singleShot(0, this, [this]() { updateLauncherCardWidths(); });
+    }
 }
 
 void OnboardingWizard::syncStepper()
@@ -2036,6 +2194,9 @@ void OnboardingWizard::resizeEvent(QResizeEvent *event)
             check->move(m_methodCards[i]->width() - check->width() - 12, 12);
         }
     }
+    // 窗口尺寸变化后重算启动器卡片的固定宽度（延迟一拍，等布局把页面宽度算完）
+    if (m_launcherCardsLayout)
+        QTimer::singleShot(0, this, [this]() { updateLauncherCardWidths(); });
 }
 
 void OnboardingWizard::onNextClicked()
@@ -2137,29 +2298,19 @@ void OnboardingWizard::onLauncherScan(const QString &key)
     const int idx = m_launcherKeys.indexOf(key);
     if (idx < 0)
         return;
-    m_launcherStatusText[idx]->setText(tr("\u6B63\u5728\u626B\u63CF\u2026"));
-    m_launcherStatus[idx]->setProperty("state", QStringLiteral("scanning"));
-    m_launcherStatus[idx]->style()->unpolish(m_launcherStatus[idx]);
-    m_launcherStatus[idx]->style()->polish(m_launcherStatus[idx]);
+    QLabel *statusDot = m_launcherStatus.value(idx);
+    QLabel *statusText = m_launcherStatusText.value(idx);
+    if (statusText)
+        statusText->setText(tr("\u6B63\u5728\u626B\u63CF\u2026"));
+    if (statusDot) {
+        statusDot->setProperty("state", QStringLiteral("scanning"));
+        statusDot->style()->unpolish(statusDot);
+        statusDot->style()->polish(statusDot);
+    }
 
     // 真实检测：读取数据目录
     QTimer::singleShot(150, this, [this, idx, key]() {
-        const LauncherDetect det = LauncherImporter::detectOne(key);
-        const bool found = det.detected;
-        if (found) {
-            m_launcherStatus[idx]->setProperty("state", QStringLiteral("found"));
-            m_launcherStatusText[idx]->setText(tr("\u5DF2\u68C0\u6D4B\u5230 \u00B7 ")
-                                               + (det.detail.isEmpty() ? det.dataDir : det.detail));
-        } else {
-            m_launcherStatus[idx]->setProperty("state", QStringLiteral("missing"));
-            m_launcherStatusText[idx]->setText(tr("\u672A\u68C0\u6D4B\u5230\u5B89\u88C5"));
-        }
-        m_launcherStatusText[idx]->setProperty("state", found ? QStringLiteral("found")
-                                                              : QStringLiteral("missing"));
-        m_launcherStatus[idx]->style()->unpolish(m_launcherStatus[idx]);
-        m_launcherStatus[idx]->style()->polish(m_launcherStatus[idx]);
-        m_launcherStatusText[idx]->style()->unpolish(m_launcherStatusText[idx]);
-        m_launcherStatusText[idx]->style()->polish(m_launcherStatusText[idx]);
+        applyLauncherDetect(idx, LauncherImporter::detectOne(key));
     });
 }
 
@@ -2171,102 +2322,170 @@ void OnboardingWizard::onLauncherImport(const QString &key)
     if (idx < 0)
         return;
 
-    // 真实导入：账户 + 版本目录 + Java
-    const int addedAccounts = importAccountsFor(key).size();
-    const LauncherImportResult r = LauncherImporter::importFrom(key);
     SettingsManager *sm = SettingsManager::instance();
 
-    // 注册实例文件夹
-    if (key == QStringLiteral("multimc")) {
-        // MultiMC：每个 instance 的 .minecraft 单独注册
-        for (const QString &instDir : r.instanceDirs) {
-            QString instName = instDir;
-            instName = instName.section(QStringLiteral("/instances/"), 1, 1)
-                               .section(QLatin1Char('/'), 0, 0);
-            if (instName.isEmpty())
-                instName = tr("MultiMC \u5B9E\u4F8B");
-            sm->addInstanceFolder(instName, instDir, false);
+    // 真实导入：账户 + 游戏目录 + Java + 内存
+    // 账户数量按导入前后差值统计（同名账户会被自动去重，不能直接数解析结果）
+    const int accountsBefore = sm->getAccounts().size();
+    importAccountsFor(key);
+    const int addedAccounts = sm->getAccounts().size() - accountsBefore;
+
+    const LauncherImportResult r = LauncherImporter::importFrom(key);
+
+    // 游戏目录注册成实例文件夹（已在列表里的不重复添加）
+    const QList<InstanceFolderInfo> existingFolders = sm->getInstanceFolders();
+    int addedFolders = 0;
+    const auto registerFolder = [&](const QString &dir) {
+        const QString absDir = QDir(dir).absolutePath();
+        for (const InstanceFolderInfo &folder : existingFolders) {
+            if (QDir(folder.path).absolutePath().compare(absDir, Qt::CaseInsensitive) == 0)
+                return; // 已注册过
         }
-    } else if (!r.minecraftDir.isEmpty()) {
-        const QString name = tr("%1 \u5BFC\u5165\u7684\u5B9E\u4F8B\u5E93").arg(launcherDisplayName(key));
-        sm->addInstanceFolder(name, r.minecraftDir, false);
+        sm->addInstanceFolder(importedFolderName(key, dir), QDir::toNativeSeparators(absDir), false);
+        ++addedFolders;
+    };
+    for (const QString &dir : r.instanceDirs)
+        registerFolder(dir);
+    if (!r.minecraftDir.isEmpty() && r.instanceDirs.isEmpty())
+        registerFolder(r.minecraftDir);
+
+    // Java：启动器里登记的全部运行时（合并去重，以前只带一个）
+    int addedJavas = 0;
+    for (const QString &javaExe : r.javaPaths) {
+        if (importJavaPath(javaExe))
+            ++addedJavas;
+    }
+    if (addedJavas == 0 && !r.javaPath.isEmpty() && importJavaPath(r.javaPath))
+        ++addedJavas;
+
+    // 第三方登录服务器（authlib-injector）：按地址去重
+    int addedAuthServers = 0;
+    {
+        QStringList known;
+        for (const AuthServerInfo &server : sm->getAuthServers())
+            known << server.url.toLower();
+        for (const LauncherAuthServer &server : r.authServers) {
+            if (server.url.isEmpty() || known.contains(server.url.toLower()))
+                continue;
+            sm->addAuthServer(server.url, server.name);
+            known << server.url.toLower();
+            ++addedAuthServers;
+        }
     }
 
-    // 导入启动器配置的 Java 路径（合并去重）
-    if (!r.javaPath.isEmpty())
-        importJavaPath(r.javaPath);
+    // 下载源 / 下载线程：启动器用镜像的话，方块盒子也跟着用镜像
+    QString downloadSourceText;
+    if (r.downloadSource == 0 || r.downloadSource == 1) {
+        const bool bmcl = (r.downloadSource == 1);
+        const DownloadSource source = bmcl ? DownloadSource::BMCL : DownloadSource::Official;
+        sm->setDownloadSource(source);
+        sm->setForgeDownloadSource(bmcl ? ForgeDownloadSource::BMCL : ForgeDownloadSource::Official);
+        sm->setFabricDownloadSource(bmcl ? FabricDownloadSource::BMCL : FabricDownloadSource::Official);
+        sm->setOptiFineDownloadSource(bmcl ? OptiFineDownloadSource::BMCL : OptiFineDownloadSource::Official);
+        sm->setNeoForgeDownloadSource(bmcl ? NeoForgeDownloadSource::BMCL : NeoForgeDownloadSource::Official);
+        downloadSourceText = bmcl ? tr("\u955C\u50CF") : tr("\u5B98\u65B9");
+    }
+    if (r.downloadThreads > 0)
+        sm->setDownloadThreadCount(r.downloadThreads);
 
-    // 导入启动器配置的内存（仅当启动器明确设置了最大内存时）
+    // 内存：大小 + 是否自动分配
     if (r.javaMaxMemoryMb > 0)
         sm->setMaxMemory(r.javaMaxMemoryMb);
     if (r.javaMinMemoryMb > 0)
         sm->setMinMemory(r.javaMinMemoryMb);
+    if (r.autoMemoryKnown)
+        sm->setAutoMemoryEnabled(r.autoMemory);
 
-    m_imported.append(key);
-    if (m_launcherActions[idx]) {
-        QLayout *oldLay = m_launcherActions[idx]->layout();
-        if (oldLay) {
-            while (QLayoutItem *item = oldLay->takeAt(0)) {
-                if (QWidget *w = item->widget())
-                    w->deleteLater();
-                delete item;
-            }
-            delete oldLay;
-        }
-        QHBoxLayout *aLay = new QHBoxLayout(m_launcherActions[idx]);
-        aLay->setContentsMargins(0, 4, 0, 0);
-        QLabel *done = new QLabel(tr("\u2714 \u5DF2\u5BFC\u5165"), m_launcherActions[idx]);
-        done->setObjectName(QStringLiteral("obwImportedBadge"));
-        done->setAlignment(Qt::AlignCenter);
-        aLay->addWidget(done);
-    }
-
-    // footer 汇总：账户 / 版本（含名称）/ Java
+    // 汇总本次真正新增的内容
     QStringList parts;
     if (addedAccounts > 0)
         parts << tr("%1 \u4E2A\u8D26\u6237").arg(addedAccounts);
-    if (r.versionCount > 0) {
-        QStringList shown = r.versionNames.mid(0, 3);
-        if (shown.isEmpty() && r.versionCount > 0)
-            shown << tr("%1 \u4E2A\u7248\u672C").arg(r.versionCount);
-        const QString verText = shown.join(QStringLiteral(", "));
-        if (r.versionCount > 3)
-            parts << tr("%1 \u4E2A\u7248\u672C\uFF08%2 \u7B49\uFF09").arg(r.versionCount).arg(verText);
-        else
-            parts << tr("%1 \u4E2A\u7248\u672C\uFF08%2\uFF09").arg(r.versionCount).arg(verText);
-    }
-    if (!r.javaPath.isEmpty())
-        parts << tr("Java \u5DF2\u5BFC\u5165");
-    if (r.javaMaxMemoryMb > 0)
+    if (r.versionCount > 0)
+        parts << tr("%1 \u4E2A\u7248\u672C").arg(r.versionCount);
+    if (addedFolders > 0)
+        parts << tr("%1 \u4E2A\u6E38\u620F\u76EE\u5F55").arg(addedFolders);
+    if (addedJavas > 0)
+        parts << tr("%1 \u4E2A Java").arg(addedJavas);
+    if (addedAuthServers > 0)
+        parts << tr("%1 \u4E2A\u767B\u5F55\u670D\u52A1\u5668").arg(addedAuthServers);
+    if (!downloadSourceText.isEmpty())
+        parts << tr("\u4E0B\u8F7D\u6E90\uFF1A%1").arg(downloadSourceText);
+    if (r.javaMaxMemoryMb > 0 && r.autoMemoryKnown && r.autoMemory)
+        parts << tr("\u5185\u5B58\u81EA\u52A8\u5206\u914D\uFF08\u4E0A\u9650 %1 MB\uFF09").arg(r.javaMaxMemoryMb);
+    else if (r.javaMaxMemoryMb > 0)
         parts << tr("\u5185\u5B58 %1 MB").arg(r.javaMaxMemoryMb);
-    m_footerHint->setText(parts.isEmpty()
-                              ? tr("\u672A\u627E\u5230\u53EF\u5BFC\u5165\u7684\u8D26\u6237\u6216\u7248\u672C")
-                              : tr("\u5DF2\u4ECE\u542F\u52A8\u5668\u5BFC\u5165\uFF1A") + parts.join(QStringLiteral(" \u00B7 ")));
+    // 安卓启动器的账户基本都在应用私有目录，读不到时明确告诉用户还要自己登录一次
+    if ((key == QStringLiteral("fcl") || key == QStringLiteral("zl2")
+         || key == QStringLiteral("pojav") || key == QStringLiteral("other"))
+        && addedAccounts == 0)
+        parts << tr("\u8D26\u6237\u9700\u5728\u300C\u8BBE\u7F6E \u2192 \u8D26\u6237\u7BA1\u7406\u300D\u91CC\u91CD\u65B0\u767B\u5F55");
+
+    if (parts.isEmpty()) {
+        // 什么都没拿到：保留按钮，用户可「重新检测」后再试
+        m_footerHint->setText(tr("\u8BE5\u542F\u52A8\u5668\u91CC\u6CA1\u6709\u627E\u5230\u53EF\u5BFC\u5165\u7684\u8D26\u6237\u6216\u7248\u672C\uFF0C\u53EF\u5728\u540E\u9762\u7684\u6B65\u9AA4\u91CC\u624B\u52A8\u6DFB\u52A0"));
+        return;
+    }
+
+    m_imported.append(key);
+    // 只把「导入」按钮置灰，不改按钮文字/控件，各张卡宽度保持完全一致
+    if (QPushButton *importBtn = m_launcherImportBtn.value(idx)) {
+        importBtn->setEnabled(false);
+        importBtn->setToolTip(tr("\u5DF2\u4ECE\u8BE5\u542F\u52A8\u5668\u5BFC\u5165\u5B8C\u6210"));
+    }
+    applyLauncherDetect(idx, LauncherImporter::detectOne(key));
+
+    m_footerHint->setText(tr("\u5DF2\u4ECE %1 \u5BFC\u5165\uFF1A%2")
+                              .arg(launcherDisplayName(key), parts.join(QStringLiteral(" \u00B7 "))));
+
+    // 让后面的账户 / Java / 文件夹页立刻显示导入结果
+    if (addedAccounts > 0)
+        refreshAccountList();
+    if (addedJavas > 0)
+        refreshJavaList();
+    if (addedFolders > 0)
+        refreshFolderList();
 }
 
-void OnboardingWizard::importJavaPath(const QString &javaExe)
+bool OnboardingWizard::importJavaPath(const QString &javaExe)
 {
     SettingsManager *sm = SettingsManager::instance();
     const QList<QPair<QString, QString>> existing = sm->getJavaInstallations();
     for (const auto &inst : existing) {
         if (inst.first.compare(javaExe, Qt::CaseInsensitive) == 0)
-            return; // 已存在
+            return false; // 已存在
     }
-    // 版本标签：取父目录名（如 jdk-17.0.2 → jdk-17.0.2），保留原名即可
+    // 版本标签：优先取父目录名（如 jdk-17.0.2）；父目录是 bin 时再往上一层
+    // （启动器自带的 runtime/java-runtime-delta/bin/java.exe 才不会显示成 "bin"）
+    QDir javaDir = QFileInfo(javaExe).absoluteDir();
+    if (javaDir.dirName().compare(QStringLiteral("bin"), Qt::CaseInsensitive) == 0 || javaDir.dirName().isEmpty())
+        javaDir.cdUp();
+    const QString name = javaDir.dirName();
     QList<QPair<QString, QString>> updated = existing;
-    updated.append(qMakePair(javaExe, QFileInfo(javaExe).absoluteDir().dirName()));
+    updated.append(qMakePair(javaExe, name));
     sm->setJavaInstallations(updated);
+    return true;
 }
 
 QList<AccountInfo> OnboardingWizard::importAccountsFor(const QString &key)
 {
     // 通过 LauncherImporter 解析账户并写入 SettingsManager（同名自动去重）
     const QList<AccountInfo> imported = LauncherImporter::importAccounts(key);
-    int added = 0;
+    SettingsManager *sm = SettingsManager::instance();
+    const bool wasEmpty = sm->getAccounts().isEmpty();
+    bool first = wasEmpty;
     for (const AccountInfo &acc : imported) {
-        const bool isFirst = (added == 0);
-        SettingsManager::instance()->addAccount(acc.username, acc.type, acc.serverUrl, isFirst);
-        ++added;
+        if (acc.username.isEmpty())
+            continue;
+        // 微软账户带着可用的访问令牌时才按正版账户导入，否则按离线账户
+        if (acc.type.compare(QStringLiteral("microsoft"), Qt::CaseInsensitive) == 0
+            && !acc.accessToken.isEmpty()) {
+            sm->addMicrosoftAccount(acc.username, acc.accessToken, acc.refreshToken, acc.uuid,
+                                    acc.skinUrl, first);
+        } else {
+            const QString type = acc.type.isEmpty() ? QStringLiteral("offline") : acc.type;
+            sm->addAccount(acc.username, type, acc.serverUrl, first);
+        }
+        first = false;
     }
     return imported;
 }
@@ -2277,9 +2496,35 @@ QString OnboardingWizard::launcherDisplayName(const QString &key) const
         return QStringLiteral("PCL");
     if (key == QStringLiteral("hmcl"))
         return QStringLiteral("HMCL");
+    if (key == QStringLiteral("multimc"))
+        return QStringLiteral("MultiMC");
     if (key == QStringLiteral("baka"))
         return QStringLiteral("BakaXL");
+    if (key == QStringLiteral("fcl"))
+        return QStringLiteral("FCL");
+    if (key == QStringLiteral("zl2"))
+        return QStringLiteral("ZL2");
+    if (key == QStringLiteral("pojav"))
+        return QStringLiteral("PojavLauncher");
+    if (key == QStringLiteral("other"))
+        return tr("\u5176\u4ED6\u76EE\u5F55");
     return key;
+}
+
+QString OnboardingWizard::importedFolderName(const QString &key, const QString &dir) const
+{
+    // 实例文件夹显示名：启动器名 + 游戏目录所在目录名
+    // （.minecraft 这类隐藏名往上取一级，如 D:\Minecraft\.minecraft → Minecraft）
+    QDir d(dir);
+    QString leaf = d.dirName();
+    if (leaf.startsWith(QLatin1Char('.')) || leaf.isEmpty()) {
+        QDir parent(d);
+        if (parent.cdUp())
+            leaf = parent.dirName();
+    }
+    if (leaf.isEmpty())
+        leaf = launcherDisplayName(key);
+    return tr("%1 \u5BFC\u5165 \u00B7 %2").arg(launcherDisplayName(key), leaf);
 }
 
 /* ============================================================

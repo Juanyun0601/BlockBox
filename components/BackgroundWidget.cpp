@@ -5,6 +5,8 @@
 
 #include <QPainter>
 #include <QDebug>
+#include <QCoreApplication>
+#include <QEvent>
 #include <QRadialGradient>
 #include <QLinearGradient>
 #include <QtMath>
@@ -18,7 +20,8 @@ BackgroundWidget::BackgroundWidget(QWidget *parent)
 {
     m_panorama = new PanoramaSkyRenderer;
     // 低配设备降低旋转全景的渲染分辨率，优先保证界面流畅
-    m_panorama->setRenderLimit(LowConfigMode::instance()->isLowConfigMode() ? 900 : 1200);
+    m_baseRenderLimit = LowConfigMode::instance()->isLowConfigMode() ? 900 : 1200;
+    m_panorama->setRenderLimit(m_baseRenderLimit);
 
     m_flowClock.start();
     m_flowTimer.setInterval(33); // ~30 FPS
@@ -31,11 +34,40 @@ BackgroundWidget::BackgroundWidget(QWidget *parent)
     m_rotateClock.start();
     m_rotateTimer.setInterval(m_rotateIntervalMs);
     connect(&m_rotateTimer, &QTimer::timeout, this, &BackgroundWidget::tickRotating);
+
+    // 用户拖动 / 滚轮时先暂停背景：这类操作最在意跟手，不能让背景动画抢 UI 线程。
+    // 按下先等一小会儿再停：普通点一下按钮不该把背景定住
+    m_pressHoldTimer = new QTimer(this);
+    m_pressHoldTimer->setSingleShot(true);
+    m_pressHoldTimer->setInterval(120);
+    connect(m_pressHoldTimer, &QTimer::timeout, this, [this]() {
+        setAnimationPaused(true);
+    });
+
+    m_pauseIdleTimer = new QTimer(this);
+    m_pauseIdleTimer->setSingleShot(true);
+    m_pauseIdleTimer->setInterval(220);
+    connect(m_pauseIdleTimer, &QTimer::timeout, this, [this]() {
+        if (m_animationPaused)
+            setAnimationPaused(false);
+    });
+    // 装到应用对象上：任何页面的拖动 / 滚轮都能收到
+    if (QCoreApplication *app = QCoreApplication::instance())
+        app->installEventFilter(this);
 }
 
 BackgroundWidget::~BackgroundWidget()
 {
     delete m_panorama;
+}
+
+namespace {
+// 旋转全景的刷新间隔：普通档按出图耗时自适应，省电档再压到 ~15 FPS
+constexpr int kNormalRotateIntervalMs = 33;
+constexpr int kEcoRotateIntervalMs = 66;
+// 流光背景的刷新间隔：省电档同样减半
+constexpr int kNormalFlowIntervalMs = 33;
+constexpr int kEcoFlowIntervalMs = 66;
 }
 
 void BackgroundWidget::setMode(Mode mode)
@@ -73,6 +105,64 @@ void BackgroundWidget::setDarkScrimEnabled(bool enabled)
         return;
     m_darkScrim = enabled;
     update();
+}
+
+void BackgroundWidget::setEcoMode(bool on)
+{
+    if (m_ecoMode == on)
+        return;
+    m_ecoMode = on;
+    applyRenderBudget();
+    if (m_mode == Rotating || m_mode == FlowLight)
+        update();
+}
+
+void BackgroundWidget::setAnimationPaused(bool paused)
+{
+    if (m_animationPaused == paused)
+        return;
+    m_animationPaused = paused;
+
+    if (paused) {
+        // 定时器停掉，画面定格；下一次重绘会直接复用上一帧，不再算全景
+        m_rotateTimer.stop();
+        m_flowTimer.stop();
+        return;
+    }
+    if (m_mode == Rotating && isVisible()) {
+        m_rotateClock.restart();
+        m_rotateTimer.start(m_rotateIntervalMs);
+    }
+    // 流光用绝对时钟推进相位，停表期间不动，恢复后接着走，不会跳回起点
+    if (m_mode == FlowLight && m_flowRunning && isVisible())
+        m_flowTimer.start();
+}
+
+int BackgroundWidget::targetRotateIntervalMs(int costMs) const
+{
+    // 慢机器上宁可帧率低一点，也不要拖慢整个界面
+    int interval = costMs >= 24 ? 66 : (costMs >= 12 ? 50 : kNormalRotateIntervalMs);
+    if (m_ecoMode)
+        interval = qMax(interval, kEcoRotateIntervalMs);
+    return interval;
+}
+
+void BackgroundWidget::applyRenderBudget()
+{
+    // 省电档：出图长边降到 2/3（像素数约 44%），出一帧的耗时就少一半左右
+    const int limit = m_ecoMode ? qMax(560, m_baseRenderLimit * 2 / 3) : m_baseRenderLimit;
+    m_panorama->setRenderLimit(limit);
+
+    const int flowInterval = m_ecoMode ? kEcoFlowIntervalMs : kNormalFlowIntervalMs;
+    if (m_flowTimer.interval() != flowInterval)
+        m_flowTimer.setInterval(flowInterval);
+
+    const int wanted = targetRotateIntervalMs(m_panorama->lastRenderCostMs());
+    if (wanted != m_rotateIntervalMs) {
+        m_rotateIntervalMs = wanted;
+        if (!m_animationPaused && m_rotateTimer.isActive())
+            m_rotateTimer.setInterval(wanted);
+    }
 }
 
 void BackgroundWidget::setPanoramaScene(const QString &scene)
@@ -121,7 +211,7 @@ QPixmap BackgroundWidget::rotatingPreview() const
     m_rotatingPreviewScene = scene;
     m_rotatingPreview = QPixmap(QStringLiteral(":/Images/Panorama/%1/panorama_0.jpg").arg(scene));
     if (m_rotatingPreview.isNull())
-        qDebug() << "[BackgroundWidget]" << "No fallback panorama tile for scene:" << scene;
+        qDebug() << "[BackgroundWidget]" << "场景没有回退全景图块:" << scene;
     return m_rotatingPreview;
 }
 
@@ -177,7 +267,7 @@ void BackgroundWidget::updatePixmap()
     }
     m_originalPixmap = QPixmap(m_imagePath);
     if (m_originalPixmap.isNull()) {
-        qDebug() << "[BackgroundWidget]" << "Failed to load image:" << m_imagePath;
+        qDebug() << "[BackgroundWidget]" << "图片加载失败:" << m_imagePath;
         m_pixmap = QPixmap();
         return;
     }
@@ -313,11 +403,11 @@ void BackgroundWidget::paintEvent(QPaintEvent *event)
             if (!frame.isNull()) {
                 painter.drawImage(QRect(0, 0, width(), height()), frame);
                 // 按上一帧耗时自适应刷新间隔：慢机器上宁可帧率低一点，也不要拖慢整个界面
-                const int cost = m_panorama->lastRenderCostMs();
-                const int wanted = cost >= 24 ? 66 : (cost >= 12 ? 50 : 33);
+                const int wanted = targetRotateIntervalMs(m_panorama->lastRenderCostMs());
                 if (wanted != m_rotateIntervalMs) {
                     m_rotateIntervalMs = wanted;
-                    m_rotateTimer.setInterval(wanted);
+                    if (!m_animationPaused)
+                        m_rotateTimer.setInterval(wanted);
                 }
                 m_rotateDrewOnce = true;
             } else {
@@ -438,7 +528,8 @@ void BackgroundWidget::startFlowAnimation()
 {
     m_flowRunning = true;
     m_flowClock.restart();
-    m_flowTimer.start();
+    if (!m_animationPaused)
+        m_flowTimer.start();
     update();
 }
 
@@ -457,7 +548,7 @@ void BackgroundWidget::startRotatingAnimation()
 {
     m_rotateDrewOnce = false;
     m_rotateClock.restart();
-    if (!m_rotateTimer.isActive())
+    if (!m_animationPaused && !m_rotateTimer.isActive())
         m_rotateTimer.start(m_rotateIntervalMs);
 }
 
@@ -495,12 +586,46 @@ void BackgroundWidget::hideEvent(QHideEvent *event)
 void BackgroundWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    // 重新显示时恢复定时器
-    if (m_flowRunning && m_mode == FlowLight)
+    // 重新显示时恢复定时器（暂停档期间保持定格）
+    if (m_flowRunning && m_mode == FlowLight && !m_animationPaused)
         m_flowTimer.start();
-    if (m_mode == Rotating) {
+    if (m_mode == Rotating && !m_animationPaused) {
         m_rotateClock.restart();
         m_rotateTimer.start(m_rotateIntervalMs);
         update();
     }
+}
+
+// 拖动 / 滚轮期间暂停背景动画：画面定格在当前角度，只留一次静态贴图，
+// 停手 220ms 后自己接着转。看地图、翻列表这类操作最吃这个。
+bool BackgroundWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    if (m_mode == Rotating || m_mode == FlowLight) {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress:
+            // 只是按下还不算拖动：按住够久（真在拖）才停，点按钮时背景照常转
+            m_pauseIdleTimer->stop();
+            m_pressHoldTimer->start();
+            break;
+        case QEvent::MouseButtonRelease:
+            m_pressHoldTimer->stop();
+            if (m_animationPaused)
+                m_pauseIdleTimer->start();
+            break;
+        case QEvent::Wheel:
+            m_pressHoldTimer->stop();
+            setAnimationPaused(true);
+            m_pauseIdleTimer->start();
+            break;
+        case QEvent::WindowDeactivate:
+            // 窗口失焦（例如拖到别的程序上松开）：直接恢复，别一直定格
+            m_pressHoldTimer->stop();
+            m_pauseIdleTimer->stop();
+            setAnimationPaused(false);
+            break;
+        default:
+            break;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }

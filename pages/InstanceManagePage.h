@@ -24,6 +24,7 @@ class ShaderPackSettingsPage;
 class ProjectionEditPage;
 class BlurLoadingOverlay;
 class InstanceLogPage;
+class InstanceRecordingsPage;
 
 class InstanceManagePage : public QWidget
 {
@@ -58,6 +59,11 @@ signals:
     void modDownloadSearchRequested(const QString &keyword);
     /** 本地资源搜索无结果，请求前往对应资源下载页在线搜索 */
     void fileSearchRequested(ContentType type, const QString &keyword);
+    /**
+     * 本地资源页空状态请求「快速安装对应模组」（光影/投影/录像页）
+     * @param modKey 需要安装的模组标识，由主窗口按实例加载器决定实际安装哪个
+     */
+    void quickInstallModRequested(const QString &modKey);
     /** 请求启动游戏（由概览页转发） */
     void launchGameRequested();
     /** 请求快捷启动游戏并进入指定存档 */
@@ -68,6 +74,12 @@ signals:
     void saveSettingsOpened();
     /** 已进入存档地表地图子页面（由存档列表的「地图」按钮触发） */
     void saveMapOpened();
+    /**
+     * 存档地图页进入 / 离开前台（含切到别的子页、切到别的顶栏页）。
+     * 主窗口据此给旋转背景降档：地图页拖动大图 + 后台瓦片渲染时，
+     * 背景动画不该再抢 UI 线程。
+     */
+    void worldMapActiveChanged(bool active);
     /** 已进入光影设置子页面（由光影包列表的「光影设置」按钮触发） */
     void shaderSettingsOpened();
     /** 已进入投影编辑子页面（由投影列表的编辑按钮/双击触发） */
@@ -79,6 +91,9 @@ signals:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+
+    /** 只用来盯存档地图页的 Show / Hide（页面自己不用改） */
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void initUI();
@@ -102,6 +117,7 @@ private:
     InstanceFilePage *m_resourcePacksPage;
     InstanceFilePage *m_shaderPacksPage;
     InstanceLogPage *m_logPage;
+    InstanceRecordingsPage *m_recordingsPage;
     SaveSettingsPage *m_saveSettingsPage;
     WorldMapPage *m_worldMapPage;
     ShaderPackSettingsPage *m_shaderSettingsPage;

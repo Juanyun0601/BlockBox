@@ -299,6 +299,37 @@ int runRealSave(const QString &savePath, int maxThreads)
             check(sink->layoutReady.load(), "real sink layout published");
             check(sink->done.load() == res.renderedRegions, "real sink progress matches");
 
+            // 立体视图用的高度图：与颜色图同尺寸、同原点的 16 位灰度
+            {
+                const bool sameSize = !res.heightImage.isNull()
+                    && res.heightImage.size() == res.image.size()
+                    && res.heightImage.format() == QImage::Format_Grayscale16;
+                int valid = 0;
+                int opaque = 0;
+                if (sameSize)
+                {
+                    for (int y = 0; y < res.image.height(); y += 3)
+                    {
+                        const quint16 *hp = reinterpret_cast<const quint16 *>(
+                            res.heightImage.constScanLine(y));
+                        const QRgb *cp = reinterpret_cast<const QRgb *>(
+                            res.image.constScanLine(y));
+                        for (int x = 0; x < res.image.width(); x += 3)
+                        {
+                            if (hp[x] != 0x8000) ++valid;
+                            if (qAlpha(cp[x]) > 0) ++opaque;
+                        }
+                    }
+                }
+                std::printf("    height map: %dx%d valid=%d opaque=%d\n",
+                            res.heightImage.width(), res.heightImage.height(),
+                            valid, opaque);
+                check(sameSize, "height map matches image size/format");
+                check(valid > 0, "height map has surface heights");
+                check(valid >= opaque * 95 / 100,
+                      "height map covers every surface pixel");
+            }
+
             // 渐进图块拼接 == 最终图（真实数据下逐字节比对）
             if (!res.image.isNull())
             {

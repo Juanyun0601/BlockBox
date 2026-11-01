@@ -26,7 +26,10 @@
 #include "platform.h"
 #include "components/QuizReminder.h"
 #include "pages/OnboardingWizard.h"
+
 #include "utils/AsyncInitializer.h"
+#include "utils/ContentFavoriteSync.h"
+#include "utils/ForumAccountService.h"
 #include "utils/GameLauncher.h"
 #include "utils/LanguageManager.h"
 #include "utils/LauncherLogger.h"
@@ -44,16 +47,23 @@ namespace {
 /**
  * @brief 启动后在右下角显示入站答题提醒
  *
- * 答题不再是硬性门槛：尚未通过时每次启动都会在主窗口右下角弹一个小提醒，
- * 用户可以选择「开始答题」，也可以「跳过」直接使用启动器。
+ * 答题结果和论坛账号绑定：账号还没通过时每次启动都会在主窗口右下角弹一个小提醒，
+ * 用户可以选择「开始答题」，也可以「跳过」直接使用启动器（发帖和评论需要先通过答题）。
  * 提醒窗挂在主窗口上，随主窗口一起销毁；已通过答题则不再出现。
  */
 void showQuizReminder(QWidget *parent)
 {
-    if (!parent || QuizBank::hasPassed())
+    if (!parent || QuizBank::hasPassed()
+        || ForumAccountService::instance()->hasPassedQuiz())
         return;
 
     QuizReminder *reminder = new QuizReminder(parent);
+    if (MainWindow *mainWindow = qobject_cast<MainWindow *>(parent))
+    {
+        // 未登录点「去登录」：直接打开账号页的登录表单
+        QObject::connect(reminder, &QuizReminder::loginRequested, mainWindow,
+                         &MainWindow::openForumAccountLogin);
+    }
     reminder->showReminder();
 }
 
@@ -115,10 +125,10 @@ int main(int argc, char *argv[])
     // 主题在启动窗口显示之后再初始化并套用：QSS 的解析与套用会明显拖慢
     // 首个窗口的出现，先让用户看到启动窗口，再上主题样式
     startupWidget->applyTheme();
-    qDebug() << "[App]" << "ThemeManager initialized and stylesheet applied";
+    qDebug() << "[App]" << "主题管理器已初始化并应用样式表";
 
     // 开始测量应用启动时间
-    PerformanceMonitor::instance()->startMeasurement("Application Startup");
+    PerformanceMonitor::instance()->startMeasurement("应用启动");
 
     // 首次运行判定：以持久化的 onboarding/completed 标记为准（而非数据文件夹是否存在）。
     // 数据文件夹由 getDataDirectory() 在启动早期创建，不能作为首次判据——
@@ -130,35 +140,39 @@ int main(int argc, char *argv[])
 
     // 初始化应用数据目录，确保BlockBox和.minecraft文件夹被创建
     startupWidget->updateProgress(10, QCoreApplication::translate("MainWindow", "正在初始化数据目录..."));
-    PerformanceMonitor::instance()->startMeasurement("Data Directory Initialization");
+    PerformanceMonitor::instance()->startMeasurement("数据目录初始化");
     Platform::getDataDirectory();
-    PerformanceMonitor::instance()->endMeasurement("Data Directory Initialization");
+    PerformanceMonitor::instance()->endMeasurement("数据目录初始化");
 
     // 同步加载语言设置（在创建任何 Widget 之前，确保 tr() 使用正确的翻译）
     startupWidget->updateProgress(15, QCoreApplication::translate("MainWindow", "正在加载语言设置..."));
     LanguageManager::instance()->loadLanguageSync();
-    qDebug() << "[App]" << "LanguageManager initialized synchronously";
+
+    qDebug() << "[App]" << "语言管理器已同步初始化";
 
     // 主题已在启动窗口显示后初始化并套用（见上方 applyTheme），
     // 保证后续创建的主窗口与各页面直接带上主题样式
 
     // 检查资源文件是否正确加载
-    qDebug() << "[App]" << "Resource paths:" << QDir::searchPaths(":");
+    qDebug() << "[App]" << "资源路径：" << QDir::searchPaths(":");
     QDir resourceDir(":/translations");
-    qDebug() << "[App]" << "Translation files in resource:" << resourceDir.entryList();
+    qDebug() << "[App]" << "资源中的翻译文件：" << resourceDir.entryList();
     
     // 创建主窗口（但不显示，等待异步初始化完成）
     startupWidget->updateProgress(20, QCoreApplication::translate("MainWindow", "正在创建主窗口..."));
-    PerformanceMonitor::instance()->startMeasurement("Main Window Initialization");
+    PerformanceMonitor::instance()->startMeasurement("主窗口初始化");
     MainWindow w;
-    PerformanceMonitor::instance()->endMeasurement("Main Window Initialization");
+    PerformanceMonitor::instance()->endMeasurement("主窗口初始化");
+
+    // 在线资源收藏 ↔ 论坛账号 同步器（监听收藏增删并在登录后对账补传）
+    ContentFavoriteSync::instance();
 
     // 初始化Java缓存（首次启动全盘扫描，后续从缓存加载）
     startupWidget->updateProgress(25, QCoreApplication::translate("MainWindow", "正在检测Java..."));
-    PerformanceMonitor::instance()->startMeasurement("Java Cache Initialization");
+    PerformanceMonitor::instance()->startMeasurement("Java 缓存初始化");
     GameLauncher::instance()->initJavaCache();
-    PerformanceMonitor::instance()->endMeasurement("Java Cache Initialization");
-    qDebug() << "[App]" << "Java cache initialization completed";
+    PerformanceMonitor::instance()->endMeasurement("Java 缓存初始化");
+    qDebug() << "[App]" << "Java 缓存初始化完成";
 
 
 
@@ -167,8 +181,8 @@ int main(int argc, char *argv[])
 
     // 连接异步初始化完成信号
     QObject::connect(&initializer, &AsyncInitializer::allInitializationFinished, [&]() {
-        PerformanceMonitor::instance()->endMeasurement("Async Initialization");
-        qDebug() << "[App]" << "Showing main window after async initialization";
+        PerformanceMonitor::instance()->endMeasurement("异步初始化");
+        qDebug() << "[App]" << "异步初始化完成后显示主窗口";
         
         // 启动完成
         startupWidget->updateProgress(100, QCoreApplication::translate("MainWindow", "启动完成"));
@@ -204,12 +218,13 @@ int main(int argc, char *argv[])
         });
 
         // 结束测量应用启动时间
-        PerformanceMonitor::instance()->endMeasurement("Application Startup");
+        PerformanceMonitor::instance()->endMeasurement("应用启动");
     });
 
     // 启动异步初始化
-    PerformanceMonitor::instance()->startMeasurement("Async Initialization");
+    PerformanceMonitor::instance()->startMeasurement("异步初始化");
     initializer.startAsyncInitialization();
 
     return a.exec();
 }
+

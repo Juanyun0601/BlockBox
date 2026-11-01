@@ -80,14 +80,14 @@ static QPixmap getShellThumbnail(const QString &filePath, int maxSize)
     // 初始化COM（如果尚未初始化）
     static HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
-        qCCritical(lcThumbnail) << "Failed to initialize COM:" << hr;
+        qCCritical(lcThumbnail) << "初始化 COM 失败：" << hr;
         return QPixmap();
     }
 
     // 将文件路径转换为宽字符路径
     wchar_t wPath[MAX_PATH];
     if (filePath.toWCharArray(wPath) >= MAX_PATH) {
-        qCCritical(lcThumbnail) << "File path too long";
+        qCCritical(lcThumbnail) << "文件路径过长";
         return QPixmap();
     }
 
@@ -95,7 +95,7 @@ static QPixmap getShellThumbnail(const QString &filePath, int maxSize)
     IShellItem *pShellItem = nullptr;
     hr = SHCreateItemFromParsingName(wPath, nullptr, IID_PPV_ARGS(&pShellItem));
     if (FAILED(hr) || !pShellItem) {
-        qCWarning(lcThumbnail) << "Failed to create shell item for:" << filePath;
+        qCWarning(lcThumbnail) << "创建 shell item 失败：" << filePath;
         return QPixmap();
     }
 
@@ -103,7 +103,7 @@ static QPixmap getShellThumbnail(const QString &filePath, int maxSize)
     IShellItemImageFactory *pImageFactory = nullptr;
     hr = pShellItem->QueryInterface(IID_PPV_ARGS(&pImageFactory));
     if (FAILED(hr) || !pImageFactory) {
-        qCWarning(lcThumbnail) << "Failed to get image factory for:" << filePath;
+        qCWarning(lcThumbnail) << "获取 image factory 失败：" << filePath;
         pShellItem->Release();
         return QPixmap();
     }
@@ -115,7 +115,7 @@ static QPixmap getShellThumbnail(const QString &filePath, int maxSize)
     HBITMAP hBitmap = nullptr;
     hr = pImageFactory->GetImage(size, SIIGBF_THUMBNAIL | SIIGBF_ICONOVERLAY, &hBitmap);
     if (FAILED(hr) || !hBitmap) {
-        qCWarning(lcThumbnail) << "Failed to get thumbnail for:" << filePath;
+        qCWarning(lcThumbnail) << "获取缩略图失败：" << filePath;
         pImageFactory->Release();
         pShellItem->Release();
         return QPixmap();
@@ -124,7 +124,7 @@ static QPixmap getShellThumbnail(const QString &filePath, int maxSize)
     // 将HBITMAP转换为QPixmap
     QPixmap result = hbitmapToQPixmap(hBitmap);
     if (result.isNull()) {
-        qCWarning(lcThumbnail) << "Failed to convert HBITMAP to QPixmap";
+        qCWarning(lcThumbnail) << "将 HBITMAP 转换为 QPixmap 失败";
         DeleteObject(hBitmap);
         pImageFactory->Release();
         pShellItem->Release();
@@ -143,7 +143,7 @@ static QPixmap getShellThumbnail(const QString &filePath, int maxSize)
 bool ThumbnailProvider::setSageThumbsLibraryPath(const QString &dllPath)
 {
     if (dllPath.isEmpty()) {
-        qCWarning(lcThumbnail) << "SageThumbs library path is empty";
+        qCWarning(lcThumbnail) << "SageThumbs 库路径为空";
         return false;
     }
 
@@ -158,7 +158,7 @@ bool ThumbnailProvider::setSageThumbsLibraryPath(const QString &dllPath)
 
     QLibrary *lib = new QLibrary(dllPath);
     if (!lib->load()) {
-        qCWarning(lcThumbnail) << "Failed to load SageThumbs library:" << lib->errorString();
+        qCWarning(lcThumbnail) << "加载 SageThumbs 库失败：" << lib->errorString();
         delete lib;
         return false;
     }
@@ -170,14 +170,14 @@ bool ThumbnailProvider::setSageThumbsLibraryPath(const QString &dllPath)
         lib->resolve("SageThumbs_GetThumbnail"));
 
     if (!s_sageThumbsGetThumbnail) {
-        qCWarning(lcThumbnail) << "Failed to resolve SageThumbs_GetThumbnail function";
+        qCWarning(lcThumbnail) << "解析 SageThumbs_GetThumbnail 函数失败";
         lib->unload();
         delete lib;
         return false;
     }
 
     s_sageThumbsDll = lib;
-    qCInfo(lcThumbnail) << "SageThumbs library loaded successfully:" << dllPath;
+    qCInfo(lcThumbnail) << "SageThumbs 库加载成功：" << dllPath;
     return true;
 }
 
@@ -190,7 +190,7 @@ QPixmap ThumbnailProvider::getThumbnail(const QString &filePath, int maxSize, Ba
     // 检查文件是否存在
     QFileInfo fileInfo(filePath);
     if (!fileInfo.exists() || !fileInfo.isFile()) {
-        qCWarning(lcThumbnail) << "File does not exist:" << filePath;
+        qCWarning(lcThumbnail) << "文件不存在：" << filePath;
         return QPixmap();
     }
 
@@ -276,7 +276,7 @@ QPixmap ThumbnailProvider::getThumbnail(const QString &filePath, int maxSize, Ba
         break;
     }
 
-    qCDebug(lcThumbnail) << "Failed to load thumbnail for:" << filePath;
+    qCDebug(lcThumbnail) << "加载缩略图失败：" << filePath;
     return QPixmap();
 }
 

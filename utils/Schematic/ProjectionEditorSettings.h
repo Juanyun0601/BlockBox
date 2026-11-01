@@ -25,7 +25,7 @@ public:
     static void resetToDefaults();
 
     // ==== 常用默认值 ====
-    static QString defaultTool()         { return QStringLiteral("查看"); }
+    static QString defaultTool()         { return QStringLiteral("编辑"); }
     static QString defaultShowAir()      { return QStringLiteral("false"); }
     static QString defaultUseTextures()  { return QStringLiteral("true"); }
     static QString defaultUseShapes()    { return QStringLiteral("true"); }

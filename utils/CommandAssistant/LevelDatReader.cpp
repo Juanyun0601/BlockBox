@@ -481,8 +481,8 @@ bool decompressGzip(const QString &path, QByteArray &out)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
     {
-        qWarning() << "[LevelDatReader] Cannot open file:" << path
-                   << "error:" << file.errorString();
+        qWarning() << "[LevelDatReader] 无法打开文件：" << path
+                   << "错误：" << file.errorString();
         return false;
     }
     QByteArray compressed = file.readAll();
@@ -490,7 +490,7 @@ bool decompressGzip(const QString &path, QByteArray &out)
 
     if (compressed.size() < 2)
     {
-        qWarning() << "[LevelDatReader] File too small:" << path;
+        qWarning() << "[LevelDatReader] 文件过小：" << path;
         return false;
     }
 
@@ -498,7 +498,7 @@ bool decompressGzip(const QString &path, QByteArray &out)
     if (static_cast<quint8>(compressed.at(0)) != 0x1f ||
         static_cast<quint8>(compressed.at(1)) != 0x8b)
     {
-        qWarning() << "[LevelDatReader] Not a gzip file:" << path;
+        qWarning() << "[LevelDatReader] 不是 gzip 文件：" << path;
         return false;
     }
 
@@ -513,7 +513,7 @@ bool decompressGzip(const QString &path, QByteArray &out)
     int ret = inflateInit2(&strm, 16 + MAX_WBITS);
     if (ret != Z_OK)
     {
-        qWarning() << "[LevelDatReader] inflateInit2 failed:" << ret;
+        qWarning() << "[LevelDatReader] inflateInit2 初始化失败：" << ret;
         return false;
     }
 
@@ -530,8 +530,8 @@ bool decompressGzip(const QString &path, QByteArray &out)
         if (ret != Z_OK && ret != Z_STREAM_END)
         {
             inflateEnd(&strm);
-            qWarning() << "[LevelDatReader] inflate failed:" << ret
-                       << "msg:" << strm.msg;
+            qWarning() << "[LevelDatReader] 解压失败：" << ret
+                       << "消息：" << strm.msg;
             return false;
         }
         out.append(buffer, BUFFER_SIZE - static_cast<int>(strm.avail_out));
@@ -557,7 +557,7 @@ std::optional<LevelInfo> LevelDatReader::readLevelDat(const QString &path)
 {
     if (!QFileInfo::exists(path))
     {
-        qWarning() << "[LevelDatReader] File not found:" << path;
+        qWarning() << "[LevelDatReader] 文件不存在：" << path;
         return std::nullopt;
     }
 
@@ -574,7 +574,7 @@ std::optional<LevelInfo> LevelDatReader::readLevelDat(const QString &path)
     NbtTag root;
     if (!reader.parseRoot(root))
     {
-        qWarning() << "[LevelDatReader] NBT parse failed:" << path;
+        qWarning() << "[LevelDatReader] NBT 解析失败：" << path;
         return std::nullopt;
     }
 
@@ -582,7 +582,7 @@ std::optional<LevelInfo> LevelDatReader::readLevelDat(const QString &path)
     const NbtTag *dataTag = findChild(root, QStringLiteral("Data"));
     if (dataTag == nullptr)
     {
-        qWarning() << "[LevelDatReader] Missing 'Data' tag:" << path;
+        qWarning() << "[LevelDatReader] 缺少 'Data' 标签：" << path;
         return std::nullopt;
     }
 
@@ -635,7 +635,7 @@ std::optional<LevelInfo> LevelDatReader::readLevelDat(const QString &path)
 
     if (!allowCommandsFound || !gameTypeFound || !versionNameFound)
     {
-        qWarning() << "[LevelDatReader] Missing required fields:"
+        qWarning() << "[LevelDatReader] 缺少必需字段："
                    << "allowCommands=" << allowCommandsFound
                    << "GameType=" << gameTypeFound
                    << "Version.Name=" << versionNameFound

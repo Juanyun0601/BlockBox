@@ -33,6 +33,7 @@ TopBar::TopBar(QWidget *parent)
     , m_accountCard(nullptr)
     , m_accountAvatar(nullptr)
     , m_accountNameLabel(nullptr)
+    , m_accountFullName(tr("未登录"))
     , m_gameCard(nullptr)
     , m_instanceNameLabel(nullptr)
     , m_instanceName()
@@ -135,6 +136,9 @@ void TopBar::initUI()
     // ---- Right section: account card ----
     m_accountCard = createAccountCard();
 
+    // ---- Right section: forum quick card（系统消息 / 聊天）----
+    m_forumCard = createForumCard();
+
     // ---- Right section: game management card ----
     m_gameCard = createGameCard();
 
@@ -148,6 +152,7 @@ void TopBar::initUI()
 
     // Add right section
     m_topLayout->addWidget(m_accountCard);
+    m_topLayout->addWidget(m_forumCard);
     m_topLayout->addWidget(m_gameCard);
 
     // Window controls card (far right)
@@ -180,6 +185,10 @@ void TopBar::initUI()
     connect(m_accountAvatar, &QPushButton::clicked, this, &TopBar::accountManageClicked);
     connect(m_accountNameLabel, &QPushButton::clicked, this, &TopBar::accountManageClicked);
 
+    // Forum quick card - 系统消息 / 聊天
+    connect(m_forumNotifyBtn, &QPushButton::clicked, this, &TopBar::forumNotificationsClicked);
+    connect(m_forumChatBtn, &QPushButton::clicked, this, &TopBar::forumChatClicked);
+
     connect(m_minimizeBtn, &QPushButton::clicked, this, &TopBar::minimizeWindowRequested);
     connect(m_maximizeBtn, &QPushButton::clicked, this, &TopBar::maximizeWindowRequested);
     connect(m_closeBtn, &QPushButton::clicked, this, &TopBar::closeWindowRequested);
@@ -199,6 +208,10 @@ void TopBar::initUI()
         m_instanceSelectBtn->setIcon(themedSelect);
         m_instanceSettingsBtn->setIcon(themedSettings);
     m_instanceAssistantBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/instance_assistant.svg"));
+
+        // 论坛快捷卡按钮图标随主题刷新
+        m_forumNotifyBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/topbar_notify.svg"));
+        m_forumChatBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/topbar_chat.svg"));
 
         // 窗口控制按钮图标也需要随主题刷新
         m_minimizeBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/window_minimize.svg"));
@@ -406,6 +419,14 @@ void TopBar::toggleEdition()
     emit editionSwitched(!m_isJavaEdition);
 }
 
+void TopBar::setEditionSwitchVisible(bool visible)
+{
+    if (!m_editionCard)
+        return;
+
+    m_editionCard->setVisible(visible);
+}
+
 void TopBar::animateEditionSwitch()
 {
     if (!m_editionCard)
@@ -554,6 +575,38 @@ QWidget* TopBar::createAccountCard()
 
     layout->addWidget(m_accountAvatar);
     layout->addWidget(m_accountNameLabel);
+
+    return card;
+}
+
+QWidget* TopBar::createForumCard()
+{
+    QWidget *card = new QWidget();
+    card->setObjectName("forumQuickCard");
+    card->setFixedHeight(40);
+
+    QHBoxLayout *layout = new QHBoxLayout(card);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(2);
+
+    m_forumNotifyBtn = new QPushButton(tr("系统消息"), card);
+    m_forumNotifyBtn->setObjectName("forumNotifyButton");
+    m_forumNotifyBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/topbar_notify.svg"));
+    m_forumNotifyBtn->setIconSize(QSize(16, 16));
+    m_forumNotifyBtn->setCursor(Qt::PointingHandCursor);
+    m_forumNotifyBtn->setToolTip(tr("论坛通知"));
+    m_forumNotifyBtn->setFlat(true);
+
+    m_forumChatBtn = new QPushButton(tr("聊天"), card);
+    m_forumChatBtn->setObjectName("forumChatButton");
+    m_forumChatBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/topbar_chat.svg"));
+    m_forumChatBtn->setIconSize(QSize(16, 16));
+    m_forumChatBtn->setCursor(Qt::PointingHandCursor);
+    m_forumChatBtn->setToolTip(tr("论坛好友与私信"));
+    m_forumChatBtn->setFlat(true);
+
+    layout->addWidget(m_forumNotifyBtn);
+    layout->addWidget(m_forumChatBtn);
 
     return card;
 }
@@ -965,12 +1018,67 @@ void TopBar::resizeEvent(QResizeEvent *event)
 
 void TopBar::setAccountName(const QString &name)
 {
-    if (m_accountNameLabel) m_accountNameLabel->setText(name);
+    m_accountFullName = name;
+    if (!m_accountNameLabel) return;
+
+    // 账户昵称可能很长，超出卡片宽度时省略，完整名字放在悬停提示里
+    const QFontMetrics metrics(m_accountNameLabel->font());
+    m_accountNameLabel->setText(metrics.elidedText(name, Qt::ElideRight, 180));
+    m_accountNameLabel->setToolTip(name);
+}
+
+void TopBar::setAccountAvatarPlaceholder(const QString &name)
+{
+    if (!m_accountAvatar)
+        return;
+
+    constexpr int size = 28;
+
+    // 品牌色打底 + 名称首字母：方块盒子账户没设置头像、或头像还在下载时先显示这个
+    QColor background(ThemeManager::instance()->currentThemeColor());
+    if (!background.isValid())
+        background = QColor(QStringLiteral("#2e7d32"));
+
+    QPixmap placeholder(size, size);
+    placeholder.fill(Qt::transparent);
+
+    QPainter painter(&placeholder);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(background);
+    painter.drawRoundedRect(QRectF(0, 0, size, size), 6, 6);
+
+    const QString trimmed = name.trimmed();
+    const QString letter = trimmed.isEmpty() ? QStringLiteral("?") : trimmed.left(1).toUpper();
+
+    QFont font = m_accountAvatar->font();
+    font.setPixelSize(15);
+    font.setBold(true);
+    painter.setFont(font);
+    // 亮色底用深字、深色底用白字，保证首字母看得清
+    painter.setPen(background.lightness() > 160 ? QColor(QStringLiteral("#10240f")) : QColor(Qt::white));
+    painter.drawText(placeholder.rect(), Qt::AlignCenter, letter);
+    painter.end();
+
+    m_accountAvatar->setIcon(QIcon(placeholder));
+    m_accountAvatar->setIconSize(QSize(size, size));
+}
+
+void TopBar::clearAccountAvatar()
+{
+    if (m_accountAvatar)
+        m_accountAvatar->setIcon(QIcon());
+}
+
+void TopBar::setAccountToolTip(const QString &text)
+{
+    // 名称按钮的悬停提示保留完整账户名，这里只改头像按钮
+    if (m_accountAvatar) m_accountAvatar->setToolTip(text);
 }
 
 QString TopBar::accountName() const
 {
-    return m_accountNameLabel ? m_accountNameLabel->text() : QString();
+    return m_accountFullName;
 }
 
 void TopBar::setAccountAvatar(const QPixmap &pixmap)
@@ -1008,6 +1116,11 @@ void TopBar::setAccountCardVisible(bool visible)
 void TopBar::setWindowControlCardVisible(bool visible)
 {
     if (m_windowControlCard) m_windowControlCard->setVisible(visible);
+}
+
+void TopBar::setForumCardVisible(bool visible)
+{
+    if (m_forumCard) m_forumCard->setVisible(visible);
 }
 
 void TopBar::setInstanceSettingsSelected(bool selected)

@@ -205,6 +205,7 @@ private:
     // Data
     QString m_currentAccountName;
     QString m_currentAccountType;
+    QString m_currentServerUrl;  // 当前选中账户的认证服务器地址（第三方账户非空）
     QString m_currentUuid;      // 当前选中账户的 UUID（供复制 UUID 动作使用）
     QString m_currentSkinUrl;   // 当前选中账户的皮肤 URL（供刷新皮肤动作使用）
     bool m_isDefaultAccount;

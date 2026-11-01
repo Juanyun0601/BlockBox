@@ -1,19 +1,14 @@
 /**
  * @file   BiomeName.h
- * @brief  从当前实例读取群系中文名（lang 文件）
+ * @brief  从当前实例读取群系 / 物品中文名（lang 文件）
  * @author BlockBox Team
  * @date   2026-10-17
  *
- * 存档地图「当前群系」显示的数据源：读当前实例客户端 JAR 的
- * assets/minecraft/lang/zh_cn.json 与 en_us.json，把 biome.* 翻译键
- * 反解为「群系资源名 ↔ 显示名」映射（中文优先，英文兜底）。
- * 这样既覆盖原版全部群系，也天然带上模组 / 自定义翻译。
+ * 存档地图「当前群系」与结构战利品物品名的数据源：读当前实例客户端 JAR 的
+ * assets/minecraft/lang/zh_cn.json 与 en_us.json，把 biome.* / item.* 翻译键
+ * 反解为「资源名 ↔ 显示名」映射（中文优先，英文兜底）。
  *
- * 命名优先级（保证显示中文名）：
- *   实例 zh_cn.json → 内置常见群系表（BiomeCatalog）→ 实例 en_us.json → 资源名
- *
- * 线程模型：loadFromInstance() 为纯 IO 纯函数，应放后台线程执行；
- * chineseName() / nameForId() 读取传入的表与内置表，可随时调用。
+ * 线程模型：loadFromInstance() 为纯 IO 纯函数，应放后台线程执行。
  */
 
 #ifndef BIOMENAME_H
@@ -24,13 +19,17 @@
 
 namespace BiomeName {
 
-/** 实例 lang 解析结果：zh_cn.json 与 en_us.json 的群系名分表存放 */
+/** 实例 lang 解析结果：zh_cn.json 与 en_us.json 的群系 / 物品名分表存放 */
 struct InstanceNames
 {
-    /** "minecraft:plains" -> "平原"（zh_cn.json，可能为空） */
+    /** "minecraft:plains" -> "平原"（zh_cn.json biome.*，可能为空） */
     QHash<QString, QString> zh;
-    /** "minecraft:plains" -> "Plains"（en_us.json，可能为空） */
+    /** "minecraft:plains" -> "Plains"（en_us.json biome.*，可能为空） */
     QHash<QString, QString> en;
+    /** "minecraft:diamond" -> "钻石"（zh_cn.json item.*，可能为空） */
+    QHash<QString, QString> itemsZh;
+    /** "minecraft:diamond" -> "Diamond"（en_us.json item.*，可能为空） */
+    QHash<QString, QString> itemsEn;
 };
 
 /**

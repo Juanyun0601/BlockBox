@@ -41,7 +41,7 @@
 namespace {
 
 // ── 缓存与采样参数 ──────────────────────────────────────────────────
-constexpr int kCacheFormatVersion = 4;
+constexpr int kCacheFormatVersion = 5;   // 5：动画贴图取第一帧后，旧封面图（灯笼横条纹）作废重画
 constexpr int kMaxSampledVoxels   = 64000;
 constexpr int kMaxLinearDim        = 224;
 constexpr int kMinStride           = 1;
@@ -909,7 +909,7 @@ QImage SchematicCoverRenderer::renderInWorker(const QString &filePath, int width
     }
     catch (...)
     {
-        qWarning() << "SchematicCoverRenderer: unexpected exception for" << filePath;
+        qWarning() << "SchematicCoverRenderer: 渲染时发生意外异常：" << filePath;
         return QImage();
     }
 }

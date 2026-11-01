@@ -1,6 +1,7 @@
 #include "InstanceManagePage.h"
 
 #include <QLabel>
+#include <QEvent>
 #include <QResizeEvent>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -22,6 +23,7 @@
 #include "pages/WorldMapPage.h"
 #include "pages/ShaderPackSettingsPage.h"
 #include "pages/InstanceLogPage.h"
+#include "pages/InstanceRecordingsPage.h"
 #include "utils/SettingsManager.h"
 
 InstanceManagePage::InstanceManagePage(QWidget *parent)
@@ -37,6 +39,7 @@ InstanceManagePage::InstanceManagePage(QWidget *parent)
     , m_resourcePacksPage(nullptr)
     , m_shaderPacksPage(nullptr)
     , m_logPage(nullptr)
+    , m_recordingsPage(nullptr)
     , m_saveSettingsPage(nullptr)
     , m_worldMapPage(nullptr)
     , m_shaderSettingsPage(nullptr)
@@ -56,10 +59,13 @@ void InstanceManagePage::setCurrentTab(int index)
     //            10=存档设置（非侧边栏页，仅由存档列表进入），
     //            11=光影设置（非侧边栏页，仅由光影包列表进入），
     //            12=投影编辑（非侧边栏页，仅由投影列表进入），
-    //            13=日志, 14=文件传输, 15=存档地图（非侧边栏页，仅由存档列表进入）
+    //            13=日志, 14=文件传输, 15=存档地图（非侧边栏页，仅由存档列表进入），
+    //            16=录像
     // 侧边栏"修改"子项已改为直接前往安装新实例页进入修改模式，不再对应本页标签
-    static const int tabMap[] = {0, 1, -1, 2, 14, 4, 8, 9, 5, 3, 6, 7, 13};
-    if (index < 0 || index > 12)
+    // 侧边栏子项: 0=概览 1=设置 2=修改 3=导出整合包 4=文件传输 5=存档 6=服务器
+    //            7=投影 8=截图 9=录像 10=模组 11=资源包 12=光影包 13=日志
+    static const int tabMap[] = {0, 1, -1, 2, 14, 4, 8, 9, 5, 16, 3, 6, 7, 13};
+    if (index < 0 || index > 13)
         return;
     const int stackIndex = tabMap[index];
     if (stackIndex < 0)
@@ -163,6 +169,7 @@ void InstanceManagePage::initUI()
     // 12=投影编辑（非侧边栏页，仅由投影列表进入）
     // 13=日志, 14=文件传输
     // 15=存档地图（非侧边栏页，仅由存档列表进入）
+    // 16=录像
 
     // 0: 概览页
     m_overviewPage = new InstanceOverviewPage(this);
@@ -178,7 +185,7 @@ void InstanceManagePage::initUI()
             QDesktopServices::openUrl(QUrl::fromLocalFile(m_currentInstancePath));
     });
     connect(m_overviewPage, &InstanceOverviewPage::modsRequested, this, [this]() {
-        setCurrentTab(9); // 模组
+        setCurrentTab(10); // 模组
     });
     connect(m_overviewPage, &InstanceOverviewPage::settingsRequested, this, [this]() {
         setCurrentTab(1); // 设置
@@ -259,6 +266,8 @@ void InstanceManagePage::initUI()
     });
     connect(m_shaderPacksPage, &InstanceFilePage::askAiRequested,
             this, &InstanceManagePage::askAiRequested);
+    connect(m_shaderPacksPage, &InstanceFilePage::quickInstallModRequested,
+            this, &InstanceManagePage::quickInstallModRequested);
 
     // 8: 服务器管理
     m_serverPage = new ServerManagePage(this);
@@ -282,6 +291,8 @@ void InstanceManagePage::initUI()
             emit projectionEditOpened();
         }
     });
+    connect(m_projectionPage, &ProjectionManagePage::quickInstallModRequested,
+            this, &InstanceManagePage::quickInstallModRequested);
 
     // 10: 存档设置（由存档列表卡片按钮进入，非侧边栏页）
     m_saveSettingsPage = new SaveSettingsPage(this);
@@ -339,6 +350,9 @@ void InstanceManagePage::initUI()
     // 15: 存档地表地图（由存档列表卡片「地图」按钮进入，非侧边栏页）
     m_worldMapPage = new WorldMapPage(this);
     m_contentStack->addWidget(m_worldMapPage); // index 15
+    // 地图页真上了前台（也含整页被切走、被顶栏切走）时通知主窗口给背景降档；
+    // 用事件过滤盯 Show/Hide，地图页自身不用关心背景的事
+    m_worldMapPage->installEventFilter(this);
     connect(m_savesPage, &InstanceFilePage::saveMapRequested, this,
             [this](const QString &saveName) {
         if (m_currentInstancePath.isEmpty())
@@ -367,6 +381,12 @@ void InstanceManagePage::initUI()
         dlg->exec();
     });
 
+    // 16: 录像（Replay Mod / Flashback 录像列表）
+    m_recordingsPage = new InstanceRecordingsPage(this);
+    m_contentStack->addWidget(m_recordingsPage); // index 16
+    connect(m_recordingsPage, &InstanceRecordingsPage::quickInstallModRequested,
+            this, &InstanceManagePage::quickInstallModRequested);
+
     m_contentStack->setCurrentIndex(0);
     mainLayout->addWidget(m_contentStack);
 }
@@ -374,6 +394,17 @@ void InstanceManagePage::initUI()
 void InstanceManagePage::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+}
+
+bool InstanceManagePage::eventFilter(QObject *watched, QEvent *event)
+{
+    // 存档地图页真正可见 / 不可见（Qt 会把 Show/Hide 派发给所有子控件：
+    // 换内层子页、切顶栏页、窗口最小化都会走到这里）
+    if (watched == m_worldMapPage
+        && (event->type() == QEvent::Show || event->type() == QEvent::Hide)) {
+        emit worldMapActiveChanged(event->type() == QEvent::Show);
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void InstanceManagePage::loadSubPage(int stackIndex)
@@ -394,6 +425,7 @@ void InstanceManagePage::loadSubPage(int stackIndex)
     case 9: lazyApplyPath(m_projectionPage); break;
     case 13: lazyApplyPath(m_logPage); break;
     case 14: lazyApplyPath(m_lanTransferPage); break;
+    case 16: lazyApplyPath(m_recordingsPage); break;
     default: break;
     }
 }
@@ -406,6 +438,9 @@ void InstanceManagePage::refresh()
     // 存档地图页：顶栏刷新 = 重新渲染当前维度
     if (m_contentStack && m_contentStack->currentIndex() == 15 && m_worldMapPage)
         m_worldMapPage->refresh();
+    // 录像页：顶栏刷新 = 重新扫描录像文件
+    if (m_contentStack && m_contentStack->currentIndex() == 16 && m_recordingsPage)
+        m_recordingsPage->refreshFileList();
 }
 
 void InstanceManagePage::applyPageFilter(const QString &query)

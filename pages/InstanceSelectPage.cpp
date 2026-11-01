@@ -1292,7 +1292,7 @@ void InstanceSelectPage::onGameCrashed(const QString& error)
 void InstanceSelectPage::onLaunchProgressChanged(int progress, const QString& message)
 {
     // Show progress if needed
-    qDebug() << "[InstanceSelectPage]" << "Launch progress:" << progress << "% -" << message;
+    qDebug() << "[InstanceSelectPage]" << "启动进度:" << progress << "% -" << message;
 }
 
 // 后台线程中计算所有实例的文件夹大小

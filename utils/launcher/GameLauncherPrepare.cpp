@@ -27,6 +27,88 @@
 #include "utils/ErrorAnalyzer.h"
 #include "utils/SettingsManager.h"
 
+namespace {
+
+// ── 当前平台上某个库可用的 Natives classifier 下载信息 ──
+// 1.13~1.18 的版本 JSON 把本地库放在 downloads.classifiers 里
+// （例如 org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2-natives-windows.jar），
+// 它既不在 downloads.artifact 里、也不作为独立库出现，
+// 所以下载/补全流程必须单独处理，否则解压 Natives 时根本找不到 jar，
+// 游戏会以 UnsatisfiedLinkError: Failed to locate library: lwjgl.dll 秒退。
+QList<QPair<QString, QJsonObject>> platformNativeClassifiers(const QJsonObject& library)
+{
+    QList<QPair<QString, QJsonObject>> result;
+
+    if (!library.contains("downloads") || !library["downloads"].isObject())
+        return result;
+
+    const QJsonObject downloads = library["downloads"].toObject();
+    if (!downloads.contains("classifiers") || !downloads["classifiers"].isObject())
+        return result;
+
+    const QJsonObject classifiers = downloads["classifiers"].toObject();
+
+    // 优先用 library.natives 字段定位当前平台的 classifier 键名（Mojang 规范）
+    QStringList classifierCandidates;
+    if (library.contains("natives") && library["natives"].isObject())
+    {
+        const QJsonObject nativesMap = library["natives"].toObject();
+#ifdef Q_OS_WIN
+        if (nativesMap.contains("windows"))
+            classifierCandidates << nativesMap["windows"].toString();
+#elif defined(Q_OS_MAC)
+        if (nativesMap.contains("osx"))
+            classifierCandidates << nativesMap["osx"].toString();
+#elif defined(Q_OS_ANDROID) || defined(Q_OS_LINUX)
+        if (nativesMap.contains("linux"))
+            classifierCandidates << nativesMap["linux"].toString();
+#endif
+    }
+
+    // 硬编码回退列表（兼容缺少 natives 字段的旧格式）
+#ifdef Q_OS_WIN
+    classifierCandidates << "natives-windows" << "natives-windows-64"
+                         << "natives-windows-arm64" << "natives-windows-x86";
+#elif defined(Q_OS_MAC)
+    classifierCandidates << "natives-macos" << "natives-macos-64" << "natives-macos-arm64";
+#elif defined(Q_OS_ANDROID)
+    classifierCandidates << "natives-linux" << "natives-linux-arm64" << "natives-linux-arm32";
+#elif defined(Q_OS_LINUX)
+    classifierCandidates << "natives-linux" << "natives-linux-64" << "natives-linux-arm64";
+#else
+    return result;
+#endif
+
+    for (const QString& candidate : classifierCandidates)
+    {
+        if (classifiers.contains(candidate) && classifiers[candidate].isObject())
+        {
+            const QJsonObject download = classifiers[candidate].toObject();
+            if (!download["path"].toString().isEmpty())
+                result.append(qMakePair(candidate, download));
+            break; // 与解压逻辑一致：每个库只取第一个命中的 classifier
+        }
+    }
+    return result;
+}
+
+// 由 maven 坐标 + classifier 拼出库文件相对路径（classifiers 缺 url 时的兜底地址用）
+QString nativeClassifierRelativePath(const QString& libName, const QString& classifier)
+{
+    const QStringList parts = libName.split(':');
+    if (parts.size() < 3 || classifier.isEmpty())
+        return QString();
+
+    const QString group = parts.at(0);
+    const QString artifact = parts.at(1);
+    const QString version = parts.at(2);
+
+    return QString("%1/%2/%3/%2-%3-%4.jar")
+        .arg(QString(group).replace('.', '/'), artifact, version, classifier);
+}
+
+} // namespace
+
 // ── 镜像回退：将官方 URL 映射到 BMCLAPI 镜像 ──
 void GameLauncher::applyMirrorFallback(QString& url)
 {
@@ -584,6 +666,35 @@ void GameLauncher::downloadMissingFiles(const QString& instancePath)
                 }
                 if (!lib.contains("downloads") || !lib["downloads"].isObject()) continue;
                 QJsonObject dls = lib["downloads"].toObject();
+
+                // natives classifier（1.13~1.18 的本地库），解压 Natives 前必须先补全
+                for (const QPair<QString, QJsonObject>& nativesEntry : platformNativeClassifiers(lib)) {
+                    const QJsonObject nativeDownload = nativesEntry.second;
+                    const QString nativePath = nativeDownload["path"].toString();
+                    if (nativePath.isEmpty()) continue;
+
+                    const QString nativeFilePath = libPath + "/" + nativePath;
+                    if (QFile::exists(nativeFilePath) && QFileInfo(nativeFilePath).size() > 0) continue;
+
+                    QString nativeUrl = nativeDownload["url"].toString();
+                    if (nativeUrl.isEmpty()) {
+                        const QString relativePath =
+                            nativeClassifierRelativePath(libName, nativesEntry.first);
+                        if (relativePath.isEmpty()) continue;
+                        nativeUrl = QString("https://libraries.minecraft.net/%1").arg(relativePath);
+                    }
+
+                    FileCompletionTask nativeTask;
+                    nativeTask.url = nativeUrl;
+                    nativeTask.filePath = nativeFilePath;
+                    nativeTask.fileSize = nativeDownload["size"].toVariant().toLongLong();
+                    nativeTask.expectedHash = nativeDownload["sha1"].toString();
+                    nativeTask.description = QString("Natives: %1").arg(nativePath.section('/', -1));
+                    nativeTask.priority = CompletionPriority::Normal;
+                    nativeTask.timeoutMs = 120000;
+                    enqueueCompletionTask(nativeTask);
+                }
+
                 if (!dls.contains("artifact") || !dls["artifact"].isObject()) continue;
 
                 QJsonObject art = dls["artifact"].toObject();
@@ -771,6 +882,54 @@ bool GameLauncher::downloadLibrariesForInstance(const QJsonObject& versionJson, 
             continue;
         }
         QJsonObject dls = lib["downloads"].toObject();
+
+        // ── Natives classifier（1.13~1.18 的本地库，解压 Natives 前必须先落盘）──
+        for (const QPair<QString, QJsonObject>& nativesEntry : platformNativeClassifiers(lib)) {
+            const QJsonObject nativeDownload = nativesEntry.second;
+            const QString nativePath = nativeDownload["path"].toString();
+            if (nativePath.isEmpty()) continue;
+
+            const QString nativeFilePath = librariesPath + "/" + nativePath;
+            if (QFile::exists(nativeFilePath) && QFileInfo(nativeFilePath).size() > 0) {
+                existed++;
+                continue;
+            }
+
+            QStringList candidateUrls;
+            const QString jsonUrl = nativeDownload["url"].toString();
+            if (!jsonUrl.isEmpty()) candidateUrls << jsonUrl;
+            const QString relativePath =
+                nativeClassifierRelativePath(libName, nativesEntry.first);
+            if (!relativePath.isEmpty()) {
+                candidateUrls << QString("https://libraries.minecraft.net/%1").arg(relativePath);
+                candidateUrls << QString("https://bmclapi2.bangbang93.com/maven/%1").arg(relativePath);
+            }
+
+            bool nativeOk = false;
+            for (const QString& candidateUrl : candidateUrls) {
+                emit launchDetailAdded(QString("[下载] Natives: %1").arg(nativePath.section('/', -1)));
+                QByteArray data = downloadFile(QUrl(candidateUrl), &nativeOk);
+                if (!nativeOk || data.isEmpty()) {
+                    QString mirroredUrl = candidateUrl;
+                    applyMirrorFallback(mirroredUrl);
+                    if (mirroredUrl != candidateUrl)
+                        data = downloadFile(QUrl(mirroredUrl), &nativeOk);
+                }
+                if (nativeOk && !data.isEmpty()) {
+                    QDir().mkpath(QFileInfo(nativeFilePath).absolutePath());
+                    saveFile(nativeFilePath, data);
+                    downloaded++;
+                    emit launchDetailAdded(QString("  ✓ Natives 下载成功: %1 (%2 KB)")
+                                               .arg(nativePath.section('/', -1)).arg(data.size() / 1024));
+                    break;
+                }
+            }
+            if (!nativeOk) {
+                missing++;
+                emit launchDetailAdded(QString("  ✗ Natives 下载失败: %1").arg(nativePath));
+            }
+        }
+
         if (!dls.contains("artifact") || !dls["artifact"].isObject()) {
             skipped++;
             continue;
@@ -1156,6 +1315,8 @@ bool GameLauncher::extractNatives(const QString& instancePath)
 
     int processedLibraries = 0;
     int librariesWithNatives = 0;
+    int nativesExpected = 0;
+    int nativesMissing = 0;
 
     for (const QJsonValue& value : libraries)
     {
@@ -1170,99 +1331,95 @@ bool GameLauncher::extractNatives(const QString& instancePath)
             }
         }
 
-        if (!library.contains("downloads") || !library["downloads"].isObject())
+        const QList<QPair<QString, QJsonObject>> nativesEntries = platformNativeClassifiers(library);
+        if (nativesEntries.isEmpty())
         {
             processedLibraries++;
             continue;
         }
 
-        QJsonObject downloads = library["downloads"].toObject();
-        if (!downloads.contains("classifiers") || !downloads["classifiers"].isObject())
+        for (const QPair<QString, QJsonObject>& nativesEntry : nativesEntries)
         {
-            processedLibraries++;
-            continue;
-        }
+            nativesExpected++;
 
-        QJsonObject classifiers = downloads["classifiers"].toObject();
-
-        // 优先用 library.natives 字段定位当前平台的 classifier 键名（Mojang 规范）
-        QStringList classifierCandidates;
-        if (library.contains("natives") && library["natives"].isObject())
-        {
-            QJsonObject nativesMap = library["natives"].toObject();
-#ifdef Q_OS_WIN
-            if (nativesMap.contains("windows"))
-                classifierCandidates << nativesMap["windows"].toString();
-#elif defined(Q_OS_MAC)
-            if (nativesMap.contains("osx"))
-                classifierCandidates << nativesMap["osx"].toString();
-#elif defined(Q_OS_ANDROID)
-            if (nativesMap.contains("linux"))
-                classifierCandidates << nativesMap["linux"].toString();
-#elif defined(Q_OS_LINUX)
-            if (nativesMap.contains("linux"))
-                classifierCandidates << nativesMap["linux"].toString();
-#endif
-        }
-
-        // 硬编码回退列表（兼容缺少 natives 字段的旧格式）
-#ifdef Q_OS_WIN
-        classifierCandidates << "natives-windows" << "natives-windows-64" << "natives-windows-arm64" << "natives-windows-x86";
-#elif defined(Q_OS_MAC)
-        classifierCandidates << "natives-macos" << "natives-macos-64" << "natives-macos-arm64";
-#elif defined(Q_OS_ANDROID)
-        classifierCandidates << "natives-linux" << "natives-linux-arm64" << "natives-linux-arm32";
-#elif defined(Q_OS_LINUX)
-        classifierCandidates << "natives-linux" << "natives-linux-64" << "natives-linux-arm64";
-#else
-        processedLibraries++;
-        continue;
-#endif
-
-        QJsonObject nativeDownload;
-        bool foundNative = false;
-        for (const QString& candidate : classifierCandidates)
-        {
-            if (classifiers.contains(candidate) && classifiers[candidate].isObject())
+            const QString classifier = nativesEntry.first;
+            const QJsonObject nativeDownload = nativesEntry.second;
+            const QString path = nativeDownload["path"].toString();
+            if (path.isEmpty())
             {
-                nativeDownload = classifiers[candidate].toObject();
-                foundNative = true;
-                break;
+                continue;
             }
-        }
-        if (!foundNative)
-        {
-            processedLibraries++;
-            continue;
-        }
-        QString path = nativeDownload["path"].toString();
-        if (path.isEmpty())
-        {
-            processedLibraries++;
-            continue;
+
+            const QString libraryPath = librariesPath + "/" + path;
+
+            // ── 缺文件时先补全：JSON 给的地址 → 官方 libraries → BMCLAPI 镜像 ──
+            if (!QFile::exists(libraryPath))
+            {
+                QStringList candidateUrls;
+                const QString jsonUrl = nativeDownload["url"].toString();
+                if (!jsonUrl.isEmpty())
+                    candidateUrls << jsonUrl;
+
+                const QString relativePath =
+                    nativeClassifierRelativePath(library["name"].toString(), classifier);
+                if (!relativePath.isEmpty())
+                {
+                    candidateUrls << QString("https://libraries.minecraft.net/%1").arg(relativePath);
+                    candidateUrls << QString("https://bmclapi2.bangbang93.com/maven/%1").arg(relativePath);
+                }
+
+                for (const QString& candidateUrl : candidateUrls)
+                {
+                    bool ok = false;
+                    emit launchDetailAdded(QString("下载缺失的Natives库: %1").arg(path.section('/', -1)));
+                    QByteArray data = downloadFile(QUrl(candidateUrl), &ok);
+                    if (!ok || data.isEmpty())
+                    {
+                        QString mirroredUrl = candidateUrl;
+                        applyMirrorFallback(mirroredUrl);
+                        if (mirroredUrl != candidateUrl)
+                            data = downloadFile(QUrl(mirroredUrl), &ok);
+                    }
+                    if (ok && !data.isEmpty())
+                    {
+                        QDir().mkpath(QFileInfo(libraryPath).absolutePath());
+                        saveFile(libraryPath, data);
+                        emit launchDetailAdded(QString("  ✓ Natives库补全成功: %1 (%2 KB)")
+                                                   .arg(path.section('/', -1)).arg(data.size() / 1024));
+                        break;
+                    }
+                }
+            }
+
+            if (!QFile::exists(libraryPath))
+            {
+                nativesMissing++;
+                emit launchDetailAdded(QString("警告: 缺少Natives库 %1，游戏将因缺少本地库无法启动").arg(path));
+                continue;
+            }
+
+            emit launchDetailAdded(QString("解压Natives文件: %1").arg(QFileInfo(libraryPath).fileName()));
+            extractNativesFromJar(libraryPath, nativesPath);
+
+            librariesWithNatives++;
         }
 
-        QString libraryPath = librariesPath + "/" + path;
-        QFileInfo libraryFile(libraryPath);
-
-        if (!libraryFile.exists())
-        {
-            emit launchDetailAdded(QString("库文件缺失: %1").arg(libraryPath));
-            processedLibraries++;
-            continue;
-        }
-
-        emit launchDetailAdded(QString("解压Natives文件: %1").arg(libraryFile.fileName()));
-        extractNativesFromJar(libraryPath, nativesPath);
-
-        librariesWithNatives++;
         processedLibraries++;
 
         int progress = (processedLibraries * 100) / libraries.size();
         emit launchProgressChanged(50 + (progress / 2), QString("解压Natives文件 (%1%)").arg(progress));
     }
 
-    emit launchDetailAdded(QString("Natives文件处理完成，共处理 %1 个库文件，其中 %2 个包含Natives").arg(processedLibraries).arg(librariesWithNatives));
+    emit launchDetailAdded(QString("Natives文件处理完成，共处理 %1 个库文件，其中 %2 个包含Natives")
+                               .arg(processedLibraries).arg(librariesWithNatives));
+
+    // 声明了本地库却一个都没解压出来：直接说清原因，别让游戏以 LWJGL 找不到 dll 的形式秒退
+    if (nativesExpected > 0 && librariesWithNatives == 0)
+    {
+        emit launchDetailAdded(QString("错误: 版本声明的 %1 个 Natives 库都没能解压（缺失 %2 个），游戏无法启动")
+                                   .arg(nativesExpected).arg(nativesMissing));
+        return false;
+    }
     return true;
 }
 

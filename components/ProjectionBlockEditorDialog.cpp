@@ -143,6 +143,7 @@ enum class Glyph
     Break,
     Fill,
     Select,
+    Edit,
     Undo,
     Redo,
     Focus,
@@ -228,6 +229,20 @@ QIcon makeGlyphIcon(Glyph glyph, const QColor &color, int size = 18)
         p.setBrush(Qt::NoBrush);
         break;
     }
+    case Glyph::Edit:
+    {
+        // 铅笔：斜向笔身 + 笔尖，一眼读作「编辑」
+        const QPolygonF body{ QPointF(11.2, 2.6), QPointF(15.4, 6.8),
+                              QPointF(6.6, 15.6), QPointF(2.4, 11.4) };
+        p.drawPolygon(body);
+        p.setPen(QPen(color, 1.1));
+        p.drawLine(QPointF(4.6, 9.2), QPointF(8.8, 13.4));
+        p.setPen(pen);
+        const QPolygonF tip{ QPointF(6.6, 15.6), QPointF(2.4, 11.4), QPointF(1.9, 16.1) };
+        fillPoly(tip, mid);
+        p.drawPolygon(tip);
+        break;
+    }
     case Glyph::Undo:
     {
         p.drawArc(QRectF(4, 5.5, 11, 9), 20 * 16, 160 * 16);
@@ -280,31 +295,8 @@ QIcon makeGlyphIcon(Glyph glyph, const QColor &color, int size = 18)
 /** 无材质时的方块色块图标：带高光边的立体小方块，保证调色板始终有视觉锚点 */
 QIcon makeSwatchIcon(const QColor &color, int size = 20)
 {
-    const qreal dpr = 2.0;
-    QPixmap pm(int(size * dpr), int(size * dpr));
-    pm.setDevicePixelRatio(dpr);
-    pm.fill(Qt::transparent);
-
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    const QRectF r(1.0, 1.0, size - 2.0, size - 2.0);
-    p.setPen(QPen(color.darker(150), 1.0));
-    p.setBrush(color);
-    p.drawRoundedRect(r, size * 0.22, size * 0.22);
-
-    QColor hi = color.lighter(155);
-    hi.setAlpha(150);
-    p.setPen(Qt::NoPen);
-    p.setBrush(hi);
-    QPainterPath path;
-    path.moveTo(r.left() + r.width() * 0.18, r.top() + r.height() * 0.16);
-    path.lineTo(r.right() - r.width() * 0.18, r.top() + r.height() * 0.16);
-    path.lineTo(r.right() - r.width() * 0.30, r.top() + r.height() * 0.40);
-    path.lineTo(r.left() + r.width() * 0.30, r.top() + r.height() * 0.40);
-    path.closeSubpath();
-    p.drawPath(path);
-    p.end();
-    return QIcon(pm);
+    // 画法统一放在 InstanceTextureLoader 里，结构详情弹窗的战利品图标复用同一套
+    return InstanceTextureLoader::swatchIcon(color, size, 2.0);
 }
 
 /** 读取主题令牌色（例如 "TEXT_SECONDARY"），解析失败时返回 fallback */
@@ -370,20 +362,15 @@ void ProjectionBlockEditorDialog::initUI()
         // 隐藏的工具下拉：沿用原有「工具枚举 -> 视图模式」的数据通道
         m_toolCombo = new QComboBox(this);
         m_toolCombo->setObjectName(QStringLiteral("projToolCombo"));
-        m_toolCombo->addItem(tr("查看"), int(ToolOrbit));
-        m_toolCombo->addItem(tr("放置"), int(ToolPlace));
-        m_toolCombo->addItem(tr("破坏"), int(ToolBreak));
-        m_toolCombo->addItem(tr("填充"), int(ToolFill));
         m_toolCombo->addItem(tr("选取"), int(ToolSelect));
+        m_toolCombo->addItem(tr("编辑"), int(ToolEdit));
         m_toolCombo->setVisible(false);
 
+        // 顶部只有两个模式：选取（左键选中）与编辑（左键破坏 / 右键放置）
         struct ToolSpec { Glyph glyph; QString text; QString tip; };
         const QVector<ToolSpec> tools{
-            { Glyph::Cube,   tr("查看"), tr("左键破坏方块、右键放置方块；按住拖动可旋转视角（快捷键 1）") },
-            { Glyph::Place,  tr("放置"), tr("左键放置当前方块（右键在任何工具下都能放置，快捷键 2）") },
-            { Glyph::Break,  tr("破坏"), tr("左键破坏方块、右键放置方块（快捷键 3）") },
-            { Glyph::Fill,   tr("填充"), tr("左键破坏、右键放置；批量填充用右侧按钮（快捷键 4）") },
-            { Glyph::Select, tr("选取"), tr("左键单击选中同类方块（右键仍为放置，快捷键 5）") },
+            { Glyph::Select, tr("选取"), tr("左键单击选中方块，可切换为「同类型全部」多选；右键仍为放置（快捷键 1）") },
+            { Glyph::Edit,   tr("编辑"), tr("左键破坏方块、右键放置当前方块，拖动鼠标可像《我的世界》一样转动视角（快捷键 2）") },
         };
         auto *toolGroup = new QButtonGroup(this);
         toolGroup->setExclusive(true);
@@ -723,8 +710,10 @@ void ProjectionBlockEditorDialog::initUI()
     auto *bottom = new QHBoxLayout();
     bottom->setSpacing(8);
     auto *hintLabel = new QLabel(
-        tr("左键破坏 · 右键放置 · 拖动旋转 · 滚轮缩放 · WASD 移动"), this);
+        tr("左键破坏 · 右键放置 · 拖动转向 · 滚轮推进 · WASD 飞行 · 空格/Shift 升降 · 双击 W 或 Ctrl 疾跑"), this);
     hintLabel->setObjectName(QStringLiteral("projMutedLabel"));
+    hintLabel->setToolTip(tr("视角操作与《我的世界》一致：拖动鼠标原地转动视角；WASD 沿视线飞行；"
+                             "空格上升、Shift 下降；双击 W 或按住 Ctrl 疾跑；滚轮沿视线推进 / 后退。"));
     bottom->addWidget(hintLabel, 1);
 
     auto *closeBtn = new QPushButton(tr("关闭"), this);
@@ -971,8 +960,8 @@ bool ProjectionBlockEditorDialog::loadProjection(const QString &filePath, const 
     m_layerSlider->setRange(0, m_doc.sizeY());
     m_layerSlider->setValue(0);
     m_layerLabel->setText(tr("全部"));
-    m_view->setLayerFilter(-1);
-    m_view->setLayerMode(VoxelViewWidget::LayerMode::All);
+    // 层与模式一起设，只重建一次几何
+    m_view->setLayerView(-1, VoxelViewWidget::LayerMode::All);
     if (m_belowToggle)
         m_belowToggle->setChecked(false);
 
@@ -1267,27 +1256,19 @@ void ProjectionBlockEditorDialog::applyToolToView()
 {
     if (!m_view)
         return;
-    // 左键随工具切换：放置工具左键放置、选取工具左键选取、其余工具左键破坏；
-    // 右键在任何工具下都是放置当前方块，这样「左键破坏 / 右键放置」始终可用
-    switch (m_tool)
-    {
-    case ToolPlace:
-        m_view->setLeftAction(VoxelViewWidget::LeftAction::Place);
-        break;
-    case ToolSelect:
+    // 左键随模式切换：选取模式左键选取、编辑模式左键破坏；
+    // 右键在两种模式下都是放置当前方块，这样「左键破坏 / 右键放置」始终可用
+    if (m_tool == ToolSelect)
         m_view->setLeftAction(VoxelViewWidget::LeftAction::Select);
-        break;
-    default:
+    else
         m_view->setLeftAction(VoxelViewWidget::LeftAction::Break);
-        break;
-    }
 }
 
 void ProjectionBlockEditorDialog::onToolChanged(int index)
 {
     const int tool = m_toolCombo->itemData(index).toInt();
     m_tool = tool;
-    // 左键动作随工具切换（放置 / 选取 / 破坏），右键始终放置
+    // 左键动作随模式切换（选取 / 编辑），右键始终放置
     applyToolToView();
     if (tool != ToolSelect)
         m_view->setCursor(Qt::ArrowCursor);
@@ -1407,7 +1388,7 @@ void ProjectionBlockEditorDialog::updateSelectionLabel()
     else if (m_tool == ToolSelect)
         m_selectLabel->setText(tr("左键单击方块即可选中"));
     else
-        m_selectLabel->setText(tr("切到「选取」工具（快捷键 5）后左键单击方块即可选中"));
+        m_selectLabel->setText(tr("切到「选取」模式（快捷键 1）后左键单击方块即可选中"));
     if (m_clearSelBtn)
         m_clearSelBtn->setEnabled(n > 0);
 }
@@ -1430,17 +1411,17 @@ void ProjectionBlockEditorDialog::onFillLayerChanged(int value)
     if (value <= 0)
     {
         m_layerLabel->setText(tr("全部"));
-        m_view->setLayerFilter(-1);
-        m_view->setLayerMode(VoxelViewWidget::LayerMode::All);
+        m_view->setLayerView(-1, VoxelViewWidget::LayerMode::All);
     }
     else
     {
         m_layerLabel->setText(tr("Y层 %1").arg(value));
-        m_view->setLayerFilter(value - 1);
-        // 勾选「此层及以下」→ 显示当前层及以下（下方变暗）；否则仅显示当前层
-        m_view->setLayerMode(m_belowToggle && m_belowToggle->isChecked()
-            ? VoxelViewWidget::LayerMode::Below
-            : VoxelViewWidget::LayerMode::Single);
+        // 勾选「此层及以下」→ 显示当前层及以下（下方变暗）；否则仅显示当前层；
+        // 层与模式一次设好，只重建一次几何（大投影里两次重建会明显卡手）
+        m_view->setLayerView(value - 1,
+            (m_belowToggle && m_belowToggle->isChecked())
+                ? VoxelViewWidget::LayerMode::Below
+                : VoxelViewWidget::LayerMode::Single);
     }
     m_view->setDirty();
 }
@@ -1623,21 +1604,16 @@ void ProjectionBlockEditorDialog::applyEditorSettings()
         m_view->setShowAir(showAirOn);
     }
 
-    // 默认工具（查看/放置/破坏/填充）：按工具名映射到编辑器下拉项
+    // 默认模式（选取 / 编辑）：按模式名映射到编辑器下拉项；
+    // 旧版设置里存的「查看 / 放置 / 破坏 / 填充」一律视为「编辑」
     const QString tool = ProjectionEditorSettings::value(
         QStringLiteral("defaultTool"),
         ProjectionEditorSettings::defaultTool());
-    int toolIndex = 0;
-    if (tool == QLatin1String("放置"))
-        toolIndex = 1;
-    else if (tool == QLatin1String("破坏"))
-        toolIndex = 2;
-    else if (tool == QLatin1String("填充"))
-        toolIndex = 3;
+    const int toolIndex = (tool == QLatin1String("选取")) ? 0 : 1;
     m_toolCombo->setCurrentIndex(toolIndex);
     m_tool = m_toolCombo->itemData(toolIndex).toInt();
     // setCurrentIndex 在索引没变化时不会发信号，这里显式同步一次左键动作，
-    // 否则默认就是「查看」工具时，打开编辑器后左键单击不会破坏方块
+    // 否则默认就是第 0 项时，打开编辑器后左键单击不会按所选模式生效
     applyToolToView();
 
     // 材质开关与来源
@@ -1677,6 +1653,18 @@ void ProjectionBlockEditorDialog::applyEditorSettings()
         m_shapeLoader = BlockShapeLoader::sharedForInstance(m_instancePath);
         if (m_shapeLoader)
             m_view->setShapeLoader(m_shapeLoader);
+    }
+
+    // 视角操作（与《我的世界》的「鼠标灵敏度 / 反转鼠标」对应）
+    if (m_view)
+    {
+        bool ok = false;
+        const int sensPercent = ProjectionEditorSettings::value(
+            QStringLiteral("lookSensitivity"), QStringLiteral("50")).toInt(&ok);
+        m_view->setLookSensitivity((ok ? qBound(0, sensPercent, 100) : 50) / 100.0f);
+        m_view->setInvertLookY(
+            ProjectionEditorSettings::value(QStringLiteral("invertLookY"),
+                                            QStringLiteral("false")) == QLatin1String("true"));
     }
 }
 
@@ -2104,9 +2092,6 @@ void ProjectionBlockEditorDialog::setupShortcuts()
     addShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z), [this]() { onRedo(); });
     addShortcut(QKeySequence(Qt::Key_1), [this]() { m_toolCombo->setCurrentIndex(0); });
     addShortcut(QKeySequence(Qt::Key_2), [this]() { m_toolCombo->setCurrentIndex(1); });
-    addShortcut(QKeySequence(Qt::Key_3), [this]() { m_toolCombo->setCurrentIndex(2); });
-    addShortcut(QKeySequence(Qt::Key_4), [this]() { m_toolCombo->setCurrentIndex(3); });
-    addShortcut(QKeySequence(Qt::Key_5), [this]() { m_toolCombo->setCurrentIndex(4); });
     addShortcut(QKeySequence(Qt::Key_F), [this]() { onFocusView(); });
     addShortcut(QKeySequence(Qt::Key_R), [this]() { if (m_view) m_view->resetView(); });
     addShortcut(QKeySequence(QKeySequence::Save), [this]() { onSaveInPlace(); });

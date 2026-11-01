@@ -39,8 +39,16 @@ public:
 
     void setAccountName(const QString &name);
     void setAccountAvatar(const QPixmap &pixmap);
+    /** 账户卡片头像占位：没有头像图时用品牌色底色 + 名称首字母（方块盒子账户常用） */
+    void setAccountAvatarPlaceholder(const QString &name);
+    /** 清空账户卡片头像（无头像的未登录状态） */
+    void clearAccountAvatar();
+    /** 账户卡片的悬停提示：区分游戏账户 / 方块盒子账户 */
+    void setAccountToolTip(const QString &text);
     void setAccountCardVisible(bool visible);
     void setWindowControlCardVisible(bool visible);
+    /** 显示/隐藏顶栏「系统消息 / 聊天」快捷卡片（随论坛实验功能开关） */
+    void setForumCardVisible(bool visible);
     void setInstanceSettingsSelected(bool selected);
     void setInstanceSelectSelected(bool selected);
     void setAccountSelected(bool selected);
@@ -50,6 +58,8 @@ public:
     void setJavaEdition(bool java);
     /** 切换 Java 版/基岩版（等同点击顶栏版本切换卡片） */
     void toggleEdition();
+    /** 显示/隐藏顶栏版本切换入口（基岩版为实验性功能，默认隐藏） */
+    void setEditionSwitchVisible(bool visible);
 
     const QString &instanceName() const { return m_instanceName; }
     QString accountName() const;
@@ -64,6 +74,11 @@ signals:
     void launchGameClicked();
     void accountManageClicked();
     void searchClicked();
+
+    /** 顶栏「系统消息」：打开论坛通知 */
+    void forumNotificationsClicked();
+    /** 顶栏「聊天」：打开论坛好友与私信 */
+    void forumChatClicked();
 
     /** 游戏版本切换（true=Java版，false=基岩版），参数为新版本 */
     void editionSwitched(bool javaEdition);
@@ -81,6 +96,7 @@ private:
     QWidget* createGameCard();
     QWidget* createWindowControlCard();
     QWidget* createEditionCard();
+    QWidget* createForumCard();
     void updateEditionCard();
     void animateEditionSwitch();
     void stopEditionAnimation();
@@ -142,6 +158,8 @@ private:
     QWidget *m_accountCard;
     QPushButton *m_accountAvatar;
     QPushButton *m_accountNameLabel;
+    /** 账户完整名称（界面上可能被省略号截断） */
+    QString m_accountFullName;
 
     // Right section - game management card
     QWidget *m_gameCard;
@@ -152,6 +170,11 @@ private:
     QPushButton *m_instanceSettingsBtn;
     QPushButton *m_instanceAssistantBtn;
     QPushButton *m_launchGameBtn;
+
+    // Right section - forum quick access card（系统消息 / 聊天）
+    QWidget *m_forumCard = nullptr;
+    QPushButton *m_forumNotifyBtn = nullptr;
+    QPushButton *m_forumChatBtn = nullptr;
 
     // Window control buttons card
     QWidget *m_windowControlCard;

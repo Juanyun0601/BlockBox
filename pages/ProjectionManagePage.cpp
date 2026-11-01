@@ -30,6 +30,7 @@
 #include <QPointer>
 #include "components/AppMessageBox.h"
 #include <QSpacerItem>
+#include <QTimer>
 #include <QUrl>
 
 #include <algorithm>
@@ -44,6 +45,8 @@ ProjectionManagePage::ProjectionManagePage(QWidget *parent)
     , m_cardGridLayout(nullptr)
     , m_cardFlowLayout(nullptr)
     , m_emptyLabel(nullptr)
+    , m_emptyWidget(nullptr)
+    , m_quickInstallBtn(nullptr)
     , m_bottomBar(nullptr)
     , m_openFolderBtn(nullptr)
     , m_addProjectionBtn(nullptr)
@@ -198,11 +201,41 @@ void ProjectionManagePage::initUI()
     mainLayout->addWidget(m_scrollArea, 1);
 
     // 空提示放滚动区外（放网格内会被 clearCards 删除，且筛空/空列表都要用）
-    m_emptyLabel = new QLabel(tr("暂无投影文件，可点击底部「添加投影」按钮导入"));
+    // 投影文件由游戏内模组生成，一个文件都没有时顺手给出「快速安装投影模组」入口
+    m_emptyWidget = new QWidget(this);
+    QVBoxLayout *emptyLayout = new QVBoxLayout(m_emptyWidget);
+    emptyLayout->setContentsMargins(0, 0, 0, 0);
+    emptyLayout->setSpacing(12);
+    emptyLayout->addStretch();
+
+    m_emptyLabel = new QLabel(tr("暂无投影文件，可点击底部「添加投影」按钮导入"), m_emptyWidget);
     m_emptyLabel->setObjectName("exampleContentLabel");
     m_emptyLabel->setAlignment(Qt::AlignCenter);
-    m_emptyLabel->hide();
-    mainLayout->addWidget(m_emptyLabel, 1);
+    m_emptyLabel->setWordWrap(true);
+    emptyLayout->addWidget(m_emptyLabel);
+
+    m_quickInstallBtn = new QPushButton(tr("快速安装投影模组"), m_emptyWidget);
+    m_quickInstallBtn->setObjectName("quickInstallBtn");
+    // 主色按钮配白色图标（主题色描边会和底色糊在一起看不清）
+    m_quickInstallBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/download.svg", QColor("#ffffff"), 18));
+    m_quickInstallBtn->setIconSize(QSize(18, 18));
+    m_quickInstallBtn->setCursor(Qt::PointingHandCursor);
+    m_quickInstallBtn->setToolTip(
+        tr("自动安装 Litematica：游戏内可生成 .litematic 投影文件并导出到 schematics 目录"));
+    emptyLayout->addWidget(m_quickInstallBtn, 0, Qt::AlignHCenter);
+    emptyLayout->addStretch();
+
+    m_emptyWidget->hide();
+    mainLayout->addWidget(m_emptyWidget, 1);
+
+    connect(m_quickInstallBtn, &QPushButton::clicked, this, [this]() {
+        // 连点会并起两套安装流程，先短暂禁用按钮
+        QPushButton *btn = m_quickInstallBtn;
+        btn->setEnabled(false);
+        QTimer::singleShot(2500, btn, [btn]() { btn->setEnabled(true); });
+        emit quickInstallModRequested(QStringLiteral("projection"));
+    });
 
     m_bottomBar = new QWidget();
     m_bottomBar->setObjectName("modBottomBar");
@@ -738,7 +771,7 @@ void ProjectionManagePage::placeCards()
     if (m_projectionFiles.isEmpty())
     {
         m_emptyLabel->setText(tr("暂无投影文件，可点击底部「添加投影」按钮导入"));
-        showEmptyHint(true);
+        showEmptyHint(true, true);
         updateSelectionBar();
         return;
     }
@@ -800,9 +833,11 @@ void ProjectionManagePage::placeCards()
     updateSelectionBar();
 }
 
-void ProjectionManagePage::showEmptyHint(bool show)
+void ProjectionManagePage::showEmptyHint(bool show, bool allowQuickInstall)
 {
-    m_emptyLabel->setVisible(show);
+    m_emptyWidget->setVisible(show);
+    // 只有「一个投影都没有」时才给快速安装入口，筛选筛空时资源其实存在
+    m_quickInstallBtn->setVisible(show && allowQuickInstall);
     // 空提示占据列表区域时隐藏滚动区（提示在滚动区外，不再进网格被 clearCards 删除）
     m_scrollArea->setVisible(!show);
 }

@@ -88,7 +88,7 @@ void ProgressDialog::showWithTask(Task *task)
 
     if(!task)
     {
-        qDebug() << "Programmer error: progress dialog created with null task.";
+        qDebug() << "程序错误: 进度对话框的任务为空。";
         close();
         return;
     }
@@ -119,7 +119,7 @@ int ProgressDialog::execWithTask(Task *task)
 
     if(!task)
     {
-        qDebug() << "Programmer error: progress dialog created with null task.";
+        qDebug() << "程序错误: 进度对话框的任务为空。";
         return Accepted;
     }
 

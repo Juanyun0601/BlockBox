@@ -94,7 +94,7 @@ bool Download::startNextUrl()
         return false;
     m_current_url = next;
     m_url = m_url_list[m_current_url];
-    qDebug() << "Falling back to next URL:" << m_url.toString();
+    qDebug() << "换用下一个 URL：" << m_url.toString();
     start(m_network);
     return true;
 }
@@ -103,7 +103,7 @@ void Download::startImpl()
 {
     if(m_status == Job_Aborted)
     {
-        qWarning() << "Attempt to start an aborted Download:" << m_url.toString();
+        qWarning() << "尝试启动已取消的下载：" << m_url.toString();
         emit aborted(m_index_within_job);
         return;
     }
@@ -113,10 +113,10 @@ void Download::startImpl()
     {
         case Job_Finished:
             emit succeeded(m_index_within_job);
-            qDebug() << "Download cache hit " << m_url.toString();
+            qDebug() << "缓存命中：" << m_url.toString();
             return;
         case Job_InProgress:
-            qDebug() << "Downloading " << m_url.toString();
+            qDebug() << "正在下载 " << m_url.toString();
             break;
         case Job_Failed_Proceed: // this is meaningless in this context. We do need a sink.
         case Job_NotStarted:
@@ -153,7 +153,7 @@ void Download::downloadError(QNetworkReply::NetworkError error)
 {
     if(error == QNetworkReply::OperationCanceledError)
     {
-        qCritical() << "Aborted " << m_url.toString();
+        qCritical() << "下载已取消：" << m_url.toString();
         m_status = Job_Aborted;
     }
     else
@@ -167,7 +167,7 @@ void Download::downloadError(QNetworkReply::NetworkError error)
             }
         }
         // error happened during download.
-        qCritical() << "Failed " << m_url.toString() << " with reason " << error;
+        qCritical() << "下载失败：" << m_url.toString() << "，原因：" << error;
         m_status = Job_Failed;
     }
 }
@@ -177,9 +177,9 @@ void Download::sslErrors(const QList<QSslError> & errors)
     int i = 1;
     for (auto error : errors)
     {
-        qCritical() << "Download" << m_url.toString() << "SSL Error #" << i << " : " << error.errorString();
+        qCritical() << "下载" << m_url.toString() << "SSL 错误 #" << i << "：" << error.errorString();
         auto cert = error.certificate();
-        qCritical() << "Certificate in question:\n" << cert.toText();
+        qCritical() << "相关证书：\n" << cert.toText();
         i++;
     }
 }
@@ -229,19 +229,19 @@ bool Download::handleRedirect()
         redirect = QUrl(redirectStr, QUrl::TolerantMode);
         if(!redirect.isValid())
         {
-            qWarning() << "Failed to parse redirect URL:" << redirectStr;
+            qWarning() << "解析重定向 URL 失败：" << redirectStr;
             downloadError(QNetworkReply::ProtocolFailure);
             return false;
         }
-        qDebug() << "Fixed location header:" << redirect;
+        qDebug() << "已修正的 Location 头：" << redirect;
     }
     else
     {
-        qDebug() << "Location header:" << redirect;
+        qDebug() << "Location 头：" << redirect;
     }
 
     m_url = QUrl(redirect.toString());
-    qDebug() << "Following redirect to " << m_url.toString();
+    qDebug() << "跟随重定向到 " << m_url.toString();
     start(m_network);
     return true;
 }
@@ -252,14 +252,14 @@ void Download::downloadFinished()
     // handle HTTP redirection first
     if(handleRedirect())
     {
-        qDebug() << "Download redirected:" << m_url.toString();
+        qDebug() << "下载已重定向：" << m_url.toString();
         return;
     }
 
     // if the download failed before this point ...
     if (m_status == Job_Failed_Proceed)
     {
-        qDebug() << "Download failed but we are allowed to proceed:" << m_url.toString();
+        qDebug() << "下载失败，但可继续使用已有数据：" << m_url.toString();
         m_sink->abort();
         m_reply.reset();
         emit succeeded(m_index_within_job);
@@ -273,14 +273,14 @@ void Download::downloadFinished()
         {
             return;
         }
-        qDebug() << "Download failed in previous step:" << m_url.toString();
+        qDebug() << "下载失败：" << m_url.toString();
         m_sink->abort();
         emit failed(m_index_within_job);
         return;
     }
     else if(m_status == Job_Aborted)
     {
-        qDebug() << "Download aborted in previous step:" << m_url.toString();
+        qDebug() << "下载已取消：" << m_url.toString();
         m_sink->abort();
         m_reply.reset();
         emit aborted(m_index_within_job);
@@ -291,7 +291,7 @@ void Download::downloadFinished()
     auto data = m_reply->readAll();
     if(data.size())
     {
-        qDebug() << "Writing extra" << data.size() << "bytes to" << m_target_path;
+        qDebug() << "写入下载数据：额外" << data.size() << "字节到" << m_target_path;
         m_status = m_sink->write(data);
     }
 
@@ -306,13 +306,13 @@ void Download::downloadFinished()
         {
             return;
         }
-        qDebug() << "Download failed to finalize:" << m_url.toString();
+        qDebug() << "下载失败：" << m_url.toString();
         m_sink->abort();
         emit failed(m_index_within_job);
         return;
     }
     m_reply.reset();
-    qDebug() << "Download succeeded:" << m_url.toString();
+    qDebug() << "下载完成：" << m_url.toString();
     emit succeeded(m_index_within_job);
 }
 
@@ -324,13 +324,13 @@ void Download::downloadReadyRead()
         m_status = m_sink->write(data);
         if(m_status == Job_Failed)
         {
-            qCritical() << "Failed to process response chunk for " << m_target_path;
+            qCritical() << "无法写入下载数据：" << m_target_path;
         }
-        // qDebug() << "Download" << m_url.toString() << "gained" << data.size() << "bytes";
+        // qDebug() << "下载" << m_url.toString() << "收到" << data.size() << "字节";
     }
     else
     {
-        qCritical() << "Cannot write to " << m_target_path << ", illegal status" << m_status;
+        qCritical() << "无法写入：" << m_target_path << "，非法状态" << m_status;
     }
 }
 

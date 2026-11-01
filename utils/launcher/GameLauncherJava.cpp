@@ -8,6 +8,7 @@
 
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QPair>
@@ -18,6 +19,87 @@
 
 #include "utils/JavaScanWorker.h"
 #include "utils/SettingsManager.h"
+
+namespace {
+
+/// java.exe 同目录下的 server/jvm.dll
+/// 真实安装（JDK/JRE）都有这个文件；Oracle 的 javapath / java8path 转发存根目录里没有，
+/// 靠这一点可以把「存根」排到真实安装后面（存根可能指向 32 位 JVM）。
+QString serverJvmDllOf(const QString &javaExe)
+{
+    if (javaExe.isEmpty())
+    {
+        return QString();
+    }
+
+    const QFileInfo exeInfo(javaExe);
+    // detectJava() 可能返回 PATH 简写 "java"，此时无从判断
+    if (!exeInfo.isAbsolute())
+    {
+        return QString();
+    }
+
+    return exeInfo.absolutePath() + QStringLiteral("/server/jvm.dll");
+}
+
+/// 读取 PE 头里的 Machine 字段：0x8664=x64，0x014c=x86，读不到返回 0
+int readPeMachine(const QString &filePath)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        return 0;
+    }
+
+    const QByteArray dosHeader = file.read(0x40);
+    if (dosHeader.size() < 0x40)
+    {
+        return 0;
+    }
+
+    const auto u16At = [](const QByteArray &data, int offset) -> quint16 {
+        return quint16(quint8(data[offset])) | (quint16(quint8(data[offset + 1])) << 8);
+    };
+    const auto u32At = [](const QByteArray &data, int offset) -> quint32 {
+        return quint32(quint8(data[offset]))
+             | (quint32(quint8(data[offset + 1])) << 8)
+             | (quint32(quint8(data[offset + 2])) << 16)
+             | (quint32(quint8(data[offset + 3])) << 24);
+    };
+
+    // e_lfanew(0x3C) 指向 PE 签名
+    const quint32 peOffset = u32At(dosHeader, 0x3C);
+    if (peOffset < 0x40 || peOffset > 0x10000 || !file.seek(peOffset))
+    {
+        return 0;
+    }
+
+    const QByteArray peHeader = file.read(6);
+    if (peHeader.size() < 6
+        || peHeader.at(0) != 'P' || peHeader.at(1) != 'E'
+        || peHeader.at(2) != '\0' || peHeader.at(3) != '\0')
+    {
+        return 0;
+    }
+
+    return u16At(peHeader, 4);
+}
+
+} // namespace
+
+int GameLauncher::javaBitness(const QString &javaExe)
+{
+    const int machine = readPeMachine(serverJvmDllOf(javaExe));
+    if (machine == 0x8664)
+    {
+        return 64;
+    }
+    if (machine == 0x014c)
+    {
+        return 32;
+    }
+    return 0;
+}
 
 GameLauncher::JavaInfo GameLauncher::detectJava()
 {
@@ -583,7 +665,11 @@ GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVers
     };
 
     // ── 筛选满足约束的候选，优先选最低兼容版本（最贴近 minJavaVersion）──
+    // 同一主版本内再有侧重：真实安装 > Oracle 转发存根；64 位 JVM > 32 位。
+    // 32 位 JVM 的堆上限只有 1.2~1.5GB，自动内存分配很容易超限导致秒退，
+    // 而 Oracle 的 java8path（(x86) 目录下）往往是扫描时最先命中的那个。
     int bestMajor = -1;
+    int bestTier = -1;
     for (const JavaInfo& javaInfo : javaList)
     {
         int javaMajor = javaMajorOf(javaInfo.version);
@@ -594,11 +680,19 @@ GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVers
             continue;
         }
 
-        // 选最低兼容版本（参考 PCL SelectSuitableJavaAsync：按主版本号升序优先）
-        if (bestMajor < 0 || javaMajor < bestMajor)
+        const bool hasRealJvm = QFile::exists(serverJvmDllOf(javaInfo.path));
+        const int bitness = hasRealJvm ? javaBitness(javaInfo.path) : 0;
+        int tier = 0;
+        if (hasRealJvm)      tier += 2;
+        if (bitness == 64)   tier += 1;
+
+        // 选最低兼容版本；主版本相同的才用 tier 决胜
+        if (bestMajor < 0 || javaMajor < bestMajor
+            || (javaMajor == bestMajor && tier > bestTier))
         {
             bestJavaInfo = javaInfo;
             bestMajor = javaMajor;
+            bestTier = tier;
         }
     }
 
@@ -620,6 +714,8 @@ GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVers
         if (highestJava.valid)
         {
             bestJavaInfo = highestJava;
+            qDebug() << "[GameLauncher]" << "未找到满足约束的 Java，最高版本兜底:"
+                     << bestJavaInfo.version << bestJavaInfo.path;
             emit launchDetailAdded(QString("警告: 未找到满足约束 (%1) 的 Java，使用最高版本兜底: %2 (%3)")
                 .arg(rangeDesc).arg(bestJavaInfo.version).arg(bestJavaInfo.path));
             // 版本太低（例如新版游戏需要 Java 25，而机器上最高只有 Java 21）时明确提示
@@ -633,7 +729,15 @@ GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVers
     }
     else
     {
-        emit launchDetailAdded(QString("选择了兼容的 Java 版本: %1 (%2)").arg(bestJavaInfo.version).arg(bestJavaInfo.path));
+        const int bitness = javaBitness(bestJavaInfo.path);
+        const QString bitnessText = (bitness == 64) ? QStringLiteral("64 位")
+                                  : (bitness == 32) ? QStringLiteral("32 位")
+                                                    : QStringLiteral("位数未知");
+        // 写进 launcher.log：用户反馈「Java 没选对」时，日志里能直接看到实际用了哪个 java.exe
+        qDebug() << "[GameLauncher]" << "自动选择 Java:" << bestJavaInfo.version
+                 << bestJavaInfo.path << bitnessText;
+        emit launchDetailAdded(QString("选择了兼容的 Java 版本: %1 (%2, %3)")
+            .arg(bestJavaInfo.version, bestJavaInfo.path, bitnessText));
     }
 
     return bestJavaInfo;

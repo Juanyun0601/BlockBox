@@ -7,9 +7,10 @@
  * 提供对 Minecraft 单机存档 level.dat（NBT + gzip）的完整读取与修改能力。
  * 功能参考开源启动器 PCL-CE 的 SaveManager / SaveInfo：
  *   - 读取：版本、存档名、种子、最后游玩时间、出生点、游戏模式、
- *           游玩时长、难度、是否锁定难度、是否允许作弊
+ *           游玩时长、难度、是否锁定难度、是否允许作弊、游戏规则
  *   - 修改：允许作弊（Data.allowCommands）、难度（Data.Difficulty /
- *           difficulty_settings.difficulty）、锁定难度（Data.DifficultyLocked）
+ *           difficulty_settings.difficulty）、锁定难度（Data.DifficultyLocked）、
+ *           游戏规则（Data.GameRules）
  *
  * 写入采用原子替换：先写临时文件，再把旧文件备份为 level.dat_old，
  * 最后重命名完成替换，避免中途断电损坏存档。
@@ -17,6 +18,7 @@
 
 #pragma once
 
+#include <QMap>
 #include <QString>
 #include <optional>
 
@@ -51,6 +53,8 @@ struct SaveInfo
     int difficulty = 1;             ///< 难度（0=和平，1=简单，2=普通，3=困难）
     bool difficultyLocked = false;  ///< 难度是否已锁定
 
+    QMap<QString, QString> gameRules; ///< 游戏规则（Data.GameRules，键值均为字符串）
+
     QString folderPath;             ///< 存档文件夹绝对路径
     QString levelDatPath;           ///< 实际读取/写入的 level.dat 路径
 };
@@ -70,6 +74,7 @@ struct SaveChanges
     std::optional<int> spawnX;              ///< 出生点 X
     std::optional<int> spawnY;              ///< 出生点 Y
     std::optional<int> spawnZ;              ///< 出生点 Z
+    std::optional<QMap<QString, QString>> gameRules; ///< 游戏规则修改（仅列出的键会被写入）
 
     bool isEmpty() const
     {
@@ -82,8 +87,26 @@ struct SaveChanges
             && !dayTime.has_value()
             && !spawnX.has_value()
             && !spawnY.has_value()
-            && !spawnZ.has_value();
+            && !spawnZ.has_value()
+            && !gameRules.has_value();
     }
+};
+
+/**
+ * @brief 从 level.dat 解析得到的主机玩家状态
+ *
+ * 单机模式下主机玩家的数据保存在 level.dat 的 Data.Player 下，
+ * 游戏每次自动保存（约 45 秒）与退出世界时更新。
+ */
+struct PlayerState
+{
+    bool hasPos = false;  ///< 是否读取到位置（Data.Player.Pos）
+    double x = 0.0;       ///< 玩家 X（方块坐标，Pos[0]）
+    double y = 0.0;       ///< 玩家 Y（Pos[1]）
+    double z = 0.0;       ///< 玩家 Z（Pos[2]）
+    bool hasRotation = false; ///< 是否读取到朝向（Data.Player.Rotation）
+    double yaw = 0.0;     ///< 水平朝向角（Rotation[0]；0=南/+Z，90=西/-X）
+    int dimension = 0;    ///< 所在维度（-1=下界，0=主世界，1=末地）
 };
 
 /**
@@ -101,6 +124,14 @@ public:
      * @return 解析成功返回 SaveInfo；失败返回 std::nullopt
      */
     static std::optional<SaveInfo> readSave(const QString &folderPath);
+
+    /**
+     * @brief 读取主机玩家在 level.dat 里的位置与朝向（只读，不写入）
+     * @param folderPath 存档文件夹绝对路径（内含 level.dat）
+     * @return 读到位置返回 PlayerState；level.dat 缺失 / 解析失败 /
+     *         没有玩家位置数据时返回 std::nullopt
+     */
+    static std::optional<PlayerState> readPlayerState(const QString &folderPath);
 
     /**
      * @brief 将修改应用到指定存档的 level.dat（原子写入）

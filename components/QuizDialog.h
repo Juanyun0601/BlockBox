@@ -25,9 +25,9 @@ class QStackedWidget;
  *
  * 覆盖主窗口的模态弹窗：从题库随机抽取 50 题，每题 2 分，
  * 答错会立即显示正确答案与解析；总分达到 80 分即通过。
- * 答题不是启动器的硬性门槛（启动时只在右下角提醒，可跳过），
- * 用户从提醒或设置里主动打开本弹窗作答，未通过可以重新答题或直接关闭。
- * 通过后把结果写入 QSettings（quiz/passed），之后启动不再提醒。
+ * 答题结果和论坛账号绑定：未登录时先引导去登录账号，
+ * 通过后除写入本机 QSettings（quiz/passed）外，还会上报到论坛记录在账号上。
+ * 之后启动不再提醒，发帖 / 评论的资格也随账号解锁。
  */
 class QuizDialog : public AppDialogBase
 {
@@ -40,6 +40,10 @@ public:
     int score() const { return m_score; }
     /// 本次答对的题数
     int correctCount() const { return m_correctCount; }
+
+signals:
+    /// 未登录就想答题：用户点了「去登录」，请打开账号页的登录表单
+    void loginRequested();
 
 protected:
     /// 答题过程中不允许按 Esc 关闭弹窗（避免误触直接退出启动器）
@@ -63,6 +67,9 @@ private:
     QString highlightedOptionStyle(const QString &color) const;
 
     QStackedWidget *m_stack = nullptr;
+
+    // 未登录提示页（index 2）：答题已绑定账号，先去登录
+    QPushButton *m_loginButton = nullptr;
 
     // 答题页
     QLabel *m_progressLabel = nullptr;

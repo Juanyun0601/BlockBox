@@ -608,7 +608,7 @@ void HongshiClient::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 {
     Q_UNUSED(exitCode);
     Q_UNUSED(status);
-    qDebug() << "Hongshi kernel process exited";
+    qDebug() << "Hongshi 内核进程已退出";
 
     if (m_stopping) {
         // 用户主动停止，不视为异常
@@ -636,7 +636,7 @@ void HongshiClient::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 
 void HongshiClient::onProcessErrorOccurred(QProcess::ProcessError error)
 {
-    qDebug() << "Hongshi kernel process error:" << int(error);
+    qDebug() << "Hongshi 内核进程出错：" << int(error);
     if (error == QProcess::FailedToStart) {
         m_pollTimer.stop();
         m_watchTimer.stop();

@@ -25,6 +25,8 @@ class QStackedWidget;
 class QWidget;
 class QLineEdit;
 class QFrame;
+class QHBoxLayout;
+struct LauncherDetect;
 
 /**
  * @brief 首次运行新手引导：语言设置 → 引导方式 → 账户/导入 → Java → 实例文件夹 → 样式
@@ -58,6 +60,10 @@ private slots:
     void onSkipClicked();
     void onLauncherScan(const QString &key);
     void onLauncherImport(const QString &key);
+    /// 异步完成首次检测后，把结果填进四张卡片
+    void refreshLauncherCards();
+    /// 把单个启动器的检测结果应用到对应卡片（状态点、文案、按钮可用性）
+    void applyLauncherDetect(int idx, const LauncherDetect &det);
     void onToggleAddAccount();
     void onSwitchAccountTab(int index);
     void onAddOfflineAccount();
@@ -93,6 +99,8 @@ private:
     void buildStep5();
     void buildDonePage();
     QWidget *buildFooter(QWidget *parent);
+    /// 四张启动器卡片按可用宽度算一次固定宽度（四张始终等宽，不随内容变化）
+    void updateLauncherCardWidths();
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -123,7 +131,10 @@ protected:
     void updateImagePreview(const QString &path);
     QList<AccountInfo> importAccountsFor(const QString &key);
     QString launcherDisplayName(const QString &key) const;
-    void importJavaPath(const QString &javaExe);
+    /// 注册进实例文件夹时用的名字（启动器名 + 游戏目录所在盘符目录名）
+    QString importedFolderName(const QString &key, const QString &dir) const;
+    /// 把 java.exe 合并进 Java 列表（已存在返回 false）
+    bool importJavaPath(const QString &javaExe);
     QList<QPair<QString, QString>> lightJavaDetect() const;
 
     /// 发起 Java 下载（mirrorId 为空时按当前语言自动选择镜像源）
@@ -170,11 +181,14 @@ protected:
     QWidget *m_methodCards[3] = {nullptr, nullptr, nullptr};
     QList<QLabel *> m_methodChecks;   ///< Step1 卡片右上角对勾徽章
 
-    // Step2 导入
-    QList<QString> m_launcherKeys;    ///< 启动器 key（与卡片顺序一致）
-    QWidget *m_launcherActions[3] = {nullptr, nullptr, nullptr};
-    QLabel *m_launcherStatus[3] = {nullptr, nullptr, nullptr};
-    QLabel *m_launcherStatusText[3] = {nullptr, nullptr, nullptr};
+    // Step2 导入（桌面 4 张卡：PCL / HMCL / MultiMC / BakaXL；安卓 2 张卡：FCL / ZL2）
+    QList<QString> m_launcherKeys;    ///< 启动器 key（与卡片顺序一致，随平台变化）
+    QList<QWidget *> m_launcherCards; ///< 启动器卡片（固定等宽）
+    QHBoxLayout *m_launcherCardsLayout = nullptr; ///< 卡片行布局（用来按可用宽度算固定宽度）
+    QList<QWidget *> m_launcherActions;       ///< 每张卡的操作行
+    QList<QLabel *> m_launcherStatus;         ///< 每张卡的状态圆点
+    QList<QLabel *> m_launcherStatusText;     ///< 每张卡的检测摘要
+    QList<QPushButton *> m_launcherImportBtn; ///< 每张卡的「导入」按钮（未检测到时置灰）
 
     // Step2 账户
     QWidget *m_accountListWidget = nullptr;

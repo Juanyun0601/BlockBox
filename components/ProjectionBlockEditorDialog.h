@@ -7,7 +7,7 @@
  * 基于 VoxelViewWidget 的 3D 体素方块编辑器，数据模型使用 SchematicDocument。
  * 功能：
  *   - 3D 立体查看（WASD 移动、空格升、Shift 降、拖动转向、滚轮前后）
- *   - 交互编辑：左键破坏、右键放置当前选中方块（「放置」工具下左键也是放置）
+ *   - 交互编辑：顶部两个模式 —— 选取（左键选中方块）、编辑（左键破坏、右键放置当前方块）
  *   - 方块调色板：浏览/选择投影中出现的方块进行放置
  *   - 批量操作：整块替换、全空间填充、区域填充
  *   - 图层过滤（按 Y 层突出显示）
@@ -166,15 +166,12 @@ private:
 
     QString displayName() const;
 
-    // 交互工具
+    // 交互模式（顶部只有两个模式按钮）
     enum Tool : int {
-        ToolOrbit = 0,
-        ToolPlace,
-        ToolBreak,
-        ToolFill,
-        ToolSelect
+        ToolSelect = 0, ///< 选取：左键单击选中方块（范围可选单格 / 同类全部）
+        ToolEdit        ///< 编辑：左键破坏、右键放置当前方块
     };
-    int             m_tool = ToolOrbit;
+    int             m_tool = ToolEdit;
 
     // 撤销/重做（内存中的差异快照，不再落磁盘临时文件）
     struct UndoStep

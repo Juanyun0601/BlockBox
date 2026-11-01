@@ -9,6 +9,7 @@
 
 #include "components/AppFileDialog.h"
 #include "components/MarkdownOutlinedLabel.h"
+#include "components/OutlinedLabel.h"
 #include "components/OutlinedTextEdit.h"
 #include "components/ResourceReferenceDialog.h"
 
@@ -94,6 +95,8 @@ namespace
         {
             return;
         }
+        // 箭头只是装饰，点击事件穿透给整行的标题按钮
+        chevronLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
         chevronLabel->setPixmap(IconHelper::loadColoredIcon(
                                     expanded ? kChevronExpanded : kChevronCollapsed,
                                     QColor(0x88, 0x88, 0x88), kChevronSize)
@@ -303,6 +306,115 @@ namespace
             }
         }
         return QString();
+    }
+
+    // ------------------------------------------------------------------------
+    // 过程行状态图标（观感对齐 opencode：运行中旋转点阵，结束定格 ✓ / ✗）
+    // ------------------------------------------------------------------------
+    constexpr int kGlyphSize = 14;
+    constexpr int kSpinnerFrameCount = 10;
+    const char *const kSpinnerFrames[kSpinnerFrameCount] = {
+        "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
+    };
+
+    /**
+     * @brief 设置过程行左侧状态图标
+     *
+     * 运行中显示旋转点阵（由挂在图标上的 QTimer 驱动），结束后定格为 ✓ 或 ✗，
+     * 取代原先的「执行中…/成功/失败」文字，让过程行更紧凑。颜色由 QSS 的
+     * [state="running|success|danger"] 选择器控制。
+     */
+    void setStepGlyphState(QLabel *glyph, const QString &state)
+    {
+        if (!glyph)
+        {
+            return;
+        }
+
+        const QString timerName = QStringLiteral("stepGlyphTimer");
+        QTimer *timer = glyph->findChild<QTimer *>(timerName);
+        if (state == QLatin1String("running"))
+        {
+            if (!timer)
+            {
+                timer = new QTimer(glyph);
+                timer->setObjectName(timerName);
+                timer->setInterval(80);
+                QObject::connect(timer, &QTimer::timeout, glyph, [glyph]() {
+                    const int frame = (glyph->property("spinFrame").toInt() + 1) % kSpinnerFrameCount;
+                    glyph->setProperty("spinFrame", frame);
+                    glyph->setText(QString::fromUtf8(kSpinnerFrames[frame]));
+                });
+            }
+            glyph->setProperty("spinFrame", 0);
+            glyph->setText(QString::fromUtf8(kSpinnerFrames[0]));
+            timer->start();
+        }
+        else
+        {
+            if (timer)
+            {
+                timer->stop();
+            }
+            glyph->setText(state == QLatin1String("danger") ? QStringLiteral("✗")
+                                                            : QStringLiteral("✓"));
+        }
+
+        glyph->setProperty("state", state);
+        glyph->style()->unpolish(glyph);
+        glyph->style()->polish(glyph);
+    }
+
+    /// 创建过程行左侧状态图标（state: running / success / danger）
+    QLabel *createStepGlyph(QWidget *parent, const QString &state)
+    {
+        auto *glyph = new OutlinedLabel(QString(), parent);
+        glyph->setObjectName(QStringLiteral("agentStepGlyph"));
+        glyph->setFixedSize(kGlyphSize, kGlyphSize);
+        glyph->setAlignment(Qt::AlignCenter);
+        // 图标只做状态提示，点击事件穿透给整行的标题按钮
+        glyph->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        setStepGlyphState(glyph, state);
+        return glyph;
+    }
+
+    /// 把仍在转圈的过程行图标定格为 ✗（中断/出错收尾时调用，避免图标一直转下去）
+    void freezeStepGlyph(QWidget *card)
+    {
+        if (!card)
+        {
+            return;
+        }
+        QLabel *glyph = card->findChild<QLabel *>(QStringLiteral("agentStepGlyph"));
+        if (glyph && glyph->property("state").toString() == QLatin1String("running"))
+        {
+            setStepGlyphState(glyph, QStringLiteral("danger"));
+        }
+    }
+
+    /**
+     * @brief 思考行收尾：图标定格 ✓，状态文字由「思考中…」换成思考用时
+     *
+     * durationMs < 0 表示没有计时（历史消息回放），此时只收图标不显示文字。
+     */
+    void finishThinkingHeader(QWidget *bubble, qint64 durationMs)
+    {
+        if (!bubble)
+        {
+            return;
+        }
+        setStepGlyphState(bubble->findChild<QLabel *>(QStringLiteral("agentStepGlyph")),
+                          QStringLiteral("success"));
+        auto *statusLabel = bubble->findChild<QLabel *>(QStringLiteral("thinkingStatusText"));
+        if (!statusLabel || statusLabel->property("done").toBool())
+        {
+            return;
+        }
+        statusLabel->setProperty("done", true);
+        statusLabel->setText(durationMs >= 0 ? formatStepDuration(durationMs) : QString());
+        statusLabel->setProperty("type", QStringLiteral("muted"));
+        statusLabel->style()->unpolish(statusLabel);
+        statusLabel->style()->polish(statusLabel);
     }
 }
 
@@ -2515,6 +2627,15 @@ void AiChatPage::onStopStreaming()
         saveConversations();
     }
 
+    // 中断时把仍在转圈的过程行定格为失败，避免图标一直转下去
+    for (QWidget *stepCard : m_currentToolStepCards)
+    {
+        freezeStepGlyph(stepCard);
+    }
+    freezeStepGlyph(m_currentSearchStepCard);
+    finishThinkingHeader(m_currentThinkingBubble,
+                         m_thinkingElapsedTimer.isValid() ? m_thinkingElapsedTimer.elapsed() : -1);
+
     // 清理当前回合状态
     m_currentAiBubble = nullptr;
     m_currentThinkingBubble = nullptr;
@@ -2693,6 +2814,7 @@ void AiChatPage::onSendMessage()
     m_messageLayout->insertWidget(m_messageLayout->count() - 1, m_typingIndicator);
 
     m_requestTimer.start();
+    m_thinkingElapsedTimer.invalidate(); // 新一轮请求重新计思考用时
     // 思考强度选择为运行时总开关：>0 时覆盖模型配置中的 supportsThinking
     AiModel sendModel = m_currentModel;
     sendModel.supportsThinking = (m_thinkingEffort > 0);
@@ -2863,18 +2985,11 @@ void AiChatPage::onStreamContent(const QString &delta)
         m_streamFlushedLen = 0;
     }
 
-    // 收到首个正文内容：思考阶段结束，思考行状态置为「已完成」
+    // 收到首个正文内容：思考阶段结束，思考行状态置为完成并显示思考用时
     if (m_currentThinkingBubble)
     {
-        if (auto *st = m_currentThinkingBubble->findChild<QLabel*>(QStringLiteral("thinkingStatusText")))
-        {
-            if (st->text() != tr("已完成"))
-            {
-                st->setText(tr("已完成"));
-                st->setProperty("type", QStringLiteral("success"));
-                st->style()->polish(st);
-            }
-        }
+        finishThinkingHeader(m_currentThinkingBubble,
+                             m_thinkingElapsedTimer.isValid() ? m_thinkingElapsedTimer.elapsed() : -1);
     }
 
     // 标记有新内容待刷新，节流定时器 50ms 后触发 UI 更新
@@ -2892,6 +3007,7 @@ void AiChatPage::onStreamReasoning(const QString &delta)
     if (!m_currentThinkingBubble)
     {
         m_currentThinkingBubble = createThinkingWidget(m_currentReasoning, true);
+        m_thinkingElapsedTimer.start(); // 思考用时从首个思考增量开始计
         int insertPos = m_messageLayout->count() - 1;
         if (m_currentAiBubble)
         {
@@ -2950,12 +3066,8 @@ void AiChatPage::onStreamFinished(const TokenUsage &usage)
     // 思考状态与行尾预览收尾
     if (m_currentThinkingBubble)
     {
-        if (auto *st = m_currentThinkingBubble->findChild<QLabel*>(QStringLiteral("thinkingStatusText")))
-        {
-            st->setText(tr("已完成"));
-            st->setProperty("type", QStringLiteral("success"));
-            st->style()->polish(st);
-        }
+        finishThinkingHeader(m_currentThinkingBubble,
+                             m_thinkingElapsedTimer.isValid() ? m_thinkingElapsedTimer.elapsed() : -1);
         if (auto *pv = m_currentThinkingBubble->findChild<QLabel*>(QStringLiteral("thinkingPreview")))
         {
             setThinkingPreview(pv, m_currentReasoning);
@@ -3019,6 +3131,13 @@ void AiChatPage::onStreamFinished(const TokenUsage &usage)
         aiMsg.toolPhase = m_aiService->turnToolPhase();
         m_conversations[m_currentConvIndex].messages.append(aiMsg);
     }
+
+    // 收尾：仍在转圈的过程行定格为 ✗，避免图标一直转下去
+    for (QWidget *stepCard : m_currentToolStepCards)
+    {
+        freezeStepGlyph(stepCard);
+    }
+    freezeStepGlyph(m_currentSearchStepCard);
 
     m_currentAiBubble = nullptr;
     m_currentThinkingBubble = nullptr;
@@ -3120,6 +3239,13 @@ void AiChatPage::onStreamError(const QString &error)
     {
         m_conversations[m_currentConvIndex].messages.append(errorMsg);
     }
+
+    // 出错收尾：仍在转圈的过程行定格为 ✗，避免图标一直转下去
+    for (QWidget *stepCard : m_currentToolStepCards)
+    {
+        freezeStepGlyph(stepCard);
+    }
+    freezeStepGlyph(m_currentSearchStepCard);
 
     m_currentAiBubble = nullptr;
     m_currentThinkingBubble = nullptr;
@@ -3445,7 +3571,7 @@ QWidget* AiChatPage::createThinkingWidget(const QString &text, bool running)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // 单行标题：SVG 折叠箭头 + 「思考」 + 状态（整行可点击展开/收起）
+    // 单行标题：状态图标 + 「思考」 + 状态/用时 + 最新思考预览 + 折叠箭头（整行可点击）
     auto *headerBtn = new QPushButton(container);
     headerBtn->setObjectName("thinkingHeaderRow");
     headerBtn->setCursor(Qt::PointingHandCursor);
@@ -3454,21 +3580,18 @@ QWidget* AiChatPage::createThinkingWidget(const QString &text, bool running)
     headerLayout->setContentsMargins(2, 2, 2, 2);
     headerLayout->setSpacing(6);
 
-    auto *chevronLabel = new QLabel(headerBtn);
-    chevronLabel->setObjectName("thinkingChevron");
-    chevronLabel->setFixedSize(kChevronSize, kChevronSize);
-    chevronLabel->setAlignment(Qt::AlignCenter);
-    setChevronPixmap(chevronLabel, false);
-    headerLayout->addWidget(chevronLabel);
+    // 左侧状态图标（对齐 opencode）：思考中为旋转点阵，收尾后定格 ✓
+    headerLayout->addWidget(createStepGlyph(
+        headerBtn, running ? QStringLiteral("running") : QStringLiteral("success")));
 
     auto *titleLabel = new MarkdownOutlinedLabel(tr("思考"), headerBtn);
     titleLabel->setObjectName("thinkingTitle");
     headerLayout->addWidget(titleLabel);
 
-    // 状态：思考中…（琥珀色）→ 已完成（绿色）
-    auto *statusLabel = new MarkdownOutlinedLabel(running ? tr("思考中…") : tr("已完成"), headerBtn);
+    // 状态：思考中…（琥珀色）；收尾后由 finishThinkingHeader 换成思考用时（灰色）
+    auto *statusLabel = new MarkdownOutlinedLabel(running ? tr("思考中…") : QString(), headerBtn);
     statusLabel->setObjectName("thinkingStatusText");
-    statusLabel->setProperty("type", running ? QStringLiteral("info") : QStringLiteral("success"));
+    statusLabel->setProperty("type", running ? QStringLiteral("info") : QStringLiteral("muted"));
     statusLabel->style()->polish(statusLabel);
     headerLayout->addWidget(statusLabel);
 
@@ -3478,6 +3601,14 @@ QWidget* AiChatPage::createThinkingWidget(const QString &text, bool running)
     previewLabel->setMinimumWidth(0);
     headerLayout->addWidget(previewLabel, 1);
     setThinkingPreview(previewLabel, text);
+
+    // 折叠箭头移到行尾：状态图标占了行首位置，展开提示仍保留
+    auto *chevronLabel = new QLabel(headerBtn);
+    chevronLabel->setObjectName("thinkingChevron");
+    chevronLabel->setFixedSize(kChevronSize, kChevronSize);
+    chevronLabel->setAlignment(Qt::AlignCenter);
+    setChevronPixmap(chevronLabel, false);
+    headerLayout->addWidget(chevronLabel);
 
     // 展开内容：默认收起；流式期间用 QTextEdit 增量追加（QLabel 全量重排会卡顿），历史消息用 QLabel
     auto *contentWidget = new QWidget();
@@ -3744,6 +3875,7 @@ void AiChatPage::regenerateLastAnswer()
     m_messageLayout->insertWidget(m_messageLayout->count() - 1, m_typingIndicator);
 
     m_requestTimer.start();
+    m_thinkingElapsedTimer.invalidate(); // 重新生成同样重新计思考用时
     // 思考强度选择为运行时总开关，覆盖模型配置中的 supportsThinking
     AiModel regenModel = m_currentModel;
     regenModel.supportsThinking = (m_thinkingEffort > 0);
@@ -5046,7 +5178,7 @@ void AiChatPage::onResourceDownloadRequested(const ModInfo &info, const ModVersi
     // 校验实例路径存在
     if (!QDir(instancePath).exists())
     {
-        qWarning() << "[AiChatPage] Instance path does not exist:" << instancePath;
+        qWarning() << "[AiChatPage] 实例路径不存在:" << instancePath;
         return;
     }
 
@@ -5054,7 +5186,7 @@ void AiChatPage::onResourceDownloadRequested(const ModInfo &info, const ModVersi
     QString targetPath = ContentDownloader::installPath(instancePath, contentType);
     if (!QDir().mkpath(targetPath))
     {
-        qWarning() << "[AiChatPage] Failed to create target directory:" << targetPath;
+        qWarning() << "[AiChatPage] 创建目标目录失败:" << targetPath;
         return;
     }
 
@@ -5456,12 +5588,12 @@ void AiChatPage::onContextCompressionFinished(int originalTokens, int compressed
             m_conversations[m_currentConvIndex].messages = m_aiService->pendingHistory();
             saveConversations();
         }
-        qDebug() << "[AiChatPage] Context compressed:" << originalTokens
+        qDebug() << "[AiChatPage] 上下文已压缩:" << originalTokens
                  << "->" << compressedTokens << "tokens";
     }
     else
     {
-        qWarning() << "[AiChatPage] Context compression failed, continuing with original history";
+        qWarning() << "[AiChatPage] 上下文压缩失败，继续使用原始历史";
     }
 }
 
@@ -5486,7 +5618,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(2);
 
-    // 单行标题：SVG 折叠箭头 + 名称 + 状态 + 耗时 + 摘要（整行可点击展开/收起）
+    // 单行标题：状态图标 + 名称 + 主参数/结果摘要 + 耗时 + 折叠箭头（整行可点击展开/收起）
     auto *headerRow = new QPushButton(card);
     headerRow->setObjectName("agentToolStepHeaderRow");
     headerRow->setCursor(Qt::PointingHandCursor);
@@ -5495,12 +5627,11 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     headerLayout->setContentsMargins(2, 2, 2, 2);
     headerLayout->setSpacing(6);
 
-    auto *chevronLabel = new QLabel(headerRow);
-    chevronLabel->setObjectName("agentToolStepChevron");
-    chevronLabel->setFixedSize(kChevronSize, kChevronSize);
-    chevronLabel->setAlignment(Qt::AlignCenter);
-    setChevronPixmap(chevronLabel, false);
-    headerLayout->addWidget(chevronLabel);
+    // 左侧状态图标（对齐 opencode）：执行中为旋转点阵，结束定格 ✓ / ✗，
+    // 不再用「执行中…/成功/失败」文字，行内信息更紧凑
+    headerLayout->addWidget(createStepGlyph(
+        headerRow, finished ? (success ? QStringLiteral("success") : QStringLiteral("danger"))
+                            : QStringLiteral("running")));
 
     // 解析参数 JSON（用于文件编辑行显示与运行中摘要）
     QJsonObject argsObj;
@@ -5545,26 +5676,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
         }
     }
 
-    // 状态文字（执行中 / 成功 / 失败，颜色由 QSS 控制）
-    QString statusText = finished ? (success ? tr("成功") : tr("失败")) : tr("执行中…");
-    QString badgeType = finished
-        ? (success ? QStringLiteral("success") : QStringLiteral("danger"))
-        : QStringLiteral("info");
-    auto *statusLabel = new MarkdownOutlinedLabel(statusText, headerRow);
-    statusLabel->setObjectName("agentToolStepStatusText");
-    statusLabel->setProperty("type", badgeType);
-    statusLabel->style()->polish(statusLabel);
-    headerLayout->addWidget(statusLabel);
-
-    // 耗时
-    if (finished && durationMs > 0)
-    {
-        auto *durationLabel = new MarkdownOutlinedLabel(formatStepDuration(durationMs), headerRow);
-        durationLabel->setObjectName("agentToolStepDuration");
-        headerLayout->addWidget(durationLabel);
-    }
-
-    // 行尾摘要：完成态显示结果摘要，运行中显示参数摘要（次要色，单行）
+    // 行尾摘要：完成态显示结果摘要，运行中显示主参数（次要色，单行）
     QString lineSummary = resultSummary;
     if (lineSummary.isEmpty() && !finished)
     {
@@ -5577,12 +5689,25 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
             lineSummary = arguments; // 非 JSON 参数（如搜索查询词）直接显示
         }
     }
-    if (!lineSummary.isEmpty())
-    {
-        auto *summaryLabel = new MarkdownOutlinedLabel(flattenSummary(lineSummary), headerRow);
-        summaryLabel->setObjectName("agentToolStepSummary");
-        headerLayout->addWidget(summaryLabel, 1);
-    }
+    // 摘要常驻中间弹性位（空时只作占位），完成后由 applyToolStepFinish 换成结果摘要
+    auto *summaryLabel = new MarkdownOutlinedLabel(flattenSummary(lineSummary), headerRow);
+    summaryLabel->setObjectName("agentToolStepSummary");
+    summaryLabel->setMinimumWidth(0); // 窗口较窄时允许被压缩，避免把耗时/箭头挤出
+    headerLayout->addWidget(summaryLabel, 1);
+
+    // 耗时：常驻行尾，运行中为空，结束后填入（对齐 opencode 的右侧用时）
+    auto *durationLabel = new MarkdownOutlinedLabel(
+        finished && durationMs > 0 ? formatStepDuration(durationMs) : QString(), headerRow);
+    durationLabel->setObjectName("agentToolStepDuration");
+    headerLayout->addWidget(durationLabel);
+
+    // 折叠箭头移到行尾（行首位置已让给状态图标）
+    auto *chevronLabel = new QLabel(headerRow);
+    chevronLabel->setObjectName("agentToolStepChevron");
+    chevronLabel->setFixedSize(kChevronSize, kChevronSize);
+    chevronLabel->setAlignment(Qt::AlignCenter);
+    setChevronPixmap(chevronLabel, false);
+    headerLayout->addWidget(chevronLabel);
 
     layout->addWidget(headerRow);
 
@@ -5591,7 +5716,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     detailsWidget->setObjectName("agentToolStepDetails");
     detailsWidget->setVisible(false);
     auto *detailsLayout = new QVBoxLayout(detailsWidget);
-    detailsLayout->setContentsMargins(20, 2, 6, 4);
+    detailsLayout->setContentsMargins(0, 2, 6, 4);
     detailsLayout->setSpacing(4);
 
     if (!arguments.isEmpty())
@@ -5660,56 +5785,26 @@ void AiChatPage::applyToolStepFinish(QWidget *card, const QString &resultSummary
     card->setProperty("status", success ? QStringLiteral("success") : QStringLiteral("danger"));
     card->style()->polish(card);
 
-    auto *headerRow = card->findChild<QWidget*>(QStringLiteral("agentToolStepHeaderRow"));
-    if (!headerRow)
-    {
-        return;
-    }
-    auto *hLayout = qobject_cast<QHBoxLayout*>(headerRow->layout());
+    // 状态图标定格：成功 ✓ / 失败 ✗（不再写状态文字）
+    setStepGlyphState(card->findChild<QLabel*>(QStringLiteral("agentStepGlyph")),
+                      success ? QStringLiteral("success") : QStringLiteral("danger"));
 
-    // 状态文字：成功 / 失败
-    if (auto *statusLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepStatusText")))
-    {
-        statusLabel->setText(success ? tr("成功") : tr("失败"));
-        statusLabel->setProperty("type", success ? QStringLiteral("success") : QStringLiteral("danger"));
-        statusLabel->style()->polish(statusLabel);
-    }
-
-    // 耗时（已存在则更新，否则插在状态文字之后）
+    // 耗时（标签常驻，直接填文本）
     if (durationMs > 0)
     {
-        auto *durationLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepDuration"));
-        if (!durationLabel)
+        if (auto *durationLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepDuration")))
         {
-            durationLabel = new MarkdownOutlinedLabel(QString(), headerRow);
-            durationLabel->setObjectName(QStringLiteral("agentToolStepDuration"));
-            if (hLayout)
-            {
-                int insertIdx = hLayout->count();
-                if (auto *statusLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepStatusText")))
-                {
-                    insertIdx = hLayout->indexOf(statusLabel) + 1;
-                }
-                hLayout->insertWidget(insertIdx, durationLabel);
-            }
+            durationLabel->setText(formatStepDuration(durationMs));
         }
-        durationLabel->setText(formatStepDuration(durationMs));
     }
 
-    // 更新或插入行尾摘要
+    // 行尾摘要换成结果摘要
     if (!resultSummary.isEmpty())
     {
-        auto *summaryLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepSummary"));
-        if (!summaryLabel)
+        if (auto *summaryLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepSummary")))
         {
-            summaryLabel = new MarkdownOutlinedLabel(QString(), headerRow);
-            summaryLabel->setObjectName(QStringLiteral("agentToolStepSummary"));
-            if (hLayout)
-            {
-                hLayout->addWidget(summaryLabel, 1);
-            }
+            summaryLabel->setText(flattenSummary(resultSummary));
         }
-        summaryLabel->setText(flattenSummary(resultSummary));
     }
 
     // 填充结果原文到展开态结果区（「搜索」行传 updateResultText=false，保留站点列表）

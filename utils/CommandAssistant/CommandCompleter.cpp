@@ -48,7 +48,7 @@ CommandCompleter::CommandCompleter(CommandDatabase *db)
 {
     if (m_db == nullptr)
     {
-        qWarning() << "CommandCompleter: null CommandDatabase pointer";
+        qWarning() << "CommandCompleter: CommandDatabase 指针为空";
     }
 }
 

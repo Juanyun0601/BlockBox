@@ -67,12 +67,17 @@ public:
   /** 同步当前实例名（MainWindow 在切换/恢复实例时推送），经典模式面板显示用 */
   void setCurrentInstanceName(const QString &name);
 
+  /** 设置页改完「首页轮播图」后调用：重新读取列表并只重建左侧轮播 */
+  void reloadCarouselImages();
+
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override;
   void resizeEvent(QResizeEvent *event) override;
   void showEvent(QShowEvent *event) override;
 
 signals:
+  /** 空态轮播卡片被点击：请求跳到「设置 → 界面设置」添加图片 */
+  void customizeCarouselRequested();
   // Quick link signals (Section 2)
   void installNewInstanceClicked();
   void downloadModpackClicked();
@@ -149,11 +154,17 @@ private:
   QLabel *m_carouselPlaceholder;
   QVector<QPushButton*> m_carouselDots;
   QTimer *m_carouselTimer;
-  QStringList m_carouselPaths;
+  QStringList m_carouselPaths;      // 当前实际展示的图片（自定义优先，缺省为内置风景图）
   int m_currentCarouselIndex;
   void updateCarousel();
   void setCarouselIndex(int index);
   void updateCarouselHeight();
+
+  void rebuildCarouselSection();      // 只重建左侧轮播，右侧皮肤面板/公告栏保持不动
+  void clearCarouselWidget();         // 拆掉旧的轮播视图、指示点与定时器
+  void buildCarouselWidget();         // 按当前 m_carouselPaths 生成轮播视图
+  QWidget *m_carouselHost = nullptr;          // 轮播区的独立容器（放在皮肤面板左侧）
+  QVBoxLayout *m_carouselHostLayout = nullptr;
   // 公告栏（封面图 + 皮肤模型下方，内容来自官网 announcement.json）
   HomeAnnouncementBar *m_announcementBar = nullptr;
   // 轮播右侧皮肤面板

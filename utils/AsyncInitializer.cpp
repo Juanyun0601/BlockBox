@@ -24,22 +24,22 @@ AsyncInitializer::AsyncInitializer(QObject* parent)
 
 void AsyncInitializer::startAsyncInitialization()
 {
-  qDebug() << "[App]" << "Starting async initialization...";
+  qDebug() << "[App]" << "开始异步初始化...";
 
   // 更新进度：开始异步初始化
   StartupProgressWidget::instance()->updateProgress(40, tr("正在异步加载资源..."));
 
   // 启动异步资源加载（语言已在启动时同步加载完成）
-  PerformanceMonitor::instance()->startMeasurement("Async Resource Loading");
+  PerformanceMonitor::instance()->startMeasurement("异步资源加载");
   QFuture<void> resourceFuture = ResourceManager::instance()->preloadResourcesAsync();
   m_resourceFutureWatcher->setFuture(resourceFuture);
 }
 
 void AsyncInitializer::onResourceLoadFinished()
 {
-  PerformanceMonitor::instance()->endMeasurement("Async Resource Loading");
-  qDebug() << "[App]" << "Resource loading completed";
-  qDebug() << "[App]" << "All async initialization tasks completed";
+  PerformanceMonitor::instance()->endMeasurement("异步资源加载");
+  qDebug() << "[App]" << "资源加载完成";
+  qDebug() << "[App]" << "所有异步初始化任务已完成";
   StartupProgressWidget::instance()->updateProgress(65, tr("异步初始化完成"));
   emit allInitializationFinished();
 }

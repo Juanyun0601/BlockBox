@@ -422,6 +422,11 @@ void InstanceGameSettingsPage::initUI()
 
     m_javaPathCombo = new QComboBox(contentWidget);
     m_javaPathCombo->setObjectName("instanceJavaPathCombo");
+    // 与全局设置页一致：Java 路径过长时显示省略号而不是把整行（乃至整页）撑宽
+    m_javaPathCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_javaPathCombo->setMinimumContentsLength(18);
+    connect(m_javaPathCombo, &QComboBox::currentTextChanged, m_javaPathCombo,
+            [this](const QString &text) { m_javaPathCombo->setToolTip(text); });
     m_javaPathCombo->addItem(tr("使用全局设置"), QString());
 
     // 只填充已保存的 Java 缓存；完整扫描耗时可达数十秒，构造期执行会拖慢启动
@@ -455,6 +460,7 @@ void InstanceGameSettingsPage::initUI()
     QPushButton *javaRefreshBtn = new QPushButton(tr("刷新"), contentWidget);
     javaRefreshBtn->setObjectName("refreshBtn");
 
+    m_javaPathCombo->setToolTip(m_javaPathCombo->currentText());
     javaControlRow->addWidget(m_javaPathCombo, 1);
     javaControlRow->addWidget(javaBrowseBtn);
     javaControlRow->addWidget(javaRefreshBtn);

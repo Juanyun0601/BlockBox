@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QStringList>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -67,6 +68,141 @@ QString formatDayTimeClock(qint64 ticks)
         .arg(hour, 2, 10, QLatin1Char('0'))
         .arg(minute, 2, 10, QLatin1Char('0'));
 }
+
+// ============================================================================
+// 游戏规则定义表（level.dat 中 Data.GameRules，值均为字符串）
+// since 非空时表示该规则需要的最低游戏版本，旧版本游戏会忽略此规则
+// ============================================================================
+struct GameRuleDef
+{
+    const char *id;           ///< 规则 ID
+    const char *zh;           ///< 中文名
+    const char *group;        ///< 分组名
+    const char *defaultValue; ///< 游戏默认值
+    bool numeric;             ///< 是否为数值规则
+    int minValue;             ///< 数值规则下限
+    int maxValue;             ///< 数值规则上限
+    const char *since;        ///< 需要的最低游戏版本（空表示不作说明）
+    const char *desc;         ///< 说明（悬浮提示）
+};
+
+const GameRuleDef kGameRules[] = {
+    // 玩家
+    { "keepInventory",              "死亡不掉落",   "玩家", "false", false, 0, 0, "",
+      "死亡后保留物品栏和经验，不会掉落" },
+    { "doImmediateRespawn",         "立即重生",     "玩家", "false", false, 0, 0, "",
+      "死亡后跳过死亡界面直接重生" },
+    { "naturalRegeneration",        "自然回血",     "玩家", "true",  false, 0, 0, "",
+      "生命值会随时间自动恢复" },
+    { "fallDamage",                 "摔落伤害",     "玩家", "true",  false, 0, 0, "",
+      "从高处摔落会造成伤害" },
+    { "fireDamage",                 "火焰伤害",     "玩家", "true",  false, 0, 0, "",
+      "火焰和岩浆会造成伤害" },
+    { "drowningDamage",             "溺水伤害",     "玩家", "true",  false, 0, 0, "",
+      "水下憋气耗尽后会造成伤害" },
+    { "freezingDamage",             "冰冻伤害",     "玩家", "true",  false, 0, 0, "1.17",
+      "在细雪中冰冻会造成伤害" },
+    { "locatorBar",                 "队友定位条",   "玩家", "true",  false, 0, 0, "1.21.6",
+      "屏幕上显示队友位置的定位条（联机用）" },
+    { "enderPearlsVanishOnDeath",   "死亡珍珠消失", "玩家", "true",  false, 0, 0, "1.20.2",
+      "玩家死亡时，正在飞行的末影珍珠立即消失" },
+    { "spectatorsGenerateChunks",   "旁观者加载区块","玩家","true",  false, 0, 0, "",
+      "旁观者玩家也会促使周围区块加载生成" },
+    { "playersSleepingPercentage",  "跳夜所需玩家", "玩家", "100",   true,  0, 100, "1.17",
+      "需要入睡的玩家比例（%）达到该数值才能跳过夜晚，0 表示无需有人入睡" },
+    { "spawnRadius",                "出生散布半径", "玩家", "10",    true,  0, 1024, "",
+      "新玩家和重生玩家围绕世界出生点散布的范围（格），0 表示固定出生在世界出生点" },
+    // 世界
+    { "doDaylightCycle",            "昼夜更替",     "世界", "true",  false, 0, 0, "",
+      "太阳、月亮和昼夜照常流转" },
+    { "doWeatherCycle",             "天气更替",     "世界", "true",  false, 0, 0, "",
+      "晴天、雨天、雷雨会自然变化" },
+    { "doFireTick",                 "火焰蔓延",     "世界", "true",  false, 0, 0, "",
+      "火焰会蔓延、点燃方块并自然熄灭" },
+    { "allowFireTicksAwayFromPlayer","火焰远离燃烧","世界", "false", false, 0, 0, "1.21.5",
+      "允许火焰蔓延到离玩家很远的地方继续燃烧（25w44a 起已移除）" },
+    { "mobGriefing",                "生物破坏方块", "世界", "true",  false, 0, 0, "",
+      "苦力怕爆炸毁地形、末影人搬方块、僵尸踩坏农田等行为" },
+    { "doTileDrops",                "方块掉落",     "世界", "true",  false, 0, 0, "",
+      "破坏方块后会掉落物品" },
+    { "doEntityDrops",              "实体掉落",     "世界", "true",  false, 0, 0, "",
+      "矿车、船、物品展示框等被破坏后掉落物品" },
+    { "doVinesSpread",              "藤蔓蔓延",     "世界", "true",  false, 0, 0, "",
+      "藤蔓会向四周生长蔓延" },
+    { "projectilesCanBreakBlocks",  "投射物破坏植物","世界","true",  false, 0, 0, "1.20.3",
+      "箭等投射物可以打碎紫水晶簇、滴水石锥等方块" },
+    { "waterSourceConversion",      "水源汇聚",     "世界", "true",  false, 0, 0, "1.19.3",
+      "流水会互相汇聚成新水源，可以做无限水" },
+    { "lavaSourceConversion",       "熔岩源汇聚",   "世界", "false", false, 0, 0, "1.19.3",
+      "熔岩会互相汇聚成新熔岩源（可做无限熔岩）" },
+    { "snowAccumulationHeight",     "降雪堆积上限", "世界", "1",     true,  0, 8, "1.19.3",
+      "下雪时地表最多能积几层雪，0 表示完全不积雪" },
+    { "blockExplosionDropDecay",    "方块爆炸掉落衰减","世界","true", false, 0, 0, "1.19.3",
+      "下界床等方块类爆炸炸毁方块后，一部分掉落物会消失" },
+    { "mobExplosionDropDecay",      "生物爆炸掉落衰减","世界","true", false, 0, 0, "1.19.3",
+      "苦力怕等生物爆炸炸毁方块后，一部分掉落物会消失" },
+    { "tntExplosionDropDecay",      "TNT爆炸掉落衰减","世界","false", false, 0, 0, "1.19.3",
+      "TNT 爆炸炸毁方块后，一部分掉落物会消失（默认全部掉落）" },
+    { "tntExplodes",                "TNT爆炸",      "世界", "true",  false, 0, 0, "1.21.5",
+      "点燃的 TNT 能否正常爆炸，关闭后 TNT 和 TNT 矿车都无法引爆" },
+    { "spawnChunkRadius",           "出生点常加载", "世界", "2",     true,  0, 32, "1.20.5",
+      "世界出生点周围始终保持加载的区块半径，0 表示不再常加载出生点区块（1.21.9 起已移除）" },
+    { "randomTickSpeed",            "随机刻速度",   "世界", "3",     true,  0, 4096, "",
+      "作物生长、树叶枯萎等随机事件的速度，0 为停止生长" },
+    // 生物
+    { "doMobSpawning",              "生物自然生成", "生物", "true",  false, 0, 0, "",
+      "动物和怪物会自然生成" },
+    { "doMobLoot",                  "生物掉落物",   "生物", "true",  false, 0, 0, "",
+      "生物死亡后掉落战利品" },
+    { "doInsomnia",                 "幻翼生成",     "生物", "true",  false, 0, 0, "",
+      "玩家长时间不睡觉会生成幻翼" },
+    { "doPatrolSpawning",           "巡逻队生成",   "生物", "true",  false, 0, 0, "",
+      "灾厄巡逻队会生成" },
+    { "doTraderSpawning",           "流浪商人生成", "生物", "true",  false, 0, 0, "",
+      "流浪商人和羊驼会生成" },
+    { "doWardenSpawning",           "监守者生成",   "生物", "true",  false, 0, 0, "",
+      "深暗之域中会生成监守者" },
+    { "disableRaids",               "禁止袭击",     "生物", "false", false, 0, 0, "",
+      "带着不祥之兆进入村庄不再触发袭击" },
+    { "forgiveDeadPlayers",         "愤怒平息",     "生物", "true",  false, 0, 0, "",
+      "被激怒的中立生物在目标玩家死亡后平息怒火" },
+    { "universalAnger",             "迁怒所有人",   "生物", "false", false, 0, 0, "",
+      "被激怒的中立生物会攻击所有玩家" },
+    { "maxEntityCramming",          "实体挤压上限", "生物", "24",    true,  0, 1024, "",
+      "同一格内实体超过该数量时会受到挤压伤害" },
+    // 交通与传送
+    { "minecartMaxSpeed",           "矿车最大速度", "交通与传送", "8", true, 1, 1000, "1.21.2",
+      "普通矿车的最高速度（格/游戏刻）" },
+    { "playersNetherPortalDefaultDelay", "传送门等待时间", "交通与传送", "80", true, 1, 10000, "1.20.3",
+      "玩家（非创造）站在下界传送门里需要等待的时长（游戏刻，默认 80 即 4 秒）" },
+    { "playersNetherPortalCreativeDelay","创造传送门等待", "交通与传送", "0",  true, 0, 10000, "1.20.3",
+      "创造模式玩家在下界传送门里需要等待的时长（游戏刻），0 为即进即传" },
+    // 界面与命令
+    { "announceAdvancements",       "公告进度",     "界面与命令", "true",  false, 0, 0, "",
+      "解锁进度、达成挑战时在聊天栏公告" },
+    { "showDeathMessages",          "死亡消息",     "界面与命令", "true",  false, 0, 0, "",
+      "玩家死亡时在聊天栏显示消息" },
+    { "reducedDebugInfo",           "简化调试屏",   "界面与命令", "false", false, 0, 0, "",
+      "F3 调试界面隐藏坐标等详细信息" },
+    { "doLimitedCrafting",          "限定合成",     "界面与命令", "false", false, 0, 0, "",
+      "只能合成已解锁配方的物品" },
+    { "commandBlockOutput",         "命令方块播报", "界面与命令", "true",  false, 0, 0, "",
+      "命令方块的执行结果播报到聊天栏" },
+    { "sendCommandFeedback",        "命令反馈",     "界面与命令", "true",  false, 0, 0, "",
+      "执行命令后在聊天栏显示反馈" },
+    { "logAdminCommands",           "日志记录命令", "界面与命令", "true",  false, 0, 0, "",
+      "把管理员命令写入日志文件" },
+    { "disableElytraMovementCheck", "关闭鞘翅测速", "界面与命令", "false", false, 0, 0, "",
+      "服务器不再检测鞘翅飞行是否超速" },
+    { "globalSoundEvents",          "全服播报音效", "界面与命令", "true",  false, 0, 0, "1.19.3",
+      "凋灵召唤、末影龙死亡、末地传送门激活等音效全服都能听到，关闭后只有附近玩家能听到" },
+    { "commandModificationBlockLimit","命令改方块上限","界面与命令","32768", true, 1, 2147483647, "1.19.4",
+      "/fill、/clone 等命令一次最多能改动的方块数" },
+    { "maxCommandForkCount",        "命令分叉数",   "界面与命令", "65536", true, 1, 2147483647, "1.20.3",
+      "一条命令一次最多能同时执行多少个分支" },
+    { "maxCommandChainLength",      "命令链长度",   "界面与命令", "65536", true, 1, 65536, "",
+      "一次命令方块链最多可执行的命令数" },
+};
 
 } // namespace
 
@@ -335,6 +471,10 @@ void SaveSettingsPage::initUI()
     settingCardLayout->addLayout(spawnRow);
 
     layout->addWidget(settingCard);
+
+    // ── 游戏规则卡片 ──
+    buildRulesCard(contentWidget, layout, headerFont);
+
     layout->addStretch();
 
     // ── 底部按钮 ──
@@ -379,6 +519,7 @@ void SaveSettingsPage::initUI()
     m_spawnYSpin->setEnabled(false);
     m_spawnZSpin->setEnabled(false);
     m_saveBtn->setEnabled(false);
+    setRulesEnabled(false);
 }
 
 void SaveSettingsPage::setCurrentSave(const QString &saveFolderPath, const QString &saveName)
@@ -395,6 +536,9 @@ void SaveSettingsPage::reset()
     m_saveFolderPath.clear();
     m_saveName.clear();
     m_loaded = false;
+    m_info.gameRules.clear();
+    if (m_otherRulesLayout)
+        loadOtherRules();
     m_saveNameLabel->clear();
     m_versionLabel->setText(tr("—"));
     m_seedLabel->setText(tr("—"));
@@ -427,6 +571,7 @@ void SaveSettingsPage::reset()
     m_spawnYSpin->setEnabled(false);
     m_spawnZSpin->setEnabled(false);
     m_saveBtn->setEnabled(false);
+    setRulesEnabled(false);
 }
 
 void SaveSettingsPage::addInfoRow(const QString &head, QWidget *content)
@@ -466,6 +611,7 @@ void SaveSettingsPage::loadSaveInfo()
         m_spawnYSpin->setEnabled(false);
         m_spawnZSpin->setEnabled(false);
         m_saveBtn->setEnabled(false);
+        setRulesEnabled(false);
         return;
     }
 
@@ -544,6 +690,10 @@ void SaveSettingsPage::loadSaveInfo()
         m_hardcoreHint->hide();
         refreshHardcoreState();
     }
+
+    // 游戏规则
+    loadRuleValues();
+    setRulesEnabled(true);
 }
 
 void SaveSettingsPage::onHardcoreToggled()
@@ -580,6 +730,283 @@ void SaveSettingsPage::refreshSpawnSpinEnable()
     m_spawnXSpin->setEnabled(enable);
     m_spawnYSpin->setEnabled(enable);
     m_spawnZSpin->setEnabled(enable);
+}
+
+// ============================================================================
+// 游戏规则卡片
+// ============================================================================
+void SaveSettingsPage::buildRulesCard(QWidget *contentWidget, QVBoxLayout *layout,
+                                      const QFont &headerFont)
+{
+    QWidget *rulesCard = new QWidget(contentWidget);
+    rulesCard->setObjectName("funcCard");
+    auto *cardLayout = new QVBoxLayout(rulesCard);
+    cardLayout->setContentsMargins(16, 16, 16, 16);
+    cardLayout->setSpacing(10);
+
+    // 标题行：标题 + 提示 + 恢复默认值
+    auto *headerRow = new QHBoxLayout();
+    headerRow->setSpacing(8);
+    auto *rulesHeader = new QLabel(tr("游戏规则"), rulesCard);
+    rulesHeader->setFont(headerFont);
+    headerRow->addWidget(rulesHeader);
+    auto *rulesHint = new QLabel(tr("免命令调整常用规则，随「保存修改」一起写入存档"), rulesCard);
+    rulesHint->setStyleSheet(QStringLiteral("color: #888888; font-size: 12px;"));
+    headerRow->addWidget(rulesHint);
+    headerRow->addStretch();
+    m_rulesResetBtn = new QPushButton(tr("恢复默认值"), rulesCard);
+    m_rulesResetBtn->setObjectName("bottomActionBtn");
+    m_rulesResetBtn->setCursor(Qt::PointingHandCursor);
+    m_rulesResetBtn->setToolTip(tr("把下方所有规则恢复为游戏默认值，点「保存修改」后写入存档"));
+    connect(m_rulesResetBtn, &QPushButton::clicked, this, &SaveSettingsPage::onRulesResetClicked);
+    headerRow->addWidget(m_rulesResetBtn);
+    cardLayout->addLayout(headerRow);
+
+    // 搜索框
+    m_ruleSearchEdit = new QLineEdit(rulesCard);
+    m_ruleSearchEdit->setPlaceholderText(tr("搜索规则，如：不掉落、keepInventory"));
+    m_ruleSearchEdit->setClearButtonEnabled(true);
+    connect(m_ruleSearchEdit, &QLineEdit::textChanged,
+            this, &SaveSettingsPage::onRuleSearchChanged);
+    cardLayout->addWidget(m_ruleSearchEdit);
+
+    // 按定义表中出现的顺序分组展示
+    QStringList groups;
+    for (const GameRuleDef &def : kGameRules)
+    {
+        const QString group = tr(def.group);
+        if (!groups.contains(group))
+            groups.append(group);
+    }
+
+    for (const QString &group : groups)
+    {
+        auto *groupHeader = new QLabel(group, rulesCard);
+        groupHeader->setStyleSheet(
+            QStringLiteral("color: #888888; font-size: 12px; font-weight: bold;"));
+        cardLayout->addWidget(groupHeader);
+        m_groupHeaders.insert(group, groupHeader);
+
+        auto *grid = new QGridLayout();
+        grid->setHorizontalSpacing(16);
+        grid->setVerticalSpacing(6);
+        cardLayout->addLayout(grid);
+
+        int row = 0;
+        int col = 0;
+        for (const GameRuleDef &def : kGameRules)
+        {
+            if (tr(def.group) != group)
+                continue;
+
+            RuleControl rule;
+            rule.id = QString::fromLatin1(def.id);
+            rule.zh = tr(def.zh);
+            rule.group = group;
+            rule.defaultValue = QString::fromLatin1(def.defaultValue);
+            rule.numeric = def.numeric;
+            QString tip = tr("%1\n规则 ID：%2").arg(tr(def.desc), rule.id);
+            if (def.since && *def.since)
+                tip += tr("\n需要 %1 或更新版本，旧版本游戏会忽略此规则")
+                           .arg(QString::fromLatin1(def.since));
+
+            if (rule.numeric)
+            {
+                // 数值规则独占一整行：若上一行右格已被占用则先另起一行
+                if (col == 1)
+                    ++row;
+                col = 0;
+                auto *rowWidget = new QWidget(rulesCard);
+                auto *rowLayout = new QHBoxLayout(rowWidget);
+                rowLayout->setContentsMargins(0, 0, 0, 0);
+                rowLayout->setSpacing(8);
+                auto *nameLabel = new QLabel(rule.zh, rowWidget);
+                nameLabel->setToolTip(tip);
+                rowLayout->addWidget(nameLabel);
+                rule.spin = new QSpinBox(rowWidget);
+                rule.spin->setRange(def.minValue, def.maxValue);
+                rule.spin->setToolTip(tip);
+                rowLayout->addWidget(rule.spin);
+                rowLayout->addStretch();
+                rule.row = rowWidget;
+                grid->addWidget(rowWidget, row, 0, 1, 2);
+                ++row;
+            }
+            else
+            {
+                rule.check = new QCheckBox(rule.zh, rulesCard);
+                rule.check->setToolTip(tip);
+                rule.row = rule.check;
+                grid->addWidget(rule.check, row, col);
+                if (col == 0)
+                    col = 1;
+                else
+                {
+                    col = 0;
+                    ++row;
+                }
+            }
+            m_rules.append(rule);
+        }
+    }
+
+    // 其他规则：模组、数据包或更高版本游戏添加的规则，随存档动态填充
+    auto *otherHeader = new QLabel(tr("其他规则"), rulesCard);
+    otherHeader->setStyleSheet(
+        QStringLiteral("color: #888888; font-size: 12px; font-weight: bold;"));
+    otherHeader->setToolTip(tr("由模组、数据包或更高版本游戏添加的规则，改动会原样写入存档"));
+    otherHeader->hide();
+    cardLayout->addWidget(otherHeader);
+    m_groupHeaders.insert(tr("其他规则"), otherHeader);
+
+    m_otherRulesLayout = new QVBoxLayout();
+    m_otherRulesLayout->setSpacing(6);
+    cardLayout->addLayout(m_otherRulesLayout);
+
+    layout->addWidget(rulesCard);
+}
+
+void SaveSettingsPage::loadRuleValues()
+{
+    m_ruleBaseline.clear();
+    for (const RuleControl &rule : m_rules)
+    {
+        // level.dat 中缺省的规则按游戏默认值展示（游戏加载时对缺失规则同样取默认值）
+        const QString fileValue = m_info.gameRules.value(rule.id);
+        if (rule.numeric)
+        {
+            int value = rule.defaultValue.toInt();
+            if (!fileValue.isEmpty())
+            {
+                bool ok = false;
+                const int parsed = fileValue.toInt(&ok);
+                if (ok)
+                    value = parsed;
+            }
+            value = qBound(rule.spin->minimum(), value, rule.spin->maximum());
+            rule.spin->setValue(value);
+            m_ruleBaseline.insert(rule.id, QString::number(value));
+        }
+        else
+        {
+            const bool on = fileValue.isEmpty()
+                ? (rule.defaultValue == QStringLiteral("true"))
+                : (fileValue == QStringLiteral("true"));
+            rule.check->setChecked(on);
+            m_ruleBaseline.insert(rule.id,
+                                  on ? QStringLiteral("true") : QStringLiteral("false"));
+        }
+    }
+
+    loadOtherRules();
+}
+
+void SaveSettingsPage::loadOtherRules()
+{
+    // 清空上一次的行
+    m_otherRules.clear();
+    while (QLayoutItem *item = m_otherRulesLayout->takeAt(0))
+    {
+        if (QWidget *w = item->widget())
+            w->deleteLater();
+        delete item;
+    }
+
+    // 已知规则之外的原样展示并允许编辑（模组 / 数据包 / 更高版本游戏添加）
+    const QString otherGroup = tr("其他规则");
+    for (auto it = m_info.gameRules.constBegin(); it != m_info.gameRules.constEnd(); ++it)
+    {
+        bool known = false;
+        for (const RuleControl &rule : m_rules)
+        {
+            if (rule.id == it.key())
+            {
+                known = true;
+                break;
+            }
+        }
+        if (known)
+            continue;
+
+        RuleControl rule;
+        rule.id = it.key();
+        rule.zh = it.key();
+        rule.group = otherGroup;
+        rule.defaultValue = it.value();
+        const QString tip = tr("该规则来自模组、数据包或更高版本的游戏，值会原样写入存档");
+
+        auto *rowWidget = new QWidget(this);
+        auto *rowLayout = new QHBoxLayout(rowWidget);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(8);
+        auto *idLabel = new QLabel(it.key(), rowWidget);
+        idLabel->setToolTip(tip);
+        rowLayout->addWidget(idLabel);
+        rule.text = new QLineEdit(it.value(), rowWidget);
+        rule.text->setToolTip(tip);
+        rowLayout->addWidget(rule.text, 1);
+        rule.row = rowWidget;
+        m_otherRulesLayout->addWidget(rowWidget);
+        m_otherRules.append(rule);
+        m_ruleBaseline.insert(rule.id, it.value());
+    }
+}
+
+void SaveSettingsPage::setRulesEnabled(bool enabled)
+{
+    if (m_ruleSearchEdit)
+        m_ruleSearchEdit->setEnabled(enabled);
+    if (m_rulesResetBtn)
+        m_rulesResetBtn->setEnabled(enabled);
+    auto setRowEnabled = [&enabled](const RuleControl &rule) {
+        if (rule.numeric && rule.spin)
+            rule.spin->setEnabled(enabled);
+        else if (rule.text)
+            rule.text->setEnabled(enabled);
+        else if (rule.check)
+            rule.check->setEnabled(enabled);
+    };
+    for (const RuleControl &rule : m_rules)
+        setRowEnabled(rule);
+    for (const RuleControl &rule : m_otherRules)
+        setRowEnabled(rule);
+}
+
+void SaveSettingsPage::onRuleSearchChanged(const QString &text)
+{
+    const QString keyword = text.trimmed();
+    QMap<QString, int> visibleCount;
+    auto applyFilter = [this, &keyword, &visibleCount](const RuleControl &rule) {
+        bool match = keyword.isEmpty()
+            || rule.zh.contains(keyword, Qt::CaseInsensitive)
+            || rule.id.contains(keyword, Qt::CaseInsensitive);
+        if (!match && rule.text)
+            match = rule.text->text().contains(keyword, Qt::CaseInsensitive);
+        rule.row->setVisible(match);
+        if (match)
+            ++visibleCount[rule.group];
+    };
+    for (const RuleControl &rule : m_rules)
+        applyFilter(rule);
+    for (const RuleControl &rule : m_otherRules)
+        applyFilter(rule);
+    // 全组规则都被过滤掉时隐藏组标题
+    for (auto it = m_groupHeaders.constBegin(); it != m_groupHeaders.constEnd(); ++it)
+        it.value()->setVisible(visibleCount.value(it.key()) > 0);
+}
+
+void SaveSettingsPage::onRulesResetClicked()
+{
+    for (const RuleControl &rule : m_rules)
+    {
+        // 其他规则没有已知的默认值，恢复默认只作用于内置规则
+        if (rule.text)
+            continue;
+        if (rule.numeric)
+            rule.spin->setValue(rule.defaultValue.toInt());
+        else
+            rule.check->setChecked(rule.defaultValue == QStringLiteral("true"));
+    }
 }
 
 void SaveSettingsPage::setDayTimePreset(qint64 ticks)
@@ -644,6 +1071,32 @@ void SaveSettingsPage::onSaveClicked()
     changes.spawnY = m_spawnYSpin->value();
     changes.spawnZ = m_spawnZSpin->value();
 
+    // 3. 游戏规则：只写入与载入基线不同的项，避免污染旧版本存档
+    QMap<QString, QString> ruleChanges;
+    auto collectRuleChange = [this, &ruleChanges](const RuleControl &rule) {
+        QString current;
+        if (rule.numeric && rule.spin)
+            current = QString::number(rule.spin->value());
+        else if (rule.text)
+        {
+            // 其他规则原样写入；清空视为不修改，避免生成空值规则
+            current = rule.text->text();
+            if (current.isEmpty())
+                return;
+        }
+        else if (rule.check)
+            current = rule.check->isChecked() ? QStringLiteral("true")
+                                              : QStringLiteral("false");
+        if (current != m_ruleBaseline.value(rule.id))
+            ruleChanges.insert(rule.id, current);
+    };
+    for (const RuleControl &rule : m_rules)
+        collectRuleChange(rule);
+    for (const RuleControl &rule : m_otherRules)
+        collectRuleChange(rule);
+    if (!ruleChanges.isEmpty())
+        changes.gameRules = ruleChanges;
+
     QString error;
     if (!LevelDatEditor::applyChanges(currentFolder, changes, &error))
     {
@@ -654,6 +1107,10 @@ void SaveSettingsPage::onSaveClicked()
 
     AppMessageBox::information(this, tr("保存成功"),
         tr("存档设置已保存。\n注意：若游戏正在运行，修改可能需要重启游戏后生效。"));
+
+    // 保存成功后重新读取，让顶部信息与规则基线同步
+    m_loaded = false;
+    loadSaveInfo();
 }
 
 void SaveSettingsPage::onOpenFolderClicked()

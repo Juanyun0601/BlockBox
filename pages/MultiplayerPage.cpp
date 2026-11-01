@@ -28,10 +28,17 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "components/AppFileDialog.h"
+#include "components/NotificationManager.h"
+#include "utils/frp/FrpManager.h"
 #include "utils/Hongshi/HongshiClient.h"
 #include "utils/IconHelper.h"
 #include "utils/Terracotta/TerracottaClient.h"
 #include "utils/ThemeManager.h"
+
+#include <QDesktopServices>
+#include <QIntValidator>
+#include <QUrl>
 
 MultiplayerPage::MultiplayerPage(QWidget *parent)
     : QWidget(parent)
@@ -66,6 +73,24 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
     , m_tunnelAddrLabel(nullptr)
     , m_copyAddrBtn(nullptr)
     , m_hongshiStopBtn(nullptr)
+    , m_frpHomePage(nullptr)
+    , m_frpStatusLabel(nullptr)
+    , m_frpDescLabel(nullptr)
+    , m_frpKeyHint(nullptr)
+    , m_frpKeyEdit(nullptr)
+    , m_frpIdHint(nullptr)
+    , m_frpIdEdit(nullptr)
+    , m_frpHintLabel(nullptr)
+    , m_frpLinkRow(nullptr)
+    , m_frpPanelBtn(nullptr)
+    , m_frpPickBtn(nullptr)
+    , m_frpStartBtn(nullptr)
+    , m_frpRoomPage(nullptr)
+    , m_frpLatencyLabel(nullptr)
+    , m_frpAddrLabel(nullptr)
+    , m_frpCopyBtn(nullptr)
+    , m_frpRoomHint(nullptr)
+    , m_frpStopBtn(nullptr)
 {
     initUI();
     applyThemeStyles();
@@ -84,6 +109,34 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
         showInfoDialog(tr("联机错误"), err);
     });
 
+    auto *frp = FrpManager::instance();
+    connect(frp, &FrpManager::stateChanged, this, &MultiplayerPage::refreshPage);
+    connect(frp, &FrpManager::remoteAddressChanged, this, &MultiplayerPage::refreshFrpStatusBar);
+    connect(frp, &FrpManager::downloadStateChanged, this, [this]() {
+        refreshFrpInstallStatus();
+        refreshFrpPage();
+    });
+    connect(frp, &FrpManager::downloadProgressChanged, this, [this](qreal) {
+        refreshFrpInstallStatus();
+        refreshFrpPage();
+    });
+    connect(frp, &FrpManager::downloadInfoChanged, this, [this](const QString &) {
+        refreshFrpInstallStatus();
+    });
+    connect(frp, &FrpManager::installFinished, this,
+            [this](bool success, const QString &message) {
+                refreshFrpInstallStatus();
+                refreshFrpPage();
+                if (success)
+                    NotificationManager::showSuccess(window(), message);
+                else
+                    NotificationManager::showError(window(), message);
+            });
+    connect(frp, &FrpManager::errorOccurred, this, [this](const QString &err) {
+        if (frpActive())
+            showInfoDialog(tr("联机错误"), err);
+    });
+
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
             this, &MultiplayerPage::applyThemeStyles);
 
@@ -91,7 +144,9 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
     QTimer *timer = new QTimer(this);
     timer->setInterval(1000);
     connect(timer, &QTimer::timeout, this, [this]() {
-        if (hongshiActive()) {
+        if (frpActive()) {
+            refreshFrpStatusBar();
+        } else if (hongshiActive()) {
             refreshTunnelStatusBar();
         } else {
             refreshStatusBar();
@@ -129,6 +184,21 @@ void MultiplayerPage::initUI()
     m_coreCombo->setFixedHeight(28);
     m_coreCombo->addItem(tr("陶瓦联机"));
     m_coreCombo->addItem(tr("红石联机"));
+    // frp 服务商加彩色圆点小图标便于区分
+    const auto dotIcon = [](const QColor &color) {
+        QPixmap pix(16, 16);
+        pix.fill(Qt::transparent);
+        QPainter p(&pix);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setBrush(color);
+        p.setPen(Qt::NoPen);
+        p.drawEllipse(2, 2, 12, 12);
+        return QIcon(pix);
+    };
+    m_coreCombo->addItem(dotIcon(FrpManager::providerColor(FrpManager::Provider::Sakura)),
+                         tr("樱花联机"));
+    m_coreCombo->addItem(dotIcon(FrpManager::providerColor(FrpManager::Provider::OpenFrp)),
+                         tr("OpenFrp 联机"));
     m_coreCombo->setToolTip(tr("选择联机核心"));
 
     m_updateBtn = new QPushButton(tr("更新"), m_topBarContainer);
@@ -165,6 +235,16 @@ void MultiplayerPage::initUI()
     buildHongshiTunnelPage(m_hongshiTunnelPage);
     m_stack->addWidget(m_hongshiTunnelPage); // 3: 红石联机 隧道页
 
+    m_frpHomePage = new QWidget();
+    m_frpHomePage->setObjectName(QStringLiteral("multiplayerFrpHome"));
+    buildFrpHomePage(m_frpHomePage);
+    m_stack->addWidget(m_frpHomePage);     // 4: frp 服务商 首页
+
+    m_frpRoomPage = new QWidget();
+    m_frpRoomPage->setObjectName(QStringLiteral("multiplayerFrpRoom"));
+    buildFrpRoomPage(m_frpRoomPage);
+    m_stack->addWidget(m_frpRoomPage);     // 5: frp 服务商 房间页
+
     mainLayout->addWidget(m_stack, 1);
 
     connect(m_coreCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -176,6 +256,18 @@ void MultiplayerPage::initUI()
 bool MultiplayerPage::hongshiActive() const
 {
     return m_coreCombo && m_coreCombo->currentIndex() == 1;
+}
+
+bool MultiplayerPage::frpActive() const
+{
+    return m_coreCombo && m_coreCombo->currentIndex() >= 2;
+}
+
+FrpManager::Provider MultiplayerPage::frpProvider() const
+{
+    return (m_coreCombo && m_coreCombo->currentIndex() == 2)
+        ? FrpManager::Provider::Sakura
+        : FrpManager::Provider::OpenFrp;
 }
 
 // ============================
@@ -234,6 +326,15 @@ void MultiplayerPage::buildHomePage(QWidget *page)
 
 // 信号连接
     connect(m_updateBtn, &QPushButton::clicked, this, [this]() {
+        if (frpActive()) {
+            auto *frp = FrpManager::instance();
+            const auto provider = frpProvider();
+            if (frp->isDownloading(provider))
+                return; // 正在下载
+            if (!frp->isFrpcPresent(provider))
+                frp->downloadFrpc(provider);
+            return;
+        }
         if (hongshiActive()) {
             auto st = m_hongshi->installStatus();
             if (st == HongshiClient::InstallStatus::Downloading
@@ -644,6 +745,187 @@ void MultiplayerPage::buildHongshiTunnelPage(QWidget *page)
     });
 }
 
+// ============================
+// frp 服务商联机（樱花 / OpenFrp）：首页
+// ============================
+
+void MultiplayerPage::buildFrpHomePage(QWidget *page)
+{
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(10);
+
+    // 顶部状态文字（frpc 安装/下载状态）
+    m_frpStatusLabel = new QLabel(page);
+    m_frpStatusLabel->setObjectName(QStringLiteral("multiplayerStatusLabel"));
+    m_frpStatusLabel->setWordWrap(true);
+    m_frpStatusLabel->setAlignment(Qt::AlignCenter);
+    layout->addWidget(m_frpStatusLabel);
+
+    // ---- 中间区域：说明信息（内容随核心切换，见 updateFrpDesc） ----
+    m_frpDescLabel = new QLabel(page);
+    m_frpDescLabel->setObjectName(QStringLiteral("multiplayerDescLabel"));
+    m_frpDescLabel->setWordWrap(true);
+    m_frpDescLabel->setTextFormat(Qt::RichText);
+    m_frpDescLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    m_frpDescLabel->setOpenExternalLinks(true);
+    layout->addWidget(m_frpDescLabel, 1);
+
+    // ---- 访问密钥 ----
+    m_frpKeyHint = new QLabel(tr("访问密钥"), page);
+    m_frpKeyHint->setObjectName(QStringLiteral("hongshiFieldLabel"));
+    layout->addWidget(m_frpKeyHint);
+
+    m_frpKeyEdit = new QLineEdit(page);
+    m_frpKeyEdit->setObjectName(QStringLiteral("frpKeyEdit"));
+    m_frpKeyEdit->setFixedHeight(34);
+    m_frpKeyEdit->setPlaceholderText(tr("在官网面板「访问密钥」页面获取"));
+    layout->addWidget(m_frpKeyEdit);
+
+    // ---- 隧道 ID ----
+    m_frpIdHint = new QLabel(tr("隧道 ID"), page);
+    m_frpIdHint->setObjectName(QStringLiteral("hongshiFieldLabel"));
+    layout->addWidget(m_frpIdHint);
+
+    m_frpIdEdit = new QLineEdit(page);
+    m_frpIdEdit->setObjectName(QStringLiteral("frpIdEdit"));
+    m_frpIdEdit->setFixedHeight(34);
+    m_frpIdEdit->setPlaceholderText(tr("官网面板隧道列表中的数字 ID"));
+    m_frpIdEdit->setValidator(new QIntValidator(1, 999999999, m_frpIdEdit));
+    layout->addWidget(m_frpIdEdit);
+
+    // ---- 打开面板 / 手动选择 frpc ----
+    m_frpLinkRow = new QWidget(page);
+    m_frpLinkRow->setObjectName(QStringLiteral("frpLinkRow"));
+    auto *linkLayout = new QHBoxLayout(m_frpLinkRow);
+    linkLayout->setContentsMargins(0, 0, 0, 0);
+    linkLayout->setSpacing(6);
+
+    m_frpPanelBtn = new QPushButton(tr("打开面板"), m_frpLinkRow);
+    m_frpPanelBtn->setObjectName(QStringLiteral("hongshiNodeRefreshBtn"));
+    m_frpPanelBtn->setCursor(Qt::PointingHandCursor);
+    m_frpPanelBtn->setFixedHeight(26);
+    m_frpPanelBtn->setToolTip(tr("注册账号、创建 TCP 隧道、查看访问密钥与隧道 ID"));
+    linkLayout->addWidget(m_frpPanelBtn);
+
+    m_frpPickBtn = new QPushButton(tr("手动选择 frpc"), m_frpLinkRow);
+    m_frpPickBtn->setObjectName(QStringLiteral("hongshiNodeRefreshBtn"));
+    m_frpPickBtn->setCursor(Qt::PointingHandCursor);
+    m_frpPickBtn->setFixedHeight(26);
+    m_frpPickBtn->setToolTip(tr("自动下载失败时，可手动下载后选择 frpc 程序导入"));
+    linkLayout->addWidget(m_frpPickBtn);
+    linkLayout->addStretch(1);
+    layout->addWidget(m_frpLinkRow);
+
+    // ---- 获取指引提示 ----
+    m_frpHintLabel = new QLabel(page);
+    m_frpHintLabel->setObjectName(QStringLiteral("hongshiFieldHint"));
+    m_frpHintLabel->setWordWrap(true);
+    layout->addWidget(m_frpHintLabel);
+
+    // ---- 启动隧道按钮 ----
+    m_frpStartBtn = new QPushButton(tr("启动隧道"), page);
+    m_frpStartBtn->setObjectName(QStringLiteral("multiplayerCreateBtn"));
+    m_frpStartBtn->setCursor(Qt::PointingHandCursor);
+    m_frpStartBtn->setFixedHeight(34);
+    layout->addWidget(m_frpStartBtn);
+
+    connect(m_frpStartBtn, &QPushButton::clicked, this, &MultiplayerPage::startFrpTunnel);
+    connect(m_frpPanelBtn, &QPushButton::clicked, this, &MultiplayerPage::openFrpPanel);
+    connect(m_frpPickBtn, &QPushButton::clicked, this, &MultiplayerPage::pickFrpcManually);
+
+    // 输入变化即保存（按服务商分别记住）
+    connect(m_frpKeyEdit, &QLineEdit::textEdited, this, [this](const QString &text) {
+        FrpManager::instance()->setAccessKey(frpProvider(), text);
+    });
+    connect(m_frpIdEdit, &QLineEdit::textEdited, this, [this](const QString &text) {
+        FrpManager::instance()->setTunnelId(frpProvider(), text.toInt());
+    });
+}
+
+// ============================
+// frp 服务商联机：房间页
+// ============================
+
+void MultiplayerPage::buildFrpRoomPage(QWidget *page)
+{
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(8);
+
+    // ---- 顶部：隧道状态与联机时间 ----
+    m_frpLatencyLabel = new QLabel(page);
+    m_frpLatencyLabel->setObjectName(QStringLiteral("multiplayerLatencyLabel"));
+    m_frpLatencyLabel->setAlignment(Qt::AlignCenter);
+    m_frpLatencyLabel->setWordWrap(true);
+    layout->addWidget(m_frpLatencyLabel);
+
+    // ---- 中间：大字远程连接地址 + 复制按钮 ----
+    auto *addrLayout = new QHBoxLayout();
+    addrLayout->setSpacing(6);
+
+    m_frpAddrLabel = new QLabel(page);
+    m_frpAddrLabel->setObjectName(QStringLiteral("multiplayerRoomCodeLabel"));
+    m_frpAddrLabel->setAlignment(Qt::AlignCenter);
+    m_frpAddrLabel->setWordWrap(true);
+    m_frpAddrLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_frpAddrLabel->setText(tr("正在连接节点..."));
+
+    QFont addrFont = m_frpAddrLabel->font();
+    addrFont.setBold(true);
+    addrFont.setPointSize(12);
+    m_frpAddrLabel->setFont(addrFont);
+
+    m_frpCopyBtn = new QPushButton(page);
+    m_frpCopyBtn->setObjectName(QStringLiteral("multiplayerCopyCodeBtn"));
+    m_frpCopyBtn->setCursor(Qt::PointingHandCursor);
+    m_frpCopyBtn->setFixedSize(28, 28);
+    m_frpCopyBtn->setToolTip(tr("复制联机地址"));
+    m_frpCopyBtn->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/copy.svg"),
+        ThemeManager::instance()->currentThemeColor(), 16));
+    m_frpCopyBtn->setIconSize(QSize(16, 16));
+
+    addrLayout->addStretch(1);
+    addrLayout->addWidget(m_frpAddrLabel, 4);
+    addrLayout->addWidget(m_frpCopyBtn);
+    addrLayout->addStretch(1);
+    layout->addLayout(addrLayout);
+
+    m_frpRoomHint = new QLabel(page);
+    m_frpRoomHint->setObjectName(QStringLiteral("hongshiFieldHint"));
+    m_frpRoomHint->setWordWrap(true);
+    m_frpRoomHint->setAlignment(Qt::AlignCenter);
+    layout->addWidget(m_frpRoomHint);
+
+    layout->addStretch(1);
+
+    // ---- 停止联机按钮 ----
+    m_frpStopBtn = new QPushButton(tr("停止联机"), page);
+    m_frpStopBtn->setObjectName(QStringLiteral("multiplayerLeaveBtn"));
+    m_frpStopBtn->setCursor(Qt::PointingHandCursor);
+    m_frpStopBtn->setFixedHeight(32);
+    layout->addWidget(m_frpStopBtn);
+
+    connect(m_frpCopyBtn, &QPushButton::clicked, this, [this]() {
+        const QString addr = FrpManager::instance()->remoteAddress();
+        if (addr.isEmpty()) return;
+        QApplication::clipboard()->setText(addr);
+        m_frpCopyBtn->setIcon(IconHelper::loadColoredIcon(
+            QStringLiteral(":/Images/Icons/copy.svg"),
+            QColor(76, 175, 80), 16));
+        QTimer::singleShot(800, this, [this]() {
+            m_frpCopyBtn->setIcon(IconHelper::loadColoredIcon(
+                QStringLiteral(":/Images/Icons/copy.svg"),
+                ThemeManager::instance()->currentThemeColor(), 16));
+        });
+    });
+
+    connect(m_frpStopBtn, &QPushButton::clicked, this, [this]() {
+        FrpManager::instance()->stop();
+    });
+}
+
 void MultiplayerPage::applyThemeStyles()
 {
 QString themeColor = ThemeManager::instance()->currentThemeColor();
@@ -920,6 +1202,136 @@ QString themeColor = ThemeManager::instance()->currentThemeColor();
             ).arg(textColor, borderColor, themeColor, hoverBg));
     }
 
+    // frp 服务商联机首页（复用陶瓦首页/红石表单的控件样式名）
+    if (m_frpHomePage) {
+        m_frpHomePage->setStyleSheet(
+            QString(
+                "QLabel#multiplayerStatusLabel {"
+                "  color: %1;"
+                "  font-size: 11px;"
+                "  padding: 4px;"
+                "  background: transparent;"
+                "}"
+                "QLabel#multiplayerDescLabel {"
+                "  color: %1;"
+                "  font-size: 12px;"
+                "  padding: 8px;"
+                "  background: palette(base);"
+                "  border: 1px solid %2;"
+                "  border-radius: 6px;"
+                "}"
+                "QLabel#hongshiFieldLabel {"
+                "  color: %1;"
+                "  font-size: 12px;"
+                "  font-weight: 600;"
+                "  background: transparent;"
+                "  border: none;"
+                "}"
+                "QLabel#hongshiFieldHint {"
+                "  color: %1;"
+                "  font-size: 11px;"
+                "  background: transparent;"
+                "  border: none;"
+                "}"
+                "QLineEdit#frpKeyEdit, QLineEdit#frpIdEdit {"
+                "  background: palette(base);"
+                "  border: 1px solid %2;"
+                "  border-radius: 6px;"
+                "  color: %1;"
+                "  font-size: 12px;"
+                "  padding: 2px 8px;"
+                "}"
+                "QLineEdit#frpKeyEdit:focus, QLineEdit#frpIdEdit:focus {"
+                "  border-color: %3;"
+                "}"
+                "QWidget#frpLinkRow QPushButton#hongshiNodeRefreshBtn {"
+                "  background: palette(base);"
+                "  border: 1px solid %2;"
+                "  border-radius: 6px;"
+                "  color: %1;"
+                "  font-size: 11px;"
+                "  padding: 0 10px;"
+                "}"
+                "QWidget#frpLinkRow QPushButton#hongshiNodeRefreshBtn:hover {"
+                "  border-color: %3;"
+                "  color: %3;"
+                "}"
+                "QPushButton#multiplayerCreateBtn {"
+                "  background: %3;"
+                "  color: white;"
+                "  border: none;"
+                "  border-radius: 6px;"
+                "  font-size: 13px;"
+                "  font-weight: 500;"
+                "}"
+                "QPushButton#multiplayerCreateBtn:hover {"
+                "  background: %4;"
+                "}"
+"QPushButton#multiplayerCreateBtn:disabled {"
+                "  background: %5;"
+                "  color: %6;"
+                "}"
+            ).arg(textColor, borderColor, themeColor, tc.darker(110).name(),
+                  mpDisabledBg, mpDisabledText));
+    }
+
+    // frp 服务商联机房间页（复用房间页/红石隧道页的控件样式名）
+    if (m_frpRoomPage) {
+        m_frpRoomPage->setStyleSheet(
+            QString(
+                "QLabel#multiplayerLatencyLabel {"
+                "  color: %1;"
+                "  font-size: 11px;"
+                "  padding: 2px;"
+                "  background: transparent;"
+                "}"
+                "QLabel#multiplayerLatencyLabel[status=\"good\"] {"
+                "  color: #4caf50;"
+                "}"
+                "QLabel#multiplayerLatencyLabel[status=\"medium\"] {"
+                "  color: #ff9800;"
+                "}"
+                "QLabel#multiplayerLatencyLabel[status=\"bad\"] {"
+                "  color: #d32f2f;"
+                "}"
+                "QLabel#multiplayerRoomCodeLabel {"
+                "  color: %3;"
+                "  font-size: 14px;"
+                "  font-weight: bold;"
+                "  padding: 12px 8px;"
+                "  background: palette(base);"
+                "  border: 1px solid %2;"
+                "  border-radius: 6px;"
+                "}"
+                "QPushButton#multiplayerCopyCodeBtn {"
+                "  background: palette(base);"
+                "  border: 1px solid %2;"
+                "  border-radius: 4px;"
+                "}"
+                "QPushButton#multiplayerCopyCodeBtn:hover {"
+                "  background: %4;"
+                "  border-color: %3;"
+                "}"
+                "QPushButton#multiplayerLeaveBtn {"
+                "  background: palette(base);"
+                "  border: 1px solid %2;"
+                "  border-radius: 6px;"
+                "  color: #d32f2f;"
+                "  font-size: 12px;"
+                "}"
+                "QPushButton#multiplayerLeaveBtn:hover {"
+                "  background: rgba(211, 47, 47, 0.12);"
+                "  border-color: #d32f2f;"
+                "}"
+                "QLabel#hongshiFieldHint {"
+                "  color: %1;"
+                "  font-size: 11px;"
+                "  background: transparent;"
+                "  border: none;"
+                "}"
+            ).arg(textColor, borderColor, themeColor, hoverBg));
+    }
+
     // 玩家卡片样式（与模组卡片一致的列表项样式）
     QString playerCardStyle = QString(
         "QWidget[cardRole=\"mpContainer\"] {"
@@ -962,6 +1374,12 @@ QString themeColor = ThemeManager::instance()->currentThemeColor();
 }
 void MultiplayerPage::refreshPage()
 {
+    // frp 服务商核心：走独立刷新逻辑
+    if (frpActive()) {
+        refreshFrpPage();
+        return;
+    }
+
     // 红石联机核心：走独立刷新逻辑
     if (hongshiActive()) {
         refreshHongshiPage();
@@ -1253,6 +1671,11 @@ void MultiplayerPage::populateNodeCombo()
 
 void MultiplayerPage::refreshInstallStatus()
 {
+    if (frpActive()) {
+        refreshFrpInstallStatus();
+        return;
+    }
+
     if (hongshiActive()) {
         refreshHongshiInstallStatus();
         return;
@@ -1366,6 +1789,237 @@ void MultiplayerPage::refreshHongshiInstallStatus()
         m_updateBtn->setEnabled(true);
         m_updateBtn->setToolTip(tr("下载失败，点击重试"));
         break;
+    }
+}
+
+// ============================
+// frp 服务商联机（樱花 / OpenFrp）
+// ============================
+
+void MultiplayerPage::updateFrpDesc()
+{
+    const auto provider = frpProvider();
+    auto *frp = FrpManager::instance();
+
+    if (m_frpDescLabel) {
+        if (provider == FrpManager::Provider::Sakura) {
+            m_frpDescLabel->setText(
+                tr("樱花联机基于樱花内网穿透（SakuraFrp）：在官网注册并创建 TCP 隧道后，"
+                   "把「访问密钥」和「隧道 ID」填到下面，点「启动隧道」即可获得一个联机地址，"
+                   "把地址分享给好友，参与者在 Minecraft 中连接该地址即可共同游玩。<br><br>"
+                   "创建隧道时类型选 TCP，本地地址填 127.0.0.1，本地端口填游戏"
+                   "「对局域网开放」显示的端口。<br><br>"
+                   "SakuraFrp 是第三方服务（需实名认证），与本软件无关，如遇问题可前往"
+                   "<a href=\"https://doc.natfrp.com/\">SakuraFrp 帮助文档</a>反馈。<br><br>"
+                   "在联机过程中，请严格遵守当地法律法规。"));
+        } else {
+            m_frpDescLabel->setText(
+                tr("OpenFrp 联机基于 OpenFrp 公益内网穿透：在官网注册并创建 TCP 隧道后，"
+                   "把「访问密钥」和「隧道 ID」填到下面，点「启动隧道」即可获得一个联机地址，"
+                   "把地址分享给好友，参与者在 Minecraft 中连接该地址即可共同游玩。<br><br>"
+                   "创建隧道时类型选 TCP，本地地址填 127.0.0.1，本地端口填游戏"
+                   "「对局域网开放」显示的端口。<br><br>"
+                   "OpenFrp 是第三方服务，与本软件无关，如遇问题可前往"
+                   "<a href=\"https://www.openfrp.net/\">OpenFrp 官网</a>反馈。<br><br>"
+                   "在联机过程中，请严格遵守当地法律法规。"));
+        }
+    }
+
+    if (m_frpKeyEdit)
+        m_frpKeyEdit->setText(frp->accessKey(provider));
+    if (m_frpIdEdit) {
+        const int id = frp->tunnelId(provider);
+        m_frpIdEdit->setText(id > 0 ? QString::number(id) : QString());
+    }
+    if (m_frpHintLabel) {
+        m_frpHintLabel->setText(
+            tr("没有账号？点「打开面板」注册并创建 TCP 隧道，再把密钥和 ID 填在上面。"));
+    }
+}
+
+void MultiplayerPage::refreshFrpPage()
+{
+    if (!frpActive())
+        return;
+
+    auto *frp = FrpManager::instance();
+    const auto provider = frpProvider();
+    const bool running = frp->isRunning();
+
+    // 页面切换：隧道运行中 → 房间页(index 5)，否则首页(index 4)
+    const int target = running ? 5 : 4;
+    if (m_stack->currentIndex() != target) {
+        m_stack->setCurrentIndex(target);
+        if (target == 5)
+            m_frpEnterTime = QDateTime::currentDateTime();
+    }
+
+    // 首页状态文字（frpc 安装/下载状态）
+    if (m_frpStatusLabel) {
+        QString text;
+        if (frp->isDownloading(provider)) {
+            const qreal progress = frp->downloadProgress();
+            text = progress >= 0
+                ? tr("正在下载 frpc… %1%").arg(qRound(progress * 100))
+                : tr("正在下载 frpc…");
+            if (!frp->downloadInfo().isEmpty())
+                text += QStringLiteral("\n") + frp->downloadInfo();
+        } else if (!frp->isFrpcPresent(provider)) {
+            text = tr("未安装 frpc 客户端，请点击顶部「下载」按钮安装");
+        } else {
+            const QString ver = frp->installedVersion(provider);
+            text = ver.isEmpty() ? tr("frpc 客户端已就绪")
+                                 : tr("frpc 客户端已就绪（v%1）").arg(ver);
+        }
+        m_frpStatusLabel->setText(text);
+    }
+
+    // 首页按钮：frpc 未就绪时不可启动
+    if (m_frpStartBtn)
+        m_frpStartBtn->setEnabled(frp->isFrpcPresent(provider));
+
+    if (target == 5)
+        refreshFrpStatusBar();
+}
+
+void MultiplayerPage::refreshFrpInstallStatus()
+{
+    if (!frpActive() || !m_updateBtn) return;
+    auto *frp = FrpManager::instance();
+    const auto provider = frpProvider();
+
+    if (frp->isDownloading(provider)) {
+        const qreal progress = frp->downloadProgress();
+        m_updateBtn->setText(progress >= 0
+            ? tr("下载中 %1%").arg(qRound(progress * 100)) : tr("下载中"));
+        m_updateBtn->setEnabled(false);
+        m_updateBtn->setToolTip(frp->downloadInfo().isEmpty()
+            ? tr("正在下载 frpc 客户端…") : frp->downloadInfo());
+        return;
+    }
+
+    if (!frp->isFrpcPresent(provider)) {
+        m_updateBtn->setText(tr("下载"));
+        m_updateBtn->setEnabled(true);
+        m_updateBtn->setToolTip(tr("自动下载并安装 %1 的 frpc 客户端")
+                                    .arg(FrpManager::providerName(provider)));
+        return;
+    }
+
+    m_updateBtn->setText(tr("已是最新"));
+    m_updateBtn->setEnabled(false);
+    m_updateBtn->setToolTip(tr("frpc 客户端已就绪（%1）")
+                                .arg(frp->installedVersion(provider)));
+}
+
+void MultiplayerPage::refreshFrpStatusBar()
+{
+    if (!m_frpLatencyLabel) return;
+    auto *frp = FrpManager::instance();
+    if (!frp->isRunning()) {
+        m_frpLatencyLabel->clear();
+        return;
+    }
+
+    const bool established = frp->isTunnelEstablished();
+
+    // 顶部状态与联机时间
+    QString text;
+    if (m_frpEnterTime.isValid()) {
+        qint64 seconds = m_frpEnterTime.secsTo(QDateTime::currentDateTime());
+        int h = int(seconds / 3600);
+        int m = int((seconds % 3600) / 60);
+        int s = int(seconds % 60);
+        QString timeStr = (h > 0)
+            ? QStringLiteral("%1:%2:%3")
+                  .arg(h, 2, 10, QLatin1Char('0'))
+                  .arg(m, 2, 10, QLatin1Char('0'))
+                  .arg(s, 2, 10, QLatin1Char('0'))
+            : QStringLiteral("%1:%2")
+                  .arg(m, 2, 10, QLatin1Char('0'))
+                  .arg(s, 2, 10, QLatin1Char('0'));
+        text = tr("%1 | 联机时间 %2").arg(frp->statusText(), timeStr);
+    }
+    m_frpLatencyLabel->setText(text);
+
+    // 状态颜色驱动 [status="..."] 选择器
+    m_frpLatencyLabel->setProperty("status",
+        established ? QStringLiteral("good") : QStringLiteral("medium"));
+    m_frpLatencyLabel->style()->polish(m_frpLatencyLabel);
+
+    // 大字：远程连接地址
+    const QString addr = frp->remoteAddress();
+    if (m_frpAddrLabel) {
+        if (!addr.isEmpty())
+            m_frpAddrLabel->setText(addr);
+        else if (established)
+            m_frpAddrLabel->setText(tr("已建立，可在面板查看地址"));
+        else
+            m_frpAddrLabel->setText(tr("正在连接节点..."));
+    }
+
+    // 提示
+    if (m_frpRoomHint) {
+        m_frpRoomHint->setText(addr.isEmpty()
+            ? tr("连接建立后这里会显示远程地址；也可以到官网面板查看隧道的连接地址。")
+            : tr("在 Minecraft 多人游戏中连接上方地址即可联机，请将地址分享给好友。"));
+    }
+}
+
+void MultiplayerPage::startFrpTunnel()
+{
+    auto *frp = FrpManager::instance();
+    const auto provider = frpProvider();
+    if (frp->isRunning())
+        return; // 隧道运行中，房间页有「停止联机」
+
+    if (!frp->isFrpcPresent(provider)) {
+        showInfoDialog(tr("未安装 frpc 客户端"),
+            tr("尚未安装 frpc 客户端，请先点击顶部「下载」按钮下载安装。"));
+        return;
+    }
+
+    const QString key = m_frpKeyEdit ? m_frpKeyEdit->text().trimmed() : QString();
+    const QString idStr = m_frpIdEdit ? m_frpIdEdit->text().trimmed() : QString();
+    if (key.isEmpty()) {
+        showInfoDialog(tr("缺少访问密钥"),
+            tr("请先填写访问密钥：在官网面板「访问密钥」页面获取。"));
+        return;
+    }
+    bool ok = false;
+    const int tunnelId = idStr.toInt(&ok);
+    if (!ok || tunnelId <= 0) {
+        showInfoDialog(tr("隧道 ID 无效"),
+            tr("请填写官网面板隧道列表中的数字 ID。"));
+        return;
+    }
+
+    frp->setAccessKey(provider, key);
+    frp->setTunnelId(provider, tunnelId);
+    frp->start(provider);
+}
+
+void MultiplayerPage::openFrpPanel()
+{
+    QDesktopServices::openUrl(QUrl(FrpManager::panelUrl(frpProvider())));
+}
+
+void MultiplayerPage::pickFrpcManually()
+{
+    const auto provider = frpProvider();
+    const QString file = AppFileDialog::getOpenFileName(
+        this, tr("选择 frpc 程序"), QString(),
+        tr("frpc 程序 (frpc*.exe);;所有文件 (*.*)"));
+    if (file.isEmpty())
+        return;
+
+    if (FrpManager::instance()->importFrpc(provider, file)) {
+        NotificationManager::showSuccess(window(), tr("frpc 导入成功"));
+        refreshFrpInstallStatus();
+        refreshFrpPage();
+    } else {
+        showInfoDialog(tr("导入失败"),
+            tr("无法导入所选程序，请确认选择的是 frpc 程序文件。"));
     }
 }
 
@@ -1563,15 +2217,18 @@ void MultiplayerPage::refreshStatusBar()
 
 void MultiplayerPage::onCoreChanged(int index)
 {
-    if (index == 1) {
-        // 切到红石联机：离开陶瓦房间/停止陶瓦轮询不启停 daemon
+    // 非本核心即停，保证同一时刻只有一个核心在运行
+    if (index != 0)
         m_client->leaveRoom();
-        if (m_hongshi->serverNodes().isEmpty()) {
-            m_hongshi->refreshServerNodes();
-        }
-    } else {
-        // 切到陶瓦联机：停止红石内核
+    if (index != 1)
         m_hongshi->stopKernel();
+    if (!frpActive())
+        FrpManager::instance()->stop(); // 离开 frp 核心即停止隧道
+
+    if (frpActive())
+        updateFrpDesc(); // 按服务商刷新说明与表单
+    if (index == 1 && m_hongshi->serverNodes().isEmpty()) {
+        m_hongshi->refreshServerNodes();
     }
     refreshPage();
     refreshInstallStatus();

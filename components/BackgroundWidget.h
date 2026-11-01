@@ -33,6 +33,21 @@ public:
     void setDarkScrimEnabled(bool enabled);
     bool darkScrimEnabled() const { return m_darkScrim; }
 
+    /**
+     * 前台页面重绘密集（存档地图：拖动大图 + 后台瓦片渲染）时打开省电档：
+     * 旋转全景降到低帧率、出图分辨率也降一档，把 UI 线程让给前台页面。
+     * 关掉后自适应逻辑会自己把帧率拉回去。
+     */
+    void setEcoMode(bool on);
+    bool ecoMode() const { return m_ecoMode; }
+
+    /**
+     * 前台正在拖动 / 缩放（最需要跟手）时暂停背景动画：画面定格在当前角度，
+     * 只做一次廉价贴图，不再占 UI 线程；停手后调用 false 恢复。
+     */
+    void setAnimationPaused(bool paused);
+    bool animationPaused() const { return m_animationPaused; }
+
     // 供全景渲染器处理面贴图/全景图模糊复用
     static QImage blurImage(const QImage &source, int radius);
 
@@ -41,6 +56,9 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void showEvent(QShowEvent *event) override;
+
+    /** 全局监听鼠标按下 / 滚轮：用户正在拖动或滚动时先停下背景动画 */
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void updatePixmap();
@@ -57,6 +75,11 @@ private:
     void reloadRotatingFrame();
     // 素材缺失时的静态兜底，避免整块纯黑盖住界面
     QPixmap rotatingPreview() const;
+
+    // 按「上一帧耗时 + 当前档位」算旋转刷新间隔（毫秒）
+    int targetRotateIntervalMs(int costMs) const;
+    // 档位切换后重设出图限幅与定时器间隔
+    void applyRenderBudget();
 
     Mode m_mode;
     QColor m_solidColor;
@@ -81,6 +104,16 @@ private:
     QElapsedTimer m_rotateClock;
     int m_rotateIntervalMs = 33;
     bool m_rotateDrewOnce = false;
+
+    // 省电档 / 暂停档：前台重绘密集时降低背景开销
+    bool m_ecoMode = false;
+    bool m_animationPaused = false;
+    // 普通档的出图长边（构造时按是否低配定），省电档按它打折
+    int m_baseRenderLimit = 1200;
+    // 拖手后稍等片刻再恢复转动，避免连续操作时反复起停
+    QTimer *m_pauseIdleTimer = nullptr;
+    // 按下后先观察一小会儿：确实在拖才停背景，点一下不算
+    QTimer *m_pressHoldTimer = nullptr;
 };
 
 #endif

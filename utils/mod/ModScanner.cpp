@@ -67,7 +67,7 @@ bool ModScanner::scanModsSync(const QString &instancePath, LocalModList &result)
   QDir dir(modsDir);
   if (!dir.exists())
   {
-    qDebug() << "ModScanner: mods directory not found:" << modsDir;
+    qDebug() << "ModScanner: mods 目录不存在：" << modsDir;
     return true;
   }
 
@@ -289,7 +289,7 @@ bool ModScanner::parseFabricModJson(const QString &content, ModInfo &info)
   QJsonDocument doc = QJsonDocument::fromJson(content.toUtf8(), &parseError);
   if (parseError.error != QJsonParseError::NoError)
   {
-    qDebug() << "ModScanner: fabric.mod.json parse error:" << parseError.errorString();
+    qDebug() << "ModScanner: fabric.mod.json 解析错误：" << parseError.errorString();
     return false;
   }
 
@@ -494,7 +494,7 @@ bool ModScanner::parseMcmodInfo(const QString &content, ModInfo &info)
   QJsonDocument doc = QJsonDocument::fromJson(content.toUtf8(), &parseError);
   if (parseError.error != QJsonParseError::NoError)
   {
-    qDebug() << "ModScanner: mcmod.info parse error:" << parseError.errorString();
+    qDebug() << "ModScanner: mcmod.info 解析错误：" << parseError.errorString();
     return false;
   }
 

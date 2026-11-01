@@ -98,6 +98,7 @@ components/ProgressDialog.cpp \
       components/NotificationCard.cpp \
      components/NotificationManager.cpp \
      components/NotificationHistoryDialog.cpp \
+     components/FileOpStepsDialog.cpp \
      components/InstanceAssistantWindow.cpp \
      components/GameFloatingIcon.cpp \
      components/BedrockInstanceAssistantWindow.cpp \
@@ -128,6 +129,7 @@ components/ProgressDialog.cpp \
      components/OutlinedTextEdit.cpp \
      components/LocalCategoryDialog.cpp \
      components/VoxelViewWidget.cpp \
+    components/WorldMap3DView.cpp \
 components/ProjectionBlockEditorDialog.cpp \
      components/HomeDataVisuals.cpp \
      components/FileDropOverlay.cpp \
@@ -156,12 +158,14 @@ pages/settings/SettingsAdvancedPage.cpp \
      pages/InstanceSelectPage.cpp \
     pages/LanTransferPage.cpp \
     pages/AccountManagePage.cpp \
+    pages/ForumAccountPage.cpp \
     pages/AiChatPage.cpp \
      pages/InstanceManagePage.cpp \
      pages/InstanceModsPage.cpp \
      pages/InstanceOverviewPage.cpp \
      pages/InstanceLogPage.cpp \
          pages/InstanceFilePage.cpp \
+     pages/InstanceRecordingsPage.cpp \
      pages/InstanceResourcesPage.cpp \
      pages/SaveSettingsPage.cpp \
      pages/WorldMapPage.cpp \
@@ -183,6 +187,8 @@ pages/settings/SettingsAdvancedPage.cpp \
     pages/TaskListPage.cpp \
     pages/TaskDetailPage.cpp \
     utils/SettingsManager.cpp \
+    utils/ForumAccountService.cpp \
+    utils/HomeCarouselStore.cpp \
     utils/QuizBank.cpp \
     utils/SkinDownloader.cpp \
     utils/SpeedCalculator.cpp \
@@ -269,6 +275,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/JavaScanWorker.cpp \
     utils/LauncherImporter.cpp \
     utils/LauncherLogger.cpp \
+    utils/FileOpStepLog.cpp \
     utils/JavaDownloader.cpp \
     utils/mod/ModData.cpp \
      utils/mod/CurseForgeAPI.cpp \
@@ -276,6 +283,7 @@ pages/settings/SettingsAdvancedPage.cpp \
       utils/WebpLoader.cpp \
       utils/ThumbnailProvider.cpp \
     utils/FavoritesManager.cpp \
+    utils/ContentFavoriteSync.cpp \
     utils/LocalCategoryManager.cpp \
     utils/mod/MCModAPI.cpp \
     utils/mod/SearchQueryResolver.cpp \
@@ -303,12 +311,21 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/CommandAssistant/LitematicReader.cpp \
     utils/Saves/LevelDatEditor.cpp \
     utils/ServersDatIO.cpp \
+    utils/McServerPinger.cpp \
     utils/WorldMap/WorldMapRenderer.cpp \
     utils/WorldMap/SeedTerrainRenderer.cpp \
+    utils/WorldMap/TreePredictor.cpp \
+    utils/WorldMap/TreeGen.cpp \
+    utils/WorldMap/MushroomPredictor.cpp \
     utils/WorldMap/CavePredictor.cpp \
     utils/WorldMap/StructureFinder.cpp \
     utils/WorldMap/StructureIcons.cpp \
     utils/WorldMap/StructureLoot.cpp \
+utils/WorldMap/StructureModelBuilder.cpp \
+utils/WorldMap/StructureTemplates.cpp \
+utils/WorldMap/StrongholdModel.cpp \
+utils/WorldMap/FortressModel.cpp \
+utils/WorldMap/MineshaftModel.cpp \
     utils/WorldMap/McRandom.cpp \
     utils/WorldMap/BiomeCatalog.cpp \
     utils/WorldMap/BiomeName.cpp \
@@ -331,6 +348,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/CommandAssistant/CommandPack.cpp \
     utils/Terracotta/TerracottaClient.cpp \
     utils/Hongshi/HongshiClient.cpp \
+    utils/frp/FrpManager.cpp \
     utils/GravityCone/GravityConeClient.cpp \
     pages/MultiplayerPage.cpp \
     pages/BedrockMultiplayerPage.cpp \
@@ -352,7 +370,20 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/translation/TranslationService.cpp \
     components/TranslationSettingsDialog.cpp \
     utils/AiModelListFetcher.cpp \
-    components/AiModelFetchRow.cpp
+    components/AiModelFetchRow.cpp \
+    pages/CommunityForumPage.cpp \
+    pages/ForumThreadDetailPage.cpp \
+    pages/ForumThreadListPage.cpp \
+    pages/ForumComposerPage.cpp \
+    pages/ForumUserProfilePage.cpp \
+    pages/ForumFriendsPage.cpp \
+    pages/FeedbackPage.cpp \
+    utils/ForumContentService.cpp \
+    utils/ForumChatService.cpp \
+    utils/FeedbackService.cpp \
+    utils/ForumImageStore.cpp \
+    components/ForumKit.cpp \
+    components/ForumPostBrowser.cpp
 
 HEADERS += \
     platform.h \
@@ -390,6 +421,7 @@ components/ProgressDialog.h \
        components/NotificationCard.h \
      components/NotificationManager.h \
      components/NotificationHistoryDialog.h \
+     components/FileOpStepsDialog.h \
        components/BackgroundWidget.h \
        components/PanoramaSkyRenderer.h \
        components/InstanceAssistantWindow.h \
@@ -420,6 +452,7 @@ components/ProgressDialog.h \
          components/OutlinedTextEdit.h \
         components/LocalCategoryDialog.h \
         components/VoxelViewWidget.h \
+    components/WorldMap3DView.h \
 components/ProjectionBlockEditorDialog.h \
          components/HomeDataVisuals.h \
          components/FileDropOverlay.h \
@@ -435,6 +468,7 @@ components/ProjectionBlockEditorDialog.h \
     pages/InstanceSelectPage.h \
     pages/LanTransferPage.h \
     pages/AccountManagePage.h \
+    pages/ForumAccountPage.h \
     pages/AiChatPage.h \
     pages/MicrosoftLoginDialog.h \
     pages/LaunchDetailsPage.h \
@@ -446,6 +480,8 @@ components/ProjectionBlockEditorDialog.h \
     pages/TaskListPage.h \
     pages/TaskDetailPage.h \
     utils/SettingsManager.h \
+    utils/ForumAccountService.h \
+    utils/HomeCarouselStore.h \
     utils/PageFilter.h \
     utils/QuizBank.h \
     utils/McimHelper.h \
@@ -504,6 +540,7 @@ components/ProjectionBlockEditorDialog.h \
     utils/JarUtils.h \
     utils/ManifestCache.h \
     utils/FavoritesManager.h \
+    utils/ContentFavoriteSync.h \
     utils/LocalCategoryManager.h \
     utils/fabric/FabricInstaller.h \
     utils/forge/ForgeDownloader.h \
@@ -544,6 +581,7 @@ components/ProjectionBlockEditorDialog.h \
     pages/InstanceOverviewPage.h \
     pages/InstanceLogPage.h \
          pages/InstanceFilePage.h \
+    pages/InstanceRecordingsPage.h \
      pages/InstanceResourcesPage.h \
      pages/SaveSettingsPage.h \
      pages/WorldMapPage.h \
@@ -561,6 +599,7 @@ pages/ProjectionManagePage.h \
       utils/JavaScanWorker.h \
     utils/LauncherImporter.h \
     utils/LauncherLogger.h \
+    utils/FileOpStepLog.h \
     utils/JavaDownloader.h \
      utils/mod/ModData.h \
       utils/WebpLoader.h \
@@ -604,12 +643,22 @@ pages/ProjectionManagePage.h \
     utils/Schematic/InstanceBlockNames.h \
     utils/Saves/LevelDatEditor.h \
     utils/ServersDatIO.h \
+    utils/McServerPinger.h \
     utils/WorldMap/WorldMapRenderer.h \
     utils/WorldMap/SeedTerrainRenderer.h \
+    utils/WorldMap/TreePredictor.h \
+    utils/WorldMap/TreeGen.h \
+    utils/WorldMap/TreeData.h \
+    utils/WorldMap/MushroomPredictor.h \
     utils/WorldMap/CavePredictor.h \
     utils/WorldMap/StructureFinder.h \
     utils/WorldMap/StructureIcons.h \
     utils/WorldMap/StructureLoot.h \
+utils/WorldMap/StructureModelBuilder.h \
+utils/WorldMap/StructureTemplates.h \
+utils/WorldMap/StrongholdModel.h \
+utils/WorldMap/FortressModel.h \
+utils/WorldMap/MineshaftModel.h \
     utils/WorldMap/McRandom.h \
     utils/WorldMap/BiomeCatalog.h \
     utils/WorldMap/BiomeName.h \
@@ -623,6 +672,7 @@ pages/ProjectionManagePage.h \
     utils/CommandAssistant/CommandPack.h \
     utils/Terracotta/TerracottaClient.h \
     utils/Hongshi/HongshiClient.h \
+    utils/frp/FrpManager.h \
     utils/GravityCone/GravityConeClient.h \
     pages/MultiplayerPage.h \
     pages/BedrockMultiplayerPage.h \
@@ -646,6 +696,19 @@ pages/ProjectionManagePage.h \
     utils/translation/TranslationService.h \
     components/TranslationSettingsDialog.h \
     utils/AiModelListFetcher.h \
+    pages/CommunityForumPage.h \
+    pages/ForumThreadDetailPage.h \
+    pages/ForumThreadListPage.h \
+    pages/ForumComposerPage.h \
+    pages/ForumUserProfilePage.h \
+    pages/ForumFriendsPage.h \
+    pages/FeedbackPage.h \
+    utils/ForumContentService.h \
+    utils/ForumChatService.h \
+    utils/FeedbackService.h \
+    utils/ForumImageStore.h \
+    components/ForumKit.h \
+    components/ForumPostBrowser.h \
     components/AiModelFetchRow.h
 
 FORMS += \
@@ -774,3 +837,4 @@ SOURCES += \
     third_party/cubiomes/finders.c \
     third_party/cubiomes/util.c \
     third_party/cubiomes/quadbase.c
+

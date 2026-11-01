@@ -7525,6 +7525,223 @@
    "chinese": "治疗自己(插件)",
    "english": "/heal",
    "description": "恢复满血(需插件)"
+  },
+  {
+   "id": "give-diamond-pickaxe",
+   "category": "物品",
+   "chinese": "给自己一把钻石镐",
+   "english": "/give @s diamond_pickaxe 1",
+   "description": "给予自己一把钻石镐"
+  },
+  {
+   "id": "give-golden-apple",
+   "category": "物品",
+   "chinese": "给自己一个金苹果",
+   "english": "/give @s golden_apple 1",
+   "description": "给予自己一个金苹果"
+  },
+  {
+   "id": "give-arrow",
+   "category": "物品",
+   "chinese": "给自己一组箭",
+   "english": "/give @s arrow 64",
+   "description": "给予自己 64 支箭"
+  },
+  {
+   "id": "give-torch",
+   "category": "物品",
+   "chinese": "给自己一组火把",
+   "english": "/give @s torch 64",
+   "description": "给予自己 64 个火把"
+  },
+  {
+   "id": "give-shulker-box",
+   "category": "物品",
+   "chinese": "给自己一个潜影盒",
+   "english": "/give @s shulker_box 1",
+   "description": "给予自己一个潜影盒"
+  },
+  {
+   "id": "ench-sharpness",
+   "category": "附魔",
+   "chinese": "给手中物品附魔锋利 V",
+   "english": "/enchant @s sharpness 5",
+   "description": "为手持的剑附魔锋利 V"
+  },
+  {
+   "id": "ench-protection",
+   "category": "附魔",
+   "chinese": "给手中物品附魔保护 IV",
+   "english": "/enchant @s protection 4",
+   "description": "为手持的盔甲附魔保护 IV"
+  },
+  {
+   "id": "ench-efficiency",
+   "category": "附魔",
+   "chinese": "给手中物品附魔效率 V",
+   "english": "/enchant @s efficiency 5",
+   "description": "为手持的工具附魔效率 V"
+  },
+  {
+   "id": "ench-unbreaking",
+   "category": "附魔",
+   "chinese": "给手中物品附魔耐久 III",
+   "english": "/enchant @s unbreaking 3",
+   "description": "为手持物品附魔耐久 III"
+  },
+  {
+   "id": "ench-mending",
+   "category": "附魔",
+   "chinese": "给手中物品附魔经验修补",
+   "english": "/enchant @s mending 1",
+   "description": "为手持物品附魔经验修补"
+  },
+  {
+   "id": "eff-fire-resistance",
+   "category": "药水效果",
+   "chinese": "给自己 3 分钟防火",
+   "english": "/effect give @s fire_resistance 180 0",
+   "description": "180 秒防火效果"
+  },
+  {
+   "id": "eff-water-breathing",
+   "category": "药水效果",
+   "chinese": "给自己 3 分钟水下呼吸",
+   "english": "/effect give @s water_breathing 180 0",
+   "description": "180 秒水下呼吸效果"
+  },
+  {
+   "id": "eff-invisibility",
+   "category": "药水效果",
+   "chinese": "给自己 3 分钟隐身",
+   "english": "/effect give @s invisibility 180 0",
+   "description": "180 秒隐身效果"
+  },
+  {
+   "id": "eff-haste",
+   "category": "药水效果",
+   "chinese": "给自己 60 秒急迫",
+   "english": "/effect give @s haste 60 0",
+   "description": "60 秒急迫(挖掘加速)效果"
+  },
+  {
+   "id": "summon-villager",
+   "category": "召唤生物",
+   "chinese": "在面前召唤一个村民",
+   "english": "/summon villager ~ ~1 ~",
+   "description": "召唤村民"
+  },
+  {
+   "id": "summon-wolf",
+   "category": "召唤生物",
+   "chinese": "在面前召唤一只狼",
+   "english": "/summon wolf ~ ~1 ~",
+   "description": "召唤狼"
+  },
+  {
+   "id": "summon-horse",
+   "category": "召唤生物",
+   "chinese": "在面前召唤一匹马",
+   "english": "/summon horse ~ ~1 ~",
+   "description": "召唤马"
+  },
+  {
+   "id": "summon-sheep",
+   "category": "召唤生物",
+   "chinese": "在面前召唤一只绵羊",
+   "english": "/summon sheep ~ ~1 ~",
+   "description": "召唤绵羊"
+  },
+  {
+   "id": "tp-up",
+   "category": "传送",
+   "chinese": "向上传送 10 格",
+   "english": "/tp @s ~ ~10 ~",
+   "description": "从当前位置向上传送 10 格"
+  },
+  {
+   "id": "tp-all-here",
+   "category": "传送",
+   "chinese": "把所有玩家传送到我身边",
+   "english": "/tp @a @s",
+   "description": "将所有玩家传送到自己位置"
+  },
+  {
+   "id": "time-midnight",
+   "category": "时间天气",
+   "chinese": "把时间设为午夜",
+   "english": "/time set midnight",
+   "description": "设置时间为午夜"
+  },
+  {
+   "id": "time-add-day",
+   "category": "时间天气",
+   "chinese": "时间快进一天",
+   "english": "/time add 24000",
+   "description": "将时间快进一整天"
+  },
+  {
+   "id": "fill-glass-10",
+   "category": "方块建筑",
+   "chinese": "填充 10×10×10 区域为玻璃",
+   "english": "/fill ~ ~ ~ ~10 ~10 ~10 glass",
+   "description": "以自己为起点填充玻璃区域"
+  },
+  {
+   "id": "setblock-tnt",
+   "category": "方块建筑",
+   "chinese": "在面前放置一个 TNT",
+   "english": "/setblock ~ ~1 ~ tnt",
+   "description": "在头顶上方放置 TNT"
+  },
+  {
+   "id": "op-player",
+   "category": "服务器管理",
+   "chinese": "给 Steve 管理员权限",
+   "english": "/op Steve",
+   "description": "将玩家 Steve 提升为服务器管理员"
+  },
+  {
+   "id": "deop-player",
+   "category": "服务器管理",
+   "chinese": "收回 Steve 的管理员权限",
+   "english": "/deop Steve",
+   "description": "取消玩家 Steve 的管理员权限"
+  },
+  {
+   "id": "list-players",
+   "category": "服务器管理",
+   "chinese": "查看在线玩家列表",
+   "english": "/list",
+   "description": "列出当前在线的所有玩家"
+  },
+  {
+   "id": "difficulty-peaceful",
+   "category": "服务器管理",
+   "chinese": "把难度设为和平",
+   "english": "/difficulty peaceful",
+   "description": "设置游戏难度为和平"
+  },
+  {
+   "id": "whitelist-off",
+   "category": "服务器管理",
+   "chinese": "关闭白名单",
+   "english": "/whitelist off",
+   "description": "停用服务器白名单"
+  },
+  {
+   "id": "plugin-msg",
+   "category": "插件常用",
+   "chinese": "私聊玩家 Steve",
+   "english": "/msg Steve 你好",
+   "description": "向玩家发送私信"
+  },
+  {
+   "id": "plugin-warp",
+   "category": "插件常用",
+   "chinese": "传送到地标(插件)",
+   "english": "/warp spawn",
+   "description": "传送到服务器地标(需插件)"
   }
  ]
 }

@@ -126,7 +126,7 @@ bool extractFromJar(const QString &jarPath, const QString &entryPath, const QStr
     // 条目名来自压缩包内部，恶意 JAR 可用 "../" 让解压写到目标目录之外
     if (!Safety::isSafeEntryName(entryPath))
     {
-        qWarning() << "[JarUtils]" << "Unsafe entry path rejected:" << entryPath;
+        qWarning() << "[JarUtils]" << "已拒绝不安全的解压条目路径：" << entryPath;
         return false;
     }
 
@@ -159,7 +159,7 @@ bool extractFromJar(const QString &jarPath, const QString &entryPath, const QStr
         return true;
     }
 
-    qWarning() << "[JarUtils]" << "All extraction methods failed for"
+    qWarning() << "[JarUtils]" << "所有解压方式均失败："
                << "jar:" << jarPath << "entry:" << entryPath;
     return false;
 }
@@ -301,11 +301,83 @@ QStringList listEntriesInJar(const QString &jarPath, const QString &prefix)
     return entries;
 }
 
+namespace
+{
+/**
+ * @brief 把 srcDir 下的内容递归平移到 destDir 根下
+ */
+void moveExtractedDirContentsUp(const QString &srcDir, const QString &destDir)
+{
+    QDir src(srcDir);
+    if (!src.exists())
+    {
+        return;
+    }
+
+    const QFileInfoList children = src.entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &child : children)
+    {
+        const QString targetPath = destDir + "/" + child.fileName();
+        if (child.isDir())
+        {
+            QDir().mkpath(targetPath);
+            moveExtractedDirContentsUp(child.absoluteFilePath(), targetPath);
+        }
+        else
+        {
+            if (QFile::exists(targetPath))
+            {
+                QFile::remove(targetPath);
+            }
+            if (!QFile::rename(child.absoluteFilePath(), targetPath))
+            {
+                qWarning() << "[JarUtils]" << "移动已解压条目失败：" << targetPath;
+            }
+        }
+    }
+
+    QDir(srcDir).removeRecursively();
+}
+
+/**
+ * @brief 把 destDir/<dirPath> 这一层目录里的内容平移到 destDir 根下
+ *
+ * 进程内解压、PowerShell、Python 三种后端工作时会剥掉目录前缀，
+ * jar.exe 与 unzip 则会保留这一层，这里统一成「内容直接位于 destDir」，
+ * 免得调用方还得按不同后端的目录布局各写一套路径。
+ */
+void flattenExtractedDirLevel(const QString &destDir, const QString &dirPath)
+{
+    if (destDir.isEmpty())
+    {
+        return;
+    }
+
+    QString normalized = dirPath;
+    while (normalized.endsWith(QLatin1Char('/')) || normalized.endsWith(QLatin1Char('\\')))
+    {
+        normalized.chop(1);
+    }
+    if (normalized.isEmpty())
+    {
+        return;
+    }
+
+    const QString nestedDir = destDir + "/" + normalized;
+    if (!QDir(nestedDir).exists())
+    {
+        return;
+    }
+
+    moveExtractedDirContentsUp(nestedDir, destDir);
+}
+} // namespace
+
 bool extractJarDirectory(const QString &jarPath, const QString &dirPath, const QString &destDir)
 {
     if (!Safety::isSafeEntryName(dirPath))
     {
-        qWarning() << "[JarUtils]" << "Unsafe directory path rejected:" << dirPath;
+        qWarning() << "[JarUtils]" << "已拒绝不安全的解压目录路径：" << dirPath;
         return false;
     }
 
@@ -315,7 +387,7 @@ bool extractJarDirectory(const QString &jarPath, const QString &dirPath, const Q
     {
         if (!Safety::isSafeEntryName(entry))
         {
-            qWarning() << "[JarUtils]" << "Unsafe entry in jar rejected:" << entry;
+            qWarning() << "[JarUtils]" << "已拒绝 jar 中不安全的解压条目：" << entry;
             return false;
         }
     }
@@ -325,45 +397,57 @@ bool extractJarDirectory(const QString &jarPath, const QString &dirPath, const Q
         QDir().mkpath(destDir);
     }
 
-    // 进程内解析优先（毫秒级），外部工具只在解析失败时兜底
+    // 进程内解析优先（毫秒级），外部工具只在解析失败时兜底。
+    // 各后端对 dirPath 这一层的处理并不一致，成功后统一抹平，保证调用方按
+    // 「内容直接位于 destDir」读取即可。
+    bool extracted = false;
+
     if (tryExtractJarDirectoryManual(jarPath, dirPath, destDir))
     {
-        return true;
+        extracted = true;
     }
-
-    QString jarToolPath = getJarToolPath();
-    if (!jarToolPath.isEmpty() && QFile::exists(jarToolPath))
+    else
     {
-        QProcess process;
-        QStringList args;
-        args << "-xf" << jarPath << dirPath;
-        process.setWorkingDirectory(destDir);
-        process.start(jarToolPath, args);
-        if (process.waitForFinished(120000) && process.exitCode() == 0)
+        QString jarToolPath = getJarToolPath();
+        if (!jarToolPath.isEmpty() && QFile::exists(jarToolPath))
         {
-            return true;
+            QProcess process;
+            QStringList args;
+            args << "-xf" << jarPath << dirPath;
+            process.setWorkingDirectory(destDir);
+            process.start(jarToolPath, args);
+            if (process.waitForFinished(120000) && process.exitCode() == 0)
+            {
+                extracted = true;
+            }
+        }
+
+#ifdef Q_OS_WIN
+        if (!extracted && tryExtractJarDirectoryWithPowerShell(jarPath, dirPath, destDir))
+        {
+            extracted = true;
+        }
+#else
+        if (!extracted && tryExtractJarDirectoryWithUnzip(jarPath, dirPath, destDir))
+        {
+            extracted = true;
+        }
+#endif
+
+        if (!extracted && tryExtractJarDirectoryWithPython(jarPath, dirPath, destDir))
+        {
+            extracted = true;
         }
     }
 
-#ifdef Q_OS_WIN
-    if (tryExtractJarDirectoryWithPowerShell(jarPath, dirPath, destDir))
+    if (!extracted)
     {
-        return true;
-    }
-#else
-    if (tryExtractJarDirectoryWithUnzip(jarPath, dirPath, destDir))
-    {
-        return true;
-    }
-#endif
-
-    if (tryExtractJarDirectoryWithPython(jarPath, dirPath, destDir))
-    {
-        return true;
+        qWarning() << "[JarUtils]" << "所有目录解压方式均失败";
+        return false;
     }
 
-    qWarning() << "[JarUtils]" << "All directory extraction methods failed";
-    return false;
+    flattenExtractedDirLevel(destDir, dirPath);
+    return true;
 }
 
 bool tryExtractWithJarTool(const QString &jarPath, const QString &entryPath, const QString &destPath)
@@ -647,7 +731,7 @@ bool tryExtractManual(const QString &jarPath, const QString &entryPath, const QS
         outputData = decompressRawDeflate(compressedData, targetUncompressedSize);
         if (outputData.isEmpty())
         {
-            qWarning() << "[JarUtils]" << "Deflate decompression failed for" << entryPath;
+            qWarning() << "[JarUtils]" << "解压条目失败（Deflate 解压失败）：" << entryPath;
             return false;
         }
     }
@@ -1254,7 +1338,7 @@ QByteArray decompressRawDeflate(const QByteArray &compressedData, quint32 uncomp
     int ret = inflateInit2(&strm, -15);
     if (ret != Z_OK)
     {
-        qWarning() << "[JarUtils]" << "inflateInit2 failed:" << ret;
+        qWarning() << "[JarUtils]" << "inflateInit2 初始化失败：" << ret;
         return result;
     }
 
@@ -1265,8 +1349,8 @@ QByteArray decompressRawDeflate(const QByteArray &compressedData, quint32 uncomp
             && static_cast<quint64>(uncompressedSize)
                    > static_cast<quint64>(compressedData.size()) * 200u + 65536u))
     {
-        qWarning() << "[JarUtils]" << "Suspicious uncompressed size:" << uncompressedSize
-                   << "compressed:" << compressedData.size();
+        qWarning() << "[JarUtils]" << "可疑的解压后大小：" << uncompressedSize
+                   << "压缩后：" << compressedData.size();
         inflateEnd(&strm);
         return QByteArray();
     }
@@ -1288,7 +1372,7 @@ QByteArray decompressRawDeflate(const QByteArray &compressedData, quint32 uncomp
 
     if (ret != Z_STREAM_END)
     {
-        qWarning() << "[JarUtils]" << "inflate failed:" << ret;
+        qWarning() << "[JarUtils]" << "解压失败（inflate）：" << ret;
         return QByteArray();
     }
 

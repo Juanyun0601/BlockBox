@@ -243,13 +243,13 @@ void applyImmersiveMode()
 {
     QJniObject activity = activityContext();
     if (!activity.isValid()) {
-        qDebug() << "[Immersive] no activity context";
+        qDebug() << "[Immersive] 无 activity context";
         return;
     }
 
     QJniObject window = activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
     if (!window.isValid()) {
-        qDebug() << "[Immersive] no window";
+        qDebug() << "[Immersive] 无 window";
         return;
     }
 
@@ -266,12 +266,12 @@ void applyImmersiveMode()
                 "android/view/WindowInsets$Type", "statusBars", "()I");
             jint nav = QJniObject::callStaticMethod<jint>(
                 "android/view/WindowInsets$Type", "navigationBars", "()I");
-            qDebug() << "[Immersive] controller ok, bars =" << (bars | nav);
+            qDebug() << "[Immersive] controller 可用，bars =" << (bars | nav);
             controller.callMethod<void>("hide", "(I)V", jint(bars | nav));
             // 2 = BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE：边缘上滑临时呼出并自动隐藏
             controller.callMethod<void>("setSystemBarsBehavior", "(I)V", jint(2));
         } else {
-            qDebug() << "[Immersive] no insets controller";
+            qDebug() << "[Immersive] 无 insets controller";
         }
     } else {
         // API 24-29 兜底：immersive sticky（LAYOUT_STABLE|LAYOUT_HIDE_NAVIGATION|
@@ -280,12 +280,12 @@ void applyImmersiveMode()
         if (decor.isValid()) {
             decor.callMethod<void>("setSystemUiVisibility", "(I)V",
                                    jint(0x100 | 0x2 | 0x4 | 0x200 | 0x400 | 0x1000));
-            qDebug() << "[Immersive] legacy systemUiVisibility set";
+            qDebug() << "[Immersive] 已设置 legacy systemUiVisibility";
         }
     }
 
     if (env->ExceptionCheck()) {
-        qDebug() << "[Immersive] JNI exception cleared";
+        qDebug() << "[Immersive] 已清除 JNI exception";
         env->ExceptionClear();
     }
 }

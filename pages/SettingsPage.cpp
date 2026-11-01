@@ -14,6 +14,7 @@
 #include <QToolTip>
 
 #include "utils/BackgroundManager.h"
+#include "utils/HomeCarouselStore.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/MemoryAllocator.h"
@@ -133,6 +134,9 @@ void SettingsPage::onRestoreDefaults()
             qDebug() << "[SettingsPage]" << "恢复界面设置默认值";
             ThemeManager::instance()->setSidebarBgColor("");
             ThemeManager::instance()->resetColorOverrides();
+            HomeCarouselStore::clearCustom();
+            refreshHomeCarouselRows();
+            emit carouselImagesChanged();
             break;
     case 2: qDebug() << "[SettingsPage]" << "恢复全局游戏设置默认值"; break;
     case 3: qDebug() << "[SettingsPage]" << "恢复按键绑定默认值"; break;
@@ -156,11 +160,19 @@ void SettingsPage::onRestoreDefaults()
         qDebug() << "[SettingsPage]" << "恢复界面设置默认值";
         ThemeManager::instance()->setSidebarBgColor("");
         ThemeManager::instance()->resetColorOverrides();
+        HomeCarouselStore::clearCustom();
+        refreshHomeCarouselRows();
+        emit carouselImagesChanged();
         break;
     case 2: qDebug() << "[SettingsPage]" << "恢复全局游戏设置默认值"; break;
     case 3: qDebug() << "[SettingsPage]" << "恢复实例设置默认值"; break;
     case 4: qDebug() << "[SettingsPage]" << "恢复Java管理设置默认值"; break;
-    case 5: qDebug() << "[SettingsPage]" << "恢复高级设置默认值"; break;
+    case 5:
+        qDebug() << "[SettingsPage]" << "恢复高级设置默认值";
+        SettingsManager::instance()->setForumBaseUrl(QString());
+        if (auto *forumUrlEdit = m_advancedSettings->findChild<QLineEdit *>(QStringLiteral("forumUrlEdit")))
+            forumUrlEdit->setText(SettingsManager::instance()->forumBaseUrl());
+        break;
     case 6: qDebug() << "[SettingsPage]" << "恢复按键绑定默认值"; break;
     case 7: qDebug() << "[SettingsPage]" << "恢复系统信息设置默认值"; break;
     case 8:

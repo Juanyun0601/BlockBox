@@ -15,9 +15,8 @@ NotificationManager::NotificationManager(QObject *parent)
 NotificationManager::~NotificationManager()
 {
     m_instance = nullptr;
-    for (NotificationCard *card : m_cards) {
-        card->deleteLater();
-    }
+    // 卡片挂在各自的父控件下，由父控件负责销毁；这里只清空指针表。
+    // 退出时若再对卡片调用 deleteLater()，会用到已经销毁的事件循环而崩溃。
     m_cards.clear();
 }
 
@@ -68,6 +67,8 @@ void NotificationManager::showCard(NotificationCard::Type type, QWidget *parent,
 
     connect(card, &NotificationCard::dismissRequested,
             this, &NotificationManager::removeCard);
+    // 父控件先于本管理器销毁时（例如关闭窗口）把卡片指针摘掉，避免列表里留下悬空指针
+    connect(card, &QObject::destroyed, this, [this, card]() { m_cards.removeAll(card); });
 
     m_cards.append(card);
 

@@ -1197,11 +1197,11 @@ void InstanceAssistantWindow::runContextDetectionInBackground()
                         m_blockRegistry->addBlock(block);
                     }
                     m_blockRegistry->rebuildIndexes();
-                    qDebug() << "GameRegistry: blocks" << m_blockRegistry->allBlocks().size()
-                             << "| items" << result.gameRegistry.items().size()
-                             << "| entities" << result.gameRegistry.entities().size()
-                             << "| effects" << result.gameRegistry.effects().size()
-                             << "| enchantments" << result.gameRegistry.enchantments().size();
+                    qDebug() << "GameRegistry: 方块" << m_blockRegistry->allBlocks().size()
+                             << "| 物品" << result.gameRegistry.items().size()
+                             << "| 实体" << result.gameRegistry.entities().size()
+                             << "| 效果" << result.gameRegistry.effects().size()
+                             << "| 附魔" << result.gameRegistry.enchantments().size();
                 }
 
                 // 物品/实体/效果/附魔：合并到指令数据库（模组数据优先，自动重建索引）
@@ -1728,13 +1728,13 @@ void InstanceAssistantWindow::reloadCommandDatabase()
         }
         CommandPack pack;
         if (!pack.loadFromFile(entry.first)) {
-            qWarning() << "InstanceAssistantWindow: failed to load pack" << entry.first;
+            qWarning() << "InstanceAssistantWindow: 加载包失败" << entry.first;
             continue;
         }
         m_commandDb->mergePack(pack);
-        qDebug() << "InstanceAssistantWindow: merged pack" << pack.name()
-                 << "from" << entry.first
-                 << "(commands:" << pack.info().commandCount << ")";
+        qDebug() << "InstanceAssistantWindow: 已合并包" << pack.name()
+                 << "来自" << entry.first
+                 << "(指令数:" << pack.info().commandCount << ")";
     }
 }
 

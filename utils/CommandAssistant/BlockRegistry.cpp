@@ -98,7 +98,7 @@ int BlockRegistry::loadFromJar(const QString &jarPath)
     QByteArray data;
     if (!JarUtils::extractFromJarToMemory(jarPath, it.value(), data))
     {
-      qWarning() << "[BlockRegistry]" << "Failed to extract lang file:" << it.value();
+      qWarning() << "[BlockRegistry]" << "提取语言文件失败：" << it.value();
       continue;
     }
 
@@ -106,8 +106,8 @@ int BlockRegistry::loadFromJar(const QString &jarPath)
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
     if (parseError.error != QJsonParseError::NoError)
     {
-      qWarning() << "[BlockRegistry]" << "Lang JSON parse error:"
-                 << parseError.errorString() << "in" << it.value();
+      qWarning() << "[BlockRegistry]" << "语言 JSON 解析错误："
+                 << parseError.errorString() << "，位于" << it.value();
       continue;
     }
     langObjects.insert(it.key(), doc.object());

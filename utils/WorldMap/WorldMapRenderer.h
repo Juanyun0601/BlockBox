@@ -66,10 +66,22 @@ struct SeedPreview
     int centerRegionZ = 0;
 };
 
+/**
+ * 高度图里「此处没有地表」的编码值（与 qint16 的 INT16_MIN 位模式一致）。
+ * 高度图是 QImage::Format_Grayscale16，每格 16 位：值 = quint16(qint16(地表 Y))，
+ * 因此 -64 这类负高度也能原样存下。
+ */
+constexpr quint16 kNoHeightEncoded = 0x8000;
+
 /** 渲染结果 */
 struct RenderResult
 {
     QImage image;             ///< 俯视地表图；未生成的区块为透明
+    /**
+     * 地表高度图（可选，立体视图用）：Format_Grayscale16，尺寸/原点与 image 一致。
+     * 每格 = quint16(qint16(地表 Y))，kNoHeightEncoded 表示该处没有地表。
+     */
+    QImage heightImage;
     int minChunkX = 0;        ///< 图像左上角对应的区块坐标 X（世界方块 X = minChunkX * 16）
     int minChunkZ = 0;        ///< 图像左上角对应的区块坐标 Z
     int blockPerPixel = 1;    ///< 每像素代表的方块数（世界过大时 > 1）
@@ -107,6 +119,11 @@ struct ProgressiveSink
     QMutex tileMutex;
     /** 待贴图区块：first = 最终图上的像素坐标，second = 已按 blockPerPixel 缩放的图块 */
     QList<QPair<QPoint, QImage>> pendingTiles;
+    /**
+     * 与 pendingTiles **逐项对齐**的地表高度图块（漏一项就是空图 = 无高度）。
+     * 立体视图靠它算起伏；不需要立体图时调用方不必读。
+     */
+    QList<QPair<QPoint, QImage>> pendingHeightTiles;
 
     /**
      * 渐进渲染的优先区域：region 渲染顺序按到它的切比雪夫距离由近及远
@@ -127,6 +144,7 @@ using ProgressiveSinkPtr = std::shared_ptr<ProgressiveSink>;
 struct PriorCanvas
 {
     QImage image;
+    QImage heightImage;   ///< 可选：同尺寸高度图（有就一起搬，省一次重算）
     int minChunkX = 0;
     int minChunkZ = 0;
     int blockPerPixel = 0; ///< ≤0 = 不可用
@@ -225,6 +243,8 @@ QVector<BlockHit> scanChunkBlocks(const QString &savePath, Dimension dim,
  * @param maxThreads  并行区域数上限；<=0 用 QThreadPool 默认线程数，1 = 单线程
  * @param seed        种子预测：无文件的区域按种子渲染近似地形（enabled=false 时行为不变）
  * @param prior       上一张画布（可选）：bpp 一致时重叠 region 直接搬像素，跳过重渲
+ * @param withHeight  是否同时产出地表高度图（heightImage / sink 的高度图块）。
+ *                    立体视图要用；只画俯视图时可传 false 省内存
  */
 RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     const std::function<bool()> &cancelled,
@@ -233,10 +253,27 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     int maxThreads = 0,
                     int maxSurfaceY = -1,
                     const SeedPreview &seed = SeedPreview(),
-                    const PriorCanvas &prior = PriorCanvas());
+                    const PriorCanvas &prior = PriorCanvas(),
+                    bool withHeight = true);
 
 /** 方块 ID（含或不含 minecraft: 前缀）→ 地表颜色 */
 QColor blockColor(const QString &blockName);
+
+/**
+ * @brief 读高度图某格的真实地表 Y（立体视图用）
+ *
+ * 高度图为 Format_Grayscale16，每格 quint16(qint16(y))。越界、空图、
+ * 该处无地表时返回 INT16_MIN（= kNoHeightEncoded）。
+ */
+qint16 heightAtPixel(const QImage &heightImage, int px, int py);
+
+/**
+ * @brief 把一块高度图贴进更大的高度图（两者都是 Format_Grayscale16）
+ *
+ * 逐行 memcpy：QPainter 对 16 位灰度图的合成支持不全，这里不冒那个险。
+ * 越界部分按目标图裁剪，不会越界写。
+ */
+void blitHeightTile(QImage &dst, const QPoint &dest, const QImage &tile);
 
 // ── 地形模式（ShadeMode::Terrain）共用纯函数：真实地表与种子预测同款 ──
 

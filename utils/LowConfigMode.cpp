@@ -56,11 +56,11 @@ LowConfigMode::LowConfigMode(QObject *parent)
     // 根据设置更新低配置模式状态
     updateLowConfigModeState();
 
-    qDebug() << "[LowConfigMode]" << "LowConfigMode initialized:";
-    qDebug() << "[LowConfigMode]" << "  - Total Memory:" << getTotalMemoryGB() << "GB";
-    qDebug() << "[LowConfigMode]" << "  - CPU Cores:" << m_cachedCpuCores;
-    qDebug() << "[LowConfigMode]" << "  - Is Low Config Device:" << isLowConfigDevice();
-    qDebug() << "[LowConfigMode]" << "  - Low Config Mode:" << m_lowConfigModeEnabled.load();
+    qDebug() << "[LowConfigMode]" << "低配置模式已初始化：";
+    qDebug() << "[LowConfigMode]" << "  - 总内存：" << getTotalMemoryGB() << "GB";
+    qDebug() << "[LowConfigMode]" << "  - CPU 核心数：" << m_cachedCpuCores;
+    qDebug() << "[LowConfigMode]" << "  - 是否低配置设备：" << isLowConfigDevice();
+    qDebug() << "[LowConfigMode]" << "  - 低配置模式：" << m_lowConfigModeEnabled.load();
 }
 
 LowConfigMode::~LowConfigMode()
@@ -127,7 +127,7 @@ qint64 LowConfigMode::detectTotalSystemMemory() const
     }
 #else
     // 其他平台：尝试从环境变量或默认值
-    qWarning() << "[LowConfigMode]" << "LowConfigMode: Unknown platform, using default memory detection";
+    qWarning() << "[LowConfigMode]" << "低配置模式：未知平台，使用默认内存检测";
     totalMemory = 8LL * 1024 * 1024 * 1024; // 默认假设8GB
 #endif
 
@@ -173,7 +173,7 @@ void LowConfigMode::setLowConfigMode(bool enabled)
         // 保存设置
         saveSettings();
 
-        qDebug() << "[LowConfigMode]" << "LowConfigMode changed to:" << enabled;
+        qDebug() << "[LowConfigMode]" << "低配置模式已变更为：" << enabled;
 
         // 发送信号
         emit lowConfigModeChanged(enabled);
@@ -205,7 +205,7 @@ void LowConfigMode::setAutoDetectEnabled(bool enabled)
         saveSettings();
         updateLowConfigModeState();
 
-        qDebug() << "[LowConfigMode]" << "AutoDetect changed to:" << enabled;
+        qDebug() << "[LowConfigMode]" << "自动检测已变更为：" << enabled;
 
         emit autoDetectChanged(enabled);
     }
@@ -224,7 +224,7 @@ void LowConfigMode::setMemoryThresholdGB(double thresholdGB)
         saveSettings();
         updateLowConfigModeState();
 
-        qDebug() << "[LowConfigMode]" << "Memory threshold changed to:" << thresholdGB << "GB";
+        qDebug() << "[LowConfigMode]" << "内存阈值已变更为：" << thresholdGB << "GB";
     }
 }
 
@@ -241,7 +241,7 @@ void LowConfigMode::setCpuCoreThreshold(int threshold)
         saveSettings();
         updateLowConfigModeState();
 
-        qDebug() << "[LowConfigMode]" << "CPU core threshold changed to:" << threshold;
+        qDebug() << "[LowConfigMode]" << "CPU 核心阈值已变更为：" << threshold;
     }
 }
 
@@ -310,7 +310,7 @@ void LowConfigMode::updateLowConfigModeState()
 
         if (currentState != shouldBeLowConfig) {
             m_lowConfigModeEnabled = shouldBeLowConfig;
-            qDebug() << "[LowConfigMode]" << "Auto-detect: LowConfigMode set to" << shouldBeLowConfig;
+            qDebug() << "[LowConfigMode]" << "自动检测：低配置模式已设置为" << shouldBeLowConfig;
             emit lowConfigModeChanged(shouldBeLowConfig);
         }
     }

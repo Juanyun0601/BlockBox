@@ -6,6 +6,8 @@
  *
  * 从实例的版本 jar 中提取 `assets/minecraft/textures/block` 下的方块贴图（.png），
  * 打包成一张 OpenGL 纹理图集（每格 16×16），并提供"方块名 -> 图集 UV 矩形"映射。
+ * 同一张图集里还会追加 `assets/minecraft/textures/item`（旧版 `textures/items`）下的
+ * 物品贴图，供战利品等界面的物品图标复用同一份"客户端 jar 材质"，方块索引不受影响。
  *
  * 实例路径约定（与启动器一致）：
  *   <实例根>/.minecraft/versions/<版本>/<版本>.jar   （共享 .minecraft）
@@ -22,9 +24,11 @@
  */
 #pragma once
 
+#include <QColor>
 #include <QIcon>
 #include <QImage>
 #include <QMap>
+#include <QPixmap>
 #include <QString>
 #include <QStringList>
 
@@ -63,7 +67,7 @@ public:
     /** 图集每行贴图数量 */
     int tilesPerRow() const { return m_tilesPerRow; }
 
-    /** 已加载的贴图数量 */
+    /** 已加载的贴图总数（方块 + 物品） */
     int textureCount() const { return m_textureCount; }
 
     /** 图集尺寸（正方形边，像素） */
@@ -98,6 +102,38 @@ public:
      */
     QIcon blockIcon(const QString &blockName, int size = 16) const;
 
+    /**
+     * @brief 根据物品 id 返回对应贴图格，是否成功
+     * @param itemId 物品 id，如 "minecraft:diamond"、"golden_apple"
+     * @param tile   输出：贴图格下标
+     * @return true 表示有对应贴图
+     */
+    bool itemTextureFor(const QString &itemId, int &tile) const;
+
+    /**
+     * @brief 取物品图标（从图集裁一块并缩放到 size）
+     * @param itemId 物品 id
+     * @param size   图标边长像素（默认 16）
+     * @return 无贴图时返回空 QIcon
+     */
+    QIcon itemIcon(const QString &itemId, int size = 16) const;
+
+    /** 已加载的物品贴图数量 */
+    int itemTextureCount() const { return m_itemCount; }
+
+    /**
+     * @brief 无贴图时的方块色块图标：带高光边的立体小方块
+     * @param color 方块代表色（一般取 VoxelViewWidget::blockColorOf）
+     * @param size  图标边长（逻辑像素）
+     * @param dpr   设备像素比（决定位图实际分辨率）
+     *
+     * 与投影编辑器调色板的回退图标同一画法，保证两处观感一致。
+     */
+    static QIcon swatchIcon(const QColor &color, int size = 16, qreal dpr = 2.0);
+
+    /** 同 swatchIcon，但直接给出位图（放进 QLabel 等不需要 QIcon 的位置） */
+    static QPixmap swatchPixmap(const QColor &color, int size = 16, qreal dpr = 2.0);
+
 private:
     // 方块名规范化：去 "minecraft:" 前缀与属性 [..]
     static QString normalizeName(const QString &blockName);
@@ -109,12 +145,18 @@ private:
     bool loadFromJar(const QString &jarPath, QString *errorOut);
     bool tryLoadDiskCache(const QString &jarPath);
     bool saveDiskCache(const QString &jarPath) const;
-    void buildAtlas(const QMap<QString, QImage> &textures);
+    void buildAtlas(const QMap<QString, QImage> &blockTextures,
+                    const QMap<QString, QImage> &itemTextures);
+
+    /** 从图集裁出第 tile 格并缩放到 size（无图时返回空） */
+    QIcon iconFromTile(int tile, int size) const;
 
     QImage   m_atlas;
     int      m_tilesPerRow = 0;
     int      m_atlasSize = 0;
-    int      m_textureCount = 0;
+    int      m_textureCount = 0;       // 图集内总贴图数（方块 + 物品）
+    int      m_itemCount = 0;          // 其中物品贴图数（排在方块之后）
     QMap<QString, int> m_nameToTile;   // 规范化方块名 -> 贴图格下标
+    QMap<QString, int> m_itemToTile;   // 规范化物品名 -> 贴图格下标
     QString  m_cacheKey;               // 磁盘缓存用的 jar 路径
 };

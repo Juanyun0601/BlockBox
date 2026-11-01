@@ -1,6 +1,6 @@
 # 存档地表地图页视觉探针：渲染真实 WorldMapPage + 真实 style.qss
 # 用法：qmake world_map_page_probe.pro && mingw32-make && release/world_map_page_probe.exe
-QT       += core gui widgets svg concurrent network
+QT       += core gui widgets svg concurrent network opengl openglwidgets
 
 CONFIG   += c++17 console
 CONFIG   -= app_bundle
@@ -16,15 +16,28 @@ SOURCES += world_map_page_probe.cpp \
            ../../utils/WorldMap/WorldMapRenderer.cpp \
            ../../utils/WorldMap/SeedTerrainRenderer.cpp \
            ../../utils/WorldMap/CavePredictor.cpp \
+           ../../utils/WorldMap/TreePredictor.cpp \
+  ../../utils/WorldMap/MushroomPredictor.cpp \
+  ../../utils/WorldMap/TreeGen.cpp \
            ../../utils/WorldMap/StructureFinder.cpp \
            ../../utils/WorldMap/StructureIcons.cpp \
            ../../utils/WorldMap/StructureLoot.cpp \
+           ../../utils/WorldMap/StructureModelBuilder.cpp \
+           ../../utils/WorldMap/StrongholdModel.cpp \
+           ../../utils/WorldMap/FortressModel.cpp \
+           ../../utils/WorldMap/MineshaftModel.cpp \
+           ../../utils/WorldMap/StructureTemplates.cpp \
            ../../utils/WorldMap/McRandom.cpp \
            ../../utils/WorldMap/BiomeCatalog.cpp \
            ../../utils/WorldMap/BiomeName.cpp \
            ../../utils/WorldMap/OreFinder.cpp \
            ../../utils/JarUtils.cpp \
            ../../utils/Schematic/NbtCodec.cpp \
+           ../../utils/Schematic/SchematicDocument.cpp \
+           ../../utils/Schematic/InstanceTextureLoader.cpp \
+           ../../utils/Schematic/BlockShapeLoader.cpp \
+           ../../components/VoxelViewWidget.cpp \
+           ../../components/WorldMap3DView.cpp \
            ../../utils/Saves/LevelDatEditor.cpp \
            ../../utils/IconHelper.cpp \
            ../../layouts/FlowLayout.cpp \
@@ -44,23 +57,39 @@ HEADERS += ../../pages/WorldMapPage.h \
            ../../utils/WorldMap/WorldMapRenderer.h \
            ../../utils/WorldMap/SeedTerrainRenderer.h \
            ../../utils/WorldMap/CavePredictor.h \
+           ../../utils/WorldMap/TreePredictor.h \
+  ../../utils/WorldMap/MushroomPredictor.h \
+  ../../utils/WorldMap/TreeGen.h \
            ../../utils/WorldMap/StructureFinder.h \
            ../../utils/WorldMap/StructureIcons.h \
            ../../utils/WorldMap/StructureLoot.h \
+           ../../utils/WorldMap/StructureModelBuilder.h \
+           ../../utils/WorldMap/StrongholdModel.h \
+           ../../utils/WorldMap/FortressModel.h \
+           ../../utils/WorldMap/StructureTemplates.h \
            ../../utils/WorldMap/McRandom.h \
            ../../utils/WorldMap/BiomeCatalog.h \
            ../../utils/WorldMap/BiomeName.h \
            ../../utils/WorldMap/OreFinder.h \
            ../../utils/JarUtils.h \
            ../../utils/Schematic/NbtCodec.h \
+           ../../utils/Schematic/SchematicDocument.h \
+           ../../utils/Schematic/InstanceTextureLoader.h \
+           ../../utils/Schematic/BlockShapeLoader.h \
+           ../../components/VoxelViewWidget.h \
+           ../../components/WorldMap3DView.h \
            ../../utils/Saves/LevelDatEditor.h \
            ../../layouts/FlowLayout.h \
            ../../components/StructureDetailDialog.h \
            ../../components/AppDialogBase.h \
            fake/utils/ThemeManager.h \
            fake/utils/SettingsManager.h \
+           fake/utils/GameLauncher.h \
+           fake/utils/CommandAssistant/GameDetector.h \
            fake/components/AppFileDialog.h \
            fake/components/NotificationManager.h
 
 RESOURCES += ../../resources.qrc ../../resources_data.qrc
-LIBS    += -lz
+LIBS    += -lz -lopengl32
+
+

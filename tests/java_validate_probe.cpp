@@ -134,6 +134,74 @@ int main(int argc, char *argv[])
                     fail == 0 ? "[PASS] 全部通过" : "[FAIL] 存在不一致", pass, fail);
     }
 
+    // 4c) 同一主版本有多个候选时：真实安装优先于 Oracle 转发存根、64 位优先于 32 位，
+    //     且结果与缓存顺序无关（此前的实现按缓存顺序先到先得）
+    std::printf("\n[4c] findBestJavaVersion 同主版本优先级（存根/位数）:\n");
+    {
+        const QString tmpRoot = QDir(QDir::tempPath()).filePath(QStringLiteral("blockbox_jbit_probe"));
+        QDir(tmpRoot).removeRecursively();
+        QDir().mkpath(tmpRoot + QStringLiteral("/stub/bin/server"));
+        QDir().mkpath(tmpRoot + QStringLiteral("/shim/bin"));
+
+        // 伪造 32 位 JVM：bin/java.exe 占位 + bin/server/jvm.dll（PE Machine = 0x014c）
+        const QString stub32 = tmpRoot + QStringLiteral("/stub/bin/java.exe");
+        QFile stubExe(stub32);
+        if (stubExe.open(QIODevice::WriteOnly)) { stubExe.write("stub"); stubExe.close(); }
+        QByteArray pe(0x58, '\0');
+        pe[0] = 'M'; pe[1] = 'Z';
+        const int peOff = 0x40;
+        for (int i = 0; i < 4; ++i) pe[0x3C + i] = char((quint32(peOff) >> (8 * i)) & 0xFF);
+        pe[peOff] = 'P'; pe[peOff + 1] = 'E';
+        pe[peOff + 4] = char(0x4c); pe[peOff + 5] = char(0x01);
+        QFile stubDll(tmpRoot + QStringLiteral("/stub/bin/server/jvm.dll"));
+        if (stubDll.open(QIODevice::WriteOnly)) { stubDll.write(pe); stubDll.close(); }
+
+        // Oracle 转发存根：只有 java.exe，没有 server/jvm.dll
+        const QString shim = tmpRoot + QStringLiteral("/shim/bin/java.exe");
+        QFile shimExe(shim);
+        if (shimExe.open(QIODevice::WriteOnly)) { shimExe.write("shim"); shimExe.close(); }
+
+        const QString real8 = QStringLiteral("D:/系统迁移勿删/.minecraft/runtime/jre-legacy/bin/java.exe");
+        if (!QFile::exists(real8)) {
+            std::printf("    [SKIP] 本机找不到真实 Java 8，跳过\n");
+        } else {
+            std::printf("    javaBitness: 伪造32位=%d(期望32) 存根=%d(期望0) 真实Java8=%d(期望64)\n",
+                        GameLauncher::javaBitness(stub32), GameLauncher::javaBitness(shim),
+                        GameLauncher::javaBitness(real8));
+            using JL = QList<QPair<QString, QString>>;
+            const QString v8 = QStringLiteral("1.8.0_51");
+            const JL orders[2] = {
+                JL{ qMakePair(stub32, v8), qMakePair(real8, v8) },
+                JL{ qMakePair(real8, v8), qMakePair(stub32, v8) },
+            };
+            int pass = 0, fail = 0;
+            for (int i = 0; i < 2; ++i) {
+                SettingsManager::instance()->setJavaInstallations(orders[i]);
+                const GameLauncher::JavaInfo pick =
+                    GameLauncher::instance()->findBestJavaVersion(QStringLiteral("1.16.5"));
+                const bool ok = (pick.path == real8);
+                std::printf("    顺序%d(伪造32位在前=%d) => %s  %s\n", i + 1, int(i == 0),
+                            ok ? "选中真实 Java 8" : qPrintable(QStringLiteral("选中 ") + pick.path),
+                            ok ? "OK" : "MISMATCH");
+                if (ok) ++pass; else ++fail;
+            }
+            SettingsManager::instance()->setJavaInstallations(
+                JL{ qMakePair(shim, v8), qMakePair(real8, v8) });
+            const GameLauncher::JavaInfo pick2 =
+                GameLauncher::instance()->findBestJavaVersion(QStringLiteral("1.16.5"));
+            const bool ok2 = (pick2.path == real8);
+            std::printf("    存根在前 => %s  %s\n",
+                        ok2 ? "选中真实 Java 8" : qPrintable(QStringLiteral("选中 ") + pick2.path),
+                        ok2 ? "OK" : "MISMATCH");
+            if (ok2) ++pass; else ++fail;
+            std::printf("    %s (pass=%d fail=%d)\n",
+                        fail == 0 ? "[PASS] 全部通过" : "[FAIL] 存在不一致", pass, fail);
+        }
+
+        SettingsManager::instance()->setJavaInstallations(savedInstallations);
+        QDir(tmpRoot).removeRecursively();
+    }
+
     // 5) 兜底检测
     std::printf("\n[5] detectJava():\n");
     {

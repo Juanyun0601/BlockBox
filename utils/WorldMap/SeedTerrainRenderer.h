@@ -45,13 +45,16 @@ bool supported(int mc, WorldMapRenderer::Dimension dim);
  *                地表高于该 Y 时截断成固体（石头 / 下界岩 / 末地石）；海洋
  *                水底低于截断面时仍显示水色，水面下沉到截断 Y 并按剩余水深
  *                调暗
+ * @param outHeight 非空时回传同尺寸的地表高度图（QImage::Format_Grayscale16，
+ *                每格 quint16(qint16 Y)，0x8000 = 无地表），供立体视图使用
  * @return outSize×outSize 的 ARGB 图；不支持的组合返回空图
  */
 QImage renderRegionTile(int regionX, int regionZ,
                         WorldMapRenderer::Dimension dim,
                         WorldMapRenderer::ShadeMode mode,
                         quint64 seed, int mc, int outSize = 512,
-                        int maxSurfaceY = -1);
+                        int maxSurfaceY = -1,
+                        QImage *outHeight = nullptr);
 
 } // namespace SeedTerrainRenderer
 

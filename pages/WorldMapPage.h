@@ -46,6 +46,7 @@ class QPushButton;
 class QScrollArea;
 class QStackedWidget;
 class QTimer;
+class WorldMap3DView;
 class WorldMapView;
 
 class WorldMapPage : public QWidget
@@ -75,8 +76,24 @@ public:
     /** 已加载的 1:1 细节瓦片数（探针 / 状态显示用） */
     int loadedDetailTiles() const;
 
+    // ── 立体（3D）模式：探针断言用 ──
+    /** 当前是否为立体模式 */
+    bool is3dMode() const { return m_3dOn; }
+    /** 切换立体模式；返回切换后是否处于立体模式 */
+    Q_INVOKABLE bool toggle3dMode();
+    /** 立体视图是否已拿到画面 */
+    bool has3dSurface() const;
+    /** 立体视图里是否有地表高度数据（false = 没算高度，只能按平地画） */
+    bool has3dHeightData() const;
+    /** 立体视图当前画面（探针截图用） */
+    QImage view3dFrame() const;
+    /** 立体视图最近一帧的四边形数 */
+    int view3dQuadCount() const;
+
     /** 当前地图图像（与画布共享同一块像素，不拷贝）——探针取样用 */
     QImage mapImage() const { return m_liveImage; }
+    /** 当前画布的地表高度图（Format_Grayscale16；探针取样用） */
+    QImage mapHeightImage() const { return m_liveHeight; }
 
     /**
      * 打开地图时横向固定的区块数：不做整图自适应，
@@ -170,6 +187,46 @@ public:
     /** 第 i 个矿物点的矿物下标（OreFinder::allOres() 下标；无效 -1） */
     int oreMarkerType(int i) const;
 
+    // ── 用户标记点（右键「添加标记点」）：探针断言用 ──
+    /** 当前存档的用户标记点数 */
+    int userMarkerCount() const;
+    /** 第 idx 个用户标记的方块坐标（打包 QPoint(x, z)；无效返回 QPoint()） */
+    QPoint userMarkerBlockPos(int idx) const;
+    /** 第 idx 个用户标记的屏幕位置（图钉锚点；视口外 / 无效返回 QPoint()） */
+    QPoint userMarkerScreenPos(int idx) const;
+    /** 新增一个用户标记并持久化（探针 / 深层跳转用；返回是否成功） */
+    Q_INVOKABLE bool addUserMarker(qint64 x, qint64 z,
+                                   const QString &name, int icon);
+    /** 删除第 idx 个用户标记并持久化（返回是否成功） */
+    Q_INVOKABLE bool removeUserMarker(int idx);
+    /** 打开第 idx 个用户标记的居中编辑弹窗（idx<0 = 以默认坐标新增） */
+    Q_INVOKABLE bool openMarkerEditor(int idx);
+    /** 关闭标记编辑弹窗（不保存） */
+    Q_INVOKABLE void closeMarkerEditor();
+    /** 保存标记编辑弹窗的当前内容（返回是否成功保存） */
+    Q_INVOKABLE bool saveMarkerEditor();
+    /**
+     * 对第 i 个矿物点发起「验证是否存在」（等同点了信息窗里的验证按钮）：
+     * 后台重读所在区块，确认消失会自动标记完成；返回是否成功发起。
+     */
+    Q_INVOKABLE bool verifyOreMarker(int i);
+    /** 是否有矿点验证在途（探针等待验证结果用） */
+    bool oreVerifyBusy() const { return m_oreVerifyJob != nullptr; }
+
+    // ── 玩家标记（游戏运行中显示玩家位置与朝向）：探针断言用 ──
+    /** 是否显示玩家标记 */
+    bool hasPlayerMarker() const;
+    /** 玩家标记的方块坐标（打包 QPoint(x, z)） */
+    QPoint playerMarkerBlockPos() const;
+    /** 玩家标记的朝向角（度，MC yaw 约定：0=南/+Z，90=西/-X） */
+    double playerMarkerYaw() const;
+    /** 玩家标记的屏幕中心（view 内坐标；未显示 / 视口外返回 QPoint()） */
+    QPoint playerMarkerScreenPos() const;
+    /** 直接在画布上放 / 收玩家标记（绕过进程与新鲜度检测；测试 / 验证用） */
+    Q_INVOKABLE void debugShowPlayerMarker(double x, double z, double yaw,
+                                           bool on = true);
+
+
 protected:
     /**
      * 地图快捷键统一入口。
@@ -203,6 +260,8 @@ private slots:
     /** 远程图标就位后刷新第二行按钮图标 */
     void refreshStructIcons();
     void onGridToggled(bool on);
+    /** 顶部「3D」开关：切到立体视图 / 切回俯视图 */
+    void on3dToggled(bool on);
     void onSeedToggled(bool on);
     /** 种子画布去抖到期：视角中心离开当前画布窗口 → 以新中心重渲 */
     void onSeedRecenterTimeout();
@@ -215,8 +274,7 @@ private slots:
     void onExportClicked();
     void onPollProgress();
     /** 视口去抖到期：挑选需要补的 1:1 细节 region */
-    void scheduleTiles();
-    /** 队列还有就接着渲，空了就补下一批（由中心向四周扩散） */
+    void scheduleTiles();    /** 队列还有就接着渲，空了就补下一批（由中心向四周扩散） */
     void continueTiling();
     /** 第二行右侧「展开」按钮：切换内容浏览弹窗 */
     void onExpandToggled(bool on);
@@ -240,6 +298,8 @@ private slots:
     void scheduleOreScan();
     /** 收取已完成的 region 扫描结果并刷新画布上的矿物点 */
     void drainOreScan();
+    /** 收取矿物点验证结果：确认消失则自动标记完成并刷新画布 */
+    void drainOreVerify();
     /** 按当前勾选与缓存重建画布矿物点（顺带刷新状态栏提示） */
     void rebuildOreMarkers();
     /** 换存档 / 换维度 / 复位：清空矿物扫描缓存与画布点位 */
@@ -250,6 +310,8 @@ private slots:
     void rebuildBiomeOverlay();
     /** 按搜索词 / 维度重建弹窗两列列表 */
     void rebuildPopupLists();
+    /** 玩家标记轮询：判定游戏是否在玩当前存档，是则把玩家位置/朝向画上画布 */
+    void updatePlayerMarker();
 
 private:
     struct RenderJob
@@ -303,6 +365,22 @@ private:
         QVector<OreFinder::Hit> hits; ///< 命中的矿物方块坐标
     };
 
+    /**
+     * 矿物点验证任务：信息窗点「验证是否存在」后重读该矿点所在区块，
+     * 确认该坐标的矿石是否还在存档里（玩家可能已经把它挖掉了）。
+     */
+    struct OreVerifyJob
+    {
+        std::atomic<bool> done{ false };
+        QPoint chunk;                 ///< 矿点所在区块
+        qint64 x = 0;                 ///< 矿点方块坐标
+        int y = 0;
+        qint64 z = 0;
+        int ore = -1;                 ///< allOres() 下标
+        QString doneKey;              ///< 验证确认消失后要写的完成标记 key
+        QVector<OreFinder::Hit> hits; ///< 该区块的最新扫描结果（顺手并入缓存）
+    };
+
     /** 单区域 1:1 瓦片的渲染结果（跨线程传回 UI） */
     struct TileResult
     {
@@ -334,6 +412,12 @@ private:
     void primeLiveFromPrior();
     void setBusy(bool busy);
     void updateZoomLabel();
+    /** 把当前画布（颜色 + 高度）交给立体视图；keepView=false 时重新取景 */
+    void sync3dSurface(bool keepView);
+    /** 按当前模式切栈页：0 = 空态、1 = 俯视画布、2 = 立体视图 */
+    void applyStackMode();
+    /** 平移当前视图（俯视图按像素、立体视图按屏幕增量） */
+    void panMap(const QPoint &delta);
     /** 拼状态栏文本：指针坐标 + 选中区块 + 渲染统计（cursor 为空则保留上次指针） */
     void updateStatusLabel(const QString &cursor = QString());
     /** 画布右键：弹地图上下文菜单（复制坐标 / 居中 / 填入跳转 / 取消选择） */
@@ -343,21 +427,82 @@ private:
                             qint64 x, qint64 z);
     /** 点击地图矿物点：弹同一个信息窗（多带一个 Y，矿物类型不同） */
     void showOrePopup(const QPoint &globalPos, int ore, qint64 x, qint64 y, qint64 z);
+    /** 点击用户标记：弹信息小窗（图标 / 名称 / 坐标 / 编辑 / 删除 / 复制） */
+    void showUserMarkerPopup(const QPoint &globalPos, int idx);
     /** 小窗「详情」：弹居中的结构详情弹窗（简介 / 预览 / 战利品） */
     void showStructureDetail(int structIdx, qint64 x, qint64 z);
     /**
      * 地图信息小窗（结构与矿物共用）：图标 + 名称 + 坐标 + 复制 / 百科 / 完成标记。
      * @param y 为 kNoY（INT_MIN）时坐标只显示 X / Z（结构不知道具体高度）
      * @param structIdx allStructures() 下标；≥0 时多给一个「详情」按钮（仅结构）
+     * @param oreIdx OreFinder::allOres() 下标；≥0 时多给一个「验证是否存在」
+     *        按钮（仅矿物，点击后读存档确认该矿点是否还在）
      */
     void showMapPointPopup(const QPoint &globalPos, const QPixmap &icon,
                            const QString &title, qint64 x, qint64 y, qint64 z,
                            const QString &wikiTitle, const QString &doneKey,
-                           int structIdx = -1);
+                           int structIdx = -1, int oreIdx = -1);
+    /** 后台重读矿点所在区块，验证该矿石是否还在存档里（结果由 drainOreVerify 收） */
+    void startOreVerify(qint64 x, int y, qint64 z, int ore);
     /** 完成标记写入 QSettings（按存档路径分桶） */
     void persistStructDone() const;
     /** 读当前存档的完成标记到内存并同步到画布 */
     void loadStructDone();
+
+    // ── 用户标记点（右键添加，按存档持久化） ──
+    /** 一个用户手放的标记点 */
+    struct UserMarker
+    {
+        qint64 x = 0;   ///< 方块坐标
+        qint64 z = 0;
+        int icon = 0;   ///< 预设图标下标（userMarkerIconDefs()）
+        QString name;   ///< 自定义名称
+    };
+    /** 读当前存档的用户标记到内存并同步到画布 */
+    void loadUserMarkers();
+    /** 用户标记写入 QSettings（JSON 数组，按存档路径分桶） */
+    void persistUserMarkers() const;
+    /** 把 m_userMarkers 推给画布绘制 */
+    void syncUserMarkersToView();
+    /** 居中弹出标记编辑弹窗（idx<0 = 新增模式，坐标用 defX/defZ） */
+    void openMarkerEditDialog(int idx, qint64 defX, qint64 defZ);
+    /** 关闭并销毁标记编辑弹窗（不保存） */
+    void closeMarkerEditPopup();
+    /** 编辑弹窗的「保存」：校验输入 → 增/改 → 持久化 → 关窗 */
+    void saveMarkerEdit();
+    /** 删除第 idx 个用户标记（持久化 + 同步画布 + 通知） */
+    void deleteUserMarker(int idx);
+    /** 当前存档的用户标记 */
+    QVector<UserMarker> m_userMarkers;
+    /** 居中标记编辑弹窗（每次打开新建，关闭即销毁） */
+    QPointer<QWidget> m_markerEditPopup;
+    /** 弹窗控件：名称 / 图标按钮组 / 坐标输入 */
+    QLineEdit *m_mkNameEdit = nullptr;
+    QList<QPushButton *> m_mkIconBtns;
+    QLineEdit *m_mkXEdit = nullptr;
+    QLineEdit *m_mkZEdit = nullptr;
+    /** 正在编辑的标记下标（-1 = 新增模式） */
+    int m_mkEditIdx = -1;
+    /** 新增模式下弹窗带的初始坐标 */
+    qint64 m_mkDefX = 0;
+    qint64 m_mkDefZ = 0;
+
+    // ── 玩家标记（游戏运行中）：轮询 level.dat 的 Data.Player ──
+    /** 收掉画布上的玩家标记（只动显示，不清解析缓存） */
+    void clearPlayerMarker();
+    /** 玩家标记轮询定时器（setCurrentSave 启动，reset 停止） */
+    QTimer *m_playerTimer = nullptr;
+    /** 最近一次成功解析的玩家数据（level.dat 没变就复用，不重复解压） */
+    bool m_playerDataValid = false;
+    double m_playerX = 0.0;
+    double m_playerY = 0.0;
+    double m_playerZ = 0.0;
+    double m_playerYaw = 0.0;
+    int m_playerDim = 0;    ///< 玩家所在维度（-1 下界 / 0 主世界 / 1 末地）
+    /** 已解析的 level.dat 修改时间（毫秒）；-1 = 未解析 / 存档已切换 */
+    qint64 m_playerLevelDatMsec = -1;
+
+
     /** 清掉细节瓦片的调度状态（换存档 / 换维度 / 概览换图时） */
     void clearTileState(bool clearViewTiles);
     /** 记一塊已加载的瓦片并做 LRU 淘汰，同时刷新状态栏"细节 N" */
@@ -387,6 +532,8 @@ private:
     bool m_pendingRestoreBlockSet = false;
     /** 上一张 live 画布：种子重定心时把重叠 region 搬进新画布，避免闪白 */
     QImage m_priorLiveImage;
+    /** 上一张画布的地表高度图（重定心时一并搬，立体视图才不会出空洞） */
+    QImage m_priorLiveHeight;
     int m_priorMinChunkX = 0;
     int m_priorMinChunkZ = 0;
     int m_priorBpp = 0;
@@ -450,6 +597,8 @@ private:
     QSet<QPoint> m_oreScanned;
     /** 在途的区块扫描任务（同一时刻只跑一批，读盘不抢渲染线程） */
     std::shared_ptr<OreScanJob> m_oreJob;
+    /** 在途的矿点验证任务（信息窗「验证是否存在」；同一时刻只跑一个） */
+    std::shared_ptr<OreVerifyJob> m_oreVerifyJob;
     /** 扫描线程池（与结构查询分开：要读 region 文件，别堵结构刷新） */
     QThreadPool m_orePool;
     /** 视口 / 缩放去抖定时器（停手后才扫，拖图中不读盘） */
@@ -471,6 +620,15 @@ private:
     std::shared_ptr<BiomeNameJob> m_biomeNameJob;
 
     WorldMapView *m_view;
+    /**
+     * 立体视图（3D 模式）：与俯视画布共用同一个栈，顶部「3D」开关切换。
+     * 数据来源就是 m_liveImage + m_liveHeight，不额外读盘。
+     */
+    WorldMap3DView *m_view3d = nullptr;
+    QPushButton *m_3dBtn = nullptr;
+    bool m_3dOn = false;
+    /** 立体视图用的地表高度图（与 m_liveImage 同尺寸同原点；空 = 按平地画） */
+    QImage m_liveHeight;
     QStackedWidget *m_stack;
     QLabel *m_titleIcon;
     QLabel *m_saveNameLabel;

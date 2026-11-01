@@ -770,6 +770,19 @@ void readDifficulty(const NbtTag &data, SaveInfo &info)
         info.difficultyLocked = (lk->intValue != 0);
 }
 
+void readGameRules(const NbtTag &data, SaveInfo &info)
+{
+    // GameRules（TAG_Compound，每条规则的值均为 TAG_String）
+    const NbtTag *rules = findChild(data, QStringLiteral("GameRules"));
+    if (!rules || rules->type != NbtType::Compound)
+        return;
+    for (const NbtTag &rule : rules->children)
+    {
+        if (rule.type == NbtType::String)
+            info.gameRules.insert(rule.name, rule.stringValue);
+    }
+}
+
 // 外部种子文件（26.x 新版本体系：data/minecraft/world_gen_settings.dat）
 void readExternalSeed(const QString &folderPath, SaveInfo &info)
 {
@@ -803,6 +816,62 @@ void readExternalSeed(const QString &folderPath, SaveInfo &info)
     {
         info.hasSeed = true;
         info.seed = v;
+    }
+}
+
+// ============================================================================
+// level.dat 玩家数据读取（Data.Player）
+// ============================================================================
+
+/**
+ * @brief 读取主机玩家的位置与朝向（Data.Player.Pos / Rotation / Dimension）
+ *
+ * Dimension 新版是 TAG_String（如 "minecraft:overworld"），
+ * 旧版（1.8 及更早）是 TAG_Int（-1/0/1），两种格式都认。
+ */
+void readPlayer(const NbtTag &data, PlayerState &state)
+{
+    const NbtTag *player = findChild(data, QStringLiteral("Player"));
+    if (!player || player->type != NbtType::Compound)
+        return;
+
+    // Pos：TAG_List<Double> ×3
+    if (const NbtTag *pos = findChild(*player, QStringLiteral("Pos"));
+        pos && pos->type == NbtType::List
+        && pos->listElementType == NbtType::Double && pos->children.size() >= 3)
+    {
+        state.x = pos->children.at(0).doubleValue;
+        state.y = pos->children.at(1).doubleValue;
+        state.z = pos->children.at(2).doubleValue;
+        state.hasPos = true;
+    }
+
+    // Rotation：TAG_List<Float> ×2（yaw, pitch），只要水平朝向 yaw
+    if (const NbtTag *rot = findChild(*player, QStringLiteral("Rotation"));
+        rot && rot->type == NbtType::List
+        && rot->listElementType == NbtType::Float && rot->children.size() >= 2)
+    {
+        state.yaw = rot->children.at(0).floatValue;
+        state.hasRotation = true;
+    }
+
+    // Dimension：字符串里含 the_nether / the_end 即对应维度，其余归为主世界
+    if (const NbtTag *dim = findChild(*player, QStringLiteral("Dimension")))
+    {
+        if (dim->type == NbtType::String)
+        {
+            if (dim->stringValue.contains(QLatin1String("the_nether")))
+                state.dimension = -1;
+            else if (dim->stringValue.contains(QLatin1String("the_end")))
+                state.dimension = 1;
+            else
+                state.dimension = 0;
+        }
+        else if (dim->type == NbtType::Int || dim->type == NbtType::Short
+                 || dim->type == NbtType::Byte)
+        {
+            state.dimension = static_cast<int>(dim->intValue);
+        }
     }
 }
 
@@ -968,6 +1037,29 @@ void applyChangesToData(NbtTag &data, const SaveChanges &changes)
             }
         }
     }
+
+    // 游戏规则：Data.GameRules（TAG_Compound，每条规则的值均为 TAG_String）
+    if (changes.gameRules.has_value())
+    {
+        NbtTag *rules = findChild(data, QStringLiteral("GameRules"));
+        if (!rules || rules->type != NbtType::Compound)
+        {
+            // 旧存档可能没有 GameRules 复合标签，创建一个
+            NbtTag tag;
+            tag.name = QStringLiteral("GameRules");
+            tag.type = NbtType::Compound;
+            data.children.append(std::move(tag));
+            rules = &data.children.last();
+        }
+        for (auto it = changes.gameRules->constBegin();
+             it != changes.gameRules->constEnd(); ++it)
+        {
+            upsertTag(*rules, it.key(), [&it](NbtTag &tag) {
+                tag.type = NbtType::String;
+                tag.stringValue = it.value();
+            });
+        }
+    }
 }
 
 // ============================================================================
@@ -1046,7 +1138,7 @@ std::optional<SaveInfo> LevelDatEditor::readSave(const QString &folderPath)
         const QString backup = folderPath + QStringLiteral("/level.dat_old");
         if (!QFileInfo::exists(backup))
         {
-            qWarning() << "[LevelDatEditor] level.dat not found:" << folderPath;
+            qWarning() << "[LevelDatEditor] 未找到 level.dat：" << folderPath;
             return std::nullopt;
         }
         levelDatPath = backup;
@@ -1056,7 +1148,7 @@ std::optional<SaveInfo> LevelDatEditor::readSave(const QString &folderPath)
     QFile file(levelDatPath);
     if (!file.open(QIODevice::ReadOnly))
     {
-        qWarning() << "[LevelDatEditor] Cannot open:" << levelDatPath
+        qWarning() << "[LevelDatEditor] 无法打开：" << levelDatPath
                    << file.errorString();
         return std::nullopt;
     }
@@ -1066,7 +1158,7 @@ std::optional<SaveInfo> LevelDatEditor::readSave(const QString &folderPath)
     QByteArray raw;
     if (!decompressGzip(compressed, raw) || raw.isEmpty())
     {
-        qWarning() << "[LevelDatEditor] Decompress failed:" << levelDatPath;
+        qWarning() << "[LevelDatEditor] 解压失败：" << levelDatPath;
         return std::nullopt;
     }
 
@@ -1074,14 +1166,14 @@ std::optional<SaveInfo> LevelDatEditor::readSave(const QString &folderPath)
     NbtTag root;
     if (!reader.readTag(root) || root.type != NbtType::Compound)
     {
-        qWarning() << "[LevelDatEditor] NBT parse failed:" << levelDatPath;
+        qWarning() << "[LevelDatEditor] NBT 解析失败：" << levelDatPath;
         return std::nullopt;
     }
 
     const NbtTag *dataTag = findChild(root, QStringLiteral("Data"));
     if (!dataTag)
     {
-        qWarning() << "[LevelDatEditor] Missing Data tag:" << levelDatPath;
+        qWarning() << "[LevelDatEditor] 缺少 Data 标签：" << levelDatPath;
         return std::nullopt;
     }
 
@@ -1089,9 +1181,49 @@ std::optional<SaveInfo> LevelDatEditor::readSave(const QString &folderPath)
     readSpawn(*dataTag, info);
     readSeed(*dataTag, info);
     readDifficulty(*dataTag, info);
+    readGameRules(*dataTag, info);
     readExternalSeed(folderPath, info);
 
     return info;
+}
+
+std::optional<PlayerState> LevelDatEditor::readPlayerState(
+    const QString &folderPath)
+{
+    QString levelDatPath = folderPath + QStringLiteral("/level.dat");
+    if (!QFileInfo::exists(levelDatPath))
+    {
+        // 回退到 level.dat_old
+        const QString backup = folderPath + QStringLiteral("/level.dat_old");
+        if (!QFileInfo::exists(backup))
+            return std::nullopt;
+        levelDatPath = backup;
+    }
+
+    QFile file(levelDatPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return std::nullopt;
+    const QByteArray compressed = file.readAll();
+    file.close();
+
+    QByteArray raw;
+    if (!decompressGzip(compressed, raw) || raw.isEmpty())
+        return std::nullopt;
+
+    NbtReader reader(raw);
+    NbtTag root;
+    if (!reader.readTag(root) || root.type != NbtType::Compound)
+        return std::nullopt;
+
+    const NbtTag *dataTag = findChild(root, QStringLiteral("Data"));
+    if (!dataTag)
+        return std::nullopt;
+
+    PlayerState state;
+    readPlayer(*dataTag, state);
+    if (!state.hasPos)
+        return std::nullopt;
+    return state;
 }
 
 bool LevelDatEditor::applyChanges(const QString &folderPath,

@@ -825,7 +825,7 @@ void JavaDownloader::doDownload(const QString &url, const QString &savePath)
       }
     }
 
-    qDebug() << "[JavaDownloader] Downloaded:" << savePath;
+    qDebug() << "[JavaDownloader] 下载完成：" << savePath;
     emit downloadCompleted(savePath);
 
     // 如果需要解压

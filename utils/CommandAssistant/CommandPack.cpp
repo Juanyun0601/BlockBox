@@ -184,12 +184,12 @@ bool CommandPack::loadFromFile(const QString &filePath)
     QFile file(filePath);
     if (!file.exists())
     {
-        qWarning() << "CommandPack: file not found:" << filePath;
+        qWarning() << "CommandPack: 文件不存在：" << filePath;
         return false;
     }
     if (!file.open(QIODevice::ReadOnly))
     {
-        qWarning() << "CommandPack: failed to open file:" << file.errorString();
+        qWarning() << "CommandPack: 打开文件失败：" << file.errorString();
         return false;
     }
 
@@ -200,7 +200,7 @@ bool CommandPack::loadFromFile(const QString &filePath)
     const QJsonDocument doc = QJsonDocument::fromJson(rawData, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject())
     {
-        qWarning() << "CommandPack: JSON parse failed:" << parseError.errorString();
+        qWarning() << "CommandPack: JSON 解析失败：" << parseError.errorString();
         return false;
     }
 
@@ -248,7 +248,7 @@ bool CommandPack::saveToFile(const QString &filePath) const
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
     {
-        qWarning() << "CommandPack: failed to open file for write:" << file.errorString();
+        qWarning() << "CommandPack: 打开写入文件失败：" << file.errorString();
         return false;
     }
 

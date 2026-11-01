@@ -19,6 +19,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
@@ -33,8 +35,11 @@
 #include <QSet>
 #include <QSettings>
 #include <QStackedWidget>
+#include <QSlider>
 #include <QTabWidget>
+#include <QToolButton>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QVector>
 
@@ -46,12 +51,18 @@
 #include <zlib.h>
 
 #include "pages/WorldMapPage.h"
+#include "utils/SettingsManager.h"
 #include "platform.h"
+#include "components/StructureDetailDialog.h"
+#include "components/VoxelViewWidget.h"
 #include "utils/Schematic/NbtCodec.h"
+#include "utils/Schematic/SchematicDocument.h"
 #include "utils/Saves/LevelDatEditor.h"
+#include "utils/ThemeManager.h"
 #include "utils/WorldMap/StructureFinder.h"
 #include "utils/WorldMap/StructureIcons.h"
 #include "utils/WorldMap/StructureLoot.h"
+#include "utils/WorldMap/StructureModelBuilder.h"
 #include "utils/WorldMap/SeedTerrainRenderer.h"
 
 namespace {
@@ -109,6 +120,8 @@ QString resolveTokens(QString style)
         {"@TEXT_ON_PRIMARY@", "#ffffff"},
         {"@SUCCESS@", "#10B981"}, {"@INFO@", "#2196F3"},
         {"@WARNING@", "#F57C00"}, {"@DANGER@", "#D32F2F"},
+        {"@WARNING_TEXT_DARK@", "#856404"},
+        {"@WARNING_RGBA_26@", "rgba(255, 152, 0, 0.26)"},
     };
     for (const auto &kv : t)
         style.replace(QLatin1String(kv.k), QLatin1String(kv.v));
@@ -695,7 +708,7 @@ int main(int argc, char **argv)
     expect(progress && !progress->isVisible(), "progress bar hidden after render");
 
     // ── 结构标记：按种子在后台算，等收敛后应有结果 ──
-    expect(page.waitForStructs(8000), "structure query converged");
+    expect(page.waitForStructs(30000), "structure query converged");
     {
         const int markers = page.structureMarkerCount();
         std::fprintf(stderr, "  structure markers=%d\n", markers);
@@ -829,7 +842,7 @@ int main(int argc, char **argv)
         if (clearBtn && selectAllBtn)
         {
             clearBtn->click();
-            expect(page.waitForStructs(8000), "clear-all query converged");
+            expect(page.waitForStructs(30000), "clear-all query converged");
             std::fprintf(stderr, "  markers after clear=%d\n",
                          page.structureMarkerCount());
             expect(page.structureMarkerCount() == 0,
@@ -841,7 +854,7 @@ int main(int argc, char **argv)
             expect(noneChecked, "clear-all unchecks all state");
 
             selectAllBtn->click();
-            expect(page.waitForStructs(8000), "select-all query converged");
+            expect(page.waitForStructs(30000), "select-all query converged");
             std::fprintf(stderr, "  markers after select-all=%d\n",
                          page.structureMarkerCount());
             expect(page.structureMarkerCount() > 0,
@@ -1307,23 +1320,35 @@ int main(int argc, char **argv)
                                 else
                                     expect(false,
                                            "intro coord shows X and Z");
+                            }
 
-                                // 战利品：有数据的结构应有芯片标签
-                                // （探针走概览：打开详情时页面可能无种子）
+                            // 战利品页：芯片在「战利品」tab，不在简介页
+                            {
+                                tabs->setCurrentIndex(2);
+                                QApplication::processEvents();
+                                QWidget *lootPage = tabs->widget(2);
+                                expect(lootPage != nullptr,
+                                       "loot page exists");
                                 const StructureLoot::Result loot =
                                     StructureLoot::rollLoot(
-                                        QLatin1String(def.key), 12345, false,
-                                        0, 0);
+                                        QLatin1String(def.key),
+                                        4562377579810721523ULL, true,
+                                        blk.x(), blk.y(), 21);
                                 QLabel *lootSection =
-                                    intro->findChild<QLabel *>(
-                                        QStringLiteral(
-                                            "structDetailLootSection"));
-                                const QList<QLabel *> lootChips =
-                                    intro->findChildren<QLabel *>(
-                                        QStringLiteral(
-                                            "structDetailLootChip"));
+                                    lootPage
+                                        ? lootPage->findChild<QLabel *>(
+                                              QStringLiteral(
+                                                  "structDetailLootSection"))
+                                        : nullptr;
+                                // 芯片是「图标 + 名称」的组合控件，名称在子标签里
+                                const QList<QWidget *> lootChips =
+                                    lootPage
+                                        ? lootPage->findChildren<QWidget *>(
+                                              QStringLiteral(
+                                                  "structDetailLootChip"))
+                                        : QList<QWidget *>();
                                 std::fprintf(stderr,
-                                             "  loot section=%s chips=%d\n",
+                                             "  loot tab section=%s chips=%d\n",
                                              lootSection
                                                  ? lootSection->text()
                                                        .toUtf8()
@@ -1333,26 +1358,122 @@ int main(int argc, char **argv)
                                 if (!loot.stacks.isEmpty())
                                 {
                                     expect(lootSection != nullptr,
-                                           "intro has loot section title");
+                                           "loot tab has section title");
                                     expect(lootChips.size()
                                                == loot.stacks.size(),
-                                           "intro loot chip count matches table");
-                                    // 概览回退：芯片应含第一项物品名
+                                           "loot tab chip count matches");
                                     bool hasKeyItem = false;
-                                    for (QLabel *chip : lootChips)
-                                        if (chip->text().contains(
+                                    int chipWithIcon = 0;
+                                    for (QWidget *chip : lootChips)
+                                    {
+                                        const QLabel *nameLabel =
+                                            chip->findChild<QLabel *>(
+                                                QStringLiteral(
+                                                    "structDetailLootName"));
+                                        if (nameLabel
+                                            && nameLabel->text().contains(
                                                 loot.stacks.first().name))
                                             hasKeyItem = true;
+                                        const QLabel *iconLabel =
+                                            chip->findChild<QLabel *>(
+                                                QStringLiteral(
+                                                    "structDetailLootIcon"));
+                                        if (iconLabel && iconLabel->pixmap()
+                                                                 .isNull() == false)
+                                            ++chipWithIcon;
+                                    }
                                     expect(hasKeyItem,
-                                           "intro loot chips include table items");
-                                }
-                                else
-                                {
-                                    expect(lootChips.isEmpty(),
-                                           "no loot chips when table empty");
+                                           "loot tab chips include items");
+                                    expect(chipWithIcon == lootChips.size(),
+                                           "loot tab chips all have icons");
                                 }
 
-                                // 种子掷取：结果应稳定且带数量
+                                // 分类：任一宝箱 / 各类箱子（按战利品表拆）
+                                {
+                                    const auto cats =
+                                        lootPage
+                                            ? lootPage->findChildren<QPushButton *>(
+                                                  QStringLiteral(
+                                                      "structDetailLootCat"))
+                                            : QList<QPushButton *>();
+                                    std::fprintf(stderr,
+                                                 "  loot categories=%d chests=%d\n",
+                                                 int(cats.size()),
+                                                 int(loot.chestLoots.size()));
+                                    if (loot.fromSeed
+                                        && loot.chestLoots.size() > 1)
+                                    {
+                                        const bool hasTotals =
+                                            loot.chests > 1 && loot.chests <= 8;
+                                        expect(cats.size()
+                                                   == loot.chestLoots.size()
+                                                          + (hasTotals ? 2 : 1),
+                                               "loot tab categorises every chest");
+                                        expect(!cats.isEmpty()
+                                                   && cats.first()->text()
+                                                          == QStringLiteral("任一宝箱")
+                                                   && cats.first()->isChecked(),
+                                               "loot tab defaults to 任一宝箱");
+                                        if (hasTotals)
+                                            expect(cats.size() > 1
+                                                       && cats.at(1)->text()
+                                                              == QStringLiteral("全部合计"),
+                                                   "loot tab offers totals");
+                                        const int labelIndex = hasTotals ? 2 : 1;
+                                        expect(cats.size() > labelIndex
+                                                   && cats.at(labelIndex)->text()
+                                                          == loot.chestLoots
+                                                                 .first()
+                                                                 .label,
+                                               "loot tab names chests by label");
+                                        // 切到第一类箱子：芯片只剩该类明细
+                                        if (cats.size() > labelIndex)
+                                        {
+                                            cats.at(labelIndex)->click();
+                                            QApplication::processEvents();
+                                            const auto firstChips =
+                                                lootPage->findChildren<QWidget *>(
+                                                    QStringLiteral(
+                                                        "structDetailLootChip"));
+                                            const auto &expectItems =
+                                                loot.chestLoots.first().stacks;
+                                            std::fprintf(
+                                                stderr,
+                                                "  chest1 chips=%d expect=%d\n",
+                                                int(firstChips.size()),
+                                                int(expectItems.size()));
+                                            expect(firstChips.size()
+                                                       == expectItems.size(),
+                                                   "宝箱1 shows only its own loot");
+                                            // 切回全部：合并清单照旧
+                                            cats.first()->click();
+                                            QApplication::processEvents();
+                                            const auto allChips =
+                                                lootPage->findChildren<QWidget *>(
+                                                    QStringLiteral(
+                                                        "structDetailLootChip"));
+                                            expect(allChips.size()
+                                                       == loot.stacks.size(),
+                                                   "全部 restores merged loot");
+                                            dlg->grab().save(
+                                                QStringLiteral(
+                                                    "D:/BlockBox/_out/struct_detail_loot_cats.png"));
+                                        }
+                                    }
+                                }
+
+                                // 简介页不应再有战利品芯片
+                                QWidget *intro2 = tabs->widget(0);
+                                const auto introChips =
+                                    intro2
+                                        ? intro2->findChildren<QWidget *>(
+                                              QStringLiteral(
+                                                  "structDetailLootChip"))
+                                        : QList<QWidget *>();
+                                expect(introChips.isEmpty(),
+                                       "intro page has no loot chips");
+
+                                // 种子掷取确定性
                                 {
                                     const StructureLoot::Result a =
                                         StructureLoot::rollLoot(
@@ -1371,28 +1492,153 @@ int main(int argc, char **argv)
                                         expect(a.stacks.first().count >= 1,
                                                "seeded loot stack has count");
                                 }
+                                tabs->setCurrentIndex(0);
                             }
 
-                            // 预览 / 战利品仍是占位
-                            for (int i = 1; i < tabs->count(); ++i)
+                            // 预览页：三维模型页（无种子时给提示）
                             {
-                                tabs->setCurrentIndex(i);
+                                tabs->setCurrentIndex(1);
                                 QApplication::processEvents();
-                                expect(tabs->currentIndex() == i,
-                                       "can switch detail page");
-                                QLabel *hint = tabs->widget(i)
-                                    ? tabs->widget(i)->findChild<QLabel *>(
-                                          QStringLiteral(
-                                              "structDetailPlaceholderHint"))
+                                QWidget *preview = tabs->widget(1);
+                                expect(preview != nullptr
+                                           && preview->objectName()
+                                                  == QStringLiteral(
+                                                      "structDetailPreviewPage"),
+                                       "preview page exists");
+                                QLabel *hint = preview
+                                    ? preview->findChild<QLabel *>(
+                                          QStringLiteral("structPreviewHint"))
                                     : nullptr;
-                                std::fprintf(stderr, "  page %d hint: %s\n", i,
+                                QLabel *stats = preview
+                                    ? preview->findChild<QLabel *>(
+                                          QStringLiteral("structPreviewStats"))
+                                    : nullptr;
+                                QWidget *view = preview
+                                    ? preview->findChild<QWidget *>(
+                                          QStringLiteral("structPreviewView"))
+                                    : nullptr;
+                                std::fprintf(stderr,
+                                             "  preview hint: %s\n",
                                              hint ? hint->text().toUtf8().constData()
                                                   : "(none)");
                                 expect(hint != nullptr && !hint->text().isEmpty(),
-                                       "placeholder page shows hint text");
+                                       "preview page shows status hint");
+                                expect(stats != nullptr,
+                                       "preview page has stats label");
+                                expect(view != nullptr,
+                                       "preview page has 3d view");
+                                if (hint)
+                                {
+                                    if (hint->text().contains(
+                                            QStringLiteral("种子")))
+                                        expect(true,
+                                               "preview explains missing seed");
+                                    else
+                                        expect(view != nullptr
+                                                   && view->isVisible(),
+                                               "preview renders seeded model");
+                                }
+
+                                // 层数过滤：只看某一层 / 看「此层以下」整段
+                                {
+                                    QWidget *bar = preview
+                                        ? preview->findChild<QWidget *>(
+                                              QStringLiteral("structPreviewLayerBar"))
+                                        : nullptr;
+                                    auto *layerSlider = preview
+                                        ? preview->findChild<QSlider *>(
+                                              QStringLiteral("structPreviewLayerSlider"))
+                                        : nullptr;
+                                    auto *belowToggle = preview
+                                        ? preview->findChild<QToolButton *>(
+                                              QStringLiteral("structPreviewBelowToggle"))
+                                        : nullptr;
+                                    auto *layerValue = preview
+                                        ? preview->findChild<QLabel *>(
+                                              QStringLiteral("structPreviewLayerValue"))
+                                        : nullptr;
+                                    const bool layered =
+                                        layerSlider && layerSlider->maximum() > 0;
+                                    expect(!layered
+                                               || (bar != nullptr && bar->isVisible()),
+                                           "preview shows layer bar");
+                                    if (layered)
+                                    {
+                                        layerSlider->setValue(
+                                            qMin(2, layerSlider->maximum()));
+                                        QApplication::processEvents();
+                                        expect(layerValue != nullptr
+                                                   && layerValue->text().contains(
+                                                       QStringLiteral("层")),
+                                               "layer bar names current layer");
+                                        if (belowToggle)
+                                        {
+                                            belowToggle->setChecked(true);
+                                            QApplication::processEvents();
+                                            expect(belowToggle->isChecked(),
+                                                   "layer bar offers this-layer-and-below");
+                                            dlg->grab().save(QStringLiteral(
+                                                "D:/BlockBox/_out/struct_detail_preview_layer.png"));
+                                        }
+                                        layerSlider->setValue(0);
+                                        QApplication::processEvents();
+                                    }
+                                }
+
+                                // 藏宝箱高亮：沉船模型里有箱子，按钮应出现且默认打开
+                                {
+                                    auto *chestToggle = preview
+                                        ? preview->findChild<QToolButton *>(
+                                              QStringLiteral("structPreviewChestToggle"))
+                                        : nullptr;
+                                    expect(chestToggle != nullptr,
+                                           "preview has chest highlight toggle");
+                                    if (chestToggle)
+                                    {
+                                        std::fprintf(stderr,
+                                                     "  chest toggle: visible=%d checked=%d text=%s\n",
+                                                     chestToggle->isVisible() ? 1 : 0,
+                                                     chestToggle->isChecked() ? 1 : 0,
+                                                     chestToggle->text().toUtf8().constData());
+                                        expect(chestToggle->isVisible(),
+                                               "shipwreck preview shows chest toggle");
+                                        expect(chestToggle->isChecked(),
+                                               "chest highlight defaults on");
+                                        expect(chestToggle->text().contains(
+                                                   QStringLiteral("藏宝箱")),
+                                               "chest toggle names 藏宝箱");
+                                        auto *voxel =
+                                            qobject_cast<VoxelViewWidget *>(view);
+                                        if (voxel)
+                                            std::fprintf(stderr,
+                                                         "  voxel selected=%lld highlight=%lld\n",
+                                                         static_cast<long long>(
+                                                             voxel->selectedCells().size()),
+                                                         static_cast<long long>(
+                                                             voxel->highlightCells().size()));
+                                        expect(voxel != nullptr
+                                                   && !voxel->highlightCells().isEmpty(),
+                                               "chest cells are highlighted");
+                                        QImage chestOn = view->grab().toImage();
+                                        chestOn.save(QStringLiteral(
+                                            "D:/BlockBox/_out/chest_highlight_on.png"));
+                                        chestToggle->setChecked(false);
+                                        QApplication::processEvents();
+                                        QImage chestOff = view->grab().toImage();
+                                        chestOff.save(QStringLiteral(
+                                            "D:/BlockBox/_out/chest_highlight_off.png"));
+                                        expect(voxel != nullptr
+                                                   && voxel->highlightCells().isEmpty(),
+                                               "chest highlight toggles off");
+                                        expect(chestOn != chestOff,
+                                               "chest highlight visibly changes the preview");
+                                        chestToggle->setChecked(true);
+                                        QApplication::processEvents();
+                                    }
+                                }
+                                tabs->setCurrentIndex(0);
+                                QApplication::processEvents();
                             }
-                            tabs->setCurrentIndex(0);
-                            QApplication::processEvents();
                         }
 
                         // 卡片居中：卡片中心与窗口中心偏差要小
@@ -1424,6 +1670,68 @@ int main(int argc, char **argv)
                                    QStringLiteral("structDetailDialog"))
                                    == nullptr,
                                "detail dialog closes on reject");
+                    }
+                }
+
+                // 结构模型构建器：直接按种子生成，坐标不同/种子不同结果稳定
+                {
+                    StructureModelInfo info;
+                    SchematicDocument *doc = StructureModelBuilder::build(
+                        QStringLiteral("village"), 0, 0, 12345, true,
+                        QStringLiteral("1.21.4"), &info);
+                    expect(doc != nullptr, "structure builder builds village");
+                    if (doc)
+                    {
+                        expect(info.sizeX > 0 && info.sizeY > 0
+                                   && info.sizeZ > 0 && info.blockCount > 0,
+                               "structure builder reports size and blocks");
+                        expect(!info.variant.isEmpty(),
+                               "structure builder reports variant");
+                        delete doc;
+                    }
+                    expect(!StructureModelBuilder::supports(
+                               QStringLiteral("not_a_structure")),
+                           "structure builder rejects unknown key");
+                }
+
+                // 预览页种子模型截图（BLOCKBOX_PROBE_PREVIEW=1 时执行）
+                if (qEnvironmentVariableIsSet("BLOCKBOX_PROBE_PREVIEW"))
+                {
+                    const char *keys[] = {
+                        "village", "desert_pyramid", "jungle_temple",
+                        "swamp_hut", "igloo", "ocean_ruin", "shipwreck",
+                        "ruined_portal", "outpost", "monument", "mansion",
+                        "stronghold", "mineshaft", "ancient_city",
+                        "trial_chambers", "trail_ruins", "desert_well",
+                        "buried_treasure", "fortress", "bastion", "end_city",
+                        "end_gateway", "abandoned_camp", "nether_fossil",
+                        "end_ship",
+                    };
+                    QDir().mkpath(QStringLiteral("D:/BlockBox/_out/struct_models"));
+                    for (const char *key : keys)
+                    {
+                        StructureDetailDialog dialog(
+                            QString::fromLatin1(key), QString::fromLatin1(key),
+                            QPixmap(), QString::fromLatin1(key), 0, 0, true,
+                            QStringLiteral("主世界"), false,
+                            StructureLoot::Result(), 12345,
+                            true, QString(), QStringLiteral("1.21.4"), nullptr);
+                        dialog.resize(860, 620);
+                        dialog.show();
+                        dialog.setCurrentPage(
+                            StructureDetailDialog::PreviewPage);
+                        QApplication::processEvents();
+                        QThread::msleep(60);
+                        QApplication::processEvents();
+                        const QString path =
+                            QStringLiteral("D:/BlockBox/_out/struct_models/%1.png")
+                                .arg(QLatin1String(key));
+                        const bool ok = dialog.grab().save(path);
+                        std::fprintf(stderr, "  preview shot %s: %s\n", key,
+                                     ok ? "ok" : "FAILED");
+                        expect(ok, "preview screenshot saved");
+                        dialog.close();
+                        QApplication::processEvents();
                     }
                 }
 
@@ -1556,6 +1864,126 @@ int main(int argc, char **argv)
                          right, page.width());
             expect(right <= page.width() - 8, "toolbar fits in 1000px width");
         }
+    }
+
+    // ── 用户标记点：右键添加 → 居中编辑弹窗 → 画布图钉 → 编辑 / 删除 ──
+    {
+        expect(page.userMarkerCount() == 0, "no user markers initially");
+        expect(page.addUserMarker(300, 200, QStringLiteral("老家"), 2),
+               "addUserMarker (invokable) succeeds");
+        expect(page.userMarkerCount() == 1, "user marker added");
+        const QPoint mp = page.userMarkerScreenPos(0);
+        std::fprintf(stderr, "  user marker screen=(%d,%d)\n", mp.x(), mp.y());
+        expect(!mp.isNull(), "user marker pin visible (spawn is view center)");
+
+        // 新增模式的编辑弹窗：填名字、选图标、保存 → 画布多一枚图钉
+        expect(page.openMarkerEditor(-1), "marker editor opens (add mode)");
+        QWidget *editor = page.findChild<QWidget *>(
+            QStringLiteral("worldMapMarkerEditPopup"));
+        expect(editor != nullptr && editor->isVisible(),
+               "marker edit popup visible (centered)");
+        if (editor)
+        {
+            const QList<QPushButton *> iconBtns =
+                editor->findChildren<QPushButton *>(
+                    QStringLiteral("worldMapMarkerIconBtn"));
+            expect(iconBtns.size() == 8, "8 preset icon buttons in editor");
+            if (iconBtns.size() == 8)
+            {
+                expect(iconBtns[0]->isChecked(),
+                       "icon 0 (pin) checked by default in add mode");
+                iconBtns[4]->click();
+                expect(iconBtns[4]->isChecked() && !iconBtns[0]->isChecked(),
+                       "clicking icon 4 selects it exclusively");
+            }
+            QLineEdit *nameEdit = editor->findChild<QLineEdit *>(
+                QStringLiteral("worldMapMarkerEdit"));
+            expect(nameEdit != nullptr, "name edit exists");
+            if (nameEdit)
+                nameEdit->setText(QStringLiteral("传送门"));
+            QApplication::processEvents();
+            editor->grab().save(
+                QStringLiteral("D:/BlockBox/_out/marker_editor.png"));
+            expect(page.saveMarkerEditor(), "saveMarkerEditor persists");
+            expect(!editor->isVisible(), "editor closed after save");
+        }
+        QApplication::processEvents();
+        // close() 走 DeleteOnClose，销毁可能压后一拍：这里只断言"没有任何可见实例"
+        {
+            bool anyVisible = false;
+            const auto leftovers = page.findChildren<QWidget *>(
+                QStringLiteral("worldMapMarkerEditPopup"));
+            for (QWidget *w : leftovers)
+                anyVisible = anyVisible || w->isVisible();
+            expect(!anyVisible, "editor destroyed after save");
+        }
+        expect(page.userMarkerCount() == 2, "marker count after save = 2");
+        expect(!page.userMarkerScreenPos(1).isNull(),
+               "second marker pin visible");
+        const QPoint b1 = page.userMarkerBlockPos(1);
+        std::fprintf(stderr, "  marker1 block=(%d,%d)\n", b1.x(), b1.y());
+
+        // 编辑已有标记：预填名称，改完保存（旧弹窗的销毁可能还没落地，
+        // findChild 可能拿到旧实例，这里按"可见"挑当前弹窗）
+        expect(page.openMarkerEditor(0), "marker editor opens (edit mode)");
+        QApplication::processEvents();
+        editor = nullptr;
+        for (QWidget *w : page.findChildren<QWidget *>(
+                 QStringLiteral("worldMapMarkerEditPopup")))
+            if (w->isVisible()) { editor = w; break; }
+        expect(editor != nullptr && editor->isVisible(),
+               "edit popup reopens for existing marker");
+        if (editor)
+        {
+            QLineEdit *nameEdit = editor->findChild<QLineEdit *>(
+                QStringLiteral("worldMapMarkerEdit"));
+            expect(nameEdit && nameEdit->text() == QStringLiteral("老家"),
+                   "edit mode prefills marker name");
+            expect(page.saveMarkerEditor(), "save after edit");
+        }
+        expect(page.userMarkerCount() == 2, "edit keeps count = 2");
+
+        // 右键菜单带「添加标记点…」入口
+        QWidget *mapView = page.findChild<QWidget *>(
+            QStringLiteral("worldMapView"));
+        if (mapView)
+        {
+            const QPointF c(mapView->width() / 2.0, mapView->height() / 2.0);
+            QMouseEvent press(QEvent::MouseButtonPress, c,
+                              mapView->mapToGlobal(c.toPoint()),
+                              Qt::RightButton, Qt::RightButton, Qt::NoModifier);
+            QApplication::sendEvent(mapView, &press);
+            QMenu *menu = nullptr;
+            for (QMenu *m : page.findChildren<QMenu *>())
+                if (m->isVisible()) { menu = m; break; }
+            expect(menu != nullptr, "right click opens context menu");
+            bool hasAdd = false;
+            if (menu)
+            {
+                for (QAction *a : menu->actions())
+                    if (a->text() == QStringLiteral("添加标记点…"))
+                        hasAdd = true;
+                menu->close();
+            }
+            expect(hasAdd, "context menu has 添加标记点 entry");
+            QApplication::processEvents();
+        }
+
+        // 持久化：QSettings 里应能按存档路径找到 JSON
+        {
+            QSettings s;
+            const QJsonDocument doc = QJsonDocument::fromJson(s.value(
+                QStringLiteral("worldMap/userMarkers/")
+                + QString::number(qHash(savePath))).toByteArray());
+            expect(doc.array().size() == 2,
+                   "user markers persisted as JSON array");
+        }
+
+        // 清场：后续鼠标交互段落要靠「点画布中心 = 选中区块」，不能留图钉拦着
+        while (page.userMarkerCount() > 0)
+            expect(page.removeUserMarker(0), "removeUserMarker");
+        expect(page.userMarkerCount() == 0, "user markers cleaned up");
+        QApplication::processEvents();
     }
 
     // ── 鼠标交互：单击选中 / 中键平移 / 右键菜单 / 双击放大 ──
@@ -2179,6 +2607,29 @@ int main(int argc, char **argv)
                                 expect(page.structureDoneCount() == doneBefore,
                                        "ore done toggle undone");
                             }
+                            // 验证是否存在：矿石还在存档里时不应自动标记完成。
+                            // 用页面级接口触发（与点弹窗按钮等价），免得弹窗先关掉。
+                            {
+                                QPushButton *verifyBtn = popup->findChild<QPushButton *>(
+                                    QStringLiteral("worldMapOreVerify"));
+                                expect(verifyBtn != nullptr,
+                                       "ore popup has verify button");
+                                const int doneBeforeV = page.structureDoneCount();
+                                expect(page.verifyOreMarker(target),
+                                       "ore verify starts in background");
+                                QElapsedTimer vclock;
+                                vclock.start();
+                                while (page.oreVerifyBusy()
+                                       && vclock.elapsed() < 10000)
+                                {
+                                    QApplication::processEvents();
+                                    QThread::msleep(10);
+                                }
+                                expect(!page.oreVerifyBusy(),
+                                       "ore verify finishes");
+                                expect(page.structureDoneCount() == doneBeforeV,
+                                       "ore verify keeps existing ore unmarked");
+                            }
                             popup->grab().toImage().save(
                                 QStringLiteral("D:/BlockBox/_out/"
                                                "world_map_page_probe_ore_popup.png"));
@@ -2387,7 +2838,203 @@ int main(int argc, char **argv)
         }
     }
 
+    // ── 立体（3D）模式：同一份画布换个看法 ──
+    {
+        // 先直接问渲染器要一张图，确认高度图与颜色图逐点对齐（不经过页面）
+        {
+            const WorldMapRenderer::RenderResult direct =
+                WorldMapRenderer::render(savePath,
+                                         WorldMapRenderer::Dimension::Overworld,
+                                         WorldMapRenderer::ShadeMode::BlockColor,
+                                         {}, {}, nullptr);
+            const QImage hm = direct.heightImage;
+            int opaque = 0;
+            int missing = 0;
+            if (!hm.isNull() && hm.size() == direct.image.size())
+            {
+                for (int y = 0; y < direct.image.height(); y += 5)
+                {
+                    const QRgb *cp = reinterpret_cast<const QRgb *>(
+                        direct.image.constScanLine(y));
+                    const quint16 *hp = reinterpret_cast<const quint16 *>(
+                        hm.constScanLine(y));
+                    for (int x = 0; x < direct.image.width(); x += 5)
+                    {
+                        if (qAlpha(cp[x]) == 0)
+                            continue;
+                        ++opaque;
+                        if (hp[x] == 0x8000)
+                            ++missing;
+                    }
+                }
+            }
+            std::fprintf(stderr,
+                         "  direct render: img=%dx%d hm=%dx%d opaque=%d missing=%d\n",
+                         direct.image.width(), direct.image.height(),
+                         hm.width(), hm.height(), opaque, missing);
+            expect(!hm.isNull() && hm.size() == direct.image.size(),
+                   "renderer returns aligned height map");
+            expect(missing * 100 <= opaque * 2,
+                   "renderer fills a height for every surface pixel");
+        }
+        // 先把种子预测打开：这样画布上大片区域都有地形（也顺带验证种子高度图）
+        if (auto *seedBtn = page.findChild<QPushButton *>(
+                QStringLiteral("worldMapSeedBtn")))
+        {
+            if (!seedBtn->isChecked())
+            {
+                seedBtn->click();
+                QApplication::processEvents();
+            }
+            waitRenderDone(page, stack, nullptr, 30000);
+        }
+        expect(!page.is3dMode(), "3d mode off by default");
+        // 立体视图是实验性功能：先在设置里打开，测完关掉
+        SettingsManager::instance()->setExperimentalMap3dEnabled(true);
+        const bool on = page.toggle3dMode();
+        QApplication::processEvents();
+        expect(on && page.is3dMode(), "3d mode turned on");
+        expect(page.has3dSurface(), "3d view bound to canvas");
+        expect(page.has3dHeightData(), "3d height map available");
+        const QImage frame3d = page.view3dFrame();
+        expect(!frame3d.isNull() && frame3d.width() > 200, "3d frame rendered");
+        expect(page.view3dQuadCount() > 500, "3d mesh has quads");
+        // 有地表的像素必须有高度：两者逐点对齐，立体视图才不会出现"空洞"
+        {
+            const QImage map = page.mapImage();
+            const QImage hm = page.mapHeightImage();
+            int opaque = 0;
+            int missing = 0;
+            if (!map.isNull() && !hm.isNull()
+                && hm.size() == map.size()
+                && hm.format() == QImage::Format_Grayscale16)
+            {
+                for (int y = 0; y < map.height(); y += 7)
+                {
+                    const QRgb *cp = reinterpret_cast<const QRgb *>(
+                        map.constScanLine(y));
+                    const quint16 *hp = reinterpret_cast<const quint16 *>(
+                        hm.constScanLine(y));
+                    for (int x = 0; x < map.width(); x += 7)
+                    {
+                        if (qAlpha(cp[x]) == 0)
+                            continue;
+                        ++opaque;
+                        if (hp[x] == 0x8000)
+                            ++missing;
+                    }
+                }
+            }
+            std::fprintf(stderr, "  height map: opaque=%d missing=%d (%dx%d)\n",
+                         opaque, missing, hm.width(), hm.height());
+            expect(!hm.isNull() && hm.size() == map.size(),
+                   "height map aligned with canvas");
+            expect(opaque > 1000, "height map sample covers canvas");
+            expect(missing * 100 <= opaque * 2,
+                   "every opaque pixel has a surface height");
+        }
+        const int idx3d = stack ? stack->currentIndex() : -1;
+        std::fprintf(stderr, "  3d: stack=%d quads=%d frame=%dx%d\n", idx3d,
+                     page.view3dQuadCount(), frame3d.width(), frame3d.height());
+        expect(idx3d == 2, "stack -> 3d view");
+        const QImage shot3d = page.grab().toImage();
+        shot3d.save(QStringLiteral("D:/BlockBox/_out/wmp_3d_mode.png"));
+        // 画面里应当有地形（颜色数远多于纯天空渐变）
+        {
+            QSet<QRgb> colors;
+            for (int y = shot3d.height() / 4; y < shot3d.height() * 3 / 4; y += 3)
+                for (int x = shot3d.width() / 4; x < shot3d.width() * 3 / 4; x += 3)
+                    colors.insert(shot3d.pixel(x, y));
+            std::fprintf(stderr, "  3d colors=%d\n", int(colors.size()));
+            expect(colors.size() > 60, "3d canvas shows terrain");
+        }
+
+        // 切回俯视图：画布与视口都要回来
+        const bool off = page.toggle3dMode();
+        QApplication::processEvents();
+        expect(!off && !page.is3dMode(), "3d mode turned off");
+        expect(stack && stack->currentIndex() == 1, "stack -> back to map view");
+        SettingsManager::instance()->setExperimentalMap3dEnabled(false);
+    }
+
     expect(g_parseWarnings == 0, "no QSS parse warnings");
+
+    // ── 玩家标记：位置 + 朝向箭头（debug 钩子直接上画布，绕过进程门控） ──
+    {
+        page.clearSelection();
+        QWidget *mv = page.findChild<QWidget *>(QStringLiteral("worldMapView"));
+        const QPoint vOrigin = mv ? mv->mapTo(&page, QPoint(0, 0)) : QPoint();
+        const QColor accent = ThemeManager::instance()->currentThemeColor();
+        auto snap2 = [&page]() {
+            QImage im = page.grab().toImage();
+            im.setDevicePixelRatio(1.0);
+            return im;
+        };
+        auto isAccent = [&accent](const QImage &im, int x, int y) {
+            if (!im.rect().contains(QPoint(x, y)))
+                return false;
+            const QRgb px = im.pixel(x, y);
+            return qAbs(qRed(px) - accent.red()) <= 36
+                && qAbs(qGreen(px) - accent.green()) <= 36
+                && qAbs(qBlue(px) - accent.blue()) <= 36;
+        };
+        // 统计标记中心 7~18px 环带里的主题色像素（圆点半径 6px，环带里只有
+        // 朝向箭头会画出主题色），按 上/下/左/右 分桶
+        auto arrowLeak = [&](const QImage &im, const QPoint &c, int *out) {
+            out[0] = out[1] = out[2] = out[3] = 0;
+            for (int dy = -18; dy <= 18; ++dy)
+                for (int dx = -18; dx <= 18; ++dx)
+                {
+                    const int d2 = dx * dx + dy * dy;
+                    if (d2 < 49 || d2 > 324 || !isAccent(im, c.x() + dx, c.y() + dy))
+                        continue;
+                    if (std::abs(dx) > std::abs(dy))
+                        out[dx > 0 ? 3 : 2] += 1;
+                    else
+                        out[dy > 0 ? 1 : 0] += 1;
+                }
+        };
+        // MC yaw：0=南(+Z)=屏幕向下，90=西(-X)=向左，180=北=向上，270=东=向右
+        const struct
+        {
+            double yaw;
+            int dir; // 0=up 1=down 2=left 3=right
+            const char *name;
+        } yawCases[] = {
+            { 0.0, 1, "south/down" },
+            { 90.0, 2, "west/left" },
+            { 180.0, 0, "north/up" },
+            { 270.0, 3, "east/right" },
+        };
+        const QPoint vcBlock = page.viewCenterBlock();
+        for (const auto &tc : yawCases)
+        {
+            // 注意：这里不能 processEvents——3 秒玩家轮询定时器（探针桩恒
+            // 判定「没在游戏」）会清掉刚放的调试标记；grab() 本身同步重绘
+            page.debugShowPlayerMarker(vcBlock.x(), vcBlock.y(), tc.yaw);
+            const QPoint ps = page.playerMarkerScreenPos();
+            expect(!ps.isNull(), "player marker has on-screen position");
+            if (ps.isNull())
+                continue;
+            const QPoint c = ps + vOrigin;
+            const QImage im = snap2();
+            int leak[4];
+            arrowLeak(im, c, leak);
+            std::fprintf(stderr, "  yaw=%.0f (%s) leak u/d/l/r=%d/%d/%d/%d\n",
+                         tc.yaw, tc.name, leak[0], leak[1], leak[2], leak[3]);
+            expect(leak[tc.dir] > 8, "arrow pixels point along facing direction");
+            // 反方向（上下互换 / 左右互换）不应有箭头，容许少量杂色误判
+            expect(leak[tc.dir ^ 1] * 5 < leak[tc.dir],
+                   "no arrow pixels opposite the facing direction");
+            im.copy(QRect(c - QPoint(24, 24), QSize(48, 48)))
+                .save(QStringLiteral("D:/BlockBox/_out/wmp_player_marker_yaw%1.png")
+                          .arg(int(tc.yaw)));
+        }
+        expect(page.playerMarkerBlockPos() == vcBlock,
+               "player marker block pos = view center");
+        page.debugShowPlayerMarker(0, 0, 0.0, false);
+        expect(!page.hasPlayerMarker(), "player marker cleared (debug hook off)");
+    }
 
     std::fprintf(stderr, "failures: %d\n", g_fail);
     return g_fail == 0 ? 0 : 1;

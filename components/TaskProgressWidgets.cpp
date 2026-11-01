@@ -6,6 +6,7 @@
  */
 #include "TaskProgressWidgets.h"
 
+#include <QFontMetrics>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -304,9 +305,23 @@ void StageStepperWidget::paintEvent(QPaintEvent *event)
     const int dotY = static_cast<int>(H * 0.30);
     const int dotR = 7;
 
+    QFont nameFont = font();
+    nameFont.setPixelSize(11);
+    nameFont.setBold(false);
+    const QFontMetrics nameFm(nameFont);
+
+    // 两端按标签半宽留出边距：首尾步骤的名称以圆点居中后仍完整落在控件内，
+    // 窄宽度下最多各占 24% 宽，避免圆点被挤到一起。
+    double halfLabelMax = 0.0;
+    for (const QString &name : m_stages)
+    {
+        halfLabelMax = qMax(halfLabelMax, nameFm.horizontalAdvance(name) / 2.0);
+    }
+    const double edgeInset = qBound(18.0, halfLabelMax + 2.0, qMax(18.0, width() * 0.24));
+
     // 连接线（轨道）
-    const double leftX = 18.0;
-    const double rightX = width() - 18.0;
+    const double leftX = edgeInset;
+    const double rightX = qMax(leftX, width() - edgeInset);
     painter.setPen(QPen(QColor(15, 23, 42, 18), 3));
     painter.drawLine(QPointF(leftX, dotY), QPointF(rightX, dotY));
 
@@ -322,9 +337,8 @@ void StageStepperWidget::paintEvent(QPaintEvent *event)
 
     // 圆点 + 名称
     const double stepX = count > 1 ? (rightX - leftX) / (count - 1) : 0.0;
-    QFont nameFont = font();
-    nameFont.setPixelSize(11);
-    nameFont.setBold(false);
+    // 每个名称可用宽度不超过相邻步距（留 8px 间隙），超长时省略号截断
+    const double labelSlot = count > 1 ? qMax(20.0, stepX - 8.0) : qMax(20.0, rightX - leftX);
 
     for (int i = 0; i < count; ++i)
     {
@@ -388,12 +402,27 @@ void StageStepperWidget::paintEvent(QPaintEvent *event)
                              QString::number(i + 1));
         }
 
-        // 名称
+        // 名称：居中对齐圆点，但整体限制在控件矩形内，放不下就省略
         painter.setFont(nameFont);
         QColor nameColor = m_textColor;
         nameColor.setAlpha(current ? 255 : 160);
         painter.setPen(nameColor);
-        painter.drawText(QRectF(cx - 44, dotY + 10, 88, 18), Qt::AlignHCenter | Qt::AlignTop,
-                         m_stages.at(i));
+
+        const QString fullName = m_stages.at(i);
+        const double textW = nameFm.horizontalAdvance(fullName);
+        const double boxMaxW = qMin(labelSlot, qMax(0.0, width() - 8.0));
+        double boxW = qMin(textW + 4.0, boxMaxW);
+        if (boxW <= 0.0) continue;
+        const QString shownName = textW > boxW ? nameFm.elidedText(fullName, Qt::ElideRight, int(boxW)) : fullName;
+        double boxX = cx - boxW / 2.0;
+        if (boxX < 2.0)
+        {
+            boxX = 2.0;
+        }
+        if (boxX + boxW > width() - 2.0)
+        {
+            boxX = qMax(2.0, width() - 2.0 - boxW);
+        }
+        painter.drawText(QRectF(boxX, dotY + 10, boxW, 18), Qt::AlignHCenter | Qt::AlignTop, shownName);
     }
 }

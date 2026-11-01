@@ -404,7 +404,7 @@ bool OptiFineInstaller::runOptiFinePatcher(const QString &installerPath, const Q
     process.start(javaPath, arguments);
 
     if (!process.waitForStarted(30000)) {
-        qWarning() << "OptiFine patcher failed to start";
+        qWarning() << "OptiFine 补丁器启动失败";
         return false;
     }
 
@@ -414,13 +414,13 @@ bool OptiFineInstaller::runOptiFinePatcher(const QString &installerPath, const Q
         if (m_isCancelled) {
             return false;
         }
-        qWarning() << "OptiFine patcher timed out (10 minutes)";
+        qWarning() << "OptiFine 补丁器超时（10 分钟）";
         return false;
     }
 
     if (process.exitCode() != 0) {
-        qWarning() << "OptiFine patcher exited with code" << process.exitCode();
-        qWarning() << "Patcher output:" << process.readAll();
+        qWarning() << "OptiFine 补丁器已退出，退出码：" << process.exitCode();
+        qWarning() << "补丁器输出：" << process.readAll();
         return false;
     }
 
@@ -732,7 +732,7 @@ QString OptiFineInstaller::readJarEntry(const QString &jarPath, const QString &e
     process.start("jar", arguments);
 
     if (!process.waitForStarted(10000)) {
-        qWarning() << "JAR process failed to start for reading" << entryPath;
+        qWarning() << "JAR 进程启动失败，无法读取条目：" << entryPath;
         return QString();
     }
 
@@ -770,7 +770,7 @@ bool OptiFineInstaller::extractJarEntry(const QString &jarPath, const QString &e
     process.start("jar", arguments);
 
     if (!process.waitForStarted(10000)) {
-        qWarning() << "JAR process failed to start for extracting" << entryPath;
+        qWarning() << "JAR 进程启动失败，无法解压条目：" << entryPath;
         return false;
     }
 
@@ -779,7 +779,7 @@ bool OptiFineInstaller::extractJarEntry(const QString &jarPath, const QString &e
     QString sourcePath = m_tempDir + "/" + entryPath;
     QFile extractedFile(sourcePath);
     if (!extractedFile.exists()) {
-        qWarning() << "Failed to extract" << entryPath << "from" << jarPath;
+        qWarning() << "解压失败：" << entryPath << "来自" << jarPath;
         return false;
     }
 
@@ -808,7 +808,7 @@ bool OptiFineInstaller::jarEntryExists(const QString &jarPath, const QString &en
     process.start("jar", arguments);
 
     if (!process.waitForStarted(10000)) {
-        qWarning() << "JAR process failed to start for listing entries";
+        qWarning() << "JAR 进程启动失败，无法列出条目";
         return false;
     }
 

@@ -19,6 +19,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QtMath>
+#include <algorithm>
 #include <memory>
 
 namespace {
@@ -91,6 +92,7 @@ struct ModelRef
     QString model;
     int     rotX = 0;
     int     rotY = 0;
+    int     weight = 1;     // 数组里作为「加权随机候选」时的权重，默认 1
 };
 
 // 读取单个变体对象 / multipart apply 对象的 model + x/y 旋转
@@ -102,7 +104,22 @@ static ModelRef refFromObject(const QJsonObject &obj, const QString &fallbackMod
         r.model = fallbackModel;
     r.rotX = obj.value(QStringLiteral("x")).toInt(0);
     r.rotY = obj.value(QStringLiteral("y")).toInt(0);
+    r.weight = obj.value(QStringLiteral("weight")).toInt(1);
+    if (r.weight <= 0)
+        r.weight = 1;
     return r;
+}
+
+// 数组形式的模型引用在游戏里是「按权重随机挑一个」用（石头就是 4 个镜像/旋转副本），
+// 不是「全部叠加」。全都画出来等于同一块石头画 4 遍：面数 ×4，还会共面互相闪。
+// 这里把权重最高的排到最前，配合调用处的「第一个解析出几何的就用」，与原版体积一致。
+static void orderByWeightDesc(QList<ModelRef> &refs)
+{
+    if (refs.size() <= 1)
+        return;
+    std::stable_sort(refs.begin(), refs.end(), [](const ModelRef &a, const ModelRef &b) {
+        return a.weight > b.weight;
+    });
 }
 
 // 解析 model 引用值（字符串 或 array[obj] 或 obj）为模型引用列表
@@ -727,6 +744,7 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
         {
             QList<ModelRef> refs;
             appendModelRefs(vars.value(bestKey), QString(), refs);
+            orderByWeightDesc(refs);
             for (const ModelRef &r : refs)
             {
                 if (r.model.isEmpty())
@@ -736,8 +754,12 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
                 // 用不同旋转重复引用（玻璃板、墙、栅栏），共享一份会漏掉后几次
                 QStringList visited;
                 collectElements(normalizeModelKey(r.model), nullptr, out.boxes, visited);
-                applyBlockRotation(out.boxes, before,
-                                   float(r.rotX), float(r.rotY));
+                if (out.boxes.size() > before)
+                {
+                    applyBlockRotation(out.boxes, before,
+                                       float(r.rotX), float(r.rotY));
+                    break;      // 与游戏一致：只用一个候选模型
+                }
             }
             gotAny = !refs.isEmpty();
         }
@@ -804,9 +826,11 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
                 if (!matched)
                     continue;
 
-                // multipart part 的模型在 "apply" 键中（对象含 model/x/y）；兼容直接给字符串
+                // multipart part 的模型在 "apply" 键中（对象含 model/x/y）；兼容直接给字符串。
+                // 给数组时同样是加权随机候选，只取第一个能解析出几何的
                 QList<ModelRef> refs;
                 appendModelRefs(po.value(QStringLiteral("apply")), QString(), refs);
+                orderByWeightDesc(refs);
                 for (const ModelRef &r : refs)
                 {
                     if (r.model.isEmpty())
@@ -814,8 +838,12 @@ bool BlockShapeLoader::shapeFor(const QString &blockStateName, BlockShapes &out)
                     const int before = out.boxes.size();
                     QStringList visited;
                     collectElements(normalizeModelKey(r.model), nullptr, out.boxes, visited);
-                    applyBlockRotation(out.boxes, before,
-                                       float(r.rotX), float(r.rotY));
+                    if (out.boxes.size() > before)
+                    {
+                        applyBlockRotation(out.boxes, before,
+                                           float(r.rotX), float(r.rotY));
+                        break;
+                    }
                 }
                 if (!refs.isEmpty())
                     gotAny = true;

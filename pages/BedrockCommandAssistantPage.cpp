@@ -43,7 +43,7 @@ BedrockCommandAssistantPage::BedrockCommandAssistantPage(QWidget *parent)
     m_commandDb = new CommandDatabase();
     if (!m_commandDb->loadFromFile(QStringLiteral(":/resources/bedrock_command_database.json")))
     {
-        qWarning() << "BedrockCommandAssistantPage: failed to load bedrock command database";
+        qWarning() << "BedrockCommandAssistantPage: 基岩版指令库加载失败";
     }
 
     m_translator = new CommandTranslator(m_commandDb);

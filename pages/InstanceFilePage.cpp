@@ -75,6 +75,8 @@ InstanceFilePage::InstanceFilePage(FileType type, QWidget *parent)
     , m_viewMode(ContentViewSwitch::List)
     , m_loadingOverlay(nullptr)
     , m_emptyLabel(nullptr)
+    , m_emptyWidget(nullptr)
+    , m_quickInstallBtn(nullptr)
     , m_downloadSearchBtn(nullptr)
     , m_categoryManager(nullptr)
     , m_categoryCombo(nullptr)
@@ -283,11 +285,38 @@ void InstanceFilePage::initUI()
     mainLayout->addWidget(m_scrollArea, 1);
 
     // 空提示放在列表区域内（无资源时居中显示在卡片本该出现的位置）
-    m_emptyLabel = new QLabel(tr("暂无%1").arg(typeDisplayName()));
+    // 光影包额外带一个「快速安装光影模组」按钮：没有光影包时多半连加载器都没装
+    m_emptyWidget = new QWidget(this);
+    QVBoxLayout *emptyLayout = new QVBoxLayout(m_emptyWidget);
+    emptyLayout->setContentsMargins(0, 0, 0, 0);
+    emptyLayout->setSpacing(12);
+    emptyLayout->addStretch();
+
+    m_emptyLabel = new QLabel(tr("暂无%1").arg(typeDisplayName()), m_emptyWidget);
     m_emptyLabel->setObjectName("modPlaceholderLabel");
     m_emptyLabel->setAlignment(Qt::AlignCenter);
-    m_emptyLabel->hide();
-    mainLayout->addWidget(m_emptyLabel, 1);
+    m_emptyLabel->setWordWrap(true);
+    emptyLayout->addWidget(m_emptyLabel);
+
+    m_quickInstallBtn = nullptr;
+    if (m_fileType == ShaderPack)
+    {
+        m_quickInstallBtn = new QPushButton(tr("快速安装光影模组"), m_emptyWidget);
+        m_quickInstallBtn->setObjectName("quickInstallBtn");
+        // 主色按钮配白色图标（主题色描边会和底色糊在一起看不清）
+        m_quickInstallBtn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/download.svg", QColor("#ffffff"), 18));
+        m_quickInstallBtn->setIconSize(QSize(18, 18));
+        m_quickInstallBtn->setCursor(Qt::PointingHandCursor);
+        m_quickInstallBtn->setToolTip(
+            tr("自动安装光影加载器：Fabric / Quilt / NeoForge 装 Iris，Forge 装 Oculus\n"
+               "装好后把光影包放进 shaderpacks 目录即可在游戏内开启"));
+        emptyLayout->addWidget(m_quickInstallBtn, 0, Qt::AlignHCenter);
+    }
+    emptyLayout->addStretch();
+
+    m_emptyWidget->hide();
+    mainLayout->addWidget(m_emptyWidget, 1);
 
     // 拖放导入结果提示（列表下方，默认隐藏）
     m_dragStatusLabel = new QLabel();
@@ -453,6 +482,17 @@ void InstanceFilePage::setupConnections()
     {
         connect(m_installNewBtn, &QPushButton::clicked, this, [this]() {
             emit fileSearchRequested(QString());
+        });
+    }
+    if (m_quickInstallBtn)
+    {
+        // 空状态一键装好光影加载器，省得用户自己上模组站找 Iris / Oculus
+        connect(m_quickInstallBtn, &QPushButton::clicked, this, [this]() {
+            // 连点会并起两套安装流程，先短暂禁用按钮
+            QPushButton *btn = m_quickInstallBtn;
+            btn->setEnabled(false);
+            QTimer::singleShot(2500, btn, [btn]() { btn->setEnabled(true); });
+            emit quickInstallModRequested(QStringLiteral("shader_loader"));
         });
     }
     connect(m_updateCheckApi, &ModrinthAPI::hashesMatched,
@@ -1862,13 +1902,21 @@ void InstanceFilePage::showLoading(bool show)
 
 void InstanceFilePage::showEmptyHint(bool show)
 {
-    if (show)
-        m_emptyLabel->setText(tr("暂无%1").arg(typeDisplayName()));
-    m_emptyLabel->setVisible(show);
-    // 空态时隐藏列表滚动区，让提示文字占据列表区域
-    m_scrollArea->setVisible(!show);
+    // 真正的「一个文件都没有」时才带快速安装按钮：搜索/筛选筛空时资源其实存在
+    applyEmptyState(tr("暂无%1").arg(typeDisplayName()), show, show && m_fileList.isEmpty());
     if (!show)
         m_downloadSearchBtn->hide();
+}
+
+void InstanceFilePage::applyEmptyState(const QString &text, bool show, bool allowQuickInstall)
+{
+    if (show)
+        m_emptyLabel->setText(text);
+    m_emptyWidget->setVisible(show);
+    if (m_quickInstallBtn)
+        m_quickInstallBtn->setVisible(show && allowQuickInstall);
+    // 空态时隐藏列表滚动区，让提示文字占据列表区域
+    m_scrollArea->setVisible(!show);
 }
 
 void InstanceFilePage::updateBottomBarState()
@@ -2094,33 +2142,28 @@ void InstanceFilePage::applyFilterAndSearch()
     if (visibleCount == 0 && m_fileList.size() > 0 && m_fileType != Screenshot
         && !m_currentSearch.isEmpty())
     {
-        m_emptyLabel->setText(tr("没有找到匹配的%1").arg(typeDisplayName()));
-        m_emptyLabel->setVisible(true);
+        applyEmptyState(tr("没有找到匹配的%1").arg(typeDisplayName()), true, false);
         m_downloadSearchBtn->setVisible(true);
     }
     else if (visibleCount == 0 && m_fileList.size() > 0 && !m_currentSearch.isEmpty())
     {
         // 截图搜索无结果：给提示但不去下载页
-        m_emptyLabel->setText(tr("没有找到匹配的%1").arg(typeDisplayName()));
-        m_emptyLabel->setVisible(true);
+        applyEmptyState(tr("没有找到匹配的%1").arg(typeDisplayName()), true, false);
         m_downloadSearchBtn->hide();
     }
     else if (visibleCount == 0 && m_fileList.size() > 0)
     {
         // 纯筛选（分类/状态/时间/大小）全部被隐藏：提示但不引导去下载页
-        m_emptyLabel->setText(tr("没有符合筛选条件的%1").arg(typeDisplayName()));
-        m_emptyLabel->setVisible(true);
+        applyEmptyState(tr("没有符合筛选条件的%1").arg(typeDisplayName()), true, false);
         m_downloadSearchBtn->hide();
     }
     else
     {
-        if (m_fileList.isEmpty())
-            m_emptyLabel->setText(tr("暂无%1").arg(typeDisplayName()));
-        m_emptyLabel->setVisible(m_fileList.isEmpty());
+        // 列表本身为空时才是「真的没内容」，此时光影包页给出快速安装入口
+        applyEmptyState(tr("暂无%1").arg(typeDisplayName()), m_fileList.isEmpty(),
+                        m_fileList.isEmpty());
         m_downloadSearchBtn->hide();
     }
-    // 提示可见时列表为空，隐藏滚动区让提示占据列表区域
-    m_scrollArea->setVisible(!m_emptyLabel->isVisible());
 }
 
 QString InstanceFilePage::formatFileSize(qint64 bytes) const

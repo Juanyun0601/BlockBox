@@ -55,9 +55,9 @@ PerformanceMonitor::PerformanceMonitor(QObject *parent)
                 Qt::QueuedConnection);
     }
     
-    qDebug() << "[PerformanceMonitor]" << "PerformanceMonitor initialized";
-    qDebug() << "[PerformanceMonitor]" << "  - Low Config Mode:" << m_lowConfigModeEnabled.load();
-    qDebug() << "[PerformanceMonitor]" << "  - Total Startup Threshold:" << m_totalStartupThreshold.load() << "ms";
+    qDebug() << "[PerformanceMonitor]" << "性能监控已初始化";
+    qDebug() << "[PerformanceMonitor]" << "  - 低配置模式：" << m_lowConfigModeEnabled.load();
+    qDebug() << "[PerformanceMonitor]" << "  - 启动总阈值：" << m_totalStartupThreshold.load() << "ms";
 }
 
 PerformanceMonitor::~PerformanceMonitor()
@@ -107,7 +107,7 @@ void PerformanceMonitor::startMeasurement(const QString& name)
         m_startupPhaseOrder.append(name);
     }
     
-    qDebug() << "[PerformanceMonitor] Started measurement:" << name;
+    qDebug() << "[PerformanceMonitor] 开始测量：" << name;
 }
 
 qint64 PerformanceMonitor::endMeasurement(const QString& name)
@@ -121,12 +121,12 @@ qint64 PerformanceMonitor::endMeasurement(const QString& name)
         m_measurements[name] = elapsed;
         m_timers.remove(name);
         
-        qDebug() << "[PerformanceMonitor] Measurement completed -" << name << ":" << elapsed << "ms";
-        
+        qDebug() << "[PerformanceMonitor] 测量完成 -" << name << ":" << elapsed << "ms";
+
         return elapsed;
     }
-    
-    qWarning() << "[PerformanceMonitor] Measurement not found:" << name;
+
+    qWarning() << "[PerformanceMonitor] 未找到测量点：" << name;
     return -1;
 }
 
@@ -157,11 +157,11 @@ void PerformanceMonitor::printMeasurements() const
     QMutexLocker locker(&m_mutex);
     
     if (m_measurements.isEmpty()) {
-        qDebug() << "[PerformanceMonitor]" << "\n===== No Performance Measurements =====\n";
+        qDebug() << "[PerformanceMonitor]" << "\n===== 无性能测量结果 =====\n";
         return;
     }
-    
-    qDebug() << "[PerformanceMonitor]" << "\n===== Performance Measurements =====";
+
+    qDebug() << "[PerformanceMonitor]" << "\n===== 性能测量结果 =====";
     for (auto it = m_measurements.constBegin(); it != m_measurements.constEnd(); ++it) {
         qDebug() << "[PerformanceMonitor]" << QString("  %1: %2 ms")
                     .arg(it.key(), -30)
@@ -188,7 +188,7 @@ void PerformanceMonitor::startStartupMeasurement()
     m_timers[MEASUREMENT_APP_STARTUP] = timer;
     
     qDebug() << "[PerformanceMonitor]" << "\n========================================";
-    qDebug() << "[PerformanceMonitor] Startup measurement started at" 
+    qDebug() << "[PerformanceMonitor] 启动测量开始于"
              << m_startupStartTime.toString("yyyy-MM-dd hh:mm:ss.zzz");
     qDebug() << "[PerformanceMonitor]" << "========================================\n";
 }
@@ -198,7 +198,7 @@ void PerformanceMonitor::endStartupMeasurement()
     QMutexLocker locker(&m_mutex);
     
     if (!m_startupMeasuring.load()) {
-        qWarning() << "[PerformanceMonitor] No startup measurement in progress";
+        qWarning() << "[PerformanceMonitor] 没有进行中的启动测量";
         return;
     }
     
@@ -214,9 +214,9 @@ void PerformanceMonitor::endStartupMeasurement()
         m_startupCompleted = true;
         
         qDebug() << "[PerformanceMonitor]" << "\n========================================";
-        qDebug() << "[PerformanceMonitor] Startup measurement completed";
-        qDebug() << "[PerformanceMonitor]" << "  Total startup time:" << elapsed << "ms";
-        qDebug() << "[PerformanceMonitor]" << "  Phases measured:" << m_startupPhaseOrder.size();
+        qDebug() << "[PerformanceMonitor] 启动测量已完成";
+        qDebug() << "[PerformanceMonitor]" << "  总启动时间：" << elapsed << "ms";
+        qDebug() << "[PerformanceMonitor]" << "  已测量阶段：" << m_startupPhaseOrder.size();
         qDebug() << "[PerformanceMonitor]" << "========================================\n";
         
         // 发送信号
@@ -373,7 +373,7 @@ bool PerformanceMonitor::checkPerformanceThresholds()
     
     if (totalTime > totalThreshold) {
         allWithinThreshold = false;
-        qWarning() << QString("[PerformanceMonitor] WARNING: Total startup time (%1 ms) exceeds threshold (%2 ms)")
+        qWarning() << QString("[PerformanceMonitor] 警告：总启动时间（%1 ms）超过阈值（%2 ms）")
                       .arg(totalTime)
                       .arg(totalThreshold);
         
@@ -391,7 +391,7 @@ bool PerformanceMonitor::checkPerformanceThresholds()
         
         if (phaseTime > phaseThreshold && phaseThreshold > 0) {
             allWithinThreshold = false;
-            qWarning() << QString("[PerformanceMonitor] WARNING: Phase '%1' (%2 ms) exceeds threshold (%3 ms)")
+            qWarning() << QString("[PerformanceMonitor] 警告：阶段「%1」（%2 ms）超过阈值（%3 ms）")
                           .arg(phase)
                           .arg(phaseTime)
                           .arg(phaseThreshold);
@@ -447,8 +447,8 @@ void PerformanceMonitor::setLowConfigModeEnabled(bool enabled)
     bool oldValue = m_lowConfigModeEnabled.exchange(enabled);
     
     if (oldValue != enabled) {
-        qDebug() << "[PerformanceMonitor] Low config mode changed to:" << enabled;
-        qDebug() << "[PerformanceMonitor]" << "  - Threshold multiplier:" << getThresholdMultiplier();
+        qDebug() << "[PerformanceMonitor] 低配置模式已变更为：" << enabled;
+        qDebug() << "[PerformanceMonitor]" << "  - 阈值倍数：" << getThresholdMultiplier();
         
         emit lowConfigModeChanged(enabled);
     }
@@ -469,7 +469,7 @@ double PerformanceMonitor::getThresholdMultiplier() const
 void PerformanceMonitor::setTotalStartupThreshold(qint64 thresholdMs)
 {
     m_totalStartupThreshold = thresholdMs;
-    qDebug() << "[PerformanceMonitor] Total startup threshold set to:" << thresholdMs << "ms";
+    qDebug() << "[PerformanceMonitor] 启动总阈值已设置为：" << thresholdMs << "ms";
 }
 
 qint64 PerformanceMonitor::getTotalStartupThreshold() const
@@ -481,7 +481,7 @@ void PerformanceMonitor::setPhaseThreshold(const QString& phaseName, qint64 thre
 {
     QMutexLocker locker(&m_mutex);
     m_phaseThresholds[phaseName] = thresholdMs;
-    qDebug() << "[PerformanceMonitor] Phase threshold set:" << phaseName << "->" << thresholdMs << "ms";
+    qDebug() << "[PerformanceMonitor] 阶段阈值已设置：" << phaseName << "->" << thresholdMs << "ms";
 }
 
 qint64 PerformanceMonitor::getPhaseThreshold(const QString& phaseName) const

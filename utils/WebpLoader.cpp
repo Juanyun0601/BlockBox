@@ -63,14 +63,14 @@ bool WebpLoader::resolveLib()
             if (QFile::exists(fullPath)) {
                 s_lib = new QLibrary(fullPath);
                 if (s_lib->load()) {
-                    qDebug() << "Loaded libwebp from:" << fullPath;
+                    qDebug() << "已从以下路径加载 libwebp：" << fullPath;
                     s_webpDecodeRGBA = s_lib->resolve("WebPDecodeRGBA");
                     s_webpGetInfo = s_lib->resolve("WebPGetInfo");
                     if (s_webpDecodeRGBA && s_webpGetInfo) {
-                        qDebug() << "libwebp functions resolved successfully";
+                        qDebug() << "libwebp 函数解析成功";
                         return true;
                     }
-                    qDebug() << "libwebp found but missing required functions";
+                    qDebug() << "已找到 libwebp，但缺少所需函数";
                     s_lib->unload();
                 }
                 delete s_lib;
@@ -79,7 +79,7 @@ bool WebpLoader::resolveLib()
         }
     }
 
-    qDebug() << "libwebp DLL not found - WebP decoding unavailable";
+    qDebug() << "未找到 libwebp DLL，WebP 解码不可用";
     return false;
 }
 
@@ -112,19 +112,19 @@ QImage WebpLoader::decode(const QByteArray &data)
     int width = 0, height = 0;
     if (!fnGetInfo(reinterpret_cast<const uint8_t*>(data.constData()),
                    static_cast<size_t>(data.size()), &width, &height)) {
-        qDebug() << "WebPGetInfo failed - not a valid WebP image";
+        qDebug() << "WebPGetInfo 失败，不是有效的 WebP 图片";
         return QImage();
     }
 
     if (width <= 0 || height <= 0 || width > 16384 || height > 16384) {
-        qDebug() << "Invalid WebP dimensions:" << width << "x" << height;
+        qDebug() << "WebP 尺寸无效：" << width << "x" << height;
         return QImage();
     }
 
     uint8_t *rgba = fnDecode(reinterpret_cast<const uint8_t*>(data.constData()),
                              static_cast<size_t>(data.size()), &width, &height);
     if (!rgba) {
-        qDebug() << "WebPDecodeRGBA failed";
+        qDebug() << "WebPDecodeRGBA 解码失败";
         return QImage();
     }
 

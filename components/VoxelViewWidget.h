@@ -5,8 +5,9 @@
  * @date   2026-08-18
  *
  * 基于 QOpenGLWidget 渲染投影方块（按方块真实形状 + 材质图集 + 逐顶点环境光遮蔽）。
- * 提供自由飞行相机：WASD 水平移动、空格上升、Shift 下降、拖动转向，
- * 滚轮沿视线前后；以及射线拾取（左键破坏、右键放置）。
+ * 提供第一人称自由飞行相机：拖动原地转向、WASD 沿视线飞行、空格上升、
+ * Shift 下降、双击 W 或按住 Ctrl 疾跑，俯仰限制 ±90°，操作逻辑与《我的世界》
+ * 原版一致；滚轮沿视线前后推进；以及射线拾取（左键破坏、右键放置）。
  *
  * 渲染管线要点（性能与观感）：
  *   - 只生成「看得见」的面：相邻格是不透明白色整方块时，该面直接丢弃；
@@ -21,6 +22,7 @@
 
 #include <QByteArray>
 #include <QColor>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QKeyEvent>
 #include <QMatrix4x4>
@@ -103,8 +105,15 @@ public:
     void focusAll();
     void focusOnCells(const QSet<int> &cells);
 
-    /** 应用视角预设（保持当前观察中心与距离） */
+    /** 应用视角预设（保持取景中心与距离，换一个方向观察） */
     void applyViewPreset(ViewPreset preset);
+
+    /** 鼠标灵敏度（0..1，与《我的世界》的「鼠标灵敏度」选项一致） */
+    void setLookSensitivity(float sensitivity);
+    float lookSensitivity() const { return m_lookSensitivity; }
+    /** 反转鼠标纵向视角（与《我的世界》的「反转鼠标」选项一致） */
+    void setInvertLookY(bool invert) { m_invertLookY = invert; }
+    bool invertLookY() const { return m_invertLookY; }
 
     /** 「贴面放置」：右键（或放置工具左键）放到鼠标所指方块的外侧相邻格，而不是替换它 */
     void setPlaceAdjacent(bool on) { m_placeAdjacent = on; }
@@ -117,6 +126,15 @@ public:
     void setSelectedCells(const QSet<int> &cells);
     const QSet<int> &selectedCells() const { return m_selectedCells; }
     void clearSelection() { setSelectedCells(QSet<int>()); }
+
+    /**
+     * @brief 设置需要高亮的格子（体积序索引，见 SchematicDocument）
+     * @param cells 格索引集合；以琥珀金描边 + 淡金填充标出，被其他方块挡住时
+     *              会透出半透明的轮廓，切到「只看某一层」时只高亮该层内的格子
+     */
+    void setHighlightCells(const QSet<int> &cells);
+    const QSet<int> &highlightCells() const { return m_highlightCells; }
+    void clearHighlight() { setHighlightCells(QSet<int>()); }
 
     /** 左键单击要执行的动作（由编辑器当前工具决定） */
     enum class LeftAction {
@@ -144,6 +162,14 @@ public:
      */
     void setLayerMode(LayerMode mode);
     LayerMode layerMode() const { return m_layerMode; }
+
+    /**
+     * @brief 一次设置图层过滤与显示模式（层与模式都没变时不重建几何）
+     *
+     * 同时改层和模式时用这个：setLayerFilter + setLayerMode 会各自触发
+     * 一次整份几何重建，大结构上连点两次重建能感觉到卡顿。
+     */
+    void setLayerView(int layer, LayerMode mode);
 
     /** 当前几何的三角形面数（用于界面上的实时统计） */
     int quadCount() const { return m_quadCount; }
@@ -198,6 +224,7 @@ private:
     /** 单个形状盒某面的贴图信息 */
     struct RenderFace
     {
+        bool present = false;         // 模型是否声明了这一面（没声明的面不画，与游戏一致）
         bool useTex = false;
         float uv[4] = {0, 0, 0, 0};   // u0,v0,u1,v1（图集归一化坐标）
         bool cull = true;             // 可被邻居整方块剔除（模型给了 cullface 才为 true）
@@ -241,6 +268,10 @@ private:
     QVector3D eyePosition() const;
     QVector3D lookTarget() const;
     bool isFlyKey(int qtKey) const;
+    /** 《我的世界》式灵敏度换算：滑块 0..1 → 每像素转过的弧度 */
+    float mouseLookRadiansPerPixel() const;
+    /** 结束拖动转向；restoreCursorToPress 为真时把光标还原到按下位置 */
+    void endLookCapture(bool restoreCursorToPress);
 
     /** 射线拾取：DDA 体素步进 + 命中格形状精测 */
     bool pickRay(const QPoint &pos, int &x, int &y, int &z, bool skipAir = false,
@@ -253,11 +284,13 @@ private:
     void buildOccupancy();
     void rebuildSelectionGeometry();
     void rebuildHoverGeometry();
+    void rebuildHighlightGeometry();
 
     /** 上传顶点数据到 VBO（须在 GL 上下文有效时调用） */
     void uploadGeometry();
     void uploadSelectionGeometry();
     void uploadHoverGeometry();
+    void uploadHighlightGeometry();
     /** 绑定/更新材质图集纹理（须在 GL 上下文有效时调用；仅在材质变化后真正重建） */
     void uploadAtlasTexture();
     void ensureBackgroundResources();
@@ -272,6 +305,10 @@ private:
     /** 把某格的形状盒（含旋转）追加为线段顶点（叠加通道用） */
     void appendCellLines(int cellIndex, const QVector<RenderBox> &boxes,
                          uchar r, uchar g, uchar b, QByteArray *out) const;
+    /** 把某格的形状盒（含旋转）追加为半透明三角面（高亮填充用） */
+    void appendCellFaces(int cellIndex, const QVector<RenderBox> &boxes,
+                         uchar r, uchar g, uchar b, uchar a,
+                         QByteArray *out) const;
 
     SchematicDocument *m_doc = nullptr;
     InstanceTextureLoader *m_loader = nullptr;
@@ -308,6 +345,15 @@ private:
     int m_hoverLineVerts = 0;
     bool m_hoverUploadDirty = true;
 
+    // ---- 高亮通道（藏宝箱等特殊格）----
+    QOpenGLBuffer m_hiVbo{QOpenGLBuffer::VertexBuffer};
+    QOpenGLVertexArrayObject m_hiVao;
+    QByteArray m_hiData;               // 先若干三角形（淡金填充），后若干线段（描边）
+    int m_hiTriVerts = 0;
+    int m_hiLineVerts = 0;
+    bool m_hiUploadDirty = true;
+    QSet<int> m_highlightCells;
+
     // ---- 背景 ----
     QOpenGLShaderProgram m_bgProgram;
     QOpenGLVertexArrayObject m_bgVao;
@@ -319,16 +365,23 @@ private:
     bool m_paletteCacheValid = false;
     QByteArray m_occupancy;                     // 每格 1 字节：bit0=可见非空气，bit1=不透明整方块
 
-    // ---- 相机（环绕观察：中心点 + 距离 + 朝向角）----
+    // ---- 相机（第一人称自由视角：视点位置 + 朝向角，操作对齐《我的世界》）----
     float m_yaw = 0.6f;
     float m_pitch = -0.35f;
-    QVector3D m_orbitCenter{0.5f, 0.5f, 0.5f};
-    float m_orbitDist = 24.0f;
+    QVector3D m_eyePos{0.5f, 0.5f, 0.5f};
+    float m_viewDist = 24.0f;          // 取景距离：雾效与移动速度的基准
+    float m_lookSensitivity = 0.5f;    // 0..1，对应 MC 的鼠标灵敏度
+    bool m_invertLookY = false;
     bool m_eyeValid = false;
-    QPoint m_lastPos;
+    QPoint m_pressPos;
     bool m_dragging = false;
     bool m_dragMoved = false;
-    QPoint m_pressPos;
+    /** 拖动转向中：指针锁定在视口中心，可无限转动（MC 的鼠标视角手感） */
+    bool m_lookActive = false;
+    QPoint m_lookAnchor;
+    QElapsedTimer m_clock;
+    qint64 m_lastWTapMs = 0;           // 双击 W 检测
+    bool m_sprintLatch = false;
     bool m_selectPending = false;
     /** 按下时记下的待执行编辑：松开且未拖动才真正生效（拖动 = 转向视角） */
     enum PendingEdit { EditNone = 0, EditBreak, EditPlace };

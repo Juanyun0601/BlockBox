@@ -12,9 +12,13 @@
 #include <QDate>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
+#include <QIcon>
+#include <QPixmap>
 #include <QProcess>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QToolButton>
 #include "components/AppFileDialog.h"
 #include "components/AppMessageBox.h"
 #include <functional>
@@ -29,9 +33,16 @@
 #include "../../layouts/FlowLayout.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
+#include "utils/HomeCarouselStore.h"
 #include "utils/LanguageManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
+
+namespace {
+// 首页轮播缩略图尺寸（16:9）
+constexpr int kHomeCarouselThumbW = 96;
+constexpr int kHomeCarouselThumbH = 54;
+} // namespace
 
 void SettingsPage::initInterfaceSettings()
 {
@@ -640,6 +651,46 @@ void SettingsPage::initInterfaceSettings()
     });
 
     // ========================================================================
+    // 首页轮播图
+    // ========================================================================
+    QVBoxLayout *carouselCard = createSettingsCard(layout, tr("首页轮播图"));
+
+    m_homeCarouselStatusLabel = new QLabel();
+    m_homeCarouselStatusLabel->setObjectName("settingDesc");
+    m_homeCarouselStatusLabel->setWordWrap(true);
+
+    m_homeCarouselStrip = new QWidget();
+    m_homeCarouselStripLayout = new FlowLayout(m_homeCarouselStrip, 0, 8, 8);
+
+    auto *addCarouselBtn = new QPushButton(tr("添加图片…"));
+    addCarouselBtn->setObjectName("browseBtn");
+    addCarouselBtn->setCursor(Qt::PointingHandCursor);
+    connect(addCarouselBtn, &QPushButton::clicked, this, [this]() {
+        addHomeCarouselImages();
+    });
+
+    auto *resetCarouselBtn = new QPushButton(tr("恢复默认"));
+    resetCarouselBtn->setObjectName("restoreDefaultsBtn");
+    resetCarouselBtn->setCursor(Qt::PointingHandCursor);
+    connect(resetCarouselBtn, &QPushButton::clicked, this, [this]() {
+        clearHomeCarouselImages();
+    });
+
+    QHBoxLayout *carouselRow = appendSettingRow(carouselCard,
+        tr("轮播图片"), tr("不添加自定义图片时，首页展示内置的默认风景图。"), QString(), true);
+    auto *carouselBtnRow = new QHBoxLayout();
+    carouselBtnRow->setContentsMargins(0, 0, 0, 0);
+    carouselBtnRow->setSpacing(8);
+    carouselBtnRow->addWidget(addCarouselBtn);
+    carouselBtnRow->addWidget(resetCarouselBtn);
+    carouselRow->addLayout(carouselBtnRow);
+
+    carouselCard->addWidget(m_homeCarouselStatusLabel);
+    carouselCard->addWidget(m_homeCarouselStrip);
+
+    refreshHomeCarouselRows();
+
+    // ========================================================================
     // 语言设置
     // ========================================================================
     QVBoxLayout *languageCard = createSettingsCard(layout, tr("语言设置"));
@@ -723,4 +774,129 @@ void SettingsPage::initInterfaceSettings()
 
     // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
+}
+
+void SettingsPage::refreshHomeCarouselRows()
+{
+    if (!m_homeCarouselStripLayout || !m_homeCarouselStrip || !m_homeCarouselStatusLabel)
+        return;
+
+    // 清空旧缩略图（FlowLayout 是自定义布局，需自己 takeAt）
+    while (QLayoutItem *item = m_homeCarouselStripLayout->takeAt(0))
+    {
+        if (QWidget *w = item->widget())
+            w->deleteLater();
+        delete item;
+    }
+
+    const QStringList images = HomeCarouselStore::existingImages(HomeCarouselStore::savedImages());
+    if (images.isEmpty())
+    {
+        m_homeCarouselStatusLabel->setText(tr("当前使用内置风景图。"));
+        m_homeCarouselStrip->hide();
+        return;
+    }
+
+    m_homeCarouselStatusLabel->setText(
+        tr("已添加 %1 张图片，按此顺序轮播。点击缩略图可移除。").arg(images.size()));
+    m_homeCarouselStrip->show();
+
+    const qreal dpr = devicePixelRatioF();
+    for (const QString &path : images)
+    {
+        auto *thumb = new QToolButton(m_homeCarouselStrip);
+        thumb->setObjectName("carouselThumb");
+        thumb->setCursor(Qt::PointingHandCursor);
+        thumb->setFixedSize(kHomeCarouselThumbW, kHomeCarouselThumbH);
+        thumb->setIconSize(QSize(kHomeCarouselThumbW, kHomeCarouselThumbH));
+        thumb->setToolTip(tr("点击移除：%1").arg(QFileInfo(path).fileName()));
+
+        QPixmap pixmap(path);
+        if (!pixmap.isNull())
+        {
+            pixmap = pixmap.scaled(int(kHomeCarouselThumbW * dpr), int(kHomeCarouselThumbH * dpr),
+                                   Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            pixmap.setDevicePixelRatio(dpr);
+            thumb->setIcon(QIcon(pixmap));
+        }
+        else
+        {
+            thumb->setText(tr("无法预览"));
+        }
+
+        const QString imagePath = path;
+        connect(thumb, &QToolButton::clicked, this, [this, imagePath]() {
+            const AppMessageBox::StandardButton reply = AppMessageBox::question(
+                this, tr("移除轮播图片"),
+                tr("要从首页轮播中移除这张图片吗？"),
+                AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
+            if (reply != AppMessageBox::Yes)
+                return;
+
+            QStringList images = HomeCarouselStore::savedImages();
+            if (images.removeAll(imagePath) > 0)
+            {
+                HomeCarouselStore::saveImages(images);
+                HomeCarouselStore::removeImageFile(imagePath);
+            }
+            refreshHomeCarouselRows();
+            emit carouselImagesChanged();
+        });
+
+        m_homeCarouselStripLayout->addWidget(thumb);
+    }
+}
+
+void SettingsPage::addHomeCarouselImages()
+{
+    const QStringList files = AppFileDialog::getOpenFileNames(
+        this, tr("选择轮播图片"), QString(), HomeCarouselStore::imageFileFilter());
+    if (files.isEmpty())
+        return;
+
+    QStringList images = HomeCarouselStore::existingImages(HomeCarouselStore::savedImages());
+    int failed = 0;
+    for (const QString &file : files)
+    {
+        const QString imported = HomeCarouselStore::importImage(file);
+        if (imported.isEmpty())
+        {
+            ++failed;
+            continue;
+        }
+        if (!images.contains(imported))
+            images.append(imported);
+    }
+
+    if (images != HomeCarouselStore::savedImages())
+    {
+        HomeCarouselStore::saveImages(images);
+        refreshHomeCarouselRows();
+        emit carouselImagesChanged();
+    }
+
+    if (failed > 0)
+    {
+        AppMessageBox::warning(this, tr("添加轮播图片"),
+            tr("有 %1 张图片无法识别或读取失败，已跳过。").arg(failed));
+    }
+}
+
+void SettingsPage::clearHomeCarouselImages()
+{
+    const QStringList images = HomeCarouselStore::savedImages();
+    if (images.isEmpty())
+        return;
+
+    const AppMessageBox::StandardButton reply = AppMessageBox::question(
+        this, tr("恢复默认轮播图"),
+        tr("将移除已添加的 %1 张图片（只删除方块盒子内的副本，不影响原图），"
+           "首页恢复显示内置风景图。是否继续？").arg(images.size()),
+        AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
+    if (reply != AppMessageBox::Yes)
+        return;
+
+    HomeCarouselStore::clearCustom();
+    refreshHomeCarouselRows();
+    emit carouselImagesChanged();
 }

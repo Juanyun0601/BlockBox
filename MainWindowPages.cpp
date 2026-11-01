@@ -16,6 +16,7 @@
 
 #include "utils/PageTransitionAnimator.h"
 #include "utils/ContentAnimator.h"
+#include "components/BackgroundWidget.h"
 #include "components/NotificationManager.h"
 #include "components/SideBar.h"
 #include "components/SubNavPanel.h"
@@ -25,6 +26,7 @@
 #include "pages/AiChatPage.h"
 #include "pages/JavaDownloadPage.h"
 #include "pages/AccountManagePage.h"
+#include "pages/ForumAccountPage.h"
 #include "pages/ForgeVersionListPage.h"
 #include "pages/HomePage.h"
 #include "pages/InstallInstancePage.h"
@@ -46,6 +48,13 @@
 #include "pages/SkinEditorPage.h"
 #include "pages/TaskListPage.h"
 #include "pages/NewsPage.h"
+#include "pages/CommunityForumPage.h"
+#include "pages/ForumThreadDetailPage.h"
+#include "pages/ForumThreadListPage.h"
+#include "pages/ForumComposerPage.h"
+#include "pages/ForumUserProfilePage.h"
+#include "pages/FeedbackPage.h"
+#include "pages/ForumFriendsPage.h"
 #include "utils/PerformanceMonitor.h"
 #include "utils/SettingsManager.h"
 #include "utils/VersionDownloader.h"
@@ -53,9 +62,9 @@
 
 void MainWindow::initPages()
 {
-    PerformanceMonitor::instance()->startMeasurement("Pages Initialization");
+    PerformanceMonitor::instance()->startMeasurement("页面初始化");
     initEssentialPages();
-    PerformanceMonitor::instance()->endMeasurement("Pages Initialization");
+    PerformanceMonitor::instance()->endMeasurement("页面初始化");
 }
 
 void MainWindow::refreshHomeRecentPlays()
@@ -67,7 +76,7 @@ void MainWindow::refreshHomeRecentPlays()
 
 void MainWindow::initEssentialPages()
 {
-    PerformanceMonitor::instance()->startMeasurement("Home Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("主页初始化");
     QScrollArea *scrollArea1 = new QScrollArea(this);
     scrollArea1->setWidgetResizable(true);
     scrollArea1->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -78,6 +87,9 @@ void MainWindow::initEssentialPages()
     m_stackedWidget->addWidget(scrollArea1);
 
     // 连接最近游玩信号
+    // 首页空态轮播卡片：点击后跳到「设置 → 界面设置」添加自己的图片
+    connect(homePage, &HomePage::customizeCarouselRequested,
+            this, &MainWindow::openInterfaceSettings);
     connect(homePage, &HomePage::recentPlayLaunchClicked, this, [this](const QString &gameRootPath) {
         // 根据游戏根路径查找第一个版本并启动
         QString versionPath = findFirstVersionInGameRoot(gameRootPath);
@@ -108,8 +120,8 @@ void MainWindow::initEssentialPages()
         m_subNavPanel->showForParent(4, false);
         m_sideBar->clearSelection();
         m_topBar->setTitle(tr("实例>服务器"));
-        m_instanceManagePage->setCurrentTab(10);
-        m_subNavPanel->setSelectedChild(10);
+        m_instanceManagePage->setCurrentTab(6);
+        m_subNavPanel->setSelectedChild(6);
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceManagePage));
     });
     connect(homePage, &HomePage::recentPlaySettingsClicked, this, [this](const QString &gameRootPath) {
@@ -162,9 +174,9 @@ void MainWindow::initEssentialPages()
         }
     });
 
-    PerformanceMonitor::instance()->endMeasurement("Home Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("主页初始化");
 
-    PerformanceMonitor::instance()->startMeasurement("Resources Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("资源页初始化");
     m_resourcesPage = new ResourcesPage(this);
     m_stackedWidget->addWidget(m_resourcesPage);
     m_resourcesPage->setInstancePath(m_currentInstancePath);
@@ -172,7 +184,7 @@ void MainWindow::initEssentialPages()
     connect(m_resourcesPage, &ResourcesPage::navItemClicked, this, [this](int childIndex) {
         onChildNavClicked(1, childIndex);
     });
-    PerformanceMonitor::instance()->endMeasurement("Resources Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("资源页初始化");
 
     // 设置页改为首次进入时创建（见 initSettingsPage）：
     // 其控件数量较多，启动阶段提前构造会白白拖慢启动
@@ -242,6 +254,9 @@ void MainWindow::initEssentialPages()
         if (m_contentDownloadPage)
             m_contentDownloadPage->setSearchText(keyword);
     });
+    // 本地资源页空状态「快速安装对应模组」：光影加载器 / 投影 / 录像模组
+    connect(m_instanceManagePage, &InstanceManagePage::quickInstallModRequested,
+            this, &MainWindow::onQuickInstallModRequested);
     connect(m_instanceManagePage, &InstanceManagePage::launchGameRequested,
             this, qOverload<>(&MainWindow::onLaunchGameClicked));
     connect(m_instanceManagePage, &InstanceManagePage::quickLaunchSaveRequested,
@@ -252,6 +267,13 @@ void MainWindow::initEssentialPages()
             this, &MainWindow::onSaveSettingsOpened);
     connect(m_instanceManagePage, &InstanceManagePage::saveMapOpened,
             this, &MainWindow::onSaveMapOpened);
+    // 存档地图页在前台时把旋转背景降到省电档：地图拖动大图、
+    // 后台还在并行渲染瓦片，背景不该再占 UI 线程
+    connect(m_instanceManagePage, &InstanceManagePage::worldMapActiveChanged,
+            this, [this](bool active) {
+        if (m_backgroundWidget)
+            m_backgroundWidget->setEcoMode(active);
+    });
     connect(m_instanceManagePage, &InstanceManagePage::shaderSettingsOpened,
             this, &MainWindow::onShaderSettingsOpened);
     connect(m_instanceManagePage, &InstanceManagePage::projectionEditOpened,
@@ -281,7 +303,7 @@ void MainWindow::initEssentialPages()
     connect(m_localModDetailPage, &LocalModDetailPage::backRequested, this, [this]() {
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceManagePage));
         // 返回"实例管理>模组"：恢复侧边栏同时恢复实例管理子导航
-        restoreSideBarWithSubNav(4, 9);
+        restoreSideBarWithSubNav(4, 10);
         m_topBar->setTitle(tr("实例管理"));
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -302,7 +324,7 @@ void MainWindow::initEssentialPages()
             connect(m_topBar, &TopBar::backClicked, this, [this]() {
                 m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceManagePage));
                 // 返回"实例管理>模组"：恢复侧边栏同时恢复实例管理子导航
-                restoreSideBarWithSubNav(4, 9);
+                restoreSideBarWithSubNav(4, 10);
                 m_topBar->setTitle(tr("实例管理"));
                 disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
                 connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -335,6 +357,28 @@ void MainWindow::initEssentialPages()
     // 官方新闻列表页占位（保持 PageIndex 枚举与 stackedWidget 索引对齐）
     QWidget *placeholderNews = new QWidget(this);
     m_stackedWidget->addWidget(placeholderNews);
+
+    // 社区（方块盒子论坛首页）占位
+    QWidget *placeholderCommunity = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderCommunity);
+
+    // 论坛深度集成四页占位（保持 PageIndex 枚举与 stackedWidget 索引对齐）
+    QWidget *placeholderForumThreadDetail = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderForumThreadDetail);
+    QWidget *placeholderForumThreadList = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderForumThreadList);
+    QWidget *placeholderForumComposer = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderForumComposer);
+    QWidget *placeholderForumUserProfile = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderForumUserProfile);
+
+    // 软件内反馈页占位（设置 > 关于 的意见反馈入口）
+    QWidget *placeholderFeedback = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderFeedback);
+
+    // 论坛好友与私信页占位（保持 PageIndex 枚举与 stackedWidget 索引对齐）
+    QWidget *placeholderForumFriends = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderForumFriends);
 
     m_pageAnimator->animateToIndex(0);
 }
@@ -407,6 +451,27 @@ void MainWindow::ensurePageInitialized(PageIndex pageIndex)
     case PageIndex::NewsPage:
         initNewsPage();
         break;
+    case PageIndex::CommunityPage:
+        initCommunityPage();
+        break;
+    case PageIndex::ForumThreadDetailPage:
+        initForumThreadDetailPage();
+        break;
+    case PageIndex::ForumThreadListPage:
+        initForumThreadListPage();
+        break;
+    case PageIndex::ForumComposerPage:
+        initForumComposerPage();
+        break;
+    case PageIndex::ForumUserProfilePage:
+        initForumUserProfilePage();
+        break;
+    case PageIndex::FeedbackPage:
+        initFeedbackPage();
+        break;
+    case PageIndex::ForumFriendsPage:
+        initForumFriendsPage();
+        break;
     case PageIndex::SettingsPage:
         initSettingsPage();
         break;
@@ -420,7 +485,7 @@ void MainWindow::initModDownloadPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::ModDownloadPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Mod Download Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("模组下载页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ModDownloadPage));
     m_modDownloadPage = new ModDownloadPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -437,14 +502,14 @@ void MainWindow::initModDownloadPage()
     connect(m_modDownloadPage, &ModDownloadPage::instanceSelectionChanged,
             this, &MainWindow::applyInstanceContext);
     m_pageInitialized[PageIndex::ModDownloadPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Mod Download Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("模组下载页初始化");
 }
 
 void MainWindow::initInstanceSelectPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::InstanceSelectPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Instance Select Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("实例选择页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::InstanceSelectPage));
     m_instanceSelectPage = new InstanceSelectPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -467,26 +532,56 @@ void MainWindow::initInstanceSelectPage()
     connect(m_instanceSelectPage, &InstanceSelectPage::importModpackRequested, this, &MainWindow::showModpackImportPage);
     connect(m_instanceSelectPage, &InstanceSelectPage::exportModpackRequested, this, &MainWindow::showModpackExportPage);
     m_pageInitialized[PageIndex::InstanceSelectPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Instance Select Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("实例选择页初始化");
 }
 
 void MainWindow::initAccountManagePage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::AccountManagePage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Account Manage Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("账户管理页初始化");
+
+    // 容器：经典界面与实验性论坛界面各占一页，切换时只换显示，不销毁页面
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::AccountManagePage));
-    m_accountManagePage = new AccountManagePage(this);
+    m_accountUiStack = new QStackedWidget(this);
+    m_accountUiStack->setObjectName(QStringLiteral("accountUiStack"));
     m_stackedWidget->removeWidget(placeholder);
-    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::AccountManagePage), m_accountManagePage);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::AccountManagePage), m_accountUiStack);
     delete placeholder;
+
+    // 按实验性开关决定先建哪个界面，另一个等切换时按需创建
+    const bool experimental = SettingsManager::instance()
+                              && SettingsManager::instance()->isExperimentalForumAccountEnabled();
+    if (experimental)
+        buildForumAccountManagePage();
+    else
+        buildClassicAccountManagePage();
+
+    QWidget *firstPage = experimental ? static_cast<QWidget *>(m_forumAccountPage)
+                                      : static_cast<QWidget *>(m_accountManagePage);
+    if (firstPage)
+        m_accountUiStack->setCurrentWidget(firstPage);
+
+    m_pageInitialized[PageIndex::AccountManagePage] = true;
+    PerformanceMonitor::instance()->endMeasurement("账户管理页初始化");
+}
+
+void MainWindow::buildClassicAccountManagePage()
+{
+    if (!m_accountUiStack || m_accountManagePage) { return; }
+
+    m_accountManagePage = new AccountManagePage(this);
+    m_accountUiStack->addWidget(m_accountManagePage);
     connect(m_accountManagePage, &AccountManagePage::backToMainRequested, this, &MainWindow::onBackToMain);
     connect(m_accountManagePage, &AccountManagePage::accountSelected, this, [this](const QString &accountName) {
-        m_topBar->setAccountName(accountName);
+        // 只更新启动用的游戏账户；顶栏若正在展示方块盒子账户，显示保持不变
+        m_gameAccountName = accountName;
+        syncTopBarAccount();
     });
     // 账户皮肤加载后，将皮肤头部裁剪头像同步到顶栏账户头像
     connect(m_accountManagePage, &AccountManagePage::accountSkinUpdated, this, [this](const QPixmap &avatar) {
-        m_topBar->setAccountAvatar(avatar);
+        m_gameAccountAvatar = avatar;
+        syncTopBarAccount();
     });
     // 账户管理页左侧"皮肤制作"按钮 → 进入皮肤编辑页
     connect(m_accountManagePage, &AccountManagePage::skinEditorRequested, this, &MainWindow::onSkinEditorClicked);
@@ -495,35 +590,105 @@ void MainWindow::initAccountManagePage()
             this, &MainWindow::onAccountManagePageOpened);
     connect(m_accountManagePage, &AccountManagePage::addAccountPageOpened,
             this, &MainWindow::onAddAccountPageOpened);
-    // 若皮肤编辑页已先于账户页初始化，补建皮肤应用 → 账户刷新的信号连接
+    // 皮肤编辑页可能先于经典账户页创建：这里补建「应用到账户」的信号连接
     if (m_skinEditorPage)
     {
         connect(m_skinEditorPage, &SkinEditorPage::skinAppliedToAccount,
-                m_accountManagePage, &AccountManagePage::refreshSkinForAccount);
+                m_accountManagePage, &AccountManagePage::refreshSkinForAccount,
+                Qt::UniqueConnection);
     }
-    m_pageInitialized[PageIndex::AccountManagePage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Account Manage Page Initialization");
+}
+
+void MainWindow::buildForumAccountManagePage()
+{
+    if (!m_accountUiStack || m_forumAccountPage) { return; }
+
+    m_forumAccountPage = new ForumAccountPage(this);
+    m_accountUiStack->addWidget(m_forumAccountPage);
+
+    connect(m_forumAccountPage, &ForumAccountPage::backToMainRequested, this, &MainWindow::onBackToMain);
+    connect(m_forumAccountPage, &ForumAccountPage::accountManagePageOpened,
+            this, &MainWindow::onAccountManagePageOpened);
+
+    // 「我的主题 / 回复 / 收藏 / 通知」点击：在启动器内打开帖子详情，不再跳浏览器
+    connect(m_forumAccountPage, &ForumAccountPage::threadOpenRequested, this,
+            [this](int threadId) {
+                m_forumReturnAction = [this]() { showAccountManagePage(); };
+                showForumThread(threadId);
+            });
+
+    // 「我的收藏 → 资源收藏」点击：打开在线资源详情页（与收藏夹页行为一致）
+    connect(m_forumAccountPage, &ForumAccountPage::contentFavoriteOpenRequested, this,
+            [this](const ModInfo &info, ContentType type) { showContentDetailPage(info, type); });
+
+    // 「角色」页切换游戏账户：启动游戏跟着换账户；顶栏在登录方块盒子账户时仍显示社区身份
+    connect(m_forumAccountPage, &ForumAccountPage::gameAccountSelected, this,
+            [this](const QString &accountName, const QPixmap &avatar) {
+                m_gameAccountName = accountName;
+                m_gameAccountAvatar = avatar;
+                syncTopBarAccount();
+            });
+
+    // 账户详情页里的「打开皮肤编辑器」
+    connect(m_forumAccountPage, &ForumAccountPage::skinEditorRequested, this,
+            &MainWindow::onSkinEditorClicked);
+
+    // 页内「论坛设置」：跳到 设置 → 高级设置（与社区页的论坛设置入口一致）
+    connect(m_forumAccountPage, &ForumAccountPage::openAdvancedSettingsRequested, this, [this]() {
+        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+        m_topBar->setInstanceSelectSelected(false);
+        m_topBar->setInstanceSettingsSelected(false);
+        m_topBar->setAccountSelected(false);
+        m_topBar->setSettingsTitle();
+
+        m_sideBar->setSelectedIndex(2);
+        m_subNavPanel->showForParent(2, false);
+        ensurePageInitialized(PageIndex::SettingsPage);
+        animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, 2);
+        m_lastSidebarIndex = 2;
+        onChildNavClicked(2, 5);
+        m_subNavPanel->setSelectedChild(5);
+    });
+}
+
+void MainWindow::switchAccountUiMode()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (!m_pageInitialized[PageIndex::AccountManagePage] || !m_accountUiStack) { return; }
+
+    const bool experimental = SettingsManager::instance()
+                              && SettingsManager::instance()->isExperimentalForumAccountEnabled();
+    if (experimental)
+        buildForumAccountManagePage();
+    else
+        buildClassicAccountManagePage();
+
+    QWidget *target = experimental ? static_cast<QWidget *>(m_forumAccountPage)
+                                   : static_cast<QWidget *>(m_accountManagePage);
+    if (target)
+        m_accountUiStack->setCurrentWidget(target);
 }
 
 void MainWindow::initLaunchDetailsPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::LaunchDetailsPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Launch Details Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("启动详情页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::LaunchDetailsPage));
     m_launchDetailsPage = new LaunchDetailsPage(this);
     m_stackedWidget->removeWidget(placeholder);
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::LaunchDetailsPage), m_launchDetailsPage);
     delete placeholder;
     m_pageInitialized[PageIndex::LaunchDetailsPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Launch Details Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("启动详情页初始化");
 }
 
 void MainWindow::initInstallInstancePage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::InstallInstancePage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Install Instance Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("安装实例页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::InstallInstancePage));
     m_installInstancePage = new InstallInstancePage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -547,14 +712,14 @@ void MainWindow::initInstallInstancePage()
     connect(m_installInstancePage, &InstallInstancePage::modifyVersionSelected,
             this, &MainWindow::onModifyVersionSelected);
     m_pageInitialized[PageIndex::InstallInstancePage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Install Instance Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("安装实例页初始化");
 }
 
 void MainWindow::initLoaderDetailPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::LoaderDetailPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Loader Detail Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("加载器详情页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::LoaderDetailPage));
     m_loaderDetailPage = new LoaderDetailPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -581,14 +746,14 @@ void MainWindow::initLoaderDetailPage()
     });
     connect(m_loaderDetailPage, &LoaderDetailPage::instanceModified, this, &MainWindow::onInstanceModified);
     m_pageInitialized[PageIndex::LoaderDetailPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Loader Detail Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("加载器详情页初始化");
 }
 
 void MainWindow::initForgeVersionListPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::ForgeVersionListPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Forge Version List Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("Forge 版本列表页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ForgeVersionListPage));
     m_forgeVersionListPage = new ForgeVersionListPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -597,14 +762,14 @@ void MainWindow::initForgeVersionListPage()
     connect(m_forgeVersionListPage, &ForgeVersionListPage::backToLoaderDetailRequested, this, &MainWindow::onBackToLoaderDetail);
     connect(m_forgeVersionListPage, &ForgeVersionListPage::forgeVersionSelected, this, &MainWindow::onForgeVersionSelected);
     m_pageInitialized[PageIndex::ForgeVersionListPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Forge Version List Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("Forge 版本列表页初始化");
 }
 
 void MainWindow::initTaskListPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::TaskListPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Task List Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("任务列表页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::TaskListPage));
     m_taskListPage = new TaskListPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -613,14 +778,14 @@ void MainWindow::initTaskListPage()
     connect(m_taskListPage, &TaskListPage::backToMainRequested, this, &MainWindow::onTaskListPageBack);
     connect(m_taskListPage, &TaskListPage::taskDetailRequested, this, &MainWindow::onTaskDetailRequested);
     m_pageInitialized[PageIndex::TaskListPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Task List Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("任务列表页初始化");
 }
 
 void MainWindow::initTaskDetailPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::TaskDetailPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Task Detail Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("任务详情页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::TaskDetailPage));
     m_taskDetailPage = new TaskDetailPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -629,7 +794,7 @@ void MainWindow::initTaskDetailPage()
     connect(m_taskDetailPage, &TaskDetailPage::backToTaskListRequested, this, &MainWindow::onTaskDetailPageBack);
     connect(m_taskDetailPage, &TaskDetailPage::taskCancelled, this, &MainWindow::onTaskCancelled);
     m_pageInitialized[PageIndex::TaskDetailPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Task Detail Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("任务详情页初始化");
 }
 
 
@@ -637,7 +802,7 @@ void MainWindow::initModDetailPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::ModDetailPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Mod Detail Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("模组详情页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ModDetailPage));
     m_modDetailPage = new ModDetailPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -708,7 +873,7 @@ void MainWindow::initModDetailPage()
                           m_modDetailPage->instanceLoaderType());
     });
     m_pageInitialized[PageIndex::ModDetailPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Mod Detail Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("模组详情页初始化");
 }
 
 void MainWindow::showModDetailPage(const ModInfo &modInfo, const QString &filterGameVersion,
@@ -768,7 +933,7 @@ void MainWindow::showLocalModDetailPage(const ModInfo &modInfo)
     connect(m_topBar, &TopBar::backClicked, this, [this]() {
         m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::InstanceManagePage));
         // 返回"实例管理>模组"：恢复侧边栏同时恢复实例管理子导航
-        restoreSideBarWithSubNav(4, 9);
+        restoreSideBarWithSubNav(4, 10);
         m_topBar->setTitle(tr("实例管理"));
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
@@ -822,9 +987,19 @@ void MainWindow::showInstanceSelectPage()
 void MainWindow::showAccountManagePage()
 {
     ensurePageInitialized(PageIndex::AccountManagePage);
+    // 每次进入都同步一次，确保和实验性开关当前状态一致
+    switchAccountUiMode();
     setSideBarVisible(false);
     m_topBar->setAccountManageTitle();
     m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::AccountManagePage));
+}
+
+void MainWindow::openForumAccountLogin()
+{
+    showAccountManagePage();
+    // 实验性论坛账户界面关着时没有登录表单可展示，就停在账户页
+    if (m_forumAccountPage)
+        m_forumAccountPage->openLoginForm();
 }
 
 void MainWindow::showLaunchDetailsPage()
@@ -887,7 +1062,7 @@ void MainWindow::initModpackImportPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::ModpackImportPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Modpack Import Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("整合包导入页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ModpackImportPage));
     m_modpackImportPage = new ModpackImportPage(this);
     connect(m_modpackImportPage, &ModpackImportPage::backRequested, this, &MainWindow::onBackToMain);
@@ -901,7 +1076,7 @@ void MainWindow::initModpackImportPage()
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ModpackImportPage), m_modpackImportPage);
     delete placeholder;
     m_pageInitialized[PageIndex::ModpackImportPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Modpack Import Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("整合包导入页初始化");
 }
 
 void MainWindow::showModpackImportPage()
@@ -919,7 +1094,7 @@ void MainWindow::initSearchPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::SearchPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Search Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("搜索页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::SearchPage));
     m_searchPage = new SearchPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -977,7 +1152,7 @@ void MainWindow::initSearchPage()
     });
 
     m_pageInitialized[PageIndex::SearchPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Search Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("搜索页初始化");
 }
 
 void MainWindow::showSearchPage()
@@ -1013,7 +1188,7 @@ void MainWindow::initModpackExportPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::ModpackExportPageIndex]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Modpack Export Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("整合包导出页初始化");
     QWidget* placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ModpackExportPageIndex));
     m_modpackExportPage = new ModpackExportPage(this);
     connect(m_modpackExportPage, &ModpackExportPage::backRequested, this, &MainWindow::onBackToMain);
@@ -1029,7 +1204,7 @@ void MainWindow::initModpackExportPage()
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ModpackExportPageIndex), m_modpackExportPage);
     delete placeholder;
     m_pageInitialized[PageIndex::ModpackExportPageIndex] = true;
-    PerformanceMonitor::instance()->endMeasurement("Modpack Export Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("整合包导出页初始化");
 }
 
 void MainWindow::showModpackExportPage(const QString& instancePath)
@@ -1051,7 +1226,7 @@ void MainWindow::initAiChatPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::AiChatPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("AI Chat Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("AI 聊天页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::AiChatPage));
     m_aiChatPage = new AiChatPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -1062,14 +1237,14 @@ void MainWindow::initAiChatPage()
                                      m_currentInstanceVersion,
                                      m_currentInstanceLoader);
     m_pageInitialized[PageIndex::AiChatPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("AI Chat Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("AI 聊天页初始化");
 }
 
 void MainWindow::initJavaDownloadPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::JavaDownloadPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Java Download Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("Java 下载页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::JavaDownloadPage));
     m_javaDownloadPage = new JavaDownloadPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -1086,7 +1261,7 @@ void MainWindow::initJavaDownloadPage()
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
     });
     m_pageInitialized[PageIndex::JavaDownloadPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Java Download Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("Java 下载页初始化");
 }
 
 void MainWindow::showJavaDownloadPage()
@@ -1113,7 +1288,7 @@ void MainWindow::initSkinEditorPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::SkinEditorPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Skin Editor Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("皮肤编辑器页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::SkinEditorPage));
     m_skinEditorPage = new SkinEditorPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -1124,10 +1299,11 @@ void MainWindow::initSkinEditorPage()
     if (m_accountManagePage)
     {
         connect(m_skinEditorPage, &SkinEditorPage::skinAppliedToAccount,
-                m_accountManagePage, &AccountManagePage::refreshSkinForAccount);
+                m_accountManagePage, &AccountManagePage::refreshSkinForAccount,
+                Qt::UniqueConnection);
     }
     m_pageInitialized[PageIndex::SkinEditorPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Skin Editor Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("皮肤编辑器页初始化");
 }
 
 void MainWindow::showSkinEditorPage()
@@ -1151,7 +1327,7 @@ void MainWindow::initPluginPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::PluginPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Plugin Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("插件页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::PluginPage));
     m_pluginPage = new PluginPage(this);
     m_stackedWidget->removeWidget(placeholder);
@@ -1173,21 +1349,21 @@ void MainWindow::initPluginPage()
             this, &MainWindow::onQuickLaunchServerClicked);
 
     m_pageInitialized[PageIndex::PluginPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Plugin Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("插件页初始化");
 }
 
 void MainWindow::initNewsPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::NewsPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("News Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("资讯页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::NewsPage));
     m_newsPage = new NewsPage(this);
     m_stackedWidget->removeWidget(placeholder);
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::NewsPage), m_newsPage);
     delete placeholder;
     m_pageInitialized[PageIndex::NewsPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("News Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("资讯页初始化");
 }
 
 void MainWindow::showNewsPage()
@@ -1204,7 +1380,7 @@ void MainWindow::initSettingsPage()
 {
     QMutexLocker locker(&m_initMutex);
     if (m_pageInitialized[PageIndex::SettingsPage]) { return; }
-    PerformanceMonitor::instance()->startMeasurement("Settings Page Initialization");
+    PerformanceMonitor::instance()->startMeasurement("设置页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::SettingsPage));
     QScrollArea *scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -1214,6 +1390,473 @@ void MainWindow::initSettingsPage()
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::SettingsPage), scrollArea);
     delete placeholder;
     connect(settingsPage, &SettingsPage::downloadJavaRequested, this, &MainWindow::showJavaDownloadPage);
+    // 关于页点了「意见反馈」：跳到软件内反馈页
+    connect(settingsPage, &SettingsPage::openFeedbackRequested, this, &MainWindow::showFeedbackPage);
+    // 界面设置里改了首页轮播图：立即刷新首页轮播（无需重启）
+    connect(settingsPage, &SettingsPage::carouselImagesChanged, this, [this]() {
+        if (m_homePage) {
+            m_homePage->reloadCarouselImages();
+        }
+    });
     m_pageInitialized[PageIndex::SettingsPage] = true;
-    PerformanceMonitor::instance()->endMeasurement("Settings Page Initialization");
+    PerformanceMonitor::instance()->endMeasurement("设置页初始化");
+}
+
+void MainWindow::initCommunityPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::CommunityPage]) { return; }
+    PerformanceMonitor::instance()->startMeasurement("社区页初始化");
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::CommunityPage));
+    m_communityPage = new CommunityForumPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::CommunityPage), m_communityPage);
+    delete placeholder;
+
+    // 社区页里的「论坛设置」：跳到 设置 → 高级设置
+    connect(m_communityPage, &CommunityForumPage::openAdvancedSettingsRequested, this, [this]() {
+        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+        m_topBar->setInstanceSelectSelected(false);
+        m_topBar->setInstanceSettingsSelected(false);
+        m_topBar->setAccountSelected(false);
+        m_topBar->setSettingsTitle();
+
+        m_sideBar->setSelectedIndex(2);
+        m_subNavPanel->showForParent(2, false);
+        ensurePageInitialized(PageIndex::SettingsPage);
+        animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, 2);
+        m_lastSidebarIndex = 2;
+        onChildNavClicked(2, 5);
+        m_subNavPanel->setSelectedChild(5);
+    });
+
+    // ── 论坛深度集成：社区页所有点击都在启动器内消化，不再跳浏览器 ──
+    connect(m_communityPage, &CommunityForumPage::threadOpenRequested, this, [this](int threadId) {
+        m_forumReturnAction = [this]() { returnToCommunityPage(); };
+        showForumThread(threadId);
+    });
+    connect(m_communityPage, &CommunityForumPage::boardOpenRequested, this,
+            [this](const QString &slug, const QString &boardName) {
+                m_forumReturnAction = [this]() { returnToCommunityPage(); };
+                showForumBoard(slug, boardName);
+            });
+    connect(m_communityPage, &CommunityForumPage::tagOpenRequested, this, [this](const QString &tag) {
+        m_forumReturnAction = [this]() { returnToCommunityPage(); };
+        showForumTag(tag);
+    });
+    connect(m_communityPage, &CommunityForumPage::composeRequested, this, [this]() {
+        m_forumReturnAction = [this]() { returnToCommunityPage(); };
+        showForumComposer();
+    });
+    connect(m_communityPage, &CommunityForumPage::friendsOpenRequested, this, [this]() {
+        m_forumReturnAction = [this]() { returnToCommunityPage(); };
+        showForumFriends();
+    });
+    connect(m_communityPage, &CommunityForumPage::notificationsRequested, this, [this]() {
+        m_forumReturnAction = [this]() { returnToCommunityPage(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openNotificationsTab();
+    });
+    connect(m_communityPage, &CommunityForumPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { returnToCommunityPage(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+
+    m_pageInitialized[PageIndex::CommunityPage] = true;
+    PerformanceMonitor::instance()->endMeasurement("社区页初始化");
+}
+
+// ────────────────────────────────────────────────────────────── 论坛深度集成
+// 帖子详情 / 主题列表（板块·搜索·标签）/ 发帖 / 用户主页 四个内层页，
+// 统一走「隐藏侧边栏 + 顶栏返回键」的详情页模式，返回动作由进入入口决定。
+
+void MainWindow::initForumThreadDetailPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::ForumThreadDetailPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ForumThreadDetailPage));
+    m_forumThreadDetailPage = new ForumThreadDetailPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ForumThreadDetailPage),
+                                  m_forumThreadDetailPage);
+    delete placeholder;
+
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::boardOpenRequested, this,
+            [this](const QString &slug, const QString &boardName) {
+                m_forumReturnAction = [this]() { presentForumThreadDetail(); };
+                showForumBoard(slug, boardName);
+            });
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::tagOpenRequested, this,
+            [this](const QString &tag) {
+                m_forumReturnAction = [this]() { presentForumThreadDetail(); };
+                showForumTag(tag);
+            });
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::userOpenRequested, this,
+            [this](int userId) {
+                m_forumReturnAction = [this]() { presentForumThreadDetail(); };
+                showForumUserProfile(userId);
+            });
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { presentForumThreadDetail(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::threadDeleted, this, [this]() {
+        // 主题没了，回社区页并刷新
+        returnToCommunityPage();
+    });
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::backRequested, this, [this]() {
+        returnToCommunityPage();
+    });
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::threadOpenRequested, this,
+            [this](int threadId) {
+                // 正文里点了别的帖子：把当前帖子记成返回落点，返回键效果同网页版的浏览器后退
+                const int previous = m_forumThreadDetailPage ? m_forumThreadDetailPage->threadId() : 0;
+                if (previous > 0 && previous != threadId)
+                    m_forumReturnAction = [this, previous]() { showForumThread(previous); };
+                showForumThread(threadId);
+            });
+
+    m_pageInitialized[PageIndex::ForumThreadDetailPage] = true;
+}
+
+void MainWindow::initForumThreadListPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::ForumThreadListPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ForumThreadListPage));
+    m_forumThreadListPage = new ForumThreadListPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ForumThreadListPage),
+                                  m_forumThreadListPage);
+    delete placeholder;
+
+    connect(m_forumThreadListPage, &ForumThreadListPage::threadOpenRequested, this,
+            [this](int threadId) {
+                m_forumReturnAction = [this]() { presentForumThreadList(); };
+                showForumThread(threadId);
+            });
+    connect(m_forumThreadListPage, &ForumThreadListPage::composeRequested, this,
+            [this](const QString &boardSlug) {
+                m_forumReturnAction = [this]() { presentForumThreadList(); };
+                showForumComposer(boardSlug);
+            });
+    connect(m_forumThreadListPage, &ForumThreadListPage::boardOpenRequested, this,
+            [this](const QString &slug, const QString &boardName) {
+                m_forumReturnAction = [this]() { presentForumThreadList(); };
+                showForumBoard(slug, boardName);
+            });
+
+    m_pageInitialized[PageIndex::ForumThreadListPage] = true;
+}
+
+void MainWindow::initForumComposerPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::ForumComposerPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ForumComposerPage));
+    m_forumComposerPage = new ForumComposerPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ForumComposerPage),
+                                  m_forumComposerPage);
+    delete placeholder;
+
+    connect(m_forumComposerPage, &ForumComposerPage::threadCreated, this, [this](int threadId) {
+        // 发完直接看新帖；从新帖返回时回社区页
+        m_forumReturnAction = [this]() { returnToCommunityPage(); };
+        showForumThread(threadId);
+    });
+    connect(m_forumComposerPage, &ForumComposerPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { presentForumComposer(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+
+    m_pageInitialized[PageIndex::ForumComposerPage] = true;
+}
+
+void MainWindow::initForumUserProfilePage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::ForumUserProfilePage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ForumUserProfilePage));
+    m_forumUserProfilePage = new ForumUserProfilePage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ForumUserProfilePage),
+                                  m_forumUserProfilePage);
+    delete placeholder;
+
+    connect(m_forumUserProfilePage, &ForumUserProfilePage::threadOpenRequested, this,
+            [this](int threadId) {
+                m_forumReturnAction = [this]() { presentForumUserProfile(); };
+                showForumThread(threadId);
+            });
+    connect(m_forumUserProfilePage, &ForumUserProfilePage::chatOpenRequested, this,
+            [this](int userId) {
+                m_forumReturnAction = [this]() { presentForumUserProfile(); };
+                showForumFriends(userId);
+            });
+    connect(m_forumUserProfilePage, &ForumUserProfilePage::friendsOpenRequested, this, [this]() {
+        m_forumReturnAction = [this]() { presentForumUserProfile(); };
+        showForumFriends();
+    });
+
+    m_pageInitialized[PageIndex::ForumUserProfilePage] = true;
+}
+
+void MainWindow::initFeedbackPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::FeedbackPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::FeedbackPage));
+    m_feedbackPage = new FeedbackPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::FeedbackPage),
+                                  m_feedbackPage);
+    delete placeholder;
+
+    // 未登录点了「去登录」：先记下返回动作再跳账户页弹登录表单
+    connect(m_feedbackPage, &FeedbackPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { presentFeedbackPage(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+
+    m_pageInitialized[PageIndex::FeedbackPage] = true;
+}
+
+void MainWindow::initForumFriendsPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::ForumFriendsPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ForumFriendsPage));
+    m_forumFriendsPage = new ForumFriendsPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ForumFriendsPage),
+                                  m_forumFriendsPage);
+    delete placeholder;
+
+    connect(m_forumFriendsPage, &ForumFriendsPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { presentForumFriends(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+    connect(m_forumFriendsPage, &ForumFriendsPage::userOpenRequested, this, [this](int userId) {
+        m_forumReturnAction = [this]() { presentForumFriends(); };
+        showForumUserProfile(userId);
+    });
+
+    m_pageInitialized[PageIndex::ForumFriendsPage] = true;
+}
+
+void MainWindow::showForumThread(int threadId)
+{
+    ensurePageInitialized(PageIndex::ForumThreadDetailPage);
+    presentForumThreadDetail();
+    if (m_forumThreadDetailPage)
+        m_forumThreadDetailPage->openThread(threadId);
+}
+
+void MainWindow::showForumBoard(const QString &slug, const QString &boardName)
+{
+    ensurePageInitialized(PageIndex::ForumThreadListPage);
+    presentForumThreadList();
+    if (m_forumThreadListPage)
+        m_forumThreadListPage->openBoard(slug, boardName);
+}
+
+void MainWindow::showForumSearch(const QString &query)
+{
+    ensurePageInitialized(PageIndex::ForumThreadListPage);
+    presentForumThreadList();
+    if (m_forumThreadListPage)
+        m_forumThreadListPage->openSearch(query);
+}
+
+void MainWindow::showForumTag(const QString &tag)
+{
+    ensurePageInitialized(PageIndex::ForumThreadListPage);
+    presentForumThreadList();
+    if (m_forumThreadListPage)
+        m_forumThreadListPage->openTag(tag);
+}
+
+void MainWindow::showForumComposer(const QString &preselectSlug)
+{
+    ensurePageInitialized(PageIndex::ForumComposerPage);
+    presentForumComposer();
+    if (m_forumComposerPage)
+        m_forumComposerPage->startNewThread(preselectSlug);
+}
+
+void MainWindow::showFeedbackPage()
+{
+    ensurePageInitialized(PageIndex::FeedbackPage);
+    // 反馈页的返回落点是「设置 > 关于」
+    m_forumReturnAction = [this]() { returnToSettingsAbout(); };
+    presentFeedbackPage();
+    if (m_feedbackPage)
+        m_feedbackPage->open();
+}
+
+void MainWindow::showForumFriends(int userId)
+{
+    ensurePageInitialized(PageIndex::ForumFriendsPage);
+    presentForumFriends();
+    if (m_forumFriendsPage)
+        m_forumFriendsPage->openChat(userId);
+}
+
+void MainWindow::showForumUserProfile(int userId)
+{
+    ensurePageInitialized(PageIndex::ForumUserProfilePage);
+    presentForumUserProfile();
+    if (m_forumUserProfilePage)
+        m_forumUserProfilePage->openUser(userId);
+}
+
+void MainWindow::presentForumThreadDetail()
+{
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("社区 > 帖子"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onForumPageBack);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::ForumThreadDetailPage));
+}
+
+void MainWindow::presentForumThreadList()
+{
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("社区 > 主题列表"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onForumPageBack);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::ForumThreadListPage));
+}
+
+void MainWindow::presentForumComposer()
+{
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("社区 > 发帖"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onForumPageBack);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::ForumComposerPage));
+}
+
+void MainWindow::presentForumUserProfile()
+{
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("社区 > 用户主页"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onForumPageBack);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::ForumUserProfilePage));
+}
+
+void MainWindow::presentFeedbackPage()
+{
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("设置 > 意见反馈"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onForumPageBack);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::FeedbackPage));
+}
+
+void MainWindow::presentForumFriends()
+{
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("社区 > 好友与私信"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onForumPageBack);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::ForumFriendsPage));
+}
+
+void MainWindow::onForumPageBack()
+{
+    // 返回动作由进入时的入口决定（社区页 / 列表页 / 账户页 / 论坛内层页之间互转）
+    if (m_forumReturnAction)
+    {
+        const auto action = m_forumReturnAction;
+        m_forumReturnAction = nullptr;
+        action();
+        return;
+    }
+    onBackToMain();
+}
+
+void MainWindow::returnToSettingsAbout()
+{
+    // 与点击侧边栏「设置 > 关于」保持一致：恢复侧边栏选中、子导航定位与顶栏标题
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setSettingsTitle();
+
+    m_sideBar->setSelectedIndex(2);
+    m_subNavPanel->showForParent(2, false);
+    ensurePageInitialized(PageIndex::SettingsPage);
+    animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, 2);
+    m_lastSidebarIndex = 2;
+    onChildNavClicked(2, 9);
+    m_subNavPanel->setSelectedChild(9);
+}
+
+void MainWindow::returnToCommunityPage()
+{
+    ensurePageInitialized(PageIndex::CommunityPage);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    m_topBar->setTitle(tr("社区"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+
+    setSideBarVisible(true);
+    if (m_sideBar)
+        m_sideBar->setSelectedIndex(6);
+    if (m_subNavPanel)
+        m_subNavPanel->hidePanel();
+    m_lastSidebarIndex = 6;
+
+    animatedSwitchToPage(PageIndex::CommunityPage);
+    if (m_communityPage)
+        m_communityPage->refresh();
 }

@@ -7,14 +7,17 @@
 #include "components/FavoriteFolderDialog.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QContextMenuEvent>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFontMetrics>
 #include <QFormLayout>
 #include <QGraphicsOpacityEffect>
 #include <QHash>
@@ -27,9 +30,11 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPropertyAnimation>
 #include <QScrollBar>
 #include <QSpacerItem>
+#include <QTimer>
 #include <QUrl>
 
 #include <algorithm>
@@ -53,11 +58,27 @@ ServerManagePage::ServerManagePage(QWidget *parent)
 {
     m_categoryManager = new LocalCategoryManager(this);
     m_categoryManager->setResourceType(QStringLiteral("servers"));
+
+    m_pinger = new McServerPinger(this);
+    connect(m_pinger, &McServerPinger::pingFinished, this,
+            [this](const QString &key, const McServerPinger::Result &result) {
+                m_pingResults.insert(key, result);
+                m_pingAtMs.insert(key, QDateTime::currentMSecsSinceEpoch());
+                for (QWidget *card : m_cardWidgets)
+                {
+                    if (card && card->property("serverKey").toString() == key)
+                        applyPingResultToCard(card);
+                }
+            });
+
     initUI();
 }
 
 ServerManagePage::~ServerManagePage()
 {
+    // 还挂着的探测会话不继承本页生命周期，显式收掉
+    if (m_pinger)
+        m_pinger->cancelAll();
 }
 
 void ServerManagePage::setInstancePath(const QString &path)
@@ -421,17 +442,32 @@ void ServerManagePage::placeCards()
 
         QWidget *card = new QWidget(m_cardContainer);
         card->setObjectName("resourceCard");
-        card->setFixedHeight(80);
+        card->setFixedHeight(88);
         card->setCursor(Qt::PointingHandCursor);
         card->setProperty("serverKey",
             ServersDatIO::addressKey(entry.address, entry.port));
+        card->setProperty("serverCardDescription", entry.description);
         card->installEventFilter(this);
         card->setContextMenuPolicy(Qt::CustomContextMenu);
         const QString catKey = entry.address;
+        const QString serverKey = card->property("serverKey").toString();
         connect(card, &QWidget::customContextMenuRequested, this,
-            [this, catKey](const QPoint &pos) {
+            [this, catKey, serverKey, entry](const QPoint &pos) {
                 QMenu menu(this);
                 appendCategoryMenu(&menu, catKey);
+                menu.addSeparator();
+                QAction *refreshAction = menu.addAction(tr("刷新服务器信息"));
+                connect(refreshAction, &QAction::triggered, this,
+                    [this, serverKey, entry]() {
+                        m_pingAtMs.remove(serverKey);
+                        m_pingResults.remove(serverKey);
+                        for (QWidget *c : m_cardWidgets)
+                        {
+                            if (c && c->property("serverKey").toString() == serverKey)
+                                applyPingResultToCard(c);
+                        }
+                        pingOne(serverKey, entry.address, entry.port);
+                    });
                 menu.exec(pos);
             });
 
@@ -441,10 +477,13 @@ void ServerManagePage::placeCards()
 
         QLabel *iconLabel = new QLabel(card);
         iconLabel->setObjectName("serverCardIcon");
-        iconLabel->setFixedSize(40, 40);
+        iconLabel->setFixedSize(48, 48);
+        // 默认图标画在 @TEXT_ON_PRIMARY@ 的主色渐变底上，用白色描边才看得清
         QIcon srvIcon = IconHelper::loadColoredIcon(
-            ":/Images/Icons/server.svg", themeColor, 32);
-        iconLabel->setPixmap(srvIcon.pixmap(32, 32));
+            ":/Images/Icons/server.svg", QColor(Qt::white), 48);
+        // 记住默认图标：离线或没有 favicon 时回退到它
+        iconLabel->setProperty("defaultIcon", srvIcon.pixmap(48, 48));
+        iconLabel->setPixmap(srvIcon.pixmap(48, 48));
         iconLabel->setAlignment(Qt::AlignCenter);
         cardLayout->addWidget(iconLabel);
 
@@ -459,7 +498,11 @@ void ServerManagePage::placeCards()
         QLabel *nameLabel = new QLabel(entry.name, card);
         nameLabel->setObjectName("modNameLabel");
         nameLabel->setStyleSheet("font-size: 14px; font-weight: bold;");
-        nameRow->addWidget(nameLabel);
+        // 名称过长时按卡片宽度省略，避免把右侧的状态角标挤出可视区
+        nameLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        nameLabel->setMinimumWidth(0);
+        nameLabel->setProperty("fullText", entry.name);
+        nameRow->addWidget(nameLabel, 1);
         if (!catName.isEmpty())
         {
             QLabel *catChip = new QLabel(catName, card);
@@ -467,25 +510,40 @@ void ServerManagePage::placeCards()
             catChip->setProperty("cardRole", "chip");
             nameRow->addWidget(catChip);
         }
-        nameRow->addStretch();
+        QLabel *statusLabel = new QLabel(tr("● 检测中…"), card);
+        statusLabel->setObjectName("serverCardStatus");
+        statusLabel->setStyleSheet("font-size: 11px; color: #888;");
+        nameRow->addWidget(statusLabel, 0, Qt::AlignVCenter);
         infoLayout->addLayout(nameRow);
 
+        // 地址行：地址（左）+ 在线人数 / 版本 / 延迟（右）
+        QHBoxLayout *addrRow = new QHBoxLayout();
+        addrRow->setContentsMargins(0, 0, 0, 0);
+        addrRow->setSpacing(8);
         QString addrText = entry.address;
         if (entry.port != 25565)
             addrText += QString(":%1").arg(entry.port);
         QLabel *addrLabel = new QLabel(addrText, card);
         addrLabel->setObjectName("modDescLabel");
         addrLabel->setStyleSheet("font-size: 12px; color: #888;");
-        infoLayout->addWidget(addrLabel);
+        addrRow->addWidget(addrLabel, 0);
+        addrRow->addStretch();
+        QLabel *infoLabel = new QLabel(QString(), card);
+        infoLabel->setObjectName("serverCardInfo");
+        infoLabel->setStyleSheet("font-size: 11px; color: #888;");
+        infoLabel->setTextFormat(Qt::PlainText);
+        addrRow->addWidget(infoLabel, 0, Qt::AlignVCenter);
+        infoLayout->addLayout(addrRow);
 
-        if (!entry.description.isEmpty())
-        {
-            QLabel *descLabel = new QLabel(entry.description, card);
-            descLabel->setObjectName("modDescLabel");
-            descLabel->setStyleSheet("font-size: 11px; color: #aaa;");
-            descLabel->setTextFormat(Qt::PlainText);
-            infoLayout->addWidget(descLabel);
-        }
+        // MOTD 行：探测到就在线文案，否则退回用户自己写的描述；都没有则整行隐藏
+        QLabel *motdLabel = new QLabel(card);
+        motdLabel->setObjectName("serverCardMotd");
+        motdLabel->setStyleSheet("font-size: 11px; color: #aaa;");
+        motdLabel->setTextFormat(Qt::PlainText);
+        motdLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        motdLabel->setMinimumWidth(0);
+        motdLabel->setProperty("fullText", entry.description);
+        infoLayout->addWidget(motdLabel);
         cardLayout->addLayout(infoLayout, 1);
 
         QPushButton *connectBtn = new QPushButton(card);
@@ -546,6 +604,7 @@ void ServerManagePage::placeCards()
         m_cardGridLayout->addWidget(card, row, col, 1, 1);
         m_cardWidgets.append(card);
         createSelectionOverlay(card);
+        applyPingResultToCard(card);   // 先用缓存/占位状态填充
         col++;
         if (col >= 1)
         {
@@ -569,6 +628,15 @@ void ServerManagePage::placeCards()
         showEmptyHint(false);
     }
     updateSelectionBar();
+
+    // 卡片就位后异步探测在线状态（离开页面一段时间再回来时顺带刷新）
+    pingServers(false);
+
+    // 等布局铺开后再按实际宽度省略 MOTD
+    QTimer::singleShot(0, this, [this]() {
+        for (QWidget *card : m_cardWidgets)
+            elideCardTexts(card);
+    });
 }
 
 void ServerManagePage::showEmptyHint(bool show)
@@ -1229,7 +1297,231 @@ bool ServerManagePage::eventFilter(QObject *watched, QEvent *event)
     {
         if (idx < m_selectionOverlays.size())
             m_selectionOverlays[idx]->setGeometry(card->rect());
+        elideCardTexts(card);
     }
 
     return QWidget::eventFilter(watched, event);
 }
+
+void ServerManagePage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // 页面重新可见时（切回来 / 从别的页返回）刷新一次，避免长时间显示旧状态
+    if (m_pinger && QDateTime::currentMSecsSinceEpoch() - m_lastPingSweepMs > 30000)
+        pingServers(false);
+}
+
+void ServerManagePage::pingServers(bool force)
+{
+    if (!m_pinger || m_cardWidgets.isEmpty())
+        return;
+    // 页面还在后台时不发请求，等真正切到本页再由 showEvent 触发
+    if (!isVisible())
+        return;
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    m_lastPingSweepMs = now;
+    const qint64 freshMs = 60000;   // 一分钟内的结果视为新鲜，不重复探测
+
+    for (QWidget *card : m_cardWidgets)
+    {
+        if (!card)
+            continue;
+        const QString key = card->property("serverKey").toString();
+        if (key.isEmpty())
+            continue;
+        quint16 port = 25565;
+        QString host = key;
+        for (const ServerEntry &entry : m_servers)
+        {
+            if (ServersDatIO::addressKey(entry.address, entry.port) != key)
+                continue;
+            host = entry.address;
+            port = entry.port;
+            break;
+        }
+        if (!force && m_pingAtMs.contains(key) && now - m_pingAtMs.value(key) < freshMs)
+        {
+            applyPingResultToCard(card);
+            continue;
+        }
+        applyPingResultToCard(card);
+        pingOne(key, host, port);
+    }
+}
+
+void ServerManagePage::pingOne(const QString &key, const QString &host, quint16 port)
+{
+    if (!m_pinger || key.isEmpty())
+        return;
+
+    // 地址里带了端口就用地址里的，反之用条目端口
+    QString hostPart = host.trimmed();
+    quint16 portPart = port;
+    if (hostPart.contains(QLatin1Char(':')) && !hostPart.startsWith(QLatin1Char('[')))
+    {
+        QString parsedHost;
+        quint16 parsedPort = 0;
+        if (ServersDatIO::parseAddress(hostPart, parsedHost, parsedPort))
+        {
+            hostPart = parsedHost;
+            portPart = parsedPort;
+        }
+    }
+
+    m_pingResults.insert(key, McServerPinger::Result());   // Pending
+    m_pinger->ping(key, hostPart, portPart);
+}
+
+namespace
+{
+/** 把服务器图标裁成圆角方块：先按短边铺满缩放，再居中裁剪 */
+QPixmap makeRoundedIcon(const QPixmap &source, int side)
+{
+    if (source.isNull() || side <= 0)
+        return QPixmap();
+    const QPixmap scaled = source.scaled(side, side, Qt::KeepAspectRatioByExpanding,
+                                         Qt::SmoothTransformation);
+    QPixmap out(side, side);
+    out.fill(Qt::transparent);
+    QPainter painter(&out);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    QPainterPath clip;
+    clip.addRoundedRect(QRectF(0, 0, side, side), 8, 8);
+    painter.setClipPath(clip);
+    painter.drawPixmap((side - scaled.width()) / 2, (side - scaled.height()) / 2, scaled);
+    painter.end();
+    return out;
+}
+
+/** 按标签当前宽度重排 "fullText" 里的完整文案，放不下时右侧省略并挂上提示 */
+void elideLabelToWidth(QLabel *label)
+{
+    if (!label)
+        return;
+    const QString full = label->property("fullText").toString();
+    if (full.isEmpty())
+    {
+        label->clear();
+        label->setToolTip(QString());
+        return;
+    }
+    // 布局尚未铺开时先放全文，等 Resize 事件再按实际宽度省略
+    if (label->width() < 20)
+    {
+        label->setText(full);
+        label->setToolTip(QString());
+        return;
+    }
+    const QFontMetrics metrics(label->font());
+    const QString shown = metrics.elidedText(full, Qt::ElideRight, label->width() - 2);
+    label->setText(shown);
+    label->setToolTip(shown == full ? QString() : full);
+}
+}   // namespace
+
+void ServerManagePage::applyPingResultToCard(QWidget *card)
+{
+    if (!card)
+        return;
+    QLabel *statusLabel = card->findChild<QLabel *>("serverCardStatus");
+    QLabel *infoLabel = card->findChild<QLabel *>("serverCardInfo");
+    QLabel *motdLabel = card->findChild<QLabel *>("serverCardMotd");
+    QLabel *iconLabel = card->findChild<QLabel *>("serverCardIcon");
+    if (!statusLabel || !infoLabel || !motdLabel)
+        return;
+
+    const QString key = card->property("serverKey").toString();
+    const bool hasResult = m_pingResults.contains(key);
+    McServerPinger::Result result;
+    if (hasResult)
+        result = m_pingResults.value(key);
+
+    statusLabel->setToolTip(QString());
+    switch (result.state)
+    {
+    case McServerPinger::Result::Online:
+        if (result.latencyMs >= 0 && result.latencyMs < 200)
+            statusLabel->setStyleSheet("font-size: 11px; color: #4CAF50;");
+        else if (result.latencyMs < 600)
+            statusLabel->setStyleSheet("font-size: 11px; color: #CDDC39;");
+        else
+            statusLabel->setStyleSheet("font-size: 11px; color: #FFB300;");
+        statusLabel->setText(tr("● 在线"));
+        break;
+    case McServerPinger::Result::Offline:
+        statusLabel->setStyleSheet("font-size: 11px; color: #E57373;");
+        statusLabel->setText(tr("● 离线"));
+        // 离线原因挂在角标上：人数那一行是空的，悬停不到
+        if (!result.error.isEmpty())
+            statusLabel->setToolTip(result.error);
+        break;
+    default:
+        statusLabel->setStyleSheet("font-size: 11px; color: #888;");
+        statusLabel->setText(tr("● 检测中…"));
+        break;
+    }
+
+    if (result.state == McServerPinger::Result::Online)
+    {
+        QStringList parts;
+        if (result.playersMax > 0 || result.playersOnline > 0)
+            parts << tr("%1/%2 人").arg(result.playersOnline).arg(result.playersMax);
+        if (!result.versionName.isEmpty())
+            parts << result.versionName;
+        if (result.latencyMs >= 0)
+            parts << tr("%1 ms").arg(result.latencyMs);
+        infoLabel->setText(parts.join(QStringLiteral(" · ")));
+        infoLabel->setToolTip(result.protocolVersion > 0
+                                  ? tr("协议版本 %1").arg(result.protocolVersion)
+                                  : QString());
+    }
+    else if (result.state == McServerPinger::Result::Offline)
+    {
+        infoLabel->setText(QString());
+        infoLabel->setToolTip(result.error);
+    }
+    else
+    {
+        infoLabel->setText(QString());
+        infoLabel->setToolTip(QString());
+    }
+
+    // MOTD 优先；离线/未探测时退回用户填写的描述
+    QString motd = (result.state == McServerPinger::Result::Online) ? result.motd : QString();
+    if (motd.isEmpty())
+        motd = card->property("serverCardDescription").toString();
+    motdLabel->setProperty("fullText", motd);
+    motdLabel->setVisible(!motd.trimmed().isEmpty());
+
+    if (iconLabel)
+    {
+        const int side = qMax(40, iconLabel->width());
+        if (result.state == McServerPinger::Result::Online && !result.icon.isNull())
+        {
+            iconLabel->setStyleSheet(QStringLiteral("background: transparent;"));
+            iconLabel->setPixmap(makeRoundedIcon(result.icon, side));
+        }
+        else
+        {
+            iconLabel->setStyleSheet(QString());
+            const QPixmap fallback = qvariant_cast<QPixmap>(
+                iconLabel->property("defaultIcon"));
+            if (!fallback.isNull())
+                iconLabel->setPixmap(fallback.scaled(side, side, Qt::KeepAspectRatio,
+                                                     Qt::SmoothTransformation));
+        }
+    }
+
+    elideCardTexts(card);
+}
+
+void ServerManagePage::elideCardTexts(QWidget *card)
+{
+    if (!card)
+        return;
+    elideLabelToWidth(card->findChild<QLabel *>("modNameLabel"));
+    elideLabelToWidth(card->findChild<QLabel *>("serverCardMotd"));
+}
+

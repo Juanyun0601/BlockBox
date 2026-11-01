@@ -102,6 +102,13 @@ public:
     bool isLoaded() const { return m_loaded; }
     void clear();
 
+    /**
+     * @brief 新建一个全部为空气的空投影（结构预览等程序化生成场景）
+     * @param sizeX/Y/Z 三个方向的尺寸（须为正）
+     * @return true 成功
+     */
+    bool createEmpty(int sizeX, int sizeY, int sizeZ);
+
     // ------------------------------------------------------------------ 元信息
     QString filePath() const { return m_filePath; }
     QString name() const { return m_name; }

@@ -142,7 +142,7 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     // Handle Java path
     emit launchProgressChanged(20, "获取Java...");
     QString javaPath = config.javaPath;
-    qDebug() << "[GameLauncher]" << "GameLauncher received Java path:" << javaPath;
+    qDebug() << "[GameLauncher]" << "收到 Java 路径：" << javaPath;
 
     if (javaPath == "auto") {
         emit launchDetailAdded("正在自动检测Java...");
@@ -185,6 +185,7 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
             }
         }
     } else {
+        qDebug() << "[GameLauncher]" << "使用指定的 Java:" << javaPath;
         emit launchDetailAdded(QString("使用指定的Java路径: %1").arg(javaPath));
     }
 
@@ -202,6 +203,18 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
         return false;
     }
     emit launchDetailAdded(QString("Java版本验证成功: %1").arg(javaInfo.version));
+
+    // 32 位 JVM 的堆上限约 1.2~1.5GB，自动内存分配很容易超限，
+    // JVM 会在初始化阶段直接退出（表现为游戏秒退、exit code 1），这里提前说清楚
+    if (javaBitness(javaPath) == 32 && m_currentConfig.maxMemory > 1200)
+    {
+        const QString tip = QString("警告: 当前使用的是 32 位 Java，最大内存只能分配到约 1.2GB，"
+                                    "而本次分配了 %1MB，游戏可能启动失败。请在设置里改用 64 位 Java。")
+                                .arg(m_currentConfig.maxMemory);
+        qWarning() << "[GameLauncher]" << tip;
+        emit launchDetailAdded(tip);
+    }
+
     emit launchProgressChanged(30, "Java验证完成");
 
     // ── 根据策略决定是否执行文件完整性检查与补全 ──

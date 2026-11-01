@@ -28,6 +28,7 @@
 #include "utils/PageFilter.h"
 
 class CustomCheckBox;
+class FlowLayout;
 
 class SettingsPage : public QWidget
 {
@@ -41,6 +42,10 @@ signals:
     void backToMainRequested();
     void downloadJavaRequested();
     void jumpToInstanceSettingsRequested(const QString &instancePath);
+    /** 首页轮播图被修改（添加/移除/恢复默认），首页据此刷新轮播 */
+    void carouselImagesChanged();
+    /** 关于页点了「意见反馈」：跳到软件内反馈页 */
+    void openFeedbackRequested();
 
 private slots:
     void onNavItemClicked(int index);
@@ -156,6 +161,9 @@ private:
     CustomCheckBox  *m_projShowAirCheck = nullptr;
     CustomCheckBox  *m_projTextureCheck = nullptr;
     CustomCheckBox  *m_projShapesCheck = nullptr;
+    CustomCheckBox  *m_projInvertYCheck = nullptr;
+    QSlider         *m_projSensitivitySlider = nullptr;
+    QLabel          *m_projSensitivityValue = nullptr;
     QLineEdit       *m_projSourceInstanceEdit = nullptr;
     
     int m_currentIndex;
@@ -180,6 +188,14 @@ private:
     QPushButton *m_solidColorBtn;
     QLineEdit *m_imagePathEdit;
     QPushButton *m_browseImageBtn;
+
+    // 首页轮播图（界面设置）：自定义图片的管理控件
+    QLabel *m_homeCarouselStatusLabel = nullptr;
+    QWidget *m_homeCarouselStrip = nullptr;
+    FlowLayout *m_homeCarouselStripLayout = nullptr;
+    void refreshHomeCarouselRows();
+    void addHomeCarouselImages();
+    void clearHomeCarouselImages();
 
     // Java 管理页控件
     QListWidget *m_javaListWidget;

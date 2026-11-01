@@ -530,8 +530,8 @@ bool decompressGzip(const QString &path, QByteArray &out)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
     {
-        qWarning() << "[LitematicReader] Cannot open file:" << path
-                   << "error:" << file.errorString();
+        qWarning() << "[LitematicReader] 无法打开文件：" << path
+                   << "错误：" << file.errorString();
         return false;
     }
     QByteArray compressed = file.readAll();
@@ -539,7 +539,7 @@ bool decompressGzip(const QString &path, QByteArray &out)
 
     if (compressed.size() < 2)
     {
-        qWarning() << "[LitematicReader] File too small:" << path;
+        qWarning() << "[LitematicReader] 文件过小：" << path;
         return false;
     }
 
@@ -547,7 +547,7 @@ bool decompressGzip(const QString &path, QByteArray &out)
     if (static_cast<quint8>(compressed.at(0)) != 0x1f ||
         static_cast<quint8>(compressed.at(1)) != 0x8b)
     {
-        qWarning() << "[LitematicReader] Not a gzip file:" << path;
+        qWarning() << "[LitematicReader] 不是 gzip 文件：" << path;
         return false;
     }
 
@@ -561,7 +561,7 @@ bool decompressGzip(const QString &path, QByteArray &out)
     int ret = inflateInit2(&strm, 16 + MAX_WBITS);
     if (ret != Z_OK)
     {
-        qWarning() << "[LitematicReader] inflateInit2 failed:" << ret;
+        qWarning() << "[LitematicReader] inflateInit2 初始化失败：" << ret;
         return false;
     }
 
@@ -578,8 +578,8 @@ bool decompressGzip(const QString &path, QByteArray &out)
         if (ret != Z_OK && ret != Z_STREAM_END)
         {
             inflateEnd(&strm);
-            qWarning() << "[LitematicReader] inflate failed:" << ret
-                       << "msg:" << strm.msg;
+            qWarning() << "[LitematicReader] 解压失败：" << ret
+                       << "消息：" << strm.msg;
             return false;
         }
         out.append(buffer, BUFFER_SIZE - static_cast<int>(strm.avail_out));
@@ -760,7 +760,7 @@ std::optional<LitematicInfo> LitematicReader::readFile(const QString &path)
 {
     if (!QFileInfo::exists(path))
     {
-        qWarning() << "[LitematicReader] File not found:" << path;
+        qWarning() << "[LitematicReader] 文件不存在：" << path;
         return std::nullopt;
     }
 
@@ -776,7 +776,7 @@ std::optional<LitematicInfo> LitematicReader::readFile(const QString &path)
     NbtTag root;
     if (!reader.parseRoot(root))
     {
-        qWarning() << "[LitematicReader] NBT parse failed:" << path;
+        qWarning() << "[LitematicReader] NBT 解析失败：" << path;
         return std::nullopt;
     }
 
@@ -784,7 +784,7 @@ std::optional<LitematicInfo> LitematicReader::readFile(const QString &path)
     const NbtTag *metadata = findChild(root, QStringLiteral("Metadata"));
     if (metadata == nullptr)
     {
-        qWarning() << "[LitematicReader] Missing 'Metadata' tag:" << path;
+        qWarning() << "[LitematicReader] 缺少 'Metadata' 标签：" << path;
         return std::nullopt;
     }
 

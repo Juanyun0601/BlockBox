@@ -334,6 +334,7 @@ bool FavoritesManager::renameFolder(const QString &folderId, const QString &newN
 
 bool FavoritesManager::deleteFolder(const QString &folderId)
 {
+    QList<FavoriteItem> removedItems;
     QMutexLocker locker(&m_mutex);
     for (int i = 0; i < m_folders.size(); ++i)
     {
@@ -344,10 +345,19 @@ bool FavoritesManager::deleteFolder(const QString &folderId)
             {
                 return false;
             }
+            removedItems = m_folders[i].items;
             m_folders.removeAt(i);
             save();
             locker.unlock();
             emit foldersChanged();
+            // 随收藏夹一起消失、且不存在于其它收藏夹的条目，视为彻底移除
+            for (const FavoriteItem &item : removedItems)
+            {
+                if (foldersContaining(item.id).isEmpty())
+                {
+                    emit favoriteRemoved(item.id);
+                }
+            }
             return true;
         }
     }
@@ -396,6 +406,7 @@ bool FavoritesManager::addFavorite(const QString &folderId, const ModInfo &info,
             save();
             locker.unlock();
             emit folderChanged(folderId);
+            emit favoriteAdded(item);
             return true;
         }
     }
@@ -417,6 +428,11 @@ bool FavoritesManager::removeFavorite(const QString &folderId, const QString &it
                     save();
                     locker.unlock();
                     emit folderChanged(folderId);
+                    // 只有该条目不再存在于任何收藏夹时，才算彻底移除
+                    if (foldersContaining(itemId).isEmpty())
+                    {
+                        emit favoriteRemoved(itemId);
+                    }
                     return true;
                 }
             }

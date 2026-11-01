@@ -170,7 +170,7 @@ std::optional<GameProcessInfo> GameDetector::detectRunningGame()
   if (snapshot == INVALID_HANDLE_VALUE)
   {
     qWarning() << "[GameDetector]"
-               << "CreateToolhelp32Snapshot failed, error =" << GetLastError();
+               << "CreateToolhelp32Snapshot 失败，错误码 =" << GetLastError();
     return std::nullopt;
   }
 
@@ -217,7 +217,7 @@ std::optional<GameProcessInfo> GameDetector::detectRunningGame()
 
     if (!process.waitForFinished(5000))
     {
-      qWarning() << "[GameDetector]" << "PowerShell timeout for PID" << pid;
+      qWarning() << "[GameDetector]" << "PowerShell 等待 PID 超时：" << pid;
       process.kill();
       process.waitForFinished(1000);
       continue;
@@ -226,8 +226,8 @@ std::optional<GameProcessInfo> GameDetector::detectRunningGame()
     if (process.exitCode() != 0)
     {
       qWarning() << "[GameDetector]"
-                 << "PowerShell exit code" << process.exitCode()
-                 << "for PID" << pid;
+                 << "PowerShell 退出码" << process.exitCode()
+                 << "（PID" << pid << "）";
       continue;
     }
 

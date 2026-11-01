@@ -208,6 +208,17 @@ void SettingsPage::initAboutSettings()
     addLinkRow(tr("官方网站"), tr("访问 BlockBox 官方网站。"), "https://blockbox.cc.cd");
     addLinkRow(tr("GitHub"), tr("查看源代码、提交问题与建议。"), "https://github.com/Juanyun0601/BlockBox");
 
+    // 意见反馈：跳到软件内反馈页（登录论坛账号后提交，后台统一处理）
+    QHBoxLayout *feedbackRow = appendSettingRow(linkCard,
+        tr("意见反馈"),
+        tr("提交软件问题与建议，处理进度会在反馈页里显示。"));
+    QPushButton *feedbackBtn = new QPushButton(tr("去反馈"), m_aboutSettings);
+    feedbackBtn->setObjectName("primaryButton");
+    feedbackBtn->setCursor(Qt::PointingHandCursor);
+    feedbackBtn->setFixedWidth(80);
+    connect(feedbackBtn, &QPushButton::clicked, this, &SettingsPage::openFeedbackRequested);
+    feedbackRow->addWidget(feedbackBtn);
+
     // ── 开源许可卡片 ──
     QVBoxLayout *licenseCard = createSettingsCard(layout, tr("开源许可"));
 
@@ -322,12 +333,28 @@ void SettingsPage::initAboutSettings()
         "源码可见", "https://github.com/EndingCredits/litematic-viewer");
     addOpenSourceRow("Deepslate", tr("Minecraft 结构/Web 渲染库，封面体素预览思路来源之一。"),
         "MIT", "https://github.com/misode/deepslate");
+    addOpenSourceRow("原版结构模板（Java 版 1.21.4 客户端）", tr("世界地图结构详情三维预览的核心数据：冰屋、沉船、废弃传送门、水下遗迹、掠夺者哨塔、古迹废墟、末地船、下界化石、平原村庄、远古城市、末地城、试炼密室、堡垒遗迹、林地府邸共 14 类结构，直接按游戏自带的结构模板逐块还原，方块种类、数量与朝向和游戏内一致（准确度 95% 以上）。其中村庄、远古城市、末地城、堡垒遗迹和试炼密室还会按游戏自带的拼接规则（模板池）拼出成片建筑群或整座地下迷宫，林地府邸用游戏自带的 73 个房间模板铺成楼层；村庄按所在群系自动选用平原、沙漠、热带草原、针叶林、雪原五种风格，并复刻原版拼图算法（随机种子、段的选择、朝向与位置）逐段还原，与游戏内实际生成的村庄逐方块对照一致（苔藓、路面风化这类游戏随机装饰除外）。结构模板版权归 Mojang Studios 所有。"),
+        tr("Mojang 最终用户许可协议"), "https://www.minecraft.net/eula");
+    addOpenSourceRow("Cubiomes", tr("世界地图的结构定位、种子计算与群系判定算法参考。"),
+        "MIT", "https://github.com/Cubitect/cubiomes");
+    addOpenSourceRow("Minecraft Wiki · 结构蓝本", tr("没有结构模板的结构（海底神殿等）仍按 Wiki 结构页面做示意重建，预览页会写明「程序化近似」；要塞、下界要塞和废弃矿井则按游戏自身的生成与拼装规则逐段还原（对照 1.21.4 客户端），与游戏内实际生成的结构逐块一致。"),
+        "CC BY-NC-SA 3.0", "https://zh.minecraft.wiki/w/结构");
+
+    // 投影方块编辑器
+    appendSettingRow(opensourceCard, tr("投影方块编辑器"), QString(), QString(), true);
+
+    addOpenSourceRow("Luanti（原 Minetest）", tr("开源体素沙盒。投影方块编辑器的第一人称自由视角参考了它的相机与移动实现：鼠标原地转动视角、俯仰角限制 ±90°、W/S 沿视线飞行、A/D 水平横移、空格 / Shift 升降、双击 W 或按住 Ctrl 疾跑，操作逻辑与《我的世界》原版一致。"),
+        "LGPL-2.1", "https://github.com/minetest/minetest");
 
     // 地图与存档
     appendSettingRow(opensourceCard, tr("地图与存档"), QString(), QString(), true);
 
     addOpenSourceRow("MCA Selector", tr("Anvil 区域文件解析、地表俯视着色与多线程渐进渲染思路参考（存档地图）。"),
         "GPL-3.0", "https://github.com/Querz/mcaselector");
+    addOpenSourceRow("Misode · mcmeta", tr("原版世界生成数据。世界地图的未加载区块种子预测据此还原蘑菇岛巨型蘑菇：每个区块长蘑菇的位置、红伞还是棕伞、伞柄多高，都按游戏标记区块装饰阶段的同一套随机算法推算，游戏内逐区块核对，位置、颜色与高度一致（岛屿上的巨型蘑菇全部命中，整体准确度约 93%，1.18 至 1.21.4 各版本均已核对生效）。"),
+        "MIT", "https://github.com/misode/mcmeta");
+    addOpenSourceRow("FeatureUtils（KaptainWutax）", tr("世界地图「战利品」页通过种子推测箱子内容的算法参考：先按世界种子定位结构，再按游戏自带的战利品表（池、轮数、权重、附魔与药水等物品函数、嵌套表）逐项推算每个箱子里各物品的出现概率。出现概率不低于 95% 的物品标为「必出」，其余按概率从高到低排列；宝箱数据取自官方 1.21.4 客户端（56 张宝箱表 + 3 张考古表），与游戏内战利品规则一致。"),
+        "MIT", "https://github.com/KaptainWutax/FeatureUtils");
 
     // Mod 平台
     appendSettingRow(opensourceCard, tr("Mod 平台"), QString(), QString(), true);
@@ -344,6 +371,8 @@ void SettingsPage::initAboutSettings()
     // AI / 工具
     appendSettingRow(opensourceCard, tr("AI 与工具"), QString(), QString(), true);
 
+    addOpenSourceRow("opencode", tr("开源 AI 编程助手，AI 助手工作模式的过程展示（思考行、工具调用行的状态图标与展开样式）参考其设计。"),
+        "MIT", "https://github.com/sst/opencode");
     addOpenSourceRow("Ollama", tr("本地大模型推理后端。"),
         "MIT", "https://github.com/ollama/ollama");
     addOpenSourceRow("Chunker", tr("Java 版与基岩版存档转换引擎。"),

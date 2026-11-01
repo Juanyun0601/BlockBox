@@ -1,0 +1,369 @@
+[PASS] write r.0.0 (full)
+[PASS] write r.1.1
+[PASS] write r.1.0
+[PASS] write fixture level.dat
+  render: regions=81 failed=0 bpp=2 img=2304x2304 tiles=81
+[PASS] progressive sink got tiles
+  first tile dest=1792,1792 center dest=2048,2048 center idx=1
+[PASS] priority region is in the first batch of tiles
+  center pixel a=255 rgb=53,99,192
+[PASS] center region rendered (no hole)
+  seed render: regions=1681 bpp=8 tiles=1681 first=1344,1216 center=1280,1280
+[PASS] seed branch: priority region is in the first batch
+  seed center pixel a=255 rgb=118,139,166
+[PASS] seed branch: center region rendered (no hole)
+[PASS] render finished
+[PASS] stack -> map view
+[PASS] canvas switched while still rendering (real-time)
+  status: 区域 3 · 已渲染 3 · 每像素 1 格 · 90 ms
+  biome: 当前群系：白桦林
+[PASS] current biome shown in chinese
+[PASS] progress bar hidden after render
+[FAIL] structure query converged
+  structure markers=0
+[FAIL] seed-based structure markers present
+[PASS] dimension + shade + height combos
+[PASS] toolbar buttons (grid/zoom/fit/export/expand...)
+[PASS] coordinate inputs moved into expand popup (not on toolbar)
+[PASS] shade combo has 3 modes
+[PASS] third shade mode is terrain
+[PASS] terrain mode renders the surface
+[PASS] terrain mode is colored (not height-gray)
+[PASS] structure bar has one button per structure type
+[PASS] structure set covers all 26 types
+[PASS] all structure keys present incl. gateway/camp/fossil/ship
+  unsupported=3 disabled=3
+[PASS] unsupported structures listed but disabled
+[PASS] computable structure button enabled
+[PASS] computable structure button enabled
+  rare structures=8
+[PASS] rare flags assigned
+[PASS] page tracks structure buttons
+[PASS] all structure toggles checked by default
+[PASS] page state defaults to all-enabled
+[PASS] structure buttons have icons
+[PASS] structure bar has 全选/清空 buttons
+[FAIL] clear-all query converged
+  markers after clear=104
+[FAIL] clear-all removes all markers
+[PASS] clear-all unchecks all state
+[FAIL] select-all query converged
+  markers after select-all=104
+[PASS] select-all restores markers
+  dense same-type groups sampled=1
+[PASS] viewport has dense same-type marker pairs to merge
+  merged groups with badge=1/1
+[PASS] dense merged icon shows dark ×N badge
+[PASS] icon style defaults to Icon
+  icon-style files on disk=89
+[PASS] all EnvSprite icons downloaded (*.icon.png)
+[PASS] switch to Overview style
+[PASS] overview-style pixmap resolvable
+  overview-style files on disk=25
+[PASS] overview cache stored separately from icon cache
+[PASS] switch back to Icon style
+[PASS] fixture level.dat has spawn
+[PASS] spawn read as (300, 200)
+[PASS] initial zoom readout exists
+  initial zoom=118%
+  initial center=(299, 199)
+[PASS] initial view centered on spawn
+[PASS] initial view uses fixed 64-chunk window
+  central colors=772
+[PASS] canvas shows terrain (many colors)
+[PASS] found an isolated visible marker
+  marker[19] type=10 block=(192,176) screen=(477,229)
+  stroke px(0,-16)=1 px(0,-19)=rgb(102,134,69)
+  white stroke top=1 outside=1
+[PASS] marker has white stroke at top edge (30px icon)
+[PASS] no white stroke outside the border
+[PASS] clicking marker opens structure popup
+[PASS] popup shows structure name
+  popup coord: X 192   Z 176
+[PASS] popup shows structure coordinates
+[PASS] popup has copy/wiki/done buttons
+  wiki url: https://zh.minecraft.wiki/w/Shipwreck
+[PASS] wiki url points to zh.minecraft.wiki
+  clipboard: 192, 176
+[PASS] copy button writes clipboard
+[PASS] not marked done initially
+[PASS] done button marks structure done
+[PASS] done count is 1
+[PASS] done button text toggles to cancel
+  persisted: 10_192_176
+[PASS] done flag persisted to QSettings
+  avg before=(185,174) after=(174,178)
+  done pixel diff=15
+[PASS] marked-done marker drawn semi-transparent
+[PASS] cancel removes done flag
+[PASS] done count back to 0
+[PASS] structure popup has detail button
+[PASS] detail button carries structure index
+[PASS] detail click closes structure popup
+[PASS] detail button opens detail dialog
+[PASS] detail dialog titled with structure name
+[PASS] detail dialog has tab widget
+  detail tabs: 简介/预览/战利品
+[PASS] detail tabs are 简介 / 预览 / 战利品
+[PASS] detail dialog opens on 简介 page
+[PASS] intro page exists
+  intro keys: 名称/Wiki/维度/坐标
+  intro values: 沉船|Shipwreck|主世界|X 192   Z 176
+[PASS] intro shows structure name row
+[PASS] intro shows dimension row
+[PASS] intro shows coord row
+[PASS] intro name matches structure
+[PASS] intro coord shows X and Z
+[PASS] loot page exists
+  loot tab section=战利品（按种子） chips=11
+[PASS] loot tab has section title
+[PASS] loot tab chip count matches
+[PASS] loot tab chips include items
+[PASS] loot tab chips all have icons
+[PASS] intro page has no loot chips
+[PASS] seeded loot is deterministic
+[PASS] seeded loot stack has count
+[PASS] preview page exists
+  preview hint: 模型逐块还原自原版结构模板（与游戏内数据一致），位置与朝向按世界种子推定；周边地形实体等未包含。
+[PASS] preview page shows status hint
+[PASS] preview page has stats label
+[PASS] preview page has 3d view
+[PASS] preview explains missing seed
+[PASS] preview shows layer bar
+[PASS] layer bar names current layer
+[PASS] layer bar offers this-layer-and-below
+[PASS] preview has chest highlight toggle
+  chest toggle: visible=1 checked=1 text=高亮藏宝箱 3
+[PASS] shipwreck preview shows chest toggle
+[PASS] chest highlight defaults on
+[PASS] chest toggle names 藏宝箱
+[PASS] chest cells are highlighted
+[PASS] chest highlight toggles off
+  child: QLabel | structPreviewVariant | 14,12 75x24
+  child: QLabel | structPreviewStats | 327,12 106x24
+  child: QToolButton | structPreviewChestToggle | 441,12 91x24
+  child: VoxelViewWidget | structPreviewView | 14,44 518x300
+  child: QWidget | structPreviewLayerBar | 14,348 518x26
+  child: QLabel | structPreviewHint | 14,382 518x30
+[PASS] detail dialog has centered card
+  card center offset: 1,1
+[PASS] detail card is centered in dialog
+[PASS] detail dialog closes on reject
+[PASS] structure builder builds village
+[PASS] structure builder reports size and blocks
+[PASS] structure builder reports variant
+[PASS] structure builder rejects unknown key
+  preview shot village: ok
+[PASS] preview screenshot saved
+  preview shot desert_pyramid: ok
+[PASS] preview screenshot saved
+  preview shot jungle_temple: ok
+[PASS] preview screenshot saved
+  preview shot swamp_hut: ok
+[PASS] preview screenshot saved
+  preview shot igloo: ok
+[PASS] preview screenshot saved
+  preview shot ocean_ruin: ok
+[PASS] preview screenshot saved
+  preview shot shipwreck: ok
+[PASS] preview screenshot saved
+  preview shot ruined_portal: ok
+[PASS] preview screenshot saved
+  preview shot outpost: ok
+[PASS] preview screenshot saved
+  preview shot monument: ok
+[PASS] preview screenshot saved
+  preview shot mansion: ok
+[PASS] preview screenshot saved
+  preview shot stronghold: ok
+[PASS] preview screenshot saved
+  preview shot mineshaft: ok
+[PASS] preview screenshot saved
+  preview shot ancient_city: ok
+[PASS] preview screenshot saved
+  preview shot trial_chambers: ok
+[PASS] preview screenshot saved
+  preview shot trail_ruins: ok
+[PASS] preview screenshot saved
+  preview shot desert_well: ok
+[PASS] preview screenshot saved
+  preview shot buried_treasure: ok
+[PASS] preview screenshot saved
+  preview shot fortress: ok
+[PASS] preview screenshot saved
+  preview shot bastion: ok
+[PASS] preview screenshot saved
+  preview shot end_city: ok
+[PASS] preview screenshot saved
+  preview shot end_gateway: ok
+[PASS] preview screenshot saved
+  preview shot abandoned_camp: ok
+[PASS] preview screenshot saved
+  preview shot nether_fossil: ok
+[PASS] preview screenshot saved
+  preview shot end_ship: ok
+[PASS] preview screenshot saved
+[PASS] zoom-out button exists
+  zoomed-out markers: rare=9 rareDrawn=9 commonHidden=12
+[PASS] rare structures still drawn when zoomed out
+[PASS] common structures hidden when zoomed out
+[PASS] grid toggle exists
+  page width after resize(1000) = 1000
+[PASS] structure bar has scroll container
+  struct scroll max@1000px = 248
+[PASS] narrow width: structure bar scrollable
+[PASS] export button exists (refresh moved to top bar)
+  toolbar right edge @1000px = 970 (page 1000)
+[PASS] toolbar fits in 1000px width
+[PASS] map view exists
+[PASS] status label exists
+[PASS] click selects chunk (status shows selection)
+[PASS] middle button enters pan mode
+[PASS] middle release leaves pan mode
+[PASS] right click opens context menu
+[PASS] double click zooms in
+  detail tiles loaded=2
+[PASS] 1:1 detail tiles load for visible region
+  tile order: (0,0) (1,0)
+[PASS] tile load order recorded
+  center region=(0,0)
+[PASS] first detail tile is the viewport-center region
+[PASS] tiles load outward (distance non-decreasing)
+[PASS] 1:1 button exists
+[PASS] 1:1 button reports 100% (1px = 1 block)
+[PASS] 1:1 changes zoom readout
+  zoom readout: 189% -> 100%
+[PASS] height combo exists
+[PASS] height combo has an inline input box
+[PASS] height default = unlimited
+[PASS] map image available
+  Y=64 (0,0): rgb(53,99,192) -> rgb(120,91,61)
+[PASS] Y=64 changes surface (cuts blocks above)
+[PASS] Y=64 still shows the surface below
+[PASS] cut surface is not the water that sat above
+[PASS] typed Y=100 restores the true surface
+[PASS] G toggles grid
+[PASS] + zooms in
+[PASS] - zooms out
+[PASS] 0 fits to window
+[PASS] default view is not fit-to-overview
+[PASS] C clears selection
+[PASS] 2 switches to nether
+[PASS] subtitle follows dimension
+[PASS] 1 switches back to overworld
+[qt ] [LevelDatEditor] δ�ҵ� level.dat�� "C:/Users/dp/AppData/Local/Temp/world_map_page_probe-vmtjuN/saves/EmptyWorld"
+[PASS] empty save shows hint
+[PASS] seed preview toggle exists
+[PASS] seed toggle enabled (save has seed)
+[PASS] seed preview starts off (probe boot setting)
+[PASS] map image before seed toggle
+[PASS] render after enabling seed preview
+[PASS] map image after seed toggle
+[PASS] seed preview expands map bounds
+  seed-on status: 区域 1681 · 已渲染 1681 · 每像素 8 格 · 种子预测 1678 · 6867 ms
+[PASS] status reports seed region count
+[PASS] render after disabling seed preview
+[PASS] disabling seed preview restores bounds
+[PASS] seed preview state persisted
+[PASS] second row has expand button
+[PASS] popup starts closed
+[PASS] expand opens content popup
+[PASS] popup widget exists
+[PASS] popup has search box
+[PASS] popup has X and Z coordinate inputs at its top
+[PASS] popup structure list populated
+[PASS] popup has structure + biome + ore columns
+  popup rows: struct=26 biome=55 ore=8
+[PASS] structure column lists all types
+[PASS] biome column lists biomes
+[PASS] ore column lists ores
+[PASS] list row = toggle (icon+name) + highlight btn
+[PASS] biome row count exposed
+[PASS] biomes default to all-deselected
+[PASS] structure column has select-all/clear
+[PASS] biome column has select-all/clear
+[PASS] ore column has select-all/clear
+[PASS] search filters structure list
+[PASS] struct/biome query converged
+[PASS] no overlay when biomes all-deselected
+[PASS] biome select-all query converged
+  biome overlay cells=825
+[PASS] biome select-all produces overlay cells
+[PASS] biome select-all checks all rows
+[PASS] biome clear empties overlay
+[PASS] zoom controls found for ore scan
+[PASS] ore row count exposed
+[PASS] ores default to all-deselected
+[PASS] no ore dots before selection
+[PASS] click diamond ore row
+[PASS] ore row becomes checked
+  ore prompt (zoomed out): 需放大到 100% 以上才会扫描矿物
+[PASS] no ore dots while zoomed out
+[PASS] prompt asks to zoom in before scanning
+[PASS] popup closed for ore dot screenshot
+  ore dots=1024 prompt=矿物 1024 处 · 扫描中（已扫 64 个区块）
+[PASS] 1:1 scan marks ore dots
+  ore scan idle=1 chunks=1653 (2405 ms)
+[PASS] ore scan finishes over visible chunks
+[PASS] chunk-level cache populated (1653 chunks)
+[PASS] status stops saying scanning after finishing
+[PASS] popup reopened after ore scan
+[PASS] map view found for ore click
+[PASS] found a visible ore dot
+[PASS] clicking ore dot opens info popup
+  ore popup: title=钻石矿石 coord=X 288   Y 65   Z 220
+[PASS] ore popup shows ore name
+[PASS] ore popup shows ore Y coordinate
+[PASS] ore popup shows ore X/Z
+[PASS] ore popup has copy/wiki/done buttons
+[PASS] ore wiki url points to zh.minecraft.wiki
+[PASS] ore copy writes x,y,z
+[PASS] ore done button records a mark
+[PASS] ore done button text toggles
+[PASS] ore done toggle undone
+[PASS] ore clear removes dots
+[PASS] village type present
+[PASS] highlight village accepted
+[PASS] close button closes popup
+[PASS] expand reopens popup
+[PASS] Esc closes popup
+[PASS] expand opens popup again
+[PASS] click outside closes popup
+[PASS] expand toggles open
+[PASS] expand toggles closed
+[PASS] goto coord edits exist
+[PASS] goto button found in content popup
+[PASS] goto moved view center to (700,700)
+[PASS] re-render starts from view center region, got 1,1
+[PASS] re-render from view center finished
+[PASS] seed preview button found
+[PASS] big world rendered before seed toggle
+[PASS] seed re-render finished
+  seed-on: view center region=0,0 tiles=1673
+  growth order: [0,0 1,-2 -2,-2 -1,-1 -2,-1 1,-1 -1,-2 2,-2 2,-1 1,0 0,-1 0,-2]
+[PASS] progressive growth observed
+  center tile arrival index=0 (batch 418)
+[PASS] view center region 0,0 arrives early, index=0
+  final center pixel a=255
+[PASS] center region present in final image
+  direct render: img=1024x1024 hm=1024x1024 opaque=10687 missing=0
+[PASS] renderer returns aligned height map
+[PASS] renderer fills a height for every surface pixel
+[PASS] 3d mode off by default
+[PASS] 3d mode turned on
+[PASS] 3d view bound to canvas
+[PASS] 3d height map available
+[PASS] 3d frame rendered
+[PASS] 3d mesh has quads
+  height map: opaque=140625 missing=0 (2624x2624)
+[PASS] height map aligned with canvas
+[PASS] height map sample covers canvas
+[PASS] every opaque pixel has a surface height
+  3d: stack=2 quads=47959 frame=1631x694
+[PASS] stack -> 3d view
+  3d colors=7384
+[PASS] 3d canvas shows terrain
+[PASS] 3d mode turned off
+[PASS] stack -> back to map view
+[PASS] no QSS parse warnings
+failures: 5

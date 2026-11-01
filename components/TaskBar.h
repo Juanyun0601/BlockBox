@@ -1,6 +1,7 @@
 #ifndef TASKBAR_H
 #define TASKBAR_H
 
+#include <QHash>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMap>
@@ -13,6 +14,7 @@
 #include "utils/DownloadTaskManager.h"
 
 class QPropertyAnimation;
+class QTimer;
 
 class TaskBar : public QWidget
 {
@@ -58,6 +60,10 @@ private:
     void updateVisibility();
     void setupCardConnections(DownloadTaskCard *card, const QString &taskId);
     void updateCountBadge();
+    void fadeOutAndRemoveDownloadCard(const QString &taskId);
+    void scheduleDownloadCardDismissal(const QString &taskId, int delayMs);
+    void cancelDownloadCardDismissal(const QString &taskId);
+    void onLaunchCardDismissTimeout();
 
     QHBoxLayout *m_mainLayout;
     QWidget *m_tray;
@@ -74,6 +80,11 @@ private:
 
     // Download tasks
     QMap<QString, DownloadTaskCard*> m_downloadTaskCards;
+
+    // 任务结束后自动收起卡片用的一次性定时器（按任务 id 索引）
+    QHash<QString, QTimer*> m_cardDismissTimers;
+    // 启动失败/异常退出的启动卡片自动收起的定时器
+    QTimer *m_launchDismissTimer;
 
     // Exit animation
     QPropertyAnimation *m_exitAnim;

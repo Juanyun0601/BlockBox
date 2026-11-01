@@ -32,12 +32,12 @@
 #include <QEvent>
 #include <QEasingCurve>
 #include <QFile>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QIcon>
-#include <QImageReader>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -63,6 +63,7 @@
 #include "components/PerfMonitorCard.h"
 #include "components/PerformanceDetailDialog.h"
 #include "layouts/FlowLayout.h"
+#include "utils/HomeCarouselStore.h"
 #include "utils/SettingsManager.h"
 #include "utils/SystemTools.h"
 #include "utils/CommandAssistant/LevelDatReader.h"
@@ -549,6 +550,16 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
     // 官方新闻卡片同样按容器宽度均分三列，重建方式与最近游玩一致
     scheduleNewsRebuild();
   }
+  if (event->type() == QEvent::MouseButtonPress && watched == m_carouselPlaceholder)
+  {
+    auto *mouseEvent = static_cast<QMouseEvent*>(event);
+    // 空态占位卡片：整块可点，点击跳到设置页的「界面设置」去添加图片
+    if (mouseEvent->button() == Qt::LeftButton)
+    {
+      emit customizeCarouselRequested();
+      return true;
+    }
+  }
   if (event->type() == QEvent::MouseButtonPress)
   {
     auto *mouseEvent = static_cast<QMouseEvent*>(event);
@@ -583,24 +594,48 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
 
 void HomePage::loadPictures()
 {
+  m_carouselPaths.clear();
+
+  // 1. 用户在「设置 → 界面设置」里添加的图片优先展示
+  const QStringList saved = HomeCarouselStore::savedImages();
+  const QStringList custom = HomeCarouselStore::existingImages(saved);
+  // 失效路径（图片被删除/损坏）顺手从设置里清掉，避免下次启动重复检查
+  if (custom != saved)
+    HomeCarouselStore::saveImages(custom);
+
+  if (!custom.isEmpty())
+  {
+    m_carouselPaths = custom;
+    return;
+  }
+
+  // 2. 未自定义：使用内置风景图
   QDir dir(":/Images/Pictures/");
   QStringList filters;
   filters << "*.jpg" << "*.png";
-  QStringList entries = dir.entryList(filters, QDir::Files, QDir::Name);
-  m_carouselPaths.clear();
+  const QStringList entries = dir.entryList(filters, QDir::Files, QDir::Name);
   for (const QString &entry : entries)
-  {
-    const QString path = dir.absoluteFilePath(entry);
-    // 只读文件头判断能否解码，不解码像素：轮播图为数 MB 的大图，
-    // 启动时逐张完整解码要多花几百毫秒
-    QImageReader reader(path);
-    if (!reader.canRead())
-    {
-      qWarning() << "[HomePage] 轮播图片无法加载，已跳过:" << path;
-      continue;
-    }
-    m_carouselPaths.append(path);
-  }
+    m_carouselPaths.append(dir.absoluteFilePath(entry));
+  m_carouselPaths = HomeCarouselStore::existingImages(m_carouselPaths);
+}
+
+void HomePage::reloadCarouselImages()
+{
+  // 设置页改完自定义图片后回来：重新读列表并只重建左侧轮播
+  loadPictures();
+  rebuildCarouselSection();
+}
+
+void HomePage::rebuildCarouselSection()
+{
+  // 只换左侧轮播：皮肤面板（3D 预览）与公告栏保持原样，
+  // 避免每次增删图片都重新初始化 GL、重新拉取皮肤与公告
+  if (!m_carouselHostLayout)
+    return;
+
+  clearCarouselWidget();
+  buildCarouselWidget();
+  QTimer::singleShot(0, this, [this]() { updateCarouselHeight(); });
 }
 
 QVector<RecentPlayEntry> HomePage::scanRecentPlays(const QList<InstanceFolderInfo> &folders,
@@ -1019,69 +1054,16 @@ QWidget* HomePage::createCarouselSection()
   heroRow->setContentsMargins(0, 0, 0, 0);
   heroRow->setSpacing(kHeroSpacing);
 
-  if (m_carouselPaths.isEmpty())
-  {
-    auto *placeholder = new QLabel(tr("暂无风景图片"));
-    placeholder->setObjectName("carouselPlaceholder");
-    placeholder->setAlignment(Qt::AlignCenter);
-    m_carouselPlaceholder = placeholder;
-    heroRow->addWidget(placeholder, 1);
-  }
-  else
-  {
-    m_carouselView = new CarouselView();
-    m_carouselView->installEventFilter(this);
-    heroRow->addWidget(m_carouselView, 1);
-  }
+  // 轮播放进独立容器：换图时只重建这块，右侧皮肤面板与下方公告栏都不动
+  m_carouselHost = new QWidget();
+  m_carouselHostLayout = new QVBoxLayout(m_carouselHost);
+  m_carouselHostLayout->setContentsMargins(0, 0, 0, 0);
+  m_carouselHostLayout->setSpacing(0);
+  buildCarouselWidget();
+  heroRow->addWidget(m_carouselHost, 1);
 
   heroRow->addWidget(createSkinPanel());
   vlay->addLayout(heroRow);
-
-  if (!m_carouselPaths.isEmpty())
-  {
-    // 指示点浮层：直接叠在封面图之上（不再单独占一行），
-    // 垂直中心与右侧皮肤面板底部的「默认/经典」切换条对齐，两者落在同一水平线上
-    auto *dotsPill = new QWidget(m_carouselView);
-    dotsPill->setObjectName("carouselDotsPill");
-    dotsPill->setAttribute(Qt::WA_StyledBackground, true);
-    dotsPill->setFixedHeight(kCarouselDotsPillHeight);
-    auto *dotsLayout = new QHBoxLayout(dotsPill);
-    dotsLayout->setContentsMargins(7, 0, 7, 0);   // 胶囊左右留白
-    dotsLayout->setSpacing(5);
-    for (int i = 0; i < m_carouselPaths.size(); ++i)
-    {
-      auto *dot = new QPushButton(dotsPill);
-      dot->setObjectName("carouselDot");
-      dot->setFixedSize(kCarouselDotSize, kCarouselDotSize);
-      dot->setCursor(Qt::PointingHandCursor);
-      int index = i;
-      QObject::connect(dot, &QPushButton::clicked, [this, index]()
-      {
-        setCarouselIndex(index);
-      });
-      dotsLayout->addWidget(dot);
-      m_carouselDots.append(dot);
-    }
-
-    // 浮层布局挂在轮播视图上：底部留白把胶囊压到图底部，横向居中
-    auto *dotsOverlay = new QVBoxLayout(m_carouselView);
-    dotsOverlay->setContentsMargins(0, 0, 0, kCarouselDotsBottomGap);
-    dotsOverlay->setSpacing(0);
-    dotsOverlay->addStretch(1);
-    dotsOverlay->addWidget(dotsPill, 0, Qt::AlignHCenter);
-
-    // 初始显示第一张
-    setCarouselIndex(0);
-
-    // 自动轮播定时器
-    m_carouselTimer = new QTimer(this);
-    m_carouselTimer->setInterval(5000);
-    QObject::connect(m_carouselTimer, &QTimer::timeout, [this]()
-    {
-      updateCarousel();
-    });
-    m_carouselTimer->start();
-  }
 
   // ── 公告栏：官网 announcement.json 的最新公告，多条可分批切换 ──
   // 放在封面 + 皮肤模型下方、其余卡片之前，没有公告时自行隐藏
@@ -1089,6 +1071,103 @@ QWidget* HomePage::createCarouselSection()
   vlay->addWidget(m_announcementBar);
 
   return container;
+}
+
+// 按当前 m_carouselPaths 生成左侧轮播：空态占位卡，或自绘轮播 + 指示点
+void HomePage::buildCarouselWidget()
+{
+  if (!m_carouselHostLayout)
+    return;
+
+  if (m_carouselPaths.isEmpty())
+  {
+    auto *placeholder = new QLabel(tr("暂无轮播图片\n前往 设置 → 界面设置 添加"));
+    placeholder->setObjectName("carouselPlaceholder");
+    placeholder->setAlignment(Qt::AlignCenter);
+    placeholder->setCursor(Qt::PointingHandCursor);
+    placeholder->setToolTip(tr("前往设置添加轮播图片"));
+    placeholder->installEventFilter(this);
+    m_carouselPlaceholder = placeholder;
+    m_carouselHostLayout->addWidget(placeholder);
+    return;
+  }
+
+  m_carouselView = new CarouselView();
+  m_carouselView->installEventFilter(this);
+  m_carouselHostLayout->addWidget(m_carouselView);
+
+  // 指示点浮层：直接叠在封面图之上（不再单独占一行），
+  // 垂直中心与右侧皮肤面板底部的「默认/经典」切换条对齐，两者落在同一水平线上
+  auto *dotsPill = new QWidget(m_carouselView);
+  dotsPill->setObjectName("carouselDotsPill");
+  dotsPill->setAttribute(Qt::WA_StyledBackground, true);
+  dotsPill->setFixedHeight(kCarouselDotsPillHeight);
+  auto *dotsLayout = new QHBoxLayout(dotsPill);
+  dotsLayout->setContentsMargins(7, 0, 7, 0);   // 胶囊左右留白
+  dotsLayout->setSpacing(5);
+  for (int i = 0; i < m_carouselPaths.size(); ++i)
+  {
+    auto *dot = new QPushButton(dotsPill);
+    dot->setObjectName("carouselDot");
+    dot->setFixedSize(kCarouselDotSize, kCarouselDotSize);
+    dot->setCursor(Qt::PointingHandCursor);
+    int index = i;
+    QObject::connect(dot, &QPushButton::clicked, [this, index]()
+    {
+      setCarouselIndex(index);
+    });
+    dotsLayout->addWidget(dot);
+    m_carouselDots.append(dot);
+  }
+
+  // 浮层只保留底部指示点胶囊；自定义入口统一放在「设置 → 界面设置」
+  auto *overlay = new QVBoxLayout(m_carouselView);
+  overlay->setContentsMargins(10, 10, 10, kCarouselDotsBottomGap);
+  overlay->setSpacing(0);
+  overlay->addStretch(1);
+  overlay->addWidget(dotsPill, 0, Qt::AlignHCenter);
+
+  // 初始显示第一张
+  setCarouselIndex(0);
+
+  // 自动轮播定时器
+  m_carouselTimer = new QTimer(this);
+  m_carouselTimer->setInterval(5000);
+  QObject::connect(m_carouselTimer, &QTimer::timeout, [this]()
+  {
+    updateCarousel();
+  });
+  m_carouselTimer->start();
+}
+
+// 拆掉当前轮播（视图、指示点、定时器），只动轮播容器内部
+void HomePage::clearCarouselWidget()
+{
+  if (m_carouselTimer)
+  {
+    m_carouselTimer->stop();
+    m_carouselTimer->deleteLater();
+    m_carouselTimer = nullptr;
+  }
+  m_carouselDots.clear();
+
+  if (m_carouselHostLayout)
+  {
+    while (QLayoutItem *item = m_carouselHostLayout->takeAt(0))
+      delete item;
+  }
+  // 视图/占位卡上的按钮与浮层布局都是它的子对象，随视图一起回收
+  QWidget *oldViews[2] = { m_carouselView, m_carouselPlaceholder };
+  m_carouselView = nullptr;
+  m_carouselPlaceholder = nullptr;
+  for (QWidget *w : oldViews)
+  {
+    if (!w)
+      continue;
+    w->hide();
+    w->setParent(nullptr);
+    w->deleteLater();
+  }
 }
 
 QWidget* HomePage::createSkinPanel()
@@ -1229,10 +1308,11 @@ void HomePage::refreshSkinPanel()
   refreshClassicPage();
 
   // 正版/第三方账户皮肤可能尚未缓存，异步下载补齐（命中缓存则直接加载并发出 skinLoaded）
-  if (!acc.uuid.isEmpty())
-    SkinDownloader::instance()->downloadSkinByUuid(acc.uuid);
-  else if (!acc.skinUrl.isEmpty())
+  // 皮肤站账户的皮肤地址由认证服务器给出（Crafatar 上没有），所以有 skinUrl 就先按它下
+  if (!acc.skinUrl.isEmpty())
     SkinDownloader::instance()->downloadSkin(acc.username, acc.skinUrl);
+  else if (!acc.uuid.isEmpty())
+    SkinDownloader::instance()->downloadSkinByUuid(acc.uuid);
 
   applySkinPanelMode();
 }

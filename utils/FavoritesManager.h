@@ -106,6 +106,10 @@ public:
 signals:
     void foldersChanged();
     void folderChanged(const QString &folderId);
+    /** 收藏新增（任何收藏夹新增条目都会发出，用于同步到论坛账号） */
+    void favoriteAdded(const FavoriteItem &item);
+    /** 收藏彻底移除（仅当该条目不再存在于任何收藏夹时发出） */
+    void favoriteRemoved(const QString &itemId);
 
 private:
     explicit FavoritesManager(QObject *parent = nullptr);

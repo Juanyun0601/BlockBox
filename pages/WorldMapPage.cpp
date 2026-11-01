@@ -8,17 +8,23 @@
 #include "WorldMapPage.h"
 
 #include <QApplication>
+#include <QButtonGroup>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QFrame>
 #include <QFuture>
 #include <QFutureWatcher>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QIntValidator>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -53,6 +59,7 @@
 #include "components/AppFileDialog.h"
 #include "components/NotificationManager.h"
 #include "components/StructureDetailDialog.h"
+#include "components/WorldMap3DView.h"
 #include "utils/WorldMap/StructureLoot.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
@@ -63,6 +70,8 @@
 #include "utils/WorldMap/StructureIcons.h"
 #include "utils/Saves/LevelDatEditor.h"
 #include "utils/ThemeManager.h"
+#include "utils/CommandAssistant/GameDetector.h"
+#include "utils/GameLauncher.h"
 
 // ═══════════════════════ 地图画布 ═══════════════════════
 
@@ -86,6 +95,11 @@ constexpr double kOreMinBlockPx = 1.0;
 constexpr int kOreCacheChunks = 8192;
 /** 单次矿物扫描任务覆盖的区块数：同一 region 内凑一批，减少重复读盘 */
 constexpr int kOreChunksPerJob = 64;
+
+/** 玩家标记轮询间隔（level.dat 由游戏自动保存约 45 秒一次，轮询不用太勤） */
+constexpr int kPlayerPollMs = 3000;
+/** level.dat 距今多久内算「这个世界正被游戏玩着」（覆盖两轮自动保存） */
+constexpr qint64 kPlayerFreshMs = 90 * 1000;
 
 /** 是否勾选了至少一种矿物（矿物默认全不选：扫描要读盘，用户要了才扫） */
 bool anyOreChecked(const QVector<bool> &flags)
@@ -117,6 +131,9 @@ QPixmap oreIconPixmap(int ore, int size)
 /** 中间地图卡片圆角（与顶部工具栏 14px 对齐） */
 constexpr qreal kMapCardRadius = 14.0;
 
+/** 结构信息小窗四周留给投影的留白（窗口透明，圆角卡片画在里面） */
+constexpr int kPopupShadowMargin = 14;
+
 /** 地图卡片底色（@BG_BASE@；不透，自定义背景不会从地图区透出） */
 QColor mapCardBackgroundColor()
 {
@@ -141,6 +158,30 @@ QColor mapCardBorderColor()
     case ThemeManager::DarkTheme:  return QColor(0x3a, 0x3a, 0x3a);
     default:                       return QColor(0x40, 0x40, 0x40);
     }
+}
+
+// ── 用户标记点（右键「添加标记点」）预设图标 ──
+/** 白色内置图标 + 彩色圆底；编辑弹窗的选择按钮与画布上的图钉共用 */
+struct UserMarkerIconDef
+{
+    const char *svg;  ///< Images/Icons 下的内置图标
+    QRgb color;       ///< 圆形底色
+    const char *tip;  ///< 编辑弹窗里按钮的悬停提示
+};
+
+const QVector<UserMarkerIconDef> &userMarkerIconDefs()
+{
+    static const QVector<UserMarkerIconDef> defs = {
+        { ":/Images/Icons/pin_filled.svg", qRgb(0xe5, 0x48, 0x4d), "标记" },
+        { ":/Images/Icons/star.svg",       qRgb(0xf7, 0x6b, 0x15), "兴趣点" },
+        { ":/Images/Icons/check.svg",      qRgb(0x30, 0xa4, 0x6c), "已完成" },
+        { ":/Images/Icons/bolt.svg",       qRgb(0xf0, 0xb4, 0x29), "农场 / 刷怪塔" },
+        { ":/Images/Icons/globe.svg",      qRgb(0x12, 0xa5, 0x94), "传送门" },
+        { ":/Images/Icons/map.svg",        qRgb(0x00, 0x91, 0xff), "宝藏 / 资源" },
+        { ":/Images/Icons/wrench.svg",     qRgb(0x8e, 0x4e, 0xc6), "红石机械" },
+        { ":/Images/Icons/sparkles.svg",   qRgb(0xe9, 0x3d, 0x82), "稀有地点" },
+    };
+    return defs;
 }
 
 } // namespace
@@ -347,6 +388,163 @@ public:
         if (idx < 0 || idx >= m_oreMarkers.size())
             return -1;
         return m_oreMarkers[idx].ore;
+    }
+
+    /** 一个用户手放的标记点（右键「添加标记点」创建，随存档持久化） */
+    struct UserMarkerItem
+    {
+        qint64 x = 0;   ///< 方块坐标
+        qint64 z = 0;
+        int icon = 0;   ///< 预设图标下标（userMarkerIconDefs()）
+        QString name;   ///< 自定义名称（画在图钉下方）
+    };
+
+    /** 替换画布上的用户标记点（页面在增删改 / 换存档后调用） */
+    void setUserMarkers(const QVector<UserMarkerItem> &items)
+    {
+        m_userMarkers = items;
+        update();
+    }
+
+    /** 当前用户标记点数（探针断言用） */
+    int userMarkerCount() const { return m_userMarkers.size(); }
+
+    /** 第 idx 个用户标记的屏幕位置（图钉锚点；视口外 / 无效返回 QPoint()） */
+    QPoint userMarkerScreenPos(int idx) const
+    {
+        if (idx < 0 || idx >= m_userMarkers.size() || !valid())
+            return QPoint();
+        const QPointF c = screenPos(m_userMarkers[idx].x, m_userMarkers[idx].z);
+        if (!QRectF(0, 0, width(), height()).contains(c))
+            return QPoint();
+        return c.toPoint();
+    }
+
+    /** 第 idx 个用户标记的方块坐标（打包 QPoint(x, z)；探针用） */
+    QPoint userMarkerBlockPos(int idx) const
+    {
+        if (idx < 0 || idx >= m_userMarkers.size())
+            return QPoint();
+        return QPoint(int(m_userMarkers[idx].x), int(m_userMarkers[idx].z));
+    }
+
+    /** 预设图标：彩底圆形 + 白色内置图标（画布与页面弹窗共用同一份缓存） */
+    QPixmap userIconPixmap(int idx, int size)
+    {
+        const auto key = qMakePair(idx, qMax(1, size));
+        auto it = m_userIconCache.find(key);
+        if (it != m_userIconCache.end())
+            return it.value();
+        const auto &defs = userMarkerIconDefs();
+        if (idx < 0 || idx >= defs.size())
+            return QPixmap();
+        const auto &d = defs.at(idx);
+        const int glyph = qMax(8, size * 10 / 16);
+        const QPixmap g = IconHelper::loadColoredIcon(
+            QLatin1String(d.svg), Qt::white, glyph).pixmap(glyph, glyph);
+        QPixmap pm(size, size);
+        pm.fill(Qt::transparent);
+        QPainter pt(&pm);
+        pt.setRenderHint(QPainter::Antialiasing);
+        pt.setPen(Qt::NoPen);
+        pt.setBrush(QColor(d.color));
+        pt.drawEllipse(pm.rect().adjusted(1, 1, -1, -1));
+        if (!g.isNull())
+            pt.drawPixmap((size - g.width()) / 2, (size - g.height()) / 2, g);
+        pt.end();
+        m_userIconCache.insert(key, pm);
+        return pm;
+    }
+
+    /** 点击用户标记点（先于结构 / 矿物命中；弹信息小窗） */
+    std::function<void(const QPoint &globalPos, int idx)> onUserMarkerClicked;
+
+    /** 屏幕点命中的用户标记下标（图钉圆头或名牌，取最近的；未命中 -1） */
+    int userMarkerAt(const QPoint &pos) const
+    {
+        if (m_userMarkers.isEmpty() || !valid())
+            return -1;
+        QFont f;
+        f.setPixelSize(11);
+        f.setBold(true);
+        const QFontMetrics fm(f);
+        int best = -1;
+        double bestD = std::numeric_limits<double>::max();
+        for (int i = 0; i < m_userMarkers.size(); ++i)
+        {
+            const UserMarkerItem &m = m_userMarkers[i];
+            const QPointF anchor = screenPos(m.x, m.z);
+            // 图钉圆头（含白边）+ 尾巴一片的命中半径
+            const QPointF cc = userPinCenter(m);
+            const double dx = pos.x() - cc.x();
+            const double dy = pos.y() - cc.y();
+            const double d2 = dx * dx + dy * dy;
+            const double hitR = kUserPinSize / 2.0 + 6.0;
+            if (d2 <= hitR * hitR && d2 < bestD)
+            {
+                bestD = d2;
+                best = i;
+                continue;
+            }
+            // 名牌也算：名字较长时点名字也能选中
+            if (!m.name.isEmpty())
+            {
+                const int tw = fm.horizontalAdvance(m.name);
+                const QRectF lb(anchor.x() - tw / 2.0 - 5.0, anchor.y() + 3.0,
+                                tw + 10.0, fm.height() + 4);
+                if (lb.contains(pos) && bestD > 0.0)
+                {
+                    bestD = 0.0;
+                    best = i;
+                }
+            }
+        }
+        return best;
+    }
+
+    // ── 玩家标记（游戏运行中：显示玩家位置与朝向） ──
+    struct PlayerMarkerItem
+    {
+        qint64 x = 0;    ///< 方块坐标
+        qint64 z = 0;
+        double yaw = 0;  ///< 水平朝向角（MC 约定：0=南/+Z，90=西/-X）
+    };
+
+    /** 替换画布上的玩家标记；on=false 清除（游戏没在玩这个存档时） */
+    void setPlayerMarker(qint64 x, qint64 z, double yaw, bool on)
+    {
+        if (m_playerOn == on
+            && (!on || (m_player.x == x && m_player.z == z
+                        && m_player.yaw == yaw)))
+            return;
+        m_player.x = x;
+        m_player.z = z;
+        m_player.yaw = yaw;
+        m_playerOn = on;
+        update();
+    }
+
+    /** 是否显示玩家标记（探针断言用） */
+    bool hasPlayerMarker() const { return m_playerOn; }
+
+    /** 第 idx 个结构标记之外的独立探针入口：玩家标记的方块坐标 */
+    QPoint playerMarkerBlockPos() const
+    {
+        return QPoint(int(m_player.x), int(m_player.z));
+    }
+
+    /** 玩家标记的朝向角（度；探针断言用） */
+    double playerMarkerYaw() const { return m_player.yaw; }
+
+    /** 玩家标记的屏幕中心（未显示 / 视口外返回 QPoint()；探针用） */
+    QPoint playerMarkerScreenPos() const
+    {
+        if (!m_playerOn || !valid())
+            return QPoint();
+        const QPointF c = screenPos(m_player.x, m_player.z);
+        if (!QRectF(0, 0, width(), height()).contains(c))
+            return QPoint();
+        return c.toPoint();
     }
 
     /** 点击矿物点（与结构图标同一套信息窗） */
@@ -782,6 +980,8 @@ protected:
             drawGrid(p, target);
 
         drawMarkers(p);
+        drawUserMarkers(p);
+        drawPlayerMarker(p);
         drawHighlight(p);
 
         if (m_hasSelection)
@@ -871,29 +1071,37 @@ protected:
         {
             m_panning = false;
             unsetCursor();
-            // 没有拖动 → 视为点击：先看是否点在结构图标上（弹信息窗），
-            // 其次是矿物点（同一个信息窗），都没命中才切换该区块的选中态
+            // 没有拖动 → 视为点击：先看是否点在用户标记上（弹信息小窗），
+            // 其次结构图标、矿物点（同一个信息窗），都没命中才切换区块选中态
             if (!m_moved && event->button() == Qt::LeftButton)
             {
-                const int hit = markerAt(event->pos());
-                if (hit >= 0 && onStructureClicked)
+                const int uhit = userMarkerAt(event->pos());
+                if (uhit >= 0 && onUserMarkerClicked)
                 {
-                    const Marker &m = m_markers[hit];
-                    onStructureClicked(event->globalPosition().toPoint(),
-                                       m.type, m.x, m.z);
+                    onUserMarkerClicked(event->globalPosition().toPoint(), uhit);
                 }
                 else
                 {
-                    const int ohit = oreMarkerAt(event->pos());
-                    if (ohit >= 0 && onOreClicked)
+                    const int hit = markerAt(event->pos());
+                    if (hit >= 0 && onStructureClicked)
                     {
-                        const OreMarker &m = m_oreMarkers[ohit];
-                        onOreClicked(event->globalPosition().toPoint(),
-                                     m.ore, m.x, m.y, m.z);
+                        const Marker &m = m_markers[hit];
+                        onStructureClicked(event->globalPosition().toPoint(),
+                                           m.type, m.x, m.z);
                     }
                     else
                     {
-                        toggleSelectionAt(event->pos());
+                        const int ohit = oreMarkerAt(event->pos());
+                        if (ohit >= 0 && onOreClicked)
+                        {
+                            const OreMarker &m = m_oreMarkers[ohit];
+                            onOreClicked(event->globalPosition().toPoint(),
+                                         m.ore, m.x, m.y, m.z);
+                        }
+                        else
+                        {
+                            toggleSelectionAt(event->pos());
+                        }
                     }
                 }
             }
@@ -1326,6 +1534,120 @@ private:
         return best;
     }
 
+    // ── 用户标记点（图钉 + 名称标签） ──
+
+    /** 图钉圆头直径（像素；锚点 = 尾尖，圆心在锚点上方） */
+    static constexpr int kUserPinSize = 24;
+
+    /** 图钉圆心的屏幕位置（锚点在尾尖，圆心抬高半径 + 尾长） */
+    QPointF userPinCenter(const UserMarkerItem &m) const
+    {
+        const QPointF c = screenPos(m.x, m.z);
+        return QPointF(c.x(), c.y() - kUserPinSize / 2.0 - 4.0);
+    }
+
+    /**
+     * 用户标记：白色描边的彩色图钉 + 白色图标，下面挂一条深色小名牌。
+     * 名牌也算命中区（名字较长时好点中）。
+     */
+    void drawUserMarkers(QPainter &p)
+    {
+        if (m_userMarkers.isEmpty() || !valid())
+            return;
+        const auto &defs = userMarkerIconDefs();
+        const double r = kUserPinSize / 2.0;
+        QFont f = p.font();
+        f.setPixelSize(11);
+        f.setBold(true);
+        const QFontMetrics fm(f);
+        for (const UserMarkerItem &m : m_userMarkers)
+        {
+            const QPointF anchor = screenPos(m.x, m.z);
+            if (!QRectF(-60, -60, width() + 120, height() + 120).contains(anchor))
+                continue; // 视口外
+            const QColor col(m.icon >= 0 && m.icon < defs.size()
+                                 ? QColor(defs.at(m.icon).color)
+                                 : QColor(0x70, 0x70, 0x70));
+            const QPointF cc = userPinCenter(m);
+            // 尾巴：三角尖指向真实方块位置（先画，圆头盖住接缝）
+            p.setPen(QPen(QColor(0, 0, 0, 70), 1.0));
+            p.setBrush(col);
+            p.drawPolygon(QPolygonF() << cc + QPointF(-4.0, r - 5.0)
+                                      << cc + QPointF(4.0, r - 5.0)
+                                      << anchor);
+            // 白描边圈 + 彩色圆底
+            p.setPen(Qt::NoPen);
+            p.setBrush(Qt::white);
+            p.drawEllipse(cc, r + 2.5, r + 2.5);
+            p.setPen(QPen(QColor(0, 0, 0, 60), 1.0));
+            p.setBrush(col);
+            p.drawEllipse(cc, r + 1.5, r + 1.5);
+            p.setPen(Qt::NoPen);
+            const QPixmap pm = userIconPixmap(m.icon, kUserPinSize - 8);
+            if (!pm.isNull())
+                p.drawPixmap(QPoint(int(cc.x()) - pm.width() / 2,
+                                    int(cc.y()) - pm.height() / 2),
+                             pm);
+
+            // 名称标签：深色圆角小底 + 白字，压在地图任何底色上都读得清
+            if (!m.name.isEmpty())
+            {
+                p.setFont(f);
+                const int tw = fm.horizontalAdvance(m.name);
+                const QRectF lb(anchor.x() - tw / 2.0 - 5.0, anchor.y() + 3.0,
+                                tw + 10.0, fm.height() + 4);
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(20, 22, 26, 180));
+                p.drawRoundedRect(lb, 4, 4);
+                p.setPen(Qt::white);
+                p.drawText(lb, Qt::AlignCenter, m.name);
+            }
+        }
+        p.setBrush(Qt::NoBrush);
+        p.setPen(Qt::NoPen);
+    }
+
+    /**
+     * 玩家标记：主题色圆点 + 沿朝向伸出的实心箭头（位置指示器样式）。
+     * MC 的 yaw 0 = 面朝 +Z（南），90 = 面朝 -X（西）；地图上 X 向右（东）、
+     * Z 向下（南），所以屏幕方向向量是 (-sin yaw, cos yaw)，画布 y 轴向下
+     * 正好与 Z 同向，直接用 atan2 求旋转角即可。
+     */
+    void drawPlayerMarker(QPainter &p)
+    {
+        if (!m_playerOn || !valid())
+            return;
+        const QPointF c = screenPos(m_player.x, m_player.z);
+        if (!QRectF(-40, -40, width() + 80, height() + 80).contains(c))
+            return; // 视口外
+
+        const QColor accent(ThemeManager::instance()->currentThemeColor());
+        const double yawRad = qDegreesToRadians(m_player.yaw);
+        const double thetaDeg =
+            qRadiansToDegrees(std::atan2(std::cos(yawRad), -std::sin(yawRad)));
+
+        p.save();
+        p.translate(c);
+        p.rotate(thetaDeg);
+        // 箭头：尖朝旋转后的 +X 方向，白描边 + 主题色填充（与图钉风格一致）
+        QPolygonF arrow;
+        arrow << QPointF(16.0, 0.0) << QPointF(3.0, 6.0) << QPointF(3.0, -6.0);
+        p.setPen(QPen(Qt::white, 2.0));
+        p.setBrush(accent);
+        p.drawPolygon(arrow);
+        p.restore();
+
+        // 圆点压在箭头根部：白圈 + 主题色圆底
+        p.setPen(Qt::NoPen);
+        p.setBrush(Qt::white);
+        p.drawEllipse(c, 7.5, 7.5);
+        p.setPen(QPen(QColor(0, 0, 0, 60), 1.0));
+        p.setBrush(accent);
+        p.drawEllipse(c, 6.0, 6.0);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(Qt::NoPen);
+    }
+
     /** 高亮圈：主题色脉冲光环（sin 相位缩放），标记「刚跳转过来的内容」 */
     void drawHighlight(QPainter &p)
     {
@@ -1506,6 +1828,13 @@ private:
     QVector<Marker> m_markers;
     /** 矿物点（已扫描 region 里命中当前勾选矿物的方块坐标） */
     QVector<OreMarker> m_oreMarkers;
+    /** 用户手放的标记点（随存档持久化，页面负责数据） */
+    QVector<UserMarkerItem> m_userMarkers;
+    /** 预设图标渲染缓存（key = 图标下标 × 尺寸；彩底固定不随主题变） */
+    QHash<QPair<int, int>, QPixmap> m_userIconCache;
+    /** 玩家标记（游戏运行中显示；数据由页面按自动保存节奏喂入） */
+    PlayerMarkerItem m_player;
+    bool m_playerOn = false;
     /** 已标记完成的结构（key = type_x_z），绘制时半透明 */
     QSet<QString> m_doneKeys;
     /** 群系叠加层（页面维护像素，这里只负责拉伸绘制） */
@@ -1567,7 +1896,8 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         tr("鼠标：左键拖拽平移 · 左键单击选中区块 · 双击放大 · 中键拖拽平移 · "
            "右键菜单 · 滚轮缩放（Shift+滚轮纵向平移）\n"
            "快捷键：+ / - 缩放 · 0 适应窗口 · 方向键 / WASD 平移（Shift 加速）· "
-           "G 网格 · R 刷新 · E 导出 · 1/2/3 切维度 · C 取消选择"));
+           "G 网格 · R 刷新 · E 导出 · 1/2/3 切维度 · C 取消选择\n"
+           "立体模式（3D）：拖拽旋转 · 滚轮缩放 · 右键拖动平移 · Ctrl+滚轮调起伏"));
     auto *barLay = new QHBoxLayout(bar);
     barLay->setContentsMargins(14, 9, 14, 9);
     barLay->setSpacing(10);
@@ -1698,9 +2028,38 @@ WorldMapPage::WorldMapPage(QWidget *parent)
 
     barLay->addWidget(renderGroup);
 
-    // —— 视图组：网格 / 缩放 / 适应窗口 ——
+    // —— 视图组：3D / 网格 / 缩放 / 适应窗口 ——
     auto *viewGroup = makeGroup();
     auto *vgLay = qobject_cast<QHBoxLayout *>(viewGroup->layout());
+
+    // 立体模式开关：同一份地表数据换个看法（俯视图 ↔ 立体地形）。
+    // 实验性功能：默认不显示，要在 设置 → 高级 → 实验性内容 里打开
+    {
+        QSettings settings;
+        m_3dOn = settings.value(QStringLiteral("worldMap/mode3d"), false).toBool();
+    }
+    m_3dBtn = makeBtn(tr("3D"),
+                      tr("立体模式（实验性）：把同一片地表按高度立起来看，"
+                         "可拖拽旋转、滚轮缩放、右键平移（Ctrl+滚轮调起伏）；"
+                         "可在 设置 → 高级 → 实验性内容 里开关"));
+    m_3dBtn->setCheckable(true);
+    if (!SettingsManager::instance()->isExperimentalMap3dEnabled())
+    {
+        m_3dOn = false; // 实验开关没开：不恢复上次的立体模式
+        QSettings settings;
+        settings.setValue(QStringLiteral("worldMap/mode3d"), false);
+    }
+    m_3dBtn->setChecked(m_3dOn);
+    m_3dBtn->setVisible(SettingsManager::instance()->isExperimentalMap3dEnabled());
+    vgLay->addWidget(m_3dBtn);
+    connect(SettingsManager::instance(), &SettingsManager::experimentalMap3dChanged,
+            this, [this](bool enabled) {
+        if (!m_3dBtn)
+            return;
+        m_3dBtn->setVisible(enabled);
+        if (!enabled && m_3dOn)
+            m_3dBtn->setChecked(false); // 走正常信号链退回俯视图
+    });
 
     m_gridBtn = makeBtn(tr("网格"), tr("显示 / 隐藏区块与区域网格（G）"),
                         QStringLiteral(":/Images/Icons/grid.svg"));
@@ -1915,6 +2274,12 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     m_view->setObjectName(QStringLiteral("worldMapView"));
     m_view->setInitialVisibleChunks(kInitialVisibleChunks);
     m_stack->addWidget(m_view);
+
+    // 立体视图：与俯视画布同一个栈，顶部「3D」开关切换
+    m_view3d = new WorldMap3DView(m_stack);
+    m_view3d->setObjectName(QStringLiteral("worldMapView3d"));
+    m_stack->addWidget(m_view3d);
+
     root->addWidget(m_stack, 1);
 
     // ── 底部状态区 ──
@@ -1988,6 +2353,13 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         scheduleTiles();
     });
 
+    // 玩家标记轮询：游戏运行中把 level.dat 里的玩家位置/朝向画上地图
+    //（setCurrentSave 启动，reset 停止；门控见 updatePlayerMarker）
+    m_playerTimer = new QTimer(this);
+    m_playerTimer->setInterval(kPlayerPollMs);
+    connect(m_playerTimer, &QTimer::timeout,
+            this, &WorldMapPage::updatePlayerMarker);
+
     // 种子画布重定心去抖：视角离开当前窗口后停手片刻再以新中心重渲
     m_seedRecenterTimer = new QTimer(this);
     m_seedRecenterTimer->setSingleShot(true);
@@ -2006,6 +2378,7 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     connect(m_shadeCombo, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &WorldMapPage::onShadeChanged);
     connect(m_gridBtn, &QPushButton::toggled, this, &WorldMapPage::onGridToggled);
+    connect(m_3dBtn, &QPushButton::toggled, this, &WorldMapPage::on3dToggled);
     connect(m_zoomInBtn, &QPushButton::clicked, this, &WorldMapPage::onZoomIn);
     connect(m_zoomOutBtn, &QPushButton::clicked, this, &WorldMapPage::onZoomOut);
     connect(m_fitBtn, &QPushButton::clicked, this, &WorldMapPage::onFitClicked);
@@ -2037,6 +2410,9 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         [this](const QPoint &globalPos, int ore, qint64 x, int y, qint64 z) {
             showOrePopup(globalPos, ore, x, y, z);
         };
+    m_view->onUserMarkerClicked = [this](const QPoint &globalPos, int idx) {
+        showUserMarkerPopup(globalPos, idx);
+    };
     // 视口一变就去抖调度细节瓦片（概览渲染期间由 m_busy 挡住，完成后统一补）
     m_view->onViewportChanged = [this]() {
         if (!m_tileTimer)
@@ -2050,17 +2426,25 @@ WorldMapPage::WorldMapPage(QWidget *parent)
             m_oreTimer->start();
     };
 
+    connect(m_view3d, &WorldMap3DView::viewChanged, this, [this]() {
+        if (m_3dOn)
+            updateStatusLabel();
+    });
+
     setBusy(false);
     updateZoomLabel();
+    // 上次是立体模式：进来就按立体模式摆好按钮状态（还没有画布时等数据到位再切页）
+    if (m_3dOn)
+        on3dToggled(true);
 }
 
 WorldMapPage::~WorldMapPage()
 {
     // 先解绑全局图标回调：否则 Wiki 图标下载完成后会回调到已销毁的页面
     StructureIcons::setUpdatedHandler(nullptr);
-    // 内容弹窗创建过的话挂过应用级事件过滤（点弹窗外关闭），析构前摘掉
-    if (m_contentPopup)
-        QApplication::instance()->removeEventFilter(this);
+    // 内容弹窗 / 标记编辑弹窗创建过的话挂过应用级事件过滤（点弹窗外关闭），
+    // 析构前摘掉（没挂过也安全，属空操作）
+    QApplication::instance()->removeEventFilter(this);
     // 再撤信号与取消标志，最后由 m_renderPool 析构等在途任务收尾
     if (m_pollTimer)
         m_pollTimer->stop();
@@ -2105,8 +2489,6 @@ void WorldMapPage::setCurrentSave(const QString &saveFolderPath, const QString &
                 m_mcMinor = major > 1 ? major : minor;
         }
     }
-    StructureLoot::setClientJar(BiomeName::findClientJar(
-        m_instancePath));
     if (m_seedBtn)
     {
         // 读不出种子或版本的存档没法预测，开关禁用并强制关闭
@@ -2116,6 +2498,15 @@ void WorldMapPage::setCurrentSave(const QString &saveFolderPath, const QString &
         m_seedBtn->setChecked(usable && m_seedPreviewOn);
     }
     loadStructDone(); // 上次存档的完成标记（弹窗半透明显示用）
+    loadUserMarkers(); // 上次存档的手放标记点（右键「添加标记点」保存的）
+    // 换存档：上一个存档的玩家数据作废，重新按 level.dat 判定是否在玩
+    m_playerDataValid = false;
+    m_playerLevelDatMsec = -1;
+    if (m_playerTimer)
+    {
+        m_playerTimer->start();
+        updatePlayerMarker(); // 立即判一次，不等第一轮 tick
+    }
     // 换存档：丢掉上一个存档的群系采样 / 叠加层 / 高亮圈 / 矿物扫描
     clearOreState();
     m_biomeGrid = BiomeCatalog::SampleGrid();
@@ -2167,7 +2558,20 @@ void WorldMapPage::reset()
     m_selectionText.clear();
     clearOreState();
     clearTileState(true);
+    m_userMarkers.clear(); // 退出存档：清掉手放标记点（换存档时由 loadUserMarkers 重载）
+    if (m_view)
+        m_view->setUserMarkers({});
+    // 退出存档：玩家标记轮询停掉，画布上的玩家标记一并收掉
+    if (m_playerTimer)
+        m_playerTimer->stop();
+    clearPlayerMarker();
+    m_playerDataValid = false;
+    m_playerLevelDatMsec = -1;
+    closeMarkerEditPopup();
     m_renderKey = -1;
+    m_liveHeight = QImage();
+    if (m_view3d)
+        m_view3d->clearSurface();
     if (m_view)
     {
         m_view->clearImage();
@@ -2184,6 +2588,110 @@ void WorldMapPage::reset()
     if (m_statusLabel)
         m_statusLabel->setText(tr("尚未加载地图"));
     setBusy(false);
+}
+
+// ═══════════════════════ 玩家标记 ═══════════════════════
+
+/**
+ * 玩家标记轮询：「玩家在游戏」= 有 Java 游戏进程在跑，且这个存档的
+ * level.dat 还在被游戏写（单机自动保存约 45 秒一次）。两个条件都满足
+ * 才把 Data.Player 的位置/朝向画上地图；玩家所在维度还要与当前地图
+ * 维度一致。level.dat 没变就复用上次解析结果，不重复解压。
+ */
+void WorldMapPage::updatePlayerMarker()
+{
+    if (m_savePath.isEmpty() || !m_view)
+        return;
+
+    // GameLauncher 只认识自己拉起的游戏，GameDetector 兜底外部启动的 javaw
+    //（非 Windows 平台恒为 false）
+    bool gameRunning = GameLauncher::instance()->isGameRunning();
+    if (!gameRunning)
+        gameRunning = GameDetector::isJavaGameRunning();
+
+    QFileInfo levelDatInfo(m_savePath + QStringLiteral("/level.dat"));
+    if (!levelDatInfo.exists())
+        levelDatInfo.setFile(m_savePath + QStringLiteral("/level.dat_old"));
+    if (!gameRunning || !levelDatInfo.exists()
+        || QDateTime::currentMSecsSinceEpoch()
+                   - levelDatInfo.lastModified().toMSecsSinceEpoch()
+               > kPlayerFreshMs)
+    {
+        clearPlayerMarker();
+        return;
+    }
+
+    const qint64 msec = levelDatInfo.lastModified().toMSecsSinceEpoch();
+    if (msec != m_playerLevelDatMsec)
+    {
+        m_playerLevelDatMsec = msec;
+        if (const auto state = LevelDatEditor::readPlayerState(m_savePath))
+        {
+            m_playerDataValid = true;
+            m_playerX = state->x;
+            m_playerY = state->y;
+            m_playerZ = state->z;
+            m_playerYaw = state->yaw;
+            m_playerDim = state->dimension;
+        }
+        // 解析失败保留上一份数据：可能撞上游戏重写 level.dat 的瞬间，
+        // 下轮再试；新鲜度阈值保证这份数据最旧也不会超过 90 秒
+        else if (!m_playerDataValid)
+        {
+            clearPlayerMarker();
+            return;
+        }
+    }
+
+    // 玩家所在维度与当前地图维度一致才画（下界里的人不会出现在主世界图上）
+    // NBT 维度是 -1 下界 / 0 主世界 / 1 末地，下拉框的 userData 是 0/1/2
+    const int playerMapDim = m_playerDim < 0 ? 1 : (m_playerDim > 0 ? 2 : 0);
+    const int mapDim = m_dimCombo ? m_dimCombo->currentData().toInt() : 0;
+    if (!m_playerDataValid || playerMapDim != mapDim)
+    {
+        clearPlayerMarker();
+        return;
+    }
+
+    m_view->setPlayerMarker(qint64(std::floor(m_playerX)),
+                            qint64(std::floor(m_playerZ)),
+                            m_playerYaw, true);
+}
+
+/** 收掉画布上的玩家标记（只动显示，不清解析缓存：切维度回来自动恢复） */
+void WorldMapPage::clearPlayerMarker()
+{
+    if (m_view)
+        m_view->setPlayerMarker(0, 0, 0.0, false);
+}
+
+// ── 玩家标记：探针断言用 ──
+
+bool WorldMapPage::hasPlayerMarker() const
+{
+    return m_view && m_view->hasPlayerMarker();
+}
+
+QPoint WorldMapPage::playerMarkerBlockPos() const
+{
+    return m_view ? m_view->playerMarkerBlockPos() : QPoint();
+}
+
+double WorldMapPage::playerMarkerYaw() const
+{
+    return m_view ? m_view->playerMarkerYaw() : 0.0;
+}
+
+QPoint WorldMapPage::playerMarkerScreenPos() const
+{
+    return m_view ? m_view->playerMarkerScreenPos() : QPoint();
+}
+
+void WorldMapPage::debugShowPlayerMarker(double x, double z, double yaw, bool on)
+{
+    if (m_view)
+        m_view->setPlayerMarker(qint64(std::floor(x)), qint64(std::floor(z)),
+                                yaw, on);
 }
 
 void WorldMapPage::refresh()
@@ -2258,6 +2766,7 @@ void WorldMapPage::onSeedRecenterTimeout()
     if (!m_liveImage.isNull())
     {
         m_priorLiveImage = m_liveImage; // 隐式共享，不拷贝像素
+    m_priorLiveHeight = m_liveHeight;
         m_priorMinChunkX = m_liveMinChunkX;
         m_priorMinChunkZ = m_liveMinChunkZ;
         m_priorBpp = m_liveBpp;
@@ -2376,6 +2885,8 @@ void WorldMapPage::startRender()
     setBusy(true);
     m_progress->setRange(0, 0);
     m_stack->setCurrentIndex(m_view->hasImage() ? 1 : 0);
+    if (m_3dOn && m_view3d && m_view3d->hasSurface())
+        applyStackMode(); // 立体模式：渲染期间也留在立体视图上看
     if (!m_view->hasImage())
         m_emptyLabel->setText(tr("正在解析地表数据…"));
     m_statusLabel->setText(tr("正在渲染…"));
@@ -2389,6 +2900,7 @@ void WorldMapPage::startRender()
     if (m_priorLiveValid && !m_priorLiveImage.isNull())
     {
         prior.image = m_priorLiveImage;
+        prior.heightImage = m_priorLiveHeight;
         prior.minChunkX = m_priorMinChunkX;
         prior.minChunkZ = m_priorMinChunkZ;
         prior.blockPerPixel = m_priorBpp;
@@ -2442,11 +2954,15 @@ void WorldMapPage::onPollProgress()
     drainLocateResult();
     drainBiomeResult();
     drainOreScan();
+    drainOreVerify();
     if (m_biomeNameJob && m_biomeNameJob->done.load(std::memory_order_acquire))
     {
         const auto job = m_biomeNameJob;
         m_biomeNameJob.reset();
         m_biomeNames = job->names;
+        // 物品中文名一并注入战利品展示
+        StructureLoot::setInstanceItemNames(job->names.itemsZh,
+                                            job->names.itemsEn);
     }
 
     if (!m_busy || !m_sink)
@@ -2454,7 +2970,7 @@ void WorldMapPage::onPollProgress()
         // 矿物在途时不能停表：扫描链靠 drainOreScan → scheduleOreScan 逐块接力，
         // 停表会断链，可见区域就无法按「先中心后四周」连续扫出来
         if (!m_structJob && !m_locateJob && !m_biomeJob && !m_biomeNameJob
-            && !m_oreJob && m_pollTimer)
+            && !m_oreJob && !m_oreVerifyJob && m_pollTimer)
             m_pollTimer->stop(); // 渲染与后台任务都收完了：停表
         return;
     }
@@ -2484,6 +3000,8 @@ void WorldMapPage::startStructRefresh()
 {
     if (!m_view)
         return;
+    if (m_3dOn)
+        return; // 立体模式里不看结构标记：切回俯视图时会重新算
     if (!m_hasSeed || m_mcVersion == 0)
     {
         m_view->setMarkers({});
@@ -2640,6 +3158,10 @@ void WorldMapPage::applyLiveLayout()
     {
         m_liveImage = QImage(w, h, QImage::Format_ARGB32);
         m_liveImage.fill(qRgba(0, 0, 0, 0));
+        // 立体视图用的高度图：与颜色图同尺寸同原点，"无地表"填 kNoHeightEncoded
+        m_liveHeight = QImage(w, h, QImage::Format_Grayscale16);
+        if (!m_liveHeight.isNull())
+            m_liveHeight.fill(WorldMapRenderer::kNoHeightEncoded);
         // 种子重定心：先把上一张画布的重叠 region 搬进来，不闪白
         primeLiveFromPrior();
         m_liveKey = key;
@@ -2652,6 +3174,9 @@ void WorldMapPage::applyLiveLayout()
     m_stack->setCurrentIndex(1);
     // 同布局的重新渲染（如切换着色方式）保留旧画面，新区域逐块覆盖
     m_view->setImageRef(&m_liveImage, minX, minZ, bpp, !sameCanvas);
+    // 立体视图跟着换数据：换画布就重新取景，同画布只刷新高度
+    sync3dSurface(!sameCanvas);
+    applyStackMode(); // 立体模式下把栈页切回 3D
     if (m_pendingRestoreBlockSet)
     {
         // 种子画布重定心：渐进建画布时几何变化会重置视口，立即恢复视角中心，
@@ -2673,11 +3198,13 @@ void WorldMapPage::drainPendingTiles()
         return;
 
     QList<QPair<QPoint, QImage>> batch;
+    QList<QPair<QPoint, QImage>> heightBatch;
     {
         QMutexLocker locker(&m_sink->tileMutex);
-        if (m_sink->pendingTiles.isEmpty())
+        if (m_sink->pendingTiles.isEmpty() && m_sink->pendingHeightTiles.isEmpty())
             return;
         batch.swap(m_sink->pendingTiles);
+        heightBatch.swap(m_sink->pendingHeightTiles);
     }
 
     QPainter painter(&m_liveImage);
@@ -2694,7 +3221,20 @@ void WorldMapPage::drainPendingTiles()
     }
     painter.end();
 
+    // 高度图块与颜色图块逐项对齐（渲染线程一次贴一对，顺序不会错开）
+    for (int i = 0; i < heightBatch.size(); ++i)
+    {
+        if (heightBatch[i].second.isNull() || m_liveHeight.isNull())
+            continue;
+        WorldMapRenderer::blitHeightTile(m_liveHeight, heightBatch[i].first,
+                                         heightBatch[i].second);
+    }
+
     m_view->refreshImage();
+    if (m_3dOn && m_view3d && m_view3d->hasSurface())
+        m_view3d->setSurface(&m_liveImage,
+                             m_liveHeight.isNull() ? nullptr : &m_liveHeight,
+                             m_liveMinChunkX, m_liveMinChunkZ, m_liveBpp, true);
 }
 
 void WorldMapPage::primeLiveFromPrior()
@@ -2705,6 +3245,7 @@ void WorldMapPage::primeLiveFromPrior()
     {
         m_priorLiveValid = false;
         m_priorLiveImage = QImage();
+        m_priorLiveHeight = QImage();
         return;
     }
     const int tilePx = 512 / m_liveBpp;
@@ -2714,6 +3255,9 @@ void WorldMapPage::primeLiveFromPrior()
     const int liveMinRz = m_liveMinChunkZ / 32;
     const int priorW = m_priorLiveImage.width();
     const int priorH = m_priorLiveImage.height();
+    const bool carryHeight = !m_priorLiveHeight.isNull()
+        && m_priorLiveHeight.size() == m_priorLiveImage.size()
+        && !m_liveHeight.isNull();
     QPainter p(&m_liveImage);
     p.setCompositionMode(QPainter::CompositionMode_Source);
     for (int rz = liveMinRz; rz * tilePx < m_liveImage.height(); ++rz)
@@ -2725,15 +3269,21 @@ void WorldMapPage::primeLiveFromPrior()
             if (srcX < 0 || srcY < 0
                 || srcX + tilePx > priorW || srcY + tilePx > priorH)
                 continue;
-            p.drawImage(QPoint((rx - liveMinRx) * tilePx,
-                               (rz - liveMinRz) * tilePx),
-                        m_priorLiveImage,
+            const QPoint dest((rx - liveMinRx) * tilePx,
+                              (rz - liveMinRz) * tilePx);
+            p.drawImage(dest, m_priorLiveImage,
                         QRect(srcX, srcY, tilePx, tilePx));
+            // 高度图跟着一起搬：否则重定心后这片区域在立体视图里就是空洞
+            if (carryHeight)
+                WorldMapRenderer::blitHeightTile(
+                    m_liveHeight, dest,
+                    m_priorLiveHeight.copy(srcX, srcY, tilePx, tilePx));
         }
     }
     p.end();
     m_priorLiveValid = false;
     m_priorLiveImage = QImage();
+    m_priorLiveHeight = QImage();
 }
 
 void WorldMapPage::applyResult(const WorldMapRenderer::RenderResult &result)
@@ -2759,7 +3309,14 @@ void WorldMapPage::applyResult(const WorldMapRenderer::RenderResult &result)
     }
 
     // 权威结果覆盖画布：与缓存共享同一块像素数据（QImage 隐式共享，不拷贝）
+    const QString prevLiveKey = m_liveKey;
     m_liveImage = result.image;
+    // 高度图与颜色图同尺寸同原点；渲染器没给（旧缓存）就按"无高度"处理
+    m_liveHeight = result.heightImage;
+    if (!m_liveHeight.isNull()
+        && (m_liveHeight.size() != m_liveImage.size()
+            || m_liveHeight.format() != QImage::Format_Grayscale16))
+        m_liveHeight = QImage();
     m_liveKey = QStringLiteral("%1x%2:%3:%4:%5")
                     .arg(result.image.width()).arg(result.image.height())
                     .arg(result.minChunkX).arg(result.minChunkZ)
@@ -2773,6 +3330,9 @@ void WorldMapPage::applyResult(const WorldMapRenderer::RenderResult &result)
     m_stack->setCurrentIndex(1);
     m_view->setImageRef(&m_liveImage, result.minChunkX, result.minChunkZ,
                         result.blockPerPixel, false);
+    // 立体视图同一份数据：画布几何没变就保持当前视角（换着色 / 刷新不跳视角）
+    sync3dSurface(prevLiveKey.isEmpty() || prevLiveKey != m_liveKey);
+    applyStackMode(); // 立体模式下把栈页切回 3D
     if (m_pendingRestoreBlockSet)
     {
         // 种子画布重定心：几何变化会把视口重置到出生点，恢复成重渲前的视角中心
@@ -2876,6 +3436,8 @@ void WorldMapPage::rememberTile(const QPoint &key)
 
 void WorldMapPage::scheduleTiles()
 {
+    if (m_3dOn)
+        return; // 立体模式不补 1:1 细节瓦片（那是俯视图的清晰度补偿）
     if (!m_view || !m_view->hasImage() || m_savePath.isEmpty() || m_busy)
         return;
     if (m_view->blockScreenSize() < kDetailMinBlockPx)
@@ -3081,8 +3643,7 @@ QList<QPoint> WorldMapPage::loadedTileOrder() const
 }
 
 void WorldMapPage::setBusy(bool busy)
-{
-    m_busy = busy;
+{    m_busy = busy;
     if (m_progress)
         m_progress->setVisible(busy);
     if (m_exportBtn)
@@ -3101,11 +3662,140 @@ void WorldMapPage::setBusy(bool busy)
 
 void WorldMapPage::updateZoomLabel()
 {
-    if (!m_zoomLabel || !m_view)
+    if (!m_zoomLabel)
         return;
+    if (m_3dOn)
+    {
+        // 立体模式下缩放比例没有"百分之几"的含义，换个提示
+        m_zoomLabel->setText(QStringLiteral("3D"));
+        m_zoomLabel->setToolTip(tr("立体模式：拖拽旋转、滚轮缩放、右键平移"));
+        return;
+    }
+    if (!m_view)
+        return;
+    m_zoomLabel->setToolTip(tr("当前缩放：1 像素对应多少个方块"));
     //按"每方块的屏幕像素"报数：100% 就是 1 像素 = 1 方块
     m_zoomLabel->setText(
         QStringLiteral("%1%").arg(qRound(m_view->blockScreenSize() * 100.0)));
+}
+
+// ═══════════════════════ 立体（3D）模式 ═══════════════════════
+
+void WorldMapPage::sync3dSurface(bool keepView)
+{
+    if (!m_view3d)
+        return;
+    if (!m_view || !m_view->hasImage() || m_liveImage.isNull())
+    {
+        m_view3d->clearSurface();
+        return;
+    }
+    m_view3d->setSurface(&m_liveImage,
+                         m_liveHeight.isNull() ? nullptr : &m_liveHeight,
+                         m_liveMinChunkX, m_liveMinChunkZ, m_liveBpp, keepView);
+}
+
+void WorldMapPage::applyStackMode()
+{
+    if (!m_stack)
+        return;
+    if (m_3dOn && m_view3d && m_view3d->hasSurface())
+        m_stack->setCurrentWidget(m_view3d);
+    else if (m_view && m_view->hasImage())
+        m_stack->setCurrentIndex(1); // 2D 画布
+    else
+        m_stack->setCurrentIndex(0); // 空态
+}
+
+void WorldMapPage::on3dToggled(bool on)
+{
+    m_3dOn = on;
+    QSettings settings;
+    settings.setValue(QStringLiteral("worldMap/mode3d"), on);
+
+    if (on)
+    {
+        // 进入立体模式：先按当前画布建一次网格，并把视角中心对齐到俯视图中心，
+        // 这样两种看法看的是同一个地方，切换不会"跳地图"
+        sync3dSurface(true);
+        if (m_view3d && m_view3d->hasSurface() && m_view && m_view->hasImage())
+        {
+            const QPoint center = m_view->centerBlock();
+            m_view3d->centerOnBlock(center.x(), center.y());
+        }
+        if (m_oreTimer)
+            m_oreTimer->stop();
+        if (m_tileFillTimer)
+            m_tileFillTimer->stop();
+    }
+    else
+    {
+        // 回俯视图：把视野中心沿用到 2D，细节瓦片接着补
+        if (m_view3d && m_view && m_view->hasImage())
+        {
+            const QPointF c = m_view3d->targetBlock();
+            m_view->centerOnBlock(qint64(c.x()), qint64(c.y()));
+        }
+        if (m_tileFillTimer && !m_busy)
+            m_tileFillTimer->start();
+        if (m_tileTimer)
+            m_tileTimer->start();
+        if (m_oreTimer)
+            m_oreTimer->start();
+        startStructRefresh(); // 立体模式期间没算的结构标记，回来补上
+    }
+
+    // 网格 / 1:1 这些只对俯视图有意义
+    if (m_gridBtn)
+        m_gridBtn->setEnabled(!on);
+    if (m_oneOneBtn)
+        m_oneOneBtn->setEnabled(!on);
+    applyStackMode();
+    updateZoomLabel();
+    updateStatusLabel();
+    updateSubtitle();
+    if (m_view3d)
+        m_view3d->setFocus();
+}
+
+bool WorldMapPage::toggle3dMode()
+{
+    if (!SettingsManager::instance()->isExperimentalMap3dEnabled())
+        return m_3dOn; // 实验开关没开：入口按钮都隐藏了，程序化切换也不放行
+    const bool next = !m_3dOn;
+    if (m_3dBtn)
+        m_3dBtn->setChecked(next); // 走正常信号链
+    else
+        on3dToggled(next);
+    return m_3dOn;
+}
+
+bool WorldMapPage::has3dSurface() const
+{
+    return m_view3d && m_view3d->hasSurface();
+}
+
+bool WorldMapPage::has3dHeightData() const
+{
+    return m_view3d && m_view3d->hasHeightData();
+}
+
+QImage WorldMapPage::view3dFrame() const
+{
+    return m_view3d ? m_view3d->lastFrame() : QImage();
+}
+
+int WorldMapPage::view3dQuadCount() const
+{
+    return m_view3d ? m_view3d->lastQuadCount() : 0;
+}
+
+void WorldMapPage::panMap(const QPoint &delta)
+{
+    if (m_3dOn && m_view3d)
+        m_view3d->panByScreen(delta);
+    else if (m_view)
+        m_view->panBy(delta);
 }
 
 void WorldMapPage::updateStatusLabel(const QString &cursor)
@@ -3114,6 +3804,21 @@ void WorldMapPage::updateStatusLabel(const QString &cursor)
         return;
     if (!cursor.isEmpty())
         m_cursorText = cursor;
+
+    // 立体模式：状态栏换成视角信息（指针坐标 / 区块选中这些是俯视图的概念）
+    if (m_3dOn && m_view3d && m_view3d->hasSurface())
+    {
+        const QPointF center = m_view3d->targetBlock();
+        QString text = tr("立体视图 · 中心 X %1 Z %2 · 视角 %3°/%4°")
+                           .arg(qint64(center.x()))
+                           .arg(qint64(center.y()))
+                           .arg(qRound(m_view3d->yawDegrees()))
+                           .arg(qRound(m_view3d->pitchDegrees()));
+        if (!m_statSuffix.isEmpty())
+            text += tr("   ·   ") + m_statSuffix;
+        m_statusLabel->setText(text);
+        return;
+    }
 
     QStringList parts;
     if (!m_cursorText.isEmpty())
@@ -3162,6 +3867,461 @@ void WorldMapPage::persistStructDone() const
 bool WorldMapPage::isStructureDone(int type, qint64 x, qint64 z) const
 {
     return m_structDone.contains(WorldMapView::doneKey(type, x, z));
+}
+
+// ═══════════════════ 用户标记点（右键添加） ═══════════════════
+
+/** 用户标记的 QSettings key：按存档路径分桶（与完成标记同一套路） */
+QString userMarkerSettingsKey(const QString &savePath)
+{
+    return QStringLiteral("worldMap/userMarkers/")
+         + QString::number(qHash(savePath));
+}
+
+void WorldMapPage::loadUserMarkers()
+{
+    m_userMarkers.clear();
+    if (!m_savePath.isEmpty())
+    {
+        QSettings s;
+        const QJsonDocument doc = QJsonDocument::fromJson(
+            s.value(userMarkerSettingsKey(m_savePath)).toByteArray());
+        const QJsonArray arr = doc.array();
+        for (const QJsonValue &v : arr)
+        {
+            const QJsonObject o = v.toObject();
+            UserMarker m;
+            m.x = qint64(o.value(QLatin1String("x")).toDouble());
+            m.z = qint64(o.value(QLatin1String("z")).toDouble());
+            m.icon = o.value(QLatin1String("icon")).toInt(0);
+            m.name = o.value(QLatin1String("name")).toString();
+            m_userMarkers.append(m);
+        }
+    }
+    syncUserMarkersToView();
+}
+
+void WorldMapPage::persistUserMarkers() const
+{
+    if (m_savePath.isEmpty())
+        return;
+    QJsonArray arr;
+    for (const auto &m : m_userMarkers)
+    {
+        arr.append(QJsonObject{
+            { QLatin1String("x"), double(m.x) },
+            { QLatin1String("z"), double(m.z) },
+            { QLatin1String("icon"), m.icon },
+            { QLatin1String("name"), m.name },
+        });
+    }
+    QSettings s;
+    s.setValue(userMarkerSettingsKey(m_savePath),
+               QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+void WorldMapPage::syncUserMarkersToView()
+{
+    if (!m_view)
+        return;
+    QVector<WorldMapView::UserMarkerItem> items;
+    items.reserve(m_userMarkers.size());
+    for (const auto &m : m_userMarkers)
+        items.append({ m.x, m.z, m.icon, m.name });
+    m_view->setUserMarkers(items);
+}
+
+int WorldMapPage::userMarkerCount() const
+{
+    return m_userMarkers.size();
+}
+
+QPoint WorldMapPage::userMarkerBlockPos(int idx) const
+{
+    return idx >= 0 && idx < m_userMarkers.size()
+        ? QPoint(int(m_userMarkers[idx].x), int(m_userMarkers[idx].z))
+        : QPoint();
+}
+
+QPoint WorldMapPage::userMarkerScreenPos(int idx) const
+{
+    return m_view ? m_view->userMarkerScreenPos(idx) : QPoint();
+}
+
+bool WorldMapPage::addUserMarker(qint64 x, qint64 z, const QString &name, int icon)
+{
+    UserMarker m;
+    m.x = x;
+    m.z = z;
+    m.icon = icon;
+    m.name = name.isEmpty() ? tr("标记点") : name;
+    m_userMarkers.append(m);
+    persistUserMarkers();
+    syncUserMarkersToView();
+    return true;
+}
+
+bool WorldMapPage::removeUserMarker(int idx)
+{
+    if (idx < 0 || idx >= m_userMarkers.size())
+        return false;
+    deleteUserMarker(idx);
+    return true;
+}
+
+bool WorldMapPage::openMarkerEditor(int idx)
+{
+    // idx ≥ 0 编辑已有标记；idx < 0 新增（坐标用视口中心，探针也能点开）
+    qint64 defX = m_mkDefX, defZ = m_mkDefZ;
+    if (idx >= 0)
+    {
+        if (idx >= m_userMarkers.size())
+            return false;
+        defX = m_userMarkers[idx].x;
+        defZ = m_userMarkers[idx].z;
+    }
+    else if (m_view && m_view->hasImage())
+    {
+        const QPoint c = m_view->centerBlock();
+        defX = c.x();
+        defZ = c.y();
+    }
+    openMarkerEditDialog(idx, defX, defZ);
+    return m_markerEditPopup != nullptr;
+}
+
+void WorldMapPage::closeMarkerEditor()
+{
+    closeMarkerEditPopup();
+}
+
+bool WorldMapPage::saveMarkerEditor()
+{
+    if (!m_markerEditPopup)
+        return false;
+    saveMarkerEdit();
+    // close() 已让弹窗不可见；DeleteOnClose 的 deleteLater 要等事件循环才销毁
+    return m_markerEditPopup.isNull() || !m_markerEditPopup->isVisible();
+}
+
+void WorldMapPage::deleteUserMarker(int idx)
+{
+    if (idx < 0 || idx >= m_userMarkers.size())
+        return;
+    const QString name = m_userMarkers[idx].name;
+    m_userMarkers.removeAt(idx);
+    persistUserMarkers();
+    syncUserMarkersToView();
+    NotificationManager::showSuccess(
+        this, name.isEmpty() ? tr("已删除标记点")
+                             : tr("已删除标记点「%1」").arg(name));
+}
+
+void WorldMapPage::openMarkerEditDialog(int idx, qint64 defX, qint64 defZ)
+{
+    if (!m_view)
+        return;
+    closeMarkerEditPopup(); // 同时只留一个
+
+    const bool editing = idx >= 0 && idx < m_userMarkers.size();
+    const auto &defs = userMarkerIconDefs();
+    const UserMarker cur = editing ? m_userMarkers[idx]
+                                   : UserMarker{ defX, defZ, 0, QString() };
+    m_mkEditIdx = editing ? idx : -1;
+    m_mkDefX = defX;
+    m_mkDefZ = defZ;
+
+    // 居中弹窗：跟随页面生命周期，非模态（保存前还能看到地图）
+    auto *pop = new QWidget(this);
+    m_markerEditPopup = pop;
+    pop->setObjectName(QStringLiteral("worldMapMarkerEditPopup"));
+    pop->setAttribute(Qt::WA_StyledBackground, true);
+    pop->setAttribute(Qt::WA_DeleteOnClose);
+    connect(pop, &QWidget::destroyed, this, [this]() {
+        // DeleteOnClose 销毁后清空指针与控件句柄（QPointer 已自动置空，
+        // 控件指针要手动清，避免悬空）
+        m_mkNameEdit = nullptr;
+        m_mkXEdit = nullptr;
+        m_mkZEdit = nullptr;
+        m_mkIconBtns.clear();
+    });
+    pop->setFixedWidth(340);
+    // 柔和投影：让弹窗浮在地图上方，层次一眼可辨
+    auto *shadow = new QGraphicsDropShadowEffect(pop);
+    shadow->setBlurRadius(36);
+    shadow->setOffset(0, 10);
+    const bool darkPopup = ThemeManager::instance()
+        && ThemeManager::instance()->currentTheme() != ThemeManager::LightTheme;
+    shadow->setColor(QColor(0, 0, 0, darkPopup ? 140 : 55));
+    pop->setGraphicsEffect(shadow);
+
+    // 点弹窗外 / Esc 关闭：过滤应用级事件（弹窗可见时才生效）
+    QApplication::instance()->installEventFilter(this);
+
+    auto *lay = new QVBoxLayout(pop);
+    lay->setContentsMargins(18, 16, 18, 16);
+    lay->setSpacing(12);
+
+    // —— 标题行 ——
+    auto *topRow = new QHBoxLayout;
+    auto *title = new QLabel(editing ? tr("编辑标记点") : tr("添加标记点"), pop);
+    title->setObjectName(QStringLiteral("worldMapMarkerTitle"));
+    topRow->addWidget(title);
+    topRow->addStretch(1);
+    auto *closeBtn = new QPushButton(QStringLiteral("×"), pop);
+    closeBtn->setObjectName(QStringLiteral("worldMapMarkerEditClose"));
+    closeBtn->setFixedSize(28, 28);
+    closeBtn->setCursor(Qt::PointingHandCursor);
+    closeBtn->setToolTip(tr("关闭（Esc）"));
+    connect(closeBtn, &QPushButton::clicked, this,
+            &WorldMapPage::closeMarkerEditPopup);
+    topRow->addWidget(closeBtn);
+    lay->addLayout(topRow);
+
+    // —— 名称 ——
+    auto *nameLabel = new QLabel(tr("名称"), pop);
+    nameLabel->setObjectName(QStringLiteral("worldMapPopupColTitle"));
+    lay->addWidget(nameLabel);
+    m_mkNameEdit = new QLineEdit(pop);
+    m_mkNameEdit->setObjectName(QStringLiteral("worldMapMarkerEdit"));
+    m_mkNameEdit->setPlaceholderText(tr("给这个位置起个名字…"));
+    m_mkNameEdit->setMaxLength(24);
+    m_mkNameEdit->setText(cur.name);
+    m_mkNameEdit->selectAll();
+    lay->addWidget(m_mkNameEdit);
+
+    // —— 图标（彩底圆形预设，单选） ——
+    auto *iconLabel = new QLabel(tr("图标"), pop);
+    iconLabel->setObjectName(QStringLiteral("worldMapPopupColTitle"));
+    lay->addWidget(iconLabel);
+    auto *iconRow = new QHBoxLayout;
+    iconRow->setSpacing(8);
+    auto *group = new QButtonGroup(pop);
+    group->setExclusive(true);
+    for (int i = 0; i < defs.size(); ++i)
+    {
+        auto *btn = new QPushButton(pop);
+        btn->setObjectName(QStringLiteral("worldMapMarkerIconBtn"));
+        btn->setFixedSize(32, 32);
+        btn->setIconSize(QSize(24, 24));
+        btn->setIcon(m_view->userIconPixmap(i, 24));
+        btn->setCheckable(true);
+        btn->setToolTip(tr(defs.at(i).tip));
+        btn->setCursor(Qt::PointingHandCursor);
+        group->addButton(btn, i);
+        btn->setChecked(i == cur.icon);
+        iconRow->addWidget(btn);
+        m_mkIconBtns.append(btn);
+    }
+    iconRow->addStretch(1);
+    lay->addLayout(iconRow);
+
+    // —— 坐标（可微调；右键点哪儿默认就在哪儿） ——
+    auto *coordLabel = new QLabel(tr("坐标"), pop);
+    coordLabel->setObjectName(QStringLiteral("worldMapPopupColTitle"));
+    lay->addWidget(coordLabel);
+    auto *coordRow = new QHBoxLayout;
+    coordRow->setSpacing(8);
+    auto mkCoordEdit = [this, pop]() {
+        auto *e = new QLineEdit(pop);
+        e->setObjectName("worldMapMarkerCoordEdit");
+        e->setValidator(new QIntValidator(-30000000, 30000000, e));
+        e->setFixedWidth(96);
+        return e;
+    };
+    m_mkXEdit = mkCoordEdit();
+    m_mkXEdit->setText(QString::number(cur.x));
+    m_mkZEdit = mkCoordEdit();
+    m_mkZEdit->setText(QString::number(cur.z));
+    coordRow->addWidget(new QLabel(tr("X"), pop));
+    coordRow->addWidget(m_mkXEdit, 1);
+    coordRow->addSpacing(6);
+    coordRow->addWidget(new QLabel(tr("Z"), pop));
+    coordRow->addWidget(m_mkZEdit, 1);
+    lay->addLayout(coordRow);
+
+    // —— 底部按钮：删除（仅编辑） / 取消 / 保存 ——
+    auto *btnRow = new QHBoxLayout;
+    btnRow->setSpacing(8);
+    if (editing)
+    {
+        auto *delBtn = new QPushButton(tr("删除"), pop);
+        delBtn->setObjectName(QStringLiteral("worldMapMarkerDelete"));
+        delBtn->setCursor(Qt::PointingHandCursor);
+        connect(delBtn, &QPushButton::clicked, pop, [this, idx]() {
+            deleteUserMarker(idx);
+            closeMarkerEditPopup();
+        });
+        btnRow->addWidget(delBtn);
+    }
+    btnRow->addStretch(1);
+    auto *cancelBtn = new QPushButton(tr("取消"), pop);
+    cancelBtn->setObjectName(QStringLiteral("worldMapMarkerCancel"));
+    cancelBtn->setCursor(Qt::PointingHandCursor);
+    connect(cancelBtn, &QPushButton::clicked, this,
+            &WorldMapPage::closeMarkerEditPopup);
+    btnRow->addWidget(cancelBtn);
+    auto *saveBtn = new QPushButton(tr("保存"), pop);
+    saveBtn->setObjectName(QStringLiteral("worldMapMarkerSave"));
+    saveBtn->setCursor(Qt::PointingHandCursor);
+    saveBtn->setDefault(true);
+    connect(saveBtn, &QPushButton::clicked, pop, [this]() { saveMarkerEdit(); });
+    btnRow->addWidget(saveBtn);
+    lay->addLayout(btnRow);
+
+    // 居中于地图画布（与内容浏览弹窗同款定位）
+    pop->adjustSize();
+    if (m_stack)
+    {
+        const QPoint center = m_stack->mapTo(this, m_stack->rect().center());
+        pop->move(center - QPoint(pop->width() / 2, pop->height() / 2));
+    }
+    pop->show();
+    pop->raise();
+    m_mkNameEdit->setFocus();
+}
+
+void WorldMapPage::closeMarkerEditPopup()
+{
+    if (m_markerEditPopup)
+    {
+        m_markerEditPopup->close(); // WA_DeleteOnClose → 销毁，QPointer 自动置空
+        m_mkNameEdit = nullptr;
+        m_mkXEdit = nullptr;
+        m_mkZEdit = nullptr;
+        m_mkIconBtns.clear();
+    }
+    m_mkEditIdx = -1;
+}
+
+void WorldMapPage::saveMarkerEdit()
+{
+    if (!m_mkNameEdit || !m_mkXEdit || !m_mkZEdit)
+        return;
+    UserMarker m;
+    m.name = m_mkNameEdit->text().trimmed();
+    if (m.name.isEmpty())
+        m.name = tr("标记点");
+    m.x = m_mkXEdit->text().toLongLong();
+    m.z = m_mkZEdit->text().toLongLong();
+    m.icon = 0;
+    for (int i = 0; i < m_mkIconBtns.size(); ++i)
+    {
+        if (m_mkIconBtns[i]->isChecked())
+        {
+            m.icon = i;
+            break;
+        }
+    }
+
+    if (m_mkEditIdx >= 0 && m_mkEditIdx < m_userMarkers.size())
+        m_userMarkers[m_mkEditIdx] = m;
+    else
+        m_userMarkers.append(m);
+    persistUserMarkers();
+    syncUserMarkersToView();
+    closeMarkerEditPopup();
+    NotificationManager::showSuccess(
+        this, tr("已保存标记点「%1」(%2, %3)").arg(m.name).arg(m.x).arg(m.z));
+}
+
+void WorldMapPage::showUserMarkerPopup(const QPoint &globalPos, int idx)
+{
+    if (idx < 0 || idx >= m_userMarkers.size() || !m_view)
+        return;
+    const UserMarker m = m_userMarkers[idx];
+
+    if (m_structPopup)
+        m_structPopup->close(); // 同时只留一个信息窗
+
+    // parent = 页面：生命周期跟随页面，且探针可 findChild 找到
+    auto *pop = new QWidget(this, Qt::Popup | Qt::FramelessWindowHint);
+    m_structPopup = pop;
+    pop->setObjectName(QStringLiteral("worldMapStructPopup"));
+    pop->setAttribute(Qt::WA_DeleteOnClose);
+    pop->setAttribute(Qt::WA_TranslucentBackground, true);
+    auto *popOuter = new QVBoxLayout(pop);
+    popOuter->setContentsMargins(kPopupShadowMargin, kPopupShadowMargin,
+                                 kPopupShadowMargin, kPopupShadowMargin);
+    popOuter->setSpacing(0);
+
+    auto *card = new QWidget(pop);
+    card->setObjectName(QStringLiteral("worldMapStructCard"));
+    card->setAttribute(Qt::WA_StyledBackground, true);
+    popOuter->addWidget(card);
+    auto *popShadow = new QGraphicsDropShadowEffect(card);
+    popShadow->setBlurRadius(22);
+    popShadow->setOffset(0, 5);
+    const bool darkPopup = ThemeManager::instance()
+        && ThemeManager::instance()->currentTheme() != ThemeManager::LightTheme;
+    popShadow->setColor(QColor(0, 0, 0, darkPopup ? 120 : 45));
+    card->setGraphicsEffect(popShadow);
+
+    auto *lay = new QVBoxLayout(card);
+    lay->setContentsMargins(14, 12, 14, 12);
+    lay->setSpacing(8);
+
+    // 标题行：图标 + 名称
+    auto *titleRow = new QHBoxLayout;
+    titleRow->setSpacing(8);
+    auto *iconLabel = new QLabel(pop);
+    iconLabel->setPixmap(m_view->userIconPixmap(m.icon, 20));
+    titleRow->addWidget(iconLabel);
+    auto *titleLabel = new QLabel(m.name.isEmpty() ? tr("标记点") : m.name, pop);
+    titleLabel->setObjectName(QStringLiteral("worldMapStructTitle"));
+    titleRow->addWidget(titleLabel);
+    titleRow->addStretch(1);
+    lay->addLayout(titleRow);
+
+    auto *coordLabel = new QLabel(tr("X %1   Z %2").arg(m.x).arg(m.z), pop);
+    coordLabel->setObjectName(QStringLiteral("worldMapStructCoord"));
+    lay->addWidget(coordLabel);
+
+    // 操作行：编辑 / 复制坐标 / 删除
+    auto *btnRow = new QHBoxLayout;
+    btnRow->setSpacing(6);
+    auto *editBtn = new QPushButton(tr("编辑"), pop);
+    editBtn->setObjectName(QStringLiteral("worldMapStructDetail"));
+    editBtn->setCursor(Qt::PointingHandCursor);
+    connect(editBtn, &QPushButton::clicked, editBtn, [this, idx]() {
+        if (m_structPopup)
+            m_structPopup->close(); // Qt::Popup 会抢鼠标抓取，先收掉再开编辑窗
+        openMarkerEditDialog(idx, 0, 0);
+    });
+    btnRow->addWidget(editBtn);
+
+    const QString coordText = QStringLiteral("%1, %2").arg(m.x).arg(m.z);
+    auto *copyBtn = new QPushButton(tr("复制坐标"), pop);
+    copyBtn->setObjectName(QStringLiteral("worldMapStructAction"));
+    copyBtn->setCursor(Qt::PointingHandCursor);
+    connect(copyBtn, &QPushButton::clicked, copyBtn, [this, coordText]() {
+        QApplication::clipboard()->setText(coordText);
+        NotificationManager::showSuccess(
+            this, tr("已复制坐标：%1").arg(coordText));
+    });
+    btnRow->addWidget(copyBtn);
+
+    auto *delBtn = new QPushButton(tr("删除"), pop);
+    delBtn->setObjectName(QStringLiteral("worldMapStructAction"));
+    delBtn->setCursor(Qt::PointingHandCursor);
+    connect(delBtn, &QPushButton::clicked, pop, [this, idx, pop]() {
+        deleteUserMarker(idx);
+        pop->close();
+    });
+    btnRow->addWidget(delBtn);
+
+    lay->addLayout(btnRow);
+    pop->adjustSize();
+
+    // 贴着点击位置弹出，但不出屏幕右/下边缘（与结构信息窗同款定位）
+    QPoint pos = globalPos + QPoint(10, 10) - QPoint(kPopupShadowMargin, kPopupShadowMargin);
+    const QRect screen = pop->screen()->availableGeometry();
+    if (pos.x() + pop->width() > screen.right())
+        pos.setX(globalPos.x() - pop->width() - 10 + kPopupShadowMargin);
+    if (pos.y() + pop->height() > screen.bottom())
+        pos.setY(globalPos.y() - pop->height() - 10 + kPopupShadowMargin);
+    pop->move(pos);
+    pop->show();
 }
 
 QPoint WorldMapPage::markerScreenPos(int idx) const
@@ -3214,7 +4374,8 @@ void WorldMapPage::showOrePopup(const QPoint &globalPos, int ore, qint64 x, qint
                       QString::fromUtf8(d.displayName), x, y, z,
                       QLatin1String(d.wikiTitle),
                       WorldMapView::doneKey(WorldMapView::kOreDoneTypeBase + ore,
-                                            x, z));
+                                            x, z),
+                      -1, ore);
 }
 
 void WorldMapPage::showStructureDetail(int structIdx, qint64 x, qint64 z)
@@ -3236,6 +4397,8 @@ void WorldMapPage::showStructureDetail(int structIdx, qint64 x, qint64 z)
         d.rare,
         StructureLoot::rollLoot(QLatin1String(d.key), m_seed,
                                 m_hasSeed, x, z, m_mcMinor),
+        m_seed, m_hasSeed, m_instancePath,
+        QStringLiteral("1.%1").arg(m_mcMinor),
         this);
     dlg->setAttribute(Qt::WA_DeleteOnClose, true);
     dlg->show();
@@ -3245,12 +4408,14 @@ void WorldMapPage::showStructureDetail(int structIdx, qint64 x, qint64 z)
  * 地图信息小窗：结构与矿物共用同一套内容（图标 + 名称 + 坐标 + 复制 / 百科 /
  * 完成标记）。完成标记写的是同一个「已完成」集合，矿物用 kOreDoneTypeBase
  * 偏移类型，标记过的矿点会和结构一样压暗。
- * 结构（structIdx ≥ 0）额外多一个「详情」按钮，打开居中的结构详情弹窗。
+ * 结构（structIdx ≥ 0）额外多一个「详情」按钮，打开居中的结构详情弹窗；
+ * 矿物（oreIdx ≥ 0）额外多一个「验证是否存在」按钮，重读存档确认矿点是否还在。
  */
 void WorldMapPage::showMapPointPopup(const QPoint &globalPos, const QPixmap &icon,
                                      const QString &title, qint64 x, qint64 y,
                                      qint64 z, const QString &wikiTitle,
-                                     const QString &doneKey, int structIdx)
+                                     const QString &doneKey, int structIdx,
+                                     int oreIdx)
 {
     if (!m_view)
         return;
@@ -3263,8 +4428,29 @@ void WorldMapPage::showMapPointPopup(const QPoint &globalPos, const QPixmap &ico
     m_structPopup = pop;
     pop->setObjectName(QStringLiteral("worldMapStructPopup"));
     pop->setAttribute(Qt::WA_DeleteOnClose);
+    // 窗口只当"透明画布"：无边框顶层窗口自带一块不透明系统底色，会把圆角填成方角，
+    // 所以窗口开透明、真正带圆角的卡片交给里面的子控件（透明窗口上的 QSS 底色
+    // 不会自己画出来，必须由子控件承载）
+    pop->setAttribute(Qt::WA_TranslucentBackground, true);
+    auto *popOuter = new QVBoxLayout(pop);
+    popOuter->setContentsMargins(kPopupShadowMargin, kPopupShadowMargin,
+                                 kPopupShadowMargin, kPopupShadowMargin);
+    popOuter->setSpacing(0);
 
-    auto *lay = new QVBoxLayout(pop);
+    auto *card = new QWidget(pop);
+    card->setObjectName(QStringLiteral("worldMapStructCard"));
+    card->setAttribute(Qt::WA_StyledBackground, true);
+    popOuter->addWidget(card);
+    // 柔和投影：小窗浮在地图上，边线之外再有一层阴影，圆角才显得立体
+    auto *popShadow = new QGraphicsDropShadowEffect(card);
+    popShadow->setBlurRadius(22);
+    popShadow->setOffset(0, 5);
+    const bool darkPopup = ThemeManager::instance()
+        && ThemeManager::instance()->currentTheme() != ThemeManager::LightTheme;
+    popShadow->setColor(QColor(0, 0, 0, darkPopup ? 120 : 45));
+    card->setGraphicsEffect(popShadow);
+
+    auto *lay = new QVBoxLayout(card);
     lay->setContentsMargins(14, 12, 14, 12);
     lay->setSpacing(8);
 
@@ -3288,9 +4474,26 @@ void WorldMapPage::showMapPointPopup(const QPoint &globalPos, const QPixmap &ico
     coordLabel->setObjectName(QStringLiteral("worldMapStructCoord"));
     lay->addWidget(coordLabel);
 
-    // 操作行：详情（仅结构） / 复制坐标 / 查看百科 / 标记为已完成
+    // 操作行：详情（仅结构） / 验证是否存在（仅矿物） / 复制坐标 / 查看百科 / 标记为已完成
     auto *btnRow = new QHBoxLayout;
     btnRow->setSpacing(6);
+
+    if (oreIdx >= 0)
+    {
+        auto *verifyBtn = new QPushButton(tr("验证是否存在"), pop);
+        verifyBtn->setObjectName(QStringLiteral("worldMapOreVerify"));
+        verifyBtn->setCursor(Qt::PointingHandCursor);
+        verifyBtn->setToolTip(
+            tr("读取存档确认这里的矿物是否还在；已被挖掉会自动标记为已完成"));
+        QObject::connect(verifyBtn, &QPushButton::clicked, verifyBtn,
+                         [this, x, y, z, oreIdx]() {
+            // Qt::Popup 会抢鼠标抓取，先收掉小窗再后台验证，结果用通知带回
+            if (m_structPopup)
+                m_structPopup->close();
+            startOreVerify(x, y, z, oreIdx);
+        });
+        btnRow->addWidget(verifyBtn);
+    }
 
     if (structIdx >= 0)
     {
@@ -3364,12 +4567,13 @@ void WorldMapPage::showMapPointPopup(const QPoint &globalPos, const QPixmap &ico
     pop->adjustSize();
 
     // 贴着点击位置弹出，但不出屏幕右/下边缘
-    QPoint pos = globalPos + QPoint(10, 10);
+    // 窗口四周留着投影留白，可见卡片比窗口小一圈，这里把这圈让回来，卡片才贴着点击处
+    QPoint pos = globalPos + QPoint(10, 10) - QPoint(kPopupShadowMargin, kPopupShadowMargin);
     const QRect screen = pop->screen()->availableGeometry();
     if (pos.x() + pop->width() > screen.right())
-        pos.setX(globalPos.x() - pop->width() - 10);
+        pos.setX(globalPos.x() - pop->width() - 10 + kPopupShadowMargin);
     if (pos.y() + pop->height() > screen.bottom())
-        pos.setY(globalPos.y() - pop->height() - 10);
+        pos.setY(globalPos.y() - pop->height() - 10 + kPopupShadowMargin);
     pop->move(pos);
     pop->show();
 }
@@ -3406,6 +4610,30 @@ void WorldMapPage::showMapContextMenu(const QPoint &globalPos, qint64 blockX,
     // 非模态弹出：probe / 自动化里点不到菜单也不会卡死
     auto *menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
+
+    // 右键落在用户标记上：先给编辑 / 删除，不用先点左键再找按钮
+    const int hitUser = m_view
+        ? m_view->userMarkerAt(m_view->mapFromGlobal(globalPos)) : -1;
+    if (hitUser >= 0)
+    {
+        menu->addAction(tr("编辑标记点…"), this, [this, hitUser]() {
+            openMarkerEditDialog(hitUser, 0, 0);
+        });
+        menu->addAction(tr("删除标记点"), this, [this, hitUser]() {
+            deleteUserMarker(hitUser);
+        });
+        menu->addSeparator();
+    }
+
+    // 添加标记点：弹居中编辑窗（名称 / 图标 / 坐标都改得了）
+    auto *addAct = menu->addAction(tr("添加标记点…"), this, [this, blockX, blockZ]() {
+        openMarkerEditDialog(-1, blockX, blockZ);
+    });
+    addAct->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/pin_filled.svg"),
+        ThemeManager::instance() ? ThemeManager::instance()->currentThemeColor()
+                                 : palette().color(QPalette::Highlight),
+        14));
 
     menu->addAction(tr("复制方块坐标  %1  %2").arg(blockX).arg(blockZ), this,
                     [this, blockX, blockZ]() {
@@ -3449,16 +4677,24 @@ void WorldMapPage::showMapContextMenu(const QPoint &globalPos, qint64 blockX,
 
 bool WorldMapPage::eventFilter(QObject *watched, QEvent *event)
 {
-    // 内容弹窗打开时：Esc 关闭；点弹窗外任意处关闭
+    // 内容弹窗 / 标记编辑弹窗打开时：Esc 关闭；点弹窗外任意处关闭
     //（点「展开」按钮本身留给按钮 toggle 处理，避免"关了又开"）
+    QWidget *openPopup = nullptr;
     if (m_contentPopup && m_contentPopup->isVisible())
+        openPopup = m_contentPopup;
+    else if (m_markerEditPopup && m_markerEditPopup->isVisible())
+        openPopup = m_markerEditPopup;
+    if (openPopup)
     {
         if (event->type() == QEvent::KeyPress)
         {
             const auto *key = static_cast<QKeyEvent *>(event);
             if (key->key() == Qt::Key_Escape)
             {
-                closeContentPopup();
+                if (openPopup == m_markerEditPopup)
+                    closeMarkerEditPopup();
+                else
+                    closeContentPopup();
                 return true;
             }
         }
@@ -3466,15 +4702,17 @@ bool WorldMapPage::eventFilter(QObject *watched, QEvent *event)
         {
             const auto *mouse = static_cast<QMouseEvent *>(event);
             const QPoint gp = mouse->globalPosition().toPoint();
-            if (!m_contentPopup->rect().contains(
-                    m_contentPopup->mapFromGlobal(gp)))
+            if (!openPopup->rect().contains(openPopup->mapFromGlobal(gp)))
             {
-                const bool onExpand = m_expandBtn
+                const bool onExpand = openPopup == m_contentPopup && m_expandBtn
                     && m_expandBtn->rect().contains(
                            m_expandBtn->mapFromGlobal(gp));
                 if (!onExpand)
                 {
-                    closeContentPopup();
+                    if (openPopup == m_markerEditPopup)
+                        closeMarkerEditPopup();
+                    else
+                        closeContentPopup();
                     return true; // 吞掉这次按下：只关弹窗，不误触地图
                 }
             }
@@ -3527,28 +4765,29 @@ void WorldMapPage::keyPressEvent(QKeyEvent *event)
         // —— 平移（方向键 + WASD，Shift 加速）——
         case Qt::Key_Left:
         case Qt::Key_A:
-            m_view->panBy(QPoint(step, 0));
+            panMap(QPoint(step, 0));
             event->accept();
             return;
         case Qt::Key_Right:
         case Qt::Key_D:
-            m_view->panBy(QPoint(-step, 0));
+            panMap(QPoint(-step, 0));
             event->accept();
             return;
         case Qt::Key_Up:
         case Qt::Key_W:
-            m_view->panBy(QPoint(0, step));
+            panMap(QPoint(0, step));
             event->accept();
             return;
         case Qt::Key_Down:
         case Qt::Key_S:
-            m_view->panBy(QPoint(0, -step));
+            panMap(QPoint(0, -step));
             event->accept();
             return;
 
         // —— 视图开关 / 输出 ——
         case Qt::Key_G:
-            m_gridBtn->toggle(); // toggled 信号会同步画布
+            if (!m_3dOn)
+                m_gridBtn->toggle(); // toggled 信号会同步画布
             event->accept();
             return;
         case Qt::Key_R:
@@ -3618,8 +4857,13 @@ void WorldMapPage::putCache(int key, const WorldMapRenderer::RenderResult &resul
         for (int k : m_cacheOrder)
         {
             const auto it = m_cache.constFind(k);
-            if (it != m_cache.constEnd() && !it->image.isNull())
+            if (it == m_cache.constEnd())
+                continue;
+            if (!it->image.isNull())
                 total += qint64(it->image.sizeInBytes());
+            // 立体视图的高度图也占内存，一起计入预算
+            if (!it->heightImage.isNull())
+                total += qint64(it->heightImage.sizeInBytes());
         }
         if (total <= budget)
             break;
@@ -3633,7 +4877,9 @@ void WorldMapPage::updateSubtitle()
 {
     if (!m_subtitleLabel || !m_dimCombo)
         return;
-    m_subtitleLabel->setText(tr("地表地图 · %1").arg(m_dimCombo->currentText()));
+    m_subtitleLabel->setText(tr("%1 · %2")
+                                 .arg(m_3dOn ? tr("立体地图") : tr("地表地图"))
+                                 .arg(m_dimCombo->currentText()));
 }
 
 void WorldMapPage::onDimensionChanged(int)
@@ -3648,6 +4894,7 @@ void WorldMapPage::onDimensionChanged(int)
     startRender();
     startStructRefresh(); // 换维度要重算（结构的维度过滤不同）
     scheduleBiomeRefresh(); // 当前群系跟随维度
+    updatePlayerMarker(); // 玩家所在维度可能与地图维度不再一致
     if (m_oreTimer)       // 该维度若仍有勾选的矿物，接着重新扫
         m_oreTimer->start();
 }
@@ -3691,6 +4938,11 @@ void WorldMapPage::onGridToggled(bool on)
 
 void WorldMapPage::onZoomIn()
 {
+    if (m_3dOn && m_view3d)
+    {
+        m_view3d->zoomBy(0.85);
+        return;
+    }
     if (!m_view)
         return;
     m_view->zoomBy(1.35);
@@ -3699,6 +4951,11 @@ void WorldMapPage::onZoomIn()
 
 void WorldMapPage::onZoomOut()
 {
+    if (m_3dOn && m_view3d)
+    {
+        m_view3d->zoomBy(1.0 / 0.85);
+        return;
+    }
     if (!m_view)
         return;
     m_view->zoomBy(1.0 / 1.35);
@@ -3707,6 +4964,11 @@ void WorldMapPage::onZoomOut()
 
 void WorldMapPage::onFitClicked()
 {
+    if (m_3dOn && m_view3d)
+    {
+        m_view3d->fitToWorld();
+        return;
+    }
     if (!m_view)
         return;
     m_view->fitToWindow();
@@ -3758,7 +5020,13 @@ void WorldMapPage::onExportClicked()
     if (path.isEmpty())
         return;
 
-    if (m_view->image().save(path, "PNG"))
+    // 立体模式下导出的是当前这一帧立体画面（所见即所得）；
+    // 用渲染帧而不是控件截图，左下角的操作提示和右上角的方位标不会混进图里
+    const QImage img = (m_3dOn && m_view3d && m_view3d->hasSurface())
+        ? (m_view3d->lastFrame().isNull() ? m_view3d->grab().toImage()
+                                          : m_view3d->lastFrame())
+        : m_view->image();
+    if (!img.isNull() && img.save(path, "PNG"))
         m_statusLabel->setText(tr("已导出到 %1").arg(path));
     else
         m_statusLabel->setText(tr("导出失败：%1").arg(path));
@@ -3771,11 +5039,13 @@ void WorldMapPage::setInstancePath(const QString &instancePath)
     if (m_instancePath == instancePath)
         return;
     m_instancePath = instancePath;
-    // 结构战利品表优先从客户端 JAR 读（版本对齐）
-    StructureLoot::setClientJar(BiomeName::findClientJar(instancePath));
+    // 换实例：清空物品中文名，随群系名一起后台重载
+    StructureLoot::clearInstanceItemNames();
     // 换实例：丢弃上个实例的中文群系表，后台重新解析当前实例 lang
     m_biomeNames.zh.clear();
     m_biomeNames.en.clear();
+    m_biomeNames.itemsZh.clear();
+    m_biomeNames.itemsEn.clear();
     loadBiomeNamesAsync();
 }
 
@@ -4412,6 +5682,8 @@ void WorldMapPage::scheduleOreScan()
 {
     if (!m_view || !m_view->hasImage())
         return;
+    if (m_3dOn)
+        return; // 立体模式不扫矿物点（那是俯视图的标注）
 
     if (!anyOreChecked(m_oreEnabled))
     {
@@ -4548,6 +5820,99 @@ void WorldMapPage::drainOreScan()
         scheduleOreScan(); // 统一在调度里收结果 + 接着排下一块
 }
 
+/**
+ * 矿点验证（信息窗「验证是否存在」）：后台重读该矿点所在区块，
+ * 比对存档里这个坐标现在是不是还是这种矿石——玩家在游戏里挖掉矿石后
+ * 存档变了，但地图的扫描缓存不知道，靠这一步把两边对齐。
+ */
+void WorldMapPage::startOreVerify(qint64 x, int y, qint64 z, int ore)
+{
+    if (m_savePath.isEmpty())
+        return;
+    if (ore < 0 || ore >= OreFinder::allOres().size())
+        return;
+    if (m_oreVerifyJob)
+    {
+        NotificationManager::showInfo(this, tr("已有矿物验证在进行中，请稍候"));
+        return;
+    }
+
+    auto job = std::make_shared<OreVerifyJob>();
+    job->chunk = QPoint(floorDiv(int(x), 16), floorDiv(int(z), 16));
+    job->x = x;
+    job->y = y;
+    job->z = z;
+    job->ore = ore;
+    job->doneKey = WorldMapView::doneKey(
+        WorldMapView::kOreDoneTypeBase + ore, x, z);
+    m_oreVerifyJob = job;
+
+    const QString savePath = m_savePath;
+    const auto dim = static_cast<WorldMapRenderer::Dimension>(
+        m_dimCombo ? m_dimCombo->currentIndex() : 0);
+    const QPoint chunk = job->chunk;
+    QtConcurrent::run(&m_orePool, [savePath, dim, chunk, job]() {
+        job->hits = OreFinder::scanChunk(savePath, dim, chunk.x(), chunk.y());
+        job->done.store(true, std::memory_order_release);
+    });
+
+    if (m_pollTimer && !m_pollTimer->isActive())
+        m_pollTimer->start();
+}
+
+/** 收取矿点验证结果：确认还在就提示，确认被挖掉就自动标记完成 */
+void WorldMapPage::drainOreVerify()
+{
+    if (!m_oreVerifyJob || !m_oreVerifyJob->done.load(std::memory_order_acquire))
+        return;
+    const auto job = m_oreVerifyJob;
+    m_oreVerifyJob.reset();
+
+    // 该区块的最新扫描结果并入缓存（和 scheduleOreScan 收结果同一套记账）：
+    // 被挖掉的矿点不用等下次重扫，立刻就从画布上消失
+    QHash<QPoint, QVector<OreFinder::Hit>> byChunk;
+    for (const OreFinder::Hit &h : job->hits)
+    {
+        if (h.index < 0)
+            continue;
+        byChunk[QPoint(floorDiv(h.x, 16), floorDiv(h.z, 16))].append(h);
+    }
+    const QPoint ch = job->chunk;
+    if (!m_oreScanned.contains(ch))
+        m_oreScanned.insert(ch);
+    auto it = byChunk.constFind(ch);
+    if (it != byChunk.cend())
+        m_oreHits.insert(ch, it.value());
+    else
+        m_oreHits.remove(ch);
+    m_oreHitOrder.removeAll(ch);
+    m_oreHitOrder.append(ch);
+    rebuildOreMarkers();
+
+    const bool exists = std::any_of(
+        job->hits.cbegin(), job->hits.cend(),
+        [job](const OreFinder::Hit &h) {
+            return h.index == job->ore && h.x == int(job->x)
+                && h.y == job->y && h.z == int(job->z);
+        });
+    if (exists)
+    {
+        NotificationManager::showSuccess(this, tr("验证完成：该矿物仍在存档中"));
+        return;
+    }
+
+    // 存档里已经没有这块矿石：自动标记为完成（画布同步压暗）
+    m_structDone.insert(job->doneKey);
+    persistStructDone();
+    if (m_view)
+    {
+        m_view->setDoneStructures(m_structDone);
+        m_view->update();
+    }
+    NotificationManager::showInfo(this,
+        tr("该矿物已不在存档中，已自动标记为完成"));
+}
+
 void WorldMapPage::rebuildOreMarkers()
 {
     if (!m_view)
@@ -4611,6 +5976,7 @@ void WorldMapPage::clearOreState()
     m_oreHitOrder.clear();
     m_oreScanned.clear();
     m_oreJob.reset();
+    m_oreVerifyJob.reset(); // 在途的矿点验证一并作废（换存档/换维度后坐标失效）
     m_oreBusy = false;
     m_oreText.clear();
     if (m_view)
@@ -4792,6 +6158,18 @@ int WorldMapPage::oreMarkerBlockY(int i) const
 int WorldMapPage::oreMarkerType(int i) const
 {
     return m_view ? m_view->oreMarkerType(i) : -1;
+}
+
+bool WorldMapPage::verifyOreMarker(int i)
+{
+    if (!m_view || i < 0 || i >= m_view->oreMarkerCount())
+        return false;
+    const QPoint xz = m_view->oreMarkerBlockPos(i);
+    const int ore = m_view->oreMarkerType(i);
+    if (ore < 0)
+        return false;
+    startOreVerify(xz.x(), m_view->oreMarkerBlockY(i), xz.y(), ore);
+    return true;
 }
 
 bool WorldMapPage::highlightStructureType(int idx)

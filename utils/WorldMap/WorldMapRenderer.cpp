@@ -1043,6 +1043,100 @@ void shadeRegion(const QVector<QRgb> &baseColors, const QVector<qint16> &heights
 }
 
 /**
+ * 把一个 region 的逐像素高度缓冲转成高度图（Format_Grayscale16）。
+ * 直接搬 qint16 的位模式：无地表（kNoHeight）正好落在 kNoHeightEncoded。
+ */
+QImage heightsToImage(const QVector<qint16> &heights, int width, int height)
+{
+    if (width <= 0 || height <= 0 || heights.size() < width * height)
+        return QImage();
+    QImage img(width, height, QImage::Format_Grayscale16);
+    if (img.isNull())
+        return img;
+    for (int r = 0; r < height; ++r)
+    {
+        quint16 *dst = reinterpret_cast<quint16 *>(img.scanLine(r));
+        const qint16 *src = heights.constData() + r * width;
+        for (int c = 0; c < width; ++c)
+            dst[c] = quint16(src[c]);
+    }
+    return img;
+}
+
+/**
+ * 高度图的盒式降采样（factor 为 2 的幂）：取块内**平均**地表高度。
+ *
+ * 不取最高值：立体视图按格算坡度，块内最高值会让相邻两格忽高忽低，
+ * 山体变成一排排尖刺；平均值与颜色图的盒式降采样同口径，观感才是"同一片地"。
+ * 整块都没有地表时保留"无数据"。
+ */
+QImage heightsDownscale(const QImage &src, int factor)
+{
+    if (src.isNull() || factor <= 1)
+        return src;
+    const int w = src.width() / factor;
+    const int h = src.height() / factor;
+    if (w <= 0 || h <= 0)
+        return QImage();
+    QImage dst(w, h, QImage::Format_Grayscale16);
+    if (dst.isNull())
+        return dst;
+    for (int y = 0; y < h; ++y)
+    {
+        quint16 *out = reinterpret_cast<quint16 *>(dst.scanLine(y));
+        for (int x = 0; x < w; ++x)
+        {
+            qint64 sum = 0;
+            int n = 0;
+            for (int dy = 0; dy < factor; ++dy)
+            {
+                const quint16 *in = reinterpret_cast<const quint16 *>(
+                    src.constScanLine(y * factor + dy));
+                for (int dx = 0; dx < factor; ++dx)
+                {
+                    const qint16 v = qint16(in[x * factor + dx]);
+                    if (v == std::numeric_limits<qint16>::min())
+                        continue;
+                    sum += v;
+                    ++n;
+                }
+            }
+            out[x] = n ? quint16(qint16(sum / n))
+                       : quint16(std::numeric_limits<qint16>::min());
+        }
+    }
+    return dst;
+}
+
+/**
+ * 高度图按矩形搬运（源/目标都是 Format_Grayscale16）：逐行 memcpy，越界裁掉。
+ * 不用 QPainter —— 16 位灰度图不是它的常用渲染目标，搬运没必要走那么重的一条路。
+ */
+void copyHeightRect(QImage &dst, int dstX, int dstY,
+                    const QImage &src, int srcX, int srcY, int w, int h)
+{
+    if (dst.isNull() || src.isNull()
+        || dst.format() != QImage::Format_Grayscale16
+        || src.format() != QImage::Format_Grayscale16)
+        return;
+    // 左侧 / 上侧越界：整体平移后缩小尺寸
+    if (dstX < 0) { w += dstX; srcX -= dstX; dstX = 0; }
+    if (dstY < 0) { h += dstY; srcY -= dstY; dstY = 0; }
+    if (srcX < 0) { w += srcX; dstX -= srcX; srcX = 0; }
+    if (srcY < 0) { h += srcY; dstY -= srcY; srcY = 0; }
+    w = std::min(w, std::min(dst.width() - dstX, src.width() - srcX));
+    h = std::min(h, std::min(dst.height() - dstY, src.height() - srcY));
+    if (w <= 0 || h <= 0)
+        return;
+    const int bytes = w * int(sizeof(quint16));
+    for (int r = 0; r < h; ++r)
+        std::memcpy(dst.scanLine(dstY + r) + dstX * qsizetype(sizeof(quint16)),
+                    src.constScanLine(srcY + r)
+                        + srcX * qsizetype(sizeof(quint16)),
+                    size_t(bytes));
+}
+
+/**
  * 把一个区块的地表提取到区域缓冲（基础色 + 高度），明暗由 shadeRegion 统一做。
  * @param originCol 图像列（= 区块内偏移 0）
  * @param originRow 图像行
@@ -1107,7 +1201,7 @@ bool renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
             palette = readPalette(data, bufLen, s);
             if (palette.isEmpty())
             {
-                qWarning() << "[WorldMap] palette empty, sec y=" << s.y
+                qWarning() << "[WorldMap] 调色板为空，sec y=" << s.y
                            << "off=" << s.paletteOff << "cnt=" << s.paletteCount;
                 continue;
             }
@@ -1116,7 +1210,7 @@ bool renderChunk(const ChunkInfo &info, const uchar *data, qint64 bufLen,
                 continue;
             if (!decodeStates(data, bufLen, s, palette.size(), preferPacked, indices))
             {
-                qWarning() << "[WorldMap] decode failed, sec y=" << s.y
+                qWarning() << "[WorldMap] 解码失败，sec y=" << s.y
                            << "palette=" << palette.size() << "data=" << s.dataCount;
                 continue;
             }
@@ -1284,6 +1378,24 @@ bool terrainKeepsBase(QRgb c)
     return qRed(c) >= 200 && qGreen(c) >= 200 && qBlue(c) >= 200;
 }
 
+qint16 heightAtPixel(const QImage &heightImage, int px, int py)
+{
+    constexpr qint16 kNone = std::numeric_limits<qint16>::min();
+    if (heightImage.isNull()
+        || px < 0 || py < 0
+        || px >= heightImage.width() || py >= heightImage.height()
+        || heightImage.format() != QImage::Format_Grayscale16)
+        return kNone;
+    return qint16(reinterpret_cast<const quint16 *>(
+                      heightImage.constScanLine(py))[px]);
+}
+
+void blitHeightTile(QImage &dst, const QPoint &dest, const QImage &tile)
+{
+    copyHeightRect(dst, dest.x(), dest.y(), tile, 0, 0,
+                   tile.width(), tile.height());
+}
+
 // ═══════════════════════ 区域文件 ═══════════════════════
 
 namespace {
@@ -1310,10 +1422,12 @@ void dimensionHeightRange(Dimension dim, int *minY, int *maxY)
  * 真实像素画在上层、种子只填空缺 —— 已加载与未加载之间不再露出空缺。
  * @param seedRes 种子渲染边长：细节瓦片传 512（方块级），概览传 512/bpp。
  * @param maxSurfaceY 高度上限（-1 = 不限制），与真实地表截断同语义
+ * @param heightFill 非空时把种子预测的高度补进这张高度图的空缺里
+ *                （颜色补了、高度不补的话，立体视图上这片就是个空洞）
  */
 QImage seedUnderlay(QImage &real, int regionX, int regionZ, Dimension dim,
                     ShadeMode mode, const SeedPreview &seed, int seedRes,
-                    int maxSurfaceY)
+                    int maxSurfaceY, QImage *heightFill = nullptr)
 {
     if (!seed.enabled || !SeedTerrainRenderer::supported(seed.mc, dim))
         return real;
@@ -1321,12 +1435,36 @@ QImage seedUnderlay(QImage &real, int regionX, int regionZ, Dimension dim,
     // 逐点抽稀会把细河、窄沙滩抽成雪花点，垫在真实地形旁边很割裂
     const int hiRes = (seedRes >= 128) ? seedRes
                                        : std::min(128, seedRes * 2);
+    QImage underH;
     QImage under = SeedTerrainRenderer::renderRegionTile(regionX, regionZ, dim,
                                                          mode, seed.seed,
                                                          seed.mc, hiRes,
-                                                         maxSurfaceY);
+                                                         maxSurfaceY,
+                                                         heightFill ? &underH
+                                                                    : nullptr);
     if (under.isNull())
         return real;
+
+    // 高度先补空缺：颜色合成之后就看不出哪里原本是洞，得赶在前面做
+    if (heightFill && !underH.isNull()
+        && heightFill->format() == QImage::Format_Grayscale16)
+    {
+        if (underH.size() != heightFill->size())
+            underH = underH.scaled(heightFill->size(), Qt::IgnoreAspectRatio,
+                                   Qt::FastTransformation);
+        const int w = std::min(underH.width(), heightFill->width());
+        const int h = std::min(underH.height(), heightFill->height());
+        for (int r = 0; r < h; ++r)
+        {
+            quint16 *dst = reinterpret_cast<quint16 *>(heightFill->scanLine(r));
+            const quint16 *src =
+                reinterpret_cast<const quint16 *>(underH.constScanLine(r));
+            for (int c = 0; c < w; ++c)
+                if (dst[c] == kNoHeightEncoded && src[c] != kNoHeightEncoded)
+                    dst[c] = src[c];
+        }
+    }
+
     if (under.size() != real.size())
         under = under.scaled(real.size(), Qt::IgnoreAspectRatio,
                              Qt::SmoothTransformation);
@@ -1383,7 +1521,7 @@ struct RegionData
  */
 QImage renderRegionFile(const QString &path, ShadeMode mode,
                         int minY, int maxY, int *failedChunks, int maxSurfaceY,
-                        bool *hasHoles = nullptr)
+                        bool *hasHoles = nullptr, QImage *heightOut = nullptr)
 {
     QImage img;
     if (hasHoles)
@@ -1450,7 +1588,7 @@ QImage renderRegionFile(const QString &path, ShadeMode mode,
         QByteArray chunk;
         if (!inflatePayload(data + pos + 5, int(len - 1), compType, chunk))
         {
-            qWarning() << "[WorldMap] inflate failed" << path << i << compType << int(len);
+            qWarning() << "[WorldMap] 解压失败" << path << i << compType << int(len);
             if (failedChunks) ++*failedChunks;
             holes = true;
             continue;
@@ -1460,13 +1598,13 @@ QImage renderRegionFile(const QString &path, ShadeMode mode,
         const ChunkInfo info = parseChunk(cdata, chunk.size());
         if (!info.ok)
         {
-            qWarning() << "[WorldMap] parse failed" << path << i << chunk.size();
+            qWarning() << "[WorldMap] 解析失败" << path << i << chunk.size();
             if (failedChunks) ++*failedChunks;
             holes = true;
             continue;
         }
         if (info.sections.isEmpty())
-            qWarning() << "[WorldMap] no sections" << path << i;
+            qWarning() << "[WorldMap] 没有 section" << path << i;
 
         // 位置表索引 i 就是该区块在 region 内的权威槽位（x = i & 31, z = i >> 5）。
         // 早先优先取 NBT 的 xPos/zPos，遇到重复或错位坐标会把别的槽位盖掉。
@@ -1488,6 +1626,10 @@ QImage renderRegionFile(const QString &path, ShadeMode mode,
     // 统一收尾：高度明暗 + 坡度阴影（Height 转灰度再叠坡度；Terrain 走分层设色 + 山体阴影）
     shadeRegion(baseColors, heights, mode, minY, maxY, img,
                 water.isEmpty() ? nullptr : &water);
+
+    // 立体视图要的高度图：逐像素地表 Y（与颜色图同尺寸同原点）
+    if (heightOut)
+        *heightOut = heightsToImage(heights, 512, 512);
 
     return img;
 }
@@ -1898,6 +2040,7 @@ void scanRegionFiles(const QString &dir, QVector<QPair<int, int>> *coords,
 struct TileTaskResult
 {
     QImage tile;
+    QImage height; ///< 同尺寸高度图（Format_Grayscale16；空 = 该区域无高度数据）
     QPoint dest;   ///< 最终图上的像素坐标
     bool ok = false;
     bool isSeed = false; ///< 该区域是种子预测（预览性质，失败不计入 failedRegions）
@@ -1981,12 +2124,25 @@ inline size_t qHash(const SeedTileKey &k, size_t h = 0)
 }
 
 QMutex g_seedTileMutex;
-QHash<SeedTileKey, QImage> g_seedTiles;
-QList<SeedTileKey> g_seedTileOrder;
-constexpr int kMaxSeedTileCache = 768; // 128×128×4B ≈ 64KB/张 → ~48MB 上限
 
+/** 种子 tile 缓存项：颜色 + 地表高度（立体视图要用，一次渲染两样都留下） */
+struct SeedTileEntry
+{
+    QImage color;
+    QImage height;
+};
+
+QHash<SeedTileKey, SeedTileEntry> g_seedTiles;
+QList<SeedTileKey> g_seedTileOrder;
+constexpr int kMaxSeedTileCache = 512; // 128×128×(4B 颜色 + 2B 高度) ≈ 96KB/张 → ~48MB 上限
+
+/**
+ * 种子预测 tile 渲染 + 缓存。
+ * @param heightOut 非空时回传同尺寸高度图（缓存里没有就当场渲染一次并一起存下）
+ */
 QImage cachedSeedTile(int rx, int rz, Dimension dim, ShadeMode mode,
-                      const SeedPreview &seed, int outSize, int maxSurfaceY)
+                      const SeedPreview &seed, int outSize, int maxSurfaceY,
+                      QImage *heightOut = nullptr)
 {
     if (outSize > 128 || !seed.enabled
         || !SeedTerrainRenderer::supported(seed.mc, dim))
@@ -2003,19 +2159,28 @@ QImage cachedSeedTile(int rx, int rz, Dimension dim, ShadeMode mode,
     {
         QMutexLocker lock(&g_seedTileMutex);
         const auto it = g_seedTiles.constFind(key);
-        if (it != g_seedTiles.constEnd())
+        if (it != g_seedTiles.constEnd() && (heightOut == nullptr
+                                             || !it.value().height.isNull()))
         {
             g_seedTileOrder.removeAll(key);
             g_seedTileOrder.append(key);
-            return it.value();
+            if (heightOut)
+                *heightOut = it.value().height;
+            return it.value().color;
         }
     }
+    QImage height;
     QImage img = SeedTerrainRenderer::renderRegionTile(
-        rx, rz, dim, mode, seed.seed, seed.mc, outSize, maxSurfaceY);
+        rx, rz, dim, mode, seed.seed, seed.mc, outSize, maxSurfaceY, &height);
     if (img.isNull())
         return img;
+    if (heightOut)
+        *heightOut = height;
     QMutexLocker lock(&g_seedTileMutex);
-    g_seedTiles.insert(key, img);
+    SeedTileEntry entry;
+    entry.color = img;
+    entry.height = height;
+    g_seedTiles.insert(key, entry);
     g_seedTileOrder.append(key);
     while (g_seedTileOrder.size() > kMaxSeedTileCache)
         g_seedTiles.remove(g_seedTileOrder.takeFirst());
@@ -2029,14 +2194,33 @@ QImage cachedSeedTile(int rx, int rz, Dimension dim, ShadeMode mode,
  * 目标尺寸大于 128（bpp=1 的 512 概览槽位）时先采 128 再平滑放大。
  */
 QImage seedTileSmooth(int rx, int rz, Dimension dim, ShadeMode mode,
-                      const SeedPreview &seed, int outSize, int maxSurfaceY)
+                      const SeedPreview &seed, int outSize, int maxSurfaceY,
+                      QImage *heightOut = nullptr)
 {
     const int hi = std::clamp(outSize * 2, 4, 128);
-    QImage img = cachedSeedTile(rx, rz, dim, mode, seed, hi, maxSurfaceY);
+    QImage heightHi;
+    QImage img = cachedSeedTile(rx, rz, dim, mode, seed, hi, maxSurfaceY,
+                                heightOut ? &heightHi : nullptr);
     if (img.isNull())
         img = SeedTerrainRenderer::renderRegionTile(rx, rz, dim, mode,
                                                     seed.seed, seed.mc, hi,
-                                                    maxSurfaceY);
+                                                    maxSurfaceY,
+                                                    heightOut ? &heightHi
+                                                              : nullptr);
+    // 高度与颜色走同一套缩放规则，保证两者严格对齐
+    if (heightOut)
+    {
+        QImage h = heightHi;
+        if (!h.isNull() && outSize > 0 && h.width() != outSize)
+        {
+            if (h.width() > outSize && h.width() % outSize == 0)
+                h = heightsDownscale(h, h.width() / outSize);
+            else
+                h = h.scaled(outSize, outSize, Qt::IgnoreAspectRatio,
+                             Qt::FastTransformation);
+        }
+        *heightOut = h;
+    }
     if (img.isNull() || img.width() <= 0 || outSize <= 0)
         return img;
     if (img.width() == outSize)
@@ -2053,23 +2237,26 @@ TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
                                 int destX, int destY, int bpp,
                                 ShadeMode mode, int minY, int maxY,
                                 int maxSurfaceY, const SeedPreview &seed,
-                                Dimension dim)
+                                Dimension dim, bool wantHeight)
 {
     TileTaskResult r;
     r.dest = QPoint(destX, destY);
 
     QImage img;
+    QImage height;
     if (!path.isEmpty())
     {
         int failedChunks = 0;
         bool holes = false;
         img = renderRegionFile(path, mode, minY, maxY, &failedChunks,
-                               maxSurfaceY, &holes);
+                               maxSurfaceY, &holes,
+                               wantHeight ? &height : nullptr);
         // 半生成 region：真实图带透明洞，用种子地形垫底补齐接缝，
         // 已加载与未加载之间不再露出一条空缺
         if (!img.isNull() && holes)
             img = seedUnderlay(img, regionX, regionZ, dim, mode, seed,
-                               std::clamp(512 / bpp, 4, 128), maxSurfaceY);
+                               std::clamp(512 / bpp, 4, 128), maxSurfaceY,
+                               height.isNull() ? nullptr : &height);
     }
     else if (seed.enabled && SeedTerrainRenderer::supported(seed.mc, dim))
     {
@@ -2079,7 +2266,7 @@ TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
         r.isSeed = true;
         const int tilePx = std::max(1, 512 / bpp);
         img = seedTileSmooth(regionX, regionZ, dim, mode, seed, tilePx,
-                             maxSurfaceY);
+                             maxSurfaceY, wantHeight ? &height : nullptr);
     }
 
     if (img.isNull())
@@ -2087,9 +2274,15 @@ TileTaskResult renderRegionTask(const QString &path, int regionX, int regionZ,
 
     r.ok = true;
     if (r.isSeed)
+    {
         r.tile = img; // 种子预测已按输出尺寸渲染，无需再降采样
+        r.height = height;
+    }
     else
+    {
         r.tile = (bpp == 1) ? img : boxDownscale(img, bpp);
+        r.height = (bpp == 1) ? height : heightsDownscale(height, bpp);
+    }
     return r;
 }
 
@@ -2104,7 +2297,7 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     const std::function<void(int, int)> &progress,
                     const ProgressiveSinkPtr &sink, int maxThreads,
                     int maxSurfaceY, const SeedPreview &seed,
-                    const PriorCanvas &prior)
+                    const PriorCanvas &prior, bool withHeight)
 {
     QElapsedTimer timer;
     timer.start();
@@ -2294,6 +2487,14 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
     const int imgH = int(blocksZ / bpp);
     QImage master(imgW, imgH, QImage::Format_ARGB32);
     master.fill(qRgba(0, 0, 0, 0));
+    // 立体视图用的地表高度图：与主图同尺寸同原点，缺省填"无地表"
+    QImage masterHeight;
+    if (withHeight)
+    {
+        masterHeight = QImage(imgW, imgH, QImage::Format_Grayscale16);
+        if (!masterHeight.isNull())
+            masterHeight.fill(kNoHeightEncoded);
+    }
 
     int minY = 0, maxY = 255;
     dimensionHeightRange(dim, &minY, &maxY);
@@ -2330,6 +2531,10 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
             const int destY = (rz - minRz) * tilePx;
             reusePainter.drawImage(QPoint(destX, destY), prior.image,
                                    QRect(srcX, srcY, tilePx, tilePx));
+            // 高度图一并搬过去：否则重定心后这些 region 在立体视图里是空洞
+            if (!masterHeight.isNull() && !prior.heightImage.isNull())
+                copyHeightRect(masterHeight, destX, destY, prior.heightImage,
+                               srcX, srcY, tilePx, tilePx);
             reused[i] = true;
             ++reuseCount;
             if (paths[i].isEmpty())
@@ -2392,6 +2597,10 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
         painter.setCompositionMode(QPainter::CompositionMode_Source);
         painter.drawImage(task.dest, task.tile);
         painter.end();
+        // 高度图与颜色图同一块区域、同一次贴图（避免两者错位）
+        if (!masterHeight.isNull() && !task.height.isNull())
+            copyHeightRect(masterHeight, task.dest.x(), task.dest.y(),
+                           task.height, 0, 0, tw, th);
     };
 
     auto worker = [&]() {
@@ -2415,12 +2624,14 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
             TileTaskResult task = renderRegionTask(path, regionX, regionZ,
                                                    destX, destY, bpp, mode,
                                                    minY, maxY, maxSurfaceY,
-                                                   seed, dim);
+                                                   seed, dim,
+                                                   withHeight && !masterHeight.isNull());
             if (sink && task.ok)
             {
                 // 一解完就入队，UI 定时 drain 就能看到新区域冒出来
                 QMutexLocker locker(&sink->tileMutex);
                 sink->pendingTiles.append(qMakePair(task.dest, task.tile));
+                sink->pendingHeightTiles.append(qMakePair(task.dest, task.height));
             }
             if (!task.ok)
             {
@@ -2456,6 +2667,7 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
     res.seedRegions = seedCount.load();
 
     res.image = master;
+    res.heightImage = masterHeight;
     res.elapsedMs = int(timer.elapsed());
     return res;
 }

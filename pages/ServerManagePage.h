@@ -13,6 +13,9 @@
 #include <QSet>
 #include <QPoint>
 #include <QString>
+#include <QHash>
+
+#include "utils/McServerPinger.h"
 
 struct ServerEntry
 {
@@ -26,6 +29,7 @@ class LocalCategoryManager;
 class QMenu;
 class QGraphicsOpacityEffect;
 class QPropertyAnimation;
+class QShowEvent;
 
 class ServerManagePage : public QWidget
 {
@@ -47,6 +51,7 @@ signals:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private slots:
     void onSearchTextChanged(const QString &text);
@@ -98,6 +103,15 @@ private:
     /** 刷新统计栏文案与底栏按钮（全选/删除选中）状态 */
     void updateSelectionBar();
 
+    /** 对当前可见的服务器卡片批量发起状态探测（force=true 时忽略新鲜度缓存） */
+    void pingServers(bool force = false);
+    /** 单条探测；结果通过 McServerPinger::pingFinished 回填 */
+    void pingOne(const QString &key, const QString &host, quint16 port);
+    /** 把缓存里的探测结果画到卡片上（状态/人数/版本/延迟/MOTD/图标） */
+    void applyPingResultToCard(QWidget *card);
+    /** 按卡片当前宽度重新省略名称与 MOTD 文案 */
+    void elideCardTexts(QWidget *card);
+
     QLineEdit *m_searchEdit;
     QLabel *m_statsLabel;
     QScrollArea *m_scrollArea;
@@ -121,6 +135,12 @@ private:
     QList<ServerEntry> m_servers;
     QString m_currentSearch;
     QString m_instancePath;
+
+    // 服务器状态探测（Minecraft Server List Ping）
+    McServerPinger *m_pinger = nullptr;
+    QHash<QString, McServerPinger::Result> m_pingResults;   // key = ServersDatIO::addressKey
+    QHash<QString, qint64> m_pingAtMs;                       // 上次探测时刻，用于节流
+    qint64 m_lastPingSweepMs = 0;
 
     // 多选状态
     QList<QWidget *> m_cardWidgets;               // 当前可见卡片（与卡片索引一一对应）

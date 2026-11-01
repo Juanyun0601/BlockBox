@@ -23,23 +23,23 @@ inline bool write(const QString &filename, const QByteArray &data)
     QFileInfo info(filename);
     if (!QDir().mkpath(info.absolutePath()))
     {
-        qWarning() << "Couldn't create folder for" << filename;
+        qWarning() << "无法创建文件夹：" << filename;
         return false;
     }
     QSaveFile file(filename);
     if (!file.open(QSaveFile::WriteOnly))
     {
-        qWarning() << "Couldn't open" << filename << "for writing:" << file.errorString();
+        qWarning() << "无法打开写入：" << filename << "：" << file.errorString();
         return false;
     }
     if (data.size() != file.write(data))
     {
-        qWarning() << "Error writing data to" << filename << ":" << file.errorString();
+        qWarning() << "写入失败：" << filename << "：" << file.errorString();
         return false;
     }
     if (!file.commit())
     {
-        qWarning() << "Error while committing data to" << filename << ":" << file.errorString();
+        qWarning() << "无法写入最终文件：" << filename << "：" << file.errorString();
         return false;
     }
     return true;

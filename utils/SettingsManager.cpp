@@ -15,6 +15,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUrl>
 
 #include "../platform.h"
 
@@ -111,6 +112,7 @@ QList<AccountInfo> SettingsManager::loadAccountsFromFile() const
         info.isDefault = obj["isDefault"].toBool();
         info.accessToken = obj["accessToken"].toString();
         info.refreshToken = obj["refreshToken"].toString();
+        info.clientToken = obj["clientToken"].toString();
         info.uuid = obj["uuid"].toString();
         info.skinUrl = obj["skinUrl"].toString();
         accounts.append(info);
@@ -130,6 +132,7 @@ bool SettingsManager::saveAccountsToFile(const QList<AccountInfo>& accounts) con
         obj["isDefault"] = info.isDefault;
         obj["accessToken"] = info.accessToken;
         obj["refreshToken"] = info.refreshToken;
+        obj["clientToken"] = info.clientToken;
         obj["uuid"] = info.uuid;
         obj["skinUrl"] = info.skinUrl;
         array.append(obj);
@@ -228,6 +231,40 @@ bool SettingsManager::addAccount(const QString &username, const QString &type, c
     accounts.append(newAccount);
     
     // 保存账户列表（写入失败要让调用方知道，不能静默假装成功）
+    return saveAccountsToSettings(accounts);
+}
+
+bool SettingsManager::addThirdPartyAccount(const QString &username, const QString &type,
+                                          const QString &serverUrl, const QString &accessToken,
+                                          const QString &clientToken, const QString &uuid,
+                                          const QString &skinUrl, bool isDefault)
+{
+    QList<AccountInfo> accounts = getAccounts();
+    for (const AccountInfo &account : accounts)
+    {
+        if (account.username.compare(username, Qt::CaseInsensitive) == 0)
+        {
+            return false; // 账户已存在（第三方角色名不分大小写）
+        }
+    }
+
+    if (isDefault)
+    {
+        for (int i = 0; i < accounts.size(); ++i)
+            accounts[i].isDefault = false;
+    }
+
+    AccountInfo newAccount;
+    newAccount.username = username;
+    newAccount.type = type;
+    newAccount.serverUrl = serverUrl;
+    newAccount.isDefault = isDefault;
+    newAccount.accessToken = accessToken;
+    newAccount.clientToken = clientToken;
+    newAccount.uuid = uuid;
+    newAccount.skinUrl = skinUrl;
+    accounts.append(newAccount);
+
     return saveAccountsToSettings(accounts);
 }
 
@@ -1047,4 +1084,105 @@ void SettingsManager::setTranslationConfig(const TranslationConfig &config)
     m_settings->setValue("translation/customModel", config.customModel);
     m_settings->setValue("translation/targetLanguage", config.targetLanguage);
     m_settings->setValue("translation/sourceLanguage", config.sourceLanguage);
+}
+
+bool SettingsManager::isExperimentalBedrockEnabled() const
+{
+    return m_settings->value("experimental/bedrock", false).toBool();
+}
+
+void SettingsManager::setExperimentalBedrockEnabled(bool enabled)
+{
+    if (isExperimentalBedrockEnabled() == enabled)
+        return;
+
+    m_settings->setValue("experimental/bedrock", enabled);
+    emit experimentalBedrockChanged(enabled);
+}
+
+bool SettingsManager::isExperimentalMap3dEnabled() const
+{
+    return m_settings->value("experimental/map3d", false).toBool();
+}
+
+void SettingsManager::setExperimentalMap3dEnabled(bool enabled)
+{
+    if (isExperimentalMap3dEnabled() == enabled)
+        return;
+
+    m_settings->setValue("experimental/map3d", enabled);
+    emit experimentalMap3dChanged(enabled);
+}
+
+bool SettingsManager::isExperimentalForumAccountEnabled() const
+{
+    return m_settings->value("experimental/forumAccount", false).toBool();
+}
+
+void SettingsManager::setExperimentalForumAccountEnabled(bool enabled)
+{
+    if (isExperimentalForumAccountEnabled() == enabled)
+        return;
+
+    m_settings->setValue("experimental/forumAccount", enabled);
+    emit experimentalForumAccountChanged(enabled);
+}
+
+bool SettingsManager::isExperimentalCommunityEnabled() const
+{
+    return m_settings->value("experimental/community", false).toBool();
+}
+
+void SettingsManager::setExperimentalCommunityEnabled(bool enabled)
+{
+    if (isExperimentalCommunityEnabled() == enabled)
+        return;
+
+    m_settings->setValue("experimental/community", enabled);
+    emit experimentalCommunityChanged(enabled);
+}
+
+QString SettingsManager::defaultForumBaseUrl()
+{
+    return QStringLiteral("https://forum.blockbox.cc.cd");
+}
+
+QString SettingsManager::normalizeForumUrl(const QString &url)
+{
+    QString value = url.trimmed();
+    if (value.isEmpty())
+        return defaultForumBaseUrl();
+
+    // 允许用户只填 forum.blockbox.cc.cd 或 127.0.0.1:3210，自动补协议
+    if (!value.contains(QStringLiteral("://")))
+        value.prepend(QStringLiteral("https://"));
+
+    while (value.endsWith(QLatin1Char('/')))
+        value.chop(1);
+
+    const QUrl parsed(value);
+    if (!parsed.isValid() || parsed.host().isEmpty())
+        return defaultForumBaseUrl();
+
+    return value;
+}
+
+QString SettingsManager::forumBaseUrl() const
+{
+    const QString stored = m_settings->value("forum/baseUrl").toString();
+    return normalizeForumUrl(stored);
+}
+
+void SettingsManager::setForumBaseUrl(const QString &url)
+{
+    const QString normalized = normalizeForumUrl(url);
+    if (forumBaseUrl() == normalized)
+        return;
+
+    if (normalized == defaultForumBaseUrl())
+        m_settings->remove("forum/baseUrl");
+    else
+        m_settings->setValue("forum/baseUrl", normalized);
+
+    emit forumBaseUrlChanged(normalized);
 }

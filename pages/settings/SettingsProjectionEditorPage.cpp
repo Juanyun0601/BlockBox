@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 
 #include "components/AppFileDialog.h"
@@ -21,26 +22,18 @@
 
 namespace {
 
-/** 工具名 <-> 下拉索引（与编辑器 Tool 枚举顺序一致：查看/放置/破坏/填充） */
+/** 模式名 <-> 下拉索引（与编辑器顶部的两个模式一致：选取 / 编辑） */
 int toolIndexFromName(const QString &name)
 {
-    if (name == QLatin1String("放置"))
-        return 1;
-    if (name == QLatin1String("破坏"))
-        return 2;
-    if (name == QLatin1String("填充"))
-        return 3;
-    return 0;
+    if (name == QLatin1String("选取"))
+        return 0;
+    // 其余（含旧版保存的「查看 / 放置 / 破坏 / 填充」）都归到「编辑」
+    return 1;
 }
 
 QString toolNameFromIndex(int index)
 {
-    switch (index) {
-    case 1:  return QStringLiteral("放置");
-    case 2:  return QStringLiteral("破坏");
-    case 3:  return QStringLiteral("填充");
-    default: return QStringLiteral("查看");
-    }
+    return index == 0 ? QStringLiteral("选取") : QStringLiteral("编辑");
 }
 
 bool strToBool(const QString &s, bool defaultValue)
@@ -74,14 +67,12 @@ void SettingsPage::initProjectionEditorSettings()
 
     m_projToolCombo = new QComboBox();
     m_projToolCombo->setObjectName("projToolCombo");
-    m_projToolCombo->addItem(tr("查看"), 0);
-    m_projToolCombo->addItem(tr("放置"), 1);
-    m_projToolCombo->addItem(tr("破坏"), 2);
-    m_projToolCombo->addItem(tr("填充"), 3);
+    m_projToolCombo->addItem(tr("选取"), 0);
+    m_projToolCombo->addItem(tr("编辑"), 1);
     disableWheelEffect(m_projToolCombo);
 
     QHBoxLayout *toolRow = appendSettingRow(toolCard,
-        tr("默认工具"), tr("打开编辑器时默认选中的工具（随后可在编辑器工具栏切换）。"), QString());
+        tr("默认模式"), tr("打开编辑器时默认选中的模式（随后可在编辑器顶部切换）。"), QString());
     toolRow->addWidget(m_projToolCombo);
 
     connect(m_projToolCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -97,6 +88,43 @@ void SettingsPage::initProjectionEditorSettings()
 
     connect(m_projShowAirCheck, &CustomCheckBox::toggled, this, [this](bool on) {
         ProjectionEditorSettings::setValue(QStringLiteral("showAir"),
+                                           on ? QStringLiteral("true") : QStringLiteral("false"));
+    });
+
+    // ── 视角操作（与《我的世界》原版一致）──
+    QVBoxLayout *viewCard = createSettingsCard(layout, tr("视角操作"));
+
+    m_projSensitivitySlider = new QSlider(Qt::Horizontal);
+    m_projSensitivitySlider->setObjectName("projSensitivitySlider");
+    m_projSensitivitySlider->setRange(0, 100);
+    m_projSensitivitySlider->setFixedWidth(180);
+    m_projSensitivitySlider->setCursor(Qt::PointingHandCursor);
+
+    m_projSensitivityValue = new QLabel(QStringLiteral("50%"));
+    m_projSensitivityValue->setObjectName("settingValueLabel");
+    m_projSensitivityValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    QHBoxLayout *sensRow = appendSettingRow(viewCard,
+        tr("鼠标灵敏度"),
+        tr("拖动鼠标转动视角的速度，对应《我的世界》的鼠标灵敏度选项；数值越大转得越快。"), QString());
+    sensRow->addWidget(m_projSensitivitySlider);
+    sensRow->addWidget(m_projSensitivityValue);
+
+    connect(m_projSensitivitySlider, &QSlider::valueChanged, this, [this](int value) {
+        if (m_projSensitivityValue)
+            m_projSensitivityValue->setText(QStringLiteral("%1%").arg(value));
+        ProjectionEditorSettings::setValue(QStringLiteral("lookSensitivity"),
+                                           QString::number(value));
+    });
+
+    m_projInvertYCheck = new CustomCheckBox();
+    QHBoxLayout *invertRow = appendSettingRow(viewCard,
+        tr("反转鼠标纵向视角"),
+        tr("勾选后鼠标往下移时视角向上看，对应《我的世界》的「反转鼠标」选项。"), QString(), true);
+    invertRow->addWidget(m_projInvertYCheck);
+
+    connect(m_projInvertYCheck, &CustomCheckBox::toggled, this, [this](bool on) {
+        ProjectionEditorSettings::setValue(QStringLiteral("invertLookY"),
                                            on ? QStringLiteral("true") : QStringLiteral("false"));
     });
 
@@ -198,4 +226,29 @@ void SettingsPage::refreshProjectionEditorSettingsControls()
     if (m_projSourceInstanceEdit)
         m_projSourceInstanceEdit->setText(
             ProjectionEditorSettings::value(QStringLiteral("sourceInstance")));
+
+    if (m_projSensitivitySlider)
+    {
+        bool ok = false;
+        int sens = ProjectionEditorSettings::value(QStringLiteral("lookSensitivity"),
+                                                   QStringLiteral("50")).toInt(&ok);
+        if (!ok)
+            sens = 50;
+        sens = qBound(0, sens, 100);
+        {
+            // 刷新界面时不要反写设置
+            const QSignalBlocker blocker(m_projSensitivitySlider);
+            m_projSensitivitySlider->setValue(sens);
+        }
+        if (m_projSensitivityValue)
+            m_projSensitivityValue->setText(QStringLiteral("%1%").arg(sens));
+    }
+
+    if (m_projInvertYCheck)
+    {
+        const bool invert = strToBool(
+            ProjectionEditorSettings::value(QStringLiteral("invertLookY"),
+                                            QStringLiteral("false")), false);
+        m_projInvertYCheck->setChecked(invert);
+    }
 }

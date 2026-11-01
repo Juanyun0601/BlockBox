@@ -45,27 +45,27 @@ void Task::start()
     {
         case State::Inactive:
         {
-            qDebug() << "Task" << describe() << "starting for the first time";
+            qDebug() << "任务" << describe() << "首次启动";
             break;
         }
         case State::AbortedByUser:
         {
-            qDebug() << "Task" << describe() << "restarting for after being aborted by user";
+            qDebug() << "任务" << describe() << "用户取消后重新启动";
             break;
         }
         case State::Failed:
         {
-            qDebug() << "Task" << describe() << "restarting for after failing at first";
+            qDebug() << "任务" << describe() << "上次失败后重新启动";
             break;
         }
         case State::Succeeded:
         {
-            qDebug() << "Task" << describe() << "restarting for after succeeding at first";
+            qDebug() << "任务" << describe() << "上次成功后重新启动";
             break;
         }
         case State::Running:
         {
-            qWarning() << "The launcher tried to start task" << describe() << "while it was already running!";
+            qWarning() << "启动器尝试启动任务" << describe() << "，但它已在运行！";
             return;
         }
     }
@@ -80,12 +80,12 @@ void Task::emitFailed(QString reason)
     // Don't fail twice.
     if (!isRunning())
     {
-        qCritical() << "Task" << describe() << "failed while not running!!!!: " << reason;
+        qCritical() << "任务" << describe() << "在未运行状态下失败了!!!!：" << reason;
         return;
     }
     m_state = State::Failed;
     m_failReason = reason;
-    qCritical() << "Task" << describe() << "failed: " << reason;
+    qCritical() << "任务" << describe() << "失败：" << reason;
     emit failed(reason);
     emit finished();
 }
@@ -95,12 +95,12 @@ void Task::emitAborted()
     // Don't abort twice.
     if (!isRunning())
     {
-        qCritical() << "Task" << describe() << "aborted while not running!!!!";
+        qCritical() << "任务" << describe() << "在未运行状态下被取消了!!!!";
         return;
     }
     m_state = State::AbortedByUser;
     m_failReason = "Aborted.";
-    qDebug() << "Task" << describe() << "aborted.";
+    qDebug() << "任务" << describe() << "已取消。";
     emit failed(m_failReason);
     emit finished();
 }
@@ -110,11 +110,11 @@ void Task::emitSucceeded()
     // Don't succeed twice.
     if (!isRunning())
     {
-        qCritical() << "Task" << describe() << "succeeded while not running!!!!";
+        qCritical() << "任务" << describe() << "在未运行状态下成功了!!!!";
         return;
     }
     m_state = State::Succeeded;
-    qDebug() << "Task" << describe() << "succeeded";
+    qDebug() << "任务" << describe() << "成功";
     emit succeeded();
     emit finished();
 }

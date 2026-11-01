@@ -626,7 +626,7 @@ void ForgeInstaller::runInstallerDirectly()
          << "-jar" << m_installerJarPath
          << "--installClient" << minecraftDir;
 
-    qDebug() << "[ForgeInstaller]" << "Starting:" << javaPath << args;
+    qDebug() << "[ForgeInstaller]" << "启动：" << javaPath << args;
 
     process->start(javaPath, args);
     progressTimer->start();
@@ -785,7 +785,7 @@ bool ForgeInstaller::extractEntryFromJar(const QString &jarPath, const QString &
 {
     if (!Safety::isSafeEntryName(entryPath))
     {
-        qWarning() << "[ForgeInstaller]" << "Unsafe entry path rejected:" << entryPath;
+        qWarning() << "[ForgeInstaller]" << "拒绝不安全的解压路径：" << entryPath;
         return false;
     }
 
@@ -823,8 +823,8 @@ bool ForgeInstaller::extractEntryFromJar(const QString &jarPath, const QString &
         return true;
     }
 
-    qWarning() << "[ForgeInstaller]" << "All extraction methods failed for"
-               << "jar:" << jarPath << "entry:" << entryPath;
+    qWarning() << "[ForgeInstaller]" << "所有解压方式均失败，jar："
+               << jarPath << "条目：" << entryPath;
     return false;
 }
 
@@ -834,7 +834,7 @@ bool ForgeInstaller::tryExtractWithJarTool(const QString &jarPath, const QString
     QString jarToolPath = getJarToolPath();
     if (jarToolPath.isEmpty())
     {
-        qWarning() << "[ForgeInstaller] jar.exe not found (JDK required)";
+        qWarning() << "[ForgeInstaller] 未找到 jar.exe（需要 JDK）";
         return false;
     }
 
@@ -852,13 +852,13 @@ bool ForgeInstaller::tryExtractWithJarTool(const QString &jarPath, const QString
 
     if (!process.waitForFinished(30000))
     {
-        qWarning() << "[ForgeInstaller] jar.exe timed out";
+        qWarning() << "[ForgeInstaller] jar.exe 超时";
         return false;
     }
 
     if (process.exitCode() != 0)
     {
-        qWarning() << "[ForgeInstaller] jar.exe failed, exit code:" << process.exitCode();
+        qWarning() << "[ForgeInstaller] jar.exe 失败，退出码：" << process.exitCode();
         return false;
     }
 
@@ -900,19 +900,19 @@ bool ForgeInstaller::tryExtractWithPowerShell(const QString &jarPath, const QStr
 
     if (!process.waitForFinished(30000))
     {
-        qWarning() << "[ForgeInstaller] PowerShell timed out";
+        qWarning() << "[ForgeInstaller] PowerShell 超时";
         return false;
     }
 
     if (process.exitCode() != 0)
     {
-        qWarning() << "[ForgeInstaller] PowerShell failed, exit code:" << process.exitCode();
+        qWarning() << "[ForgeInstaller] PowerShell 失败，退出码：" << process.exitCode();
         return false;
     }
 
     if (!QFile::exists(destPath))
     {
-        qWarning() << "[ForgeInstaller] PowerShell extraction succeeded but output file not found";
+        qWarning() << "[ForgeInstaller] PowerShell 解压成功但未找到输出文件";
         return false;
     }
 
@@ -943,14 +943,14 @@ bool ForgeInstaller::tryExtractWithPython(const QString &jarPath, const QString 
 
         if (!process.waitForFinished(15000))
         {
-            qWarning() << "[ForgeInstaller] Python timed out:" << pythonCmd;
+            qWarning() << "[ForgeInstaller] Python 超时：" << pythonCmd;
             continue;
         }
 
         if (process.exitCode() != 0)
         {
-            qWarning() << "[ForgeInstaller] Python failed:" << pythonCmd
-                       << "exit code:" << process.exitCode();
+            qWarning() << "[ForgeInstaller] Python 失败：" << pythonCmd
+                       << "退出码：" << process.exitCode();
             continue;
         }
 
@@ -960,7 +960,7 @@ bool ForgeInstaller::tryExtractWithPython(const QString &jarPath, const QString 
         }
     }
 
-    qWarning() << "[ForgeInstaller] Python not available or extraction failed";
+    qWarning() << "[ForgeInstaller] Python 不可用或解压失败";
     return false;
 }
 
@@ -992,14 +992,14 @@ bool ForgeInstaller::tryExtractManual(const QString &jarPath, const QString &ent
     QFile jarFile(jarPath);
     if (!jarFile.open(QIODevice::ReadOnly))
     {
-        qWarning() << "[ForgeInstaller] Manual extraction: cannot open JAR file:" << jarPath;
+        qWarning() << "[ForgeInstaller] 手动解压：无法打开 JAR 文件：" << jarPath;
         return false;
     }
 
     qint64 fileSize = jarFile.size();
     if (fileSize < 22)
     {
-        qWarning() << "[ForgeInstaller] Manual extraction: JAR file too small:" << fileSize;
+        qWarning() << "[ForgeInstaller] 手动解压：JAR 文件过小：" << fileSize;
         jarFile.close();
         return false;
     }
@@ -1032,7 +1032,7 @@ bool ForgeInstaller::tryExtractManual(const QString &jarPath, const QString &ent
         }
         if (foundPos < 0)
         {
-            qWarning() << "[ForgeInstaller] Manual extraction: ZIP EOCD not found";
+            qWarning() << "[ForgeInstaller] 手动解压：未找到 ZIP EOCD";
             jarFile.close();
             return false;
         }
@@ -1101,7 +1101,7 @@ bool ForgeInstaller::tryExtractManual(const QString &jarPath, const QString &ent
 
     if (!found)
     {
-        qWarning() << "[ForgeInstaller] Manual extraction: entry not found in JAR:" << entryPath;
+        qWarning() << "[ForgeInstaller] 手动解压：JAR 中未找到条目：" << entryPath;
         jarFile.close();
         return false;
     }
@@ -1139,7 +1139,7 @@ bool ForgeInstaller::tryExtractManual(const QString &jarPath, const QString &ent
         outputData = decompressRawDeflate(compressedData, targetUncompressedSize);
         if (outputData.isEmpty())
         {
-            qWarning() << "[ForgeInstaller]" << "Deflate decompression failed for" << entryPath;
+            qWarning() << "[ForgeInstaller]" << "Deflate 解压失败：" << entryPath;
             return false;
         }
     }
@@ -1171,14 +1171,14 @@ int ForgeInstaller::detectInstallerType(const QString &jarPath)
     QString extractedPath = m_tempDir + "/install_profile.json";
     if (!extractEntryFromJar(jarPath, "install_profile.json", extractedPath))
     {
-        qWarning() << "[ForgeInstaller]" << "Failed to extract install_profile.json from installer jar";
+        qWarning() << "[ForgeInstaller]" << "无法从安装器 jar 解压 install_profile.json";
         return -1;
     }
 
     QFile file(extractedPath);
     if (!file.open(QIODevice::ReadOnly))
     {
-        qWarning() << "[ForgeInstaller]" << "Failed to open install_profile.json";
+        qWarning() << "[ForgeInstaller]" << "无法打开 install_profile.json";
         return -1;
     }
 
@@ -1189,7 +1189,7 @@ int ForgeInstaller::detectInstallerType(const QString &jarPath)
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
     if (parseError.error != QJsonParseError::NoError)
     {
-        qWarning() << "[ForgeInstaller]" << "Failed to parse install_profile.json:" << parseError.errorString();
+        qWarning() << "[ForgeInstaller]" << "解析 install_profile.json 失败：" << parseError.errorString();
         return -1;
     }
 
@@ -1197,17 +1197,17 @@ int ForgeInstaller::detectInstallerType(const QString &jarPath)
 
     if (root.contains("spec"))
     {
-        qDebug() << "[ForgeInstaller]" << "Detected new version Forge installer (has 'spec' field)";
+        qDebug() << "[ForgeInstaller]" << "检测到新版 Forge 安装器（含 'spec' 字段）";
         return 0;
     }
 
     if (root.contains("install") && root.contains("versionInfo"))
     {
-        qDebug() << "[ForgeInstaller]" << "Detected old version Forge installer (has 'install' and 'versionInfo' fields)";
+        qDebug() << "[ForgeInstaller]" << "检测到旧版 Forge 安装器（含 'install' 和 'versionInfo' 字段）";
         return 1;
     }
 
-    qWarning() << "[ForgeInstaller]" << "Unknown installer type";
+    qWarning() << "[ForgeInstaller]" << "未知的安装器类型";
     return -1;
 }
 

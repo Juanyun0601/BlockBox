@@ -40,6 +40,11 @@ public:
 signals:
     /** 请求编辑投影文件（点击卡片上的编辑按钮或双击卡片） */
     void projectionEditRequested(const QString &filePath);
+    /**
+     * 空状态「快速安装投影模组」：请求安装生成投影所需模组
+     * @param modKey 需要安装的模组标识，主窗口按实例加载器决定具体装哪个
+     */
+    void quickInstallModRequested(const QString &modKey);
 
 private slots:
     void onSearchTextChanged(const QString &text);
@@ -74,7 +79,7 @@ private:
     void onViewModeChanged(ContentViewSwitch::ViewMode mode);
     /** 重建双视图容器布局（列表 QGrid / 瀑布流 Masonry） */
     void ensureCardLayout();
-    void showEmptyHint(bool show);
+    void showEmptyHint(bool show, bool allowQuickInstall = false);
     QString projectionsDirPath() const;
     QString dimensionTextFor(const QFileInfo &fi);
     void deleteProjectionFile(const QString &filePath);
@@ -113,6 +118,8 @@ private:
     QGridLayout *m_cardGridLayout;   // 列表视图
     MasonryLayout *m_cardFlowLayout; // 瀑布流视图
     QLabel *m_emptyLabel;
+    QWidget *m_emptyWidget;          // 空状态容器（提示 + 快速安装按钮）
+    QPushButton *m_quickInstallBtn;  // 空状态「快速安装投影模组」
 
     QWidget *m_bottomBar;
     QPushButton *m_openFolderBtn;

@@ -739,8 +739,8 @@ void EasyTierEngine::onAssetDownloadFinished()
             m_downloadProgress = -1;
             emit downloadProgressChanged(-1);
             emitDownloadInfo(tr("线路无响应，切换下一条…"));
-            qWarning() << "[EasyTier] download failed on" << triedUrl << reason
-                       << "→ next:" << next;
+            qWarning() << "[EasyTier] 下载失败：" << triedUrl << reason
+                       << "→ 下一条：" << next;
             startAssetDownload(next);
             return;
         }
@@ -875,7 +875,7 @@ void EasyTierEngine::checkDownloadStall()
     if (elapsed < kStallTimeoutMs)
         return;
 
-    qWarning() << "[EasyTier] download stalled" << elapsed << "ms on"
+    qWarning() << "[EasyTier] 下载无进度" << elapsed << "ms，线路："
                << m_downloadReply->property("url").toString();
     emitDownloadInfo(tr("线路无响应，切换下一条…"));
     m_lastProgressAt = QDateTime::currentMSecsSinceEpoch(); // 避免重复触发

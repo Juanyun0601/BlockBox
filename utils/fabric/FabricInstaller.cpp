@@ -1147,7 +1147,7 @@ bool FabricInstaller::downloadFile(const QString &url, const QString &filePath,
     } else {
         QString errorString = reply->errorString();
         releaseReply();
-        qWarning() << "Download failed:" << errorString;
+        qWarning() << "下载失败：" << errorString;
         return false;
     }
 }
@@ -1171,7 +1171,7 @@ QByteArray FabricInstaller::fetchUrl(const QString &url, bool *ok)
     QByteArray data = reply->readAll();
 
     if (!success) {
-        qWarning() << "Fetch failed:" << url << reply->errorString();
+        qWarning() << "获取失败：" << url << reply->errorString();
     }
 
     reply->disconnect();
