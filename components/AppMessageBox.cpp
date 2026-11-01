@@ -14,6 +14,7 @@
 #include <QStyle>
 #include <QTextBrowser>
 #include <QTextDocument>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QtMath>
 
@@ -36,6 +37,10 @@ AppMessageBox::AppMessageBox(QWidget *parent)
     , m_icon(NoIcon)
     , m_buttons(NoButton)
     , m_hasCustomButtons(false)
+    , m_cardMinWidth(420)
+    , m_cardMaxWidth(560)
+    , m_notesMinHeight(120)
+    , m_notesMaxHeight(340)
 {
     setObjectName(QStringLiteral("appMessageBox"));
 
@@ -55,8 +60,8 @@ void AppMessageBox::initUI()
 
     m_card = new QWidget(this);
     m_card->setObjectName(QStringLiteral("appMsgBoxCard"));
-    m_card->setMinimumWidth(420);
-    m_card->setMaximumWidth(560);
+    m_card->setMinimumWidth(m_cardMinWidth);
+    m_card->setMaximumWidth(m_cardMaxWidth);
 
     QVBoxLayout *cardLayout = new QVBoxLayout(m_card);
     cardLayout->setContentsMargins(28, 24, 28, 22);
@@ -100,8 +105,8 @@ void AppMessageBox::initUI()
     m_infoBrowser->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_infoBrowser->setLineWrapMode(QTextEdit::WidgetWidth);
     m_infoBrowser->document()->setDocumentMargin(0);
-    m_infoBrowser->setMinimumHeight(120);
-    m_infoBrowser->setMaximumHeight(340);
+    m_infoBrowser->setMinimumHeight(m_notesMinHeight);
+    m_infoBrowser->setMaximumHeight(m_notesMaxHeight);
     m_infoBrowser->hide();
 
     midLayout->addWidget(m_titleLabel);
@@ -281,6 +286,30 @@ void AppMessageBox::setInformativeMarkdown(const QString &markdown)
     updateMarkdownBrowserHeight();
 }
 
+void AppMessageBox::setCardWidthRange(int minWidth, int maxWidth)
+{
+    const int minimum = qMax(240, minWidth);
+    m_cardMinWidth = minimum;
+    m_cardMaxWidth = qMax(minimum, maxWidth);
+    if (!m_card)
+        return;
+    m_card->setMinimumWidth(m_cardMinWidth);
+    m_card->setMaximumWidth(m_cardMaxWidth);
+    positionOverWindow(); // 立即按宿主窗口收一次宽度
+}
+
+void AppMessageBox::setInfoBrowserHeightRange(int minHeight, int maxHeight)
+{
+    const int minimum = qMax(60, minHeight);
+    m_notesMinHeight = minimum;
+    m_notesMaxHeight = qMax(minimum, maxHeight);
+    if (m_infoBrowser) {
+        m_infoBrowser->setMinimumHeight(m_notesMinHeight);
+        m_infoBrowser->setMaximumHeight(m_notesMaxHeight);
+    }
+    updateMarkdownBrowserHeight();
+}
+
 void AppMessageBox::applyMarkdownDocumentStyle()
 {
     if (!m_infoBrowser)
@@ -313,9 +342,16 @@ void AppMessageBox::updateMarkdownBrowserHeight()
     // 短内容贴合内容高度；长内容封顶后内部滚动，避免弹窗撑满屏幕
     m_infoBrowser->document()->adjustSize();
     const int contentH = qCeil(m_infoBrowser->document()->size().height()) + 12;
-    constexpr int kMinNotesHeight = 120;
-    constexpr int kMaxNotesHeight = 340;
-    m_infoBrowser->setFixedHeight(qBound(kMinNotesHeight, contentH, kMaxNotesHeight));
+
+    int minHeight = m_notesMinHeight;
+    int maxHeight = m_notesMaxHeight;
+    // 宿主窗口不够高时（例如小窗口或手机竖屏）按窗口可用高度收紧，
+    // 避免说明区把卡片顶出窗口边界
+    QWidget *host = hostWindow();
+    if (host && host != this && host->height() > 0)
+        maxHeight = qMin(maxHeight, qMax(minHeight, host->height() - 280));
+
+    m_infoBrowser->setFixedHeight(qBound(minHeight, contentH, maxHeight));
 }
 
 void AppMessageBox::setIcon(Icon icon)
@@ -621,6 +657,17 @@ void AppMessageBox::onButtonClicked()
 
 void AppMessageBox::positionOverWindow()
 {
+    // 卡片宽度按宿主窗口收紧：窗口被拉窄（或手机竖屏）时，
+    // 调宽的弹窗不会顶出窗口边界
+    if (m_card) {
+        QWidget *host = hostWindow();
+        if (host && host != this && host->width() > 0) {
+            const int available = qMax(260, host->width() - 80);
+            const int maxWidth = qMin(m_cardMaxWidth, available);
+            m_card->setMaximumWidth(maxWidth);
+            m_card->setMinimumWidth(qMin(m_cardMinWidth, maxWidth));
+        }
+    }
     AppDialogBase::positionOverWindow();
 }
 
@@ -635,6 +682,13 @@ void AppMessageBox::showEvent(QShowEvent *event)
     refreshTitleLabel();
     if (m_defaultButton)
         m_defaultButton->setFocus();
+    // 首帧布局完成后再按实际宽度重算说明区高度：宽度变了，换行与内容高度也会变，
+    // 提前算出的高度会和最终显示对不上
+    QTimer::singleShot(0, this, [this]() {
+        if (!isVisible())
+            return;
+        updateMarkdownBrowserHeight();
+    });
 }
 
 void AppMessageBox::paintEvent(QPaintEvent *event)

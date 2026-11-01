@@ -259,13 +259,6 @@ void CommunityForumPage::buildUi()
     heroBottomRow->addWidget(m_loginButton);
     updateHeroButtons();
 
-    auto *settingsButton = new QPushButton(tr("论坛设置"), hero);
-    settingsButton->setObjectName(QStringLiteral("communityHeroButton"));
-    settingsButton->setCursor(Qt::PointingHandCursor);
-    settingsButton->setFixedHeight(30);
-    connect(settingsButton, &QPushButton::clicked, this, &CommunityForumPage::openAdvancedSettingsRequested);
-    heroBottomRow->addWidget(settingsButton);
-
     heroLayout->addLayout(heroBottomRow);
     layout->addWidget(hero);
 
@@ -376,7 +369,6 @@ void CommunityForumPage::applySiteUrl()
     if (m_urlLabel)
     {
         m_urlLabel->setText(tr("论坛地址：%1").arg(m_baseUrl));
-        m_urlLabel->setToolTip(tr("可在「设置 → 高级设置 → 方块盒子论坛」里改成自己的服务器"));
     }
 }
 
@@ -607,7 +599,7 @@ void CommunityForumPage::finishRequest()
     if (m_failedRequests == 0)
         setStatus(tr("已连接 · %1").arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm"))));
     else if (m_failedRequests >= 3)
-        setStatus(tr("连不上论坛，检查网络或「论坛设置」里的地址"), true);
+        setStatus(tr("连不上论坛，检查一下网络，或者点「刷新」再试"), true);
     else
         setStatus(tr("部分内容加载失败，可以点「刷新」再试"), true);
 

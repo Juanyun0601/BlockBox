@@ -779,6 +779,8 @@ ForumUser ForumContentService::parseAuthor(const QJsonObject &author)
     user.cover = author.value(QStringLiteral("cover")).toString();
     user.role = author.value(QStringLiteral("role")).toString();
     user.status = author.value(QStringLiteral("status")).toString();
+    // 个人简介：用户主页按 Markdown 渲染，楼层作者里通常没有这个字段
+    user.bio = author.value(QStringLiteral("bio")).toString();
     user.threadCount = author.value(QStringLiteral("thread_count")).toInt();
     user.postCount = author.value(QStringLiteral("post_count")).toInt();
     // 楼层里的作者用 joined_at，个人资料接口用 created_at

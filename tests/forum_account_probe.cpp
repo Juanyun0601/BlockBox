@@ -16,6 +16,7 @@
  * 探针会临时改写 QSettings 里的论坛地址 / 会话 / 主题，结束前恢复。
  */
 #include "pages/ForumAccountPage.h"
+#include "pages/ForumUserProfilePage.h"
 #include "utils/ForumAccountService.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
@@ -24,6 +25,7 @@
 #include <QColor>
 #include <QDateTime>
 #include <QEventLoop>
+#include <QFont>
 #include <QFrame>
 #include <QHostAddress>
 #include <QImage>
@@ -35,12 +37,16 @@
 #include <QMap>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
 #include <QStackedWidget>
+#include <QTextBlock>
+#include <QTextBrowser>
+#include <QTextFragment>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -117,8 +123,9 @@ private:
 class FakeForumServer : public QObject
 {
 public:
-    explicit FakeForumServer(bool empty, bool fail = false, QObject *parent = nullptr)
-        : QObject(parent), m_empty(empty), m_fail(fail)
+    explicit FakeForumServer(bool empty, bool fail = false, QObject *parent = nullptr,
+                             const QString &bio = QString::fromUtf8("测试账号"))
+        : QObject(parent), m_empty(empty), m_fail(fail), m_bio(bio)
     {
     }
 
@@ -240,12 +247,44 @@ private:
             return QByteArrayLiteral("{}");
         }
 
+        // 用户主页探针：资料 + 空的主题 / 回复列表
+        if (path.startsWith(QStringLiteral("/api/users/7/threads"))
+            || path.startsWith(QStringLiteral("/api/users/7/posts")))
+        {
+            const QJsonObject pagination{{QStringLiteral("page"), 1},
+                                         {QStringLiteral("per_page"), 20},
+                                         {QStringLiteral("total"), 0},
+                                         {QStringLiteral("total_pages"), 1}};
+            return QJsonDocument(QJsonObject{{QStringLiteral("threads"), QJsonArray()},
+                                             {QStringLiteral("posts"), QJsonArray()},
+                                             {QStringLiteral("pagination"), pagination}})
+                .toJson(QJsonDocument::Compact);
+        }
+        if (path == QStringLiteral("/api/users/7"))
+        {
+            const QJsonObject user{{QStringLiteral("id"), 7},
+                                   {QStringLiteral("username"), QStringLiteral("probe")},
+                                   {QStringLiteral("display_name"), QStringLiteral("方块盒探针")},
+                                   {QStringLiteral("bio"), m_bio},
+                                   {QStringLiteral("role"), QStringLiteral("admin")},
+                                   {QStringLiteral("status"), QStringLiteral("active")},
+                                   {QStringLiteral("thread_count"), 12},
+                                   {QStringLiteral("post_count"), 34},
+                                   {QStringLiteral("created_at"), 1700000000.0}};
+            return QJsonDocument(QJsonObject{{QStringLiteral("user"), user},
+                                             {QStringLiteral("friendship"),
+                                              QStringLiteral("none")},
+                                             {QStringLiteral("threads"), QJsonArray()},
+                                             {QStringLiteral("replies"), QJsonArray()}})
+                .toJson(QJsonDocument::Compact);
+        }
+
         if (path.startsWith(QStringLiteral("/api/me")) && !path.startsWith(QStringLiteral("/api/me/")))
         {
             const QJsonObject user{{QStringLiteral("id"), 7},
                                    {QStringLiteral("username"), QStringLiteral("probe")},
                                    {QStringLiteral("display_name"), QStringLiteral("方块盒探针")},
-                                   {QStringLiteral("bio"), QStringLiteral("测试账号")},
+                                   {QStringLiteral("bio"), m_bio},
                                    {QStringLiteral("role"), QStringLiteral("user")},
                                    {QStringLiteral("status"), QStringLiteral("active")},
                                    {QStringLiteral("thread_count"), 12},
@@ -341,6 +380,7 @@ private:
     bool m_allRead = false;
     int m_status = 200;
     QSet<int> m_read;
+    QString m_bio;   ///< /api/me 与缓存用户返回的简介（简介 Markdown 探针用）
 };
 
 void waitMs(int ms)
@@ -450,9 +490,29 @@ int main(int argc, char **argv)
     const bool notificationsMode = (mode == QStringLiteral("notifications")
                                     || mode == QStringLiteral("notifications_dark") || emptyMode
                                     || errorMode);
-    if (notificationsMode)
+    // 简介 Markdown 探针：假论坛返回一段带格式的简介，验证资料卡上的渲染
+    const bool bioMode = (mode == QStringLiteral("bio") || mode == QStringLiteral("bio_dark"));
+    // 用户主页（别人看到的我的主页）上的简介同样是 Markdown
+    const bool userBioMode = (mode == QStringLiteral("userbio")
+                              || mode == QStringLiteral("userbio_dark"));
+    // 老简介回归：纯文本、靠回车分行，不该被并成一段
+    const bool plainBioMode = (mode == QStringLiteral("bio_plain"));
+    const QString plainBio = QStringLiteral("我是个纯文本简介，没有任何标记。\n"
+                                            "第二行靠回车分开，应该还是两行。");
+
+    QString markdownBio = QStringLiteral(
+        "**爱折腾整合包**，常用 *Fabric* 和 `Iris`。\n"
+        "第二行：在输入框里按的回车要能换行\n\n"
+        "- 列表项一\n"
+        "- 列表项二\n\n"
+        "> 引用块里的说明\n\n"
+        "[站内帖子](thread.html?id=101) 以及 [外部链接](https://example.com)");
+    if (plainBioMode)
+        markdownBio = plainBio;
+
+    if (notificationsMode || bioMode || userBioMode || plainBioMode)
     {
-        fakeServer = new FakeForumServer(emptyMode, errorMode, &app);
+        fakeServer = new FakeForumServer(emptyMode, errorMode, &app, markdownBio);
         if (!fakeServer->start())
         {
             fprintf(stderr, "[probe] fake forum could not listen\n");
@@ -466,12 +526,12 @@ int main(int argc, char **argv)
     forumSettings.remove(QStringLiteral("forum/sessionToken"));
     forumSettings.remove(QStringLiteral("forum/sessionBaseUrl"));
     forumSettings.remove(QStringLiteral("forum/cachedUser"));
-    if (notificationsMode)
+    if (notificationsMode || bioMode || userBioMode || plainBioMode)
     {
         const QJsonObject cachedUser{{QStringLiteral("id"), 7},
                                      {QStringLiteral("username"), QStringLiteral("probe")},
                                      {QStringLiteral("display_name"), QStringLiteral("方块盒探针")},
-                                     {QStringLiteral("bio"), QStringLiteral("测试账号")},
+                                     {QStringLiteral("bio"), markdownBio},
                                      {QStringLiteral("role"), QStringLiteral("user")},
                                      {QStringLiteral("status"), QStringLiteral("active")},
                                      {QStringLiteral("thread_count"), 12},
@@ -488,7 +548,9 @@ int main(int argc, char **argv)
     forumSettings.sync();
 
     const bool dark = (mode == QStringLiteral("dark"))
-                      || (mode == QStringLiteral("notifications_dark"));
+                      || (mode == QStringLiteral("notifications_dark"))
+                      || (mode == QStringLiteral("bio_dark"))
+                      || (mode == QStringLiteral("userbio_dark"));
     if (ThemeManager::instance())
     {
         ThemeManager::instance()->loadTheme(dark ? ThemeManager::DarkTheme
@@ -991,6 +1053,149 @@ int main(int argc, char **argv)
         restore();
         fprintf(stderr, "[probe] %s\n", pass ? "PROBE-PASS" : "PROBE-FAIL");
         return pass ? 0 : 1;
+    }
+    else if (bioMode)
+    {
+        // 简介 Markdown：资料卡上应该看到排版后的效果，而不是原始的 ** / ` 标记
+        waitMs(1500);
+        const QString tag = dark ? QStringLiteral("bio_dark") : QStringLiteral("bio");
+        grab(window, tag);
+
+        auto *browser = window.page()->findChild<QTextBrowser *>(QStringLiteral("fbBioBrowser"));
+        expect("资料卡简介由 Markdown 渲染控件展示", browser != nullptr && browser->isVisible());
+        if (browser)
+        {
+            QString plain = browser->toPlainText();
+            fprintf(stderr, "[probe] 简介纯文本：%s\n",
+                    qPrintable(QString(plain).replace(QLatin1Char('\n'), QStringLiteral(" / "))));
+            expect("Markdown 标记已渲染，不再是原文", !plain.contains(QStringLiteral("**"))
+                                                          && !plain.contains(QStringLiteral("`Iris`")));
+            expect("换行按回车原样保留（含「第二行」）", plain.contains(QStringLiteral("第二行")));
+            expect("列表 / 引用块渲染出多个段落",
+                   browser->document()->blockCount() >= 5);
+
+            bool bold = false;
+            bool linkFound = false;
+            for (QTextBlock block = browser->document()->begin(); block.isValid();
+                 block = block.next())
+            {
+                for (auto it = block.begin(); !it.atEnd(); ++it)
+                {
+                    const QTextFragment fragment = it.fragment();
+                    if (!fragment.isValid())
+                        continue;
+                    if (fragment.text().contains(QStringLiteral("爱折腾整合包"))
+                        && fragment.charFormat().fontWeight() >= QFont::Bold)
+                        bold = true;
+                    if (fragment.charFormat().isAnchor())
+                        linkFound = true;
+                }
+            }
+            expect("**加粗** 生效", bold);
+            expect("链接渲染成可点的超链接", linkFound);
+
+            // 简介的高度要贴合内容，不能把下面的数据行挤开
+            fprintf(stderr, "[probe] 简介控件高度：%d\n", browser->height());
+            expect("简介高度贴合内容", browser->height() > 0 && browser->height() < 320);
+        }
+
+        // 账号设置里的「预览」：看到的就是资料卡上的样子
+        QPushButton *settingsTab = findVisibleButton(window.page(), QStringLiteral("账号设置"));
+        expect("找到「账号设置」页签", settingsTab != nullptr);
+        if (settingsTab)
+        {
+            settingsTab->click();
+            waitMs(1200);
+
+            // 简介在设置页中部，先把滚动区挪到简介附近再截图
+            auto *scroll = window.page()->findChild<QScrollArea *>(QStringLiteral("fbScroll"));
+            auto *bioStack = window.page()->findChild<QWidget *>(QStringLiteral("fbBioHost"));
+            if (scroll && bioStack)
+            {
+                scroll->ensureWidgetVisible(bioStack, 0, 150);
+                waitMs(400);
+            }
+            grab(window, tag + QStringLiteral("_settings"));
+
+            auto *bioEdit = window.page()->findChild<QPlainTextEdit *>(QStringLiteral("fbInput"));
+            bool bioFilled = false;
+            for (QPlainTextEdit *edit :
+                 window.page()->findChildren<QPlainTextEdit *>(QStringLiteral("fbInput")))
+            {
+                if (edit->toPlainText().contains(QStringLiteral("爱折腾整合包")))
+                    bioFilled = true;
+            }
+            Q_UNUSED(bioEdit);
+            expect("设置里的简介编辑器回填了原文", bioFilled);
+
+            QPushButton *previewButton = findVisibleButton(window.page(), QStringLiteral("预览"));
+            expect("简介旁边有「预览」开关", previewButton != nullptr);
+            if (previewButton)
+            {
+                previewButton->click();
+                waitMs(900);
+                if (scroll && bioStack)
+                {
+                    scroll->ensureWidgetVisible(bioStack, 0, 150);
+                    waitMs(300);
+                }
+                grab(window, tag + QStringLiteral("_preview"));
+                auto *previewBrowser =
+                    window.page()->findChild<QTextBrowser *>(QStringLiteral("fbBioPreview"));
+                expect("预览里也是排版后的简介",
+                       previewBrowser && previewBrowser->isVisible()
+                           && !previewBrowser->toPlainText().contains(QStringLiteral("**")));
+                expect("预览开关文字变成「继续编辑」",
+                       previewButton->text() == QStringLiteral("继续编辑"));
+            }
+        }
+    }
+    else if (plainBioMode)
+    {
+        // 老简介回归：纯文本、靠回车分行，渲染后仍然是两行
+        waitMs(1500);
+        grab(window, QStringLiteral("bio_plain"));
+
+        auto *browser = window.page()->findChild<QTextBrowser *>(QStringLiteral("fbBioBrowser"));
+        expect("纯文本简介照常显示", browser != nullptr && browser->isVisible());
+        if (browser)
+        {
+            const QString plain = browser->toPlainText();
+            const qsizetype idx = plain.indexOf(QStringLiteral("第二行"));
+            const QChar before = idx > 0 ? plain.at(idx - 1) : QChar();
+            const bool lineBroken = (before == QChar(0x2028)) || (before == QLatin1Char('\n'))
+                                    || (before == QLatin1Char('\r'));
+            fprintf(stderr, "[probe] 纯文本简介：%s\n",
+                    qPrintable(QString(plain).replace(QChar(0x2028), QStringLiteral(" <br> "))));
+            expect("回车分开的两行没有并成一段", lineBroken);
+        }
+    }
+    else if (userBioMode)
+    {
+        // 别人点开我的主页时看到的简介：和资料卡同一套 Markdown 排版
+        auto *profilePage = new ForumUserProfilePage();
+        profilePage->resize(1040, 700);
+        profilePage->show();
+        profilePage->openUser(7);
+        waitMs(2000);
+        const QString tag = dark ? QStringLiteral("userbio_dark") : QStringLiteral("userbio");
+        const QString path = QStringLiteral("%1/forum_%2.png").arg(kShotDir, tag);
+        profilePage->grab().save(path);
+        fprintf(stderr, "[probe] shot %s\n", qPrintable(path));
+
+        auto *browser = profilePage->findChild<QTextBrowser *>(QStringLiteral("forumProfileBio"));
+        expect("用户主页简介由 Markdown 渲染控件展示",
+               browser != nullptr && browser->isVisible());
+        if (browser)
+        {
+            const QString plain = browser->toPlainText();
+            fprintf(stderr, "[probe] 主页简介纯文本：%s\n",
+                    qPrintable(QString(plain).replace(QLatin1Char('\n'), QStringLiteral(" / "))));
+            expect("主页简介里的 Markdown 已渲染",
+                   !plain.contains(QStringLiteral("**")) && plain.contains(QStringLiteral("爱折腾整合包")));
+            expect("主页简介保留了作者的换行", plain.contains(QStringLiteral("第二行")));
+        }
+        profilePage->deleteLater();
     }
     else
     {

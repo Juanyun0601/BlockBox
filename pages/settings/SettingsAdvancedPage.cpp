@@ -11,7 +11,6 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTextEdit>
@@ -175,51 +174,6 @@ void SettingsPage::initAdvancedSettings()
     QHBoxLayout *processCheckRow = appendSettingRow(processCheckCard,
         tr("启动前检查相关进程"), tr("游戏启动前检测并提示可能冲突的进程。"), QString(), true);
     processCheckRow->addWidget(processCheckCheck);
-
-    // ── 方块盒子论坛 ──
-    QVBoxLayout *forumCard = createSettingsCard(layout, tr("方块盒子论坛"));
-
-    QLineEdit *forumUrlEdit = new QLineEdit(m_advancedSettings);
-    forumUrlEdit->setObjectName(QStringLiteral("forumUrlEdit"));
-    forumUrlEdit->setText(SettingsManager::instance()->forumBaseUrl());
-    forumUrlEdit->setPlaceholderText(SettingsManager::defaultForumBaseUrl());
-    forumUrlEdit->setMinimumWidth(240);
-    forumUrlEdit->setToolTip(tr("默认 %1，可以改成自己的服务器地址").arg(SettingsManager::defaultForumBaseUrl()));
-
-    QHBoxLayout *forumRow = appendSettingRow(forumCard,
-        tr("论坛地址"),
-        tr("左侧导航栏「社区」页会读取这个地址的板块、最新讨论和热门标签；论坛账户也走这个地址。"),
-        tr("默认是官方论坛 %1。测试本地服务时填 http://127.0.0.1:3210 这样的地址即可，"
-           "协议可以不写，结尾的斜杠会被自动去掉。")
-            .arg(SettingsManager::defaultForumBaseUrl()));
-    forumRow->addWidget(forumUrlEdit, 1);
-
-    QPushButton *resetForumBtn = new QPushButton(tr("恢复默认"), m_advancedSettings);
-    resetForumBtn->setObjectName("primaryButton");
-    resetForumBtn->setCursor(Qt::PointingHandCursor);
-    resetForumBtn->setFixedWidth(96);
-    forumRow->addWidget(resetForumBtn);
-
-    QPushButton *openForumBtn = new QPushButton(tr("打开"), m_advancedSettings);
-    openForumBtn->setObjectName("primaryButton");
-    openForumBtn->setCursor(Qt::PointingHandCursor);
-    openForumBtn->setFixedWidth(72);
-    forumRow->addWidget(openForumBtn);
-
-    // 编辑框失焦 / 回车时保存并回填规范化后的地址
-    connect(forumUrlEdit, &QLineEdit::editingFinished, this, [forumUrlEdit]() {
-        SettingsManager::instance()->setForumBaseUrl(forumUrlEdit->text());
-        forumUrlEdit->setText(SettingsManager::instance()->forumBaseUrl());
-    });
-
-    connect(resetForumBtn, &QPushButton::clicked, this, [forumUrlEdit]() {
-        SettingsManager::instance()->setForumBaseUrl(QString());
-        forumUrlEdit->setText(SettingsManager::instance()->forumBaseUrl());
-    });
-
-    connect(openForumBtn, &QPushButton::clicked, this, [forumUrlEdit]() {
-        QDesktopServices::openUrl(QUrl(SettingsManager::normalizeForumUrl(forumUrlEdit->text())));
-    });
 
     // ── 实验性内容 ──
     QVBoxLayout *experimentalCard = createSettingsCard(layout, tr("实验性内容"));

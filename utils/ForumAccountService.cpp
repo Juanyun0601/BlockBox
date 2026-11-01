@@ -790,7 +790,7 @@ QString ForumAccountService::networkFailureMessage(int networkError, const QStri
     switch (static_cast<QNetworkReply::NetworkError>(networkError))
     {
     case QNetworkReply::HostNotFoundError:
-        reason = tr("找不到论坛服务器，检查「论坛设置」里的地址是不是写错了");
+        reason = tr("找不到论坛服务器，检查一下网络连接再试");
         break;
     case QNetworkReply::ConnectionRefusedError:
         reason = tr("论坛服务器拒绝了连接，可能正在重启，过一会儿再点一次");

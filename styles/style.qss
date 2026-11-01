@@ -15683,6 +15683,22 @@ QLabel#forumMuted {
     font-size: 12px;
 }
 
+/* 用户主页简介：按 Markdown 渲染，去掉文本浏览框自带的底色、边框和内边距 */
+QTextBrowser#forumProfileBio {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    color: @TEXT_SECONDARY@;
+    font-size: 13.5px;
+}
+
+QTextBrowser#forumProfileBio:hover,
+QTextBrowser#forumProfileBio:focus {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+}
+
 QLabel#forumStatus {
     color: @TEXT_TERTIARY@;
     font-size: 12px;

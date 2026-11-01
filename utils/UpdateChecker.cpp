@@ -939,6 +939,9 @@ void UpdateChecker::showUpdateDialog(const ReleaseCandidate &release)
     AppMessageBox box(m_parent);
     box.setIcon(AppMessageBox::Information);
     box.setWindowTitle(tr("发现新版本"));
+    // 更新说明往往很长：弹窗放宽、加高，阅读更新日志时不用一直挤在窄条里
+    box.setCardWidthRange(700, 880);
+    box.setInfoBrowserHeightRange(220, 520);
     box.setText(text);
     if (!notes.isEmpty()) {
         // 更新日志按 Markdown 渲染，过长时可在弹窗内上下滚动查看全文

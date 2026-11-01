@@ -86,6 +86,20 @@ public:
      * 上下滚动查看，不再截断。空字符串会隐藏该区域。
      */
     void setInformativeMarkdown(const QString &markdown);
+    /**
+     * @brief 调整卡片宽度范围（像素）
+     *
+     * 更新日志这类需要横向阅读的长内容可以把弹窗调宽；实际生效宽度仍会
+     * 按宿主窗口自动收紧，不会超出窗口边界。
+     */
+    void setCardWidthRange(int minWidth, int maxWidth);
+    /**
+     * @brief 调整 Markdown 说明区的显示高度范围（像素）
+     *
+     * 内容较短时说明区不低于 minHeight，内容较长时封顶 maxHeight 后内部滚动；
+     * 宿主窗口高度不够时会自动收紧。
+     */
+    void setInfoBrowserHeightRange(int minHeight, int maxHeight);
     void setIcon(Icon icon);
     void setIconPixmap(const QPixmap &pixmap);
     void setStandardButtons(StandardButtons buttons);
@@ -157,6 +171,13 @@ private:
     Icon m_icon;
     StandardButtons m_buttons;
     bool m_hasCustomButtons;
+
+    // 卡片宽度与 Markdown 说明区高度范围（可被 setCardWidthRange /
+    // setInfoBrowserHeightRange 调整，默认值即普通提示弹窗的尺寸）
+    int m_cardMinWidth;
+    int m_cardMaxWidth;
+    int m_notesMinHeight;
+    int m_notesMaxHeight;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(AppMessageBox::StandardButtons)

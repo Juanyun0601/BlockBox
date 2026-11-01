@@ -170,8 +170,6 @@ void SettingsPage::onRestoreDefaults()
     case 5:
         qDebug() << "[SettingsPage]" << "恢复高级设置默认值";
         SettingsManager::instance()->setForumBaseUrl(QString());
-        if (auto *forumUrlEdit = m_advancedSettings->findChild<QLineEdit *>(QStringLiteral("forumUrlEdit")))
-            forumUrlEdit->setText(SettingsManager::instance()->forumBaseUrl());
         break;
     case 6: qDebug() << "[SettingsPage]" << "恢复按键绑定默认值"; break;
     case 7: qDebug() << "[SettingsPage]" << "恢复系统信息设置默认值"; break;

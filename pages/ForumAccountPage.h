@@ -9,6 +9,7 @@
  *
  * 页面结构（顶部那条品牌 / 导航栏已去掉，直接复用启动器自己的顶栏）：
  *   资料卡：封面横幅 + 头像 + 名称（未登录时显示「未登录」）+ 简介 + 数据 + 右侧登录、注册
+ * 简介按 Markdown 渲染（账号设置里可切到预览），和帖子正文同一套排版能力。
  *   内容卡：角色（游戏账户瀑布流）/ 我的主题 / 我的回复 / 我的收藏 / 账号设置
  *   登录卡：与论坛登录页同款的「登录 / 注册新账号」表单
  *
@@ -31,6 +32,7 @@
 #include "components/Skin3DWidget.h"
 
 class ForumAccountService;
+class ForumPostBrowser;
 class MasonryLayout;
 class QComboBox;
 class QFrame;
@@ -174,6 +176,8 @@ private:
 
     // ── 资料渲染 ──
     void renderProfile();
+    /** 资料卡简介里的链接：站内帖子在启动器内打开，其余交给系统浏览器 */
+    void handleBioLink(const QUrl &url);
     void setAvatarPlaceholder(const QString &name);
     void setAvatarPixmap(const QPixmap &pixmap);
     void loadRemoteAvatar(const QString &avatarPath);
@@ -259,7 +263,8 @@ private:
     QLabel *m_avatarLabel = nullptr;
     QLabel *m_nameLabel = nullptr;
     QLabel *m_usernameLabel = nullptr;
-    QLabel *m_bioLabel = nullptr;
+    /** 个人简介：按 Markdown 渲染（加粗、代码、列表、链接、图片都认） */
+    ForumPostBrowser *m_bioBrowser = nullptr;
     QLabel *m_roleChip = nullptr;
     QLabel *m_statThreads = nullptr;
     QLabel *m_statPosts = nullptr;
@@ -329,6 +334,10 @@ private:
     QLineEdit *m_displayNameEdit = nullptr;
     QLineEdit *m_emailEdit = nullptr;
     QPlainTextEdit *m_bioEdit = nullptr;
+    /** 简介编辑 / 预览切换（预览按 Markdown 渲染，看到的就是别人看到的样子） */
+    QWidget *m_bioHost = nullptr;
+    ForumPostBrowser *m_bioPreview = nullptr;
+    QPushButton *m_bioPreviewButton = nullptr;
     QLabel *m_settingsAvatar = nullptr;
     /** 设置页里的小封面预览 */
     ForumKit::CoverBanner *m_settingsCover = nullptr;

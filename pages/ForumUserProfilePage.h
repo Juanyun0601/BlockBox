@@ -44,6 +44,8 @@ private:
     void buildUi();
     void loadProfile();
     void renderProfile(const ForumUserProfile &profile);
+    /** 简介里的站内帖子链接在启动器内打开，其余交给系统浏览器 */
+    void handleBioLink(const QUrl &url);
     void renderFriendActions(const ForumUserProfile &profile);
     void showThreadsTab();
     void showRepliesTab();

@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
@@ -41,10 +42,12 @@
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QVBoxLayout>
 
 #include "components/AppMessageBox.h"
 #include "components/ForumKit.h"
+#include "components/ForumPostBrowser.h"
 #include "components/NotificationManager.h"
 #include "layouts/MasonryLayout.h"
 #include "utils/ForumAccountService.h"
@@ -276,8 +279,12 @@ QString notificationDayGroup(qint64 seconds)
     return day.toString(QStringLiteral("yyyy-MM-dd"));
 }
 
-/** 表单字段：标签在上，控件在下（对照论坛网页 .field） */
-QWidget *buildField(const QString &labelText, QWidget *editor, QWidget *parent)
+/**
+ * 表单字段：标签在上，控件在下（对照论坛网页 .field）
+ * @param headerExtra 可选：与标签同一行、靠右的小控件（如简介的「预览」开关）
+ */
+QWidget *buildField(const QString &labelText, QWidget *editor, QWidget *parent,
+                    QWidget *headerExtra = nullptr)
 {
     auto *field = new QWidget(parent);
     auto *layout = new QVBoxLayout(field);
@@ -286,7 +293,20 @@ QWidget *buildField(const QString &labelText, QWidget *editor, QWidget *parent)
 
     auto *label = new QLabel(labelText, field);
     label->setObjectName(QStringLiteral("fbFieldLabel"));
-    layout->addWidget(label);
+    if (headerExtra)
+    {
+        auto *headerRow = new QHBoxLayout();
+        headerRow->setContentsMargins(0, 0, 0, 0);
+        headerRow->setSpacing(8);
+        headerRow->addWidget(label);
+        headerRow->addStretch(1);
+        headerRow->addWidget(headerExtra);
+        layout->addLayout(headerRow);
+    }
+    else
+    {
+        layout->addWidget(label);
+    }
     layout->addWidget(editor);
     return field;
 }
@@ -616,11 +636,16 @@ QWidget *ForumAccountPage::buildProfileCard(QWidget *parent)
     m_usernameLabel->setWordWrap(true);
     infoColumn->addWidget(m_usernameLabel);
 
-    m_bioLabel = new QLabel(body);
-    m_bioLabel->setObjectName(QStringLiteral("fbBio"));
-    m_bioLabel->setWordWrap(true);
-    m_bioLabel->hide();
-    infoColumn->addWidget(m_bioLabel);
+    m_bioBrowser = new ForumPostBrowser(body);
+    m_bioBrowser->setObjectName(QStringLiteral("fbBioBrowser"));
+    m_bioBrowser->setCompactMode(true);
+    m_bioBrowser->hide();
+    // 简介里点站内帖子 / 图片：内链在启动器里打开，图片弹大图
+    connect(m_bioBrowser, &ForumPostBrowser::linkClicked, this,
+            &ForumAccountPage::handleBioLink);
+    connect(m_bioBrowser, &ForumPostBrowser::imageClicked, this,
+            [](const QString &path) { ForumPostBrowser::showImagePreview(path); });
+    infoColumn->addWidget(m_bioBrowser);
 
     infoColumn->addSpacing(10);
 
@@ -1071,9 +1096,54 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
 
     m_bioEdit = new QPlainTextEdit(page);
     m_bioEdit->setObjectName(QStringLiteral("fbInput"));
-    m_bioEdit->setPlaceholderText(tr("介绍一下自己，最多 300 个字"));
+    m_bioEdit->setPlaceholderText(tr("介绍一下自己，最多 300 个字，支持 Markdown"));
     m_bioEdit->setFixedHeight(88);
-    layout->addWidget(buildField(tr("个人简介"), m_bioEdit, page));
+
+    // 简介预览：和资料卡上的排版完全一致，边写边看
+    m_bioPreview = new ForumPostBrowser(page);
+    m_bioPreview->setObjectName(QStringLiteral("fbBioPreview"));
+    m_bioPreview->setCompactMode(true);
+    m_bioPreview->setMinimumHeight(88);
+    connect(m_bioPreview, &ForumPostBrowser::linkClicked, this,
+            &ForumAccountPage::handleBioLink);
+    connect(m_bioPreview, &ForumPostBrowser::imageClicked, this,
+            [](const QString &path) { ForumPostBrowser::showImagePreview(path); });
+    m_bioPreview->hide();
+
+    // 编辑框和预览叠在同一个位置，只显示其中一个（隐藏的那个不占高度）
+    m_bioHost = new QWidget(page);
+    m_bioHost->setObjectName(QStringLiteral("fbBioHost"));
+    auto *bioHostLayout = new QVBoxLayout(m_bioHost);
+    bioHostLayout->setContentsMargins(0, 0, 0, 0);
+    bioHostLayout->setSpacing(0);
+    bioHostLayout->addWidget(m_bioEdit);
+    bioHostLayout->addWidget(m_bioPreview);
+
+    m_bioPreviewButton = new QPushButton(tr("预览"), page);
+    m_bioPreviewButton->setObjectName(QStringLiteral("fbBtnGhost"));
+    m_bioPreviewButton->setCheckable(true);
+    m_bioPreviewButton->setFixedHeight(26);
+    m_bioPreviewButton->setCursor(Qt::PointingHandCursor);
+    connect(m_bioPreviewButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked && m_bioPreview)
+            m_bioPreview->setPostMarkdown(m_bioEdit->toPlainText().trimmed());
+        m_bioPreviewButton->setText(checked ? tr("继续编辑") : tr("预览"));
+        if (m_bioEdit)
+            m_bioEdit->setVisible(!checked);
+        if (m_bioPreview)
+            m_bioPreview->setVisible(checked);
+    });
+
+    layout->addWidget(buildField(tr("个人简介"), m_bioHost, page, m_bioPreviewButton));
+
+    auto *bioHint = new QLabel(
+        tr("简介支持 Markdown：**加粗**、*斜体*、`代码`、- 列表、> 引用、[文字](网址)，"
+           "换行原样保留"),
+        page);
+    bioHint->setObjectName(QStringLiteral("fbNote"));
+    bioHint->setWordWrap(true);
+    layout->addSpacing(4);
+    layout->addWidget(bioHint);
     layout->addSpacing(14);
 
     auto *saveProfileBtn = new QPushButton(tr("保存资料"), page);
@@ -1457,7 +1527,20 @@ QComboBox#fbDetailCombo QAbstractItemView {
 
 QLabel#fbName { color: %INK%; font-size: 21px; font-weight: 800; }
 QLabel#fbUsername { color: %INK3%; font-size: 13px; }
-QLabel#fbBio { color: %INK2%; font-size: 13.5px; }
+/* 简介（Markdown 渲染）：去掉文本浏览框自带的底色、边框和内边距，和资料卡融为一体 */
+QTextBrowser#fbBioBrowser, QTextBrowser#fbBioPreview, QWidget#fbBioHost {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: %INK2%;
+    font-size: 13.5px;
+}
+QTextBrowser#fbBioBrowser:hover, QTextBrowser#fbBioBrowser:focus,
+QTextBrowser#fbBioPreview:hover, QTextBrowser#fbBioPreview:focus {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
 QLabel#fbStatValue { color: %INK%; font-size: 15px; font-weight: 800; }
 QLabel#fbStatLabel { color: %INK3%; font-size: 12px; }
 QLabel#fbSectionTitle { color: %INK%; font-size: 15px; font-weight: 800; }
@@ -1885,14 +1968,15 @@ void ForumAccountPage::renderProfile()
         m_nameLabel->setText(user.displayName);
         m_usernameLabel->setText(QStringLiteral("@") + user.username);
 
-        if (user.bio.trimmed().isEmpty())
+        const QString bio = user.bio.trimmed();
+        if (bio.isEmpty())
         {
-            m_bioLabel->hide();
+            m_bioBrowser->hide();
         }
         else
         {
-            m_bioLabel->setText(user.bio);
-            m_bioLabel->show();
+            m_bioBrowser->setPostMarkdown(bio);
+            m_bioBrowser->show();
         }
 
         QString roleText = tr("论坛成员");
@@ -1925,7 +2009,7 @@ void ForumAccountPage::renderProfile()
     {
         m_nameLabel->setText(tr("未登录"));
         m_usernameLabel->setText(tr("登录方块盒子论坛账号，发帖、回复、收藏都会同步到这里"));
-        m_bioLabel->hide();
+        m_bioBrowser->hide();
         m_roleChip->hide();
 
         m_statThreads->setText(QStringLiteral("0"));
@@ -1978,6 +2062,28 @@ void ForumAccountPage::renderProfile()
             m_settingsAccountLine->setText(tr("当前未登录论坛账号。"));
         }
     }
+}
+
+void ForumAccountPage::handleBioLink(const QUrl &url)
+{
+    // 简介里的站内帖子链接在启动器内打开，其余链接交给系统浏览器
+    auto *service = ForumAccountService::instance();
+    QString text = url.toString();
+    const QString base = service ? service->baseUrl() : QString();
+    if (!base.isEmpty() && text.startsWith(base))
+        text = text.mid(base.size());
+
+    if (text.contains(QStringLiteral("thread.html")))
+    {
+        bool ok = false;
+        const int id = QUrlQuery(QUrl(text)).queryItemValue(QStringLiteral("id")).toInt(&ok);
+        if (ok && id > 0)
+        {
+            emit threadOpenRequested(id);
+            return;
+        }
+    }
+    QDesktopServices::openUrl(url);
 }
 
 void ForumAccountPage::setAvatarPlaceholder(const QString &name)
@@ -3742,6 +3848,9 @@ void ForumAccountPage::fillSettingsForm()
         m_emailEdit->setText(user.email);
     if (m_bioEdit)
         m_bioEdit->setPlainText(user.bio);
+    // 正在看预览时重新填表，预览同步成最新内容
+    if (m_bioPreview && !m_bioPreview->isHidden())
+        m_bioPreview->setPostMarkdown(user.bio.trimmed());
 }
 
 void ForumAccountPage::setTabHint(const QString &text)

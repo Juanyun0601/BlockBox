@@ -1316,25 +1316,6 @@ void MainWindow::initCommunityPage()
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::CommunityPage), m_communityPage);
     delete placeholder;
 
-    // 社区页里的「论坛设置」：跳到 设置 → 高级设置
-    connect(m_communityPage, &CommunityForumPage::openAdvancedSettingsRequested, this, [this]() {
-        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
-        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
-
-        m_topBar->setInstanceSelectSelected(false);
-        m_topBar->setInstanceSettingsSelected(false);
-        m_topBar->setAccountSelected(false);
-        m_topBar->setSettingsTitle();
-
-        m_sideBar->setSelectedIndex(2);
-        m_subNavPanel->showForParent(2, false);
-        ensurePageInitialized(PageIndex::SettingsPage);
-        animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, 2);
-        m_lastSidebarIndex = 2;
-        onChildNavClicked(2, 5);
-        m_subNavPanel->setSelectedChild(5);
-    });
-
     // ── 论坛深度集成：社区页所有点击都在启动器内消化，不再跳浏览器 ──
     connect(m_communityPage, &CommunityForumPage::threadOpenRequested, this, [this](int threadId) {
         m_forumReturnAction = [this]() { returnToCommunityPage(); };

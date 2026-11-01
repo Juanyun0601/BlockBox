@@ -214,7 +214,7 @@ void FeedbackPage::buildUi()
 
     // 启动器版本（必填，预填当前版本）
     m_appVersionField = makeInputBlock(formCard, tr("启动器版本 *"), &m_appVersionEdit,
-                                       tr("例如 beta6"), tr("在「设置 → 关于」里能看到版本号"));
+                                       tr("例如 beta7"), tr("在「设置 → 关于」里能看到版本号"));
     m_appVersionEdit->setText(AppVersion::current());
     m_appVersionEdit->setMaxLength(kAppVersionMaxLength);
     formLayout->addWidget(m_appVersionField);

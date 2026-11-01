@@ -8,12 +8,16 @@
 #include "ForumUserProfilePage.h"
 
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QVBoxLayout>
 
+#include "components/ForumPostBrowser.h"
 #include "components/NotificationManager.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ForumChatService.h"
@@ -178,8 +182,10 @@ void ForumUserProfilePage::renderProfile(const ForumUserProfile &profile)
     auto *topRow = new QHBoxLayout();
     topRow->setSpacing(14);
 
+    // 头像贴顶：简介是 Markdown，可能有好几行，居中的话会飘到中间
     topRow->addWidget(ForumKit::makeAvatar(m_profileCard, profile.user.avatar,
-                                           profile.user.displayName, 64));
+                                           profile.user.displayName, 64),
+                      0, Qt::AlignTop);
 
     auto *textColumn = new QVBoxLayout();
     textColumn->setSpacing(4);
@@ -196,10 +202,25 @@ void ForumUserProfilePage::renderProfile(const ForumUserProfile &profile)
     nameRow->addStretch(1);
     textColumn->addLayout(nameRow);
 
-    const QString bio = profile.user.bio.isEmpty() ? tr("这个人很神秘，什么都没写")
-                                                   : profile.user.bio;
-    auto *bioLabel = ForumKit::makeMuted(m_profileCard, bio);
-    textColumn->addWidget(bioLabel);
+    const QString bio = profile.user.bio.trimmed();
+    if (bio.isEmpty())
+    {
+        textColumn->addWidget(
+            ForumKit::makeMuted(m_profileCard, tr("这个人很神秘，什么都没写")));
+    }
+    else
+    {
+        // 简介按 Markdown 渲染，和帖子正文同一套排版（加粗、代码、列表、链接、图片）
+        auto *bioBrowser = new ForumPostBrowser(m_profileCard);
+        bioBrowser->setObjectName(QStringLiteral("forumProfileBio"));
+        bioBrowser->setCompactMode(true);
+        bioBrowser->setPostMarkdown(bio);
+        connect(bioBrowser, &ForumPostBrowser::linkClicked, this,
+                &ForumUserProfilePage::handleBioLink);
+        connect(bioBrowser, &ForumPostBrowser::imageClicked, this,
+                [](const QString &path) { ForumPostBrowser::showImagePreview(path); });
+        textColumn->addWidget(bioBrowser);
+    }
 
     const QString registerDate = profile.user.createdAt > 0
                                      ? QDateTime::fromSecsSinceEpoch(profile.user.createdAt)
@@ -237,6 +258,28 @@ void ForumUserProfilePage::renderProfile(const ForumUserProfile &profile)
 
     // 好友操作行（加好友 / 发私信）
     renderFriendActions(profile);
+}
+
+void ForumUserProfilePage::handleBioLink(const QUrl &url)
+{
+    // 简介里的站内帖子链接在启动器内打开，其余链接交给系统浏览器
+    auto *service = ForumAccountService::instance();
+    QString text = url.toString();
+    const QString base = service ? service->baseUrl() : QString();
+    if (!base.isEmpty() && text.startsWith(base))
+        text = text.mid(base.size());
+
+    if (text.contains(QStringLiteral("thread.html")))
+    {
+        bool ok = false;
+        const int id = QUrlQuery(QUrl(text)).queryItemValue(QStringLiteral("id")).toInt(&ok);
+        if (ok && id > 0)
+        {
+            emit threadOpenRequested(id);
+            return;
+        }
+    }
+    QDesktopServices::openUrl(url);
 }
 
 void ForumUserProfilePage::renderFriendActions(const ForumUserProfile &profile)

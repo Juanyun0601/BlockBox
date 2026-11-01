@@ -7,11 +7,17 @@
 
 #include "ForumPostBrowser.h"
 
+#include <QDialog>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QLabel>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScreen>
+#include <QTextBlock>
+#include <QTextBlockFormat>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QVBoxLayout>
 
 #include "components/NotificationManager.h"
@@ -23,6 +29,9 @@ namespace {
 
 // 正文里图片的展示宽度上限，超出则等比缩小
 constexpr int kMaxImageWidth = 620;
+
+// 紧凑模式（简介 / 签名）里每个段落的上下间距
+constexpr int kCompactParagraphGap = 2;
 
 QString postBodyStyle()
 {
@@ -39,6 +48,59 @@ QString postBodyStyle()
         "pre { background: @CODE_BG@; color: @CODE_TEXT@; border: 1px solid @CODE_BORDER@; }"
         "hr { border: none; border-top: 1px solid @BORDER_LIGHT@; }"
         "td, th { border: 1px solid @BORDER@; padding: 3px 8px; }"));
+}
+
+/** 紧凑模式追加的样式：写在正文样式之后，用来压字号和标题层级 */
+QString compactBodyStyle()
+{
+    return StyleKit::resolve(QStringLiteral(
+        "body { font-size: 13.5px; line-height: 150%; }"
+        "h1 { font-size: 15px; }"
+        "h2 { font-size: 14.5px; }"
+        "h3 { font-size: 14px; }"
+        "h4, h5, h6 { font-size: 13.5px; }"
+        "blockquote { margin: 3px 0 3px 2px; padding: 1px 0 1px 9px; }"
+        "code, pre { font-size: 12.5px; }"
+        "td, th { padding: 2px 6px; }"));
+}
+
+/**
+ * @brief 把「单个换行」升级成 Markdown 硬换行（行尾补两个空格）
+ *
+ * Qt 的 Markdown 解析按 CommonMark 把单个换行并成一个空格，多行简介会挤成
+ * 一整段。简介是用户在输入框里按回车换的行，这里把回车原样保留；
+ * 围栏代码块里的换行本来就是硬换行，不再处理。
+ */
+QString hardenSingleNewlines(const QString &markdown)
+{
+    const QStringList lines = markdown.split(QLatin1Char('\n'));
+    QString result;
+    result.reserve(markdown.size() + lines.size() * 2);
+
+    bool inFence = false;
+    for (qsizetype i = 0; i < lines.size(); ++i)
+    {
+        const QString line = lines.at(i);
+        const QString trimmed = line.trimmed();
+        const bool fenceLine = trimmed.startsWith(QStringLiteral("```"))
+                               || trimmed.startsWith(QStringLiteral("~~~"));
+        if (fenceLine)
+            inFence = !inFence;
+
+        result += line;
+        const bool hasNext = (i + 1 < lines.size());
+        if (hasNext && !inFence && !fenceLine && !trimmed.isEmpty())
+        {
+            // 已经是硬换行（行尾两个空格或反斜杠）就不用再补
+            const bool alreadyHard = line.endsWith(QStringLiteral("  "))
+                                     || line.endsWith(QLatin1Char('\\'));
+            if (!alreadyHard)
+                result += QStringLiteral("  ");
+        }
+        if (hasNext)
+            result += QLatin1Char('\n');
+    }
+    return result;
 }
 
 /** 把正文 HTML 里的 <img> 包进 bbf-image 链接，点图弹大图 */
@@ -145,12 +207,27 @@ void ForumPostBrowser::setPostMarkdown(const QString &markdown)
     renderDocument();
 }
 
+void ForumPostBrowser::setCompactMode(bool on)
+{
+    if (m_compact == on)
+        return;
+    m_compact = on;
+    // 已经渲染过内容时按新样式重排一遍（标题字号、段落间距都不一样）
+    if (!m_markdown.isEmpty())
+        renderDocument();
+}
+
 void ForumPostBrowser::changeEvent(QEvent *event)
 {
     AutoHeightTextBrowser::changeEvent(event);
     // 主题切换后正文颜色要跟着换，整体重渲染一次
     if (event->type() == QEvent::StyleChange && !m_markdown.isEmpty())
         renderDocument();
+}
+
+QString ForumPostBrowser::documentStyle() const
+{
+    return m_compact ? postBodyStyle() + compactBodyStyle() : postBodyStyle();
 }
 
 void ForumPostBrowser::renderDocument()
@@ -166,14 +243,45 @@ void ForumPostBrowser::renderDocument()
     }
 
     QTextDocument converter;
-    converter.setMarkdown(m_markdown);
+    // 简介这类短文本保留作者敲下的换行，帖子正文仍按 CommonMark 排版
+    converter.setMarkdown(m_compact ? hardenSingleNewlines(m_markdown) : m_markdown);
     const QString rawHtml = converter.toHtml();
 
     m_html = wrapImagesWithAnchors(rawHtml, &m_imagePaths);
-    setHtml(QStringLiteral("<html><head><style>%1</style></head><body>%2</body></html>")
-                .arg(postBodyStyle(), m_html));
+    applyDocument();
 
     requestPendingImages();
+}
+
+void ForumPostBrowser::applyDocument()
+{
+    setHtml(QStringLiteral("<html><head><style>%1</style></head><body>%2</body></html>")
+                .arg(documentStyle(), m_html));
+    if (m_compact)
+        tightenParagraphs(kCompactParagraphGap, kCompactParagraphGap);
+}
+
+void ForumPostBrowser::tightenParagraphs(int top, int bottom)
+{
+    QTextDocument *doc = document();
+    if (!doc)
+        return;
+
+    // Markdown 解析会给每段加较为宽松的外边距，短文本里显得很空，
+    // 这里统一收紧（只动上下间距，引用块的左缩进保留）。
+    QTextCursor cursor(doc);
+    cursor.beginEditBlock();
+    for (QTextBlock block = doc->begin(); block.isValid(); block = block.next())
+    {
+        QTextBlockFormat format = block.blockFormat();
+        if (format.topMargin() == top && format.bottomMargin() == bottom)
+            continue;
+        format.setTopMargin(top);
+        format.setBottomMargin(bottom);
+        cursor.setPosition(block.position());
+        cursor.setBlockFormat(format);
+    }
+    cursor.endEditBlock();
 }
 
 void ForumPostBrowser::requestPendingImages()
@@ -199,8 +307,7 @@ void ForumPostBrowser::requestPendingImages()
             document()->addResource(QTextDocument::ImageResource, QUrl(absolute), scaled);
 
             // 重新设置一遍 HTML 触发重排（AutoHeightTextBrowser 会跟着贴合新高度）
-            setHtml(QStringLiteral("<html><head><style>%1</style></head><body>%2</body></html>")
-                        .arg(postBodyStyle(), m_html));
+            applyDocument();
         });
     }
 }
