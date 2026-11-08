@@ -122,7 +122,9 @@ public:
     /// 安卓端核心以内置 so 形式随应用运行，等价于「已初始化」
     bool isProcessRunning() const { return m_androidReady; }
 #else
-    bool isProcessRunning() const { return m_process != nullptr && m_process->state() != QProcess::NotRunning; }
+    /// 参考 HMCL：不跟踪 wrapper 进程（--hmcl 启动 daemon 后会正常退出），
+    /// 只要已知 daemon 端口就视为运行中；daemon 死亡由状态轮询连续失败检测并清零端口
+    bool isProcessRunning() const { return m_serverPort != 0; }
 #endif
     /// 是否处于联机房间中（HostOk / GuestOk / 各种过渡状态）
     bool isInRoom() const;

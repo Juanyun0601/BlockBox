@@ -40,6 +40,7 @@
 #include <QScrollBar>
 #include <QShowEvent>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QUrl>
@@ -439,6 +440,7 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
         {
             m_threadsLoaded = m_repliesLoaded = m_bookmarksLoaded = false;
             m_myFeedbacksLoaded = false;
+            m_pointsLoaded = false;
             m_myFeedbacks.clear();
             m_contentFavorites.clear();
             m_contentFavoritesLoaded = false;
@@ -454,6 +456,7 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
         m_bookmarks = QJsonArray();
         m_threadsLoaded = m_repliesLoaded = m_bookmarksLoaded = false;
         m_myFeedbacksLoaded = false;
+        m_pointsLoaded = false;
         m_myFeedbacks.clear();
         m_threadTotal = m_replyTotal = m_bookmarkTotal = 0;
         m_contentFavorites.clear();
@@ -702,9 +705,10 @@ QWidget *ForumAccountPage::buildProfileCard(QWidget *parent)
     statRow->setContentsMargins(0, 0, 0, 0);
     statRow->setSpacing(22);
 
-    const QStringList statLabels = {tr("主题"), tr("回复"), tr("收藏"), tr("加入"), tr("游戏账户")};
-    QList<QLabel **> statTargets = {&m_statThreads, &m_statPosts, &m_statBookmarks, &m_statJoined,
-                                    &m_statGameAccounts};
+    const QStringList statLabels = {tr("主题"), tr("回复"), tr("收藏"), tr("方块"), tr("加入"),
+                                    tr("游戏账户")};
+    QList<QLabel **> statTargets = {&m_statThreads, &m_statPosts, &m_statBookmarks, &m_statPoints,
+                                    &m_statJoined, &m_statGameAccounts};
     for (int i = 0; i < statLabels.size(); ++i)
     {
         auto *statWidget = new QWidget(body);
@@ -807,7 +811,7 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     tabsLayout->setSpacing(4);
 
     const QStringList tabLabels = {tr("角色"), tr("我的主题"), tr("我的回复"), tr("我的收藏"),
-                                   tr("通知"), tr("我的反馈"), tr("账号设置")};
+                                   tr("通知"), tr("我的反馈"), tr("积分"), tr("账号设置")};
     for (int i = 0; i < tabLabels.size(); ++i)
     {
         auto *tab = new QPushButton(tabLabels.at(i), tabsTrack);
@@ -844,6 +848,7 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     m_contentPages.append(buildBookmarksContent(m_contentHost));                    // BookmarksContent
     m_contentPages.append(buildNotificationsContent(m_contentHost));                // NotificationsContent
     m_contentPages.append(buildFeedbackContent(m_contentHost));                     // FeedbackContent
+    m_contentPages.append(buildPointsContent(m_contentHost));                       // PointsContent
     m_contentPages.append(buildSettingsContent(m_contentHost));                     // SettingsContent
     m_contentPages.append(buildLoggedOutContent(m_contentHost));                    // LoggedOutContent
     for (QWidget *page : m_contentPages)
@@ -1827,6 +1832,70 @@ QPushButton#fbLink {
     padding: 2px;
 }
 QPushButton#fbLink:hover { color: %BRAND_HOVER%; }
+
+/* ── 积分页（方块 / 每日签到） ── */
+QFrame#fbPointsHero {
+    background: %BG_TINT%;
+    border: 1px solid %LINE%;
+    border-radius: 14px;
+}
+QLabel#fbPointsEyebrow { color: %BRAND%; font-size: 12.5px; font-weight: 800; }
+QLabel#fbPointsBalance { color: %INK%; font-size: 34px; font-weight: 900; }
+QLabel#fbPointsStreak { color: %INK2%; font-size: 13px; }
+QLabel#fbPointsReward { color: %INK3%; font-size: 12.5px; }
+QPushButton#fbPointsCheckin {
+    background: %BRAND%;
+    color: %ON_BRAND%;
+    border: 1px solid transparent;
+    border-radius: 19px;
+    padding: 0 18px;
+    font-size: 13.5px;
+    font-weight: 800;
+}
+QPushButton#fbPointsCheckin:hover { background: %BRAND_HOVER%; }
+QPushButton#fbPointsCheckin:disabled { background: %LINE2%; color: %INK3%; }
+QFrame#fbPointsGiftCard {
+    background: %CARD%;
+    border: 1px dashed %BRAND_LINE%;
+    border-radius: 12px;
+}
+QLabel#fbPointsGiftIcon { font-size: 20px; }
+QLabel#fbPointsGiftText { color: %INK3%; font-size: 12px; }
+QFrame#fbPointsWeek {
+    background: %BG_TINT%;
+    border: 1px solid %LINE%;
+    border-radius: 14px;
+}
+QFrame#fbPointsDay {
+    background: %CARD%;
+    border: 1px solid %LINE%;
+    border-radius: 10px;
+}
+QFrame#fbPointsDay[checked="true"] {
+    background: %BRAND_SOFT%;
+    border-color: %BRAND_LINE%;
+}
+QFrame#fbPointsDay[current="true"] { border-color: %BRAND%; }
+QLabel#fbPointsDayLabel { color: %INK3%; font-size: 11px; }
+QLabel#fbPointsDayReward { color: %INK%; font-size: 16px; font-weight: 800; }
+QLabel#fbPointsDayState { color: %INK3%; font-size: 11px; font-weight: 700; }
+QFrame#fbPointsDay[checked="true"] QLabel#fbPointsDayReward,
+QFrame#fbPointsDay[checked="true"] QLabel#fbPointsDayState { color: %BRAND%; }
+QFrame#fbPointsMakeup {
+    background: %CARD%;
+    border: 1px solid %LINE%;
+    border-radius: 14px;
+}
+QLabel#fbPointsMakeupIcon { font-size: 20px; }
+QLabel#fbPointsMakeupCount { color: %BRAND%; font-size: 12.5px; font-weight: 800; }
+QFrame#fbPointsHistoryRow {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+}
+QFrame#fbPointsHistoryRow:hover { background: %BG_TINT%; border-color: %LINE%; }
+QLabel#fbPointsHistoryDay { color: %INK%; font-size: 13px; font-weight: 700; }
+QLabel#fbPointsHistoryAmount { color: %BRAND%; font-size: 13px; font-weight: 800; }
 )QSS");
 
     auto put = [&qss](const char *token, const QString &value) {
@@ -2077,6 +2146,8 @@ void ForumAccountPage::refreshAccount()
 {
     m_threadsLoaded = m_repliesLoaded = m_bookmarksLoaded = false;
     m_myFeedbacksLoaded = false;
+    m_pointsLoaded = false;
+    m_pointsState = QJsonObject();
     m_myFeedbacks.clear();
     m_threads = QJsonArray();
     m_replies = QJsonArray();
@@ -2139,6 +2210,7 @@ void ForumAccountPage::renderProfile()
 
         m_statThreads->setText(QString::number(user.threadCount));
         m_statPosts->setText(QString::number(user.postCount));
+        m_statPoints->setText(QString::number(user.points));
         m_statJoined->setText(user.createdAt > 0
                                   ? QDateTime::fromSecsSinceEpoch(user.createdAt)
                                         .toString(QStringLiteral("yyyy-MM-dd"))
@@ -2162,6 +2234,7 @@ void ForumAccountPage::renderProfile()
 
         m_statThreads->setText(QStringLiteral("0"));
         m_statPosts->setText(QStringLiteral("0"));
+        m_statPoints->setText(QStringLiteral("0"));
         m_statJoined->setText(QStringLiteral("—"));
 
         m_profileAuthActions->show();
@@ -3135,6 +3208,11 @@ void ForumAccountPage::renderContentArea()
         showContentPage(FeedbackContent);
         loadMyFeedbacks(false);
         break;
+    case PointsTab:
+        showContentPage(PointsContent);
+        setTabHint(tr("每天签到领方块"));
+        renderPoints();
+        break;
     case SettingsTab:
         showContentPage(SettingsContent);
         setTabHint(tr("改完记得保存"));
@@ -3543,6 +3621,220 @@ QWidget *ForumAccountPage::buildFeedbackContent(QWidget *parent)
     return page;
 }
 
+/** 账户页「积分」：方块余额 + 7 天签到 + 签到记录 */
+QWidget *ForumAccountPage::buildPointsContent(QWidget *parent)
+{
+    m_pointsPage = new QWidget(parent);
+    auto *layout = new QVBoxLayout(m_pointsPage);
+    layout->setContentsMargins(18, 16, 18, 18);
+    layout->setSpacing(14);
+
+    // ── 余额 / 签到 ──
+    auto *hero = new QFrame(m_pointsPage);
+    hero->setObjectName(QStringLiteral("fbPointsHero"));
+    auto *heroLayout = new QHBoxLayout(hero);
+    heroLayout->setContentsMargins(20, 18, 20, 18);
+    heroLayout->setSpacing(18);
+
+    auto *heroMain = new QVBoxLayout();
+    heroMain->setContentsMargins(0, 0, 0, 0);
+    heroMain->setSpacing(3);
+
+    auto *eyebrow = new QLabel(tr("我的方块"), hero);
+    eyebrow->setObjectName(QStringLiteral("fbPointsEyebrow"));
+    heroMain->addWidget(eyebrow);
+
+    m_pointsBalance = new QLabel(QStringLiteral("0"), hero);
+    m_pointsBalance->setObjectName(QStringLiteral("fbPointsBalance"));
+    heroMain->addWidget(m_pointsBalance);
+
+    m_pointsStreak = new QLabel(tr("正在加载签到进度…"), hero);
+    m_pointsStreak->setObjectName(QStringLiteral("fbPointsStreak"));
+    m_pointsStreak->setWordWrap(true);
+    heroMain->addWidget(m_pointsStreak);
+
+    m_pointsReward = new QLabel(tr("登录后每天签到都能领方块"), hero);
+    m_pointsReward->setObjectName(QStringLiteral("fbPointsReward"));
+    m_pointsReward->setWordWrap(true);
+    heroMain->addWidget(m_pointsReward);
+
+    auto *actionRow = new QHBoxLayout();
+    actionRow->setContentsMargins(0, 8, 0, 0);
+    actionRow->setSpacing(10);
+
+    m_pointsCheckinButton = new QPushButton(tr("签到"), hero);
+    m_pointsCheckinButton->setObjectName(QStringLiteral("fbPointsCheckin"));
+    m_pointsCheckinButton->setCursor(Qt::PointingHandCursor);
+    m_pointsCheckinButton->setFixedHeight(38);
+    m_pointsCheckinButton->setMinimumWidth(156);
+    connect(m_pointsCheckinButton, &QPushButton::clicked, this,
+            &ForumAccountPage::checkInPoints);
+    actionRow->addWidget(m_pointsCheckinButton);
+
+    auto *webHint = new QLabel(tr("也可以在论坛网页的「我的方块」页签到"), hero);
+    webHint->setObjectName(QStringLiteral("fbNote"));
+    webHint->setWordWrap(true);
+    actionRow->addWidget(webHint, 1, Qt::AlignVCenter);
+    actionRow->addStretch();
+    heroMain->addLayout(actionRow);
+
+    heroLayout->addLayout(heroMain, 1);
+
+    // 神秘礼包（占位：每周天签到先记下来，内容以后再开放）
+    auto *gift = new QFrame(hero);
+    gift->setObjectName(QStringLiteral("fbPointsGiftCard"));
+    gift->setMaximumWidth(272);
+    gift->setMinimumWidth(0);
+    auto *giftLayout = new QHBoxLayout(gift);
+    giftLayout->setContentsMargins(14, 14, 14, 14);
+    giftLayout->setSpacing(10);
+
+    auto *giftIcon = new QLabel(QStringLiteral("🎁"), gift);
+    giftIcon->setObjectName(QStringLiteral("fbPointsGiftIcon"));
+    giftLayout->addWidget(giftIcon, 0, Qt::AlignTop);
+
+    m_pointsGift = new QLabel(tr("每周天签到都会收到一份神秘礼包，内容正在准备中。"), gift);
+    m_pointsGift->setObjectName(QStringLiteral("fbPointsGiftText"));
+    m_pointsGift->setWordWrap(true);
+    giftLayout->addWidget(m_pointsGift, 1);
+
+    heroLayout->addWidget(gift, 0, Qt::AlignVCenter);
+    layout->addWidget(hero);
+
+    // ── 7 天签到 ──
+    auto *weekHost = new QFrame(m_pointsPage);
+    weekHost->setObjectName(QStringLiteral("fbPointsWeek"));
+    auto *weekLayout = new QVBoxLayout(weekHost);
+    weekLayout->setContentsMargins(16, 14, 16, 14);
+    weekLayout->setSpacing(10);
+
+    auto *weekHead = new QHBoxLayout();
+    weekHead->setContentsMargins(0, 0, 0, 0);
+    weekHead->setSpacing(8);
+    auto *weekTitle = new QLabel(tr("7 天签到"), weekHost);
+    weekTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    weekHead->addWidget(weekTitle);
+    weekHead->addStretch();
+    auto *weekHint = new QLabel(tr("连续签到越久，每天领得越多"), weekHost);
+    weekHint->setObjectName(QStringLiteral("fbNote"));
+    weekHead->addWidget(weekHint);
+    weekLayout->addLayout(weekHead);
+
+    auto *daysRow = new QHBoxLayout();
+    daysRow->setContentsMargins(0, 0, 0, 0);
+    daysRow->setSpacing(6);
+    for (int i = 0; i < 7; ++i)
+    {
+        auto *tile = new QFrame(weekHost);
+        tile->setObjectName(QStringLiteral("fbPointsDay"));
+        tile->setMinimumWidth(0);
+        auto *tileLayout = new QVBoxLayout(tile);
+        tileLayout->setContentsMargins(8, 9, 8, 9);
+        tileLayout->setSpacing(1);
+
+        auto *dayLabel = new QLabel(tr("第 %1 天").arg(i + 1), tile);
+        dayLabel->setObjectName(QStringLiteral("fbPointsDayLabel"));
+        dayLabel->setAlignment(Qt::AlignCenter);
+        tileLayout->addWidget(dayLabel);
+
+        auto *reward = new QLabel(QStringLiteral("—"), tile);
+        reward->setObjectName(QStringLiteral("fbPointsDayReward"));
+        reward->setAlignment(Qt::AlignCenter);
+        tileLayout->addWidget(reward);
+
+        auto *state = new QLabel(tr("待领"), tile);
+        state->setObjectName(QStringLiteral("fbPointsDayState"));
+        state->setAlignment(Qt::AlignCenter);
+        tileLayout->addWidget(state);
+
+        daysRow->addWidget(tile, 1);
+        m_pointsDayCards.append(tile);
+        m_pointsDayRewards.append(reward);
+        m_pointsDayStates.append(state);
+    }
+    weekLayout->addLayout(daysRow);
+
+    auto *rule = new QLabel(
+        tr("第 1～7 天奖励逐天增加，第 8 天起每天 20 方块；断签会从第 1 天重新开始。"), weekHost);
+    rule->setObjectName(QStringLiteral("fbNote"));
+    rule->setWordWrap(true);
+    weekLayout->addWidget(rule);
+    layout->addWidget(weekHost);
+
+    // ── 补签卡 ──
+    auto *makeup = new QFrame(m_pointsPage);
+    makeup->setObjectName(QStringLiteral("fbPointsMakeup"));
+    auto *makeupLayout = new QHBoxLayout(makeup);
+    makeupLayout->setContentsMargins(16, 14, 16, 14);
+    makeupLayout->setSpacing(12);
+
+    auto *makeupIcon = new QLabel(QStringLiteral("🎫"), makeup);
+    makeupIcon->setObjectName(QStringLiteral("fbPointsMakeupIcon"));
+    makeupLayout->addWidget(makeupIcon, 0, Qt::AlignTop);
+
+    auto *makeupInfo = new QVBoxLayout();
+    makeupInfo->setContentsMargins(0, 0, 0, 0);
+    makeupInfo->setSpacing(3);
+
+    auto *makeupTitleRow = new QHBoxLayout();
+    makeupTitleRow->setContentsMargins(0, 0, 0, 0);
+    makeupTitleRow->setSpacing(8);
+    auto *makeupTitle = new QLabel(tr("补签卡"), makeup);
+    makeupTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    makeupTitleRow->addWidget(makeupTitle);
+
+    m_makeupCount = new QLabel(tr("0 张"), makeup);
+    m_makeupCount->setObjectName(QStringLiteral("fbPointsMakeupCount"));
+    makeupTitleRow->addWidget(m_makeupCount);
+    makeupTitleRow->addStretch();
+    makeupInfo->addLayout(makeupTitleRow);
+
+    m_makeupDesc = new QLabel(tr("昨天漏签时用一张补上，连续签到接着算；每张 20 方块。"), makeup);
+    m_makeupDesc->setObjectName(QStringLiteral("fbNote"));
+    m_makeupDesc->setWordWrap(true);
+    makeupInfo->addWidget(m_makeupDesc);
+    makeupLayout->addLayout(makeupInfo, 1);
+
+    auto *makeupActions = new QVBoxLayout();
+    makeupActions->setContentsMargins(0, 0, 0, 0);
+    makeupActions->setSpacing(6);
+
+    m_buyMakeupButton = new QPushButton(tr("购买补签卡（20 方块）"), makeup);
+    m_buyMakeupButton->setObjectName(QStringLiteral("fbBtnGhost"));
+    m_buyMakeupButton->setCursor(Qt::PointingHandCursor);
+    m_buyMakeupButton->setFixedHeight(30);
+    connect(m_buyMakeupButton, &QPushButton::clicked, this, &ForumAccountPage::buyMakeupCard);
+    makeupActions->addWidget(m_buyMakeupButton);
+
+    m_useMakeupButton = new QPushButton(tr("补签昨天"), makeup);
+    m_useMakeupButton->setObjectName(QStringLiteral("fbBtnPrimary"));
+    m_useMakeupButton->setCursor(Qt::PointingHandCursor);
+    m_useMakeupButton->setFixedHeight(30);
+    connect(m_useMakeupButton, &QPushButton::clicked, this, &ForumAccountPage::useMakeupCard);
+    makeupActions->addWidget(m_useMakeupButton);
+
+    makeupLayout->addLayout(makeupActions);
+    layout->addWidget(makeup);
+
+    // ── 签到记录 ──
+    auto *historyHead = new QHBoxLayout();
+    historyHead->setContentsMargins(2, 2, 2, 0);
+    auto *historyTitle = new QLabel(tr("签到记录"), m_pointsPage);
+    historyTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    historyHead->addWidget(historyTitle);
+    historyHead->addStretch();
+    layout->addLayout(historyHead);
+
+    auto *historyHost = new QWidget(m_pointsPage);
+    m_pointsHistoryLayout = new QVBoxLayout(historyHost);
+    m_pointsHistoryLayout->setContentsMargins(0, 0, 0, 0);
+    m_pointsHistoryLayout->setSpacing(4);
+    layout->addWidget(historyHost);
+
+    layout->addStretch(1);
+    return m_pointsPage;
+}
+
 /** 账户页「我的反馈」条目的状态徽章（沿用反馈页的绿 / 紫 / 灰配色） */
 QLabel *makeFeedbackStateBadge(QWidget *parent, const QString &status)
 {
@@ -3711,6 +4003,391 @@ void ForumAccountPage::renderMyFeedbacks()
         m_feedbackListLayout->addWidget(card);
     }
     m_feedbackListLayout->addStretch();
+}
+
+void ForumAccountPage::loadPoints(bool force)
+{
+    if (!m_service->isLoggedIn() || !m_pointsPage)
+        return;
+
+    if (m_pointsLoaded && !force)
+    {
+        renderPoints();
+        return;
+    }
+
+    if (m_pointsCheckinButton)
+        m_pointsCheckinButton->setEnabled(false);
+    if (m_buyMakeupButton)
+        m_buyMakeupButton->setEnabled(false);
+    if (m_useMakeupButton)
+        m_useMakeupButton->setEnabled(false);
+
+    m_service->getJson(
+        QStringLiteral("/api/points"),
+        [this](const QJsonObject &root) {
+            m_pointsState = root;
+            m_pointsLoaded = true;
+            renderPoints();
+            if (m_statPoints)
+                m_statPoints->setText(QString::number(root.value(QStringLiteral("points")).toInt()));
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            if (m_pointsBalance)
+                m_pointsBalance->setText(QStringLiteral("—"));
+            if (m_pointsStreak)
+                m_pointsStreak->setText(message);
+            if (m_pointsReward)
+                m_pointsReward->clear();
+            if (m_pointsCheckinButton)
+            {
+                m_pointsCheckinButton->setEnabled(false);
+                m_pointsCheckinButton->setText(tr("签到"));
+            }
+            if (m_makeupCount)
+                m_makeupCount->setText(tr("— 张"));
+            if (m_buyMakeupButton)
+                m_buyMakeupButton->setEnabled(false);
+            if (m_useMakeupButton)
+                m_useMakeupButton->setEnabled(false);
+            if (m_pointsHistoryLayout)
+            {
+                clearLayout(m_pointsHistoryLayout);
+                auto *error = makeMutedLabel(message, m_pointsHistoryLayout->parentWidget(), "fbEmpty");
+                error->setAlignment(Qt::AlignCenter);
+                m_pointsHistoryLayout->addSpacing(16);
+                m_pointsHistoryLayout->addWidget(error);
+                m_pointsHistoryLayout->addStretch();
+            }
+        });
+}
+
+void ForumAccountPage::refreshPointsDayCards()
+{
+    const QJsonArray week = m_pointsState.value(QStringLiteral("week")).toArray();
+    for (int i = 0; i < m_pointsDayCards.size(); ++i)
+    {
+        QFrame *tile = m_pointsDayCards.at(i);
+        const QJsonObject day = i < week.size() ? week.at(i).toObject() : QJsonObject();
+        const int reward = day.value(QStringLiteral("reward")).toInt();
+        const bool checked = day.value(QStringLiteral("checked")).toBool();
+        const bool current = day.value(QStringLiteral("current")).toBool();
+
+        if (i < m_pointsDayRewards.size())
+            m_pointsDayRewards.at(i)->setText(reward > 0 ? QStringLiteral("+%1").arg(reward)
+                                                          : QStringLiteral("—"));
+        if (i < m_pointsDayStates.size())
+            m_pointsDayStates.at(i)->setText(checked ? tr("已领") : current ? tr("今天") : tr("待领"));
+
+        tile->setProperty("checked", checked);
+        tile->setProperty("current", current);
+        // 子标签的颜色也由父卡的 checked 属性决定，父卡和两个标签都要重新套样式
+        const QList<QWidget *> styled = {tile,
+                                         i < m_pointsDayRewards.size() ? m_pointsDayRewards.at(i) : nullptr,
+                                         i < m_pointsDayStates.size() ? m_pointsDayStates.at(i) : nullptr};
+        for (QWidget *widget : styled)
+        {
+            if (!widget)
+                continue;
+            widget->style()->unpolish(widget);
+            widget->style()->polish(widget);
+        }
+    }
+}
+
+void ForumAccountPage::renderPoints()
+{
+    if (!m_pointsPage || !m_pointsBalance)
+        return;
+
+    if (!m_pointsLoaded)
+    {
+        m_pointsBalance->setText(QStringLiteral("—"));
+        m_pointsStreak->setText(tr("正在加载签到进度…"));
+        m_pointsReward->clear();
+        if (m_pointsCheckinButton)
+            m_pointsCheckinButton->setEnabled(false);
+        if (m_makeupCount)
+            m_makeupCount->setText(tr("— 张"));
+        if (m_buyMakeupButton)
+            m_buyMakeupButton->setEnabled(false);
+        if (m_useMakeupButton)
+            m_useMakeupButton->setEnabled(false);
+        if (m_pointsHistoryLayout)
+        {
+            clearLayout(m_pointsHistoryLayout);
+            auto *loading =
+                makeMutedLabel(tr("正在加载签到记录…"), m_pointsHistoryLayout->parentWidget(), "fbEmpty");
+            loading->setAlignment(Qt::AlignCenter);
+            m_pointsHistoryLayout->addSpacing(16);
+            m_pointsHistoryLayout->addWidget(loading);
+            m_pointsHistoryLayout->addSpacing(16);
+            m_pointsHistoryLayout->addStretch();
+        }
+        return;
+    }
+
+    const int points = m_pointsState.value(QStringLiteral("points")).toInt();
+    const bool checked = m_pointsState.value(QStringLiteral("checked_in_today")).toBool();
+    const int streak = m_pointsState.value(QStringLiteral("streak")).toInt();
+    const int rewardToday = m_pointsState.value(QStringLiteral("reward_today")).toInt();
+    const int rewardNext = m_pointsState.value(QStringLiteral("reward_next")).toInt();
+    const QJsonObject sunday = m_pointsState.value(QStringLiteral("sunday")).toObject();
+    const bool isSunday = sunday.value(QStringLiteral("is_sunday")).toBool();
+    const int giftPending = sunday.value(QStringLiteral("gift_pending")).toInt();
+
+    m_pointsBalance->setText(tr("%1 方块").arg(points));
+    m_pointsStreak->setText(streak > 0 ? tr("连续签到 %1 天").arg(streak)
+                                       : tr("今天签到，开始你的连续记录"));
+    if (checked)
+    {
+        m_pointsReward->setText(
+            tr("今天已领 %1 方块，明天可得 %2 方块").arg(rewardToday).arg(rewardNext));
+        if (m_pointsCheckinButton)
+        {
+            m_pointsCheckinButton->setText(tr("今天已签到"));
+            m_pointsCheckinButton->setEnabled(false);
+        }
+    }
+    else
+    {
+        m_pointsReward->setText(tr("今天签到可得 %1 方块").arg(rewardToday));
+        if (m_pointsCheckinButton)
+        {
+            m_pointsCheckinButton->setText(tr("签到领 %1 方块").arg(rewardToday));
+            m_pointsCheckinButton->setEnabled(true);
+        }
+    }
+
+    if (m_pointsGift)
+    {
+        if (giftPending > 0)
+            m_pointsGift->setText(
+                tr("已收到 %1 份神秘礼包，内容开放后可以开启。").arg(giftPending));
+        else if (isSunday)
+            m_pointsGift->setText(tr("今天是周日，签到后就能收到本周的神秘礼包（内容即将上线）。"));
+        else
+            m_pointsGift->setText(tr("每周天签到都会收到一份神秘礼包，内容正在准备中。"));
+    }
+
+    const QJsonObject makeup = m_pointsState.value(QStringLiteral("makeup")).toObject();
+    const int makeupCards = m_pointsState.value(QStringLiteral("makeup_cards")).toInt();
+    const bool yesterdayChecked = makeup.value(QStringLiteral("yesterday_checked")).toBool();
+    const int makeupPrice = makeup.value(QStringLiteral("price")).toInt(20);
+    if (m_makeupCount)
+        m_makeupCount->setText(tr("%1 张").arg(makeupCards));
+    if (m_makeupDesc)
+    {
+        if (yesterdayChecked)
+            m_makeupDesc->setText(tr("昨天已经签到过了，不用补签。"));
+        else if (makeupCards > 0)
+            m_makeupDesc->setText(tr("用一张补签卡补上昨天的签到，连续记录接着算。"));
+        else
+            m_makeupDesc->setText(
+                tr("昨天漏签时用一张补上，连续签到接着算；每张 %1 方块。").arg(makeupPrice));
+    }
+    if (m_buyMakeupButton)
+    {
+        m_buyMakeupButton->setText(tr("购买补签卡（%1 方块）").arg(makeupPrice));
+        m_buyMakeupButton->setEnabled(makeup.value(QStringLiteral("can_buy")).toBool());
+        m_buyMakeupButton->setToolTip(
+            makeup.value(QStringLiteral("can_buy")).toBool()
+                ? QString()
+                : tr("方块不够，先签到攒一些吧"));
+    }
+    if (m_useMakeupButton)
+    {
+        m_useMakeupButton->setEnabled(makeup.value(QStringLiteral("can_use")).toBool());
+        if (yesterdayChecked)
+            m_useMakeupButton->setText(tr("昨天已签到"));
+        else if (makeupCards < 1)
+            m_useMakeupButton->setText(tr("先买一张补签卡"));
+        else
+            m_useMakeupButton->setText(tr("补签昨天"));
+    }
+
+    refreshPointsDayCards();
+
+    if (!m_pointsHistoryLayout)
+        return;
+    clearLayout(m_pointsHistoryLayout);
+
+    const QJsonArray history = m_pointsState.value(QStringLiteral("history")).toArray();
+    if (history.isEmpty())
+    {
+        auto *empty = makeMutedLabel(tr("还没有签到记录，今天签到就能领第一笔方块。"),
+                                     m_pointsHistoryLayout->parentWidget(), "fbEmpty");
+        empty->setAlignment(Qt::AlignCenter);
+        m_pointsHistoryLayout->addSpacing(18);
+        m_pointsHistoryLayout->addWidget(empty);
+        m_pointsHistoryLayout->addSpacing(18);
+        m_pointsHistoryLayout->addStretch();
+        return;
+    }
+
+    for (const QJsonValue &value : history)
+    {
+        const QJsonObject row = value.toObject();
+        auto *item = new QFrame(m_pointsHistoryLayout->parentWidget());
+        item->setObjectName(QStringLiteral("fbPointsHistoryRow"));
+        auto *rowLayout = new QHBoxLayout(item);
+        rowLayout->setContentsMargins(12, 8, 12, 8);
+        rowLayout->setSpacing(10);
+
+        const QString dayText = row.value(QStringLiteral("day")).toString();
+        const QDate day = QDate::fromString(dayText, QStringLiteral("yyyy-MM-dd"));
+        auto *dayLabel = new QLabel(
+            day.isValid()
+                ? (day.year() == QDate::currentDate().year()
+                       ? day.toString(tr("M月d日"))
+                       : day.toString(QStringLiteral("yyyy-MM-dd")))
+                : dayText,
+            item);
+        dayLabel->setObjectName(QStringLiteral("fbPointsHistoryDay"));
+        rowLayout->addWidget(dayLabel);
+
+        auto *streakLabel =
+            new QLabel(tr("连续第 %1 天").arg(row.value(QStringLiteral("streak_day")).toInt()), item);
+        streakLabel->setObjectName(QStringLiteral("fbNote"));
+        rowLayout->addWidget(streakLabel);
+
+        if (row.value(QStringLiteral("sunday_gift")).toBool())
+        {
+            auto *giftChip = new QLabel(tr("神秘礼包"), item);
+            giftChip->setObjectName(QStringLiteral("fbChip"));
+            rowLayout->addWidget(giftChip);
+        }
+
+        rowLayout->addStretch();
+
+        auto *amount = new QLabel(tr("+%1 方块").arg(row.value(QStringLiteral("points")).toInt()), item);
+        amount->setObjectName(QStringLiteral("fbPointsHistoryAmount"));
+        rowLayout->addWidget(amount);
+
+        m_pointsHistoryLayout->addWidget(item);
+    }
+    m_pointsHistoryLayout->addStretch();
+}
+
+void ForumAccountPage::checkInPoints()
+{
+    if (m_pointsBusy || !m_service->isLoggedIn())
+        return;
+
+    m_pointsBusy = true;
+    if (m_pointsCheckinButton)
+    {
+        m_pointsCheckinButton->setEnabled(false);
+        m_pointsCheckinButton->setText(tr("签到中…"));
+    }
+
+    m_service->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/points/check-in"), QJsonObject(),
+        [this](const QJsonObject &result) {
+            m_pointsBusy = false;
+            m_pointsLoaded = true;
+            m_pointsState = result;
+            renderPoints();
+            if (m_statPoints)
+                m_statPoints->setText(QString::number(result.value(QStringLiteral("points")).toInt()));
+            const int awarded = result.value(QStringLiteral("awarded")).toInt();
+            if (result.value(QStringLiteral("sunday_gift")).toBool())
+                NotificationManager::showSuccess(
+                    this, tr("签到成功：+%1 方块，神秘礼包已记到账号上").arg(awarded));
+            else
+                NotificationManager::showSuccess(
+                    this, tr("签到成功：+%1 方块，连续签到第 %2 天")
+                              .arg(awarded)
+                              .arg(result.value(QStringLiteral("streak_day")).toInt()));
+            m_service->refreshProfile();
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            m_pointsBusy = false;
+            if (m_pointsCheckinButton)
+                m_pointsCheckinButton->setEnabled(true);
+            if (message.contains(QStringLiteral("已经签到")))
+                loadPoints(true);
+            else
+                renderPoints();
+            NotificationManager::showError(this, message);
+        });
+}
+
+void ForumAccountPage::buyMakeupCard()
+{
+    if (m_pointsBusy || !m_service->isLoggedIn())
+        return;
+
+    m_pointsBusy = true;
+    if (m_buyMakeupButton)
+        m_buyMakeupButton->setEnabled(false);
+
+    m_service->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/points/makeup-card/buy"), QJsonObject(),
+        [this](const QJsonObject &result) {
+            m_pointsBusy = false;
+            m_pointsLoaded = true;
+            m_pointsState = result;
+            renderPoints();
+            if (m_statPoints)
+                m_statPoints->setText(QString::number(result.value(QStringLiteral("points")).toInt()));
+            NotificationManager::showSuccess(this, tr("已经买到一张补签卡"));
+            m_service->refreshProfile();
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            m_pointsBusy = false;
+            renderPoints();
+            NotificationManager::showError(this, message);
+        });
+}
+
+void ForumAccountPage::useMakeupCard()
+{
+    if (m_pointsBusy || !m_service->isLoggedIn())
+        return;
+
+    const QJsonObject makeup = m_pointsState.value(QStringLiteral("makeup")).toObject();
+    if (!makeup.value(QStringLiteral("can_use")).toBool())
+        return;
+    const QString day = makeup.value(QStringLiteral("yesterday")).toString();
+    if (AppMessageBox::question(this, tr("使用补签卡"),
+                                tr("用一张补签卡补签 %1？").arg(day),
+                                AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No) !=
+        AppMessageBox::Yes)
+        return;
+
+    m_pointsBusy = true;
+    if (m_useMakeupButton)
+        m_useMakeupButton->setEnabled(false);
+
+    m_service->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/points/makeup"), QJsonObject(),
+        [this](const QJsonObject &result) {
+            m_pointsBusy = false;
+            m_pointsLoaded = true;
+            m_pointsState = result;
+            renderPoints();
+            if (m_statPoints)
+                m_statPoints->setText(QString::number(result.value(QStringLiteral("points")).toInt()));
+            QString message = tr("补签成功：+%1 方块")
+                                  .arg(result.value(QStringLiteral("awarded")).toInt());
+            const int todayBonus = result.value(QStringLiteral("today_bonus")).toInt();
+            if (todayBonus > 0)
+                message += tr("，今天连续奖励补差 +%1 方块").arg(todayBonus);
+            if (result.value(QStringLiteral("sunday_gift")).toBool())
+                message += tr("，神秘礼包已记到账号上");
+            NotificationManager::showSuccess(this, message);
+            m_service->refreshProfile();
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            m_pointsBusy = false;
+            loadPoints(true);
+            NotificationManager::showError(this, message);
+        });
 }
 
 void ForumAccountPage::loadNotifications()
@@ -4196,6 +4873,10 @@ void ForumAccountPage::loadTabData()
     else if (m_activeTab == FeedbackTab)
     {
         loadMyFeedbacks(false);
+    }
+    else if (m_activeTab == PointsTab)
+    {
+        loadPoints(false);
     }
 }
 

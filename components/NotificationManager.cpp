@@ -1,6 +1,8 @@
 #include "NotificationManager.h"
 #include "NotificationCard.h"
 
+#include "platform.h"
+
 #include <QCoreApplication>
 #include <QPropertyAnimation>
 #include <QWidget>
@@ -95,6 +97,17 @@ QList<NotificationRecord> NotificationManager::history()
     return instance()->m_history;
 }
 
+namespace {
+/// 通知卡片的水平落点：桌面靠左下角；手机端屏幕窄且左下角是侧边导航，
+/// 压在上面会挡住操作，改为水平居中（悬停暂停等悬停交互在触屏上也没有意义）
+int cardX(const NotificationCard *card, QWidget *win)
+{
+    if (Platform::getFormFactor() == Platform::FormFactor::Mobile)
+        return qMax(8, (win->width() - card->width()) / 2);
+    return 16;
+}
+}
+
 void NotificationManager::clearHistory()
 {
     instance()->m_history.clear();
@@ -107,14 +120,13 @@ void NotificationManager::repositionAll()
     QWidget *win = m_cards.first()->window();
     if (!win) return;
 
-    int x = 16;
     int y = win->height() - 16;
 
     for (int i = m_cards.size() - 1; i >= 0; --i) {
         NotificationCard *card = m_cards.at(i);
         y -= card->height();
 
-        QPoint targetPos(x, y);
+        QPoint targetPos(cardX(card, win), y);
 
         if (card->pos() != targetPos) {
             QPropertyAnimation *anim = new QPropertyAnimation(card, "pos", card);

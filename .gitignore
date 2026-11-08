@@ -25,6 +25,8 @@ tests/update_install_probe/build/
 tests/update_install_probe/work/
 tests/update_install_probe/setupwork/
 tests/update_install_probe/negwork/
+.tmp_lobby_probe/
+.tmp_mp_probe/
 *.log
 
 # 备份文件

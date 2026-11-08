@@ -340,6 +340,10 @@ void ForumLobbyService::closeRoom(int roomId, OkHandler onOk, FailHandler onFail
 
 void ForumLobbyService::recordJoin(int roomId, RoomHandler onOk, FailHandler onFail)
 {
+    // 分享链接进来的房间不在大厅里（没有 id），不用报加入计数
+    if (roomId <= 0)
+        return;
+
     ForumAccountService::instance()->sendJson(
         QByteArrayLiteral("POST"), QStringLiteral("/api/lobby/rooms/%1/join").arg(roomId),
         QJsonObject(),

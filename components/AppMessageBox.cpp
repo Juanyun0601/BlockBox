@@ -714,8 +714,7 @@ int AppMessageBox::exec()
     m_clickedButton = nullptr;
     refreshTitleLabel();
     positionOverWindow();
-    setWindowModality(Qt::WindowModal);
-    QDialog::exec();
+    AppDialogBase::exec();
     return int(m_resultButton);
 }
 

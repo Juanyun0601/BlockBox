@@ -32,13 +32,13 @@ struct PermissionDef {
 };
 
 const PermissionDef kPermissionDefs[] = {
-    { "file:read",  "读取方块盒子文件",            RiskLow },
-    { "file:write", "修改方块盒子文件/代码",        RiskMedium },
-    { "registry",   "读写 Windows 注册表",         RiskMedium },
-    { "network",    "访问网络",                    RiskLow },
-    { "admin",      "请求管理员权限（UAC 提权）",   RiskHigh },
-    { "system",     "执行系统级操作（服务/关机/格式化等）", RiskHigh },
-    { "ui:style",   "修改启动器界面样式（仅外观）", RiskLow },
+    { "file:read",  QT_TRANSLATE_NOOP("QObject", "读取方块盒子文件"),            RiskLow },
+    { "file:write", QT_TRANSLATE_NOOP("QObject", "修改方块盒子文件/代码"),        RiskMedium },
+    { "registry",   QT_TRANSLATE_NOOP("QObject", "读写 Windows 注册表"),         RiskMedium },
+    { "network",    QT_TRANSLATE_NOOP("QObject", "访问网络"),                    RiskLow },
+    { "admin",      QT_TRANSLATE_NOOP("QObject", "请求管理员权限（UAC 提权）"),   RiskHigh },
+    { "system",     QT_TRANSLATE_NOOP("QObject", "执行系统级操作（服务/关机/格式化等）"), RiskHigh },
+    { "ui:style",   QT_TRANSLATE_NOOP("QObject", "修改启动器界面样式（仅外观）"), RiskLow },
 };
 
 /** 危险模式表：pattern / 说明 / 是否高危 */
@@ -50,42 +50,42 @@ struct PatternEntry {
 
 const PatternEntry kDangerPatterns[] = {
     // —— 删除类（高危）——
-    {"remove-item",            "删除文件/目录（Remove-Item）",       true},
-    {"remove-childitem",       "递归删除文件/目录",                 true},
-    {"rm -rf",                 "强制递归删除（rm -rf）",            true},
-    {"rmdir",                  "删除目录",                           true},
-    {"rd /s",                  "递归删除目录（cmd）",                true},
-    {"del /s",                 "递归删除文件（cmd）",                true},
-    {"erase /s",               "递归删除文件（erase）",              true},
-    {"clear-recyclebin",       "清空回收站",                         false},
+    {"remove-item",            QT_TRANSLATE_NOOP("QObject", "删除文件/目录（Remove-Item）"),       true},
+    {"remove-childitem",       QT_TRANSLATE_NOOP("QObject", "递归删除文件/目录"),                 true},
+    {"rm -rf",                 QT_TRANSLATE_NOOP("QObject", "强制递归删除（rm -rf）"),            true},
+    {"rmdir",                  QT_TRANSLATE_NOOP("QObject", "删除目录"),                           true},
+    {"rd /s",                  QT_TRANSLATE_NOOP("QObject", "递归删除目录（cmd）"),                true},
+    {"del /s",                 QT_TRANSLATE_NOOP("QObject", "递归删除文件（cmd）"),                true},
+    {"erase /s",               QT_TRANSLATE_NOOP("QObject", "递归删除文件（erase）"),              true},
+    {"clear-recyclebin",       QT_TRANSLATE_NOOP("QObject", "清空回收站"),                         false},
     // —— 格式化 / 磁盘（高危）——
-    {"format-volume",          "格式化磁盘卷（Format-Volume）",      true},
-    {"format ",                "格式化磁盘（format）",               true},
-    {"diskpart",               "磁盘分区操作（diskpart）",           true},
+    {"format-volume",          QT_TRANSLATE_NOOP("QObject", "格式化磁盘卷（Format-Volume）"),      true},
+    {"format ",                QT_TRANSLATE_NOOP("QObject", "格式化磁盘（format）"),               true},
+    {"diskpart",               QT_TRANSLATE_NOOP("QObject", "磁盘分区操作（diskpart）"),           true},
     // —— 关机 / 重启 / 服务 ——
-    {"shutdown",               "关机/重启/注销（shutdown）",         false},
-    {"restart-computer",       "重启计算机",                         true},
-    {"stop-computer",          "关闭计算机",                         true},
-    {"stop-service",           "停止系统服务",                       true},
-    {"set-service",            "修改系统服务",                       true},
-    {"new-service",            "创建系统服务",                       true},
-    {"sc delete",              "删除系统服务（sc delete）",          true},
-    {"bcdedit",                "修改引导配置（bcdedit）",            true},
+    {"shutdown",               QT_TRANSLATE_NOOP("QObject", "关机/重启/注销（shutdown）"),         false},
+    {"restart-computer",       QT_TRANSLATE_NOOP("QObject", "重启计算机"),                         true},
+    {"stop-computer",          QT_TRANSLATE_NOOP("QObject", "关闭计算机"),                         true},
+    {"stop-service",           QT_TRANSLATE_NOOP("QObject", "停止系统服务"),                       true},
+    {"set-service",            QT_TRANSLATE_NOOP("QObject", "修改系统服务"),                       true},
+    {"new-service",            QT_TRANSLATE_NOOP("QObject", "创建系统服务"),                       true},
+    {"sc delete",              QT_TRANSLATE_NOOP("QObject", "删除系统服务（sc delete）"),          true},
+    {"bcdedit",                QT_TRANSLATE_NOOP("QObject", "修改引导配置（bcdedit）"),            true},
     // —— 注册表 ——
-    {"reg delete",             "删除注册表项（reg delete）",         true},
-    {"reg add",                "修改注册表项（reg add）",            true},
-    {"set-itemproperty",       "修改注册表值/属性",                  true},
-    {"remove-itemproperty",    "删除注册表值",                       true},
-    {"set-executionpolicy",    "修改 PowerShell 执行策略",           true},
+    {"reg delete",             QT_TRANSLATE_NOOP("QObject", "删除注册表项（reg delete）"),         true},
+    {"reg add",                QT_TRANSLATE_NOOP("QObject", "修改注册表项（reg add）"),            true},
+    {"set-itemproperty",       QT_TRANSLATE_NOOP("QObject", "修改注册表值/属性"),                  true},
+    {"remove-itemproperty",    QT_TRANSLATE_NOOP("QObject", "删除注册表值"),                       true},
+    {"set-executionpolicy",    QT_TRANSLATE_NOOP("QObject", "修改 PowerShell 执行策略"),           true},
     // —— 文件权限 / hosts ——
-    {"takeown",                "夺取文件所有权（takeown）",          true},
-    {"icacls",                 "修改文件权限（icacls）",             true},
-    {"attrib ",                "修改文件属性（attrib）",             false},
-    {"\\hosts",                "修改 hosts 文件",                    true},
+    {"takeown",                QT_TRANSLATE_NOOP("QObject", "夺取文件所有权（takeown）"),          true},
+    {"icacls",                 QT_TRANSLATE_NOOP("QObject", "修改文件权限（icacls）"),             true},
+    {"attrib ",                QT_TRANSLATE_NOOP("QObject", "修改文件属性（attrib）"),             false},
+    {"\\hosts",                QT_TRANSLATE_NOOP("QObject", "修改 hosts 文件"),                    true},
     // —— 进程 ——
-    {"stop-process",           "终止进程（Stop-Process）",           false},
-    {"taskkill",               "终止进程（taskkill）",               false},
-    {"wmic process",           "进程管理（wmic）",                   false},
+    {"stop-process",           QT_TRANSLATE_NOOP("QObject", "终止进程（Stop-Process）"),           false},
+    {"taskkill",               QT_TRANSLATE_NOOP("QObject", "终止进程（taskkill）"),               false},
+    {"wmic process",           QT_TRANSLATE_NOOP("QObject", "进程管理（wmic）"),                   false},
 };
 
 /** 危险模式 → 所需权限映射（越权检测用） */

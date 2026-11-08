@@ -10,6 +10,7 @@
 #include "DownloadTaskManager.h"
 
 #include <QCheckBox>
+#include <QCoreApplication>
 #include <QDateTimeEdit>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -433,46 +434,46 @@ QVector<CleanCategory> SystemTools::getCleanCategories()
 
 #ifdef Q_OS_WIN
     cat.id        = "windows_temp";
-    cat.displayName = QStringLiteral("Windows 临时文件");
-    cat.description = QStringLiteral("C:/Windows/Temp 下的系统临时文件");
+    cat.displayName = QCoreApplication::translate("SystemTools", "Windows 临时文件");
+    cat.description = QCoreApplication::translate("SystemTools", "C:/Windows/Temp 下的系统临时文件");
     cat.estimatedSize = estimateDirSize(QDir::cleanPath(qgetenv("SystemRoot")) + "/Temp");
     cat.checked     = true;
     categories.append(cat);
 #endif
 
     cat.id        = "user_temp";
-    cat.displayName = QStringLiteral("用户临时文件");
-    cat.description = QStringLiteral("用户临时目录");
+    cat.displayName = QCoreApplication::translate("SystemTools", "用户临时文件");
+    cat.description = QCoreApplication::translate("SystemTools", "用户临时目录");
     cat.estimatedSize = estimateDirSize(QStandardPaths::writableLocation(QStandardPaths::TempLocation));
     cat.checked     = true;
     categories.append(cat);
 
 #ifdef Q_OS_WIN
     cat.id        = "prefetch";
-    cat.displayName = QStringLiteral("Prefetch 预读文件");
-    cat.description = QStringLiteral("系统预读缓存文件，可安全清理");
+    cat.displayName = QCoreApplication::translate("SystemTools", "Prefetch 预读文件");
+    cat.description = QCoreApplication::translate("SystemTools", "系统预读缓存文件，可安全清理");
     cat.estimatedSize = estimateDirSize(QDir::cleanPath(qgetenv("SystemRoot")) + "/Prefetch");
     cat.checked     = true;
     categories.append(cat);
 
     cat.id        = "dns_cache";
-    cat.displayName = QStringLiteral("DNS 缓存");
-    cat.description = QStringLiteral("刷新 DNS 解析缓存");
+    cat.displayName = QCoreApplication::translate("SystemTools", "DNS 缓存");
+    cat.description = QCoreApplication::translate("SystemTools", "刷新 DNS 解析缓存");
     cat.estimatedSize = -1;
     cat.checked     = true;
     categories.append(cat);
 
     cat.id        = "recycle_bin";
-    cat.displayName = QStringLiteral("回收站");
-    cat.description = QStringLiteral("清空回收站中的文件");
+    cat.displayName = QCoreApplication::translate("SystemTools", "回收站");
+    cat.description = QCoreApplication::translate("SystemTools", "清空回收站中的文件");
     cat.estimatedSize = -1;
     cat.checked     = false;
     categories.append(cat);
 #endif
 
     cat.id        = "browser_cache";
-    cat.displayName = QStringLiteral("浏览器缓存");
-    cat.description = QStringLiteral("浏览器缓存文件");
+    cat.displayName = QCoreApplication::translate("SystemTools", "浏览器缓存");
+    cat.description = QCoreApplication::translate("SystemTools", "浏览器缓存文件");
     {
         qint64 browserSize = 0;
         for (const QString& p : getBrowserCachePaths())
@@ -484,8 +485,8 @@ QVector<CleanCategory> SystemTools::getCleanCategories()
 
 #ifdef Q_OS_WIN
     cat.id        = "recent_docs";
-    cat.displayName = QStringLiteral("最近文档记录");
-    cat.description = QStringLiteral("最近打开的文件快捷方式列表");
+    cat.displayName = QCoreApplication::translate("SystemTools", "最近文档记录");
+    cat.description = QCoreApplication::translate("SystemTools", "最近打开的文件快捷方式列表");
     cat.estimatedSize = estimateDirSize(QDir::cleanPath(
         QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
         + "/../Microsoft/Windows/Recent"));
@@ -493,8 +494,8 @@ QVector<CleanCategory> SystemTools::getCleanCategories()
     categories.append(cat);
 
     cat.id        = "thumbnail_cache";
-    cat.displayName = QStringLiteral("缩略图缓存");
-    cat.description = QStringLiteral("Windows 缩略图缓存文件");
+    cat.displayName = QCoreApplication::translate("SystemTools", "缩略图缓存");
+    cat.description = QCoreApplication::translate("SystemTools", "Windows 缩略图缓存文件");
     {
         QString thumbPath = QDir::cleanPath(
             QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
@@ -505,16 +506,16 @@ QVector<CleanCategory> SystemTools::getCleanCategories()
     categories.append(cat);
 
     cat.id        = "windows_logs";
-    cat.displayName = QStringLiteral("Windows 日志文件");
-    cat.description = QStringLiteral("C:/Windows/System32/logfiles 下的日志");
+    cat.displayName = QCoreApplication::translate("SystemTools", "Windows 日志文件");
+    cat.description = QCoreApplication::translate("SystemTools", "C:/Windows/System32/logfiles 下的日志");
     cat.estimatedSize = estimateDirSize(
         QDir::cleanPath(qgetenv("SystemRoot")) + "/System32/logfiles");
     cat.checked     = false;
     categories.append(cat);
 
     cat.id        = "memory_dumps";
-    cat.displayName = QStringLiteral("系统内存转储");
-    cat.description = QStringLiteral("系统崩溃时的内存转储文件 (memory.dmp, Minidump)");
+    cat.displayName = QCoreApplication::translate("SystemTools", "系统内存转储");
+    cat.description = QCoreApplication::translate("SystemTools", "系统崩溃时的内存转储文件 (memory.dmp, Minidump)");
     {
         qint64 dumpSize = 0;
         QString memDump = QDir::cleanPath(qgetenv("SystemRoot")) + "/memory.dmp";
@@ -539,7 +540,7 @@ QVector<CleanCategory> SystemTools::getCleanCategories()
 void SystemTools::showCleanupDialog(QWidget* parentWidget)
 {
     QDialog dialog(parentWidget);
-    dialog.setWindowTitle(QStringLiteral("磁盘清理"));
+    dialog.setWindowTitle(QCoreApplication::translate("SystemTools", "磁盘清理"));
     dialog.setMinimumWidth(560);
     dialog.setMinimumHeight(480);
 
@@ -548,12 +549,12 @@ void SystemTools::showCleanupDialog(QWidget* parentWidget)
     mainLayout->setContentsMargins(24, 20, 24, 20);
 
     // 标题
-    auto* titleLabel = new QLabel(QStringLiteral("选择要清理的项目"));
+    auto* titleLabel = new QLabel(QCoreApplication::translate("SystemTools", "选择要清理的项目"));
     titleLabel->setObjectName("homeSectionTitle");
     titleLabel->setStyleSheet("font-size: 18px; font-weight: bold; color: #333;");
     mainLayout->addWidget(titleLabel);
 
-    auto* descLabel = new QLabel(QStringLiteral("勾选需要清理的类别，系统将删除对应的临时文件和缓存。"));
+    auto* descLabel = new QLabel(QCoreApplication::translate("SystemTools", "勾选需要清理的类别，系统将删除对应的临时文件和缓存。"));
     descLabel->setStyleSheet("color: #666; font-size: 13px;");
     descLabel->setWordWrap(true);
     mainLayout->addWidget(descLabel);
@@ -594,7 +595,7 @@ void SystemTools::showCleanupDialog(QWidget* parentWidget)
         if (cat.estimatedSize >= 0)
             sizeLabel->setText(formatSize(cat.estimatedSize));
         else
-            sizeLabel->setText(QStringLiteral("未知"));
+            sizeLabel->setText(QCoreApplication::translate("SystemTools", "未知"));
         sizeLabel->setStyleSheet("color: #999; font-size: 12px;");
         sizeLabel->setFixedWidth(80);
         sizeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -611,12 +612,12 @@ void SystemTools::showCleanupDialog(QWidget* parentWidget)
     auto* selectLayout = new QHBoxLayout(selectRow);
     selectLayout->setContentsMargins(8, 4, 8, 4);
 
-    auto* selectAllBtn = new QPushButton(QStringLiteral("全选"));
+    auto* selectAllBtn = new QPushButton(QCoreApplication::translate("SystemTools", "全选"));
     selectAllBtn->setObjectName("launchButton");
     selectAllBtn->setCursor(Qt::PointingHandCursor);
     selectAllBtn->setFixedWidth(80);
 
-    auto* deselectAllBtn = new QPushButton(QStringLiteral("取消全选"));
+    auto* deselectAllBtn = new QPushButton(QCoreApplication::translate("SystemTools", "取消全选"));
     deselectAllBtn->setObjectName("launchButton");
     deselectAllBtn->setCursor(Qt::PointingHandCursor);
     deselectAllBtn->setFixedWidth(80);
@@ -645,15 +646,15 @@ void SystemTools::showCleanupDialog(QWidget* parentWidget)
         for (const auto& cat : categories)
             if (cat.estimatedSize >= 0)
                 total += cat.estimatedSize;
-        totalLabel->setText(QStringLiteral("可释放空间: %1").arg(formatSize(total)));
+        totalLabel->setText(QCoreApplication::translate("SystemTools", "可释放空间: %1").arg(formatSize(total)));
     }
     totalLabel->setStyleSheet("color: #555; font-size: 13px; font-weight: bold;");
     mainLayout->addWidget(totalLabel);
 
     // 按钮
     auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    buttonBox->button(QDialogButtonBox::Ok)->setText(QStringLiteral("开始清理"));
-    buttonBox->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    buttonBox->button(QDialogButtonBox::Ok)->setText(QCoreApplication::translate("SystemTools", "开始清理"));
+    buttonBox->button(QDialogButtonBox::Cancel)->setText(QCoreApplication::translate("SystemTools", "取消"));
     mainLayout->addWidget(buttonBox);
 
     QObject::connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -678,75 +679,75 @@ void SystemTools::showCleanupDialog(QWidget* parentWidget)
         if (id == "windows_temp")
         {
             qint64 sz = cleanWindowsTemp();
-            if (sz > 0) { totalCleaned += sz; details.append(QStringLiteral("Windows 临时文件: %1").arg(formatSize(sz))); }
+            if (sz > 0) { totalCleaned += sz; details.append(QCoreApplication::translate("SystemTools", "Windows 临时文件: %1").arg(formatSize(sz))); }
         }
         else if (id == "user_temp")
         {
             qint64 sz = cleanUserTemp();
-            if (sz > 0) { totalCleaned += sz; details.append(QStringLiteral("用户临时文件: %1").arg(formatSize(sz))); }
+            if (sz > 0) { totalCleaned += sz; details.append(QCoreApplication::translate("SystemTools", "用户临时文件: %1").arg(formatSize(sz))); }
         }
         else if (id == "prefetch")
         {
             qint64 sz = cleanPrefetch();
-            if (sz > 0) { totalCleaned += sz; details.append(QStringLiteral("Prefetch 预读文件: %1").arg(formatSize(sz))); }
+            if (sz > 0) { totalCleaned += sz; details.append(QCoreApplication::translate("SystemTools", "Prefetch 预读文件: %1").arg(formatSize(sz))); }
         }
         else if (id == "dns_cache")
         {
             cleanDnsCache();
-            details.append(QStringLiteral("DNS 缓存: 已清理"));
+            details.append(QCoreApplication::translate("SystemTools", "DNS 缓存: 已清理"));
         }
         else if (id == "recycle_bin")
         {
             if (cleanRecycleBin())
-                details.append(QStringLiteral("回收站: 已清空"));
+                details.append(QCoreApplication::translate("SystemTools", "回收站: 已清空"));
             else
-                details.append(QStringLiteral("回收站: 清理失败"));
+                details.append(QCoreApplication::translate("SystemTools", "回收站: 清理失败"));
         }
         else if (id == "browser_cache")
         {
             qint64 sz = cleanBrowserCache();
-            if (sz > 0) { totalCleaned += sz; details.append(QStringLiteral("浏览器缓存: %1").arg(formatSize(sz))); }
+            if (sz > 0) { totalCleaned += sz; details.append(QCoreApplication::translate("SystemTools", "浏览器缓存: %1").arg(formatSize(sz))); }
         }
         else if (id == "recent_docs")
         {
             qint64 sz = cleanRecentDocs();
-            if (sz > 0) { totalCleaned += sz; details.append(QStringLiteral("最近文档记录: %1").arg(formatSize(sz))); }
+            if (sz > 0) { totalCleaned += sz; details.append(QCoreApplication::translate("SystemTools", "最近文档记录: %1").arg(formatSize(sz))); }
         }
         else if (id == "thumbnail_cache")
         {
             qint64 sz = cleanThumbnailCache();
-            if (sz > 0) { totalCleaned += sz; details.append(QStringLiteral("缩略图缓存: %1").arg(formatSize(sz))); }
+            if (sz > 0) { totalCleaned += sz; details.append(QCoreApplication::translate("SystemTools", "缩略图缓存: %1").arg(formatSize(sz))); }
         }
         else if (id == "windows_logs")
         {
             qint64 sz = cleanWindowsLogs();
-            if (sz > 0) { totalCleaned += sz; details.append(QStringLiteral("Windows 日志: %1").arg(formatSize(sz))); }
+            if (sz > 0) { totalCleaned += sz; details.append(QCoreApplication::translate("SystemTools", "Windows 日志: %1").arg(formatSize(sz))); }
         }
         else if (id == "memory_dumps")
         {
             qint64 sz = cleanMemoryDumps();
-            if (sz > 0) { totalCleaned += sz; details.append(QStringLiteral("系统内存转储: %1").arg(formatSize(sz))); }
+            if (sz > 0) { totalCleaned += sz; details.append(QCoreApplication::translate("SystemTools", "系统内存转储: %1").arg(formatSize(sz))); }
         }
     }
 
     QString resultMsg;
     if (!anySelected)
     {
-        resultMsg = QStringLiteral("没有选择任何清理项目。");
+        resultMsg = QCoreApplication::translate("SystemTools", "没有选择任何清理项目。");
     }
     else if (totalCleaned > 0)
     {
-        resultMsg = QStringLiteral("磁盘清理完成!\n共释放: %1\n\n%2")
+        resultMsg = QCoreApplication::translate("SystemTools", "磁盘清理完成!\\n共释放: %1\\n\\n%2")
                         .arg(formatSize(totalCleaned))
                         .arg(details.join("\n"));
     }
     else
     {
-        resultMsg = QStringLiteral("磁盘清理完成!\n没有找到需要清理的文件。\n\n%1").arg(details.join("\n"));
+        resultMsg = QCoreApplication::translate("SystemTools", "磁盘清理完成!\\n没有找到需要清理的文件。\\n\\n%1").arg(details.join("\n"));
     }
 
     AppMessageBox msgBox(parentWidget);
-    msgBox.setWindowTitle(QStringLiteral("磁盘清理"));
+    msgBox.setWindowTitle(QCoreApplication::translate("SystemTools", "磁盘清理"));
     msgBox.setText(resultMsg);
     msgBox.setIcon(totalCleaned > 0 ? AppMessageBox::Information : AppMessageBox::Information);
     msgBox.exec();

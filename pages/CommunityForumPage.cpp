@@ -16,12 +16,10 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QJsonArray>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QMouseEvent>
-#include <QNetworkReply>
-#include <QNetworkRequest>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPropertyAnimation>
 #include <QPushButton>
@@ -38,10 +36,6 @@
 #include "pages/MultiplayerLobbyPage.h"
 
 namespace {
-
-/// 网络抖动时最多发几次（含第一次）
-constexpr int kMaxRequestAttempts = 3;
-constexpr int kRequestRetryDelayMs = 400;
 
 /** 整张卡片可点：点空白处也算点卡片 */
 class ClickableCard : public QFrame
@@ -139,7 +133,6 @@ QFrame *makeCard(QWidget *parent)
 CommunityForumPage::CommunityForumPage(QWidget *parent)
     : QWidget(parent)
 {
-    m_network = new QNetworkAccessManager(this);
     setAttribute(Qt::WA_StyledBackground, false);
 
     buildUi();
@@ -530,6 +523,7 @@ void CommunityForumPage::refresh()
     m_siteNewUsers = 0;
     m_newestUserName.clear();
     m_failedRequests = 0;
+    m_humanBlocked = false;
     m_pendingRequests = 3;
     m_loadedOnce = true;
 
@@ -548,8 +542,7 @@ void CommunityForumPage::refresh()
     setStatus(tr("正在连接论坛…"));
     fetchLobby();
 
-    requestJson(QStringLiteral("/api/boards"), [this](const QJsonDocument &doc) {
-        const QJsonObject root = doc.object();
+    requestJson(QStringLiteral("/api/boards"), [this](const QJsonObject &root) {
         const QJsonArray boards = root.value(QStringLiteral("boards")).toArray();
         for (const QJsonValue &value : boards)
         {
@@ -575,8 +568,8 @@ void CommunityForumPage::refresh()
             m_newestUserName = newest.value(QStringLiteral("username")).toString();
     });
 
-    requestJson(QStringLiteral("/api/threads?sort=latest&per_page=8"), [this](const QJsonDocument &doc) {
-        const QJsonArray threads = doc.object().value(QStringLiteral("threads")).toArray();
+    requestJson(QStringLiteral("/api/threads?sort=latest&per_page=8"), [this](const QJsonObject &root) {
+        const QJsonArray threads = root.value(QStringLiteral("threads")).toArray();
         for (const QJsonValue &value : threads)
         {
             const QJsonObject item = value.toObject();
@@ -595,8 +588,8 @@ void CommunityForumPage::refresh()
         }
     });
 
-    requestJson(QStringLiteral("/api/tags"), [this](const QJsonDocument &doc) {
-        const QJsonArray tags = doc.object().value(QStringLiteral("tags")).toArray();
+    requestJson(QStringLiteral("/api/tags"), [this](const QJsonObject &root) {
+        const QJsonArray tags = root.value(QStringLiteral("tags")).toArray();
         for (const QJsonValue &value : tags)
         {
             const QJsonObject item = value.toObject();
@@ -609,65 +602,39 @@ void CommunityForumPage::refresh()
 }
 
 void CommunityForumPage::requestJson(const QString &path,
-                                     const std::function<void(const QJsonDocument &)> &onSuccess)
+                                     const std::function<void(const QJsonObject &)> &onSuccess)
 {
-    sendJsonRequest(path, onSuccess, 1);
-}
-
-void CommunityForumPage::sendJsonRequest(
-    const QString &path, const std::function<void(const QJsonDocument &)> &onSuccess, int attempt)
-{
-    QNetworkRequest request{QUrl(forumUrl(path))};
-    request.setTransferTimeout(8000);
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BlockBoxLauncher"));
-    // 重试时换一条新连接、不走 HTTP/2：个别网络会把 HTTP/2 连接直接掐断
-    if (attempt > 1)
-        request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-
-    QNetworkReply *reply = m_network->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, path, onSuccess, attempt]() {
-        const QNetworkReply::NetworkError networkError = reply->error();
-        const QString networkDetail = reply->errorString();
-        const QByteArray raw = reply->readAll();
-        reply->deleteLater();
-
-        if (networkError != QNetworkReply::NoError)
-        {
-            // 连接被重置 / 握手失败 / 超时：多半是抖动，悄悄再试一次，别让用户看到"连不上论坛"
-            if (attempt < kMaxRequestAttempts && ForumAccountService::isTransientNetworkError(
-                                                     int(networkError)))
-            {
-                qWarning() << "[CommunityForum] 板块数据请求失败，准备重试:" << networkDetail;
-                QTimer::singleShot(kRequestRetryDelayMs, this, [this, path, onSuccess, attempt]() {
-                    m_network->clearConnectionCache();
-                    sendJsonRequest(path, onSuccess, attempt + 1);
-                });
+    // 统一走论坛账户服务发请求：它会带上登录令牌和人机验证令牌，
+    // 网络抖动自动重试；万一被 403 拦下来（验证过期、论坛刚重启过），
+    // 会先弹滑块，验完把这次请求原样重发，页面这边不用自己处理。
+    // 回调挂在论坛账户服务上，页面要是先没了就别再碰了
+    const QPointer<CommunityForumPage> self(this);
+    ForumAccountService::instance()->getJson(
+        path,
+        [self, onSuccess](const QJsonObject &root) {
+            if (!self)
                 return;
+            if (onSuccess)
+                onSuccess(root);
+            self->finishRequest();
+        },
+        [self, path](const QString &message, int status) {
+            if (!self)
+                return;
+            qWarning() << "[CommunityForum] 板块数据请求失败:" << self->forumUrl(path) << status
+                       << message;
+            self->m_failedRequests += 1;
+            // 人机验证没过不算「连不上论坛」，别把网络问题的那句话说给用户
+            if (status == 403)
+                self->m_humanBlocked = true;
+            if (self->m_failedRequests == 1)
+            {
+                // 错误说明可能带换行（网络失败时会附上论坛地址），头图里只放第一行
+                self->setStatus(
+                    tr("连接失败：%1").arg(message.section(QLatin1Char('\n'), 0, 0)), true);
             }
-
-            qWarning() << "[CommunityForum] 连不上论坛:" << forumUrl(path) << networkDetail;
-            m_failedRequests += 1;
-            if (m_failedRequests == 1)
-                setStatus(tr("连接失败：%1").arg(networkDetail), true);
-            finishRequest();
-            return;
-        }
-
-        QJsonParseError parseError{};
-        const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
-        if (parseError.error != QJsonParseError::NoError || !doc.isObject())
-        {
-            m_failedRequests += 1;
-            if (m_failedRequests == 1)
-                setStatus(tr("返回的数据无法解析，确认地址指向的是方块盒子论坛"), true);
-            finishRequest();
-            return;
-        }
-
-        if (onSuccess)
-            onSuccess(doc);
-        finishRequest();
-    });
+            self->finishRequest();
+        });
 }
 
 void CommunityForumPage::finishRequest()
@@ -686,6 +653,8 @@ void CommunityForumPage::finishRequest()
 
     if (m_failedRequests == 0)
         setStatus(tr("已连接 · %1").arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm"))));
+    else if (m_humanBlocked)
+        setStatus(tr("需要先完成人机验证，验证后点「刷新」"), true);
     else if (m_failedRequests >= 3)
         setStatus(tr("连不上论坛，检查一下网络，或者点「刷新」再试"), true);
     else

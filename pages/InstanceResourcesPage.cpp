@@ -413,8 +413,11 @@ void InstanceResourcesPage::setupConnections()
     connect(m_nameFetcher, &ModNameFetcher::namesResolved, this, &InstanceResourcesPage::onModNameResolved);
     connect(m_nameFetcher, &ModNameFetcher::namesFetchFailed, this, &InstanceResourcesPage::onModNameFetchFailed);
 
-    // 主题色变化时重新应用 Tab 栏样式（按钮选中态、指示条颜色）
+    // 主题色变化 / 亮暗切换时重新应用 Tab 栏样式（按钮选中态、指示条颜色、底色）
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged, this, [this]() {
+        applyTabThemeStyles();
+    });
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
         applyTabThemeStyles();
     });
 }
@@ -2312,12 +2315,12 @@ void InstanceResourcesPage::applyTabThemeStyles()
                             .arg(tc.red()).arg(tc.green()).arg(tc.blue());
 
     // Tab 栏容器样式：底部 1px 分隔线，营造层次感
-    m_tabBar->setStyleSheet(QString(
+    m_tabBar->setStyleSheet(ThemeManager::instance()->resolveTokens(QString(
         "#resourcesTabBar {"
-        "  background: palette(window);"
+        "  background: @BG_BASE@;"
         "  border-bottom: 1px solid %1;"
         "}"
-    ).arg(borderColor));
+    ).arg(borderColor)));
 
     // 指示条样式：主题色，圆角
     if (m_tabHighlight)

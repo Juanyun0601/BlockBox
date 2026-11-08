@@ -184,7 +184,7 @@ void LoadingOverlay::initUI()
     m_progressBar->setFixedHeight(6);
 
     // 状态文字
-    m_statusLabel = new QLabel(QStringLiteral("正在加载..."), m_centerWidget);
+    m_statusLabel = new QLabel(tr("正在加载..."), m_centerWidget);
     m_statusLabel->setObjectName(QStringLiteral("loadingStatusLabel"));
     m_statusLabel->setAlignment(Qt::AlignCenter);
     m_statusLabel->setWordWrap(true);
@@ -193,7 +193,7 @@ void LoadingOverlay::initUI()
     m_statusLabel->setFont(statusFont);
 
     // 取消按钮
-    m_cancelButton = new QPushButton(QStringLiteral("取消"), m_centerWidget);
+    m_cancelButton = new QPushButton(tr("取消"), m_centerWidget);
     m_cancelButton->setObjectName(QStringLiteral("loadingCancelButton"));
     m_cancelButton->setFixedSize(80, 30);
     m_cancelButton->setCursor(Qt::PointingHandCursor);

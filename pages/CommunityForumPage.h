@@ -18,7 +18,6 @@
 
 #pragma once
 
-#include <QNetworkAccessManager>
 #include <QString>
 #include <QVector>
 #include <QWidget>
@@ -30,7 +29,7 @@
 class QBoxLayout;
 class QGridLayout;
 class QHBoxLayout;
-class QJsonDocument;
+class QJsonObject;
 class QLabel;
 class QLayout;
 class QProgressBar;
@@ -123,10 +122,8 @@ private:
     void applySiteUrl();
     void updateHeroButtons();
     void requestAll();
-    void requestJson(const QString &path, const std::function<void(const QJsonDocument &)> &onSuccess);
-    /** 实际发一次请求；网络抖动时按 attempt 重试（第 2 次起退回 HTTP/1.1） */
-    void sendJsonRequest(const QString &path,
-                         const std::function<void(const QJsonDocument &)> &onSuccess, int attempt);
+    /** 走论坛账户服务拉接口数据（自带登录令牌与人机验证令牌） */
+    void requestJson(const QString &path, const std::function<void(const QJsonObject &)> &onSuccess);
     void finishRequest();
     /** 刷新页面顶部加载进度条（done/total 为已完成 / 总请求数） */
     void updateLoadingBar();
@@ -144,7 +141,6 @@ private:
     void openUrl(const QString &path);
     QString forumUrl(const QString &path) const;
 
-    QNetworkAccessManager *m_network = nullptr;
     QString m_baseUrl;
 
     // 页面顶部加载进度条（数据加载期间显示）
@@ -194,5 +190,6 @@ private:
     int m_boardColumns = 2;
     int m_pendingRequests = 0;
     int m_failedRequests = 0;
+    bool m_humanBlocked = false;   ///< 这一轮有请求被人机验证拦下来了
     bool m_loadedOnce = false;
 };

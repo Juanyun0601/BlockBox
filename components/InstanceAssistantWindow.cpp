@@ -32,6 +32,7 @@
 #include <QFutureWatcher>
 
 #include "utils/SettingsManager.h"
+#include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
 #include "utils/CommandAssistant/CommandPack.h"
 #include "utils/CommandAssistant/GameDetector.h"
@@ -320,11 +321,7 @@ void InstanceAssistantWindow::initUI()
     // Stacked widget for pages
     m_stackedWidget = new QStackedWidget();
     m_stackedWidget->setObjectName("assistantStackedWidget");
-    m_stackedWidget->setStyleSheet(
-        "#assistantStackedWidget {"
-        "  background: palette(window);"
-        "}"
-    );
+
 
     for (int i = 0; i < navItems.size(); ++i) {
         QWidget *page = new QWidget();
@@ -378,17 +375,27 @@ void InstanceAssistantWindow::applyThemeStyles()
     QString textColor = ThemeManager::instance()->currentTextColor();
     QString borderColor = ThemeManager::instance()->currentBorderColor();
 
+    // 页面底色跟着主题走：深色主题下不要再露出系统浅色
+    if (m_stackedWidget) {
+        m_stackedWidget->setStyleSheet(StyleKit::resolve(QStringLiteral(
+            "#assistantStackedWidget { background: @BG_BASE@; }")));
+    }
+    if (m_javaStack) {
+        m_javaStack->setStyleSheet(StyleKit::resolve(QStringLiteral(
+            "#assistantJavaStack { background: @BG_BASE@; }")));
+    }
+
     QColor tc(themeColor);
     QString hoverBg = QString("rgba(%1, %2, %3, 0.12)")
         .arg(tc.red()).arg(tc.green()).arg(tc.blue());
 
     m_navBar->setStyleSheet(
-        QString(
+        StyleKit::resolve(QStringLiteral(
             "#assistantNavBar {"
-            "  background: palette(window);"
+            "  background: @BG_BASE@;"
             "  border-bottom: 1px solid %1;"
             "}"
-        ).arg(borderColor)
+        )).arg(borderColor)
     );
 
     m_selectionHighlight->setStyleSheet(
@@ -712,8 +719,7 @@ void InstanceAssistantWindow::buildJavaPage(QWidget *page)
     //  - index 1：InstanceJavaDownloadPage（发行版/版本/镜像源/进度）
     m_javaStack = new QStackedWidget(page);
     m_javaStack->setObjectName(QStringLiteral("assistantJavaStack"));
-    m_javaStack->setStyleSheet(
-        QStringLiteral("#assistantJavaStack { background: palette(window); }"));
+
 
     m_javaPage = new InstanceJavaPage(m_javaStack);
     m_javaDownloadPage = new InstanceJavaDownloadPage(m_javaStack);

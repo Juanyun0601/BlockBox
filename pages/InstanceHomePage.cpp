@@ -278,9 +278,9 @@ void InstanceHomePage::applyThemeStyles()
     QString borderColor = ThemeManager::instance()->currentBorderColor();
 
     // 游玩信息单元格样式
-    QString infoStyle = QString(
+    QString infoStyle = ThemeManager::instance()->resolveTokens(QString(
         "#homeInfoCell {"
-        "  background: palette(base);"
+        "  background: @BG_CARD@;"
         "  border: 1px solid %1;"
         "  border-radius: 6px;"
         "}"
@@ -295,7 +295,7 @@ void InstanceHomePage::applyThemeStyles()
         "  background: transparent;"
         "  border: none;"
         "}"
-    ).arg(borderColor, textColor, themeColor);
+    ).arg(borderColor, textColor, themeColor));
 
     // 应用到 infoContainer 的所有子 cell
     auto infoContainer = findChild<QWidget *>("homeInfoContainer");

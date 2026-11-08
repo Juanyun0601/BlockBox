@@ -21,7 +21,10 @@
 #include <QLabel>
 #include <QLineEdit>
 #include "components/AppMessageBox.h"
+#include <QLinearGradient>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -31,20 +34,129 @@
 #include <QFileDialog>
 #include "components/LobbyPublishDialog.h"
 #include "components/NotificationManager.h"
+#include "components/ShareToFriendDialog.h"
+#include "pages/MultiplayerUiParts.h"
 #include "utils/ForumAccountService.h"
+#include "utils/ForumChatService.h"
+#include "utils/ForumImageStore.h"
 #include "utils/ForumLobbyService.h"
 #include "utils/frp/FrpManager.h"
 #include "utils/Hongshi/HongshiClient.h"
 #include "utils/IconHelper.h"
 #include "utils/Lobby/LobbyInstanceMatcher.h"
+#include "utils/Lobby/LobbyShareLink.h"
 #include "utils/StyleKit.h"
 #include "utils/Terracotta/TerracottaClient.h"
 #include "utils/ThemeManager.h"
+#include "utils/TouchScroll.h"
 
 #include <QDesktopServices>
+#include <QFrame>
 #include <QIntValidator>
 #include <QTabBar>
 #include <QUrl>
+
+// 版式零件（滚动页 / 卡片 / 状态条 / 状态圆点）与基岩版联机页共用
+using MultiplayerUi::ScrollPage;
+using MultiplayerUi::makeScrollPage;
+using MultiplayerUi::makeCard;
+using MultiplayerUi::makeCardTitle;
+using MultiplayerUi::makeFieldLabel;
+using MultiplayerUi::makeHintLabel;
+using MultiplayerUi::makeDivider;
+using MultiplayerUi::makeDot;
+using MultiplayerUi::setDotTone;
+using MultiplayerUi::makeStatusCard;
+using MultiplayerUi::makeNoteCard;
+using MultiplayerUi::makeLatencyRow;
+
+namespace {
+
+/// 玩家角色配色：房主橙 / 本机绿 / 房客蓝（头像底色、描边都用它）
+QColor playerRoleColor(const QString &kind)
+{
+    if (kind == QStringLiteral("HOST"))
+        return QColor(255, 152, 0);
+    if (kind == QStringLiteral("LOCAL"))
+        return QColor(76, 175, 80);
+    return QColor(33, 150, 243);
+}
+
+/**
+ * @brief 玩家头像底板：渐变圆 + 首字母
+ *
+ * 账户头像和首字母头像是同一套尺寸 / 描边，切换时卡片不会跳一下。
+ * 先在设备像素里画完再设 devicePixelRatio，高分屏下不会糊。
+ */
+QPixmap letterAvatarPixmap(const QColor &roleColor, const QString &displayName, int size, qreal dpr)
+{
+    const int pixels = qMax(1, qRound(size * qMax<qreal>(1.0, dpr)));
+    QPixmap pixmap(pixels, pixels);
+    pixmap.fill(Qt::transparent);
+
+    {
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::TextAntialiasing);
+
+        QLinearGradient gradient(0, 0, pixels, pixels);
+        gradient.setColorAt(0.0, roleColor.lighter(120));
+        gradient.setColorAt(1.0, roleColor.darker(108));
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(gradient);
+        painter.drawEllipse(QRectF(0, 0, pixels, pixels));
+
+        const QString trimmed = displayName.trimmed();
+        const QString letter = trimmed.isEmpty() ? QStringLiteral("?")
+                                                 : trimmed.left(1).toUpper();
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPixelSize(qMax(8, qRound(size * 0.42 * qMax<qreal>(1.0, dpr))));
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.drawText(QRectF(0, 0, pixels, pixels), Qt::AlignCenter, letter);
+    }
+
+    pixmap.setDevicePixelRatio(qMax<qreal>(1.0, dpr));
+    return pixmap;
+}
+
+/// 方块盒子账户头像：裁成圆形，再套一圈角色色描边
+QPixmap roundAvatarPixmap(const QImage &image, const QColor &roleColor, int size, qreal dpr)
+{
+    const int pixels = qMax(1, qRound(size * qMax<qreal>(1.0, dpr)));
+    QPixmap pixmap(pixels, pixels);
+    pixmap.fill(Qt::transparent);
+
+    {
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+
+        const qreal ring = qMax(1.5, 2.0 * qMax<qreal>(1.0, dpr));
+        QPainterPath clip;
+        clip.addEllipse(QRectF(0, 0, pixels, pixels).adjusted(ring, ring, -ring, -ring));
+        painter.setClipPath(clip);
+
+        const QImage scaled = image.scaled(pixels, pixels, Qt::KeepAspectRatioByExpanding,
+                                           Qt::SmoothTransformation);
+        painter.drawImage(QPointF((pixels - scaled.width()) / 2.0,
+                                  (pixels - scaled.height()) / 2.0),
+                          scaled);
+        painter.setClipping(false);
+
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(roleColor, ring));
+        painter.drawEllipse(QRectF(0, 0, pixels, pixels).adjusted(ring / 2.0, ring / 2.0,
+                                                                  -ring / 2.0, -ring / 2.0));
+    }
+
+    pixmap.setDevicePixelRatio(qMax<qreal>(1.0, dpr));
+    return pixmap;
+}
+
+} // namespace
 
 #ifdef Q_OS_ANDROID
 void MultiplayerPage::showEvent(QShowEvent *event)
@@ -66,19 +178,23 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
     , m_coreCombo(nullptr)
     , m_updateBtn(nullptr)
     , m_homePage(nullptr)
+    , m_statusDot(nullptr)
     , m_statusLabel(nullptr)
     , m_descLabel(nullptr)
     , m_joinBtn(nullptr)
     , m_createBtn(nullptr)
     , m_roomPage(nullptr)
+    , m_latencyDot(nullptr)
     , m_latencyLabel(nullptr)
     , m_roomCodeLabel(nullptr)
     , m_copyCodeBtn(nullptr)
     , m_leaveBtn(nullptr)
+    , m_playersTitle(nullptr)
     , m_playersScroll(nullptr)
     , m_playersContainer(nullptr)
     , m_playersLayout(nullptr)
     , m_hongshiHomePage(nullptr)
+    , m_hongshiStatusDot(nullptr)
     , m_hongshiStatusLabel(nullptr)
     , m_hongshiNodeCombo(nullptr)
     , m_hongshiNodeRefreshBtn(nullptr)
@@ -86,11 +202,13 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
     , m_hongshiPortSpin(nullptr)
     , m_hongshiStartBtn(nullptr)
     , m_hongshiTunnelPage(nullptr)
+    , m_hongshiLatencyDot(nullptr)
     , m_hongshiLatencyLabel(nullptr)
     , m_tunnelAddrLabel(nullptr)
     , m_copyAddrBtn(nullptr)
     , m_hongshiStopBtn(nullptr)
     , m_frpHomePage(nullptr)
+    , m_frpStatusDot(nullptr)
     , m_frpStatusLabel(nullptr)
     , m_frpDescLabel(nullptr)
     , m_frpKeyHint(nullptr)
@@ -103,6 +221,7 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
     , m_frpPickBtn(nullptr)
     , m_frpStartBtn(nullptr)
     , m_frpRoomPage(nullptr)
+    , m_frpLatencyDot(nullptr)
     , m_frpLatencyLabel(nullptr)
     , m_frpAddrLabel(nullptr)
     , m_frpCopyBtn(nullptr)
@@ -110,6 +229,8 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
     , m_frpStopBtn(nullptr)
 {
     initUI();
+    // 先把 frp 服务商的说明 / 已存密钥填好，切到樱花或 OpenFrp 时不会是空卡片
+    updateFrpDesc();
     applyThemeStyles();
 
     // 发布到联机大厅：每 40 秒续一次期，服务端 2 分钟没收到心跳就会把房间下架
@@ -176,7 +297,10 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
             showInfoDialog(tr("联机错误"), err);
     });
 
+    // 换主题色、或者亮色/暗色整体切换时都要重算样式
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
+            this, &MultiplayerPage::applyThemeStyles);
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
             this, &MultiplayerPage::applyThemeStyles);
 
     // 刷新定时器（用于更新联机时间）
@@ -206,6 +330,10 @@ MultiplayerPage::~MultiplayerPage() = default;
 
 void MultiplayerPage::initUI()
 {
+    // 命名 + 允许样式表铺底：联机页自己铺主题底色，不靠外层窗口的调色板
+    setObjectName(QStringLiteral("multiplayerRoot"));
+    setAttribute(Qt::WA_StyledBackground, true);
+
     // 联机大厅已经独立成主窗口的一级页面，这里只保留联机核心本身
     buildCorePage(this);
 
@@ -217,20 +345,25 @@ void MultiplayerPage::initUI()
 void MultiplayerPage::buildCorePage(QWidget *page)
 {
     auto *mainLayout = new QVBoxLayout(page);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setContentsMargins(14, 12, 14, 0);
     mainLayout->setSpacing(0);
 
     // ---- 顶部：核心选择 + 更新按钮（跨核心共享） ----
     m_topBarContainer = new QWidget(page);
     m_topBarContainer->setObjectName(QStringLiteral("multiplayerTopBar"));
     auto *topLayout = new QHBoxLayout(m_topBarContainer);
-    topLayout->setContentsMargins(8, 8, 8, 0);
-    topLayout->setSpacing(6);
+    topLayout->setContentsMargins(0, 0, 0, 10);
+    topLayout->setSpacing(8);
+
+    auto *coreCaption = new QLabel(tr("核心"), m_topBarContainer);
+    coreCaption->setObjectName(QStringLiteral("mpTopCaption"));
+    topLayout->addWidget(coreCaption);
 
     m_coreCombo = new QComboBox(m_topBarContainer);
     m_coreCombo->setObjectName(QStringLiteral("multiplayerCoreCombo"));
     m_coreCombo->setCursor(Qt::PointingHandCursor);
-    m_coreCombo->setFixedHeight(28);
+    m_coreCombo->setFixedHeight(32);
+    m_coreCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_coreCombo->addItem(tr("陶瓦联机"));
     m_coreCombo->addItem(tr("红石联机"));
     // frp 服务商加彩色圆点小图标便于区分
@@ -253,12 +386,19 @@ void MultiplayerPage::buildCorePage(QWidget *page)
     m_updateBtn = new QPushButton(tr("更新"), m_topBarContainer);
     m_updateBtn->setObjectName(QStringLiteral("multiplayerUpdateBtn"));
     m_updateBtn->setCursor(Qt::PointingHandCursor);
-    m_updateBtn->setFixedHeight(28);
+    m_updateBtn->setFixedHeight(32);
+    m_updateBtn->setMinimumWidth(88);
     m_updateBtn->setToolTip(tr("检查并下载最新版本联机核心"));
 
     topLayout->addWidget(m_coreCombo, 1);
     topLayout->addWidget(m_updateBtn);
     mainLayout->addWidget(m_topBarContainer);
+
+    // 顶栏与页面内容之间的一条细线
+    auto *topDivider = new QFrame(page);
+    topDivider->setObjectName(QStringLiteral("mpTopDivider"));
+    topDivider->setFixedHeight(1);
+    mainLayout->addWidget(topDivider);
 
     // ---- 页面栈 ----
     m_stack = new QStackedWidget(page);
@@ -333,24 +473,15 @@ FrpManager::Provider MultiplayerPage::frpProvider() const
 
 void MultiplayerPage::buildHomePage(QWidget *page)
 {
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(10);
+    const ScrollPage parts = makeScrollPage(page);
 
-    // 顶部状态文字（显示当前状态/版本）
-    m_statusLabel = new QLabel(page);
-    m_statusLabel->setObjectName(QStringLiteral("multiplayerStatusLabel"));
-    m_statusLabel->setWordWrap(true);
-    m_statusLabel->setAlignment(Qt::AlignCenter);
-    layout->addWidget(m_statusLabel);
+    // ---- 顶部状态条：核心装没装、跑没跑，一眼看到 ----
+    parts.body->addWidget(makeStatusCard(page, m_statusDot, m_statusLabel,
+                                         QStringLiteral("multiplayerStatusLabel")));
 
-    // ---- 中间区域：说明信息 ----
-    m_descLabel = new QLabel(page);
-    m_descLabel->setObjectName(QStringLiteral("multiplayerDescLabel"));
-    m_descLabel->setWordWrap(true);
-    m_descLabel->setTextFormat(Qt::RichText);
-    m_descLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    m_descLabel->setOpenExternalLinks(true);
+    // ---- 说明卡片 ----
+    QFrame *noteCard = makeNoteCard(page, tr("关于陶瓦联机"),
+                                    m_descLabel, QStringLiteral("multiplayerDescLabel"));
     m_descLabel->setText(
         tr("本软件可以使用陶瓦联机，可以与支持陶瓦联机的软件"
            "（如 HMCL、PCL社区版、VersePC、FCL、ZL2）进行联机。<br><br>"
@@ -361,25 +492,26 @@ void MultiplayerPage::buildHomePage(QWidget *page)
            "在联机过程中，请严格遵守当地法律法规。<br><br>"
            "感谢了解与配合，祝你联机愉快！")
     );
-    layout->addWidget(m_descLabel, 1);
+    parts.body->addWidget(noteCard);
+    parts.body->addStretch(1);
 
-    // ---- 加入房间 / 创建房间按钮 ----
+    // ---- 加入房间 / 创建房间按钮（固定在底部） ----
     auto *btnRow = new QHBoxLayout();
-    btnRow->setSpacing(6);
+    btnRow->setSpacing(10);
 
     m_joinBtn = new QPushButton(tr("加入房间"), page);
     m_joinBtn->setObjectName(QStringLiteral("multiplayerJoinBtn"));
     m_joinBtn->setCursor(Qt::PointingHandCursor);
-    m_joinBtn->setFixedHeight(34);
+    m_joinBtn->setFixedHeight(44);
 
     m_createBtn = new QPushButton(tr("创建房间"), page);
     m_createBtn->setObjectName(QStringLiteral("multiplayerCreateBtn"));
     m_createBtn->setCursor(Qt::PointingHandCursor);
-    m_createBtn->setFixedHeight(34);
+    m_createBtn->setFixedHeight(44);
 
     btnRow->addWidget(m_joinBtn, 1);
     btnRow->addWidget(m_createBtn, 1);
-    layout->addLayout(btnRow);
+    parts.outer->addLayout(btnRow);
 
 // 信号连接
     connect(m_updateBtn, &QPushButton::clicked, this, [this]() {
@@ -449,8 +581,8 @@ void MultiplayerPage::buildHomePage(QWidget *page)
             return;
         }
         if (m_client->state() == TerracottaClient::State::Fatal) {
-            showInfoDialog(tr("启动失败"),
-                tr("联机核心启动失败，请重试或重新下载安装。"));
+            // 启动失败也允许重试：重新拉起核心，而不是只弹窗让用户重启软件
+            m_client->start();
             return;
         }
         if (m_client->state() != TerracottaClient::State::Waiting) {
@@ -472,7 +604,7 @@ void MultiplayerPage::buildHomePage(QWidget *page)
         }
 
         // 获取当前账户玩家名（简化：使用默认名）
-        QString playerName = tr("BlockBox 玩家");
+        const QString playerName = localPlayerName();
         if (!m_client->joinRoom(code, playerName)) {
             showInfoDialog(tr("加入失败"),
                 tr("无法加入房间，请检查邀请码或当前状态。"));
@@ -505,8 +637,8 @@ void MultiplayerPage::buildHomePage(QWidget *page)
             return;
         }
         if (m_client->state() == TerracottaClient::State::Fatal) {
-            showInfoDialog(tr("启动失败"),
-                tr("联机核心启动失败，请重试或重新下载安装。"));
+            // 启动失败也允许重试：重新拉起核心，而不是只弹窗让用户重启软件
+            m_client->start();
             return;
         }
         if (m_client->state() != TerracottaClient::State::Waiting) {
@@ -514,7 +646,7 @@ void MultiplayerPage::buildHomePage(QWidget *page)
                 tr("当前已在房间中，请先离开当前房间。"));
             return;
         }
-        QString playerName = tr("BlockBox 玩家");
+        const QString playerName = localPlayerName();
         m_client->createRoom(playerName);
         showInfoDialog(tr("正在扫描"),
             tr("正在扫描，请进入游戏，在游戏菜单选择对局域网开放。"));
@@ -527,81 +659,102 @@ void MultiplayerPage::buildHomePage(QWidget *page)
 
 void MultiplayerPage::buildRoomPage(QWidget *page)
 {
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 12, 0, 12);
+    outer->setSpacing(12);
 
-    // ---- 顶部：延迟和联机时间 ----
-    m_latencyLabel = new QLabel(page);
-    m_latencyLabel->setObjectName(QStringLiteral("multiplayerLatencyLabel"));
+    // ---- 顶部：状态小圆点 + 联机时间 ----
+    outer->addLayout(makeLatencyRow(page, m_latencyDot, m_latencyLabel));
     m_latencyLabel->setAlignment(Qt::AlignCenter);
-    m_latencyLabel->setWordWrap(true);
-    layout->addWidget(m_latencyLabel);
 
-    // ---- 中间：大大的房间邀请码 + 复制按钮 ----
-    auto *codeLayout = new QHBoxLayout();
-    codeLayout->setSpacing(6);
+    // ---- 邀请码卡片：大字邀请码 + 一键复制 ----
+    QFrame *codeCard = makeCard(QStringLiteral("mpCodeCard"), page);
+    auto *codeRow = new QHBoxLayout(codeCard);
+    codeRow->setContentsMargins(16, 12, 12, 12);
+    codeRow->setSpacing(10);
 
-    m_roomCodeLabel = new QLabel(page);
+    auto *codeColumn = new QVBoxLayout();
+    codeColumn->setSpacing(2);
+    auto *codeCaption = new QLabel(tr("房间邀请码"), codeCard);
+    codeCaption->setObjectName(QStringLiteral("mpCodeCaption"));
+    codeColumn->addWidget(codeCaption);
+
+    m_roomCodeLabel = new QLabel(codeCard);
     m_roomCodeLabel->setObjectName(QStringLiteral("multiplayerRoomCodeLabel"));
-    m_roomCodeLabel->setAlignment(Qt::AlignCenter);
     m_roomCodeLabel->setWordWrap(true);
     m_roomCodeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    codeColumn->addWidget(m_roomCodeLabel);
+    codeRow->addLayout(codeColumn, 1);
 
-    QFont codeFont = m_roomCodeLabel->font();
-    codeFont.setBold(true);
-    codeFont.setPointSize(12);
-    m_roomCodeLabel->setFont(codeFont);
-
-    m_copyCodeBtn = new QPushButton(page);
+    m_copyCodeBtn = new QPushButton(codeCard);
     m_copyCodeBtn->setObjectName(QStringLiteral("multiplayerCopyCodeBtn"));
     m_copyCodeBtn->setCursor(Qt::PointingHandCursor);
-    m_copyCodeBtn->setFixedSize(28, 28);
+    m_copyCodeBtn->setFixedSize(36, 36);
     m_copyCodeBtn->setToolTip(tr("复制邀请码"));
     m_copyCodeBtn->setIcon(IconHelper::loadColoredIcon(
         QStringLiteral(":/Images/Icons/copy.svg"),
         ThemeManager::instance()->currentThemeColor(), 16));
     m_copyCodeBtn->setIconSize(QSize(16, 16));
+    codeRow->addWidget(m_copyCodeBtn, 0, Qt::AlignVCenter);
+    outer->addWidget(codeCard);
 
-    codeLayout->addStretch(1);
-    codeLayout->addWidget(m_roomCodeLabel, 4);
-    codeLayout->addWidget(m_copyCodeBtn);
-    codeLayout->addStretch(1);
-    layout->addLayout(codeLayout);
+    // ---- 玩家列表 ----
+    auto *playersHeader = new QHBoxLayout();
+    playersHeader->setContentsMargins(2, 2, 2, 0);
+    m_playersTitle = new QLabel(tr("玩家"), page);
+    m_playersTitle->setObjectName(QStringLiteral("mpSectionTitle"));
+    playersHeader->addWidget(m_playersTitle);
+    playersHeader->addStretch(1);
+    outer->addLayout(playersHeader);
 
-    // ---- 发布到联机大厅：把邀请码挂到论坛，朋友在软件里能一键进房 ----
-    m_pubTerracottaBtn = new QPushButton(tr("发布到联机大厅"), page);
-    m_pubTerracottaBtn->setObjectName(QStringLiteral("multiplayerPublishBtn"));
-    m_pubTerracottaBtn->setCursor(Qt::PointingHandCursor);
-    m_pubTerracottaBtn->setFixedHeight(30);
-    m_pubTerracottaBtn->setToolTip(tr("把当前房间发到论坛联机大厅，网页端只能看邀请码，软件端可一键加入"));
-    connect(m_pubTerracottaBtn, &QPushButton::clicked,
-            this, &MultiplayerPage::onPublishToLobbyClicked);
-    layout->addWidget(m_pubTerracottaBtn);
-
-    // ---- 玩家列表区域 ----
     m_playersScroll = new QScrollArea(page);
     m_playersScroll->setObjectName(QStringLiteral("multiplayerPlayersScroll"));
     m_playersScroll->setWidgetResizable(true);
     m_playersScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_playersScroll->setFrameShape(QFrame::NoFrame);
+    m_playersScroll->viewport()->setAutoFillBackground(false);
+    TouchScroll::enableDragScroll(m_playersScroll);
 
     m_playersContainer = new QWidget();
     m_playersContainer->setObjectName(QStringLiteral("multiplayerPlayersContainer"));
     m_playersLayout = new QVBoxLayout(m_playersContainer);
-    m_playersLayout->setContentsMargins(0, 0, 0, 0);
-    m_playersLayout->setSpacing(4);
+    m_playersLayout->setContentsMargins(0, 0, 2, 0);
+    m_playersLayout->setSpacing(8);
     m_playersLayout->addStretch();
 
     m_playersScroll->setWidget(m_playersContainer);
-    layout->addWidget(m_playersScroll, 1);
+    outer->addWidget(m_playersScroll, 1);
+
+    // ---- 发布到联机大厅：把邀请码挂到论坛，朋友在软件里能一键进房 ----
+    m_pubTerracottaBtn = new QPushButton(tr("发布到联机大厅"), page);
+    m_pubTerracottaBtn->setObjectName(QStringLiteral("multiplayerPublishBtn"));
+    m_pubTerracottaBtn->setCursor(Qt::PointingHandCursor);
+    m_pubTerracottaBtn->setFixedHeight(40);
+    m_pubTerracottaBtn->setToolTip(tr("把当前房间发到论坛联机大厅，网页端只能看邀请码，软件端可一键加入"));
+    connect(m_pubTerracottaBtn, &QPushButton::clicked,
+            this, &MultiplayerPage::onPublishToLobbyClicked);
+
+    // 创建分享链接：生成网页链接，朋友点开看邀请码，装了方块盒子可一键加入
+    m_shareTerracottaBtn = new QPushButton(tr("创建分享链接"), page);
+    m_shareTerracottaBtn->setObjectName(QStringLiteral("multiplayerShareBtn"));
+    m_shareTerracottaBtn->setCursor(Qt::PointingHandCursor);
+    m_shareTerracottaBtn->setFixedHeight(40);
+    m_shareTerracottaBtn->setToolTip(tr("生成一条分享链接，朋友打开就能看到邀请码并一键加入"));
+    connect(m_shareTerracottaBtn, &QPushButton::clicked,
+            this, &MultiplayerPage::onCreateShareLinkClicked);
+
+    auto *publishRow = new QHBoxLayout();
+    publishRow->setSpacing(8);
+    publishRow->addWidget(m_pubTerracottaBtn, 1);
+    publishRow->addWidget(m_shareTerracottaBtn);
+    outer->addLayout(publishRow);
 
     // ---- 离开房间按钮 ----
     m_leaveBtn = new QPushButton(tr("离开房间"), page);
     m_leaveBtn->setObjectName(QStringLiteral("multiplayerLeaveBtn"));
     m_leaveBtn->setCursor(Qt::PointingHandCursor);
-    m_leaveBtn->setFixedHeight(32);
-    layout->addWidget(m_leaveBtn);
+    m_leaveBtn->setFixedHeight(44);
+    outer->addWidget(m_leaveBtn);
 
     connect(m_copyCodeBtn, &QPushButton::clicked, this, [this]() {
         QString code = m_client->roomCode();
@@ -624,83 +777,83 @@ void MultiplayerPage::buildRoomPage(QWidget *page)
 
 void MultiplayerPage::buildHongshiHomePage(QWidget *page)
 {
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(10);
+    const ScrollPage parts = makeScrollPage(page);
 
-    // 顶部状态文字
-    m_hongshiStatusLabel = new QLabel(page);
-    m_hongshiStatusLabel->setObjectName(QStringLiteral("multiplayerStatusLabel"));
-    m_hongshiStatusLabel->setWordWrap(true);
-    m_hongshiStatusLabel->setAlignment(Qt::AlignCenter);
-    layout->addWidget(m_hongshiStatusLabel);
+    // 顶部状态条
+    parts.body->addWidget(makeStatusCard(page, m_hongshiStatusDot, m_hongshiStatusLabel,
+                                         QStringLiteral("multiplayerStatusLabel")));
+
+    // ---- 连接设置卡片 ----
+    QFrame *formCard = makeCard(QStringLiteral("mpFormCard"), page);
+    auto *form = new QVBoxLayout(formCard);
+    form->setContentsMargins(14, 12, 14, 14);
+    form->setSpacing(8);
 
     // 中转服务器节点
     auto *nodeHeaderRow = new QHBoxLayout();
-    nodeHeaderRow->setSpacing(6);
+    nodeHeaderRow->setSpacing(8);
+    nodeHeaderRow->addWidget(makeFieldLabel(tr("中转服务器节点"), formCard), 1);
 
-    auto *nodeLabel = new QLabel(tr("中转服务器节点"), page);
-    nodeLabel->setObjectName(QStringLiteral("hongshiFieldLabel"));
-    nodeHeaderRow->addWidget(nodeLabel, 1);
-
-    m_hongshiNodeRefreshBtn = new QPushButton(tr("刷新"), page);
+    m_hongshiNodeRefreshBtn = new QPushButton(tr("刷新"), formCard);
     m_hongshiNodeRefreshBtn->setObjectName(QStringLiteral("hongshiNodeRefreshBtn"));
     m_hongshiNodeRefreshBtn->setCursor(Qt::PointingHandCursor);
-    m_hongshiNodeRefreshBtn->setFixedHeight(26);
+    m_hongshiNodeRefreshBtn->setFixedHeight(28);
+    m_hongshiNodeRefreshBtn->setMinimumWidth(58);
     nodeHeaderRow->addWidget(m_hongshiNodeRefreshBtn);
-    layout->addLayout(nodeHeaderRow);
+    form->addLayout(nodeHeaderRow);
 
-    m_hongshiNodeCombo = new QComboBox(page);
+    m_hongshiNodeCombo = new QComboBox(formCard);
     m_hongshiNodeCombo->setObjectName(QStringLiteral("hongshiNodeCombo"));
     m_hongshiNodeCombo->setCursor(Qt::PointingHandCursor);
+    m_hongshiNodeCombo->setFixedHeight(36);
     m_hongshiNodeCombo->addItem(tr("加载中..."));
-    layout->addWidget(m_hongshiNodeCombo);
+    form->addWidget(m_hongshiNodeCombo);
 
-    m_hongshiNodeHint = new QLabel(page);
-    m_hongshiNodeHint->setObjectName(QStringLiteral("hongshiFieldHint"));
-    m_hongshiNodeHint->setWordWrap(true);
-    m_hongshiNodeHint->setText(tr("正在从主站获取节点列表，失败自动回退国内镜像..."));
-    layout->addWidget(m_hongshiNodeHint);
+    m_hongshiNodeHint = makeHintLabel(
+        tr("正在从主站获取节点列表，失败自动回退国内镜像..."), formCard);
+    form->addWidget(m_hongshiNodeHint);
+
+    form->addWidget(makeDivider(formCard));
 
     // 本地 Minecraft 端口
-    auto *portLabel = new QLabel(tr("本地 Minecraft 端口"), page);
-    portLabel->setObjectName(QStringLiteral("hongshiFieldLabel"));
-    layout->addWidget(portLabel);
+    form->addWidget(makeFieldLabel(tr("本地 Minecraft 端口"), formCard));
 
-    m_hongshiPortSpin = new QSpinBox(page);
+    m_hongshiPortSpin = new QSpinBox(formCard);
     m_hongshiPortSpin->setObjectName(QStringLiteral("hongshiPortSpin"));
     m_hongshiPortSpin->setRange(1, 65535);
     m_hongshiPortSpin->setValue(25565);
-    m_hongshiPortSpin->setFixedHeight(34);
-    layout->addWidget(m_hongshiPortSpin);
+    m_hongshiPortSpin->setFixedHeight(36);
+    // 上下调节箭头在窄卡片里很挤，直接当输入框用（手机端也只能敲键盘）
+    m_hongshiPortSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    form->addWidget(m_hongshiPortSpin);
 
-    auto *portHint = new QLabel(tr("请先启动游戏并选择「对局域网开放」，然后填入游戏显示的端口。"), page);
-    portHint->setObjectName(QStringLiteral("hongshiFieldHint"));
-    portHint->setWordWrap(true);
-    layout->addWidget(portHint);
+    form->addWidget(makeHintLabel(
+        tr("请先启动游戏并选择「对局域网开放」，然后填入游戏显示的端口。"), formCard));
+
+    form->addSpacing(2);
 
     // 启动内核按钮
-    m_hongshiStartBtn = new QPushButton(tr("启动内核"), page);
+    m_hongshiStartBtn = new QPushButton(tr("启动内核"), formCard);
     m_hongshiStartBtn->setObjectName(QStringLiteral("hongshiStartBtn"));
     m_hongshiStartBtn->setCursor(Qt::PointingHandCursor);
-    m_hongshiStartBtn->setFixedHeight(34);
-    layout->addWidget(m_hongshiStartBtn);
+    m_hongshiStartBtn->setFixedHeight(44);
+    form->addWidget(m_hongshiStartBtn);
 
-    // 说明文字
-    auto *desc = new QLabel(page);
-    desc->setObjectName(QStringLiteral("multiplayerDescLabel"));
-    desc->setWordWrap(true);
-    desc->setTextFormat(Qt::RichText);
-    desc->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    desc->setOpenExternalLinks(true);
-    desc->setText(
+    parts.body->addWidget(formCard);
+
+    // 说明卡片
+    QLabel *descLabel = nullptr;
+    auto *descCard = makeNoteCard(page, tr("关于红石联机"), descLabel,
+                                  QStringLiteral("multiplayerDescLabel"));
+    descLabel->setText(
         tr("红石联机是第三方开源联机服务，与本软件无关。选择中转节点并填入本地端口后，"
            "点击启动即可获得一个联机地址，将地址分享给好友，参与者在 Minecraft 中连接该地址"
            "即可共同游玩。<br><br>"
            "参考项目：<a href=\"https://github.com/hongshionline/hongshi-shell\">红石联机开源外壳</a><br><br>"
            "在联机过程中，请严格遵守当地法律法规。")
     );
-    layout->addWidget(desc, 1);
+    parts.body->addWidget(descCard);
+    parts.body->addStretch(1);
 
     // 信号连接
     connect(m_hongshiNodeRefreshBtn, &QPushButton::clicked, this, [this]() {
@@ -735,73 +888,84 @@ void MultiplayerPage::buildHongshiHomePage(QWidget *page)
 
 void MultiplayerPage::buildHongshiTunnelPage(QWidget *page)
 {
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 12, 0, 12);
+    outer->setSpacing(12);
 
-    // ---- 顶部：隧道状态与联机时间 ----
-    m_hongshiLatencyLabel = new QLabel(page);
-    m_hongshiLatencyLabel->setObjectName(QStringLiteral("multiplayerLatencyLabel"));
+    // ---- 顶部：状态小圆点 + 联机时间 ----
+    outer->addLayout(makeLatencyRow(page, m_hongshiLatencyDot, m_hongshiLatencyLabel));
     m_hongshiLatencyLabel->setAlignment(Qt::AlignCenter);
-    m_hongshiLatencyLabel->setWordWrap(true);
-    layout->addWidget(m_hongshiLatencyLabel);
 
-    // ---- 中间：大大的隧道地址 + 复制按钮 ----
-    auto *addrLayout = new QHBoxLayout();
-    addrLayout->setSpacing(6);
+    // ---- 隧道地址卡片 ----
+    QFrame *addrCard = makeCard(QStringLiteral("mpCodeCard"), page);
+    auto *addrRow = new QHBoxLayout(addrCard);
+    addrRow->setContentsMargins(16, 12, 12, 12);
+    addrRow->setSpacing(10);
 
-    m_tunnelAddrLabel = new QLabel(page);
+    auto *addrColumn = new QVBoxLayout();
+    addrColumn->setSpacing(2);
+    auto *addrCaption = new QLabel(tr("联机地址"), addrCard);
+    addrCaption->setObjectName(QStringLiteral("mpCodeCaption"));
+    addrColumn->addWidget(addrCaption);
+
+    m_tunnelAddrLabel = new QLabel(addrCard);
     m_tunnelAddrLabel->setObjectName(QStringLiteral("multiplayerRoomCodeLabel"));
-    m_tunnelAddrLabel->setAlignment(Qt::AlignCenter);
     m_tunnelAddrLabel->setWordWrap(true);
     m_tunnelAddrLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_tunnelAddrLabel->setText(tr("正在建立隧道..."));
+    addrColumn->addWidget(m_tunnelAddrLabel);
+    addrRow->addLayout(addrColumn, 1);
 
-    QFont addrFont = m_tunnelAddrLabel->font();
-    addrFont.setBold(true);
-    addrFont.setPointSize(12);
-    m_tunnelAddrLabel->setFont(addrFont);
-
-    m_copyAddrBtn = new QPushButton(page);
+    m_copyAddrBtn = new QPushButton(addrCard);
     m_copyAddrBtn->setObjectName(QStringLiteral("multiplayerCopyCodeBtn"));
     m_copyAddrBtn->setCursor(Qt::PointingHandCursor);
-    m_copyAddrBtn->setFixedSize(28, 28);
+    m_copyAddrBtn->setFixedSize(36, 36);
     m_copyAddrBtn->setToolTip(tr("复制联机地址"));
     m_copyAddrBtn->setIcon(IconHelper::loadColoredIcon(
         QStringLiteral(":/Images/Icons/copy.svg"),
         ThemeManager::instance()->currentThemeColor(), 16));
     m_copyAddrBtn->setIconSize(QSize(16, 16));
+    addrRow->addWidget(m_copyAddrBtn, 0, Qt::AlignVCenter);
+    outer->addWidget(addrCard);
 
-    addrLayout->addStretch(1);
-    addrLayout->addWidget(m_tunnelAddrLabel, 4);
-    addrLayout->addWidget(m_copyAddrBtn);
-    addrLayout->addStretch(1);
-    layout->addLayout(addrLayout);
-
-    auto *hint = new QLabel(tr("在 Minecraft 多人游戏中连接上方地址即可联机，请将地址分享给好友。"), page);
-    hint->setObjectName(QStringLiteral("hongshiFieldHint"));
-    hint->setWordWrap(true);
+    auto *hint = makeHintLabel(
+        tr("在 Minecraft 多人游戏中连接上方地址即可联机，请将地址分享给好友。"), page);
     hint->setAlignment(Qt::AlignCenter);
-    layout->addWidget(hint);
+    outer->addWidget(hint);
+
+    // 发布 / 停止两个操作固定在底部
+    outer->addStretch(1);
 
     // ---- 发布到联机大厅 ----
     m_pubHongshiBtn = new QPushButton(tr("发布到联机大厅"), page);
     m_pubHongshiBtn->setObjectName(QStringLiteral("multiplayerPublishBtn"));
     m_pubHongshiBtn->setCursor(Qt::PointingHandCursor);
-    m_pubHongshiBtn->setFixedHeight(30);
+    m_pubHongshiBtn->setFixedHeight(40);
     m_pubHongshiBtn->setToolTip(tr("把隧道地址发到论坛联机大厅，网页端只能查看地址，软件端可一键加入"));
     connect(m_pubHongshiBtn, &QPushButton::clicked,
             this, &MultiplayerPage::onPublishToLobbyClicked);
-    layout->addWidget(m_pubHongshiBtn);
 
-    layout->addStretch(1);
+    // 创建分享链接
+    m_shareHongshiBtn = new QPushButton(tr("创建分享链接"), page);
+    m_shareHongshiBtn->setObjectName(QStringLiteral("multiplayerShareBtn"));
+    m_shareHongshiBtn->setCursor(Qt::PointingHandCursor);
+    m_shareHongshiBtn->setFixedHeight(40);
+    m_shareHongshiBtn->setToolTip(tr("生成一条分享链接，朋友打开就能看到连接地址并一键加入"));
+    connect(m_shareHongshiBtn, &QPushButton::clicked,
+            this, &MultiplayerPage::onCreateShareLinkClicked);
+
+    auto *hongshiPublishRow = new QHBoxLayout();
+    hongshiPublishRow->setSpacing(8);
+    hongshiPublishRow->addWidget(m_pubHongshiBtn, 1);
+    hongshiPublishRow->addWidget(m_shareHongshiBtn);
+    outer->addLayout(hongshiPublishRow);
 
     // ---- 停止联机按钮 ----
     m_hongshiStopBtn = new QPushButton(tr("停止联机"), page);
     m_hongshiStopBtn->setObjectName(QStringLiteral("multiplayerLeaveBtn"));
     m_hongshiStopBtn->setCursor(Qt::PointingHandCursor);
-    m_hongshiStopBtn->setFixedHeight(32);
-    layout->addWidget(m_hongshiStopBtn);
+    m_hongshiStopBtn->setFixedHeight(44);
+    outer->addWidget(m_hongshiStopBtn);
 
     connect(m_copyAddrBtn, &QPushButton::clicked, this, [this]() {
         QString addr = m_hongshi->tunnelAddress();
@@ -828,84 +992,84 @@ void MultiplayerPage::buildHongshiTunnelPage(QWidget *page)
 
 void MultiplayerPage::buildFrpHomePage(QWidget *page)
 {
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(10);
+    const ScrollPage parts = makeScrollPage(page);
 
-    // 顶部状态文字（frpc 安装/下载状态）
-    m_frpStatusLabel = new QLabel(page);
-    m_frpStatusLabel->setObjectName(QStringLiteral("multiplayerStatusLabel"));
-    m_frpStatusLabel->setWordWrap(true);
-    m_frpStatusLabel->setAlignment(Qt::AlignCenter);
-    layout->addWidget(m_frpStatusLabel);
+    // 顶部状态条（frpc 安装/下载状态）
+    parts.body->addWidget(makeStatusCard(page, m_frpStatusDot, m_frpStatusLabel,
+                                         QStringLiteral("multiplayerStatusLabel")));
 
-    // ---- 中间区域：说明信息（内容随核心切换，见 updateFrpDesc） ----
-    m_frpDescLabel = new QLabel(page);
-    m_frpDescLabel->setObjectName(QStringLiteral("multiplayerDescLabel"));
-    m_frpDescLabel->setWordWrap(true);
-    m_frpDescLabel->setTextFormat(Qt::RichText);
-    m_frpDescLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    m_frpDescLabel->setOpenExternalLinks(true);
-    layout->addWidget(m_frpDescLabel, 1);
+    // ---- 连接设置卡片 ----
+    QFrame *formCard = makeCard(QStringLiteral("mpFormCard"), page);
+    auto *form = new QVBoxLayout(formCard);
+    form->setContentsMargins(14, 12, 14, 14);
+    form->setSpacing(8);
 
-    // ---- 访问密钥 ----
-    m_frpKeyHint = new QLabel(tr("访问密钥"), page);
-    m_frpKeyHint->setObjectName(QStringLiteral("hongshiFieldLabel"));
-    layout->addWidget(m_frpKeyHint);
+    // 访问密钥
+    m_frpKeyHint = makeFieldLabel(tr("访问密钥"), formCard);
+    form->addWidget(m_frpKeyHint);
 
-    m_frpKeyEdit = new QLineEdit(page);
+    m_frpKeyEdit = new QLineEdit(formCard);
     m_frpKeyEdit->setObjectName(QStringLiteral("frpKeyEdit"));
-    m_frpKeyEdit->setFixedHeight(34);
+    m_frpKeyEdit->setFixedHeight(36);
     m_frpKeyEdit->setPlaceholderText(tr("在官网面板「访问密钥」页面获取"));
-    layout->addWidget(m_frpKeyEdit);
+    form->addWidget(m_frpKeyEdit);
 
-    // ---- 隧道 ID ----
-    m_frpIdHint = new QLabel(tr("隧道 ID"), page);
-    m_frpIdHint->setObjectName(QStringLiteral("hongshiFieldLabel"));
-    layout->addWidget(m_frpIdHint);
+    form->addSpacing(2);
 
-    m_frpIdEdit = new QLineEdit(page);
+    // 隧道 ID
+    m_frpIdHint = makeFieldLabel(tr("隧道 ID"), formCard);
+    form->addWidget(m_frpIdHint);
+
+    m_frpIdEdit = new QLineEdit(formCard);
     m_frpIdEdit->setObjectName(QStringLiteral("frpIdEdit"));
-    m_frpIdEdit->setFixedHeight(34);
+    m_frpIdEdit->setFixedHeight(36);
     m_frpIdEdit->setPlaceholderText(tr("官网面板隧道列表中的数字 ID"));
     m_frpIdEdit->setValidator(new QIntValidator(1, 999999999, m_frpIdEdit));
-    layout->addWidget(m_frpIdEdit);
+    form->addWidget(m_frpIdEdit);
 
-    // ---- 打开面板 / 手动选择 frpc ----
-    m_frpLinkRow = new QWidget(page);
+    // 打开面板 / 手动选择 frpc
+    m_frpLinkRow = new QWidget(formCard);
     m_frpLinkRow->setObjectName(QStringLiteral("frpLinkRow"));
     auto *linkLayout = new QHBoxLayout(m_frpLinkRow);
     linkLayout->setContentsMargins(0, 0, 0, 0);
-    linkLayout->setSpacing(6);
+    linkLayout->setSpacing(8);
 
     m_frpPanelBtn = new QPushButton(tr("打开面板"), m_frpLinkRow);
     m_frpPanelBtn->setObjectName(QStringLiteral("hongshiNodeRefreshBtn"));
     m_frpPanelBtn->setCursor(Qt::PointingHandCursor);
-    m_frpPanelBtn->setFixedHeight(26);
+    m_frpPanelBtn->setFixedHeight(30);
     m_frpPanelBtn->setToolTip(tr("注册账号、创建 TCP 隧道、查看访问密钥与隧道 ID"));
     linkLayout->addWidget(m_frpPanelBtn);
 
     m_frpPickBtn = new QPushButton(tr("手动选择 frpc"), m_frpLinkRow);
     m_frpPickBtn->setObjectName(QStringLiteral("hongshiNodeRefreshBtn"));
     m_frpPickBtn->setCursor(Qt::PointingHandCursor);
-    m_frpPickBtn->setFixedHeight(26);
+    m_frpPickBtn->setFixedHeight(30);
     m_frpPickBtn->setToolTip(tr("自动下载失败时，可手动下载后选择 frpc 程序导入"));
     linkLayout->addWidget(m_frpPickBtn);
     linkLayout->addStretch(1);
-    layout->addWidget(m_frpLinkRow);
+    form->addWidget(m_frpLinkRow);
 
-    // ---- 获取指引提示 ----
-    m_frpHintLabel = new QLabel(page);
-    m_frpHintLabel->setObjectName(QStringLiteral("hongshiFieldHint"));
-    m_frpHintLabel->setWordWrap(true);
-    layout->addWidget(m_frpHintLabel);
+    // 获取指引提示
+    m_frpHintLabel = makeHintLabel(QString(), formCard);
+    form->addWidget(m_frpHintLabel);
 
-    // ---- 启动隧道按钮 ----
-    m_frpStartBtn = new QPushButton(tr("启动隧道"), page);
+    form->addWidget(makeDivider(formCard));
+
+    // 启动隧道按钮
+    m_frpStartBtn = new QPushButton(tr("启动隧道"), formCard);
     m_frpStartBtn->setObjectName(QStringLiteral("multiplayerCreateBtn"));
     m_frpStartBtn->setCursor(Qt::PointingHandCursor);
-    m_frpStartBtn->setFixedHeight(34);
-    layout->addWidget(m_frpStartBtn);
+    m_frpStartBtn->setFixedHeight(44);
+    form->addWidget(m_frpStartBtn);
+
+    parts.body->addWidget(formCard);
+
+    // ---- 说明卡片（内容随核心切换，见 updateFrpDesc） ----
+    auto *descCard = makeNoteCard(page, tr("关于这个联机服务"),
+                                  m_frpDescLabel, QStringLiteral("multiplayerDescLabel"));
+    parts.body->addWidget(descCard);
+    parts.body->addStretch(1);
 
     connect(m_frpStartBtn, &QPushButton::clicked, this, &MultiplayerPage::startFrpTunnel);
     connect(m_frpPanelBtn, &QPushButton::clicked, this, &MultiplayerPage::openFrpPanel);
@@ -926,73 +1090,83 @@ void MultiplayerPage::buildFrpHomePage(QWidget *page)
 
 void MultiplayerPage::buildFrpRoomPage(QWidget *page)
 {
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 12, 0, 12);
+    outer->setSpacing(12);
 
-    // ---- 顶部：隧道状态与联机时间 ----
-    m_frpLatencyLabel = new QLabel(page);
-    m_frpLatencyLabel->setObjectName(QStringLiteral("multiplayerLatencyLabel"));
+    // ---- 顶部：状态小圆点 + 联机时间 ----
+    outer->addLayout(makeLatencyRow(page, m_frpLatencyDot, m_frpLatencyLabel));
     m_frpLatencyLabel->setAlignment(Qt::AlignCenter);
-    m_frpLatencyLabel->setWordWrap(true);
-    layout->addWidget(m_frpLatencyLabel);
 
-    // ---- 中间：大字远程连接地址 + 复制按钮 ----
-    auto *addrLayout = new QHBoxLayout();
-    addrLayout->setSpacing(6);
+    // ---- 远程连接地址卡片 ----
+    QFrame *addrCard = makeCard(QStringLiteral("mpCodeCard"), page);
+    auto *addrRow = new QHBoxLayout(addrCard);
+    addrRow->setContentsMargins(16, 12, 12, 12);
+    addrRow->setSpacing(10);
 
-    m_frpAddrLabel = new QLabel(page);
+    auto *addrColumn = new QVBoxLayout();
+    addrColumn->setSpacing(2);
+    auto *addrCaption = new QLabel(tr("远程连接地址"), addrCard);
+    addrCaption->setObjectName(QStringLiteral("mpCodeCaption"));
+    addrColumn->addWidget(addrCaption);
+
+    m_frpAddrLabel = new QLabel(addrCard);
     m_frpAddrLabel->setObjectName(QStringLiteral("multiplayerRoomCodeLabel"));
-    m_frpAddrLabel->setAlignment(Qt::AlignCenter);
     m_frpAddrLabel->setWordWrap(true);
     m_frpAddrLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_frpAddrLabel->setText(tr("正在连接节点..."));
+    addrColumn->addWidget(m_frpAddrLabel);
+    addrRow->addLayout(addrColumn, 1);
 
-    QFont addrFont = m_frpAddrLabel->font();
-    addrFont.setBold(true);
-    addrFont.setPointSize(12);
-    m_frpAddrLabel->setFont(addrFont);
-
-    m_frpCopyBtn = new QPushButton(page);
+    m_frpCopyBtn = new QPushButton(addrCard);
     m_frpCopyBtn->setObjectName(QStringLiteral("multiplayerCopyCodeBtn"));
     m_frpCopyBtn->setCursor(Qt::PointingHandCursor);
-    m_frpCopyBtn->setFixedSize(28, 28);
+    m_frpCopyBtn->setFixedSize(36, 36);
     m_frpCopyBtn->setToolTip(tr("复制联机地址"));
     m_frpCopyBtn->setIcon(IconHelper::loadColoredIcon(
         QStringLiteral(":/Images/Icons/copy.svg"),
         ThemeManager::instance()->currentThemeColor(), 16));
     m_frpCopyBtn->setIconSize(QSize(16, 16));
+    addrRow->addWidget(m_frpCopyBtn, 0, Qt::AlignVCenter);
+    outer->addWidget(addrCard);
 
-    addrLayout->addStretch(1);
-    addrLayout->addWidget(m_frpAddrLabel, 4);
-    addrLayout->addWidget(m_frpCopyBtn);
-    addrLayout->addStretch(1);
-    layout->addLayout(addrLayout);
-
-    m_frpRoomHint = new QLabel(page);
-    m_frpRoomHint->setObjectName(QStringLiteral("hongshiFieldHint"));
-    m_frpRoomHint->setWordWrap(true);
+    m_frpRoomHint = makeHintLabel(QString(), page);
     m_frpRoomHint->setAlignment(Qt::AlignCenter);
-    layout->addWidget(m_frpRoomHint);
+    outer->addWidget(m_frpRoomHint);
+
+    // 发布 / 停止两个操作固定在底部
+    outer->addStretch(1);
 
     // ---- 发布到联机大厅 ----
     m_pubFrpBtn = new QPushButton(tr("发布到联机大厅"), page);
     m_pubFrpBtn->setObjectName(QStringLiteral("multiplayerPublishBtn"));
     m_pubFrpBtn->setCursor(Qt::PointingHandCursor);
-    m_pubFrpBtn->setFixedHeight(30);
+    m_pubFrpBtn->setFixedHeight(40);
     m_pubFrpBtn->setToolTip(tr("把远程地址发到论坛联机大厅，网页端只能查看地址，软件端可一键加入"));
     connect(m_pubFrpBtn, &QPushButton::clicked,
             this, &MultiplayerPage::onPublishToLobbyClicked);
-    layout->addWidget(m_pubFrpBtn);
 
-    layout->addStretch(1);
+    // 创建分享链接
+    m_shareFrpBtn = new QPushButton(tr("创建分享链接"), page);
+    m_shareFrpBtn->setObjectName(QStringLiteral("multiplayerShareBtn"));
+    m_shareFrpBtn->setCursor(Qt::PointingHandCursor);
+    m_shareFrpBtn->setFixedHeight(40);
+    m_shareFrpBtn->setToolTip(tr("生成一条分享链接，朋友打开就能看到连接地址并一键加入"));
+    connect(m_shareFrpBtn, &QPushButton::clicked,
+            this, &MultiplayerPage::onCreateShareLinkClicked);
+
+    auto *frpPublishRow = new QHBoxLayout();
+    frpPublishRow->setSpacing(8);
+    frpPublishRow->addWidget(m_pubFrpBtn, 1);
+    frpPublishRow->addWidget(m_shareFrpBtn);
+    outer->addLayout(frpPublishRow);
 
     // ---- 停止联机按钮 ----
     m_frpStopBtn = new QPushButton(tr("停止联机"), page);
     m_frpStopBtn->setObjectName(QStringLiteral("multiplayerLeaveBtn"));
     m_frpStopBtn->setCursor(Qt::PointingHandCursor);
-    m_frpStopBtn->setFixedHeight(32);
-    layout->addWidget(m_frpStopBtn);
+    m_frpStopBtn->setFixedHeight(44);
+    outer->addWidget(m_frpStopBtn);
 
     connect(m_frpCopyBtn, &QPushButton::clicked, this, [this]() {
         const QString addr = FrpManager::instance()->remoteAddress();
@@ -1015,490 +1189,26 @@ void MultiplayerPage::buildFrpRoomPage(QWidget *page)
 
 void MultiplayerPage::applyThemeStyles()
 {
-QString themeColor = ThemeManager::instance()->currentThemeColor();
-    QString textColor = ThemeManager::instance()->currentTextColor();
-    QString borderColor = ThemeManager::instance()->currentBorderColor();
-    QColor tc(themeColor);
-    QString hoverBg = QString("rgba(%1, %2, %3, 0.12)")
-        .arg(tc.red()).arg(tc.green()).arg(tc.blue());
-    const bool isMpDark = (ThemeManager::instance()->currentTheme()
-                           == ThemeManager::DarkTheme);
-    const QString mpDisabledBg = isMpDark ? "#3a3a3a" : "#f5f5f5";
-    const QString mpDisabledText = isMpDark ? "#8a8a8a" : "#999999";
-
-    // 顶部核心选择栏
-    if (m_topBarContainer) {
-        m_topBarContainer->setStyleSheet(
-            QString(
-                "QComboBox#multiplayerCoreCombo {"
-                "  background: palette(base);"
-                "  border: 1px solid %1;"
-                "  border-radius: 4px;"
-                "  color: %2;"
-                "  font-size: 12px;"
-                "  padding: 0 6px;"
-                "}"
-                "QComboBox#multiplayerCoreCombo:hover {"
-                "  border-color: %3;"
-                "}"
-                "QComboBox#multiplayerCoreCombo::drop-down {"
-                "  border: none;"
-                "  width: 22px;"
-                "}"
-                "QComboBox#multiplayerCoreCombo::down-arrow {"
-                "  image: none;"
-                "  border-left: 4px solid transparent;"
-                "  border-right: 4px solid transparent;"
-                "  border-top: 5px solid %2;"
-                "}"
-                "QComboBox#multiplayerCoreCombo QAbstractItemView {"
-                "  background: palette(base);"
-                "  color: %2;"
-                "  border: 1px solid %1;"
-                "  selection-background-color: %4;"
-                "  selection-color: %3;"
-                "}"
-                "QPushButton#multiplayerUpdateBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %1;"
-                "  border-radius: 4px;"
-                "  color: %2;"
-                "  font-size: 12px;"
-                "  padding: 0 10px;"
-                "}"
-                "QPushButton#multiplayerUpdateBtn:hover {"
-                "  background: %4;"
-                "  border-color: %3;"
-                "  color: %3;"
-                "}"
-"QPushButton#multiplayerUpdateBtn:disabled {"
-                "  color: %5;"
-                "  background: %6;"
-                "}"
-            ).arg(borderColor, textColor, themeColor, hoverBg,
-                  mpDisabledText, mpDisabledBg));
-    }
-
-    // 陶瓦联机首页
-    if (m_homePage) {
-        m_homePage->setStyleSheet(
-            QString(
-                "QLabel#multiplayerStatusLabel {"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  padding: 4px;"
-                "  background: transparent;"
-                "}"
-                "QLabel#multiplayerDescLabel {"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  padding: 8px;"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "}"
-                "QPushButton#multiplayerJoinBtn, QPushButton#multiplayerCreateBtn {"
-                "  background: %3;"
-                "  color: white;"
-                "  border: none;"
-                "  border-radius: 6px;"
-                "  font-size: 13px;"
-                "  font-weight: 500;"
-                "}"
-                "QPushButton#multiplayerJoinBtn:hover, QPushButton#multiplayerCreateBtn:hover {"
-                "  background: %4;"
-                "}"
-"QPushButton#multiplayerJoinBtn:disabled, QPushButton#multiplayerCreateBtn:disabled {"
-                "  background: %5;"
-                "  color: %6;"
-                "}"
-            ).arg(textColor, borderColor, themeColor, tc.darker(110).name(),
-                  mpDisabledBg, mpDisabledText));
-    }
-
-    // 房间页样式
-    if (m_roomPage) {
-        m_roomPage->setStyleSheet(
-            QString(
-                "QLabel#multiplayerRoomCodeLabel {"
-                "  color: %3;"
-                "  font-size: 14px;"
-                "  font-weight: bold;"
-                "  padding: 12px 8px;"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "}"
-                "QPushButton#multiplayerCopyCodeBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 4px;"
-                "}"
-                "QPushButton#multiplayerCopyCodeBtn:hover {"
-                "  background: %4;"
-                "  border-color: %3;"
-                "}"
-                "QPushButton#multiplayerLeaveBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: #d32f2f;"
-                "  font-size: 12px;"
-                "}"
-                "QPushButton#multiplayerLeaveBtn:hover {"
-                "  background: rgba(211, 47, 47, 0.12);"
-                "  border-color: #d32f2f;"
-                "}"
-                "QScrollArea#multiplayerPlayersScroll {"
-                "  background: transparent;"
-                "  border: none;"
-                "}"
-                "QWidget#multiplayerPlayersContainer {"
-                "  background: transparent;"
-                "}"
-            ).arg(textColor, borderColor, themeColor, hoverBg));
-    }
-
-    // 红石联机首页
-    if (m_hongshiHomePage) {
-        m_hongshiHomePage->setStyleSheet(
-            QString(
-                "QLabel#multiplayerStatusLabel {"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  padding: 4px;"
-                "  background: transparent;"
-                "}"
-                "QLabel#multiplayerDescLabel {"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  padding: 8px;"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "}"
-                "QLabel#hongshiFieldLabel {"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  font-weight: 600;"
-                "  background: transparent;"
-                "  border: none;"
-                "}"
-                "QLabel#hongshiFieldHint {"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  background: transparent;"
-                "  border: none;"
-                "}"
-                "QComboBox#hongshiNodeCombo {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  padding: 4px 8px;"
-                "}"
-                "QComboBox#hongshiNodeCombo:hover {"
-                "  border-color: %3;"
-                "}"
-                "QComboBox#hongshiNodeCombo QAbstractItemView {"
-                "  background: palette(base);"
-                "  color: %1;"
-                "  border: 1px solid %2;"
-                "  selection-background-color: %4;"
-                "  selection-color: %3;"
-                "}"
-                "QPushButton#hongshiNodeRefreshBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  padding: 0 10px;"
-                "}"
-                "QPushButton#hongshiNodeRefreshBtn:hover {"
-                "  border-color: %3;"
-                "  color: %3;"
-                "}"
-                "QSpinBox#hongshiPortSpin {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  padding: 2px 6px;"
-                "}"
-                "QPushButton#hongshiStartBtn {"
-                "  background: %3;"
-                "  color: white;"
-                "  border: none;"
-                "  border-radius: 6px;"
-                "  font-size: 13px;"
-                "  font-weight: 500;"
-                "}"
-                "QPushButton#hongshiStartBtn:hover {"
-                "  background: %5;"
-                "}"
-"QPushButton#hongshiStartBtn:disabled {"
-                "  background: %6;"
-                "  color: %7;"
-                "}"
-            ).arg(textColor, borderColor, themeColor, hoverBg,
-                  tc.darker(110).name(), mpDisabledBg, mpDisabledText));
-    }
-
-    // 红石联机隧道页
-    if (m_hongshiTunnelPage) {
-        m_hongshiTunnelPage->setStyleSheet(
-            QString(
-                "QLabel#multiplayerRoomCodeLabel {"
-                "  color: %3;"
-                "  font-size: 16px;"
-                "  font-weight: bold;"
-                "  padding: 12px 8px;"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "}"
-                "QPushButton#multiplayerCopyCodeBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 4px;"
-                "}"
-                "QPushButton#multiplayerCopyCodeBtn:hover {"
-                "  background: %4;"
-                "  border-color: %3;"
-                "}"
-                "QPushButton#multiplayerLeaveBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: #d32f2f;"
-                "  font-size: 12px;"
-                "}"
-                "QPushButton#multiplayerLeaveBtn:hover {"
-                "  background: rgba(211, 47, 47, 0.12);"
-                "  border-color: #d32f2f;"
-                "}"
-                "QLabel#hongshiFieldHint {"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  background: transparent;"
-                "  border: none;"
-                "}"
-            ).arg(textColor, borderColor, themeColor, hoverBg));
-    }
-
-    // frp 服务商联机首页（复用陶瓦首页/红石表单的控件样式名）
-    if (m_frpHomePage) {
-        m_frpHomePage->setStyleSheet(
-            QString(
-                "QLabel#multiplayerStatusLabel {"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  padding: 4px;"
-                "  background: transparent;"
-                "}"
-                "QLabel#multiplayerDescLabel {"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  padding: 8px;"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "}"
-                "QLabel#hongshiFieldLabel {"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  font-weight: 600;"
-                "  background: transparent;"
-                "  border: none;"
-                "}"
-                "QLabel#hongshiFieldHint {"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  background: transparent;"
-                "  border: none;"
-                "}"
-                "QLineEdit#frpKeyEdit, QLineEdit#frpIdEdit {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  padding: 2px 8px;"
-                "}"
-                "QLineEdit#frpKeyEdit:focus, QLineEdit#frpIdEdit:focus {"
-                "  border-color: %3;"
-                "}"
-                "QWidget#frpLinkRow QPushButton#hongshiNodeRefreshBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  padding: 0 10px;"
-                "}"
-                "QWidget#frpLinkRow QPushButton#hongshiNodeRefreshBtn:hover {"
-                "  border-color: %3;"
-                "  color: %3;"
-                "}"
-                "QPushButton#multiplayerCreateBtn {"
-                "  background: %3;"
-                "  color: white;"
-                "  border: none;"
-                "  border-radius: 6px;"
-                "  font-size: 13px;"
-                "  font-weight: 500;"
-                "}"
-                "QPushButton#multiplayerCreateBtn:hover {"
-                "  background: %4;"
-                "}"
-"QPushButton#multiplayerCreateBtn:disabled {"
-                "  background: %5;"
-                "  color: %6;"
-                "}"
-            ).arg(textColor, borderColor, themeColor, tc.darker(110).name(),
-                  mpDisabledBg, mpDisabledText));
-    }
-
-    // frp 服务商联机房间页（复用房间页/红石隧道页的控件样式名）
-    if (m_frpRoomPage) {
-        m_frpRoomPage->setStyleSheet(
-            QString(
-                "QLabel#multiplayerLatencyLabel {"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  padding: 2px;"
-                "  background: transparent;"
-                "}"
-                "QLabel#multiplayerLatencyLabel[status=\"good\"] {"
-                "  color: #4caf50;"
-                "}"
-                "QLabel#multiplayerLatencyLabel[status=\"medium\"] {"
-                "  color: #ff9800;"
-                "}"
-                "QLabel#multiplayerLatencyLabel[status=\"bad\"] {"
-                "  color: #d32f2f;"
-                "}"
-                "QLabel#multiplayerRoomCodeLabel {"
-                "  color: %3;"
-                "  font-size: 14px;"
-                "  font-weight: bold;"
-                "  padding: 12px 8px;"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "}"
-                "QPushButton#multiplayerCopyCodeBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 4px;"
-                "}"
-                "QPushButton#multiplayerCopyCodeBtn:hover {"
-                "  background: %4;"
-                "  border-color: %3;"
-                "}"
-                "QPushButton#multiplayerLeaveBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: #d32f2f;"
-                "  font-size: 12px;"
-                "}"
-                "QPushButton#multiplayerLeaveBtn:hover {"
-                "  background: rgba(211, 47, 47, 0.12);"
-                "  border-color: #d32f2f;"
-                "}"
-                "QLabel#hongshiFieldHint {"
-                "  color: %1;"
-                "  font-size: 11px;"
-                "  background: transparent;"
-                "  border: none;"
-                "}"
-            ).arg(textColor, borderColor, themeColor, hoverBg));
-    }
-
-    // 玩家卡片样式（与模组卡片一致的列表项样式）
-    QString playerCardStyle = QString(
-        "QWidget[cardRole=\"mpContainer\"] {"
-        "  background: palette(base);"
-        "  border: 1px solid %1;"
-        "  border-radius: 6px;"
+    // 两套联机页（Java / 基岩）共用同一份令牌样式，见 MultiplayerUiParts.h；
+    // 玩家卡片上的账号标记（房主 / 自己 / 方块盒子账户）是本页专属，接在后面补几条
+    const QString playerCardAccent = QStringLiteral(
+        "QLabel[cardRole=\"mpChip\"][accent=\"host\"] {"
+        "  color: @WARNING_TEXT@; background: @WARNING_BG@; border-color: @WARNING_BORDER@;"
         "}"
-        "QWidget[cardRole=\"mpContainer\"]:hover {"
-        "  border-color: %2;"
+        "QLabel[cardRole=\"mpChip\"][accent=\"self\"],"
+        "QLabel[cardRole=\"mpChip\"][accent=\"account\"] {"
+        "  color: @TEXT_ACCENT@; background: @PRIMARY_RGBA_10@;"
+        "  border-color: @PRIMARY_RGBA_38@;"
         "}"
-        "QLabel[cardRole=\"mpName\"] {"
-        "  font-size: 13px;"
-        "  font-weight: bold;"
-        "  color: %3;"
-        "  background: transparent;"
-        "  border: none;"
-        "}"
-        "QLabel[cardRole=\"mpChip\"] {"
-        "  background-color: rgba(%4, %5, %6, 26);"
-        "  color: %2;"
-        "  border: 1px solid %1;"
-        "  border-radius: 8px;"
-        "  padding: 2px 6px;"
-        "  font-size: 10px;"
-        "}"
-        "QPushButton[cardRole=\"mpActionBtn\"] {"
-        "  background: transparent;"
-        "  border: none;"
-        "  border-radius: 4px;"
-        "}"
-        "QPushButton[cardRole=\"mpActionBtn\"]:hover {"
-        "  background: rgba(%4, %5, %6, 26);"
-        "}"
-    ).arg(borderColor, themeColor, textColor)
-     .arg(tc.red()).arg(tc.green()).arg(tc.blue());
-
-    if (m_playersContainer) {
-        m_playersContainer->setStyleSheet(playerCardStyle);
-    }
-
-    // 顶部分页 / 发布按钮 / 联机大厅：这些控件跨页面存在，统一挂在 MultiplayerPage 上
-    setStyleSheet(StyleKit::resolve(QString(
-        "QTabBar#multiplayerSectionTabs {"
-        "  background: transparent;"
-        "}"
-        "QTabBar#multiplayerSectionTabs::tab {"
-        "  background: transparent;"
-        "  color: %2;"
-        "  border: none;"
-        "  border-bottom: 2px solid transparent;"
-        "  padding: 6px 14px;"
-        "  font-size: 12px;"
-        "  font-weight: 500;"
-        "}"
-        "QTabBar#multiplayerSectionTabs::tab:selected {"
-        "  color: %1;"
-        "  border-bottom: 2px solid %1;"
-        "}"
-        "QTabBar#multiplayerSectionTabs::tab:hover {"
-        "  color: %1;"
-        "}"
-        "QPushButton#multiplayerPublishBtn {"
-        "  background: palette(base);"
-        "  border: 1px solid %3;"
-        "  border-radius: 6px;"
-        "  color: %1;"
-        "  font-size: 12px;"
-        "}"
-        "QPushButton#multiplayerPublishBtn:hover {"
-        "  border-color: %1;"
-        "  color: %1;"
-        "  background: %4;"
-        "}"
-        "QPushButton#multiplayerPublishBtn:disabled {"
-        "  color: %5;"
-        "  background: %6;"
-        "}"
-    )).arg(themeColor, textColor, borderColor, hoverBg, mpDisabledText, mpDisabledBg,
-            tc.darker(110).name()));
+        "QWidget[cardRole=\"mpContainer\"]:hover { background: @BG_HOVER@; }");
+    setStyleSheet(StyleKit::resolve(MultiplayerUi::pageStyleSheet() + playerCardAccent));
+    const bool darkTheme = ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme;
+    const QColor linkColor(StyleKit::resolve(darkTheme ? QStringLiteral("@LINK_HOVER@")
+                                                       : QStringLiteral("@LINK@")));
+    for (QLabel *desc : findChildren<QLabel *>(QStringLiteral("multiplayerDescLabel")))
+        MultiplayerUi::applyDescriptionLinkColor(desc, linkColor);
 }
+
 void MultiplayerPage::refreshPage()
 {
     // frp 服务商核心：走独立刷新逻辑
@@ -1603,6 +1313,26 @@ void MultiplayerPage::refreshPage()
             break;
         }
         m_statusLabel->setText(text);
+
+        // 状态圆点跟着状态走：绿=可用，黄=进行中/待操作，红=出错
+        QString tone;
+        switch (state) {
+        case TerracottaClient::State::Waiting:
+            tone = m_client->isProcessRunning() ? QStringLiteral("ok") : QStringLiteral("idle");
+            break;
+        case TerracottaClient::State::HostOk:
+        case TerracottaClient::State::GuestOk:
+            tone = QStringLiteral("ok");
+            break;
+        case TerracottaClient::State::Exception:
+        case TerracottaClient::State::Fatal:
+            tone = QStringLiteral("err");
+            break;
+        default:
+            tone = QStringLiteral("warn");
+            break;
+        }
+        setDotTone(m_statusDot, tone);
     }
 
     // 更新首页按钮可用性
@@ -1611,11 +1341,13 @@ void MultiplayerPage::refreshPage()
             || (state == TerracottaClient::State::NotInstalled
                 && !m_client->installedVersion().isEmpty())
             || (state == TerracottaClient::State::Exception
-                && m_client->isProcessRunning());
+                && m_client->isProcessRunning())
+            || (state == TerracottaClient::State::Fatal); // 启动失败允许点「重试」再拉起核心
         m_joinBtn->setEnabled(canAct);
         m_createBtn->setEnabled(canAct);
 
-        if (state == TerracottaClient::State::Exception) {
+        if (state == TerracottaClient::State::Exception
+            || state == TerracottaClient::State::Fatal) {
             m_createBtn->setText(tr("重试"));
             m_joinBtn->setText(tr("重试"));
         } else {
@@ -1690,6 +1422,22 @@ void MultiplayerPage::refreshHongshiPage()
             break;
         }
         m_hongshiStatusLabel->setText(text);
+
+        // 状态圆点：已就绪绿点，需要下载/更新或正在下载黄点，下载失败红点
+        QString tone;
+        switch (hs->installStatus()) {
+        case HongshiClient::InstallStatus::Ready:
+        case HongshiClient::InstallStatus::UpToDate:
+            tone = QStringLiteral("ok");
+            break;
+        case HongshiClient::InstallStatus::DownloadFailed:
+            tone = QStringLiteral("err");
+            break;
+        default:
+            tone = QStringLiteral("warn");
+            break;
+        }
+        setDotTone(m_hongshiStatusDot, tone);
     }
 
     if (m_hongshiStartBtn) {
@@ -1769,6 +1517,11 @@ void MultiplayerPage::refreshTunnelStatusBar()
     }
     m_hongshiLatencyLabel->setProperty("status", latencyStatus);
     m_hongshiLatencyLabel->style()->polish(m_hongshiLatencyLabel);
+    setDotTone(m_hongshiLatencyDot, latencyStatus == QLatin1String("good")
+                                        ? QStringLiteral("ok")
+                                        : (latencyStatus == QLatin1String("medium")
+                                               ? QStringLiteral("warn")
+                                               : QStringLiteral("err")));
 
     // 隧道地址
     if (m_tunnelAddrLabel) {
@@ -1986,6 +1739,16 @@ void MultiplayerPage::updateFrpDesc()
         m_frpHintLabel->setText(
             tr("没有账号？点「打开面板」注册并创建 TCP 隧道，再把密钥和 ID 填在上面。"));
     }
+
+    // 说明文字是重建过的，链接要按当前主题重新上色
+    if (m_frpDescLabel) {
+        const bool darkTheme =
+            ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme;
+        MultiplayerUi::applyDescriptionLinkColor(
+            m_frpDescLabel,
+            QColor(StyleKit::resolve(darkTheme ? QStringLiteral("@LINK_HOVER@")
+                                               : QStringLiteral("@LINK@"))));
+    }
 }
 
 void MultiplayerPage::refreshFrpPage()
@@ -2023,6 +1786,10 @@ void MultiplayerPage::refreshFrpPage()
                                  : tr("frpc 客户端已就绪（v%1）").arg(ver);
         }
         m_frpStatusLabel->setText(text);
+
+        // 状态圆点：frpc 就绪绿点，未装 / 下载中黄点
+        setDotTone(m_frpStatusDot,
+                   frp->isFrpcPresent(provider) ? QStringLiteral("ok") : QStringLiteral("warn"));
     }
 
     // 首页按钮：frpc 未就绪时不可启动
@@ -2100,6 +1867,7 @@ void MultiplayerPage::refreshFrpStatusBar()
     m_frpLatencyLabel->setProperty("status",
         established ? QStringLiteral("good") : QStringLiteral("medium"));
     m_frpLatencyLabel->style()->polish(m_frpLatencyLabel);
+    setDotTone(m_frpLatencyDot, established ? QStringLiteral("ok") : QStringLiteral("warn"));
 
     // 大字：远程连接地址
     const QString addr = frp->remoteAddress();
@@ -2177,6 +1945,85 @@ void MultiplayerPage::pickFrpcManually()
     }
 }
 
+QString MultiplayerPage::localPlayerName() const
+{
+    ForumAccountService *forum = ForumAccountService::instance();
+    if (forum->isLoggedIn())
+    {
+        const ForumUser user = forum->user();
+        QString name = user.displayName.trimmed();
+        if (name.isEmpty())
+            name = user.username.trimmed();
+        if (!name.isEmpty())
+            return name;
+    }
+    return tr("BlockBox 玩家");
+}
+
+bool MultiplayerPage::isSelfProfile(const QString &playerName, const QString &kind,
+                                    bool hosting) const
+{
+    if (kind == QStringLiteral("LOCAL"))
+        return true;
+    if (hosting && kind == QStringLiteral("HOST"))
+        return true;
+
+    // 房客端不一定拿得到稳定的"本机"标记，退而按进房间时报的昵称认领自己
+    if (!hosting && ForumAccountService::instance()->isLoggedIn())
+    {
+        const QString selfName = localPlayerName();
+        return !selfName.isEmpty() && selfName.compare(playerName.trimmed(), Qt::CaseInsensitive) == 0;
+    }
+    return false;
+}
+
+void MultiplayerPage::lookupPlayerAccount(const QString &playerName)
+{
+    const QString key = playerName.trimmed();
+    if (key.size() < 2 || m_playerAccounts.contains(key)
+        || m_playerLookupPending.contains(key) || m_playerLookupMissed.contains(key))
+        return;
+
+    m_playerLookupPending.insert(key);
+    ForumChatService::instance()->searchUsers(
+        key,
+        [this, key](const QVector<ForumFriendInfo> &users) {
+            m_playerLookupPending.remove(key);
+            for (const ForumFriendInfo &user : users)
+            {
+                if (!user.isValid())
+                    continue;
+                // 只认用户名 / 昵称完全一致的结果，避免搜出半个名字就套错头像
+                if (user.username.compare(key, Qt::CaseInsensitive) != 0
+                    && user.displayName.compare(key, Qt::CaseInsensitive) != 0)
+                    continue;
+
+                PlayerAccount account;
+                account.id = user.id;
+                account.username = user.username;
+                account.displayName = user.displayName;
+                account.avatar = user.avatar;
+                m_playerAccounts.insert(key, account);
+                schedulePlayerListRefresh();
+                return;
+            }
+            m_playerLookupMissed.insert(key);
+        },
+        [this, key](const QString &, int) { m_playerLookupPending.remove(key); });
+}
+
+void MultiplayerPage::schedulePlayerListRefresh()
+{
+    if (m_playerListRefreshQueued)
+        return;
+    m_playerListRefreshQueued = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_playerListRefreshQueued = false;
+        if (m_client->isInRoom())
+            refreshPlayerList();
+    });
+}
+
 void MultiplayerPage::refreshPlayerList()
 {
     if (!m_playersLayout) return;
@@ -2191,53 +2038,117 @@ void MultiplayerPage::refreshPlayerList()
     }
 
     QList<TerracottaClient::Profile> profiles = m_client->profiles();
+
+    // 玩家列表标题带上人数
+    if (m_playersTitle) {
+        m_playersTitle->setText(profiles.isEmpty() ? tr("玩家")
+                                                   : tr("玩家 · %1").arg(profiles.size()));
+    }
+
+    // 一个人都没进来时给一句提示，列表不至于空得莫名
+    if (profiles.isEmpty()) {
+        auto *emptyLabel = new QLabel(tr("还没有人加入，把邀请码发给好友吧"));
+        emptyLabel->setObjectName(QStringLiteral("mpEmptyPlayers"));
+        emptyLabel->setAlignment(Qt::AlignCenter);
+        emptyLabel->setWordWrap(true);
+        m_playersLayout->insertWidget(m_playersLayout->count() - 1, emptyLabel);
+        return;
+    }
+
+    // 本机的方块盒子身份：登录后用自己的账户头像 / 昵称覆盖游戏名
+    ForumAccountService *forum = ForumAccountService::instance();
+    const bool loggedIn = forum->isLoggedIn();
+    QString selfName;
+    QString selfAvatar;
+    if (loggedIn)
+    {
+        const ForumUser user = forum->user();
+        selfName = user.displayName.trimmed().isEmpty() ? user.username.trimmed()
+                                                        : user.displayName.trimmed();
+        if (!selfName.isEmpty())
+            selfAvatar = user.avatar;
+    }
+    // 反查别人的账户要动论坛接口：没过人机验证就别去打扰人家，免得在房间里莫名弹滑块
+    const bool canLookupAccounts = loggedIn && forum->humanCheckSatisfied();
+    const bool hosting = m_client->state() == TerracottaClient::State::HostScanning
+                         || m_client->state() == TerracottaClient::State::HostStarting
+                         || m_client->state() == TerracottaClient::State::HostOk;
+
     for (const auto &p : profiles) {
+        const bool isSelf = isSelfProfile(p.name, p.kind, hosting);
+
+        // 能认出来的方块盒子账户（自己的，或按名字反查到的）就用账户资料覆盖游戏名
+        QString shownName = p.name;
+        QString avatarPath;
+        bool accountLinked = false;
+        if (isSelf && !selfName.isEmpty())
+        {
+            shownName = selfName;
+            avatarPath = selfAvatar;
+            accountLinked = true;
+        }
+        else if (!isSelf)
+        {
+            const PlayerAccount account = m_playerAccounts.value(p.name.trimmed());
+            if (account.isValid())
+            {
+                shownName = account.displayName.trimmed().isEmpty() ? account.username
+                                                                    : account.displayName.trimmed();
+                avatarPath = account.avatar;
+                accountLinked = true;
+            }
+            else if (canLookupAccounts)
+            {
+                // 第一次见到就查一次，查到后会自动重绘列表
+                lookupPlayerAccount(p.name);
+            }
+        }
+
+        const QColor roleColor = playerRoleColor(p.kind);
+
         QWidget *card = new QWidget();
         card->setProperty("cardRole", "mpContainer");
-        card->setFixedHeight(60);
+        card->setFixedHeight(64);
 
         auto *cardLayout = new QHBoxLayout(card);
-        cardLayout->setContentsMargins(8, 6, 8, 6);
-        cardLayout->setSpacing(8);
+        cardLayout->setContentsMargins(10, 8, 10, 8);
+        cardLayout->setSpacing(10);
 
-        QLabel *avatarLabel = new QLabel();
-        avatarLabel->setFixedSize(36, 36);
+        auto *avatarLabel = new QLabel(card);
+        avatarLabel->setFixedSize(40, 40);
         avatarLabel->setAlignment(Qt::AlignCenter);
-        QColor avatarColor = (p.kind == QStringLiteral("HOST"))
-            ? QColor(255, 152, 0)   // 房主：橙色
-            : (p.kind == QStringLiteral("LOCAL"))
-                ? QColor(76, 175, 80) // 本地：绿色
-                : QColor(33, 150, 243); // 房客：蓝色
-        QPixmap avatar(36, 36);
-        avatar.fill(Qt::transparent);
+        avatarLabel->setPixmap(letterAvatarPixmap(roleColor, shownName, 40,
+                                                  avatarLabel->devicePixelRatioF()));
+        if (!avatarPath.trimmed().isEmpty())
         {
-            QPainter painter(&avatar);
-            painter.setRenderHint(QPainter::Antialiasing);
-            painter.setBrush(avatarColor);
-            painter.setPen(Qt::NoPen);
-            painter.drawEllipse(0, 0, 36, 36);
-            painter.setPen(Qt::white);
-            QFont font = painter.font();
-            font.setBold(true);
-            font.setPixelSize(18);
-            painter.setFont(font);
-            QString letter = p.name.isEmpty() ? QStringLiteral("?")
-                : QString(p.name.at(0)).toUpper();
-            painter.drawText(avatar.rect(), Qt::AlignCenter, letter);
+            const QString avatarUrl =
+                ForumAccountService::instance()->absoluteUrl(avatarPath.trimmed());
+            if (!avatarUrl.isEmpty())
+            {
+                QPointer<QLabel> guard(avatarLabel);
+                ForumImageStore::instance()->requestImage(
+                    avatarUrl, [guard, roleColor](const QImage &image) {
+                        if (guard.isNull() || image.isNull())
+                            return;
+                        guard->setPixmap(roundAvatarPixmap(image, roleColor, 40,
+                                                           guard->devicePixelRatioF()));
+                    });
+            }
         }
-        avatarLabel->setPixmap(avatar);
-        cardLayout->addWidget(avatarLabel);
+        cardLayout->addWidget(avatarLabel, 0, Qt::AlignVCenter);
 
         auto *infoLayout = new QVBoxLayout();
         infoLayout->setSpacing(4);
         infoLayout->setContentsMargins(0, 0, 0, 0);
 
-        QLabel *nameLabel = new QLabel(p.name);
+        auto *nameLabel = new QLabel(card);
         nameLabel->setProperty("cardRole", "mpName");
-        nameLabel->setToolTip(p.name);
-        QFontMetrics fm(nameLabel->font());
-        QString elidedName = fm.elidedText(p.name, Qt::ElideRight, 180);
-        nameLabel->setText(elidedName);
+        nameLabel->setText(QFontMetrics(nameLabel->font())
+                               .elidedText(shownName, Qt::ElideRight, 180));
+        if (shownName != p.name)
+            nameLabel->setToolTip(tr("%1\n游戏内名字：%2").arg(shownName, p.name));
+        else
+            nameLabel->setToolTip(shownName);
         infoLayout->addWidget(nameLabel);
 
         auto *chipsLayout = new QHBoxLayout();
@@ -2249,19 +2160,32 @@ void MultiplayerPage::refreshPlayerList()
         else if (p.kind == QStringLiteral("LOCAL")) roleText = tr("本机");
         else roleText = tr("房客");
 
-        QLabel *roleChip = new QLabel(roleText);
+        auto *roleChip = new QLabel(roleText, card);
         roleChip->setProperty("cardRole", "mpChip");
+        if (p.kind == QStringLiteral("HOST"))
+            roleChip->setProperty("accent", "host");
+        else if (isSelf)
+            roleChip->setProperty("accent", "self");
         chipsLayout->addWidget(roleChip);
 
+        if (accountLinked)
+        {
+            auto *accountChip = new QLabel(tr("方块盒子"), card);
+            accountChip->setProperty("cardRole", "mpChip");
+            accountChip->setProperty("accent", "account");
+            accountChip->setToolTip(tr("这位玩家关联了方块盒子账户，头像和昵称取自账户资料"));
+            chipsLayout->addWidget(accountChip);
+        }
+
         if (p.kind == QStringLiteral("LOCAL") || p.kind == QStringLiteral("HOST")) {
-            QLabel *timeChip = new QLabel(tr("在线"));
+            auto *timeChip = new QLabel(tr("在线"), card);
             timeChip->setProperty("cardRole", "mpChip");
             chipsLayout->addWidget(timeChip);
         }
 
         if (!p.vendor.isEmpty()) {
             QString vendorShort = p.vendor.section(QLatin1Char(' '), 0, 0);
-            QLabel *vendorChip = new QLabel(vendorShort);
+            auto *vendorChip = new QLabel(vendorShort, card);
             vendorChip->setProperty("cardRole", "mpChip");
             chipsLayout->addWidget(vendorChip);
         }
@@ -2271,22 +2195,21 @@ void MultiplayerPage::refreshPlayerList()
 
         cardLayout->addLayout(infoLayout, 1);
 
-        QPushButton *copyNameBtn = new QPushButton();
+        auto *copyNameBtn = new QPushButton(card);
         copyNameBtn->setProperty("cardRole", "mpActionBtn");
-        copyNameBtn->setFixedSize(28, 28);
+        copyNameBtn->setFixedSize(32, 32);
         copyNameBtn->setCursor(Qt::PointingHandCursor);
-        copyNameBtn->setToolTip(tr("复制玩家名"));
+        copyNameBtn->setToolTip(tr("复制名称"));
         copyNameBtn->setIcon(IconHelper::loadColoredIcon(
             QStringLiteral(":/Images/Icons/copy.svg"),
-            ThemeManager::instance()->currentThemeColor(), 14));
-        copyNameBtn->setIconSize(QSize(14, 14));
+            ThemeManager::instance()->currentThemeColor(), 15));
+        copyNameBtn->setIconSize(QSize(15, 15));
 
-        QString playerName = p.name;
-        connect(copyNameBtn, &QPushButton::clicked, this, [playerName]() {
-            QApplication::clipboard()->setText(playerName);
+        connect(copyNameBtn, &QPushButton::clicked, this, [shownName]() {
+            QApplication::clipboard()->setText(shownName);
         });
 
-        cardLayout->addWidget(copyNameBtn);
+        cardLayout->addWidget(copyNameBtn, 0, Qt::AlignVCenter);
 
         m_playersLayout->insertWidget(m_playersLayout->count() - 1, card);
     }
@@ -2367,6 +2290,11 @@ void MultiplayerPage::refreshStatusBar()
     }
     m_latencyLabel->setProperty("status", latencyStatus);
     m_latencyLabel->style()->polish(m_latencyLabel);
+    setDotTone(m_latencyDot, latencyStatus == QLatin1String("good")
+                                 ? QStringLiteral("ok")
+                                 : (latencyStatus == QLatin1String("medium")
+                                        ? QStringLiteral("warn")
+                                        : QStringLiteral("err")));
 }
 
 void MultiplayerPage::onCoreChanged(int index)
@@ -2478,6 +2406,83 @@ void MultiplayerPage::onPublishToLobbyClicked()
     }
 
     publishRoomWithDialog();
+}
+
+void MultiplayerPage::onCreateShareLinkClicked()
+{
+    QString core;
+    QString joinInfo;
+    QString address;
+    QString error;
+    if (!currentPublishTarget(&core, &joinInfo, &address, &error))
+    {
+        showInfoDialog(tr("现在还不能分享"), error);
+        return;
+    }
+
+    ForumLobbyRoom room;
+    room.core = core;
+    room.coreLabel = ForumLobbyService::coreDisplayName(core);
+    if (core == QStringLiteral("terracotta"))
+        room.inviteCode = joinInfo;
+    else
+        room.address = address;
+    room.title = tr("%1 的联机房间").arg(instanceDisplayName());
+    // 分享的房间房主就是自己，加入方的提示会显示这个名字
+    room.host.displayName = instanceDisplayName();
+    room.gameVersion = m_instanceVersion;
+    room.loader = m_instanceLoader;
+    room.mods = instanceMods();
+
+    showShareLinkDialog(room.title, LobbyShareLink::webShareUrl(room));
+}
+
+void MultiplayerPage::showShareLinkDialog(const QString &title, const QString &link)
+{
+    QDialog *dlg = new QDialog(this);
+    dlg->setWindowTitle(tr("分享链接已生成"));
+    dlg->setMinimumWidth(460);
+    auto *layout = new QVBoxLayout(dlg);
+    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setSpacing(10);
+
+    auto *hint = new QLabel(
+        tr("把这条链接发给朋友：打开就能看到邀请码，点「通过方块盒子一键加入」直接进房；没装方块盒子会引导去下载页。"),
+        dlg);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+
+    auto *linkEdit = new QLineEdit(link, dlg);
+    linkEdit->setReadOnly(true);
+    layout->addWidget(linkEdit);
+
+    auto *btnRow = new QHBoxLayout();
+    auto *friendBtn = new QPushButton(tr("分享给论坛好友"), dlg);
+    friendBtn->setCursor(Qt::PointingHandCursor);
+    friendBtn->setFixedHeight(32);
+    btnRow->addWidget(friendBtn);
+    btnRow->addStretch();
+    auto *copyBtn = new QPushButton(tr("复制链接"), dlg);
+    copyBtn->setCursor(Qt::PointingHandCursor);
+    copyBtn->setFixedHeight(32);
+    copyBtn->setDefault(true);
+    btnRow->addWidget(copyBtn);
+    layout->addLayout(btnRow);
+
+    connect(copyBtn, &QPushButton::clicked, dlg, [copyBtn, link]() {
+        QApplication::clipboard()->setText(link);
+        copyBtn->setText(tr("已复制"));
+        QTimer::singleShot(1200, copyBtn, [copyBtn]() {
+            copyBtn->setText(tr("复制链接"));
+        });
+    });
+    connect(friendBtn, &QPushButton::clicked, dlg, [dlg, title, link]() {
+        ShareToFriendDialog::share(dlg, title, link, tr("联机房间"));
+    });
+    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
+
+    dlg->setModal(false);
+    dlg->show();
 }
 
 void MultiplayerPage::publishRoomWithDialog()
@@ -2624,6 +2629,25 @@ void MultiplayerPage::refreshPublishButtons()
         button->setText(text);
         button->setEnabled(published ? (sameRoom || canPublish) : canPublish);
         button->setToolTip(tip);
+        // 已在大厅展示时按钮切成主色浅底，一眼能看出「再点一下是下架」
+        if (button->property("published").toBool() != sameRoom)
+        {
+            button->setProperty("published", sameRoom);
+            button->style()->unpolish(button);
+            button->style()->polish(button);
+        }
+    }
+
+    // 分享按钮跟发布一样，需要房间就绪才能点；提示也沿用同一套
+    QPushButton *shareButtons[] = {m_shareTerracottaBtn, m_shareHongshiBtn, m_shareFrpBtn};
+    for (QPushButton *button : shareButtons)
+    {
+        if (!button)
+            continue;
+        button->setEnabled(canPublish);
+        button->setToolTip(canPublish
+                               ? tr("生成一条分享链接，朋友打开就能看到邀请码并一键加入")
+                               : error);
     }
 }
 

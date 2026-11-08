@@ -118,10 +118,10 @@ protected:
 private:
     enum ViewIndex { OverviewView = 0, AuthView = 1, DetailView = 2 };
     enum TabIndex { CharactersTab = 0, ThreadsTab = 1, RepliesTab = 2, BookmarksTab = 3,
-                    NotificationsTab = 4, FeedbackTab = 5, SettingsTab = 6 };
+                    NotificationsTab = 4, FeedbackTab = 5, PointsTab = 6, SettingsTab = 7 };
     enum ContentIndex { CharactersContent = 0, ThreadsContent = 1, RepliesContent = 2,
                         BookmarksContent = 3, NotificationsContent = 4, FeedbackContent = 5,
-                        SettingsContent = 6, LoggedOutContent = 7 };
+                        PointsContent = 6, SettingsContent = 7, LoggedOutContent = 8 };
     enum AuthMode { LoginMode = 0, RegisterMode = 1 };
     /** 「我的收藏」页签内的子页：资源收藏（在线资源同步） / 帖子收藏（论坛主题） */
     enum BookmarkSubTab { BookmarkResourceTab = 0, BookmarkThreadTab = 1 };
@@ -162,6 +162,8 @@ private:
     QWidget *buildNotificationsContent(QWidget *parent);
     /** 「我的反馈」页：启动器 / 网页提交的反馈和处理进度 */
     QWidget *buildFeedbackContent(QWidget *parent);
+    /** 「积分」页：方块余额、7 天签到进度与签到按钮 */
+    QWidget *buildPointsContent(QWidget *parent);
     /** 「角色」页：游戏账户瀑布流卡片 */
     QWidget *buildCharactersContent(QWidget *parent);
     /** 账户详情页：左侧 3D 皮肤预览 + 右侧资料 / 模型动作 / 账户操作 */
@@ -239,6 +241,15 @@ private:
     /** 「我的反馈」：拉取当前账号的反馈列表并渲染 */
     void loadMyFeedbacks(bool force = false);
     void renderMyFeedbacks();
+    /** 「积分」：拉取方块余额与签到进度、渲染、签到 */
+    void loadPoints(bool force = false);
+    void renderPoints();
+    void checkInPoints();
+    /** 用方块购买补签卡 / 用一张补签卡补上昨天 */
+    void buyMakeupCard();
+    void useMakeupCard();
+    /** 按签到状态刷新 7 张日期卡的选中 / 已领样式 */
+    void refreshPointsDayCards();
     void renderLoading(QVBoxLayout *layout);
     void renderRows(QVBoxLayout *layout, const QJsonArray &items, int kind);
     void loadTabData();
@@ -289,6 +300,7 @@ private:
     QLabel *m_statThreads = nullptr;
     QLabel *m_statPosts = nullptr;
     QLabel *m_statBookmarks = nullptr;
+    QLabel *m_statPoints = nullptr;
     QLabel *m_statJoined = nullptr;
     QLabel *m_statGameAccounts = nullptr;
     QWidget *m_profileAuthActions = nullptr;   // 未登录：登录 / 注册
@@ -306,6 +318,24 @@ private:
     QPushButton *m_markAllReadButton = nullptr;
     QVBoxLayout *m_feedbackListLayout = nullptr;
     QPushButton *m_feedbackRefreshButton = nullptr;
+    // 积分页（方块余额 + 每日签到）
+    QWidget *m_pointsPage = nullptr;
+    QLabel *m_pointsBalance = nullptr;
+    QLabel *m_pointsStreak = nullptr;
+    QLabel *m_pointsReward = nullptr;
+    QPushButton *m_pointsCheckinButton = nullptr;
+    QLabel *m_pointsGift = nullptr;
+    QLabel *m_makeupCount = nullptr;
+    QLabel *m_makeupDesc = nullptr;
+    QPushButton *m_buyMakeupButton = nullptr;
+    QPushButton *m_useMakeupButton = nullptr;
+    QList<QFrame *> m_pointsDayCards;
+    QList<QLabel *> m_pointsDayRewards;
+    QList<QLabel *> m_pointsDayStates;
+    QVBoxLayout *m_pointsHistoryLayout = nullptr;
+    QJsonObject m_pointsState;
+    bool m_pointsLoaded = false;
+    bool m_pointsBusy = false;
     // 角色页（游戏账户瀑布流）
     QWidget *m_charactersPage = nullptr;
     MasonryLayout *m_charactersLayout = nullptr;

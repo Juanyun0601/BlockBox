@@ -21,6 +21,7 @@
         <file>resources/ai_agent_tools.json</file>
         <!-- 入站答题题库 -->
         <file>resources/quiz/quiz_bank.txt</file>
+        <file>resources/quiz/quiz_bank_en.txt</file>
         <!-- 结构箱战利品表（原版 1.21.4 data/minecraft/loot_table：宝箱 56 张 + 考古 3 张） -->
         <file>utils/WorldMap/loot_item_names.json</file>
         <file>utils/WorldMap/loot_tables/archaeology/desert_well.json</file>

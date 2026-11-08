@@ -17,6 +17,8 @@
 #include <QDir>
 #include <QFuture>
 #include <QFutureWatcher>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QProcess>
 #include <QResource>
 #include <QSettings>
@@ -24,6 +26,14 @@
 #include <QtConcurrent>
 #include <QTimer>
 #include <QTranslator>
+
+#ifdef Q_OS_WIN
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #include "platform.h"
 #include "components/AppMessageBox.h"
@@ -47,6 +57,70 @@
 #include "utils/news/AnnouncementFeed.h"
 
 namespace {
+
+/// blockbox:// 一键加入链接的 IPC 通道名：浏览器为新链接再起的进程靠它转交给已运行的实例
+constexpr char kJoinIpcServerName[] = "BlockBox-join-ipc";
+
+/// 从命令行参数里找出 blockbox:// 一键加入链接（没有返回空串）
+QString findJoinUrlArgument(const QStringList &arguments)
+{
+    for (const QString &argument : arguments)
+    {
+        if (argument.startsWith(QStringLiteral("blockbox://"), Qt::CaseInsensitive))
+            return argument;
+    }
+    return QString();
+}
+
+/// 已有方块盒子在跑时把一键加入链接转交给它；连不上（没有在跑）返回 false
+bool forwardJoinUrlToRunningInstance(const QString &url)
+{
+    QLocalSocket socket;
+    socket.connectToServer(QString::fromLatin1(kJoinIpcServerName));
+    if (!socket.waitForConnected(500))
+        return false;
+    // 约定一行一条链接，接收端凑齐换行才处理
+    socket.write(url.toUtf8() + '\n');
+    socket.flush();
+    return socket.waitForBytesWritten(500);
+}
+
+#ifdef Q_OS_WIN
+/**
+ * @brief 注册 blockbox:// 协议（HKCU，无需管理员）
+ *
+ * 网页 join.html 的「通过方块盒子一键加入」按钮靠它唤起方块盒子。
+ * 每次启动都重写一遍：更新 / 换安装目录后注册的路径也能保持正确。
+ */
+void registerBlockboxUrlScheme()
+{
+    const QString command = QStringLiteral("\"%1\" \"%2\"")
+                                .arg(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()),
+                                     QStringLiteral("%1"));
+
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\blockbox", 0, nullptr,
+                        REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, &key, nullptr)
+        == ERROR_SUCCESS)
+    {
+        const wchar_t empty[] = L"";
+        RegSetValueExW(key, L"URL Protocol", 0, REG_SZ,
+                       reinterpret_cast<const BYTE *>(empty), sizeof(empty));
+        RegCloseKey(key);
+    }
+
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\blockbox\\shell\\open\\command",
+                        0, nullptr, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, &key, nullptr)
+        == ERROR_SUCCESS)
+    {
+        const std::wstring commandWide = command.toStdWString();
+        RegSetValueExW(key, nullptr, 0, REG_SZ,
+                       reinterpret_cast<const BYTE *>(commandWide.c_str()),
+                       static_cast<DWORD>((commandWide.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(key);
+    }
+}
+#endif
 
 /**
  * @brief 启动后在右下角显示入站答题提醒
@@ -186,6 +260,53 @@ void maybeCheckUpdates(QWidget *parent)
     });
 }
 
+/**
+ * @brief 安卓端启动权限引导：首次打开（或一直没授权时）先把游戏文件所需的
+ *        存储权限要到手，再继续新手引导 / 公告 / 更新检查，避免装实例、导入
+ *        存档时才发现没权限。授权过之后每次启动静默通过，不打扰用户。
+ *
+ * 两个分支按系统版本自动二选一：
+ *  - 安卓 11+：「所有文件访问」没有系统弹窗，只能说明用途后跳系统设置页；
+ *  - 旧版本：说明用途后再弹一次系统的存储权限授权框。
+ * 桌面端直接返回。
+ */
+void requestAndroidStartupPermissions(QWidget *parent)
+{
+    if (!AndroidBridge::isAndroidRuntime())
+        return;
+
+    const QString purpose = QCoreApplication::translate("MainWindow",
+        "安装实例、模组和导入导出存档都需要访问存储");
+
+    if (!AndroidBridge::hasAllFilesAccess())
+    {
+        const auto answer = AppMessageBox::question(
+            parent,
+            QCoreApplication::translate("MainWindow", "需要「所有文件访问」权限"),
+            QCoreApplication::translate("MainWindow",
+                                        "%1。\n\n"
+                                        "是否前往系统设置授权？授权后返回即可继续使用。")
+                .arg(purpose),
+            AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::Yes);
+        if (answer == AppMessageBox::Yes)
+            AndroidBridge::ensureAllFilesAccess();
+        return;
+    }
+
+    if (!AndroidBridge::hasLegacyStoragePermission())
+    {
+        const auto answer = AppMessageBox::question(
+            parent,
+            QCoreApplication::translate("MainWindow", "需要存储权限"),
+            QCoreApplication::translate("MainWindow",
+                                        "%1。\n\n请在接下来的系统弹窗中允许。")
+                .arg(purpose),
+            AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::Yes);
+        if (answer == AppMessageBox::Yes)
+            AndroidBridge::requestLegacyStoragePermissions();
+    }
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -226,11 +347,52 @@ int main(int argc, char *argv[])
     // 设置应用程序图标
     a.setWindowIcon(QIcon(":/Images/icon.ico"));
 
+    // ── blockbox:// 一键加入：解析命令行链接，必要时转交给已运行的实例 ──
+    const QString joinUrlArgument = findJoinUrlArgument(QApplication::arguments());
+#ifndef Q_OS_ANDROID
+    if (!joinUrlArgument.isEmpty()
+        && forwardJoinUrlToRunningInstance(joinUrlArgument))
+    {
+        // 已有方块盒子在跑：链接交给它处理，本进程直接退出，不重复开窗口
+        return 0;
+    }
+#endif
+#ifdef Q_OS_WIN
+    // 网页端「通过方块盒子一键加入」靠这个协议唤起方块盒子
+    registerBlockboxUrlScheme();
+#endif
+
 #if defined(Q_OS_ANDROID)
     // 沉浸模式：隐藏系统状态栏（时间/电量/信号）和导航条，界面铺满整屏。
     // 系统会在切前后台、窗口重新获得焦点、旋转、软键盘收放后自己把栏放回来，
     // 所以交给维持器：启动先隐藏一次，之后按这些时机自动补回，并低频自检。
     AndroidBridge::installImmersiveMode();
+
+    // 触屏上点输入框后软键盘不一定自动弹出（实测搜索框、AI 输入框都出现过
+    // 点了没反应的情况）。应用级兜底：可编辑文本控件拿到焦点时主动唤起输入法。
+    // 只读控件（QTextBrowser 等）拿到焦点不弹，避免公告弹窗一打开就蹦键盘。
+    class ImeAutoShowFilter : public QObject
+    {
+    public:
+        explicit ImeAutoShowFilter(QObject *parent) : QObject(parent) {}
+
+        bool eventFilter(QObject *watched, QEvent *event) override
+        {
+            if (event->type() == QEvent::FocusIn) {
+                bool editable = false;
+                if (auto *edit = qobject_cast<QLineEdit *>(watched))
+                    editable = !edit->isReadOnly();
+                else if (auto *textEdit = qobject_cast<QTextEdit *>(watched))
+                    editable = !textEdit->isReadOnly();
+                else if (auto *plain = qobject_cast<QPlainTextEdit *>(watched))
+                    editable = !plain->isReadOnly();
+                if (editable)
+                    QGuiApplication::inputMethod()->show();
+            }
+            return QObject::eventFilter(watched, event);
+        }
+    };
+    a.installEventFilter(new ImeAutoShowFilter(&a));
 #endif
 
     // 初始化运行日志：尽早装上，把启动过程也记进去
@@ -292,6 +454,45 @@ int main(int argc, char *argv[])
     MainWindow w;
     PerformanceMonitor::instance()->endMeasurement("主窗口初始化");
 
+#ifndef Q_OS_ANDROID
+    // 接收后续 blockbox:// 一键加入链接的转发：浏览器会为新链接再起一个进程，
+    // 那个进程把链接写进这里就退出，由这个已经跑着的实例来完成加入
+    QLocalServer *joinIpcServer = new QLocalServer(&a);
+    QLocalServer::removeServer(QString::fromLatin1(kJoinIpcServerName));
+    if (joinIpcServer->listen(QString::fromLatin1(kJoinIpcServerName)))
+    {
+        QObject::connect(joinIpcServer, &QLocalServer::newConnection, [&w, joinIpcServer]() {
+            while (QLocalSocket *connection = joinIpcServer->nextPendingConnection())
+            {
+                QObject::connect(connection, &QLocalSocket::disconnected,
+                                 connection, &QLocalSocket::deleteLater);
+                QObject::connect(connection, &QLocalSocket::readyRead, [&w, connection]() {
+                    // 一行一条链接：凑齐换行才处理，链接较大分片到达时不会被截断
+                    QByteArray buffer = connection->property("joinBuffer").toByteArray();
+                    buffer += connection->readAll();
+                    if (!buffer.contains('\n'))
+                    {
+                        connection->setProperty("joinBuffer", buffer);
+                        return;
+                    }
+                    connection->setProperty("joinBuffer", QByteArray());
+                    const QString url = QString::fromUtf8(
+                        buffer.left(buffer.indexOf('\n')).trimmed());
+                    if (url.isEmpty())
+                        return;
+                    w.raise();
+                    w.activateWindow();
+                    w.handleExternalJoinUrl(url);
+                });
+            }
+        });
+    }
+    else
+    {
+        joinIpcServer->deleteLater();
+    }
+#endif
+
     // 在线资源收藏 ↔ 论坛账号 同步器（监听收藏增删并在登录后对账补传）
     ContentFavoriteSync::instance();
 
@@ -316,26 +517,40 @@ int main(int argc, char *argv[])
         startupWidget->updateProgress(100, QCoreApplication::translate("MainWindow", "启动完成"));
         
         // 短暂延迟后隐藏启动窗口并显示主窗口
-        QTimer::singleShot(300, [&w, startupWidget, isFirstRun]() {
+        QTimer::singleShot(300, [&w, startupWidget, isFirstRun, joinUrlArgument]() {
             startupWidget->hideStartup();
             w.show();
 
+            // 安卓端先把系统权限要到手（首次启动会弹出说明 + 授权跳转），
+            // 之后再进新手引导或弹公告 / 提醒，保证引导期间就有存储可用
+            requestAndroidStartupPermissions(&w);
+
+            // 通过 blockbox:// 链接启动的：窗口就绪后自动走一键加入
+            const auto handlePendingJoinUrl = [&w, joinUrlArgument]() {
+                if (!joinUrlArgument.isEmpty())
+                    QTimer::singleShot(600, &w, [&w, joinUrlArgument]() {
+                        w.handleExternalJoinUrl(joinUrlArgument);
+                    });
+            };
+
             // 首次运行（未走完引导）：直接进入新手引导页
             if (isFirstRun) {
-                QTimer::singleShot(400, [&w]() {
+                QTimer::singleShot(400, [&w, handlePendingJoinUrl]() {
                     // 引导页走完后再做首次启动的后续动作（入站答题提醒 / 检查更新）。
                     // onboardingFinished() 只在首次启动进入引导时发出一次，设置里再次打开不会重复打扰。
-                    QObject::connect(&w, &MainWindow::onboardingFinished, &w, [&w](bool) {
+                    QObject::connect(&w, &MainWindow::onboardingFinished, &w, [&w, handlePendingJoinUrl](bool) {
                         // 新手引导之后在右下角提醒入站答题（可直接跳过，不阻塞使用）
                         showQuizReminder(&w);
                         // 重要公告弹窗结束后再检查更新，避免两个弹窗叠在一起
                         maybeShowImportantAnnouncement(&w, [&w]() { maybeCheckUpdates(&w); });
+                        handlePendingJoinUrl();
                     });
                     w.showOnboardingPage(true);
                 });
             } else {
                 showQuizReminder(&w);
                 maybeShowImportantAnnouncement(&w, [&w]() { maybeCheckUpdates(&w); });
+                handlePendingJoinUrl();
             }
         });
 

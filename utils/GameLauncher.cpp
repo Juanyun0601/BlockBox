@@ -134,7 +134,9 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     if (!preCheck(config)) {
         m_status = Failed;
         emit launchStatusChanged(m_status);
-        emit gameCrashed(m_errorMessage);
+        // 预检失败是配置问题（账户/路径/Java），不是游戏崩溃：
+        // 不能发 gameCrashed，否则上层会当成"启动期崩溃"去补文件并重试，
+        // 对配置错误毫无意义（还会连发多条错误通知）。
         return false;
     }
     emit launchProgressChanged(15, "预检查完成");
@@ -179,7 +181,6 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
                     : QStringLiteral("无法自动检测到Java，请在设置中手动指定Java路径");
                 m_status = Failed;
                 emit launchStatusChanged(m_status);
-                emit gameCrashed(m_errorMessage);
                 emit launchDetailAdded("错误: 未检测到Java");
                 return false;
             }

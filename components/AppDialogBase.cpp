@@ -25,8 +25,17 @@ AppDialogBase::AppDialogBase(QWidget *parent)
     : QDialog(parent)
 {
     setAttribute(Qt::WA_TranslucentBackground, true);
+#ifdef Q_OS_ANDROID
+    // 安卓：Qt 独立顶层窗口的几何/输入映射在真机上不可靠（实测输入坐标被
+    // 错误缩放、遮罩盖不满窗口、卡片外露出游离滚动条）。改为宿主窗口内的
+    // 覆盖层控件：挂到宿主窗口下、铺满客户区，靠自身遮罩拦截点击，
+    // 键盘/返回键焦点走控件焦点链。
+    setWindowFlags(Qt::Widget);
+    setWindowModality(Qt::NonModal);
+#else
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
     setWindowModality(Qt::WindowModal);
+#endif
 
     // 清除全局 QSS 中 QDialog 通用规则的背景/边框影响：
     // 弹窗自身必须透明，模糊背景 + 暗色遮罩由基类 paintEvent 绘制。
@@ -38,6 +47,27 @@ AppDialogBase::AppDialogBase(QWidget *parent)
     fitCardToScreen();
     positionOverWindow();
     setAttribute(Qt::WA_Moved, true);
+}
+
+int AppDialogBase::exec()
+{
+#ifdef Q_OS_ANDROID
+    // 覆盖层模式：嵌套事件循环等 finished，输入拦截靠铺满宿主的遮罩本身。
+    if (m_execLoop) {
+        qWarning("AppDialogBase::exec: Recursive loop detected for dialog '%s'",
+                 qPrintable(objectName()));
+        return Rejected;
+    }
+    QEventLoop loop;
+    m_execLoop = &loop;
+    connect(this, &QDialog::finished, &loop, &QEventLoop::quit);
+    show();
+    const int ret = loop.exec(QEventLoop::DialogExec);
+    m_execLoop = nullptr;
+    return ret;
+#else
+    return QDialog::exec();
+#endif
 }
 
 QWidget *AppDialogBase::findCardWidget() const
@@ -94,6 +124,26 @@ void AppDialogBase::fitCardToScreen()
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    // 滚动条收细并圆角化：默认样式的方形灰条会顶着卡片圆角边、
+    // 与卡内说明区自己的滚动条叠成"双滚动条"，观感很糟
+    scroll->setStyleSheet(QStringLiteral(
+        "QScrollArea#appDialogCardScroll { background: transparent; }"
+        "QScrollArea#appDialogCardScroll QScrollBar:vertical {"
+        "    background: transparent; width: 6px; margin: 6px 2px; }"
+        "QScrollArea#appDialogCardScroll QScrollBar::handle:vertical {"
+        "    background: rgba(128, 128, 128, 110); border-radius: 3px; min-height: 30px; }"
+        "QScrollArea#appDialogCardScroll QScrollBar::add-line:vertical,"
+        "QScrollArea#appDialogCardScroll QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollArea#appDialogCardScroll QScrollBar::add-page:vertical,"
+        "QScrollArea#appDialogCardScroll QScrollBar::sub-page:vertical { background: transparent; }"
+        "QScrollArea#appDialogCardScroll QScrollBar:horizontal {"
+        "    background: transparent; height: 6px; margin: 2px 6px; }"
+        "QScrollArea#appDialogCardScroll QScrollBar::handle:horizontal {"
+        "    background: rgba(128, 128, 128, 110); border-radius: 3px; min-width: 30px; }"
+        "QScrollArea#appDialogCardScroll QScrollBar::add-line:horizontal,"
+        "QScrollArea#appDialogCardScroll QScrollBar::sub-line:horizontal { width: 0; }"
+        "QScrollArea#appDialogCardScroll QScrollBar::add-page:horizontal,"
+        "QScrollArea#appDialogCardScroll QScrollBar::sub-page:horizontal { background: transparent; }"));
     scroll->setWidget(inner);
 
     QVBoxLayout *cardLay = new QVBoxLayout(card);
@@ -129,6 +179,22 @@ void AppDialogBase::positionOverWindow()
     QWidget *host = hostWindow();
     if (!host || host == this)
         return;
+
+#ifdef Q_OS_ANDROID
+    // 覆盖层模式：直接挂到宿主窗口下并铺满其客户区。
+    // 宿主窗口旋转/软键盘收放会 Resize，用事件过滤器跟着重新铺满。
+    if (parentWidget() != host) {
+        const bool wasVisible = isVisible();
+        if (wasVisible)
+            setVisible(false); // 改父控件会隐式显示，先压住
+        setParent(host);
+        if (wasVisible)
+            setVisible(true);
+    }
+    setGeometry(QRect(QPoint(0, 0), host->size()));
+    host->installEventFilter(this);
+    return;
+#endif
 
     // host 客户端区左上角在屏幕上的位置
     const QPoint hostTopLeft = host->mapToGlobal(QPoint(0, 0));
@@ -172,6 +238,11 @@ void AppDialogBase::positionOverWindow()
 
 void AppDialogBase::captureBlurBackground()
 {
+#ifdef Q_OS_ANDROID
+    // 覆盖层模式下宿主抓图会把遮罩自己抓进去（递归变暗），且手机端抓大图
+    // 拖慢弹窗打开速度。安卓端直接用纯色暗遮罩，不做模糊背景。
+    return;
+#endif
     QWidget *host = hostWindow();
     if (!host || host == this)
         return;
@@ -231,7 +302,13 @@ void AppDialogBase::showEvent(QShowEvent *event)
     // 确保弹窗真正获得激活与输入焦点：剪贴板等后台触发场景下
     // 宿主可能处于失焦状态，若不激活则弹窗看似弹出却无法点击。
     raise();
+#ifdef Q_OS_ANDROID
+    // 覆盖层不是窗口，activateWindow 无意义；要拿到返回键（Esc）事件
+    // 必须把焦点收进弹窗自身。
+    setFocus(Qt::OtherFocusReason);
+#else
     activateWindow();
+#endif
 
     QTimer::singleShot(0, this, [this]() {
         if (!isVisible())
@@ -240,6 +317,17 @@ void AppDialogBase::showEvent(QShowEvent *event)
         captureBlurBackground();
         update();
     });
+}
+
+bool AppDialogBase::eventFilter(QObject *watched, QEvent *event)
+{
+    // 覆盖层模式：宿主窗口大小变化（旋转、软键盘收放）时跟着重新铺满，
+    // 并把居中卡片压回新的可用范围
+    if (event->type() == QEvent::Resize && watched == hostWindow()) {
+        positionOverWindow();
+        fitCardToScreen();
+    }
+    return QDialog::eventFilter(watched, event);
 }
 
 void AppDialogBase::resizeEvent(QResizeEvent *event)

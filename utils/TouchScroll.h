@@ -178,6 +178,16 @@ private:
                 m_dragging = false;
                 return QObject::eventFilter(watched, event);
             }
+            // 控件声明了 flickScrollExempt（按住拖动是它自己的交互，
+            // 例如人机验证的自绘滑块）：同样不劫持，按下/移动/松手全放行
+            for (QObject *node = watched; node; node = node->parent()) {
+                if (node->isWidgetType()
+                    && static_cast<QWidget *>(node)->property("flickScrollExempt").toBool()) {
+                    m_pressActive = false;
+                    m_dragging = false;
+                    return QObject::eventFilter(watched, event);
+                }
+            }
             m_pressActive = true;
             m_dragging = false;
             m_activeViewport = viewport;

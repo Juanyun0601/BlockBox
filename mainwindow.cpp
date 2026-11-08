@@ -55,6 +55,7 @@
 #include "components/FileDropOverlay.h"
 #include "components/HumanCheckDialog.h"
 #include "utils/Lobby/LobbyInstanceMatcher.h"
+#include "utils/Lobby/LobbyShareLink.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
 #include "utils/ThemeManager.h"
@@ -702,11 +703,9 @@ void MainWindow::onSideBarItemClicked(int parentIndex)
         m_topBar->setTitle(tr("社区"));
         m_topBar->setAccountCardVisible(true);
         m_topBar->setWindowControlCardVisible(true);
-        // 论坛开了人机验证的话，进社区前先过一道滑块
-        if (!ensureHumanCheck())
-            NotificationManager::showInfo(this, tr("社区需要先完成人机验证"));
-        else if (m_communityPage) {
-            // 从其它页面切回社区时，先退出大厅子页面，回到社区首页
+        // 人机验证交给社区页自己的请求去触发（被 403 拦下 → 弹滑块 → 验完重发），
+        // 不在这里提前弹：点侧边栏的这一下会被刚弹出的弹窗当成「点遮罩」关掉
+        if (m_communityPage) {
             m_communityPage->closeLobbyIfVisible();
             m_communityPage->refresh();
         }
@@ -786,11 +785,10 @@ void MainWindow::onParentNavClicked(int parentIndex)
         m_topBar->setTitle(tr("社区"));
         m_topBar->setAccountCardVisible(true);
         m_topBar->setWindowControlCardVisible(true);
-        // 论坛开了人机验证的话，进社区前先过一道滑块
-        if (!ensureHumanCheck())
-            NotificationManager::showInfo(this, tr("社区需要先完成人机验证"));
-        else if (m_communityPage) {
-            // 从其它页面切回社区时，先退出大厅子页面，回到社区首页
+        // 论坛开了人机验证的话，交给社区页自己的请求去触发滑块：被 403 拦下时
+        // 会弹验证框、验完把请求原样重发。不在这里提前弹——点侧边栏的这一下
+        // 会被刚弹出来的弹窗当成「点遮罩」，滑块一闪就没了
+        if (m_communityPage) {
             m_communityPage->closeLobbyIfVisible();
             m_communityPage->refresh();
         }
@@ -1864,10 +1862,12 @@ void MainWindow::loadCurrentInstancePath()
     }
 }
 
-bool MainWindow::ensureHumanCheck()
+bool MainWindow::ensureHumanCheck(bool force)
 {
     ForumAccountService *service = ForumAccountService::instance();
-    if (service->humanCheckSatisfied())
+    // force：服务端已经明确拦下来了，本地那份令牌可能早被它作废，
+    // 这时候再拿本地到期时间当托词跳过滑块，被拦的请求就会一直挂着
+    if (!force && service->humanCheckSatisfied())
         return true;
 
     // 已经在弹了就别叠第二个（页面刷新时会并发好几个请求，每个都会触发一次）
@@ -1882,7 +1882,16 @@ bool MainWindow::ensureHumanCheck()
 
 void MainWindow::onHumanCheckRequired()
 {
-    ensureHumanCheck();
+    // 服务端不认令牌时才会走到这里：本地那份已经被服务当作废了
+    if (m_humanCheckRunning)
+        return;
+
+    if (!ensureHumanCheck(true))
+    {
+        // 用户没验就关掉了滑块：把被拦下的请求放掉，页面给出「需要人机验证」
+        // 的提示，而不是永远停在「正在连接论坛…」
+        ForumAccountService::instance()->abortHumanCheck();
+    }
 }
 
 void MainWindow::restoreDefaultAccount()
@@ -2316,6 +2325,18 @@ void MainWindow::onLaunchTaskCardClicked()
     // For example, show more detailed information or open a separate window
 }
 
+bool MainWindow::ensureLaunchPrerequisites()
+{
+    // 启动前置校验：账户没就绪就直说并带用户去补，而不是进启动流程后
+    // 让预检失败（旧流程会把配置错误当崩溃处理，连发多条错误通知）。
+    if (SettingsManager::instance()->getDefaultAccount().username.isEmpty()) {
+        NotificationManager::showInfo(this, tr("尚未登录账户，请先添加账户后再启动游戏"));
+        showAccountManagePage();
+        return false;
+    }
+    return true;
+}
+
 void MainWindow::onLaunchGameClicked()
 {
     if (m_currentInstancePath.isEmpty()) {
@@ -2327,6 +2348,9 @@ void MainWindow::onLaunchGameClicked()
         m_gameLauncher->status() == GameLauncher::Launching) {
         return;
     }
+
+    if (!ensureLaunchPrerequisites())
+        return;
 
     // 每次用户主动点击启动都视为"首次启动": 重置重试标记
     // 首次启动跳过文件完整性检查与补全，若启动失败再自动重试时启用补全
@@ -2395,6 +2419,9 @@ void MainWindow::launchGameWithExtraArgs(const QStringList &extraGameArgs)
         m_gameLauncher->status() == GameLauncher::Launching) {
         return;
     }
+
+    if (!ensureLaunchPrerequisites())
+        return;
 
     m_launchRetryAttempted = false;
     m_launchRetryPending = false;
@@ -2500,6 +2527,19 @@ void MainWindow::onLobbyJoinRequested(const QString &address, quint16 port,
     onQuickLaunchServerClicked(address, port);
 }
 
+void MainWindow::handleExternalJoinUrl(const QString &url)
+{
+    ForumLobbyRoom room;
+    QString error;
+    if (!LobbyShareLink::parsePayload(url, &room, &error))
+    {
+        NotificationManager::showError(this, error);
+        return;
+    }
+
+    onFriendRoomJoinRequested(room);
+}
+
 void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)
 {
     if (!room.isOnline())
@@ -2528,9 +2568,12 @@ void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)
         return;
     }
 
-    const QString friendName = room.host.displayName.trimmed().isEmpty()
-                                   ? tr("好友")
-                                   : room.host.displayName;
+    // 名字依次兜底：好友昵称 → 房间名（分享链接进来的房间没有 host 信息）→ 「好友」
+    QString friendName = room.host.displayName.trimmed();
+    if (friendName.isEmpty())
+        friendName = room.title.trimmed();
+    if (friendName.isEmpty())
+        friendName = tr("好友");
 
     if (room.isTerracotta())
     {

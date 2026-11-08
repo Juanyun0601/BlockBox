@@ -348,9 +348,20 @@ void ForumAccountService::sendAuth(const QString &path, const QJsonObject &body,
             // 登录 / 注册同样过不了人机验证这关：先弹验证框，通过后自动重发一次
             if (status == 403 && errorCode(raw) == QLatin1String("human_required"))
             {
+                // 服务端不认本地这份令牌（过期、论坛重启过、换了节点）：
+                // 必须先作废，否则界面会以为已经验过、不再弹滑块，
+                // 被拦下的请求就一直挂着，看着像「连不上论坛」
+                clearHumanCheck();
                 m_humanCheckPending = true;
                 if (m_humanReplays.size() < 12)
-                    m_humanReplays.append([this, path, body]() { sendAuth(path, body, 1); });
+                    m_humanReplays.append([this, path, body]() {
+                        if (m_humanToken.isEmpty())
+                        {
+                            emit requestFailed(tr("需要先完成人机验证，验证后再试一次"), 403);
+                            return;
+                        }
+                        sendAuth(path, body, 1);
+                    });
                 emit humanCheckRequired();
                 return;
             }
@@ -772,10 +783,19 @@ void ForumAccountService::handleReply(QNetworkReply *reply, JsonHandler onOk, Fa
                     // 顺手把这次请求记下来，验证通过后原样重发
                     if (status == 403 && errorCode(raw) == QLatin1String("human_required"))
                     {
+                        // 服务端明确说不认这个令牌，就照它说的办：本地那份作废，
+                        // 别再用「本地还在有效期内」当理由跳过滑块
+                        clearHumanCheck();
                         m_humanCheckPending = true;
                         if (retry && m_humanReplays.size() < 12)
                         {
                             m_humanReplays.append([this, retry, onOk, onFail]() {
+                                if (m_humanToken.isEmpty())
+                                {
+                                    if (onFail)
+                                        onFail(tr("需要先完成人机验证，验证后再点刷新"), 403);
+                                    return;
+                                }
                                 QNetworkReply *again = retry(1);
                                 if (again)
                                     handleReply(again, onOk, onFail, retry, 1);
@@ -945,6 +965,7 @@ ForumUser ForumAccountService::parseUser(const QJsonObject &object)
     user.status = object.value(QStringLiteral("status")).toString();
     user.threadCount = object.value(QStringLiteral("thread_count")).toInt();
     user.postCount = object.value(QStringLiteral("post_count")).toInt();
+    user.points = object.value(QStringLiteral("points")).toInt();
     user.quizPassed = object.value(QStringLiteral("quiz_passed")).toBool();
     user.createdAt = static_cast<qint64>(object.value(QStringLiteral("created_at")).toDouble());
     user.email = object.value(QStringLiteral("email")).toString();
@@ -968,6 +989,7 @@ void ForumAccountService::setUser(const ForumUser &user, bool cache)
             {QStringLiteral("status"), m_user.status},
             {QStringLiteral("thread_count"), m_user.threadCount},
             {QStringLiteral("post_count"), m_user.postCount},
+            {QStringLiteral("points"), m_user.points},
             {QStringLiteral("quiz_passed"), m_user.quizPassed},
             {QStringLiteral("created_at"), static_cast<double>(m_user.createdAt)},
             {QStringLiteral("email"), m_user.email},
@@ -1164,6 +1186,23 @@ void ForumAccountService::flushHumanCheckQueue()
     if (m_humanReplays.isEmpty())
         return;
 
+    const QVector<std::function<void()>> pending = m_humanReplays;
+    m_humanReplays.clear();
+    for (const auto &replay : pending)
+    {
+        if (replay)
+            replay();
+    }
+}
+
+void ForumAccountService::abortHumanCheck()
+{
+    m_humanCheckPending = false;
+    if (m_humanReplays.isEmpty())
+        return;
+
+    // 令牌还是空的，这些重发会直接以「需要人机验证」回失败，
+    // 页面就不用干等着了（否则会一直显示「正在连接论坛…」）
     const QVector<std::function<void()>> pending = m_humanReplays;
     m_humanReplays.clear();
     for (const auto &replay : pending)

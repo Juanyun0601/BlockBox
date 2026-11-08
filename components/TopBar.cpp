@@ -1115,7 +1115,15 @@ void TopBar::setAccountCardVisible(bool visible)
 
 void TopBar::setWindowControlCardVisible(bool visible)
 {
-    if (m_windowControlCard) m_windowControlCard->setVisible(visible);
+    if (!m_windowControlCard) return;
+#ifdef Q_OS_ANDROID
+    // 触屏没有最小化/最大化/关闭的概念（退出走系统返回/手势），手机端
+    // 无论页面怎么要求都不显示窗口控制按钮
+    Q_UNUSED(visible);
+    m_windowControlCard->hide();
+#else
+    m_windowControlCard->setVisible(visible);
+#endif
 }
 
 void TopBar::setForumCardVisible(bool visible)

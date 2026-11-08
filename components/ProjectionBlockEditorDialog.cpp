@@ -586,19 +586,19 @@ void ProjectionBlockEditorDialog::initUI()
         presetGrid->setSpacing(5);
         struct PresetSpec { const char *text; VoxelViewWidget::ViewPreset preset; const char *tip; };
         const PresetSpec presets[] = {
-            { "等轴", VoxelViewWidget::ViewPreset::Iso,    "等轴视角（默认）" },
-            { "前",   VoxelViewWidget::ViewPreset::Front,  "正视图" },
-            { "后",   VoxelViewWidget::ViewPreset::Back,   "后视图" },
-            { "左",   VoxelViewWidget::ViewPreset::Left,   "左视图" },
-            { "右",   VoxelViewWidget::ViewPreset::Right,  "右视图" },
-            { "顶",   VoxelViewWidget::ViewPreset::Top,    "俯视图" },
-            { "底",   VoxelViewWidget::ViewPreset::Bottom, "仰视图" },
+            { QT_TR_NOOP("等轴"), VoxelViewWidget::ViewPreset::Iso,    QT_TR_NOOP("等轴视角（默认）") },
+            { QT_TR_NOOP("前"),   VoxelViewWidget::ViewPreset::Front,  QT_TR_NOOP("正视图") },
+            { QT_TR_NOOP("后"),   VoxelViewWidget::ViewPreset::Back,   QT_TR_NOOP("后视图") },
+            { QT_TR_NOOP("左"),   VoxelViewWidget::ViewPreset::Left,   QT_TR_NOOP("左视图") },
+            { QT_TR_NOOP("右"),   VoxelViewWidget::ViewPreset::Right,  QT_TR_NOOP("右视图") },
+            { QT_TR_NOOP("顶"),   VoxelViewWidget::ViewPreset::Top,    QT_TR_NOOP("俯视图") },
+            { QT_TR_NOOP("底"),   VoxelViewWidget::ViewPreset::Bottom, QT_TR_NOOP("仰视图") },
         };
         m_presetButtons.clear();
         int index = 0;
         for (const PresetSpec &spec : presets)
         {
-            auto *btn = new QPushButton(QString::fromUtf8(spec.text), side);
+            auto *btn = new QPushButton(tr(spec.text), side);
             btn->setObjectName(QStringLiteral("projMiniBtn"));
             btn->setCursor(Qt::PointingHandCursor);
             btn->setMinimumWidth(0);

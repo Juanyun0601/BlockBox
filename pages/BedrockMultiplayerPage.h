@@ -19,6 +19,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+class QDialog;
 class GravityConeClient;
 
 class BedrockMultiplayerPage : public QWidget
@@ -47,24 +48,36 @@ private:
     GravityConeClient *m_client;
     QStackedWidget *m_stack;
 
+    // ---- 顶部核心栏 ----
+    QWidget *m_topBar;
+    QLabel *m_coreLabel;          ///< 固定核心名（GravityCone）
+    QPushButton *m_updateBtn;     ///< 更新联机核心按钮
+
     // ---- 首页控件 ----
     QWidget *m_homePage;
+    QLabel *m_statusDot;          ///< 状态条小圆点
     QLabel *m_statusLabel;        ///< 顶部状态文字
-    QPushButton *m_updateBtn;     ///< 更新联机核心按钮
     QLabel *m_descLabel;          ///< 说明信息文字
     QPushButton *m_joinBtn;       ///< 加入房间
     QPushButton *m_createBtn;     ///< 创建房间
 
     // ---- 房间页控件 ----
     QWidget *m_roomPage;
+    QLabel *m_latencyDot;         ///< 联机状态小圆点
     QLabel *m_latencyLabel;       ///< 顶部联机状态/时长
+    QWidget *m_addressCard;       ///< 服务器地址卡片（没地址时整块隐藏）
     QLabel *m_addressLabel;       ///< 服务器地址（房客模式提示在游戏中输入的地址）
     QLabel *m_roomCodeLabel;      ///< 大大的房间邀请码
     QPushButton *m_copyCodeBtn;   ///< 复制邀请码
     QPushButton *m_leaveBtn;      ///< 离开房间按钮
+    QLabel *m_playersTitle;       ///< 玩家列表标题（带人数）
     QScrollArea *m_playersScroll;
     QWidget *m_playersContainer;
     QVBoxLayout *m_playersLayout;
 
     QDateTime m_roomEnterTime;    ///< 进入房间时间
+
+    // ---- 加入/创建进度弹窗（复用单一窗口，进度刷新只更新文字） ----
+    QDialog *m_progressDialog = nullptr;
+    QLabel *m_progressLabel = nullptr;
 };

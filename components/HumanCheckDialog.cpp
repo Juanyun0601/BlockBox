@@ -424,6 +424,9 @@ void HumanCheckDialog::initUI()
     m_slide = new HumanSlideBar(card);
     m_slide->setFixedSize(320, kSlideHeight);
     m_slide->setRange(232);
+    // 滑块按住拖动是验证交互本身：向拖动滚动引擎声明豁免，
+    // 否则手指拖过阈值后移动事件会被当作"滚动"吞掉，滑块卡在原地
+    m_slide->setProperty("flickScrollExempt", true);
     m_slide->onMoved = [this](int value) {
         // 滑块的值就是拼图左边在画布里的坐标，拖动时拼图块跟着一起走
         m_puzzle->setOffset(value);

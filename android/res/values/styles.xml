@@ -9,5 +9,8 @@
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:backgroundDimEnabled">true</item>
+        <!-- 横屏下延伸进刘海/挖孔区：默认模式会在挖孔一侧留一条黑边
+             （1080p 屏上约 136px 宽），主界面本身是全屏沉浸式，直接铺满 -->
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
     </style>
 </resources>

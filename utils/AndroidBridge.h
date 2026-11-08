@@ -57,6 +57,21 @@ bool hasAllFilesAccess();
  */
 bool ensureAllFilesAccess();
 
+/**
+ * @brief 旧版存储权限（READ/WRITE_EXTERNAL_STORAGE，清单里声明到 API 32）
+ *        是否已授权。API 33+ 权限本身已失效，恒返回 true；API 30-32 拿到
+ *        「所有文件访问」时会自动带上，一般走 ensureAllFilesAccess 即可。
+ */
+bool hasLegacyStoragePermission();
+
+/**
+ * @brief 弹系统授权框申请旧版存储权限（API 23-32）：
+ *        23-28 申请读写两条，29-32 只申请 READ（WRITE 已从清单移除）。
+ *        系统弹窗异步出结果，无需等待，之后用 hasLegacyStoragePermission 复查。
+ * @return 是否成功发起申请（无权限可申请 / 上下文缺失时返回 false）。
+ */
+bool requestLegacyStoragePermissions();
+
 /// 通过包名启动已安装应用（ACTION_MAIN / CATEGORY_LAUNCHER / NEW_TASK）
 bool launchApp(const QString &packageName);
 

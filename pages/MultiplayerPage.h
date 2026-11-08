@@ -22,11 +22,13 @@
 
 #include <QComboBox>
 #include <QDateTime>
+#include <QHash>
 #include <QLabel>
 #include <QLineEdit>
 #include <QList>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSet>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QString>
@@ -78,6 +80,25 @@ private:
     void applyThemeStyles();
     void refreshPage();          ///< 根据当前核心/状态切换页面/刷新内容
     void refreshPlayerList();    ///< 刷新陶瓦玩家列表
+
+    // ---- 玩家卡片：方块盒子账户覆盖 ----
+    /** 玩家卡片上要显示的方块盒子账户（查不到时留空，照旧显示游戏名） */
+    struct PlayerAccount
+    {
+        int id = 0;
+        QString username;
+        QString displayName;
+        QString avatar;
+        bool isValid() const { return id > 0; }
+    };
+    /** 判断玩家列表里的这一条是不是"自己"（房主就是 HOST，房客认本机标记或昵称） */
+    bool isSelfProfile(const QString &playerName, const QString &kind, bool hosting) const;
+    /** 按玩家名反查方块盒子账户：带缓存，查过没有的也记下来，避免反复请求 */
+    void lookupPlayerAccount(const QString &playerName);
+    /** 账户查回来以后合并成一次重绘，避免连续重建卡顿 */
+    void schedulePlayerListRefresh();
+    /** 进房间时报给联机核心的玩家名：登录方块盒子就报账户昵称 */
+    QString localPlayerName() const;
     void refreshStatusBar();     ///< 刷新陶瓦延迟/时间
     void refreshInstallStatus(); ///< 刷新安装/下载状态（按当前核心分发）
     void refreshHongshiPage();       ///< 刷新红石联机页面
@@ -109,6 +130,11 @@ private:
     QStringList instanceMods() const;
     QString instanceDisplayName() const;
 
+    // ---- 创建分享链接 ----
+    void onCreateShareLinkClicked();
+    /// 展示生成的链接：可复制，也能直接发给论坛好友
+    void showShareLinkDialog(const QString &title, const QString &link);
+
     /// 弹出对话框提示（非左下卡片）
     void showInfoDialog(const QString &title, const QString &text);
 
@@ -121,6 +147,11 @@ private:
     QPushButton *m_pubTerracottaBtn = nullptr;
     QPushButton *m_pubHongshiBtn = nullptr;
     QPushButton *m_pubFrpBtn = nullptr;
+
+    // ---- 创建分享链接 ----
+    QPushButton *m_shareTerracottaBtn = nullptr;
+    QPushButton *m_shareHongshiBtn = nullptr;
+    QPushButton *m_shareFrpBtn = nullptr;
     QTimer *m_publishHeartbeatTimer = nullptr;
     int m_publishedRoomId = 0;
     QString m_publishedCore;
@@ -133,6 +164,7 @@ private:
 
     // ---- frp 服务商联机：首页控件 ----
     QWidget *m_frpHomePage;
+    QLabel *m_frpStatusDot;       ///< 状态条小圆点
     QLabel *m_frpStatusLabel;     ///< frpc 安装/下载状态
     QLabel *m_frpDescLabel;       ///< 服务商说明（按核心切换内容）
     QLabel *m_frpKeyHint;         ///< 访问密钥字段标签
@@ -147,6 +179,7 @@ private:
 
     // ---- frp 服务商联机：房间页控件 ----
     QWidget *m_frpRoomPage;
+    QLabel *m_frpLatencyDot;      ///< 隧道状态小圆点
     QLabel *m_frpLatencyLabel;    ///< 顶部隧道状态与联机时间
     QLabel *m_frpAddrLabel;       ///< 大字：远程连接地址
     QPushButton *m_frpCopyBtn;    ///< 复制连接地址
@@ -162,6 +195,7 @@ private:
 
     // ---- 陶瓦联机：首页控件 ----
     QWidget *m_homePage;
+    QLabel *m_statusDot;          ///< 状态条小圆点（安装 / 运行中 / 异常）
     QLabel *m_statusLabel;        ///< 顶部状态文字
     QLabel *m_descLabel;          ///< 说明信息文字
     QPushButton *m_joinBtn;       ///< 加入房间
@@ -169,18 +203,25 @@ private:
 
     // ---- 陶瓦联机：房间页控件 ----
     QWidget *m_roomPage;
+    QLabel *m_latencyDot;         ///< 联机状态小圆点
     QLabel *m_latencyLabel;       ///< 顶部延迟和联机时间
     QLabel *m_roomCodeLabel;      ///< 大大的房间邀请码
     QPushButton *m_copyCodeBtn;   ///< 复制邀请码
     QPushButton *m_leaveBtn;      ///< 离开房间按钮
+    QLabel *m_playersTitle;       ///< 玩家列表标题（带人数）
     QScrollArea *m_playersScroll;
     QWidget *m_playersContainer;
     QVBoxLayout *m_playersLayout;
+    QHash<QString, PlayerAccount> m_playerAccounts; ///< 玩家名 → 方块盒子账户（查到的）
+    QSet<QString> m_playerLookupPending;            ///< 正在查询的玩家名
+    QSet<QString> m_playerLookupMissed;             ///< 查过但没有对应账户
+    bool m_playerListRefreshQueued = false;         ///< 账户查回来后的合并刷新是否已排队
 
     QDateTime m_roomEnterTime;    ///< 进入房间时间
 
     // ---- 红石联机：首页控件 ----
     QWidget *m_hongshiHomePage;
+    QLabel *m_hongshiStatusDot;   ///< 状态条小圆点
     QLabel *m_hongshiStatusLabel; ///< 状态文字
     QComboBox *m_hongshiNodeCombo;///< 服务器节点选择
     QPushButton *m_hongshiNodeRefreshBtn; ///< 刷新节点列表
@@ -190,6 +231,7 @@ private:
 
     // ---- 红石联机：隧道页控件 ----
     QWidget *m_hongshiTunnelPage;
+    QLabel *m_hongshiLatencyDot;   ///< 隧道状态小圆点
     QLabel *m_hongshiLatencyLabel; ///< 隧道状态与时间
     QLabel *m_tunnelAddrLabel;     ///< 隧道地址
     QPushButton *m_copyAddrBtn;    ///< 复制地址

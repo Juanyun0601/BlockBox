@@ -11,6 +11,8 @@
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 
+#include "platform.h"
+
 NotificationCard::NotificationCard(const QString &text, Type type, int duration, QWidget *parent)
     : QWidget(parent)
     , m_text(text)
@@ -199,17 +201,22 @@ void NotificationCard::startSlideIn()
 
     QWidget *win = window();
 
-    int startX = -width();
-    int endX = 16;
+    // 与 NotificationManager::repositionAll 的落点保持一致：
+    // 桌面左下角，手机水平居中（左下角是侧边导航）
+    const bool mobile = (Platform::getFormFactor() == Platform::FormFactor::Mobile);
+    int endX = mobile ? qMax(8, (win->width() - width()) / 2) : 16;
     int targetY = win->height() - height() - 16;
 
-    move(startX, targetY);
+    int startX = mobile ? endX : -width();
+    int startY = mobile ? win->height() : targetY; // 手机端从底部滑入
+
+    move(startX, startY);
     show();
     raise();
 
     QPropertyAnimation *anim = new QPropertyAnimation(this, "pos", this);
     anim->setDuration(350);
-    anim->setStartValue(QPoint(startX, targetY));
+    anim->setStartValue(QPoint(startX, startY));
     anim->setEndValue(QPoint(endX, targetY));
     anim->setEasingCurve(QEasingCurve::OutCubic);
     anim->start(QAbstractAnimation::DeleteWhenStopped);
@@ -222,10 +229,16 @@ void NotificationCard::dismiss()
 
     m_countdownTimer->stop();
 
+    // 退出方向与滑入方向对称：桌面滑出左边缘，手机滑出底边缘
+    QWidget *win = window();
+    const bool mobile = (Platform::getFormFactor() == Platform::FormFactor::Mobile);
+    const QPoint exitPos = mobile ? QPoint(pos().x(), win ? win->height() + 8 : pos().y() + height() + 8)
+                                  : QPoint(-width(), pos().y());
+
     QPropertyAnimation *anim = new QPropertyAnimation(this, "pos", this);
     anim->setDuration(250);
     anim->setStartValue(pos());
-    anim->setEndValue(QPoint(-width(), pos().y()));
+    anim->setEndValue(exitPos);
     anim->setEasingCurve(QEasingCurve::InCubic);
 
     connect(anim, &QPropertyAnimation::finished, this, [this]() {
@@ -302,15 +315,21 @@ void NotificationCard::enterEvent(QEvent *event)
 #endif
 {
     QWidget::enterEvent(event);
+#ifndef Q_OS_ANDROID
+    // 悬停暂停倒计时（鼠标交互）。触屏设备没有悬停，enter/leave 事件
+    // 不可靠：leave 收不到会让倒计时永久停住，通知卡成"残影"不消失。
     if (!m_dismissed && m_countdownTimer->isActive()) {
         m_countdownTimer->stop();
     }
+#endif
 }
 
 void NotificationCard::leaveEvent(QEvent *event)
 {
     QWidget::leaveEvent(event);
+#ifndef Q_OS_ANDROID
     if (!m_dismissed && m_remainingSeconds > 0 && !m_countdownTimer->isActive()) {
         m_countdownTimer->start();
     }
+#endif
 }

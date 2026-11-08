@@ -39,6 +39,7 @@ struct ForumUser
     QString status;       ///< active / muted / banned
     int threadCount = 0;
     int postCount = 0;
+    int points = 0;          ///< 论坛积分「方块」余额
     bool quizPassed = false; ///< 是否已通过入站答题（答题结果绑定在账号上）
     qint64 createdAt = 0;    ///< 注册时间（秒级时间戳）
     QString email;           ///< 仅自己可见
@@ -121,6 +122,14 @@ public:
 
     /** 丢掉本地令牌，下次请求会被服务端重新拦一次 */
     void clearHumanCheck();
+
+    /**
+     * @brief 用户没验直接关掉滑块：把被拦下的请求全部按「需要人机验证」回失败
+     *
+     * 不回失败的话那些请求就一直挂在那儿，页面会永远停在「正在连接论坛…」，
+     * 看起来就像论坛连不上。
+     */
+    void abortHumanCheck();
 
     /** 修改昵称、邮箱、个人简介 */
     void updateProfile(const QString &displayName, const QString &bio, const QString &email);

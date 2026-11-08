@@ -9,6 +9,7 @@
 
 // Qt 头文件
 #include <QCheckBox>
+#include <QCoreApplication>
 #include <QClipboard>
 #include "components/AppColorDialog.h"
 #include <QComboBox>
@@ -79,7 +80,7 @@ const QStringList& templateNames()
 {
   static const QStringList names = {
     "Steve", "Alex", "Ari", "Efe", "Kai",
-    "Makena", "Noor", "Sunny", "Zuri", QStringLiteral("空白")
+    "Makena", "Noor", "Sunny", "Zuri", QCoreApplication::translate("SkinEditorPage", "空白")
   };
   return names;
 }
@@ -94,15 +95,15 @@ QString toolName(DrawTool tool)
   switch (tool)
   {
   case DrawTool::Brush:
-    return QStringLiteral("画笔");
+    return QCoreApplication::translate("SkinEditorPage", "画笔");
   case DrawTool::Eraser:
-    return QStringLiteral("橡皮");
+    return QCoreApplication::translate("SkinEditorPage", "橡皮");
   case DrawTool::Fill:
-    return QStringLiteral("填充");
+    return QCoreApplication::translate("SkinEditorPage", "填充");
   case DrawTool::Eyedropper:
-    return QStringLiteral("吸管");
+    return QCoreApplication::translate("SkinEditorPage", "吸管");
   case DrawTool::Line:
-    return QStringLiteral("直线");
+    return QCoreApplication::translate("SkinEditorPage", "直线");
   }
   return {};
 }
@@ -467,11 +468,11 @@ void SkinEditorPage::initToolBar()
   };
 
   // 分组 1：绘制工具（可选中，互斥）
-  m_brushBtn = makeBtn(":/Images/Icons/brush.svg", QStringLiteral("画笔 (B)"));
-  m_eraserBtn = makeBtn(":/Images/Icons/eraser.svg", QStringLiteral("橡皮 (E)"));
-  m_fillBtn = makeBtn(":/Images/Icons/fill.svg", QStringLiteral("填充 (G)"));
-  m_eyedropperBtn = makeBtn(":/Images/Icons/eyedropper.svg", QStringLiteral("吸管 (I)"));
-  m_lineBtn = makeBtn(":/Images/Icons/line.svg", QStringLiteral("直线 (L)"));
+  m_brushBtn = makeBtn(":/Images/Icons/brush.svg", QCoreApplication::translate("SkinEditorPage", "画笔 (B)"));
+  m_eraserBtn = makeBtn(":/Images/Icons/eraser.svg", QCoreApplication::translate("SkinEditorPage", "橡皮 (E)"));
+  m_fillBtn = makeBtn(":/Images/Icons/fill.svg", QCoreApplication::translate("SkinEditorPage", "填充 (G)"));
+  m_eyedropperBtn = makeBtn(":/Images/Icons/eyedropper.svg", QCoreApplication::translate("SkinEditorPage", "吸管 (I)"));
+  m_lineBtn = makeBtn(":/Images/Icons/line.svg", QCoreApplication::translate("SkinEditorPage", "直线 (L)"));
 
   for (auto* btn : {m_brushBtn, m_eraserBtn, m_fillBtn, m_eyedropperBtn, m_lineBtn})
   {
@@ -482,15 +483,15 @@ void SkinEditorPage::initToolBar()
   addSep();
 
   // 分组 2：编辑
-  m_undoBtn = makeBtn(":/Images/Icons/undo.svg", QStringLiteral("撤销 (Ctrl+Z)"));
-  m_redoBtn = makeBtn(":/Images/Icons/redo.svg", QStringLiteral("重做 (Ctrl+Y)"));
-  m_clearBtn = makeBtn(":/Images/Icons/clear.svg", QStringLiteral("清除"));
+  m_undoBtn = makeBtn(":/Images/Icons/undo.svg", QCoreApplication::translate("SkinEditorPage", "撤销 (Ctrl+Z)"));
+  m_redoBtn = makeBtn(":/Images/Icons/redo.svg", QCoreApplication::translate("SkinEditorPage", "重做 (Ctrl+Y)"));
+  m_clearBtn = makeBtn(":/Images/Icons/clear.svg", QCoreApplication::translate("SkinEditorPage", "清除"));
 
   addSep();
 
   // 分组 3：显示
-  m_gridBtn = makeBtn(":/Images/Icons/grid.svg", QStringLiteral("网格"));
-  m_uvBtn = makeBtn(":/Images/Icons/uv_overlay.svg", QStringLiteral("UV 叠加"));
+  m_gridBtn = makeBtn(":/Images/Icons/grid.svg", QCoreApplication::translate("SkinEditorPage", "网格"));
+  m_uvBtn = makeBtn(":/Images/Icons/uv_overlay.svg", QCoreApplication::translate("SkinEditorPage", "UV 叠加"));
   m_gridBtn->setCheckable(true);
   m_uvBtn->setCheckable(true);
   m_gridBtn->setChecked(true);
@@ -498,16 +499,16 @@ void SkinEditorPage::initToolBar()
   addSep();
 
   // 分组 4：文件
-  m_newBtn = makeBtn(":/Images/Icons/install.svg", QStringLiteral("新建"));
-  m_openBtn = makeBtn(":/Images/Icons/folder.svg", QStringLiteral("打开"));
-  m_saveBtn = makeBtn(":/Images/Icons/download.svg", QStringLiteral("保存"));
-  m_saveAsBtn = makeBtn(":/Images/Icons/download.svg", QStringLiteral("另存为"));
+  m_newBtn = makeBtn(":/Images/Icons/install.svg", QCoreApplication::translate("SkinEditorPage", "新建"));
+  m_openBtn = makeBtn(":/Images/Icons/folder.svg", QCoreApplication::translate("SkinEditorPage", "打开"));
+  m_saveBtn = makeBtn(":/Images/Icons/download.svg", QCoreApplication::translate("SkinEditorPage", "保存"));
+  m_saveAsBtn = makeBtn(":/Images/Icons/download.svg", QCoreApplication::translate("SkinEditorPage", "另存为"));
 
   addSep();
 
   // 分组 5：账户
-  m_loadAccountBtn = makeBtn(":/Images/Icons/folder.svg", QStringLiteral("从账户加载"));
-  m_applyAccountBtn = makeBtn(":/Images/Icons/download.svg", QStringLiteral("应用到账户"));
+  m_loadAccountBtn = makeBtn(":/Images/Icons/folder.svg", QCoreApplication::translate("SkinEditorPage", "从账户加载"));
+  m_applyAccountBtn = makeBtn(":/Images/Icons/download.svg", QCoreApplication::translate("SkinEditorPage", "应用到账户"));
 
   m_toolBarLayout->addStretch();
 
@@ -606,14 +607,14 @@ void SkinEditorPage::initPreviewPanel()
   boldFont.setBold(true);
 
   // ===== 编辑方式选择（2D 像素 / 3D 立体）=====
-  auto* modeLabel = new QLabel(QStringLiteral("编辑方式"));
+  auto* modeLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "编辑方式"));
   modeLabel->setFont(boldFont);
   m_panelLayout->addWidget(modeLabel);
 
   m_modeCombo = new QComboBox;
-  m_modeCombo->addItems({QStringLiteral("2D 像素"), QStringLiteral("3D 立体")});
+  m_modeCombo->addItems({QCoreApplication::translate("SkinEditorPage", "2D 像素"), QCoreApplication::translate("SkinEditorPage", "3D 立体")});
   m_modeCombo->setCurrentIndex(0);
-  m_modeCombo->setToolTip(QStringLiteral("2D 像素：在平面纹理上逐像素绘制；3D 立体：像 BlockBench 一样直接在模型表面绘制，左键绘制、右键旋转、滚轮缩放"));
+  m_modeCombo->setToolTip(QCoreApplication::translate("SkinEditorPage", "2D 像素：在平面纹理上逐像素绘制；3D 立体：像 BlockBench 一样直接在模型表面绘制，左键绘制、右键旋转、滚轮缩放"));
   m_panelLayout->addWidget(m_modeCombo);
 
   connect(m_modeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -624,11 +625,11 @@ void SkinEditorPage::initPreviewPanel()
   // 笔刷大小（2D / 3D 共用）
   auto* brushRow = new QHBoxLayout;
   brushRow->setSpacing(6);
-  auto* brushCaption = new QLabel(QStringLiteral("笔刷:"));
+  auto* brushCaption = new QLabel(QCoreApplication::translate("SkinEditorPage", "笔刷:"));
   m_brushSizeCombo = new QComboBox;
   m_brushSizeCombo->addItems({QStringLiteral("1x1"), QStringLiteral("2x2"), QStringLiteral("4x4")});
   m_brushSizeCombo->setCurrentIndex(0);
-  m_brushSizeCombo->setToolTip(QStringLiteral("笔刷大小，两种编辑方式共用"));
+  m_brushSizeCombo->setToolTip(QCoreApplication::translate("SkinEditorPage", "笔刷大小，两种编辑方式共用"));
   brushRow->addWidget(brushCaption);
   brushRow->addWidget(m_brushSizeCombo, 1);
   m_panelLayout->addLayout(brushRow);
@@ -642,7 +643,7 @@ void SkinEditorPage::initPreviewPanel()
   previewV->setContentsMargins(0, 0, 0, 0);
   previewV->setSpacing(6);
 
-  auto* previewLabel = new QLabel(QStringLiteral("3D 预览"));
+  auto* previewLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "3D 预览"));
   previewLabel->setFont(boldFont);
   previewV->addWidget(previewLabel);
 
@@ -663,7 +664,7 @@ void SkinEditorPage::initPreviewPanel()
   miniV->setContentsMargins(0, 0, 0, 0);
   miniV->setSpacing(6);
 
-  auto* miniLabel = new QLabel(QStringLiteral("2D 纹理"));
+  auto* miniLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "2D 纹理"));
   miniLabel->setFont(boldFont);
   miniV->addWidget(miniLabel);
 
@@ -676,7 +677,7 @@ void SkinEditorPage::initPreviewPanel()
   m_miniTexture->setZoom(2.0f);
   miniV->addWidget(m_miniTexture, 0, Qt::AlignHCenter);
 
-  auto* hintLabel = new QLabel(QStringLiteral("左键绘制 · 右键/中键旋转 · 滚轮缩放"));
+  auto* hintLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "左键绘制 · 右键/中键旋转 · 滚轮缩放"));
   hintLabel->setAlignment(Qt::AlignCenter);
   hintLabel->setStyleSheet("color: #888888;");
   miniV->addWidget(hintLabel);
@@ -684,52 +685,52 @@ void SkinEditorPage::initPreviewPanel()
   m_miniTextureBlock->setVisible(false);
 
   // 模型设置区
-  auto* modelLabel = new QLabel(QStringLiteral("模型"));
+  auto* modelLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "模型"));
   modelLabel->setFont(boldFont);
   m_panelLayout->addWidget(modelLabel);
 
   m_modelCombo = new QComboBox;
   m_modelCombo->addItems({QStringLiteral("Classic"), QStringLiteral("Slim")});
   m_modelCombo->setCurrentIndex(0);
-  m_modelCombo->setToolTip(QStringLiteral("Classic 手臂宽 4 像素，Slim 手臂宽 3 像素"));
+  m_modelCombo->setToolTip(QCoreApplication::translate("SkinEditorPage", "Classic 手臂宽 4 像素，Slim 手臂宽 3 像素"));
   m_panelLayout->addWidget(m_modelCombo);
 
   // 绘制外层开关（参考 Blockbench 的图层设计：默认只画内层基础皮肤，
   // 勾选后才把画笔落到帽子/外套等外层 overlay 区域，避免"没勾选却在涂外层"）
-  m_paintOuterCheck = new QCheckBox(QStringLiteral("绘制外层 (Overlay)"));
-  m_paintOuterCheck->setToolTip(QStringLiteral("3D 模式下将画笔落到外层叠加区域（帽子/外套等，纹理 y>=32 部分）。仅 64x64 格式可用"));
+  m_paintOuterCheck = new QCheckBox(QCoreApplication::translate("SkinEditorPage", "绘制外层 (Overlay)"));
+  m_paintOuterCheck->setToolTip(QCoreApplication::translate("SkinEditorPage", "3D 模式下将画笔落到外层叠加区域（帽子/外套等，纹理 y>=32 部分）。仅 64x64 格式可用"));
   m_panelLayout->addWidget(m_paintOuterCheck);
   connect(m_paintOuterCheck, &QCheckBox::toggled,
           this, &SkinEditorPage::onPaintOuterToggled);
 
   // 选取部分（参考 Blockbench 的部件选择：3D 模式只显示选中的部位，
   // 便于单独查看/绘制某个部位，其余部位隐藏且不参与拾取）
-  auto* visiblePartLabel = new QLabel(QStringLiteral("选取部分"));
+  auto* visiblePartLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "选取部分"));
   visiblePartLabel->setFont(boldFont);
   m_panelLayout->addWidget(visiblePartLabel);
 
   m_visiblePartCombo = new QComboBox;
-  m_visiblePartCombo->addItem(QStringLiteral("全部（显示整个模型）"));
-  m_visiblePartCombo->addItem(QStringLiteral("头部"));
-  m_visiblePartCombo->addItem(QStringLiteral("身体"));
-  m_visiblePartCombo->addItem(QStringLiteral("右臂"));
-  m_visiblePartCombo->addItem(QStringLiteral("左臂"));
-  m_visiblePartCombo->addItem(QStringLiteral("右腿"));
-  m_visiblePartCombo->addItem(QStringLiteral("左腿"));
-  m_visiblePartCombo->setToolTip(QStringLiteral("3D 模式下启用后只显示选中的部位，其余部位隐藏且不可绘制"));
+  m_visiblePartCombo->addItem(QCoreApplication::translate("SkinEditorPage", "全部（显示整个模型）"));
+  m_visiblePartCombo->addItem(QCoreApplication::translate("SkinEditorPage", "头部"));
+  m_visiblePartCombo->addItem(QCoreApplication::translate("SkinEditorPage", "身体"));
+  m_visiblePartCombo->addItem(QCoreApplication::translate("SkinEditorPage", "右臂"));
+  m_visiblePartCombo->addItem(QCoreApplication::translate("SkinEditorPage", "左臂"));
+  m_visiblePartCombo->addItem(QCoreApplication::translate("SkinEditorPage", "右腿"));
+  m_visiblePartCombo->addItem(QCoreApplication::translate("SkinEditorPage", "左腿"));
+  m_visiblePartCombo->setToolTip(QCoreApplication::translate("SkinEditorPage", "3D 模式下启用后只显示选中的部位，其余部位隐藏且不可绘制"));
   m_panelLayout->addWidget(m_visiblePartCombo);
   connect(m_visiblePartCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &SkinEditorPage::onVisiblePartChanged);
 
   // 格式设置区
-  auto* formatLabel = new QLabel(QStringLiteral("格式"));
+  auto* formatLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "格式"));
   formatLabel->setFont(boldFont);
   m_panelLayout->addWidget(formatLabel);
 
   m_formatCombo = new QComboBox;
   m_formatCombo->addItems({QStringLiteral("64x64"), QStringLiteral("64x32")});
   m_formatCombo->setCurrentIndex(0);
-  m_formatCombo->setToolTip(QStringLiteral("64x64 支持外层(overlay)，64x32 不含外层"));
+  m_formatCombo->setToolTip(QCoreApplication::translate("SkinEditorPage", "64x64 支持外层(overlay)，64x32 不含外层"));
   m_panelLayout->addWidget(m_formatCombo);
 
   // 预设皮肤导入区
@@ -754,7 +755,7 @@ void SkinEditorPage::initStatusBar()
   layout->setContentsMargins(8, 0, 8, 0);
   layout->setSpacing(8);
 
-  m_toolLabel = new QLabel(QStringLiteral("画笔"));
+  m_toolLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "画笔"));
   layout->addWidget(m_toolLabel);
 
   auto* sep1 = new QFrame;
@@ -788,7 +789,7 @@ void SkinEditorPage::initPalette()
   boldFont.setBold(true);
 
   // 前景/背景色预览
-  auto* fbLabel = new QLabel(QStringLiteral("前景色 / 背景色"));
+  auto* fbLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "前景色 / 背景色"));
   fbLabel->setFont(boldFont);
   m_panelLayout->addWidget(fbLabel);
 
@@ -796,17 +797,17 @@ void SkinEditorPage::initPalette()
   fbLayout->setSpacing(4);
   m_fgColorPreview = new QLabel;
   m_fgColorPreview->setFixedSize(80, 24);
-  m_fgColorPreview->setToolTip(QStringLiteral("前景色（左键绘制）"));
+  m_fgColorPreview->setToolTip(QCoreApplication::translate("SkinEditorPage", "前景色（左键绘制）"));
   m_bgColorPreview = new QLabel;
   m_bgColorPreview->setFixedSize(80, 24);
-  m_bgColorPreview->setToolTip(QStringLiteral("背景色（右键绘制）"));
+  m_bgColorPreview->setToolTip(QCoreApplication::translate("SkinEditorPage", "背景色（右键绘制）"));
   fbLayout->addWidget(m_fgColorPreview);
   fbLayout->addWidget(m_bgColorPreview);
   fbLayout->addStretch();
   m_panelLayout->addLayout(fbLayout);
 
   // 预设颜色网格（8x4 = 32 色）
-  auto* presetLabel = new QLabel(QStringLiteral("预设颜色"));
+  auto* presetLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "预设颜色"));
   presetLabel->setFont(boldFont);
   m_panelLayout->addWidget(presetLabel);
 
@@ -840,7 +841,7 @@ void SkinEditorPage::initPalette()
   m_panelLayout->addLayout(gridLayout);
 
   // 最近使用颜色（1x8）
-  auto* recentLabel = new QLabel(QStringLiteral("最近使用"));
+  auto* recentLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "最近使用"));
   recentLabel->setFont(boldFont);
   m_panelLayout->addWidget(recentLabel);
 
@@ -877,7 +878,7 @@ void SkinEditorPage::initPalette()
   m_panelLayout->addLayout(recentLayout);
 
   // 自定义颜色按钮
-  m_customColorBtn = new QPushButton(QStringLiteral("自定义颜色..."));
+  m_customColorBtn = new QPushButton(QCoreApplication::translate("SkinEditorPage", "自定义颜色..."));
   m_panelLayout->addWidget(m_customColorBtn);
   connect(m_customColorBtn, &QPushButton::clicked, this, &SkinEditorPage::onCustomColorClicked);
 }
@@ -887,9 +888,9 @@ void SkinEditorPage::initPresetSkins()
   QFont boldFont = font();
   boldFont.setBold(true);
 
-  auto* presetLabel = new QLabel(QStringLiteral("预设皮肤"));
+  auto* presetLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "预设皮肤"));
   presetLabel->setFont(boldFont);
-  presetLabel->setToolTip(QStringLiteral("点击缩略图直接导入官方皮肤模板（Steve/Alex 等），导入后会替换当前画布内容"));
+  presetLabel->setToolTip(QCoreApplication::translate("SkinEditorPage", "点击缩略图直接导入官方皮肤模板（Steve/Alex 等），导入后会替换当前画布内容"));
   m_panelLayout->addWidget(presetLabel);
 
   m_presetSkinBlock = new QWidget;
@@ -917,7 +918,7 @@ void SkinEditorPage::initPresetSkins()
     btn->setFixedSize(52, 52);
     btn->setIcon(QIcon(thumb));
     btn->setIconSize(QSize(44, 44));
-    btn->setToolTip(QStringLiteral("导入 %1 皮肤").arg(name));
+    btn->setToolTip(QCoreApplication::translate("SkinEditorPage", "导入 %1 皮肤").arg(name));
 
     m_presetSkinGrid->addWidget(btn, i / 3, i % 3);
 
@@ -934,8 +935,8 @@ void SkinEditorPage::onPresetSkinClicked(const QString& name)
 {
   if (!m_document->loadFromTemplate(name))
   {
-    AppMessageBox::warning(this, QStringLiteral("导入失败"),
-                           QStringLiteral("无法加载预设皮肤 %1").arg(name));
+    AppMessageBox::warning(this, QCoreApplication::translate("SkinEditorPage", "导入失败"),
+                           QCoreApplication::translate("SkinEditorPage", "无法加载预设皮肤 %1").arg(name));
     return;
   }
 }
@@ -1003,13 +1004,13 @@ void SkinEditorPage::updateToolButtons()
 void SkinEditorPage::onNewFromTemplate()
 {
   bool ok = false;
-  QString choice = AppInputDialog::getItem(this, QStringLiteral("新建皮肤"),
-                                          QStringLiteral("选择模板:"),
+  QString choice = AppInputDialog::getItem(this, QCoreApplication::translate("SkinEditorPage", "新建皮肤"),
+                                          QCoreApplication::translate("SkinEditorPage", "选择模板:"),
                                           templateNames(), 0, false, &ok);
   if (!ok || choice.isEmpty())
     return;
 
-  if (choice == QStringLiteral("空白"))
+  if (choice == QCoreApplication::translate("SkinEditorPage", "空白"))
     m_document->loadBlank(true);
   else
     m_document->loadFromTemplate(choice);
@@ -1017,9 +1018,9 @@ void SkinEditorPage::onNewFromTemplate()
 
 void SkinEditorPage::onOpenFile()
 {
-  QString path = QFileDialog::getOpenFileName(this, QStringLiteral("打开皮肤"),
+  QString path = QFileDialog::getOpenFileName(this, QCoreApplication::translate("SkinEditorPage", "打开皮肤"),
                                               QString(),
-                                              QStringLiteral("PNG 图片 (*.png)"));
+                                              QCoreApplication::translate("SkinEditorPage", "PNG 图片 (*.png)"));
   if (!path.isEmpty())
     m_document->loadFromFile(path);
 }
@@ -1034,9 +1035,9 @@ void SkinEditorPage::onSaveFile()
 
 void SkinEditorPage::onSaveAsFile()
 {
-  QString path = QFileDialog::getSaveFileName(this, QStringLiteral("保存皮肤"),
+  QString path = QFileDialog::getSaveFileName(this, QCoreApplication::translate("SkinEditorPage", "保存皮肤"),
                                               QString(),
-                                              QStringLiteral("PNG 图片 (*.png)"));
+                                              QCoreApplication::translate("SkinEditorPage", "PNG 图片 (*.png)"));
   if (!path.isEmpty())
     m_document->saveToFile(path);
 }
@@ -1045,8 +1046,8 @@ void SkinEditorPage::onLoadFromAccount()
 {
   if (m_currentAccount.isEmpty())
   {
-    AppMessageBox::warning(this, QStringLiteral("提示"),
-                         QStringLiteral("请先在账户管理页选择一个账户"));
+    AppMessageBox::warning(this, QCoreApplication::translate("SkinEditorPage", "提示"),
+                         QCoreApplication::translate("SkinEditorPage", "请先在账户管理页选择一个账户"));
     return;
   }
 
@@ -1072,21 +1073,21 @@ void SkinEditorPage::onLoadFromAccount()
   if (!img.isNull())
     m_document->loadFromImage(img);
   else
-    AppMessageBox::warning(this, QStringLiteral("提示"),
-                         QStringLiteral("无法获取默认皮肤"));
+    AppMessageBox::warning(this, QCoreApplication::translate("SkinEditorPage", "提示"),
+                         QCoreApplication::translate("SkinEditorPage", "无法获取默认皮肤"));
 }
 
 void SkinEditorPage::onApplyToAccount()
 {
   if (m_currentAccount.isEmpty())
   {
-    AppMessageBox::warning(this, QStringLiteral("提示"),
-                         QStringLiteral("请先在账户管理页选择一个账户"));
+    AppMessageBox::warning(this, QCoreApplication::translate("SkinEditorPage", "提示"),
+                         QCoreApplication::translate("SkinEditorPage", "请先在账户管理页选择一个账户"));
     return;
   }
 
-  auto result = AppMessageBox::question(this, QStringLiteral("确认"),
-                                      QStringLiteral("确定要将此皮肤应用到账户 %1 吗？")
+  auto result = AppMessageBox::question(this, QCoreApplication::translate("SkinEditorPage", "确认"),
+                                      QCoreApplication::translate("SkinEditorPage", "确定要将此皮肤应用到账户 %1 吗？")
                                         .arg(m_currentAccount));
   if (result != AppMessageBox::Yes)
     return;
@@ -1095,7 +1096,7 @@ void SkinEditorPage::onApplyToAccount()
   //   - 离线账户：保存到 Images/Skins/{用户名}.png（离线皮肤目录）
   //   - 正版/第三方账户：保存到 SkinDownloader 缓存目录
   QString savePath;
-  const bool isOffline = (m_currentAccountType == QStringLiteral("离线") ||
+  const bool isOffline = (m_currentAccountType == QCoreApplication::translate("SkinEditorPage", "离线") ||
                           m_currentAccountType.isEmpty());
   if (isOffline)
   {
@@ -1112,12 +1113,12 @@ void SkinEditorPage::onApplyToAccount()
   if (m_document->saveToFile(savePath))
   {
     emit skinAppliedToAccount(m_currentAccount);
-    AppMessageBox::information(this, QStringLiteral("成功"),
-                             QStringLiteral("皮肤已成功应用到账户"));
+    AppMessageBox::information(this, QCoreApplication::translate("SkinEditorPage", "成功"),
+                             QCoreApplication::translate("SkinEditorPage", "皮肤已成功应用到账户"));
   }
   else
-    AppMessageBox::warning(this, QStringLiteral("失败"),
-                         QStringLiteral("皮肤保存失败，请重试"));
+    AppMessageBox::warning(this, QCoreApplication::translate("SkinEditorPage", "失败"),
+                         QCoreApplication::translate("SkinEditorPage", "皮肤保存失败，请重试"));
 }
 
 void SkinEditorPage::onUndo()
@@ -1156,7 +1157,7 @@ void SkinEditorPage::onPresetColorClicked(const QColor& color)
 
 void SkinEditorPage::onCustomColorClicked()
 {
-  QColor color = AppColorDialog::getColor(m_fgColor, this, QStringLiteral("选择自定义颜色"));
+  QColor color = AppColorDialog::getColor(m_fgColor, this, QCoreApplication::translate("SkinEditorPage", "选择自定义颜色"));
   if (color.isValid())
   {
     m_fgColor = color;
@@ -1192,8 +1193,8 @@ void SkinEditorPage::onFormatChanged(bool is64x64)
   // 从 64x64 切换到 64x32 会丢弃外层(overlay)内容，需用户确认
   if (!is64x64 && m_document->is64x64())
   {
-    auto result = AppMessageBox::question(this, QStringLiteral("确认"),
-                                        QStringLiteral("切换到 64x32 格式将丢弃外层(overlay)内容，确定继续吗？"));
+    auto result = AppMessageBox::question(this, QCoreApplication::translate("SkinEditorPage", "确认"),
+                                        QCoreApplication::translate("SkinEditorPage", "切换到 64x32 格式将丢弃外层(overlay)内容，确定继续吗？"));
     if (result != AppMessageBox::Yes)
     {
       // 恢复下拉框状态
@@ -1289,19 +1290,19 @@ void SkinEditorPage::initCropSection()
   QFont boldFont = font();
   boldFont.setBold(true);
 
-  auto* cropLabel = new QLabel(QStringLiteral("截取部分"));
+  auto* cropLabel = new QLabel(QCoreApplication::translate("SkinEditorPage", "截取部分"));
   cropLabel->setFont(boldFont);
   m_panelLayout->addWidget(cropLabel);
 
   // 部件选择
   auto* partRow = new QHBoxLayout;
   partRow->setSpacing(6);
-  auto* partCaption = new QLabel(QStringLiteral("部件:"));
+  auto* partCaption = new QLabel(QCoreApplication::translate("SkinEditorPage", "部件:"));
   m_cropPartCombo = new QComboBox;
-  m_cropPartCombo->addItems({QStringLiteral("头部"), QStringLiteral("身体"),
-                             QStringLiteral("右臂"), QStringLiteral("左臂"),
-                             QStringLiteral("右腿"), QStringLiteral("左腿")});
-  m_cropPartCombo->setToolTip(QStringLiteral("选择要截取的皮肤部件"));
+  m_cropPartCombo->addItems({QCoreApplication::translate("SkinEditorPage", "头部"), QCoreApplication::translate("SkinEditorPage", "身体"),
+                             QCoreApplication::translate("SkinEditorPage", "右臂"), QCoreApplication::translate("SkinEditorPage", "左臂"),
+                             QCoreApplication::translate("SkinEditorPage", "右腿"), QCoreApplication::translate("SkinEditorPage", "左腿")});
+  m_cropPartCombo->setToolTip(QCoreApplication::translate("SkinEditorPage", "选择要截取的皮肤部件"));
   partRow->addWidget(partCaption);
   partRow->addWidget(m_cropPartCombo, 1);
   m_panelLayout->addLayout(partRow);
@@ -1309,23 +1310,23 @@ void SkinEditorPage::initCropSection()
   // 面选择
   auto* faceRow = new QHBoxLayout;
   faceRow->setSpacing(6);
-  auto* faceCaption = new QLabel(QStringLiteral("面:"));
+  auto* faceCaption = new QLabel(QCoreApplication::translate("SkinEditorPage", "面:"));
   m_cropFaceCombo = new QComboBox;
-  m_cropFaceCombo->addItems({QStringLiteral("前"), QStringLiteral("后"),
-                             QStringLiteral("左"), QStringLiteral("右"),
-                             QStringLiteral("上"), QStringLiteral("下")});
-  m_cropFaceCombo->setToolTip(QStringLiteral("选择要截取的面，如头部的前面"));
+  m_cropFaceCombo->addItems({QCoreApplication::translate("SkinEditorPage", "前"), QCoreApplication::translate("SkinEditorPage", "后"),
+                             QCoreApplication::translate("SkinEditorPage", "左"), QCoreApplication::translate("SkinEditorPage", "右"),
+                             QCoreApplication::translate("SkinEditorPage", "上"), QCoreApplication::translate("SkinEditorPage", "下")});
+  m_cropFaceCombo->setToolTip(QCoreApplication::translate("SkinEditorPage", "选择要截取的面，如头部的前面"));
   faceRow->addWidget(faceCaption);
   faceRow->addWidget(m_cropFaceCombo, 1);
   m_panelLayout->addLayout(faceRow);
 
   // 外层勾选
-  m_cropOuterCheck = new QCheckBox(QStringLiteral("外层 (Overlay)"));
-  m_cropOuterCheck->setToolTip(QStringLiteral("截取对应部件的外层(overlay)区域，仅 64x64 格式可用"));
+  m_cropOuterCheck = new QCheckBox(QCoreApplication::translate("SkinEditorPage", "外层 (Overlay)"));
+  m_cropOuterCheck->setToolTip(QCoreApplication::translate("SkinEditorPage", "截取对应部件的外层(overlay)区域，仅 64x64 格式可用"));
   m_panelLayout->addWidget(m_cropOuterCheck);
 
   // 选区缩略图
-  m_cropPreview = new QLabel(QStringLiteral("请选择部位"));
+  m_cropPreview = new QLabel(QCoreApplication::translate("SkinEditorPage", "请选择部位"));
   m_cropPreview->setFixedSize(100, 100);
   m_cropPreview->setAlignment(Qt::AlignCenter);
   m_cropPreview->setStyleSheet("border: 1px solid #888; background-color: #2a2a2a;");
@@ -1336,8 +1337,8 @@ void SkinEditorPage::initCropSection()
   m_panelLayout->addWidget(m_cropCoordLabel);
 
   // 截取按钮
-  m_cropBtn = new QPushButton(QStringLiteral("截取所选区域"));
-  m_cropBtn->setToolTip(QStringLiteral("将所选部位区域截取出来，可复制到剪贴板或保存为 PNG"));
+  m_cropBtn = new QPushButton(QCoreApplication::translate("SkinEditorPage", "截取所选区域"));
+  m_cropBtn->setToolTip(QCoreApplication::translate("SkinEditorPage", "将所选部位区域截取出来，可复制到剪贴板或保存为 PNG"));
   m_panelLayout->addWidget(m_cropBtn);
 
   // 信号连接
@@ -1399,7 +1400,7 @@ void SkinEditorPage::updateCropSelection()
     if (m_cropPreview != nullptr)
     {
       m_cropPreview->setPixmap(QPixmap());
-      m_cropPreview->setText(QStringLiteral("请选择部位"));
+      m_cropPreview->setText(QCoreApplication::translate("SkinEditorPage", "请选择部位"));
     }
     if (m_cropCoordLabel != nullptr)
       m_cropCoordLabel->setText("--");
@@ -1434,16 +1435,16 @@ void SkinEditorPage::onCropSelected()
 {
   if (m_document == nullptr || m_document->skinImage().isNull())
   {
-    AppMessageBox::warning(this, QStringLiteral("提示"),
-                         QStringLiteral("当前没有可截取的皮肤内容"));
+    AppMessageBox::warning(this, QCoreApplication::translate("SkinEditorPage", "提示"),
+                         QCoreApplication::translate("SkinEditorPage", "当前没有可截取的皮肤内容"));
     return;
   }
 
   const QRect rect = currentCropRect();
   if (rect.isEmpty())
   {
-    AppMessageBox::warning(this, QStringLiteral("提示"),
-                         QStringLiteral("所选区域无效，64x32 格式不支持外层(overlay)"));
+    AppMessageBox::warning(this, QCoreApplication::translate("SkinEditorPage", "提示"),
+                         QCoreApplication::translate("SkinEditorPage", "所选区域无效，64x32 格式不支持外层(overlay)"));
     return;
   }
 
@@ -1453,7 +1454,7 @@ void SkinEditorPage::onCropSelected()
 
   // 截取结果预览对话框
   QDialog dialog(this);
-  dialog.setWindowTitle(QStringLiteral("截取结果"));
+  dialog.setWindowTitle(QCoreApplication::translate("SkinEditorPage", "截取结果"));
   dialog.setMinimumWidth(300);
 
   auto* layout = new QVBoxLayout(&dialog);
@@ -1470,17 +1471,17 @@ void SkinEditorPage::onCropSelected()
   layout->addWidget(imgLabel, 0, Qt::AlignHCenter);
 
   auto* infoLabel = new QLabel(
-    QStringLiteral("%1 x %2 像素\n坐标 X:%3-%4  Y:%5-%6")
+    QCoreApplication::translate("SkinEditorPage", "%1 x %2 像素\\n坐标 X:%3-%4  Y:%5-%6")
       .arg(crop.width()).arg(crop.height())
       .arg(rect.x()).arg(rect.x() + rect.width())
       .arg(rect.y()).arg(rect.y() + rect.height()));
   infoLabel->setAlignment(Qt::AlignCenter);
   layout->addWidget(infoLabel);
 
-  auto* copyBtn = new QPushButton(QStringLiteral("复制到剪贴板"));
-  copyBtn->setToolTip(QStringLiteral("将截取区域以透明 PNG 复制到剪贴板"));
-  auto* saveBtn = new QPushButton(QStringLiteral("另存为 PNG..."));
-  auto* closeBtn = new QPushButton(QStringLiteral("关闭"));
+  auto* copyBtn = new QPushButton(QCoreApplication::translate("SkinEditorPage", "复制到剪贴板"));
+  copyBtn->setToolTip(QCoreApplication::translate("SkinEditorPage", "将截取区域以透明 PNG 复制到剪贴板"));
+  auto* saveBtn = new QPushButton(QCoreApplication::translate("SkinEditorPage", "另存为 PNG..."));
+  auto* closeBtn = new QPushButton(QCoreApplication::translate("SkinEditorPage", "关闭"));
 
   auto* btnLayout = new QHBoxLayout;
   btnLayout->addWidget(copyBtn);
@@ -1505,24 +1506,24 @@ void SkinEditorPage::onCropSelected()
   if (result == 1)
   {
     QGuiApplication::clipboard()->setImage(crop);
-    AppMessageBox::information(this, QStringLiteral("已复制"),
-                             QStringLiteral("选区已以透明 PNG 复制到剪贴板"));
+    AppMessageBox::information(this, QCoreApplication::translate("SkinEditorPage", "已复制"),
+                             QCoreApplication::translate("SkinEditorPage", "选区已以透明 PNG 复制到剪贴板"));
   }
   else if (result == 2)
   {
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("保存截取区域"),
+    QString path = QFileDialog::getSaveFileName(this, QCoreApplication::translate("SkinEditorPage", "保存截取区域"),
                                                 QString(),
-                                                QStringLiteral("PNG 图片 (*.png)"));
+                                                QCoreApplication::translate("SkinEditorPage", "PNG 图片 (*.png)"));
     if (!path.isEmpty())
     {
       if (crop.save(path))
       {
-        AppMessageBox::information(this, QStringLiteral("已保存"),
-                                 QStringLiteral("截取区域已保存到:\n%1").arg(path));
+        AppMessageBox::information(this, QCoreApplication::translate("SkinEditorPage", "已保存"),
+                                 QCoreApplication::translate("SkinEditorPage", "截取区域已保存到:\\n%1").arg(path));
       }
       else
       {
-        AppMessageBox::warning(this, QStringLiteral("失败"), QStringLiteral("保存失败"));
+        AppMessageBox::warning(this, QCoreApplication::translate("SkinEditorPage", "失败"), QCoreApplication::translate("SkinEditorPage", "保存失败"));
       }
     }
   }

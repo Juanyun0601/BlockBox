@@ -78,6 +78,7 @@ components/CustomCheckBox.cpp \
      components/InstanceFolderTree.cpp \
     components/LanTransferDialog.cpp \
     components/ShareToFriendDialog.cpp \
+    components/CreateGroupDialog.cpp \
      components/DownloadTaskCard.cpp \
      components/TaskProgressWidgets.cpp \
 components/ProgressWidget.cpp \
@@ -390,6 +391,7 @@ utils/WorldMap/MineshaftModel.cpp \
     utils/ForumContentService.cpp \
     utils/ForumLobbyService.cpp \
     utils/Lobby/LobbyInstanceMatcher.cpp \
+    utils/Lobby/LobbyShareLink.cpp \
     utils/ForumChatService.cpp \
     utils/FeedbackService.cpp \
     utils/ForumImageStore.cpp \
@@ -417,6 +419,7 @@ components/CustomCheckBox.h \
      components/InstanceFolderTree.h \
     components/LanTransferDialog.h \
     components/ShareToFriendDialog.h \
+    components/CreateGroupDialog.h \
      components/DownloadTaskCard.h \
      components/TaskProgressWidgets.h \
 components/ProgressWidget.h \
@@ -696,6 +699,7 @@ utils/WorldMap/MineshaftModel.h \
     utils/frp/FrpManager.h \
     utils/GravityCone/GravityConeClient.h \
     pages/MultiplayerPage.h \
+    pages/MultiplayerUiParts.h \
     pages/BedrockMultiplayerPage.h \
     utils/SkinEditorDocument.h \
     components/SkinTextureCanvas.h \
@@ -731,6 +735,7 @@ utils/WorldMap/MineshaftModel.h \
     utils/ForumContentService.h \
     utils/ForumLobbyService.h \
     utils/Lobby/LobbyInstanceMatcher.h \
+    utils/Lobby/LobbyShareLink.h \
     utils/ForumChatService.h \
     utils/FeedbackService.h \
     utils/ForumImageStore.h \

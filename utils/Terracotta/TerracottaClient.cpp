@@ -535,6 +535,8 @@ void TerracottaClient::fetchState()
     QUrl url(QStringLiteral("http://127.0.0.1:%1/state").arg(m_serverPort));
     QNetworkRequest req(url);
     req.setRawHeader("Cache-Control", "no-cache");
+    // daemon 挂起（TCP 通但不回包）时 reply 永不结束，连续错误计数会失效；3 秒超时兜底
+    req.setTransferTimeout(3000);
 
     QNetworkReply *reply = m_networkManager.get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
@@ -683,11 +685,12 @@ void TerracottaClient::fetchPublicNodes()
     if (m_nodesFetched) return;
     QNetworkRequest req((QUrl(kNodeListUrl)));
     req.setRawHeader("User-Agent", "BlockBox");
+    req.setTransferTimeout(8000);
     QNetworkReply *reply = m_networkManager.get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) return; // 失败不标记，下次建房前重试
         m_nodesFetched = true;
-        if (reply->error() != QNetworkReply::NoError) return;
         QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
         if (!doc.isArray()) return;
         QJsonArray arr = doc.array();
@@ -817,8 +820,8 @@ void TerracottaClient::createRoom(const QString &playerName)
 
         connect(reply, &QNetworkReply::finished, this, [this, reply, sendScanningRequest]() {
             reply->deleteLater();
-            m_nodesFetched = true;
             if (reply->error() == QNetworkReply::NoError) {
+                m_nodesFetched = true; // 失败不标记，下次建房前重试
                 QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
                 if (doc.isArray()) {
                     QJsonArray arr = doc.array();

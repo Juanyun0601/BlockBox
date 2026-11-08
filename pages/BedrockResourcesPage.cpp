@@ -351,7 +351,8 @@ void BedrockResourcesPage::applyTabThemeStyles()
     QString hoverBg = QString("rgba(%1, %2, %3, 0.12)").arg(tc.red()).arg(tc.green()).arg(tc.blue());
 
     m_tabBar->setStyleSheet(
-        QString("#bedrockResTabBar { background: palette(window); border-bottom: 1px solid %1; }")
+        ThemeManager::instance()->resolveTokens(
+        QString("#bedrockResTabBar { background: @BG_BASE@; border-bottom: 1px solid %1; }"))
             .arg(borderColor));
 
     m_tabHighlight->setStyleSheet(
@@ -369,10 +370,11 @@ void BedrockResourcesPage::applyTabThemeStyles()
 
     // 搜索框
     m_searchEdit->setStyleSheet(
-        QString("QLineEdit { background: palette(base); border: 1px solid %1; border-radius: 6px; "
-                "padding: 5px 8px; font-size: 12px; color: %2; }"
-                "QLineEdit:focus { border: 1px solid %3; }")
-            .arg(borderColor, textColor, themeColor));
+        ThemeManager::instance()->resolveTokens(
+            QString("QLineEdit { background: @BG_CARD@; border: 1px solid %1; border-radius: 6px; "
+                    "padding: 5px 8px; font-size: 12px; color: %2; }"
+                    "QLineEdit:focus { border: 1px solid %3; }")
+                .arg(borderColor, textColor, themeColor)));
 
     // 统计标签
     m_statsLabel->setStyleSheet(
@@ -385,18 +387,18 @@ void BedrockResourcesPage::applyTabThemeStyles()
             .arg(textColor));
 
     // 底部栏按钮
-    QString bottomBtnStyle = QString(
+    QString bottomBtnStyle = ThemeManager::instance()->resolveTokens(QString(
         "QPushButton { border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; "
-        "color: %1; background: palette(base); border: 1px solid %2; }"
+        "color: %1; background: @BG_CARD@; border: 1px solid %2; }"
         "QPushButton:hover { background: %3; }"
-    ).arg(textColor, borderColor, hoverBg);
+    ).arg(textColor, borderColor, hoverBg));
 
-    QString deleteBtnStyle = QString(
+    QString deleteBtnStyle = ThemeManager::instance()->resolveTokens(QString(
         "QPushButton { border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; "
-        "color: #EF4444; background: palette(base); border: 1px solid #FCA5A5; }"
-        "QPushButton:hover { background: #FEE2E2; }"
-        "QPushButton:disabled { color: #9CA3AF; background: palette(base); border: 1px solid #E5E7EB; }"
-    );
+        "color: @DANGER_TEXT@; background: @BG_CARD@; border: 1px solid @DANGER_BORDER@; }"
+        "QPushButton:hover { background: @DANGER_BG@; }"
+        "QPushButton:disabled { color: @TEXT_DISABLED@; background: @BG_CARD@; border: 1px solid @BORDER_LIGHT@; }"
+    ));
 
     m_selectAllBtn->setStyleSheet(bottomBtnStyle);
     m_openFolderBtn->setStyleSheet(bottomBtnStyle);

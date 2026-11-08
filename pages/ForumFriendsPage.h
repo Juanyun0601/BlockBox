@@ -4,12 +4,14 @@
  * @author BlockBox Team
  * @date   2026-11-01
  *
- * 左栏三个页签：好友（带未读角标与最后一条私信）/ 申请（同意·拒绝·撤回）/
- * 添加好友（按用户名或昵称搜索）；右栏是当前会话的聊天面板。
+ * 左栏三个页签：好友（好友与群聊混排的会话列表，带未读角标与最后一条消息）/
+ * 申请（同意·拒绝·撤回）/ 添加好友（按用户名或昵称搜索）；
+ * 右栏是当前会话的聊天面板（私聊或群聊）。
  * 页面可见时每 4 秒轮询一次 /api/messages/poll，刷新会话列表与聊天新消息。
  */
 #pragma once
 
+#include <QSet>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
@@ -67,6 +69,7 @@ private:
     void renderAddTab();
 
     void openConversation(const ForumFriendInfo &peer);
+    void openGroupConversation(const ForumGroupInfo &group);
     void renderChatAvatar();
     void renderChatHead();
     void renderMessages();
@@ -79,13 +82,22 @@ private:
     void refreshInputSize();
     QWidget *makeDateChip(qint64 seconds);
 
-    // ── 图片 / 引用 / 撤回 / 表情 ──
-    void setReplyTarget(int messageId, const QString &preview, bool mine);
+    // ── 群聊 ──
+    void openCreateGroupDialog();
+    void showGroupMembers();
+    void leaveCurrentGroup();
+
+    // ── 图片 / 文件 / 引用 / 撤回 / 表情 ──
+    void setReplyTarget(int messageId, const QString &preview, bool mine,
+                        const QString &peerName = QString());
     void clearReplyTarget();
     void showMessageMenu(int messageId, const QPoint &globalPos);
     void showImagePreview(const QString &imagePath);
     void pickAndSendImage();
     void sendImageFromPath(const QString &filePath);
+    void pickAndSendFile();
+    void sendFileFromPath(const QString &filePath);
+    void downloadChatFile(int messageId);
     void toggleEmojiPopup();
     void buildEmojiPopup();
     QString messagePreview(const ForumChatMessage &message) const;
@@ -94,10 +106,14 @@ private:
     QString peerStatusText(const ForumFriendInfo &peer) const;
     void runSearch(const QString &keyword);
 
+    /** 在当前会话消息里找一条消息的发送者昵称（群聊引用条用；找不到返回空） */
+    QString findMessageSenderName(int messageId) const;
+
     // ── 左栏（近似子导航面板：头部 + 胶囊页签 + 分组标题 + 条目列表）──
     QLabel *m_statusLabel = nullptr;
-    QLabel *m_sideGroupTitle = nullptr;   ///< 分组标题（好友 · N / 申请 · N / 添加好友）
+    QLabel *m_sideGroupTitle = nullptr;   ///< 分组标题（会话 · N / 申请 · N / 添加好友）
     QPushButton *m_refreshButton = nullptr;
+    QPushButton *m_createGroupButton = nullptr;  ///< 「＋发起群聊」
     QPushButton *m_friendsTabButton = nullptr;
     QPushButton *m_requestsTabButton = nullptr;
     QPushButton *m_addTabButton = nullptr;
@@ -113,8 +129,10 @@ private:
     QWidget *m_chatAvatarSlot = nullptr;   ///< 会话头像槽位（头像是异步加载的，按需重建）
     QLabel *m_chatName = nullptr;
     QLabel *m_chatStatus = nullptr;
-    QPushButton *m_chatProfileButton = nullptr;
-    QPushButton *m_chatRemoveButton = nullptr;
+    QPushButton *m_chatProfileButton = nullptr;  ///< 私聊：看对方主页
+    QPushButton *m_chatRemoveButton = nullptr;   ///< 私聊：删除好友
+    QPushButton *m_chatMembersButton = nullptr;  ///< 群聊：查看成员
+    QPushButton *m_chatLeaveButton = nullptr;    ///< 群聊：退出群聊（群主退出即解散）
     QPushButton *m_moreButton = nullptr;
     QScrollArea *m_msgsScroll = nullptr;
     QWidget *m_msgsContainer = nullptr;
@@ -126,18 +144,24 @@ private:
     // ── 状态 ──
     Tab m_tab = FriendsTab;
     ForumFriendSnapshot m_snapshot;
-    ForumFriendInfo m_peer;              ///< 当前会话的好友
+    ForumFriendInfo m_peer;              ///< 当前私聊会话的好友（与 m_group 二选一）
+    ForumGroupInfo m_group;              ///< 当前群聊会话（isValid 时代表群聊已打开）
+    QVector<ForumGroupMember> m_groupMembers; ///< 当前群的成员（打开会话时拉全）
     QVector<ForumChatMessage> m_messages; ///< 当前会话消息（按 id 升序）
-    int m_lastMessageId = 0;             ///< 已拿到的最大消息 id
-    bool m_hasMore = false;
+    int m_lastMessageId = 0;             ///< 私聊已拿到的最大消息 id
+    int m_groupLastMessageId = 0;        ///< 群聊已拿到的最大消息 id
+    bool m_hasMore = false;              ///< 私聊还有更早的消息
+    bool m_groupHasMore = false;         ///< 群聊还有更早的消息
     bool m_sending = false;
     bool m_pollBusy = false;
     QTimer m_pollTimer;
     QTimer m_searchTimer;
 
-    // ── 图片 / 引用 / 表情 ──
+    // ── 图片 / 文件 / 引用 / 表情 ──
     QPushButton *m_emojiButton = nullptr;
     QPushButton *m_imageButton = nullptr;
+    QPushButton *m_fileButton = nullptr;
+    QSet<int> m_fileDownloads;           ///< 正在提取/下载中的文件消息 id（防重复点击）
     QWidget *m_replyBar = nullptr;
     QLabel *m_replyLabel = nullptr;
     QPushButton *m_replyCancelButton = nullptr;

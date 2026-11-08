@@ -139,6 +139,10 @@ Skin3DWidget::Skin3DWidget(QWidget* parent)
   : QOpenGLWidget(parent)
   , m_tool(DrawTool::Brush)
 {
+  // 按住拖动是旋转模型的本体交互：向触屏拖动滚动引擎声明豁免，
+  // 避免放在滚动区里时拖动旋转被当作滚动内容吞掉
+  setProperty("flickScrollExempt", true);
+
   // 请求 OpenGL 3.3 Core Profile
   QSurfaceFormat fmt;
   fmt.setVersion(3, 3);

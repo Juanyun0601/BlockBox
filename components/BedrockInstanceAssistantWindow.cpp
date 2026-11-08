@@ -38,7 +38,10 @@ BedrockInstanceAssistantWindow::BedrockInstanceAssistantWindow(QWidget *parent)
     initUI();
     applyThemeStyles();
 
+    // 换主题色、或者亮色/暗色整体切换时都要重算样式
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
+            this, &BedrockInstanceAssistantWindow::applyThemeStyles);
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
             this, &BedrockInstanceAssistantWindow::applyThemeStyles);
 }
 
@@ -149,11 +152,7 @@ void BedrockInstanceAssistantWindow::initUI()
     // ---- Tab 页面 ----
     m_stackedWidget = new QStackedWidget();
     m_stackedWidget->setObjectName(QStringLiteral("assistantStackedWidget"));
-    m_stackedWidget->setStyleSheet(
-        "#assistantStackedWidget {"
-        "  background: palette(window);"
-        "}"
-    );
+
 
     for (int i = 0; i < navItems.size(); ++i) {
         QWidget *page = new QWidget();
@@ -194,12 +193,17 @@ void BedrockInstanceAssistantWindow::applyThemeStyles()
     const QString hoverBg = QString("rgba(%1, %2, %3, 0.12)")
         .arg(tc.red()).arg(tc.green()).arg(tc.blue());
 
+    if (m_stackedWidget) {
+        m_stackedWidget->setStyleSheet(
+            ThemeManager::instance()->resolveTokens(QStringLiteral(
+                "#assistantStackedWidget { background: @BG_BASE@; }")));
+    }
     if (m_navBar) {
         m_navBar->setStyleSheet(
-            QString("#assistantNavBar {"
-                    "  background: palette(window);"
+            ThemeManager::instance()->resolveTokens(QString("#assistantNavBar {"
+                    "  background: @BG_BASE@;"
                     "  border-bottom: 1px solid %1;"
-                    "}").arg(borderColor));
+                    "}").arg(borderColor)));
     }
     if (m_selectionHighlight) {
         m_selectionHighlight->setStyleSheet(

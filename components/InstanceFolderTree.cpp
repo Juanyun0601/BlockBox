@@ -168,7 +168,7 @@ void InstanceFolderTree::initFolderTree()
 void InstanceFolderTree::initBindButton()
 {
     // 创建绑定文件夹按钮
-    m_bindButton = new QPushButton("绑定文件夹", this);
+    m_bindButton = new QPushButton(tr("绑定文件夹"), this);
     m_bindButton->setObjectName("bindFolderBtn");
     
     // 连接按钮信号

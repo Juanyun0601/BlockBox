@@ -579,6 +579,8 @@ void HongshiClient::startKernel(const QString &server, quint16 port)
     setState(State::Launching);
 
     QDir().mkpath(hongshiRootDir());
+    // 清理上次运行残留的状态文件，避免新内核写入前读到过期的 open 状态（显示失效的旧地址）
+    QFile::remove(statusFilePath());
     if (!m_process) {
         m_process = new QProcess(this);
         connect(m_process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),

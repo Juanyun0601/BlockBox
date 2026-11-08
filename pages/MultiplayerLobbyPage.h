@@ -1,6 +1,6 @@
 /**
  * @file   MultiplayerLobbyPage.h
- * @brief  联机大厅（主窗口一级页面）：看房间、复制邀请码、一键挑实例加入
+ * @brief  联机大厅（社区页内的子页面）：看房间、复制邀请码、一键挑实例加入
  * @author BlockBox Team
  * @date   2026-11-06
  *
@@ -16,10 +16,15 @@
 #include <QVector>
 #include <QWidget>
 
+#include <functional>
+
+class QAction;
+class QBoxLayout;
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QResizeEvent;
 class QScrollArea;
 class QShowEvent;
 class QTimer;
@@ -47,13 +52,20 @@ signals:
 
 protected:
     void showEvent(QShowEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void buildUi();
     void applyStyle();
+    void updateResponsiveLayout();
     void requestRooms();
     void renderRooms();
     QWidget *createRoomCard(const ForumLobbyRoom &room);
+    /** 空 / 加载中 / 连不上时的居中占位卡（可选一个操作按钮） */
+    QWidget *createStateCard(const QString &glyph, const QString &title, const QString &hint,
+                             const QString &buttonText, const std::function<void()> &onClick);
+    /** 刷新顶部横幅里的房间概况 */
+    void updateHeroMeta();
     void joinRoom(const ForumLobbyRoom &room);
     void showModpackNotice(const ForumLobbyRoom &room);
     void setStatus(const QString &text, bool error = false);
@@ -64,7 +76,12 @@ private:
     QString matchText(const ForumLobbyRoom &room, QString *missingText) const;
 
     QLabel *m_titleLabel = nullptr;
+    QLabel *m_heroMetaLabel = nullptr;
+    QVBoxLayout *m_rootLayout = nullptr;
+    QBoxLayout *m_heroLayout = nullptr;
+    QWidget *m_heroActions = nullptr;
     QLineEdit *m_searchEdit = nullptr;
+    QAction *m_searchIcon = nullptr;
     QComboBox *m_coreCombo = nullptr;
     QLabel *m_statusLabel = nullptr;
     QScrollArea *m_scroll = nullptr;
@@ -74,6 +91,9 @@ private:
 
     QVector<ForumLobbyRoom> m_rooms;
     bool m_loading = false;
+    bool m_loadedOnce = false;
+    bool m_compactLayout = false;
+    QString m_errorText;
     int m_total = 0;
 
     // 陶瓦核心：等进程就绪 / 端口转发完成后再启动游戏

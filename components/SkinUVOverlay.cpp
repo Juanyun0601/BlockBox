@@ -7,6 +7,7 @@
 #include "SkinUVOverlay.h"
 
 #include <QColor>
+#include <QCoreApplication>
 #include <QFont>
 #include <QFontMetrics>
 #include <QPen>
@@ -125,30 +126,30 @@ void SkinUVOverlay::rebuildRegions()
   if (m_is64x64)
   {
     // === 内层（Base Layer）===
-    m_regions.append({QRect(0, 0, 32, 16), QStringLiteral("头部"), false});
-    m_regions.append({QRect(16, 16, 24, 16), QStringLiteral("身体"), false});
-    m_regions.append({QRect(40, 16, armWidth, 16), QStringLiteral("右臂"), false});
-    m_regions.append({QRect(0, 16, 16, 16), QStringLiteral("右腿"), false});
-    m_regions.append({QRect(32, 48, armWidth, 16), QStringLiteral("左臂"), false});
-    m_regions.append({QRect(16, 48, 16, 16), QStringLiteral("左腿"), false});
+    m_regions.append({QRect(0, 0, 32, 16), QCoreApplication::translate("SkinUVOverlay", "头部"), false});
+    m_regions.append({QRect(16, 16, 24, 16), QCoreApplication::translate("SkinUVOverlay", "身体"), false});
+    m_regions.append({QRect(40, 16, armWidth, 16), QCoreApplication::translate("SkinUVOverlay", "右臂"), false});
+    m_regions.append({QRect(0, 16, 16, 16), QCoreApplication::translate("SkinUVOverlay", "右腿"), false});
+    m_regions.append({QRect(32, 48, armWidth, 16), QCoreApplication::translate("SkinUVOverlay", "左臂"), false});
+    m_regions.append({QRect(16, 48, 16, 16), QCoreApplication::translate("SkinUVOverlay", "左腿"), false});
 
     // === 外层（Overlay Layer）===
-    m_regions.append({QRect(32, 0, 32, 16), QStringLiteral("头部外层"), true});
-    m_regions.append({QRect(16, 32, 24, 16), QStringLiteral("身体外层"), true});
-    m_regions.append({QRect(40, 32, armWidth, 16), QStringLiteral("右臂外层"), true});
-    m_regions.append({QRect(0, 32, 16, 16), QStringLiteral("右腿外层"), true});
-    m_regions.append({QRect(48, 48, armWidth, 16), QStringLiteral("左臂外层"), true});
-    m_regions.append({QRect(0, 48, 16, 16), QStringLiteral("左腿外层"), true});
+    m_regions.append({QRect(32, 0, 32, 16), QCoreApplication::translate("SkinUVOverlay", "头部外层"), true});
+    m_regions.append({QRect(16, 32, 24, 16), QCoreApplication::translate("SkinUVOverlay", "身体外层"), true});
+    m_regions.append({QRect(40, 32, armWidth, 16), QCoreApplication::translate("SkinUVOverlay", "右臂外层"), true});
+    m_regions.append({QRect(0, 32, 16, 16), QCoreApplication::translate("SkinUVOverlay", "右腿外层"), true});
+    m_regions.append({QRect(48, 48, armWidth, 16), QCoreApplication::translate("SkinUVOverlay", "左臂外层"), true});
+    m_regions.append({QRect(0, 48, 16, 16), QCoreApplication::translate("SkinUVOverlay", "左腿外层"), true});
   }
   else
   {
     // === 64x32 格式（仅内层）===
-    m_regions.append({QRect(0, 0, 32, 16), QStringLiteral("头部"), false});
-    m_regions.append({QRect(16, 16, 24, 16), QStringLiteral("身体"), false});
-    m_regions.append({QRect(40, 16, armWidth, 16), QStringLiteral("右臂"), false});
-    m_regions.append({QRect(0, 16, 16, 16), QStringLiteral("右腿"), false});
+    m_regions.append({QRect(0, 0, 32, 16), QCoreApplication::translate("SkinUVOverlay", "头部"), false});
+    m_regions.append({QRect(16, 16, 24, 16), QCoreApplication::translate("SkinUVOverlay", "身体"), false});
+    m_regions.append({QRect(40, 16, armWidth, 16), QCoreApplication::translate("SkinUVOverlay", "右臂"), false});
+    m_regions.append({QRect(0, 16, 16, 16), QCoreApplication::translate("SkinUVOverlay", "右腿"), false});
     // 左臂/左腿复用右臂/右腿区域
-    m_regions.append({QRect(40, 16, armWidth, 16), QStringLiteral("左臂(同右臂)"), false});
-    m_regions.append({QRect(0, 16, 16, 16), QStringLiteral("左腿(同右腿)"), false});
+    m_regions.append({QRect(40, 16, armWidth, 16), QCoreApplication::translate("SkinUVOverlay", "左臂(同右臂)"), false});
+    m_regions.append({QRect(0, 16, 16, 16), QCoreApplication::translate("SkinUVOverlay", "左腿(同右腿)"), false});
   }
 }

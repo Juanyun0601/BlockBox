@@ -5274,7 +5274,7 @@ Please check the file format.</translation>
     <message>
         <location filename="../pages/CommunityForumPage.cpp" line="405"/>
         <source>· 标题写清现象，比如「1.20.4 启动报 Java 找不到」</source>
-        <translation>· Make the title state the symptom, e.g. "1.20.4 won't start: Java not found"</translation>
+        <translation>· Make the title state the symptom, e.g. &quot;1.20.4 won&apos;t start: Java not found&quot;</translation>
     </message>
     <message>
         <location filename="../pages/CommunityForumPage.cpp" line="406"/>
@@ -5319,7 +5319,7 @@ Please check the file format.</translation>
     <message>
         <location filename="../pages/CommunityForumPage.cpp" line="690"/>
         <source>连不上论坛，检查一下网络，或者点「刷新」再试</source>
-        <translation>Can't reach the forum. Check your network, or click Refresh to try again.</translation>
+        <translation>Can&apos;t reach the forum. Check your network, or click Refresh to try again.</translation>
     </message>
     <message>
         <location filename="../pages/CommunityForumPage.cpp" line="692"/>
@@ -5364,7 +5364,7 @@ Please check the file format.</translation>
     <message>
         <location filename="../pages/CommunityForumPage.cpp" line="819"/>
         <source>没有拿到板块数据，稍后刷新再试</source>
-        <translation>Couldn't get board data. Refresh again later.</translation>
+        <translation>Couldn&apos;t get board data. Refresh again later.</translation>
     </message>
     <message>
         <location filename="../pages/CommunityForumPage.cpp" line="860"/>
@@ -5394,7 +5394,7 @@ Please check the file format.</translation>
     <message>
         <location filename="../pages/CommunityForumPage.cpp" line="1013"/>
         <source>现在还没有人开房间。在实例助手的联机页点「发布到联机大厅」，房间就会出现在这里。</source>
-        <translation>Nobody has opened a room yet. Click "Publish to multiplayer lobby" on the Multiplayer page of the instance assistant and your room will show up here.</translation>
+        <translation>Nobody has opened a room yet. Click &quot;Publish to multiplayer lobby&quot; on the Multiplayer page of the instance assistant and your room will show up here.</translation>
     </message>
     <message>
         <location filename="../pages/CommunityForumPage.cpp" line="1016"/>
@@ -7577,7 +7577,7 @@ Click the star button on a resource details page to add resources</translation>
     <message>
         <location filename="../pages/FeedbackComposePage.cpp" line="222"/>
         <source>在「设置 → 高级设置 → 运行日志」里点「导出日志」；很长时贴最后几十行就可以。</source>
-        <translation>Go to Settings → Advanced → Runtime logs and click "Export logs"; if it is long, the last few dozen lines are enough.</translation>
+        <translation>Go to Settings → Advanced → Runtime logs and click &quot;Export logs&quot;; if it is long, the last few dozen lines are enough.</translation>
     </message>
     <message>
         <location filename="../pages/FeedbackComposePage.cpp" line="226"/>
@@ -8351,13 +8351,13 @@ Click the star button on a resource details page to add resources</translation>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="502"/>
         <source>验证码已发送，10 分钟内有效；没收到的话看看垃圾邮件箱</source>
-        <translation>Verification code sent. It's valid for 10 minutes; check your spam folder if you don't see it.</translation>
+        <translation>Verification code sent. It&apos;s valid for 10 minutes; check your spam folder if you don&apos;t see it.</translation>
     </message>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="514"/>
         <location filename="../pages/ForumAccountPage.cpp" line="1161"/>
         <source>验证码发到上面填的邮箱，10 分钟内有效；没收到的话看看垃圾邮件箱</source>
-        <translation>The code goes to the email above and is valid for 10 minutes; check your spam folder if it doesn't arrive.</translation>
+        <translation>The code goes to the email above and is valid for 10 minutes; check your spam folder if it doesn&apos;t arrive.</translation>
     </message>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="537"/>
@@ -8490,7 +8490,7 @@ Click the star button on a resource details page to add resources</translation>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="989"/>
         <source>还没有登录方块盒子论坛</source>
-        <translation>You're not signed in to the BlockBox forum</translation>
+        <translation>You&apos;re not signed in to the BlockBox forum</translation>
     </message>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="995"/>
@@ -8693,7 +8693,7 @@ Click the star button on a resource details page to add resources</translation>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="1426"/>
         <source>注册即表示你愿意守点规矩：友善提问、不刷屏、不发广告。</source>
-        <translation>By signing up you agree to keep it civil: be friendly, don't spam, and no ads.</translation>
+        <translation>By signing up you agree to keep it civil: be friendly, don&apos;t spam, and no ads.</translation>
     </message>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="1432"/>
@@ -8738,7 +8738,7 @@ Click the star button on a resource details page to add resources</translation>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="1992"/>
         <source>两次输入的密码不一样</source>
-        <translation>The passwords don't match</translation>
+        <translation>The passwords don&apos;t match</translation>
     </message>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="2130"/>
@@ -8952,7 +8952,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="3001"/>
         <source>确定要删除游戏账户「%1」吗？</source>
-        <translation>Delete the game account "%1"?</translation>
+        <translation>Delete the game account &quot;%1&quot;?</translation>
     </message>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="3010"/>
@@ -9106,7 +9106,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="3645"/>
         <source>还没有提交过反馈。遇到软件问题，欢迎到左侧「反馈」里提交。</source>
-        <translation>You haven't submitted any feedback yet. If you run into a problem, submit it under Feedback on the left.</translation>
+        <translation>You haven&apos;t submitted any feedback yet. If you run into a problem, submit it under Feedback on the left.</translation>
     </message>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="3668"/>
@@ -9247,7 +9247,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="4280"/>
         <source>两次输入的新密码不一样</source>
-        <translation>The two new passwords don't match</translation>
+        <translation>The two new passwords don&apos;t match</translation>
     </message>
     <message>
         <location filename="../pages/ForumAccountPage.cpp" line="4302"/>
@@ -9317,7 +9317,7 @@ Click to switch to this account, double-click for account details</translation>
         <location filename="../utils/ForumAccountService.cpp" line="365"/>
         <location filename="../utils/ForumAccountService.cpp" line="804"/>
         <source>论坛返回的数据无法解析</source>
-        <translation>The forum returned data that couldn't be parsed</translation>
+        <translation>The forum returned data that couldn&apos;t be parsed</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="373"/>
@@ -9327,7 +9327,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="381"/>
         <source>已创建论坛第一个账号，你现在是管理员</source>
-        <translation>First forum account created — you're now an administrator</translation>
+        <translation>First forum account created — you&apos;re now an administrator</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="383"/>
@@ -9360,7 +9360,7 @@ Click to switch to this account, double-click for account details</translation>
         <location filename="../utils/ForumAccountService.cpp" line="605"/>
         <location filename="../utils/ForumAccountService.cpp" line="621"/>
         <source>打不开这张图片，换个文件试试</source>
-        <translation>Can't open this image. Try a different file</translation>
+        <translation>Can&apos;t open this image. Try a different file</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="517"/>
@@ -9373,12 +9373,12 @@ Click to switch to this account, double-click for account details</translation>
         <location filename="../utils/ForumAccountService.cpp" line="644"/>
         <location filename="../utils/ForumAccountService.cpp" line="652"/>
         <source>这张图片处理失败，换一张试试</source>
-        <translation>Couldn't process this image. Try another one</translation>
+        <translation>Couldn&apos;t process this image. Try another one</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="562"/>
         <source>这张图片压不进 512 KB，换一张试试</source>
-        <translation>This image can't be compressed under 512 KB. Try another one</translation>
+        <translation>This image can&apos;t be compressed under 512 KB. Try another one</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="576"/>
@@ -9398,7 +9398,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="657"/>
         <source>这张封面压不进 3 MB，换一张试试</source>
-        <translation>This cover image can't be compressed under 3 MB. Try another one</translation>
+        <translation>This cover image can&apos;t be compressed under 3 MB. Try another one</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="671"/>
@@ -9413,7 +9413,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="826"/>
         <source>连不上论坛：网络请求没能发出去</source>
-        <translation>Can't reach the forum: the network request couldn't be sent</translation>
+        <translation>Can&apos;t reach the forum: the network request couldn&apos;t be sent</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="860"/>
@@ -9428,12 +9428,12 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="866"/>
         <source>和论坛的加密连接没能建立，可能是网络被拦截，也可能是电脑时间不准</source>
-        <translation>Couldn't set up an encrypted connection to the forum. The network may be blocked, or your computer's clock may be wrong</translation>
+        <translation>Couldn&apos;t set up an encrypted connection to the forum. The network may be blocked, or your computer&apos;s clock may be wrong</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="870"/>
         <source>论坛一直没回应，网络有点慢</source>
-        <translation>The forum isn't responding; the network seems slow</translation>
+        <translation>The forum isn&apos;t responding; the network seems slow</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="873"/>
@@ -9448,12 +9448,12 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="881"/>
         <source>连不上论坛（已自动重试 %1 次）：%2</source>
-        <translation>Can't reach the forum (auto-retried %1 times): %2</translation>
+        <translation>Can&apos;t reach the forum (auto-retried %1 times): %2</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="884"/>
         <source>连不上论坛：%1</source>
-        <translation>Can't reach the forum: %1</translation>
+        <translation>Can&apos;t reach the forum: %1</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="886"/>
@@ -9468,7 +9468,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="1089"/>
         <source>验证题没拿全，稍后再试</source>
-        <translation>Couldn't fetch all the quiz questions. Try again later</translation>
+        <translation>Couldn&apos;t fetch all the quiz questions. Try again later</translation>
     </message>
     <message>
         <location filename="../utils/ForumAccountService.cpp" line="1110"/>
@@ -9641,7 +9641,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumComposerPage.cpp" line="481"/>
         <source>板块加载失败，默认发到「综合讨论」</source>
-        <translation>Couldn't load boards; posts go to “General discussion” by default</translation>
+        <translation>Couldn&apos;t load boards; posts go to “General discussion” by default</translation>
     </message>
     <message>
         <location filename="../pages/ForumComposerPage.cpp" line="513"/>
@@ -9656,7 +9656,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumComposerPage.cpp" line="544"/>
         <source>插件包超过 20 MB，服务器不收这么大，先删减一下</source>
-        <translation>The plugin package is over 20 MB; the server won't accept files that large — trim it first</translation>
+        <translation>The plugin package is over 20 MB; the server won&apos;t accept files that large — trim it first</translation>
     </message>
     <message>
         <location filename="../pages/ForumComposerPage.cpp" line="552"/>
@@ -9696,7 +9696,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumComposerPage.cpp" line="588"/>
         <source>我将随主题一起发布这个插件</source>
-        <translation>I'll publish this plugin with the thread</translation>
+        <translation>I&apos;ll publish this plugin with the thread</translation>
     </message>
     <message>
         <location filename="../pages/ForumComposerPage.cpp" line="599"/>
@@ -9754,7 +9754,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../utils/ForumContentService.cpp" line="348"/>
         <source>插件包读不出来，文件可能被占用</source>
-        <translation>Can't read the plugin package; the file may be in use</translation>
+        <translation>Can&apos;t read the plugin package; the file may be in use</translation>
     </message>
     <message>
         <location filename="../utils/ForumContentService.cpp" line="356"/>
@@ -9864,7 +9864,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumFriendsPage.cpp" line="389"/>
         <source>官方客服是默认好友，不能删除</source>
-        <translation>Official support is a default friend and can't be removed</translation>
+        <translation>Official support is a default friend and can&apos;t be removed</translation>
     </message>
     <message>
         <location filename="../pages/ForumFriendsPage.cpp" line="395"/>
@@ -10029,7 +10029,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumFriendsPage.cpp" line="1007"/>
         <source>对方也申请了你，已经成为好友</source>
-        <translation>They sent you a request too — you're now friends</translation>
+        <translation>They sent you a request too — you&apos;re now friends</translation>
     </message>
     <message>
         <location filename="../pages/ForumFriendsPage.cpp" line="1008"/>
@@ -10194,12 +10194,12 @@ Click to switch to this account, double-click for account details</translation>
         <location filename="../utils/ForumLobbyService.cpp" line="184"/>
         <location filename="../utils/ForumLobbyService.cpp" line="193"/>
         <source>打不开这张图片，换个文件试试</source>
-        <translation>Can't open this image. Try a different file</translation>
+        <translation>Can&apos;t open this image. Try a different file</translation>
     </message>
     <message>
         <location filename="../utils/ForumLobbyService.cpp" line="252"/>
         <source>这张图片压不进 4 MB 的图床限制，换一张试试</source>
-        <translation>This image can't be compressed under the 4 MB image host limit. Try another one</translation>
+        <translation>This image can&apos;t be compressed under the 4 MB image host limit. Try another one</translation>
     </message>
     <message>
         <location filename="../utils/ForumLobbyService.cpp" line="281"/>
@@ -10210,7 +10210,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../utils/ForumLobbyService.cpp" line="304"/>
         <source>房间还没发布</source>
-        <translation>The room hasn't been published yet</translation>
+        <translation>The room hasn&apos;t been published yet</translation>
     </message>
 </context>
 <context>
@@ -10313,12 +10313,12 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumPluginListPage.cpp" line="404"/>
         <source>插件包写不进临时目录</source>
-        <translation>Couldn't write the plugin package to the temp folder</translation>
+        <translation>Couldn&apos;t write the plugin package to the temp folder</translation>
     </message>
     <message>
         <location filename="../pages/ForumPluginListPage.cpp" line="412"/>
         <source>下载的文件不是有效插件包</source>
-        <translation>The downloaded file isn't a valid plugin package</translation>
+        <translation>The downloaded file isn&apos;t a valid plugin package</translation>
     </message>
     <message>
         <location filename="../pages/ForumPluginListPage.cpp" line="426"/>
@@ -10587,7 +10587,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="601"/>
         <source>拿不到插件下载地址，稍后再试</source>
-        <translation>Couldn't get the plugin download URL. Please try again later.</translation>
+        <translation>Couldn&apos;t get the plugin download URL. Please try again later.</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="630"/>
@@ -10597,12 +10597,12 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="637"/>
         <source>插件包写不进临时目录</source>
-        <translation>Couldn't write the plugin package to the temp directory</translation>
+        <translation>Couldn&apos;t write the plugin package to the temp directory</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="647"/>
         <source>下载的文件不是有效插件包</source>
-        <translation>The downloaded file isn't a valid plugin package</translation>
+        <translation>The downloaded file isn&apos;t a valid plugin package</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="658"/>
@@ -10791,7 +10791,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1266"/>
         <source>正在回复 &lt;b&gt;%1&lt;/b&gt; 的第 %2 楼</source>
-        <translation>Replying to &lt;b&gt;%1&lt;/b&gt;'s post #%2</translation>
+        <translation>Replying to &lt;b&gt;%1&lt;/b&gt;&apos;s post #%2</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1274"/>
@@ -10899,12 +10899,12 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1577"/>
         <source>确定删除这条楼中楼回复吗？此操作不可撤销。</source>
-        <translation>Delete this nested reply? This can't be undone.</translation>
+        <translation>Delete this nested reply? This can&apos;t be undone.</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1578"/>
         <source>确定删除这条回复吗？楼中楼会一并隐藏，此操作不可撤销。</source>
-        <translation>Delete this reply? Its nested replies will be hidden too. This can't be undone.</translation>
+        <translation>Delete this reply? Its nested replies will be hidden too. This can&apos;t be undone.</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1580"/>
@@ -10919,7 +10919,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1596"/>
         <source>确定删除这个主题吗？所有楼层都不再显示，此操作不可撤销。</source>
-        <translation>Delete this topic? All posts will be hidden. This can't be undone.</translation>
+        <translation>Delete this topic? All posts will be hidden. This can&apos;t be undone.</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1604"/>
@@ -10974,7 +10974,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1771"/>
         <source>该主题已锁定，暂不接受新回复</source>
-        <translation>This topic is locked and isn't accepting new replies</translation>
+        <translation>This topic is locked and isn&apos;t accepting new replies</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1777"/>
@@ -11029,7 +11029,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1879"/>
         <source>暂时读不到同版块主题</source>
-        <translation>Couldn't load topics from this board</translation>
+        <translation>Couldn&apos;t load topics from this board</translation>
     </message>
     <message>
         <location filename="../pages/ForumThreadDetailPage.cpp" line="1930"/>
@@ -11160,7 +11160,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumUserProfilePage.cpp" line="80"/>
         <source>点帖子里的作者名字可以看TA的主页</source>
-        <translation>Click an author's name in a post to see their profile</translation>
+        <translation>Click an author&apos;s name in a post to see their profile</translation>
     </message>
     <message>
         <location filename="../pages/ForumUserProfilePage.cpp" line="88"/>
@@ -11234,7 +11234,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumUserProfilePage.cpp" line="371"/>
         <source>对方也申请了你，已经成为好友</source>
-        <translation>You're now friends — they had sent you a request too</translation>
+        <translation>You&apos;re now friends — they had sent you a request too</translation>
     </message>
     <message>
         <location filename="../pages/ForumUserProfilePage.cpp" line="372"/>
@@ -11249,7 +11249,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumUserProfilePage.cpp" line="426"/>
         <source>TA 还没有发过主题</source>
-        <translation>They haven't posted any topics yet</translation>
+        <translation>They haven&apos;t posted any topics yet</translation>
     </message>
     <message>
         <location filename="../pages/ForumUserProfilePage.cpp" line="453"/>
@@ -11264,7 +11264,7 @@ Click to switch to this account, double-click for account details</translation>
     <message>
         <location filename="../pages/ForumUserProfilePage.cpp" line="488"/>
         <source>TA 还没有回复过帖子</source>
-        <translation>They haven't replied to any posts yet</translation>
+        <translation>They haven&apos;t replied to any posts yet</translation>
     </message>
     <message>
         <location filename="../pages/ForumUserProfilePage.cpp" line="509"/>
@@ -11286,7 +11286,7 @@ Click to switch to this account, double-click for account details</translation>
 可到官网面板手动下载后，点「手动选择 frpc」导入。</source>
         <translation>Failed to check the Sakura frpc version: %1
 
-You can download it manually from the web panel, then click "Select frpc manually" to import it.</translation>
+You can download it manually from the web panel, then click &quot;Select frpc manually&quot; to import it.</translation>
     </message>
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="408"/>
@@ -11305,7 +11305,7 @@ You can download it manually from the web panel, then click "Select frpc manuall
 可到官网面板手动下载后，点「手动选择 frpc」导入。</source>
         <translation>Failed to check the OpenFrp frpc version: %1
 
-You can download it manually from the web panel, then click "Select frpc manually" to import it.</translation>
+You can download it manually from the web panel, then click &quot;Select frpc manually&quot; to import it.</translation>
     </message>
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="465"/>
@@ -11330,7 +11330,7 @@ You can download it manually from the web panel, then click "Select frpc manuall
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="527"/>
         <source>无法写入临时文件</source>
-        <translation>Couldn't write the temp file</translation>
+        <translation>Couldn&apos;t write the temp file</translation>
     </message>
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="532"/>
@@ -11350,7 +11350,7 @@ You can download it manually from the web panel, then click "Select frpc manuall
 可到官网面板手动下载 frpc，再点「手动选择 frpc」导入。</source>
         <translation>Failed to download frpc: %1
 
-You can download frpc manually from the web panel, then click "Select frpc manually" to import.</translation>
+You can download frpc manually from the web panel, then click &quot;Select frpc manually&quot; to import.</translation>
     </message>
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="557"/>
@@ -11360,7 +11360,7 @@ You can download frpc manually from the web panel, then click "Select frpc manua
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="597"/>
         <source>安装 frpc 失败：无法写入程序文件</source>
-        <translation>Failed to install frpc: couldn't write program files</translation>
+        <translation>Failed to install frpc: couldn&apos;t write program files</translation>
     </message>
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="608"/>
@@ -11384,7 +11384,7 @@ You can download frpc manually from the web panel, then click "Select frpc manua
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="783"/>
         <source>尚未安装 frpc 客户端，请先点击顶部「下载」按钮安装。</source>
-        <translation>The frpc client isn't installed yet. Click the Download button at the top to install it.</translation>
+        <translation>The frpc client isn&apos;t installed yet. Click the Download button at the top to install it.</translation>
     </message>
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="787"/>
@@ -11399,7 +11399,7 @@ You can download frpc manually from the web panel, then click "Select frpc manua
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="818"/>
         <source>无法运行 frpc 程序</source>
-        <translation>Couldn't start frpc</translation>
+        <translation>Couldn&apos;t start frpc</translation>
     </message>
     <message>
         <location filename="../utils/frp/FrpManager.cpp" line="915"/>
@@ -11717,7 +11717,7 @@ Click to view details</translation>
     <message>
         <location filename="../components/HomeFriendsPanel.cpp" line="517"/>
         <source>好友列表没加载出来，稍后再试试</source>
-        <translation>Couldn't load your friend list. Please try again later.</translation>
+        <translation>Couldn&apos;t load your friend list. Please try again later.</translation>
     </message>
     <message>
         <location filename="../components/HomeFriendsPanel.cpp" line="518"/>
@@ -12308,7 +12308,7 @@ Add some in Settings → Interface</translation>
     <message>
         <location filename="../components/HumanCheckDialog.cpp" line="418"/>
         <source>拖动滑块，把拼图对进缺口，确认不是机器人</source>
-        <translation>Drag the slider to fit the puzzle piece into the gap and prove you're not a robot</translation>
+        <translation>Drag the slider to fit the puzzle piece into the gap and prove you&apos;re not a robot</translation>
     </message>
     <message>
         <location filename="../components/HumanCheckDialog.cpp" line="439"/>
@@ -12323,7 +12323,7 @@ Add some in Settings → Interface</translation>
     <message>
         <location filename="../components/HumanCheckDialog.cpp" line="528"/>
         <source>验证图没加载出来，点“换一张”再试一次</source>
-        <translation>Couldn't load the verification image. Click “New image” and try again.</translation>
+        <translation>Couldn&apos;t load the verification image. Click “New image” and try again.</translation>
     </message>
     <message>
         <location filename="../components/HumanCheckDialog.cpp" line="551"/>
@@ -13319,6 +13319,11 @@ Modified: %4</translation>
         <location filename="../components/InstanceFolderTree.cpp" line="103"/>
         <source>刷新</source>
         <translation>Refresh</translation>
+    </message>
+    <message>
+        <location filename="../components/InstanceFolderTree.cpp" line="171"/>
+        <source>绑定文件夹</source>
+        <translation>Bind Folder</translation>
     </message>
 </context>
 <context>
@@ -14859,7 +14864,7 @@ Modified: %4</translation>
     <message>
         <location filename="../pages/InstanceRecordingsPage.cpp" line="739"/>
         <source>确定要删除 &quot;%1&quot; 吗？此操作不可撤销。</source>
-        <translation>Delete "%1"? This cannot be undone.</translation>
+        <translation>Delete &quot;%1&quot;? This cannot be undone.</translation>
     </message>
     <message>
         <location filename="../pages/InstanceRecordingsPage.cpp" line="752"/>
@@ -16176,6 +16181,11 @@ Shared locations: %2</translation>
         <translation>Loading…</translation>
     </message>
     <message>
+        <location filename="../components/LanTransferDialog.cpp" line="376"/>
+        <source>%1    %2（远程）</source>
+        <translation>%1    %2 (Remote)</translation>
+    </message>
+    <message>
         <location filename="../components/LanTransferDialog.cpp" line="379"/>
         <source>远程设备 · 通过内网穿透直连
 虚拟地址：%1
@@ -17104,13 +17114,13 @@ Open system settings to grant it? Once granted, come back and tap “Install” 
         <translation>The instance directory is not writable:
 %1
 
-Switch to the app's default writable folder?
+Switch to the app&apos;s default writable folder?
 %2</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="906"/>
         <source>无法安装实例</source>
-        <translation>Can't install instance</translation>
+        <translation>Can&apos;t install instance</translation>
     </message>
     <message>
         <location filename="../pages/LoaderDetailPage.cpp" line="907"/>
@@ -17173,6 +17183,19 @@ Tap + next to “Install location” to choose another writable folder, then try
         <location filename="../pages/LoaderDetailPage.cpp" line="1047"/>
         <source>已添加 %1 %2</source>
         <translation>Added %1 %2</translation>
+    </message>
+</context>
+<context>
+    <name>LoadingOverlay</name>
+    <message>
+        <location filename="../components/LoadingOverlay.cpp" line="187"/>
+        <source>正在加载...</source>
+        <translation>Loading...</translation>
+    </message>
+    <message>
+        <location filename="../components/LoadingOverlay.cpp" line="196"/>
+        <source>取消</source>
+        <translation>Cancel</translation>
     </message>
 </context>
 <context>
@@ -17343,7 +17366,7 @@ Supports **bold**, `code`, &gt; quotes, ![](image link) and more; optional</tran
     <message>
         <location filename="../components/LobbyPublishDialog.cpp" line="336"/>
         <source>打不开这张图</source>
-        <translation>Can't open this image</translation>
+        <translation>Can&apos;t open this image</translation>
     </message>
     <message>
         <location filename="../components/LobbyPublishDialog.cpp" line="336"/>
@@ -17385,7 +17408,7 @@ Joiners can download and install it directly in the app</translation>
     <message>
         <location filename="../components/LobbyPublishDialog.cpp" line="427"/>
         <source>封面没传上去，这次先不带封面发布。</source>
-        <translation>The cover didn't upload, so it will be published without one.</translation>
+        <translation>The cover didn&apos;t upload, so it will be published without one.</translation>
     </message>
     <message>
         <location filename="../components/LobbyPublishDialog.cpp" line="439"/>
@@ -17418,7 +17441,7 @@ Joiners can download and install it directly in the app</translation>
     <message>
         <location filename="../components/LobbyPublishDialog.cpp" line="516"/>
         <source>封面没传上去</source>
-        <translation>Cover didn't upload</translation>
+        <translation>Cover didn&apos;t upload</translation>
     </message>
     <message>
         <location filename="../components/LobbyPublishDialog.cpp" line="518"/>
@@ -18816,17 +18839,17 @@ The file will be deleted:
     <message>
         <location filename="../mainwindow.cpp" line="2508"/>
         <source>这个好友的房间已经下架，首页好友列表稍后会自动刷新。</source>
-        <translation>This friend's room is no longer available. The friend list on the home page will refresh shortly.</translation>
+        <translation>This friend&apos;s room is no longer available. The friend list on the home page will refresh shortly.</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2514"/>
         <source>正在加入好友的联机房间，请稍候…</source>
-        <translation>Joining your friend's multiplayer room, please wait…</translation>
+        <translation>Joining your friend&apos;s multiplayer room, please wait…</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2521"/>
         <source>游戏已经在运行了，先关掉游戏再加入好友的房间。</source>
-        <translation>The game is already running. Close it before joining your friend's room.</translation>
+        <translation>The game is already running. Close it before joining your friend&apos;s room.</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2532"/>
@@ -18861,7 +18884,7 @@ The file will be deleted:
     <message>
         <location filename="../mainwindow.cpp" line="2560"/>
         <source>你已经在陶瓦联机的房间里了，先离开当前房间再加入好友的房间。</source>
-        <translation>You're already in a Taowa Multiplayer room. Leave it before joining your friend's room.</translation>
+        <translation>You&apos;re already in a Taowa Multiplayer room. Leave it before joining your friend&apos;s room.</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2567"/>
@@ -18871,7 +18894,7 @@ The file will be deleted:
     <message>
         <location filename="../mainwindow.cpp" line="2568"/>
         <source>先打开实例助手的联机页处理一下，再回来加入好友的房间。</source>
-        <translation>Open the Multiplayer page in the instance assistant and fix it, then come back to join your friend's room.</translation>
+        <translation>Open the Multiplayer page in the instance assistant and fix it, then come back to join your friend&apos;s room.</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2585"/>
@@ -18883,17 +18906,17 @@ The file will be deleted:
         <location filename="../mainwindow.cpp" line="2592"/>
         <location filename="../mainwindow.cpp" line="2654"/>
         <source>无法加入好友的房间，请稍后再试。</source>
-        <translation>Can't join your friend's room. Please try again later.</translation>
+        <translation>Can&apos;t join your friend&apos;s room. Please try again later.</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2596"/>
         <source>正在连接好友「%1」的联机房间…</source>
-        <translation>Connecting to %1's multiplayer room…</translation>
+        <translation>Connecting to %1&apos;s multiplayer room…</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2603"/>
         <source>正在启动联机核心，连上后会自动进入好友的房间…</source>
-        <translation>Starting the multiplayer core. You'll join your friend's room automatically once connected…</translation>
+        <translation>Starting the multiplayer core. You&apos;ll join your friend&apos;s room automatically once connected…</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2613"/>
@@ -18913,17 +18936,17 @@ The file will be deleted:
     <message>
         <location filename="../mainwindow.cpp" line="2638"/>
         <source>连不上好友的房间：%1</source>
-        <translation>Can't connect to your friend's room: %1</translation>
+        <translation>Can&apos;t connect to your friend&apos;s room: %1</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2657"/>
         <source>正在连接好友的联机房间…</source>
-        <translation>Connecting to your friend's multiplayer room…</translation>
+        <translation>Connecting to your friend&apos;s multiplayer room…</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2669"/>
         <source>联机核心没有返回可用的服务器地址。</source>
-        <translation>The multiplayer core didn't return a usable server address.</translation>
+        <translation>The multiplayer core didn&apos;t return a usable server address.</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="2684"/>
@@ -19218,7 +19241,7 @@ The file will be deleted:
     <message>
         <location filename="../mainwindow.cpp" line="3992"/>
         <source>当前实例是原版（未安装模组加载器），无法加载模组。请先给实例安装 Fabric / Forge / NeoForge 再使用该功能</source>
-        <translation>This instance is vanilla (no mod loader installed), so mods can't be loaded. Install Fabric / Forge / NeoForge for the instance before using this feature</translation>
+        <translation>This instance is vanilla (no mod loader installed), so mods can&apos;t be loaded. Install Fabric / Forge / NeoForge for the instance before using this feature</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="4053"/>
@@ -19264,7 +19287,7 @@ The file will be deleted:
     <message>
         <location filename="../main.cpp" line="110"/>
         <source>不再弹出这条公告</source>
-        <translation>Don't show this announcement again</translation>
+        <translation>Don&apos;t show this announcement again</translation>
     </message>
     <message>
         <location filename="../main.cpp" line="112"/>
@@ -19272,27 +19295,60 @@ The file will be deleted:
         <translation>Got it</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="270"/>
+        <location filename="../main.cpp" line="204"/>
+        <source>安装实例、模组和导入导出存档都需要访问存储</source>
+        <translation>Installing instances and mods, and importing or exporting saves, all require storage access</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="211"/>
+        <source>需要「所有文件访问」权限</source>
+        <translation>&quot;All Files Access&quot; permission required</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="212"/>
+        <source>%1。
+
+是否前往系统设置授权？授权后返回即可继续使用。</source>
+        <translation>%1.
+
+Go to system settings to grant permission? Come back once it is granted to keep using the app.</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="226"/>
+        <source>需要存储权限</source>
+        <translation>Storage permission required</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="227"/>
+        <source>%1。
+
+请在接下来的系统弹窗中允许。</source>
+        <translation>%1.
+
+Please allow it in the system prompt that follows.</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="317"/>
         <source>正在初始化数据目录...</source>
         <translation>Initializing data directory...</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="276"/>
+        <location filename="../main.cpp" line="323"/>
         <source>正在加载语言设置...</source>
         <translation>Loading language settings...</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="290"/>
+        <location filename="../main.cpp" line="337"/>
         <source>正在创建主窗口...</source>
         <translation>Creating main window...</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="299"/>
+        <location filename="../main.cpp" line="346"/>
         <source>正在检测Java...</source>
         <translation>Detecting Java...</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="316"/>
+        <location filename="../main.cpp" line="363"/>
         <source>启动完成</source>
         <translation>Startup complete</translation>
     </message>
@@ -19423,12 +19479,12 @@ The file will be deleted:
     <message>
         <location filename="../MainWindowPages.cpp" line="1815"/>
         <source>没能打开浏览器，请手动访问：%1</source>
-        <translation>Couldn't open your browser. Please visit: %1</translation>
+        <translation>Couldn&apos;t open your browser. Please visit: %1</translation>
     </message>
     <message>
         <location filename="../MainWindowPages.cpp" line="1819"/>
         <source>已在浏览器打开平台发布页，发布完成后回到方块盒子即可</source>
-        <translation>The platform's publish page is open in your browser. Come back to BlockBox when you're done.</translation>
+        <translation>The platform&apos;s publish page is open in your browser. Come back to BlockBox when you&apos;re done.</translation>
     </message>
     <message>
         <location filename="../MainWindowPages.cpp" line="1860"/>
@@ -19519,7 +19575,7 @@ The file will be deleted:
     <message>
         <location filename="../utils/McServerPinger.cpp" line="396"/>
         <source>无法连接到服务器</source>
-        <translation>Couldn't connect to the server</translation>
+        <translation>Couldn&apos;t connect to the server</translation>
     </message>
     <message>
         <location filename="../utils/McServerPinger.cpp" line="417"/>
@@ -20970,281 +21026,385 @@ Please confirm the game version.</translation>
 <context>
     <name>MultiplayerLobbyPage</name>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="73"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="342"/>
         <source>联机大厅</source>
         <translation>Multiplayer Lobby</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="76"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="347"/>
         <source>挑一个房间就能直接进游戏：自动选版本、加载器和模组都合适的本地实例。</source>
         <translation>Pick a room and jump straight into the game: we automatically pick a local instance with a matching version, loader, and mods.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="84"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="365"/>
         <source>打开网页大厅</source>
         <translation>Open web lobby</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="93"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="374"/>
         <source>我要开房</source>
         <translation>Host a room</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="109"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="399"/>
         <source>搜房间名、简介或房主</source>
         <translation>Search room name, description, or host</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="119"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="415"/>
         <source>全部核心</source>
         <translation>All cores</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="120"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="416"/>
         <source>陶瓦联机</source>
         <translation>Terracotta Multiplayer</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="121"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="417"/>
         <source>红石联机</source>
         <translation>Redstone Multiplayer</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="122"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="418"/>
         <source>内网穿透</source>
         <translation>NAT tunneling</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="150"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="450"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="806"/>
         <source>加载中…</source>
         <translation>Loading…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="247"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="678"/>
         <source>正在刷新…</source>
         <translation>Refreshing…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="262"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="699"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="808"/>
         <source>刷新失败：%1</source>
         <translation>Refresh failed: %1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="281"/>
         <source>大厅里暂时没有房间。
 开好房后，在实例助手的联机页点「发布到联机大厅」就能让所有人看到。</source>
-        <translation>No rooms in the lobby right now.
-Once you've hosted a room, click "Publish to Multiplayer Lobby" on the Multiplayer page in the Instance Assistant and everyone will see it.</translation>
+        <translation type="vanished">No rooms in the lobby right now.
+Once you&apos;ve hosted a room, click &quot;Publish to Multiplayer Lobby&quot; on the Multiplayer page in the Instance Assistant and everyone will see it.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="288"/>
         <source>去实例助手开房 →</source>
-        <translation>Create a room in the Instance Assistant →</translation>
+        <translation type="vanished">Create a room in the Instance Assistant →</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="299"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="810"/>
         <source>共 0 个房间</source>
         <translation>0 rooms</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="309"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="821"/>
         <source>显示 %1 个 · 在线 %2 个</source>
         <translation>Showing %1 · %2 online</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="310"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="823"/>
         <source>共 %1 个房间</source>
         <translation>%1 rooms total</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="347"/>
         <source>游戏中</source>
-        <translation>In game</translation>
+        <translation type="vanished">In game</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="347"/>
         <source>在线</source>
-        <translation>Online</translation>
+        <translation type="vanished">Online</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="354"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="954"/>
         <source>前置整合包：%1</source>
         <translation>Required modpack: %1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="357"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="957"/>
         <source>加入前可以先把这个整合包装上</source>
         <translation>You may want to install this modpack before joining</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="358"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="958"/>
         <source>加入前可以先把这个整合包装上：%1</source>
         <translation>You may want to install this modpack before joining: %1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="365"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="965"/>
         <source>缺少模组：%1</source>
         <translation>Missing mods: %1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="376"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="913"/>
         <source>MC %1</source>
         <translation>MC %1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="380"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="715"/>
+        <source>正在连接大厅…</source>
+        <translation>Connecting to the lobby…</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="720"/>
+        <source>暂时连不上大厅，稍后会自动再试</source>
+        <translation>Can&apos;t reach the lobby right now. It will retry automatically.</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="725"/>
+        <source>现在还没有人在大厅开房</source>
+        <translation>No one has opened a room in the lobby yet</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="739"/>
+        <source>在线 %1 个房间 · 等待加入 %2 个 · 游戏中 %3 个</source>
+        <translation>%1 rooms online · %2 waiting to join · %3 in game</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="777"/>
+        <source>正在加载房间…</source>
+        <translation>Loading rooms…</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="778"/>
+        <source>正在从联机大厅取房间列表，稍等一下就好。</source>
+        <translation>Fetching the room list from the multiplayer lobby. Just a moment.</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="784"/>
+        <source>暂时连不上联机大厅</source>
+        <translation>Can&apos;t reach the multiplayer lobby right now</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="785"/>
+        <source>%1
+检查一下网络，或者稍后再试一次。</source>
+        <translation>%1
+Check your network, or try again later.</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="786"/>
+        <source>重新加载</source>
+        <translation>Reload</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="792"/>
+        <source>大厅里暂时没有房间</source>
+        <translation>There are no rooms in the lobby yet</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="793"/>
+        <source>开好房后，在实例助手的联机页点「发布到联机大厅」，房间就会出现在这里。</source>
+        <translation>Once your room is open, click &quot;Publish to Multiplayer Lobby&quot; on the Multiplayer page of Instance Assistant and it will show up here.</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="794"/>
+        <source>去实例助手开房</source>
+        <translation>Open a Room in Instance Assistant</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="888"/>
+        <source>未命名房间</source>
+        <translation>Unnamed Room</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="897"/>
+        <source>我的房间</source>
+        <translation>My Room</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="920"/>
         <source>房主 %1</source>
         <translation>Host %1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="381"/>
         <source>%1 人</source>
-        <translation>%1 players</translation>
+        <translation type="vanished">%1 players</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="399"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="921"/>
+        <source>%1 人上限</source>
+        <translation>Max %1 players</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="923"/>
+        <source>%1 次加入</source>
+        <translation>%1 joins</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="926"/>
+        <source>%1发布</source>
+        <translation>Published %1</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="980"/>
         <source>未填写邀请码</source>
         <translation>No invite code entered</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="409"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="983"/>
+        <source>房主没有填写邀请码 / 地址</source>
+        <translation>The host did not provide an invite code / address</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="986"/>
         <source>复制</source>
         <translation>Copy</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="418"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="995"/>
+        <source>已复制：%1</source>
+        <translation>Copied: %1</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1001"/>
         <source>一键加入</source>
         <translation>One-click join</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="443"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1001"/>
+        <source>已下架</source>
+        <translation>Unlisted</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1008"/>
+        <source>这个房间已经下架，刷新后再看看别的吧</source>
+        <translation>This room is no longer listed. Refresh to see other rooms.</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1027"/>
         <source>任意版本都能加入</source>
         <translation>Works with any version</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="444"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1028"/>
         <source>本机没有 %1 的实例，需要先装一个</source>
         <translation>No instance for %1 on this device; install one first</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="448"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1032"/>
         <source>一键用「%1」加入 · 模组齐全</source>
-        <translation>One-click join with "%1" · all mods available</translation>
+        <translation>One-click join with &quot;%1&quot; · all mods available</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="450"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1034"/>
         <source>一键用「%1」加入 · 版本和加载器匹配</source>
-        <translation>One-click join with "%1" · version and loader match</translation>
+        <translation>One-click join with &quot;%1&quot; · version and loader match</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="451"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1035"/>
         <source>一键用「%1」加入 · 仅版本匹配</source>
-        <translation>One-click join with "%1" · version match only</translation>
+        <translation>One-click join with &quot;%1&quot; · version match only</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="458"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1042"/>
         <source>房间已过期</source>
         <translation>Room expired</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="458"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1042"/>
         <source>这个房间已经下架，刷新后再看看别的吧。</source>
         <translation>This room has been taken down. Refresh and look for another one.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="471"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1055"/>
         <source>没有邀请码</source>
         <translation>No invite code</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="471"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1055"/>
         <source>这个房间没有可用的邀请码，请让房主重新发布。</source>
         <translation>This room has no usable invite code. Ask the host to publish it again.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="479"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1063"/>
         <source>还没安装陶瓦联机核心</source>
         <translation>Terracotta Multiplayer core not installed</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="480"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1064"/>
         <source>这是陶瓦联机的房间，需要先在实例助手的联机页安装陶瓦联机核心。</source>
         <translation>This is a Terracotta Multiplayer room. Install the Terracotta Multiplayer core on the Multiplayer page in the Instance Assistant first.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="486"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1070"/>
         <source>已在房间中</source>
         <translation>Already in a room</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="487"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1071"/>
         <source>你已经在陶瓦联机的房间里了，先离开当前房间再加入其他房间。</source>
-        <translation>You're already in a Terracotta Multiplayer room. Leave the current room before joining another one.</translation>
+        <translation>You&apos;re already in a Terracotta Multiplayer room. Leave the current room before joining another one.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="504"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="586"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1088"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1170"/>
         <source>BlockBox 玩家</source>
         <translation>BlockBox player</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="510"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="590"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1094"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1174"/>
         <source>无法加入房间，请稍后再试。</source>
-        <translation>Couldn't join the room. Please try again later.</translation>
+        <translation>Couldn&apos;t join the room. Please try again later.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="513"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="593"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1097"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1177"/>
         <source>正在连接房主…</source>
         <translation>Connecting to the host…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="519"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1103"/>
         <source>正在启动陶瓦联机核心，启动后会自动加入…</source>
-        <translation>Starting the Terracotta Multiplayer core; you'll join automatically once it starts…</translation>
+        <translation>Starting the Terracotta Multiplayer core; you&apos;ll join automatically once it starts…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="529"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1113"/>
         <source>地址无效</source>
         <translation>Invalid address</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="530"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1114"/>
         <source>这个房间没有可用的连接地址，请让房主重新发布。</source>
         <translation>This room has no usable connection address. Ask the host to publish it again.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="543"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="551"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="558"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1127"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1135"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1142"/>
         <source>需要前置整合包</source>
         <translation>Modpack required</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="544"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1128"/>
         <source>房主给这个房间标了前置整合包「%1」。
 
 建议先在「资源 &gt; 导入整合包」里下载安装它：
 %2
 
 装好再回来加入。</source>
-        <translation>The host marked "%1" as a required modpack for this room.
+        <translation>The host marked &quot;%1&quot; as a required modpack for this room.
 
-We recommend downloading and installing it from "Resources &gt; Import Modpack" first:
+We recommend downloading and installing it from &quot;Resources &gt; Import Modpack&quot; first:
 %2
 
 Then come back and join.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="552"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1136"/>
         <source>房主给这个房间标了前置整合包「%1」。
 
 下载地址：
 %2
 
 自己装好再回来加入。</source>
-        <translation>The host marked "%1" as a required modpack for this room.
+        <translation>The host marked &quot;%1&quot; as a required modpack for this room.
 
 Download address:
 %2
@@ -21252,27 +21412,27 @@ Download address:
 Install it yourself, then come back and join.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="559"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1143"/>
         <source>房主给这个房间标了前置整合包「%1」，加入前先确认你装了它。</source>
-        <translation>The host marked "%1" as a required modpack for this room. Make sure it's installed before joining.</translation>
+        <translation>The host marked &quot;%1&quot; as a required modpack for this room. Make sure it&apos;s installed before joining.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="575"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1159"/>
         <source>连不上房主，请稍后再试。</source>
-        <translation>Couldn't reach the host. Please try again later.</translation>
+        <translation>Couldn&apos;t reach the host. Please try again later.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="603"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1187"/>
         <source>联机核心没有返回可用的服务器地址。</source>
         <translation>The multiplayer core did not return a usable server address.</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="611"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1195"/>
         <source>连接成功，正在启动游戏…</source>
         <translation>Connected. Launching the game…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="629"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1213"/>
         <source>加入失败</source>
         <translation>Join failed</translation>
     </message>
@@ -21569,7 +21729,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="859"/>
         <source>在官网面板「访问密钥」页面获取</source>
-        <translation>Get it on the "Access key" page of the official panel</translation>
+        <translation>Get it on the &quot;Access key&quot; page of the official panel</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="863"/>
@@ -21951,17 +22111,17 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="1958"/>
         <source>樱花联机基于樱花内网穿透（SakuraFrp）：在官网注册并创建 TCP 隧道后，把「访问密钥」和「隧道 ID」填到下面，点「启动隧道」即可获得一个联机地址，把地址分享给好友，参与者在 Minecraft 中连接该地址即可共同游玩。&lt;br&gt;&lt;br&gt;创建隧道时类型选 TCP，本地地址填 127.0.0.1，本地端口填游戏「对局域网开放」显示的端口。&lt;br&gt;&lt;br&gt;SakuraFrp 是第三方服务（需实名认证），与本软件无关，如遇问题可前往&lt;a href=&quot;https://doc.natfrp.com/&quot;&gt;SakuraFrp 帮助文档&lt;/a&gt;反馈。&lt;br&gt;&lt;br&gt;在联机过程中，请严格遵守当地法律法规。</source>
-        <translation>Sakura Multiplayer is based on SakuraFrp NAT tunneling: sign up on the official website, create a TCP tunnel, then enter the "Access Key" and "Tunnel ID" below and click "Start Tunnel" to get a multiplayer address. Share it with friends, and they can connect to it in Minecraft to play together.&lt;br&gt;&lt;br&gt;When creating the tunnel, choose TCP as the type, enter 127.0.0.1 as the local address, and use the port shown by the game's "Open to LAN" as the local port.&lt;br&gt;&lt;br&gt;SakuraFrp is a third-party service (real-name verification required) and is unrelated to this app. If you run into problems, see the &lt;a href="https://doc.natfrp.com/"&gt;SakuraFrp documentation&lt;/a&gt;.&lt;br&gt;&lt;br&gt;Please strictly follow local laws and regulations while playing online.</translation>
+        <translation>Sakura Multiplayer is based on SakuraFrp NAT tunneling: sign up on the official website, create a TCP tunnel, then enter the &quot;Access Key&quot; and &quot;Tunnel ID&quot; below and click &quot;Start Tunnel&quot; to get a multiplayer address. Share it with friends, and they can connect to it in Minecraft to play together.&lt;br&gt;&lt;br&gt;When creating the tunnel, choose TCP as the type, enter 127.0.0.1 as the local address, and use the port shown by the game&apos;s &quot;Open to LAN&quot; as the local port.&lt;br&gt;&lt;br&gt;SakuraFrp is a third-party service (real-name verification required) and is unrelated to this app. If you run into problems, see the &lt;a href=&quot;https://doc.natfrp.com/&quot;&gt;SakuraFrp documentation&lt;/a&gt;.&lt;br&gt;&lt;br&gt;Please strictly follow local laws and regulations while playing online.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="1968"/>
         <source>OpenFrp 联机基于 OpenFrp 公益内网穿透：在官网注册并创建 TCP 隧道后，把「访问密钥」和「隧道 ID」填到下面，点「启动隧道」即可获得一个联机地址，把地址分享给好友，参与者在 Minecraft 中连接该地址即可共同游玩。&lt;br&gt;&lt;br&gt;创建隧道时类型选 TCP，本地地址填 127.0.0.1，本地端口填游戏「对局域网开放」显示的端口。&lt;br&gt;&lt;br&gt;OpenFrp 是第三方服务，与本软件无关，如遇问题可前往&lt;a href=&quot;https://www.openfrp.net/&quot;&gt;OpenFrp 官网&lt;/a&gt;反馈。&lt;br&gt;&lt;br&gt;在联机过程中，请严格遵守当地法律法规。</source>
-        <translation>OpenFrp Multiplayer is based on OpenFrp's free NAT tunneling: sign up on the official website, create a TCP tunnel, then enter the "Access Key" and "Tunnel ID" below and click "Start Tunnel" to get a multiplayer address. Share it with friends, and they can connect to it in Minecraft to play together.&lt;br&gt;&lt;br&gt;When creating the tunnel, choose TCP as the type, enter 127.0.0.1 as the local address, and use the port shown by the game's "Open to LAN" as the local port.&lt;br&gt;&lt;br&gt;OpenFrp is a third-party service and is unrelated to this app. If you run into problems, visit the &lt;a href="https://www.openfrp.net/"&gt;OpenFrp website&lt;/a&gt;.&lt;br&gt;&lt;br&gt;Please strictly follow local laws and regulations while playing online.</translation>
+        <translation>OpenFrp Multiplayer is based on OpenFrp&apos;s free NAT tunneling: sign up on the official website, create a TCP tunnel, then enter the &quot;Access Key&quot; and &quot;Tunnel ID&quot; below and click &quot;Start Tunnel&quot; to get a multiplayer address. Share it with friends, and they can connect to it in Minecraft to play together.&lt;br&gt;&lt;br&gt;When creating the tunnel, choose TCP as the type, enter 127.0.0.1 as the local address, and use the port shown by the game&apos;s &quot;Open to LAN&quot; as the local port.&lt;br&gt;&lt;br&gt;OpenFrp is a third-party service and is unrelated to this app. If you run into problems, visit the &lt;a href=&quot;https://www.openfrp.net/&quot;&gt;OpenFrp website&lt;/a&gt;.&lt;br&gt;&lt;br&gt;Please strictly follow local laws and regulations while playing online.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="1987"/>
         <source>没有账号？点「打开面板」注册并创建 TCP 隧道，再把密钥和 ID 填在上面。</source>
-        <translation>No account? Click "Open panel" to sign up and create a TCP tunnel, then enter the key and ID above.</translation>
+        <translation>No account? Click &quot;Open panel&quot; to sign up and create a TCP tunnel, then enter the key and ID above.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2014"/>
@@ -21976,7 +22136,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2019"/>
         <source>未安装 frpc 客户端，请点击顶部「下载」按钮安装</source>
-        <translation>The frpc client isn't installed. Click the "Download" button at the top to install it</translation>
+        <translation>The frpc client isn&apos;t installed. Click the &quot;Download&quot; button at the top to install it</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2022"/>
@@ -22016,7 +22176,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2118"/>
         <source>连接建立后这里会显示远程地址；也可以到官网面板查看隧道的连接地址。</source>
-        <translation>The remote address will appear here once the connection is established. You can also check the tunnel's connection address on the official panel.</translation>
+        <translation>The remote address will appear here once the connection is established. You can also check the tunnel&apos;s connection address on the official panel.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2131"/>
@@ -22026,7 +22186,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2132"/>
         <source>尚未安装 frpc 客户端，请先点击顶部「下载」按钮下载安装。</source>
-        <translation>The frpc client isn't installed yet. Click the "Download" button at the top to download and install it.</translation>
+        <translation>The frpc client isn&apos;t installed yet. Click the &quot;Download&quot; button at the top to download and install it.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2139"/>
@@ -22036,7 +22196,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2140"/>
         <source>请先填写访问密钥：在官网面板「访问密钥」页面获取。</source>
-        <translation>Please enter the access key: get it on the "Access key" page of the official panel.</translation>
+        <translation>Please enter the access key: get it on the &quot;Access key&quot; page of the official panel.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2146"/>
@@ -22071,7 +22231,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2176"/>
         <source>无法导入所选程序，请确认选择的是 frpc 程序文件。</source>
-        <translation>Couldn't import the selected program. Make sure you selected the frpc program file.</translation>
+        <translation>Couldn&apos;t import the selected program. Make sure you selected the frpc program file.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2248"/>
@@ -22138,12 +22298,12 @@ Install it yourself, then come back and join.</translation>
         <location filename="../pages/MultiplayerPage.cpp" line="2416"/>
         <location filename="../pages/MultiplayerPage.cpp" line="2434"/>
         <source>隧道还没建立，等房间页显示连接地址后再发布。</source>
-        <translation>The tunnel isn't established yet. Publish once the room page shows the connection address.</translation>
+        <translation>The tunnel isn&apos;t established yet. Publish once the room page shows the connection address.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2449"/>
         <source>只有房主创建好房间后才能发布：先在「联机」页创建房间并进入游戏开服。</source>
-        <translation>Only the host can publish after creating a room: first create a room on the "Multiplayer" page and open the game to LAN.</translation>
+        <translation>Only the host can publish after creating a room: first create a room on the &quot;Multiplayer&quot; page and open the game to LAN.</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2464"/>
@@ -22170,7 +22330,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2491"/>
         <source>现在还不能发布</source>
-        <translation>Can't publish yet</translation>
+        <translation>Can&apos;t publish yet</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2501"/>
@@ -22180,7 +22340,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2504"/>
         <source>%1 的联机房间</source>
-        <translation>%1's multiplayer room</translation>
+        <translation>%1&apos;s multiplayer room</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="2525"/>
@@ -22459,6 +22619,23 @@ Install it yourself, then come back and join.</translation>
 %2</source>
         <translation>Job &apos;%1&apos; failed to process:
 %2</translation>
+    </message>
+</context>
+<context>
+    <name>NewsDetailDialog</name>
+    <message>
+        <location filename="../components/NewsDetailDialog.cpp" line="39"/>
+        <source>官方暂未提供这条新闻的摘要。</source>
+        <translation>The official summary isn&apos;t available for this news item yet.</translation>
+    </message>
+    <message>
+        <location filename="../components/NewsDetailDialog.cpp" line="40"/>
+        <source>
+
+内容来自 Minecraft 官方新闻。</source>
+        <translation>
+
+Content from Minecraft official news.</translation>
     </message>
 </context>
 <context>
@@ -22961,12 +23138,12 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/OnboardingWizard.cpp" line="959"/>
         <source>导入该启动器的账户、版本、Java、登录服与下载设置</source>
-        <translation>Import this launcher's accounts, versions, Java, sign-in servers, and download settings</translation>
+        <translation>Import this launcher&apos;s accounts, versions, Java, sign-in servers, and download settings</translation>
     </message>
     <message>
         <location filename="../pages/OnboardingWizard.cpp" line="960"/>
         <source>未检测到该启动器</source>
-        <translation>This launcher wasn't detected</translation>
+        <translation>This launcher wasn&apos;t detected</translation>
     </message>
     <message>
         <location filename="../pages/OnboardingWizard.cpp" line="980"/>
@@ -23485,7 +23662,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/OnboardingWizard.cpp" line="2422"/>
         <source>账户需在「设置 → 账户管理」里重新登录</source>
-        <translation>Accounts need to be signed in again in "Settings → Account Management"</translation>
+        <translation>Accounts need to be signed in again in &quot;Settings → Account Management&quot;</translation>
     </message>
     <message>
         <location filename="../pages/OnboardingWizard.cpp" line="2426"/>
@@ -23534,12 +23711,12 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../pages/OnboardingWizard.cpp" line="851"/>
         <source>导入只会读取并接管游戏目录、版本与账户文件（有的话），不会修改或删除原启动器的数据；手机上需要给方块盒子「所有文件访问」权限才读得到其他启动器的目录；ZL2 若用默认目录（Android/data 内）需先在 ZL2 里改到共享存储。</source>
-        <translation>Importing only reads and takes over game directories, versions, and account files (if any); it never modifies or deletes data from the original launcher. On phones, BlockBox needs the "All files access" permission to read other launchers' directories; if ZL2 uses its default directory (inside Android/data), change it to shared storage in ZL2 first.</translation>
+        <translation>Importing only reads and takes over game directories, versions, and account files (if any); it never modifies or deletes data from the original launcher. On phones, BlockBox needs the &quot;All files access&quot; permission to read other launchers&apos; directories; if ZL2 uses its default directory (inside Android/data), change it to shared storage in ZL2 first.</translation>
     </message>
     <message>
         <location filename="../pages/OnboardingWizard.cpp" line="852"/>
         <source>导入只会读取并接管启动器里的账户、版本、Java、登录服与下载、内存设置，不会修改或删除原启动器的任何数据。</source>
-        <translation>Importing only reads and takes over the launcher's accounts, versions, Java, sign-in servers, and download and memory settings; it never modifies or deletes any data from the original launcher.</translation>
+        <translation>Importing only reads and takes over the launcher&apos;s accounts, versions, Java, sign-in servers, and download and memory settings; it never modifies or deletes any data from the original launcher.</translation>
     </message>
     <message>
         <location filename="../pages/OnboardingWizard.cpp" line="916"/>
@@ -24017,7 +24194,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../components/OnlineResourceDialog.cpp" line="627"/>
         <source>Modrinth 没有「%1」这个分类，请返回上一步把下载源换成 CurseForge</source>
-        <translation>Modrinth has no "%1" category. Go back and switch the download source to CurseForge</translation>
+        <translation>Modrinth has no &quot;%1&quot; category. Go back and switch the download source to CurseForge</translation>
     </message>
     <message>
         <location filename="../components/OnlineResourceDialog.cpp" line="637"/>
@@ -24057,7 +24234,7 @@ Install it yourself, then come back and join.</translation>
     <message>
         <location filename="../components/OnlineResourceDialog.cpp" line="737"/>
         <source>正在加载「%1」的版本列表…</source>
-        <translation>Loading versions for "%1"…</translation>
+        <translation>Loading versions for &quot;%1&quot;…</translation>
     </message>
     <message>
         <location filename="../components/OnlineResourceDialog.cpp" line="758"/>
@@ -25361,7 +25538,7 @@ Only .litematic format is supported.</translation>
     <message>
         <location filename="../components/ProjectionBlockEditorDialog.cpp" line="372"/>
         <source>左键单击选中方块，可切换为「同类型全部」多选；右键仍为放置（快捷键 1）</source>
-        <translation>Left-click a block to select it; switch to "Select whole type" for multi-select. Right-click still places (shortcut 1)</translation>
+        <translation>Left-click a block to select it; switch to &quot;Select whole type&quot; for multi-select. Right-click still places (shortcut 1)</translation>
     </message>
     <message>
         <location filename="../components/ProjectionBlockEditorDialog.cpp" line="373"/>
@@ -25372,6 +25549,76 @@ Only .litematic format is supported.</translation>
         <location filename="../components/ProjectionBlockEditorDialog.cpp" line="434"/>
         <source>开启后，右键会把方块放到所点方块的相邻面上；关闭则直接覆盖所点方块</source>
         <translation>When on, right-click places blocks on the face next to the clicked block; when off, it replaces the clicked block outright</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="589"/>
+        <source>等轴</source>
+        <translation>Isometric</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="589"/>
+        <source>等轴视角（默认）</source>
+        <translation>Isometric view (default)</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="590"/>
+        <source>前</source>
+        <translation>Front</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="590"/>
+        <source>正视图</source>
+        <translation>Front view</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="591"/>
+        <source>后</source>
+        <translation>Back</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="591"/>
+        <source>后视图</source>
+        <translation>Back view</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="592"/>
+        <source>左</source>
+        <translation>Left</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="592"/>
+        <source>左视图</source>
+        <translation>Left view</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="593"/>
+        <source>右</source>
+        <translation>Right</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="593"/>
+        <source>右视图</source>
+        <translation>Right view</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="594"/>
+        <source>顶</source>
+        <translation>Top</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="594"/>
+        <source>俯视图</source>
+        <translation>Top view</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="595"/>
+        <source>底</source>
+        <translation>Bottom</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="595"/>
+        <source>仰视图</source>
+        <translation>Bottom view</translation>
     </message>
     <message>
         <location filename="../components/ProjectionBlockEditorDialog.cpp" line="713"/>
@@ -25386,7 +25633,7 @@ Only .litematic format is supported.</translation>
     <message>
         <location filename="../components/ProjectionBlockEditorDialog.cpp" line="1391"/>
         <source>切到「选取」模式（快捷键 1）后左键单击方块即可选中</source>
-        <translation>Switch to "Select" mode (shortcut 1), then left-click a block to select it</translation>
+        <translation>Switch to &quot;Select&quot; mode (shortcut 1), then left-click a block to select it</translation>
     </message>
     <message>
         <location filename="../components/ProjectionBlockEditorDialog.cpp" line="1418"/>
@@ -26418,7 +26665,7 @@ Please select a .litematic file first, or use the existing &quot;Edit Projection
     <message>
         <location filename="../pages/PublishBoardPage.cpp" line="110"/>
         <source>没有拿到板块数据，稍后刷新再试</source>
-        <translation>Couldn't get board data. Refresh and try again later</translation>
+        <translation>Couldn&apos;t get board data. Refresh and try again later</translation>
     </message>
     <message>
         <location filename="../pages/PublishBoardPage.cpp" line="117"/>
@@ -26549,7 +26796,7 @@ Please select a .litematic file first, or use the existing &quot;Edit Projection
     <message>
         <location filename="../pages/PublishPage.cpp" line="77"/>
         <source>模组、资源包等会跳转到 CurseForge / Modrinth 发布；插件（方块盒子插件）和帖子可以直接在方块盒子社区发布——插件发到「插件分享」板块，帖子只做交流讨论。</source>
-        <translation>Mods, resource packs, and so on are published on CurseForge / Modrinth; plugins (BlockBox plugins) and posts can be published directly in the BlockBox community — plugins go to the "Plugin Sharing" board, while posts are for discussion only.</translation>
+        <translation>Mods, resource packs, and so on are published on CurseForge / Modrinth; plugins (BlockBox plugins) and posts can be published directly in the BlockBox community — plugins go to the &quot;Plugin Sharing&quot; board, while posts are for discussion only.</translation>
     </message>
 </context>
 <context>
@@ -26572,7 +26819,7 @@ Please select a .litematic file first, or use the existing &quot;Edit Projection
     <message>
         <location filename="../pages/PublishPlatformPage.cpp" line="82"/>
         <source>方块盒子不托管%1文件，请选择下面的平台，在网页端完成发布</source>
-        <translation>BlockBox doesn't host %1 files. Choose a platform below and publish on its website</translation>
+        <translation>BlockBox doesn&apos;t host %1 files. Choose a platform below and publish on its website</translation>
     </message>
     <message>
         <location filename="../pages/PublishPlatformPage.cpp" line="96"/>
@@ -26597,17 +26844,17 @@ Please select a .litematic file first, or use the existing &quot;Edit Projection
     <message>
         <location filename="../pages/PublishPlatformPage.cpp" line="121"/>
         <source>Modrinth 暂不支持世界</source>
-        <translation>Modrinth doesn't support worlds yet</translation>
+        <translation>Modrinth doesn&apos;t support worlds yet</translation>
     </message>
     <message>
         <location filename="../pages/PublishPlatformPage.cpp" line="122"/>
         <source>Modrinth 没有「世界」分类，世界资源请通过 CurseForge 发布</source>
-        <translation>Modrinth has no "Worlds" category. Publish world resources through CurseForge</translation>
+        <translation>Modrinth has no &quot;Worlds&quot; category. Publish world resources through CurseForge</translation>
     </message>
     <message>
         <location filename="../pages/PublishPlatformPage.cpp" line="126"/>
         <source>Modrinth 暂不支持发布世界资源</source>
-        <translation>Modrinth can't publish world resources yet</translation>
+        <translation>Modrinth can&apos;t publish world resources yet</translation>
     </message>
     <message>
         <location filename="../pages/PublishPlatformPage.cpp" line="141"/>
@@ -26627,7 +26874,7 @@ Please select a .litematic file first, or use the existing &quot;Edit Projection
     <message>
         <location filename="../pages/PublishPlatformPage.cpp" line="148"/>
         <source>3. 发布完成后回到方块盒子，在「资源」页就能搜到并下载</source>
-        <translation>3. Once published, come back to BlockBox and you can find and download it on the "Resources" page</translation>
+        <translation>3. Once published, come back to BlockBox and you can find and download it on the &quot;Resources&quot; page</translation>
     </message>
 </context>
 <context>
@@ -26650,7 +26897,7 @@ Please select a .litematic file first, or use the existing &quot;Edit Projection
     <message>
         <location filename="../pages/PublishResourcePage.cpp" line="85"/>
         <source>插件会发布到社区的「插件分享」板块，要上传 .BlockBox 插件包；只想交流讨论的话，发帖时选「插件与开发」板块即可。</source>
-        <translation>Plugins are published to the community's "Plugin Sharing" board and require a .BlockBox plugin package. If you only want to discuss, choose the "Plugins and Development" board when posting.</translation>
+        <translation>Plugins are published to the community&apos;s &quot;Plugin Sharing&quot; board and require a .BlockBox plugin package. If you only want to discuss, choose the &quot;Plugins and Development&quot; board when posting.</translation>
     </message>
 </context>
 <context>
@@ -26979,7 +27226,7 @@ Describe your work in one sentence
 What this plugin can do
 
 ## Usage
-- Once installed, open it from "Plugins" in the left navigation
+- Once installed, open it from &quot;Plugins&quot; in the left navigation
 
 ## Configuration
 - 
@@ -27004,7 +27251,7 @@ What this plugin can do
 ## 补充说明
 - 
 </source>
-        <translation>## What you'd like to report
+        <translation>## What you&apos;d like to report
 Describe briefly what you ran into
 
 ## Expected behavior
@@ -27041,7 +27288,7 @@ Describe briefly what you ran into
 - No cheating or item duplication
 
 ## How to join
-Just click "One-click join"; the required modpack downloads and installs automatically.
+Just click &quot;One-click join&quot;; the required modpack downloads and installs automatically.
 </translation>
     </message>
     <message>
@@ -27066,10 +27313,10 @@ Just click "One-click join"; the required modpack downloads and installs automat
 - Version:
 
 ## Rules
-- Claim your own plot; don't tear down other players' builds
+- Claim your own plot; don&apos;t tear down other players&apos; builds
 
 ## How to join
-Just click "One-click join".
+Just click &quot;One-click join&quot;.
 </translation>
     </message>
     <message>
@@ -27100,7 +27347,7 @@ Just click "One-click join".
 - Wait for the host to start the round
 
 ## How to join
-Click "One-click join"; it starts once everyone is in.
+Click &quot;One-click join&quot;; it starts once everyone is in.
 </translation>
     </message>
     <message>
@@ -27117,7 +27364,7 @@ Click "One-click join"; it starts once everyone is in.
 - 进服先看公告和群号
 </source>
         <translation>## Requirements
-- The modpack you need is listed under "Required modpack" above; you'll be prompted when joining
+- The modpack you need is listed under &quot;Required modpack&quot; above; you&apos;ll be prompted when joining
 
 ## Notes
 - Check the announcements and group number after you join
@@ -27345,6 +27592,196 @@ Click "One-click join"; it starts once everyone is in.
         <translation>The manifest is missing the id or name field</translation>
     </message>
     <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="35"/>
+        <source>读取方块盒子文件</source>
+        <translation>Read BlockBox files</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="36"/>
+        <source>修改方块盒子文件/代码</source>
+        <translation>Modify BlockBox files/code</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="37"/>
+        <source>读写 Windows 注册表</source>
+        <translation>Read/write Windows registry</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="38"/>
+        <source>访问网络</source>
+        <translation>Access the network</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="39"/>
+        <source>请求管理员权限（UAC 提权）</source>
+        <translation>Request administrator rights (UAC elevation)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="40"/>
+        <source>执行系统级操作（服务/关机/格式化等）</source>
+        <translation>Perform system-level operations (services/shutdown/format, etc.)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="41"/>
+        <source>修改启动器界面样式（仅外观）</source>
+        <translation>Modify launcher UI style (appearance only)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="53"/>
+        <source>删除文件/目录（Remove-Item）</source>
+        <translation>Delete files/directories (Remove-Item)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="54"/>
+        <source>递归删除文件/目录</source>
+        <translation>Recursively delete files/directories</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="55"/>
+        <source>强制递归删除（rm -rf）</source>
+        <translation>Force recursive delete (rm -rf)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="56"/>
+        <source>删除目录</source>
+        <translation>Delete directory</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="57"/>
+        <source>递归删除目录（cmd）</source>
+        <translation>Recursively delete directory (cmd)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="58"/>
+        <source>递归删除文件（cmd）</source>
+        <translation>Recursively delete files (cmd)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="59"/>
+        <source>递归删除文件（erase）</source>
+        <translation>Recursively delete files (erase)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="60"/>
+        <source>清空回收站</source>
+        <translation>Empty the Recycle Bin</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="62"/>
+        <source>格式化磁盘卷（Format-Volume）</source>
+        <translation>Format disk volume (Format-Volume)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="63"/>
+        <source>格式化磁盘（format）</source>
+        <translation>Format disk (format)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="64"/>
+        <source>磁盘分区操作（diskpart）</source>
+        <translation>Disk partition operations (diskpart)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="66"/>
+        <source>关机/重启/注销（shutdown）</source>
+        <translation>Shut down/restart/sign out (shutdown)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="67"/>
+        <source>重启计算机</source>
+        <translation>Restart computer</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="68"/>
+        <source>关闭计算机</source>
+        <translation>Shut down computer</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="69"/>
+        <source>停止系统服务</source>
+        <translation>Stop system service</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="70"/>
+        <source>修改系统服务</source>
+        <translation>Modify system service</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="71"/>
+        <source>创建系统服务</source>
+        <translation>Create system service</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="72"/>
+        <source>删除系统服务（sc delete）</source>
+        <translation>Delete system service (sc delete)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="73"/>
+        <source>修改引导配置（bcdedit）</source>
+        <translation>Modify boot configuration (bcdedit)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="75"/>
+        <source>删除注册表项（reg delete）</source>
+        <translation>Delete registry key (reg delete)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="76"/>
+        <source>修改注册表项（reg add）</source>
+        <translation>Modify registry key (reg add)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="77"/>
+        <source>修改注册表值/属性</source>
+        <translation>Modify registry values/properties</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="78"/>
+        <source>删除注册表值</source>
+        <translation>Delete registry value</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="79"/>
+        <source>修改 PowerShell 执行策略</source>
+        <translation>Modify PowerShell execution policy</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="81"/>
+        <source>夺取文件所有权（takeown）</source>
+        <translation>Take file ownership (takeown)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="82"/>
+        <source>修改文件权限（icacls）</source>
+        <translation>Modify file permissions (icacls)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="83"/>
+        <source>修改文件属性（attrib）</source>
+        <translation>Modify file attributes (attrib)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="84"/>
+        <source>修改 hosts 文件</source>
+        <translation>Modify the hosts file</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="86"/>
+        <source>终止进程（Stop-Process）</source>
+        <translation>Terminate process (Stop-Process)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="87"/>
+        <source>终止进程（taskkill）</source>
+        <translation>Terminate process (taskkill)</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="88"/>
+        <source>进程管理（wmic）</source>
+        <translation>Process management (wmic)</translation>
+    </message>
+    <message>
         <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="187"/>
         <source>插件：%1</source>
         <translation>Plugin: %1</translation>
@@ -27545,7 +27982,7 @@ Click "One-click join"; it starts once everyone is in.
     <message>
         <location filename="../pages/ForumFriendsPage.cpp" line="71"/>
         <source>很久没来啦</source>
-        <translation>Hasn't been around in a while</translation>
+        <translation>Hasn&apos;t been around in a while</translation>
     </message>
     <message>
         <location filename="../pages/ForumFriendsPage.cpp" line="1568"/>
@@ -27575,7 +28012,7 @@ Click "One-click join"; it starts once everyone is in.
     <message>
         <location filename="../utils/AuthManager.cpp" line="51"/>
         <source>账号或密码不符合服务器的格式要求</source>
-        <translation>Account or password doesn't meet the server's format requirements</translation>
+        <translation>Account or password doesn&apos;t meet the server&apos;s format requirements</translation>
     </message>
     <message>
         <location filename="../utils/AuthManager.cpp" line="56"/>
@@ -27600,22 +28037,22 @@ Click "One-click join"; it starts once everyone is in.
     <message>
         <location filename="../utils/AuthManager.cpp" line="67"/>
         <source>无法连接到认证服务器，请检查网络或服务器地址</source>
-        <translation>Can't connect to the auth server. Check your network or the server address</translation>
+        <translation>Can&apos;t connect to the auth server. Check your network or the server address</translation>
     </message>
     <message>
         <location filename="../utils/AuthManager.cpp" line="68"/>
         <source>无法连接到认证服务器：%1</source>
-        <translation>Can't connect to the auth server: %1</translation>
+        <translation>Can&apos;t connect to the auth server: %1</translation>
     </message>
     <message>
         <location filename="../utils/ForumChatService.cpp" line="287"/>
         <source>打不开这张图片，换个文件试试</source>
-        <translation>Can't open this image. Try another file</translation>
+        <translation>Can&apos;t open this image. Try another file</translation>
     </message>
     <message>
         <location filename="../utils/ForumChatService.cpp" line="319"/>
         <source>这张图片压不进 4 MB 的图床限制，换一张试试</source>
-        <translation>This image can't be compressed under the 4 MB image host limit. Try a different one</translation>
+        <translation>This image can&apos;t be compressed under the 4 MB image host limit. Try a different one</translation>
     </message>
     <message>
         <location filename="../utils/ForumChatService.cpp" line="358"/>
@@ -27626,7 +28063,7 @@ Click "One-click join"; it starts once everyone is in.
     <message>
         <location filename="../utils/forge/LegacyForgeInstaller.cpp" line="83"/>
         <source>无法打开 %1</source>
-        <translation>Can't open %1</translation>
+        <translation>Can&apos;t open %1</translation>
     </message>
     <message>
         <location filename="../utils/forge/LegacyForgeInstaller.cpp" line="92"/>
@@ -27646,7 +28083,27 @@ Click "One-click join"; it starts once everyone is in.
     <message>
         <location filename="../utils/forge/LegacyForgeInstaller.cpp" line="484"/>
         <source>无法写入合并后的 jar：%1</source>
-        <translation>Can't write the merged jar: %1</translation>
+        <translation>Can&apos;t write the merged jar: %1</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="274"/>
+        <source>● 已下架</source>
+        <translation>● Unlisted</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="279"/>
+        <source>● 已满</source>
+        <translation>● Full</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="284"/>
+        <source>● 游戏中</source>
+        <translation>● In Game</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="289"/>
+        <source>● 等待加入</source>
+        <translation>● Waiting to Join</translation>
     </message>
 </context>
 <context>
@@ -27707,7 +28164,7 @@ Click "One-click join"; it starts once everyone is in.
         <source>入站答题已和方块盒子账号绑定：答题通过后，这个账号才能发帖和评论。
 登录账号后回来答题，成绩不会丢失。</source>
         <translation>The entry quiz is tied to your BlockBox account: only after passing it can this account post and comment.
-Sign in, then come back to take the quiz — your result won't be lost.</translation>
+Sign in, then come back to take the quiz — your result won&apos;t be lost.</translation>
     </message>
     <message>
         <location filename="../components/QuizDialog.cpp" line="305"/>
@@ -28249,7 +28706,7 @@ Sign in, then come back to take the quiz — your result won't be lost.</transla
     <message>
         <location filename="../pages/ResourcesPage.cpp" line="295"/>
         <source>为世界换上创作者的材质外观</source>
-        <translation>Give your world a creator's texture look</translation>
+        <translation>Give your world a creator&apos;s texture look</translation>
     </message>
     <message>
         <location filename="../pages/ResourcesPage.cpp" line="299"/>
@@ -28485,6 +28942,631 @@ Sign in, then come back to take the quiz — your result won't be lost.</transla
 </context>
 <context>
     <name>SaveSettingsPage</name>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="91"/>
+        <source>死亡不掉落</source>
+        <translation>Keep Inventory</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="91"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="93"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="95"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="97"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="99"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="101"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="103"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="105"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="107"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="109"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="111"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="113"/>
+        <source>玩家</source>
+        <translation>Player</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="92"/>
+        <source>死亡后保留物品栏和经验，不会掉落</source>
+        <translation>Keep inventory and experience on death, with no drops</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="93"/>
+        <source>立即重生</source>
+        <translation>Immediate Respawn</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="94"/>
+        <source>死亡后跳过死亡界面直接重生</source>
+        <translation>Skip the death screen and respawn right away</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="95"/>
+        <source>自然回血</source>
+        <translation>Natural Regeneration</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="96"/>
+        <source>生命值会随时间自动恢复</source>
+        <translation>Health regenerates over time</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="97"/>
+        <source>摔落伤害</source>
+        <translation>Fall Damage</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="98"/>
+        <source>从高处摔落会造成伤害</source>
+        <translation>Falling from a height deals damage</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="99"/>
+        <source>火焰伤害</source>
+        <translation>Fire Damage</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="100"/>
+        <source>火焰和岩浆会造成伤害</source>
+        <translation>Fire and lava deal damage</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="101"/>
+        <source>溺水伤害</source>
+        <translation>Drowning Damage</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="102"/>
+        <source>水下憋气耗尽后会造成伤害</source>
+        <translation>Damage once your air runs out underwater</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="103"/>
+        <source>冰冻伤害</source>
+        <translation>Freeze Damage</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="104"/>
+        <source>在细雪中冰冻会造成伤害</source>
+        <translation>Freezing in powder snow deals damage</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="105"/>
+        <source>队友定位条</source>
+        <translation>Locator Bar</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="106"/>
+        <source>屏幕上显示队友位置的定位条（联机用）</source>
+        <translation>Show a locator bar with nearby player positions (multiplayer)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="107"/>
+        <source>死亡珍珠消失</source>
+        <translation>Ender Pearls Vanish on Death</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="108"/>
+        <source>玩家死亡时，正在飞行的末影珍珠立即消失</source>
+        <translation>Ender pearls in flight vanish instantly when their owner dies</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="109"/>
+        <source>旁观者加载区块</source>
+        <translation>Spectators Generate Chunks</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="110"/>
+        <source>旁观者玩家也会促使周围区块加载生成</source>
+        <translation>Spectator players also keep nearby chunks loaded</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="111"/>
+        <source>跳夜所需玩家</source>
+        <translation>Players Needed to Skip Night</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="112"/>
+        <source>需要入睡的玩家比例（%）达到该数值才能跳过夜晚，0 表示无需有人入睡</source>
+        <translation>Percentage of players (%) who must sleep to skip the night; 0 means no one needs to sleep</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="113"/>
+        <source>出生散布半径</source>
+        <translation>Spawn Radius</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="114"/>
+        <source>新玩家和重生玩家围绕世界出生点散布的范围（格），0 表示固定出生在世界出生点</source>
+        <translation>Range (blocks) that new and respawning players spread around world spawn; 0 puts them at world spawn</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="116"/>
+        <source>昼夜更替</source>
+        <translation>Daylight Cycle</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="116"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="118"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="120"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="122"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="124"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="126"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="128"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="130"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="132"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="134"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="136"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="138"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="140"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="142"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="144"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="146"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="148"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="150"/>
+        <source>世界</source>
+        <translation>World</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="117"/>
+        <source>太阳、月亮和昼夜照常流转</source>
+        <translation>The sun, moon and day-night cycle keep moving</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="118"/>
+        <source>天气更替</source>
+        <translation>Weather Cycle</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="119"/>
+        <source>晴天、雨天、雷雨会自然变化</source>
+        <translation>Clear, rain and thunder change naturally</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="120"/>
+        <source>火焰蔓延</source>
+        <translation>Fire Spread</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="121"/>
+        <source>火焰会蔓延、点燃方块并自然熄灭</source>
+        <translation>Fire spreads, sets blocks alight and burns out naturally</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="122"/>
+        <source>火焰远离燃烧</source>
+        <translation>Fire Spread Around Player</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="123"/>
+        <source>允许火焰蔓延到离玩家很远的地方继续燃烧（25w44a 起已移除）</source>
+        <translation>Let fire keep burning far from players (removed since 25w44a)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="124"/>
+        <source>生物破坏方块</source>
+        <translation>Mob Griefing</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="125"/>
+        <source>苦力怕爆炸毁地形、末影人搬方块、僵尸踩坏农田等行为</source>
+        <translation>Creeper explosions wrecking terrain, endermen moving blocks, zombies trampling crops and so on</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="126"/>
+        <source>方块掉落</source>
+        <translation>Block Drops</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="127"/>
+        <source>破坏方块后会掉落物品</source>
+        <translation>Breaking blocks drops items</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="128"/>
+        <source>实体掉落</source>
+        <translation>Entity Drops</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="129"/>
+        <source>矿车、船、物品展示框等被破坏后掉落物品</source>
+        <translation>Minecarts, boats, item frames and similar drop items when broken</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="130"/>
+        <source>藤蔓蔓延</source>
+        <translation>Vine Spread</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="131"/>
+        <source>藤蔓会向四周生长蔓延</source>
+        <translation>Vines grow and spread outward</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="132"/>
+        <source>投射物破坏植物</source>
+        <translation>Projectiles Can Break Blocks</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="133"/>
+        <source>箭等投射物可以打碎紫水晶簇、滴水石锥等方块</source>
+        <translation>Arrows and other projectiles can shatter amethyst clusters, pointed dripstone and similar blocks</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="134"/>
+        <source>水源汇聚</source>
+        <translation>Water Source Conversion</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="135"/>
+        <source>流水会互相汇聚成新水源，可以做无限水</source>
+        <translation>Flowing water forms new water sources, making infinite water possible</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="136"/>
+        <source>熔岩源汇聚</source>
+        <translation>Lava Source Conversion</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="137"/>
+        <source>熔岩会互相汇聚成新熔岩源（可做无限熔岩）</source>
+        <translation>Flowing lava forms new lava sources (infinite lava)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="138"/>
+        <source>降雪堆积上限</source>
+        <translation>Snow Accumulation Height</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="139"/>
+        <source>下雪时地表最多能积几层雪，0 表示完全不积雪</source>
+        <translation>Max snow layers that can pile up; 0 means no snow builds up at all</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="140"/>
+        <source>方块爆炸掉落衰减</source>
+        <translation>Block Explosion Drop Decay</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="141"/>
+        <source>下界床等方块类爆炸炸毁方块后，一部分掉落物会消失</source>
+        <translation>Block-made explosions such as beds in the Nether destroy some drops</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="142"/>
+        <source>生物爆炸掉落衰减</source>
+        <translation>Mob Explosion Drop Decay</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="143"/>
+        <source>苦力怕等生物爆炸炸毁方块后，一部分掉落物会消失</source>
+        <translation>Mob explosions such as creepers destroy some drops</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="144"/>
+        <source>TNT爆炸掉落衰减</source>
+        <translation>TNT Explosion Drop Decay</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="145"/>
+        <source>TNT 爆炸炸毁方块后，一部分掉落物会消失（默认全部掉落）</source>
+        <translation>TNT explosions destroy some drops (all drops by default)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="146"/>
+        <source>TNT爆炸</source>
+        <translation>TNT Explodes</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="147"/>
+        <source>点燃的 TNT 能否正常爆炸，关闭后 TNT 和 TNT 矿车都无法引爆</source>
+        <translation>Whether lit TNT explodes; when off, neither TNT nor TNT minecarts detonate</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="148"/>
+        <source>出生点常加载</source>
+        <translation>Spawn Chunk Radius</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="149"/>
+        <source>世界出生点周围始终保持加载的区块半径，0 表示不再常加载出生点区块（1.21.9 起已移除）</source>
+        <translation>Chunk radius always kept loaded around world spawn; 0 disables spawn chunks (removed since 1.21.9)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="150"/>
+        <source>随机刻速度</source>
+        <translation>Random Tick Speed</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="151"/>
+        <source>作物生长、树叶枯萎等随机事件的速度，0 为停止生长</source>
+        <translation>Speed of random events like crop growth and leaf decay; 0 stops growth</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="153"/>
+        <source>生物自然生成</source>
+        <translation>Mob Spawning</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="153"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="155"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="157"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="159"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="161"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="163"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="165"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="167"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="169"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="171"/>
+        <source>生物</source>
+        <translation>Mobs</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="154"/>
+        <source>动物和怪物会自然生成</source>
+        <translation>Animals and monsters spawn naturally</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="155"/>
+        <source>生物掉落物</source>
+        <translation>Mob Drops</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="156"/>
+        <source>生物死亡后掉落战利品</source>
+        <translation>Mobs drop loot when they die</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="157"/>
+        <source>幻翼生成</source>
+        <translation>Phantom Spawning</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="158"/>
+        <source>玩家长时间不睡觉会生成幻翼</source>
+        <translation>Phantoms spawn when players go too long without sleeping</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="159"/>
+        <source>巡逻队生成</source>
+        <translation>Patrol Spawning</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="160"/>
+        <source>灾厄巡逻队会生成</source>
+        <translation>Pillager patrols spawn</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="161"/>
+        <source>流浪商人生成</source>
+        <translation>Wandering Trader Spawning</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="162"/>
+        <source>流浪商人和羊驼会生成</source>
+        <translation>Wandering traders and trader llamas spawn</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="163"/>
+        <source>监守者生成</source>
+        <translation>Warden Spawning</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="164"/>
+        <source>深暗之域中会生成监守者</source>
+        <translation>Wardens spawn in the Deep Dark</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="165"/>
+        <source>禁止袭击</source>
+        <translation>Disable Raids</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="166"/>
+        <source>带着不祥之兆进入村庄不再触发袭击</source>
+        <translation>Entering a village with Bad Omen no longer triggers a raid</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="167"/>
+        <source>愤怒平息</source>
+        <translation>Forgive Dead Players</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="168"/>
+        <source>被激怒的中立生物在目标玩家死亡后平息怒火</source>
+        <translation>Angered neutral mobs calm down once their target player dies</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="169"/>
+        <source>迁怒所有人</source>
+        <translation>Universal Anger</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="170"/>
+        <source>被激怒的中立生物会攻击所有玩家</source>
+        <translation>Angered neutral mobs attack every player</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="171"/>
+        <source>实体挤压上限</source>
+        <translation>Max Entity Cramming</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="172"/>
+        <source>同一格内实体超过该数量时会受到挤压伤害</source>
+        <translation>Entities packed into one block beyond this count take cramming damage</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="174"/>
+        <source>矿车最大速度</source>
+        <translation>Minecart Max Speed</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="174"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="176"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="178"/>
+        <source>交通与传送</source>
+        <translation>Travel &amp; Teleport</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="175"/>
+        <source>普通矿车的最高速度（格/游戏刻）</source>
+        <translation>Top speed of a regular minecart (blocks per game tick)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="176"/>
+        <source>传送门等待时间</source>
+        <translation>Portal Wait Time</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="177"/>
+        <source>玩家（非创造）站在下界传送门里需要等待的时长（游戏刻，默认 80 即 4 秒）</source>
+        <translation>Time a non-creative player must stand in a Nether portal (game ticks, default 80 = 4 seconds)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="178"/>
+        <source>创造传送门等待</source>
+        <translation>Creative Portal Wait</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="179"/>
+        <source>创造模式玩家在下界传送门里需要等待的时长（游戏刻），0 为即进即传</source>
+        <translation>Time a creative player must stand in a Nether portal (game ticks); 0 teleports instantly</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="181"/>
+        <source>公告进度</source>
+        <translation>Announce Advancements</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="181"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="183"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="185"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="187"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="189"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="191"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="193"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="195"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="197"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="199"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="201"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="203"/>
+        <source>界面与命令</source>
+        <translation>Interface &amp; Commands</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="182"/>
+        <source>解锁进度、达成挑战时在聊天栏公告</source>
+        <translation>Announce advancements and challenges in chat</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="183"/>
+        <source>死亡消息</source>
+        <translation>Death Messages</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="184"/>
+        <source>玩家死亡时在聊天栏显示消息</source>
+        <translation>Show a message in chat when a player dies</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="185"/>
+        <source>简化调试屏</source>
+        <translation>Reduced Debug Info</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="186"/>
+        <source>F3 调试界面隐藏坐标等详细信息</source>
+        <translation>F3 debug screen hides coordinates and other details</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="187"/>
+        <source>限定合成</source>
+        <translation>Limited Crafting</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="188"/>
+        <source>只能合成已解锁配方的物品</source>
+        <translation>Only craft items whose recipes are unlocked</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="189"/>
+        <source>命令方块播报</source>
+        <translation>Command Block Output</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="190"/>
+        <source>命令方块的执行结果播报到聊天栏</source>
+        <translation>Broadcast command block results to chat</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="191"/>
+        <source>命令反馈</source>
+        <translation>Command Feedback</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="192"/>
+        <source>执行命令后在聊天栏显示反馈</source>
+        <translation>Show feedback in chat after running a command</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="193"/>
+        <source>日志记录命令</source>
+        <translation>Log Admin Commands</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="194"/>
+        <source>把管理员命令写入日志文件</source>
+        <translation>Write admin commands to the log file</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="195"/>
+        <source>关闭鞘翅测速</source>
+        <translation>Disable Elytra Movement Check</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="196"/>
+        <source>服务器不再检测鞘翅飞行是否超速</source>
+        <translation>Server no longer checks elytra flight for excessive speed</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="197"/>
+        <source>全服播报音效</source>
+        <translation>Global Sound Events</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="198"/>
+        <source>凋灵召唤、末影龙死亡、末地传送门激活等音效全服都能听到，关闭后只有附近玩家能听到</source>
+        <translation>Wither spawns, ender dragon deaths and end portal activation are heard server-wide; when off, only nearby players hear them</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="199"/>
+        <source>命令改方块上限</source>
+        <translation>Command Modification Block Limit</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="200"/>
+        <source>/fill、/clone 等命令一次最多能改动的方块数</source>
+        <translation>Max blocks a single command such as /fill or /clone can change</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="201"/>
+        <source>命令分叉数</source>
+        <translation>Command Fork Limit</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="202"/>
+        <source>一条命令一次最多能同时执行多少个分支</source>
+        <translation>Max branches a single command can run at once</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="203"/>
+        <source>命令链长度</source>
+        <translation>Command Chain Size</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="204"/>
+        <source>一次命令方块链最多可执行的命令数</source>
+        <translation>Max commands a command block chain can run</translation>
+    </message>
     <message>
         <location filename="../pages/SaveSettingsPage.cpp" line="275"/>
         <source>存档信息</source>
@@ -28770,7 +29852,7 @@ Sign in, then come back to take the quiz — your result won't be lost.</transla
     <message>
         <location filename="../pages/SaveSettingsPage.cpp" line="753"/>
         <source>免命令调整常用规则，随「保存修改」一起写入存档</source>
-        <translation>Tweak common rules without commands; they're written to the world with "Save changes"</translation>
+        <translation>Tweak common rules without commands; they&apos;re written to the world with &quot;Save changes&quot;</translation>
     </message>
     <message>
         <location filename="../pages/SaveSettingsPage.cpp" line="757"/>
@@ -28780,7 +29862,7 @@ Sign in, then come back to take the quiz — your result won't be lost.</transla
     <message>
         <location filename="../pages/SaveSettingsPage.cpp" line="760"/>
         <source>把下方所有规则恢复为游戏默认值，点「保存修改」后写入存档</source>
-        <translation>Reset all rules below to the game defaults; click "Save changes" to write them to the world</translation>
+        <translation>Reset all rules below to the game defaults; click &quot;Save changes&quot; to write them to the world</translation>
     </message>
     <message>
         <location filename="../pages/SaveSettingsPage.cpp" line="767"/>
@@ -29449,7 +30531,7 @@ Note: if the game is running, changes may take effect only after restarting the 
     <message>
         <location filename="../pages/SearchPage.cpp" line="769"/>
         <source>没有找到与「%1」相关的内容</source>
-        <translation>No results for "%1"</translation>
+        <translation>No results for &quot;%1&quot;</translation>
     </message>
     <message>
         <location filename="../pages/SearchPage.cpp" line="777"/>
@@ -30819,7 +31901,7 @@ Note: if the game is running, changes may take effect only after restarting the 
     <message>
         <location filename="../pages/settings/SettingsInterfacePage.cpp" line="347"/>
         <source>选择内置的旋转全景场景；选择「自定义图片」时使用下方路径指定的图片，未指定图片时自动使用「主世界」场景。</source>
-        <translation>Choose a built-in rotating panorama scene; "Custom image" uses the image at the path below, and if no image is set the "Overworld" scene is used.</translation>
+        <translation>Choose a built-in rotating panorama scene; &quot;Custom image&quot; uses the image at the path below, and if no image is set the &quot;Overworld&quot; scene is used.</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsInterfacePage.cpp" line="363"/>
@@ -32513,7 +33595,7 @@ Click &quot;Java Detection&quot; or &quot;Manual Add&quot; above to detect Java.
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="340"/>
         <source>世界地图结构详情三维预览的核心数据：冰屋、沉船、废弃传送门、水下遗迹、掠夺者哨塔、古迹废墟、末地船、下界化石、平原村庄、远古城市、末地城、试炼密室、堡垒遗迹、林地府邸共 14 类结构，直接按游戏自带的结构模板逐块还原，方块种类、数量与朝向和游戏内一致（准确度 95% 以上）。其中村庄、远古城市、末地城、堡垒遗迹和试炼密室还会按游戏自带的拼接规则（模板池）拼出成片建筑群或整座地下迷宫，林地府邸用游戏自带的 73 个房间模板铺成楼层；村庄按所在群系自动选用平原、沙漠、热带草原、针叶林、雪原五种风格，并复刻原版拼图算法（随机种子、段的选择、朝向与位置）逐段还原，与游戏内实际生成的村庄逐方块对照一致（苔藓、路面风化这类游戏随机装饰除外）。结构模板版权归 Mojang Studios 所有。</source>
-        <translation>Core data for the 3D preview in world map structure details: 14 structure types — igloo, shipwreck, ruined portal, ocean ruins, pillager outpost, trail ruins, end ship, nether fossil, plains village, ancient city, end city, trial chambers, bastion remnant, and woodland mansion — rebuilt block by block from the game's own structure templates, with block types, counts, and orientations matching the game (over 95% accuracy). Villages, ancient cities, end cities, bastion remnants, and trial chambers are also assembled into full building clusters or entire underground mazes using the game's own jigsaw rules (template pools), and woodland mansions use the game's 73 room templates to build their floors; villages automatically use one of five styles — plains, desert, savanna, taiga, or snowy — based on their biome, and are rebuilt section by section with the original jigsaw algorithm (random seed, piece selection, orientation, and position), matching actual in-game villages block for block (excluding random decorations such as moss and weathered paths). Structure template copyright belongs to Mojang Studios.</translation>
+        <translation>Core data for the 3D preview in world map structure details: 14 structure types — igloo, shipwreck, ruined portal, ocean ruins, pillager outpost, trail ruins, end ship, nether fossil, plains village, ancient city, end city, trial chambers, bastion remnant, and woodland mansion — rebuilt block by block from the game&apos;s own structure templates, with block types, counts, and orientations matching the game (over 95% accuracy). Villages, ancient cities, end cities, bastion remnants, and trial chambers are also assembled into full building clusters or entire underground mazes using the game&apos;s own jigsaw rules (template pools), and woodland mansions use the game&apos;s 73 room templates to build their floors; villages automatically use one of five styles — plains, desert, savanna, taiga, or snowy — based on their biome, and are rebuilt section by section with the original jigsaw algorithm (random seed, piece selection, orientation, and position), matching actual in-game villages block for block (excluding random decorations such as moss and weathered paths). Structure template copyright belongs to Mojang Studios.</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="341"/>
@@ -32528,7 +33610,7 @@ Click &quot;Java Detection&quot; or &quot;Manual Add&quot; above to detect Java.
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="344"/>
         <source>没有结构模板的结构（海底神殿等）仍按 Wiki 结构页面做示意重建，预览页会写明「程序化近似」；要塞、下界要塞和废弃矿井则按游戏自身的生成与拼装规则逐段还原（对照 1.21.4 客户端），与游戏内实际生成的结构逐块一致。</source>
-        <translation>Structures without templates (ocean monuments and the like) are still reconstructed schematically from their Wiki structure pages, and the preview says “procedural approximation”; strongholds, nether fortresses, and abandoned mineshafts are rebuilt section by section with the game's own generation and assembly rules (checked against the 1.21.4 client), matching actual in-game structures block for block.</translation>
+        <translation>Structures without templates (ocean monuments and the like) are still reconstructed schematically from their Wiki structure pages, and the preview says “procedural approximation”; strongholds, nether fortresses, and abandoned mineshafts are rebuilt section by section with the game&apos;s own generation and assembly rules (checked against the 1.21.4 client), matching actual in-game structures block for block.</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="348"/>
@@ -32553,12 +33635,12 @@ Click &quot;Java Detection&quot; or &quot;Manual Add&quot; above to detect Java.
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="358"/>
         <source>原版世界生成数据。世界地图的未加载区块种子预测据此还原蘑菇岛巨型蘑菇：每个区块长蘑菇的位置、红伞还是棕伞、伞柄多高，都按游戏标记区块装饰阶段的同一套随机算法推算，游戏内逐区块核对，位置、颜色与高度一致（岛屿上的巨型蘑菇全部命中，整体准确度约 93%，1.18 至 1.21.4 各版本均已核对生效）。</source>
-        <translation>Vanilla world generation data. World map seed prediction for unloaded chunks uses it to reproduce mushroom island huge mushrooms: where each chunk's mushroom grows, red or brown cap, and how tall the stalk is are all derived with the same random algorithm the game uses in the chunk decoration stage, verified chunk by chunk in game with matching position, color, and height (every huge mushroom on the island hits; overall accuracy about 93%, verified and working on every version from 1.18 to 1.21.4).</translation>
+        <translation>Vanilla world generation data. World map seed prediction for unloaded chunks uses it to reproduce mushroom island huge mushrooms: where each chunk&apos;s mushroom grows, red or brown cap, and how tall the stalk is are all derived with the same random algorithm the game uses in the chunk decoration stage, verified chunk by chunk in game with matching position, color, and height (every huge mushroom on the island hits; overall accuracy about 93%, verified and working on every version from 1.18 to 1.21.4).</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="360"/>
         <source>世界地图「战利品」页通过种子推测箱子内容的算法参考：先按世界种子定位结构，再按游戏自带的战利品表（池、轮数、权重、附魔与药水等物品函数、嵌套表）逐项推算每个箱子里各物品的出现概率。出现概率不低于 95% 的物品标为「必出」，其余按概率从高到低排列；宝箱数据取自官方 1.21.4 客户端（56 张宝箱表 + 3 张考古表），与游戏内战利品规则一致。</source>
-        <translation>Reference for the algorithm behind the world map's “Loot” page seed-based chest prediction: locate the structure by world seed, then use the game's own loot tables (pools, rolls, weights, item functions such as enchantments and potions, nested tables) to compute each item's chance in every chest. Items with a chance of at least 95% are marked “Guaranteed”, the rest are sorted from highest to lowest chance; chest data comes from the official 1.21.4 client (56 chest tables + 3 archaeology tables) and matches in-game loot rules.</translation>
+        <translation>Reference for the algorithm behind the world map&apos;s “Loot” page seed-based chest prediction: locate the structure by world seed, then use the game&apos;s own loot tables (pools, rolls, weights, item functions such as enchantments and potions, nested tables) to compute each item&apos;s chance in every chest. Items with a chance of at least 95% are marked “Guaranteed”, the rest are sorted from highest to lowest chance; chest data comes from the official 1.21.4 client (56 chest tables + 3 archaeology tables) and matches in-game loot rules.</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsAboutPage.cpp" line="364"/>
@@ -32689,7 +33771,7 @@ Adjust the editor&apos;s default behavior here; changes take effect immediately.
     <message>
         <location filename="../pages/settings/SettingsProjectionEditorPage.cpp" line="108"/>
         <source>拖动鼠标转动视角的速度，对应《我的世界》的鼠标灵敏度选项；数值越大转得越快。</source>
-        <translation>How fast the view turns when you move the mouse, like Minecraft's mouse sensitivity option; higher values turn faster.</translation>
+        <translation>How fast the view turns when you move the mouse, like Minecraft&apos;s mouse sensitivity option; higher values turn faster.</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsProjectionEditorPage.cpp" line="121"/>
@@ -32699,7 +33781,7 @@ Adjust the editor&apos;s default behavior here; changes take effect immediately.
     <message>
         <location filename="../pages/settings/SettingsProjectionEditorPage.cpp" line="122"/>
         <source>勾选后鼠标往下移时视角向上看，对应《我的世界》的「反转鼠标」选项。</source>
-        <translation>When checked, moving the mouse down looks up, like Minecraft's “Invert Mouse” option.</translation>
+        <translation>When checked, moving the mouse down looks up, like Minecraft&apos;s “Invert Mouse” option.</translation>
     </message>
     <message>
         <location filename="../pages/settings/SettingsProjectionEditorPage.cpp" line="131"/>
@@ -33034,6 +34116,16 @@ They take effect after restarting the game.</translation>
         <location filename="../components/ShareToFriendDialog.cpp" line="162"/>
         <source>发送分享</source>
         <translation>Send share</translation>
+    </message>
+    <message>
+        <location filename="../components/ShareToFriendDialog.cpp" line="250"/>
+        <source>● 在线</source>
+        <translation>● Online</translation>
+    </message>
+    <message>
+        <location filename="../components/ShareToFriendDialog.cpp" line="251"/>
+        <source>○ 离线</source>
+        <translation>○ Offline</translation>
     </message>
     <message>
         <location filename="../components/ShareToFriendDialog.cpp" line="294"/>
@@ -33606,6 +34698,624 @@ They take effect after restarting the game.</translation>
     </message>
 </context>
 <context>
+    <name>SkinEditorPage</name>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="83"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1013"/>
+        <source>空白</source>
+        <translation>Blank</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="98"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="758"/>
+        <source>画笔</source>
+        <translation>Brush</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="100"/>
+        <source>橡皮</source>
+        <translation>Eraser</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="102"/>
+        <source>填充</source>
+        <translation>Fill</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="104"/>
+        <source>吸管</source>
+        <translation>Eyedropper</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="106"/>
+        <source>直线</source>
+        <translation>Line</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="471"/>
+        <source>画笔 (B)</source>
+        <translation>Brush (B)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="472"/>
+        <source>橡皮 (E)</source>
+        <translation>Eraser (E)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="473"/>
+        <source>填充 (G)</source>
+        <translation>Fill (G)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="474"/>
+        <source>吸管 (I)</source>
+        <translation>Eyedropper (I)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="475"/>
+        <source>直线 (L)</source>
+        <translation>Line (L)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="486"/>
+        <source>撤销 (Ctrl+Z)</source>
+        <translation>Undo (Ctrl+Z)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="487"/>
+        <source>重做 (Ctrl+Y)</source>
+        <translation>Redo (Ctrl+Y)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="488"/>
+        <source>清除</source>
+        <translation>Clear</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="493"/>
+        <source>网格</source>
+        <translation>Grid</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="494"/>
+        <source>UV 叠加</source>
+        <translation>UV Overlay</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="502"/>
+        <source>新建</source>
+        <translation>New</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="503"/>
+        <source>打开</source>
+        <translation>Open</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="504"/>
+        <source>保存</source>
+        <translation>Save</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="505"/>
+        <source>另存为</source>
+        <translation>Save As</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="510"/>
+        <source>从账户加载</source>
+        <translation>Load from Account</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="511"/>
+        <source>应用到账户</source>
+        <translation>Apply to Account</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="610"/>
+        <source>编辑方式</source>
+        <translation>Edit Mode</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="615"/>
+        <source>2D 像素</source>
+        <translation>2D Pixels</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="615"/>
+        <source>3D 立体</source>
+        <translation>3D Surface</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="617"/>
+        <source>2D 像素：在平面纹理上逐像素绘制；3D 立体：像 BlockBench 一样直接在模型表面绘制，左键绘制、右键旋转、滚轮缩放</source>
+        <translation>2D Pixels: draw pixel by pixel on the flat texture; 3D Surface: draw straight onto the model surface like BlockBench — left-click to draw, right-click to rotate, scroll wheel to zoom</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="628"/>
+        <source>笔刷:</source>
+        <translation>Brush:</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="632"/>
+        <source>笔刷大小，两种编辑方式共用</source>
+        <translation>Brush size, shared by both edit modes</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="646"/>
+        <source>3D 预览</source>
+        <translation>3D Preview</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="667"/>
+        <source>2D 纹理</source>
+        <translation>2D Texture</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="680"/>
+        <source>左键绘制 · 右键/中键旋转 · 滚轮缩放</source>
+        <translation>Left-click to draw · Right/middle-drag to rotate · Scroll to zoom</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="688"/>
+        <source>模型</source>
+        <translation>Model</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="695"/>
+        <source>Classic 手臂宽 4 像素，Slim 手臂宽 3 像素</source>
+        <translation>Classic arms are 4 pixels wide, Slim arms are 3 pixels wide</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="700"/>
+        <source>绘制外层 (Overlay)</source>
+        <translation>Draw Overlay</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="701"/>
+        <source>3D 模式下将画笔落到外层叠加区域（帽子/外套等，纹理 y&gt;=32 部分）。仅 64x64 格式可用</source>
+        <translation>In 3D mode, paint on the outer overlay area (hat, jacket, etc. — texture y&gt;=32). Only available in 64x64 format</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="708"/>
+        <source>选取部分</source>
+        <translation>Select Part</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="713"/>
+        <source>全部（显示整个模型）</source>
+        <translation>All (show the whole model)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="714"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1302"/>
+        <source>头部</source>
+        <translation>Head</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="715"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1302"/>
+        <source>身体</source>
+        <translation>Body</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="716"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1303"/>
+        <source>右臂</source>
+        <translation>Right Arm</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="717"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1303"/>
+        <source>左臂</source>
+        <translation>Left Arm</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="718"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1304"/>
+        <source>右腿</source>
+        <translation>Right Leg</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="719"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1304"/>
+        <source>左腿</source>
+        <translation>Left Leg</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="720"/>
+        <source>3D 模式下启用后只显示选中的部位，其余部位隐藏且不可绘制</source>
+        <translation>When enabled in 3D mode, only the selected part is shown; the others are hidden and cannot be painted</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="726"/>
+        <source>格式</source>
+        <translation>Format</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="733"/>
+        <source>64x64 支持外层(overlay)，64x32 不含外层</source>
+        <translation>64x64 supports the overlay, 64x32 has none</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="792"/>
+        <source>前景色 / 背景色</source>
+        <translation>Foreground / Background Color</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="800"/>
+        <source>前景色（左键绘制）</source>
+        <translation>Foreground color (left-click to draw)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="803"/>
+        <source>背景色（右键绘制）</source>
+        <translation>Background color (right-click to draw)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="810"/>
+        <source>预设颜色</source>
+        <translation>Preset Colors</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="844"/>
+        <source>最近使用</source>
+        <translation>Recently Used</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="881"/>
+        <source>自定义颜色...</source>
+        <translation>Custom Color...</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="891"/>
+        <source>预设皮肤</source>
+        <translation>Preset Skins</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="893"/>
+        <source>点击缩略图直接导入官方皮肤模板（Steve/Alex 等），导入后会替换当前画布内容</source>
+        <translation>Click a thumbnail to import an official skin template (Steve/Alex, etc.). Importing replaces the current canvas.</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="921"/>
+        <source>导入 %1 皮肤</source>
+        <translation>Import %1 Skin</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="938"/>
+        <source>导入失败</source>
+        <translation>Import failed</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="939"/>
+        <source>无法加载预设皮肤 %1</source>
+        <translation>Failed to load preset skin %1</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1007"/>
+        <source>新建皮肤</source>
+        <translation>New Skin</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1008"/>
+        <source>选择模板:</source>
+        <translation>Template:</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1021"/>
+        <source>打开皮肤</source>
+        <translation>Open Skin</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1023"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1040"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1516"/>
+        <source>PNG 图片 (*.png)</source>
+        <translation>PNG Image (*.png)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1038"/>
+        <source>保存皮肤</source>
+        <translation>Save Skin</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1049"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1076"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1084"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1438"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1446"/>
+        <source>提示</source>
+        <translation>Notice</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1050"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1085"/>
+        <source>请先在账户管理页选择一个账户</source>
+        <translation>Please select an account on the Account Management page first</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1077"/>
+        <source>无法获取默认皮肤</source>
+        <translation>Failed to get the default skin</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1089"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1196"/>
+        <source>确认</source>
+        <translation>Confirm</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1090"/>
+        <source>确定要将此皮肤应用到账户 %1 吗？</source>
+        <translation>Apply this skin to account %1?</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1099"/>
+        <source>离线</source>
+        <translation>Offline</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1116"/>
+        <source>成功</source>
+        <translation>Success</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1117"/>
+        <source>皮肤已成功应用到账户</source>
+        <translation>Skin applied to the account successfully</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1120"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1526"/>
+        <source>失败</source>
+        <translation>Failed</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1121"/>
+        <source>皮肤保存失败，请重试</source>
+        <translation>Failed to save the skin. Please try again.</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1160"/>
+        <source>选择自定义颜色</source>
+        <translation>Choose Custom Color</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1197"/>
+        <source>切换到 64x32 格式将丢弃外层(overlay)内容，确定继续吗？</source>
+        <translation>Switching to 64x32 will discard overlay content. Continue?</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1293"/>
+        <source>截取部分</source>
+        <translation>Extract Part</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1300"/>
+        <source>部件:</source>
+        <translation>Part:</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1305"/>
+        <source>选择要截取的皮肤部件</source>
+        <translation>Select the skin part to extract</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1313"/>
+        <source>面:</source>
+        <translation>Face:</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1315"/>
+        <source>前</source>
+        <translation>Front</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1315"/>
+        <source>后</source>
+        <translation>Back</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1316"/>
+        <source>左</source>
+        <translation>Left</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1316"/>
+        <source>右</source>
+        <translation>Right</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1317"/>
+        <source>上</source>
+        <translation>Top</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1317"/>
+        <source>下</source>
+        <translation>Bottom</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1318"/>
+        <source>选择要截取的面，如头部的前面</source>
+        <translation>Select the face to extract, e.g. the front of the head</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1324"/>
+        <source>外层 (Overlay)</source>
+        <translation>Overlay</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1325"/>
+        <source>截取对应部件的外层(overlay)区域，仅 64x64 格式可用</source>
+        <translation>Extract the overlay area of the selected part; 64x64 format only</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1329"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1403"/>
+        <source>请选择部位</source>
+        <translation>Please select a part</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1340"/>
+        <source>截取所选区域</source>
+        <translation>Extract Selected Area</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1341"/>
+        <source>将所选部位区域截取出来，可复制到剪贴板或保存为 PNG</source>
+        <translation>Extract the selected part area; copy it to the clipboard or save it as PNG</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1439"/>
+        <source>当前没有可截取的皮肤内容</source>
+        <translation>There is no skin content to extract</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1447"/>
+        <source>所选区域无效，64x32 格式不支持外层(overlay)</source>
+        <translation>Invalid area; the 64x32 format does not support overlay</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1457"/>
+        <source>截取结果</source>
+        <translation>Extraction Result</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1474"/>
+        <source>%1 x %2 像素\n坐标 X:%3-%4  Y:%5-%6</source>
+        <translation>%1 x %2 px\nCoordinates X:%3-%4  Y:%5-%6</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1481"/>
+        <source>复制到剪贴板</source>
+        <translation>Copy to Clipboard</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1482"/>
+        <source>将截取区域以透明 PNG 复制到剪贴板</source>
+        <translation>Copy the extracted area to the clipboard as a transparent PNG</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1483"/>
+        <source>另存为 PNG...</source>
+        <translation>Save as PNG...</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1484"/>
+        <source>关闭</source>
+        <translation>Close</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1509"/>
+        <source>已复制</source>
+        <translation>Copied</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1510"/>
+        <source>选区已以透明 PNG 复制到剪贴板</source>
+        <translation>Selection copied to the clipboard as a transparent PNG</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1514"/>
+        <source>保存截取区域</source>
+        <translation>Save Extracted Area</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1521"/>
+        <source>已保存</source>
+        <translation>Saved</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1522"/>
+        <source>截取区域已保存到:\n%1</source>
+        <translation>Extracted area saved to:\n%1</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1526"/>
+        <source>保存失败</source>
+        <translation>Save failed</translation>
+    </message>
+</context>
+<context>
+    <name>SkinUVOverlay</name>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="129"/>
+        <location filename="../components/SkinUVOverlay.cpp" line="147"/>
+        <source>头部</source>
+        <translation>Head</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="130"/>
+        <location filename="../components/SkinUVOverlay.cpp" line="148"/>
+        <source>身体</source>
+        <translation>Body</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="131"/>
+        <location filename="../components/SkinUVOverlay.cpp" line="149"/>
+        <source>右臂</source>
+        <translation>Right Arm</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="132"/>
+        <location filename="../components/SkinUVOverlay.cpp" line="150"/>
+        <source>右腿</source>
+        <translation>Right Leg</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="133"/>
+        <source>左臂</source>
+        <translation>Left Arm</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="134"/>
+        <source>左腿</source>
+        <translation>Left Leg</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="137"/>
+        <source>头部外层</source>
+        <translation>Head Overlay</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="138"/>
+        <source>身体外层</source>
+        <translation>Body Overlay</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="139"/>
+        <source>右臂外层</source>
+        <translation>Right Arm Overlay</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="140"/>
+        <source>右腿外层</source>
+        <translation>Right Leg Overlay</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="141"/>
+        <source>左臂外层</source>
+        <translation>Left Arm Overlay</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="142"/>
+        <source>左腿外层</source>
+        <translation>Left Leg Overlay</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="152"/>
+        <source>左臂(同右臂)</source>
+        <translation>Left Arm (Same as Right Arm)</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="153"/>
+        <source>左腿(同右腿)</source>
+        <translation>Left Leg (Same as Right Leg)</translation>
+    </message>
+</context>
+<context>
     <name>SpeedChartWidget</name>
     <message>
         <location filename="../components/TaskProgressWidgets.cpp" line="183"/>
@@ -33699,7 +35409,7 @@ They take effect after restarting the game.</translation>
     <message>
         <location filename="../components/StructureDetailDialog.cpp" line="287"/>
         <source>按世界种子定位到该结构，再用原版战利品表推算每个箱子里各物品的出现概率；标「必出」的物品出现概率不低于 95%。</source>
-        <translation>Locate the structure from the world seed, then use vanilla loot tables to compute each item's chance in every chest; items marked “Guaranteed” have a chance of at least 95%.</translation>
+        <translation>Locate the structure from the world seed, then use vanilla loot tables to compute each item&apos;s chance in every chest; items marked “Guaranteed” have a chance of at least 95%.</translation>
     </message>
     <message>
         <location filename="../components/StructureDetailDialog.cpp" line="301"/>
@@ -33754,7 +35464,7 @@ They take effect after restarting the game.</translation>
     <message>
         <location filename="../components/StructureDetailDialog.cpp" line="398"/>
         <source>有世界种子后，这里会按该结构的实际宝箱种类给出概率。</source>
-        <translation>With a world seed, chances here follow the structure's actual chest types.</translation>
+        <translation>With a world seed, chances here follow the structure&apos;s actual chest types.</translation>
     </message>
     <message>
         <location filename="../components/StructureDetailDialog.cpp" line="404"/>
@@ -33909,17 +35619,17 @@ Expected amount %3 (%4~%5)</translation>
     <message>
         <location filename="../components/StructureDetailDialog.cpp" line="873"/>
         <source>按游戏内的生成规则逐段还原：用世界种子和要塞所在区块算出全部房间（走廊、拐角、五叉路口、楼梯、监狱、图书馆、末地传送门房间）的类型、朝向与位置，石砖、台阶、铁栏杆、门和末地传送门框架都按游戏内规则摆放，与游戏里实际生成的要塞一致（1.18 及以后版本）；石砖的裂纹/苔藓变色是随机装饰，比例与游戏一致但具体格子不同，洞穴里的缺口与周边地形、实体未包含。</source>
-        <translation>Rebuilt section by section from in-game generation rules: the world seed and the stronghold's chunk are used to work out the type, orientation, and position of every room (corridor, corner, five-way crossing, staircase, prison, library, end portal room), and stone bricks, slabs, iron bars, doors, and end portal frames are placed by in-game rules, matching the actual in-game stronghold (1.18 and later); cracked and mossy stone brick variation is random decoration with the same proportion as the game but different exact blocks, and cave gaps plus surrounding terrain and entities are not included.</translation>
+        <translation>Rebuilt section by section from in-game generation rules: the world seed and the stronghold&apos;s chunk are used to work out the type, orientation, and position of every room (corridor, corner, five-way crossing, staircase, prison, library, end portal room), and stone bricks, slabs, iron bars, doors, and end portal frames are placed by in-game rules, matching the actual in-game stronghold (1.18 and later); cracked and mossy stone brick variation is random decoration with the same proportion as the game but different exact blocks, and cave gaps plus surrounding terrain and entities are not included.</translation>
     </message>
     <message>
         <location filename="../components/StructureDetailDialog.cpp" line="883"/>
         <source>按游戏内的生成规则逐段还原：用世界种子和要塞所在区块算出全部桥段、走廊、路口、楼梯塔、烈焰人房间与下界疣农田的类型、朝向和位置，下界砖、栏杆、楼梯、刷怪笼、箱子与岩浆池都按游戏内规则摆放，与游戏里实际生成的下界要塞一致（1.16 及以后版本）；桥墩向下的长度取决于当地地形，周边地形与实体未包含。</source>
-        <translation>Rebuilt section by section from in-game generation rules: the world seed and the fortress's chunk are used to work out the type, orientation, and position of every bridge piece, corridor, crossing, staircase tower, blaze room, and nether wart farm, and nether bricks, fences, stairs, spawners, chests, and lava pools are placed by in-game rules, matching the actual in-game nether fortress (1.16 and later); how far the bridge piers extend downward depends on the local terrain, and surrounding terrain and entities are not included.</translation>
+        <translation>Rebuilt section by section from in-game generation rules: the world seed and the fortress&apos;s chunk are used to work out the type, orientation, and position of every bridge piece, corridor, crossing, staircase tower, blaze room, and nether wart farm, and nether bricks, fences, stairs, spawners, chests, and lava pools are placed by in-game rules, matching the actual in-game nether fortress (1.16 and later); how far the bridge piers extend downward depends on the local terrain, and surrounding terrain and entities are not included.</translation>
     </message>
     <message>
         <location filename="../components/StructureDetailDialog.cpp" line="892"/>
         <source>按游戏内的生成规则逐段还原：用世界种子和矿井所在区块算出全部主厅、巷道、路口、楼梯的类型、朝向与高度，木支架、横梁、铁轨、火把、蜘蛛网、刷怪笼和箱子矿车的铁轨都按游戏内规则摆放，与游戏里实际生成的废弃矿井一致（1.13 及以后版本）；木支架只在顶上压着岩层时才会搭，游戏里矿井穿过洞穴、含水层时会少一部分，预览按「四周是实心岩层」补齐，周边地形与实体未包含。</source>
-        <translation>Rebuilt section by section from in-game generation rules: the world seed and the mineshaft's chunk are used to work out the type, orientation, and height of every main hall, tunnel, crossing, and staircase, and wooden supports, crossbeams, rails, torches, cobwebs, spawners, and chest minecart rails are placed by in-game rules, matching the actual in-game abandoned mineshaft (1.13 and later); wooden supports are only built where rock presses down from above, and since in-game mineshafts lose some of them where they pass through caves and aquifers, the preview fills them in as if surrounded by solid rock; surrounding terrain and entities are not included.</translation>
+        <translation>Rebuilt section by section from in-game generation rules: the world seed and the mineshaft&apos;s chunk are used to work out the type, orientation, and height of every main hall, tunnel, crossing, and staircase, and wooden supports, crossbeams, rails, torches, cobwebs, spawners, and chest minecart rails are placed by in-game rules, matching the actual in-game abandoned mineshaft (1.13 and later); wooden supports are only built where rock presses down from above, and since in-game mineshafts lose some of them where they pass through caves and aquifers, the preview fills them in as if surrounded by solid rock; surrounding terrain and entities are not included.</translation>
     </message>
     <message>
         <location filename="../components/StructureDetailDialog.cpp" line="902"/>
@@ -33978,33 +35688,33 @@ Expected amount %3 (%4~%5)</translation>
 <context>
     <name>SystemTools</name>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="974"/>
-        <location filename="../utils/SystemTools.cpp" line="980"/>
-        <location filename="../utils/SystemTools.cpp" line="987"/>
-        <location filename="../utils/SystemTools.cpp" line="1067"/>
-        <location filename="../utils/SystemTools.cpp" line="1071"/>
-        <location filename="../utils/SystemTools.cpp" line="1100"/>
-        <location filename="../utils/SystemTools.cpp" line="1109"/>
+        <location filename="../utils/SystemTools.cpp" line="975"/>
+        <location filename="../utils/SystemTools.cpp" line="981"/>
+        <location filename="../utils/SystemTools.cpp" line="988"/>
+        <location filename="../utils/SystemTools.cpp" line="1068"/>
+        <location filename="../utils/SystemTools.cpp" line="1072"/>
+        <location filename="../utils/SystemTools.cpp" line="1101"/>
+        <location filename="../utils/SystemTools.cpp" line="1110"/>
         <source>多线程下载</source>
         <translation>Multi-threaded Download</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="975"/>
+        <location filename="../utils/SystemTools.cpp" line="976"/>
         <source>已有下载任务正在进行中，请等待完成或取消后再试。</source>
         <translation>A download task is already in progress. Wait for it to finish or cancel it, then try again.</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="991"/>
+        <location filename="../utils/SystemTools.cpp" line="992"/>
         <source>下载地址</source>
         <translation>Download URL</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="994"/>
+        <location filename="../utils/SystemTools.cpp" line="995"/>
         <source>请输入直链下载链接 (http/https)...</source>
         <translation>Enter a direct download link (http/https)...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="997"/>
+        <location filename="../utils/SystemTools.cpp" line="998"/>
         <source>注意：百度网盘、夸克网盘等网盘链接不支持多线程下载。
 直链获取方式：在网页的下载按钮右键，点击复制链接地址，在上方粘贴。
 直链特征：以 http:// 或 https:// 开头，且服务器支持 Range 请求（断点续传）。</source>
@@ -34013,227 +35723,439 @@ To get a direct link: right-click the download button on the web page, click Cop
 A direct link starts with http:// or https://, and the server must support Range requests (resumable downloads).</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1005"/>
+        <location filename="../utils/SystemTools.cpp" line="1006"/>
         <source>保存路径</source>
         <translation>Save Path</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1008"/>
+        <location filename="../utils/SystemTools.cpp" line="1009"/>
         <source>选择保存路径...</source>
         <translation>Select save path...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1012"/>
+        <location filename="../utils/SystemTools.cpp" line="1013"/>
         <source>浏览...</source>
         <translation>Browse...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1025"/>
+        <location filename="../utils/SystemTools.cpp" line="1026"/>
         <source>选择保存路径</source>
         <translation>Choose Save Path</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1032"/>
+        <location filename="../utils/SystemTools.cpp" line="1033"/>
         <source>下载设置</source>
         <translation>Download Settings</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1037"/>
+        <location filename="../utils/SystemTools.cpp" line="1038"/>
         <source> 线程</source>
         <translation> threads</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1038"/>
+        <location filename="../utils/SystemTools.cpp" line="1039"/>
         <source>线程数:</source>
         <translation>Threads:</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1041"/>
+        <location filename="../utils/SystemTools.cpp" line="1042"/>
         <source>留空则使用默认: BlockBox/1.0</source>
         <translation>Leave blank to use the default: BlockBox/1.0</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1042"/>
+        <location filename="../utils/SystemTools.cpp" line="1043"/>
         <source>User-Agent:</source>
         <translation>User-Agent:</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1044"/>
+        <location filename="../utils/SystemTools.cpp" line="1045"/>
         <source>推荐 4-16 线程，文件小于 1MB 自动降为单线程。超过 64 线程可能增加服务器压力，实际速度提升有限。</source>
         <translation>4-16 threads recommended; files smaller than 1MB automatically fall back to a single thread. More than 64 threads may put extra load on the server with limited real speed gain.</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1052"/>
+        <location filename="../utils/SystemTools.cpp" line="1053"/>
         <source>开始下载</source>
         <translation>Start download</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1053"/>
+        <location filename="../utils/SystemTools.cpp" line="657"/>
+        <location filename="../utils/SystemTools.cpp" line="1054"/>
         <source>取消</source>
         <translation>Cancel</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1067"/>
+        <location filename="../utils/SystemTools.cpp" line="437"/>
+        <source>Windows 临时文件</source>
+        <translation>Windows Temp Files</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="438"/>
+        <source>C:/Windows/Temp 下的系统临时文件</source>
+        <translation>System temp files under C:/Windows/Temp</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="445"/>
+        <source>用户临时文件</source>
+        <translation>User Temp Files</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="446"/>
+        <source>用户临时目录</source>
+        <translation>User temp directory</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="453"/>
+        <source>Prefetch 预读文件</source>
+        <translation>Prefetch Files</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="454"/>
+        <source>系统预读缓存文件，可安全清理</source>
+        <translation>System prefetch cache files; safe to clean</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="460"/>
+        <source>DNS 缓存</source>
+        <translation>DNS Cache</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="461"/>
+        <source>刷新 DNS 解析缓存</source>
+        <translation>Flush the DNS resolver cache</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="467"/>
+        <source>回收站</source>
+        <translation>Recycle Bin</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="468"/>
+        <source>清空回收站中的文件</source>
+        <translation>Empty the Recycle Bin</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="475"/>
+        <source>浏览器缓存</source>
+        <translation>Browser Cache</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="476"/>
+        <source>浏览器缓存文件</source>
+        <translation>Browser cache files</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="488"/>
+        <source>最近文档记录</source>
+        <translation>Recent Documents</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="489"/>
+        <source>最近打开的文件快捷方式列表</source>
+        <translation>List of recently opened file shortcuts</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="497"/>
+        <source>缩略图缓存</source>
+        <translation>Thumbnail Cache</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="498"/>
+        <source>Windows 缩略图缓存文件</source>
+        <translation>Windows thumbnail cache files</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="509"/>
+        <source>Windows 日志文件</source>
+        <translation>Windows Log Files</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="510"/>
+        <source>C:/Windows/System32/logfiles 下的日志</source>
+        <translation>Logs under C:/Windows/System32/logfiles</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="517"/>
+        <source>系统内存转储</source>
+        <translation>System Memory Dumps</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="518"/>
+        <source>系统崩溃时的内存转储文件 (memory.dmp, Minidump)</source>
+        <translation>Memory dumps from system crashes (memory.dmp, Minidump)</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="543"/>
+        <location filename="../utils/SystemTools.cpp" line="750"/>
+        <source>磁盘清理</source>
+        <translation>Disk Cleanup</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="552"/>
+        <source>选择要清理的项目</source>
+        <translation>Select items to clean</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="557"/>
+        <source>勾选需要清理的类别，系统将删除对应的临时文件和缓存。</source>
+        <translation>Check the categories to clean; the matching temp files and caches will be deleted.</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="598"/>
+        <source>未知</source>
+        <translation>Unknown</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="615"/>
+        <source>全选</source>
+        <translation>Select All</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="620"/>
+        <source>取消全选</source>
+        <translation>Deselect All</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="649"/>
+        <source>可释放空间: %1</source>
+        <translation>Space available for release: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="656"/>
+        <source>开始清理</source>
+        <translation>Start Cleaning</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="682"/>
+        <source>Windows 临时文件: %1</source>
+        <translation>Windows temp files: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="687"/>
+        <source>用户临时文件: %1</source>
+        <translation>User temp files: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="692"/>
+        <source>Prefetch 预读文件: %1</source>
+        <translation>Prefetch files: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="697"/>
+        <source>DNS 缓存: 已清理</source>
+        <translation>DNS cache: cleaned</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="702"/>
+        <source>回收站: 已清空</source>
+        <translation>Recycle Bin: emptied</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="704"/>
+        <source>回收站: 清理失败</source>
+        <translation>Recycle Bin: cleanup failed</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="709"/>
+        <source>浏览器缓存: %1</source>
+        <translation>Browser cache: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="714"/>
+        <source>最近文档记录: %1</source>
+        <translation>Recent documents: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="719"/>
+        <source>缩略图缓存: %1</source>
+        <translation>Thumbnail cache: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="724"/>
+        <source>Windows 日志: %1</source>
+        <translation>Windows logs: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="729"/>
+        <source>系统内存转储: %1</source>
+        <translation>System memory dumps: %1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="736"/>
+        <source>没有选择任何清理项目。</source>
+        <translation>No cleanup items selected.</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="740"/>
+        <source>磁盘清理完成!\n共释放: %1\n\n%2</source>
+        <translation>Disk cleanup complete!\nTotal freed: %1\n\n%2</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="746"/>
+        <source>磁盘清理完成!\n没有找到需要清理的文件。\n\n%1</source>
+        <translation>Disk cleanup complete!\nNo files needed cleaning.\n\n%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="1068"/>
         <source>请输入下载链接！</source>
         <translation>Enter a download link!</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1071"/>
+        <location filename="../utils/SystemTools.cpp" line="1072"/>
         <source>请选择保存路径！</source>
         <translation>Select a save path!</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1079"/>
+        <location filename="../utils/SystemTools.cpp" line="1080"/>
         <source>连接中...</source>
         <translation>Connecting...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1096"/>
+        <location filename="../utils/SystemTools.cpp" line="1097"/>
         <source>下载完成</source>
         <translation>Download complete</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1101"/>
+        <location filename="../utils/SystemTools.cpp" line="1102"/>
         <source>下载完成!
 保存至: %1</source>
         <translation>Download complete!
 Saved to: %1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1110"/>
+        <location filename="../utils/SystemTools.cpp" line="1111"/>
         <source>下载失败: %1</source>
         <translation>Download failed: %1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1113"/>
+        <location filename="../utils/SystemTools.cpp" line="1114"/>
         <source>下载中</source>
         <translation>Downloading</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1116"/>
+        <location filename="../utils/SystemTools.cpp" line="1117"/>
         <source>下载任务已启动</source>
         <translation>Download task started</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1238"/>
+        <location filename="../utils/SystemTools.cpp" line="1239"/>
         <source>无法写入临时文件: %1</source>
         <translation>Failed to write temporary file: %1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1283"/>
+        <location filename="../utils/SystemTools.cpp" line="1284"/>
         <source>无法写入 PowerShell 脚本</source>
         <translation>Unable to write PowerShell script</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1308"/>
+        <location filename="../utils/SystemTools.cpp" line="1309"/>
         <source>已取消管理员授权</source>
         <translation>Administrator authorization canceled</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1312"/>
+        <location filename="../utils/SystemTools.cpp" line="1313"/>
         <source>无法启动管理员进程 (错误码: %1)</source>
         <translation>Unable to start administrator process (error code: %1)</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1341"/>
+        <location filename="../utils/SystemTools.cpp" line="1342"/>
         <source>写入 hosts 文件失败（未知原因，可能被安全软件拦截）</source>
         <translation>Failed to write the hosts file (unknown cause; possibly blocked by security software)</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1342"/>
+        <location filename="../utils/SystemTools.cpp" line="1343"/>
         <source>写入 hosts 文件失败：%1</source>
         <translation>Failed to write the hosts file: %1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1347"/>
+        <location filename="../utils/SystemTools.cpp" line="1348"/>
         <source>管理员进程执行异常，未获取到结果（可能被安全软件拦截）</source>
         <translation>The administrator process failed and returned no result (possibly blocked by security software)</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1358"/>
+        <location filename="../utils/SystemTools.cpp" line="1359"/>
         <source>此功能仅在 Windows 系统下可用</source>
         <translation>This feature is only available on Windows</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1367"/>
-        <location filename="../utils/SystemTools.cpp" line="1457"/>
-        <location filename="../utils/SystemTools.cpp" line="1465"/>
-        <location filename="../utils/SystemTools.cpp" line="1475"/>
-        <location filename="../utils/SystemTools.cpp" line="1488"/>
-        <location filename="../utils/SystemTools.cpp" line="1495"/>
-        <location filename="../utils/SystemTools.cpp" line="1504"/>
+        <location filename="../utils/SystemTools.cpp" line="1368"/>
+        <location filename="../utils/SystemTools.cpp" line="1458"/>
+        <location filename="../utils/SystemTools.cpp" line="1466"/>
+        <location filename="../utils/SystemTools.cpp" line="1476"/>
+        <location filename="../utils/SystemTools.cpp" line="1489"/>
+        <location filename="../utils/SystemTools.cpp" line="1496"/>
+        <location filename="../utils/SystemTools.cpp" line="1505"/>
         <source>GitHub 加速</source>
         <translation>GitHub Acceleration</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1373"/>
+        <location filename="../utils/SystemTools.cpp" line="1374"/>
         <source>通过修改本地 hosts 文件，将 GitHub 相关域名指向更快的 IP 地址，从而提升访问速度。
 点击“启用加速”将从网络获取最新 IP 映射并写入 hosts 文件（需要管理员权限）。</source>
         <translation>Speed up access to GitHub by pointing GitHub-related domains to faster IP addresses in your local hosts file.
 Click &quot;Enable Acceleration&quot; to fetch the latest IP mappings from the network and write them to the hosts file (administrator privileges required).</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1381"/>
-        <location filename="../utils/SystemTools.cpp" line="1455"/>
+        <location filename="../utils/SystemTools.cpp" line="1382"/>
+        <location filename="../utils/SystemTools.cpp" line="1456"/>
         <source>当前状态：已启用加速</source>
         <translation>Current status: acceleration enabled</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1382"/>
-        <location filename="../utils/SystemTools.cpp" line="1487"/>
+        <location filename="../utils/SystemTools.cpp" line="1383"/>
+        <location filename="../utils/SystemTools.cpp" line="1488"/>
         <source>当前状态：未启用加速</source>
         <translation>Current status: acceleration disabled</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1385"/>
+        <location filename="../utils/SystemTools.cpp" line="1386"/>
         <source>即将写入的 hosts 映射：</source>
         <translation>Hosts mappings to be written:</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1390"/>
+        <location filename="../utils/SystemTools.cpp" line="1391"/>
         <source>正在获取最新的 GitHub IP 映射...</source>
         <translation>Fetching the latest GitHub IP mappings...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1394"/>
+        <location filename="../utils/SystemTools.cpp" line="1395"/>
         <source>启用加速</source>
         <translation>Enable Acceleration</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1395"/>
+        <location filename="../utils/SystemTools.cpp" line="1396"/>
         <source>恢复默认</source>
         <translation>Restore defaults</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1430"/>
+        <location filename="../utils/SystemTools.cpp" line="1431"/>
         <source>（在线数据获取失败，使用内置 IP 映射）
 </source>
         <translation>(Failed to fetch online data; using the built-in IP mappings)
 </translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1458"/>
+        <location filename="../utils/SystemTools.cpp" line="1459"/>
         <source>已成功更新 hosts 文件并刷新 DNS 缓存！</source>
         <translation>hosts file updated and DNS cache flushed successfully!</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1466"/>
-        <location filename="../utils/SystemTools.cpp" line="1496"/>
+        <location filename="../utils/SystemTools.cpp" line="1467"/>
+        <location filename="../utils/SystemTools.cpp" line="1497"/>
         <source>操作失败：%1</source>
         <translation>Operation failed: %1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1476"/>
+        <location filename="../utils/SystemTools.cpp" line="1477"/>
         <source>hosts 文件中未发现加速条目，无需恢复。</source>
         <translation>No acceleration entries found in the hosts file, nothing to restore.</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1489"/>
+        <location filename="../utils/SystemTools.cpp" line="1490"/>
         <source>已移除加速条目并恢复默认 hosts。</source>
         <translation>Acceleration entries removed and the default hosts file restored.</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1505"/>
+        <location filename="../utils/SystemTools.cpp" line="1506"/>
         <source>此功能仅在 Windows 系统下可用。</source>
         <translation>This feature is only available on Windows.</translation>
     </message>
@@ -37098,7 +39020,7 @@ Shortcuts: + / - zoom · 0 fit to window · arrow keys / WASD pan (Shift to spee
     <message>
         <location filename="../pages/WorldMapPage.cpp" line="4504"/>
         <source>查看该结构的简介、预览与战利品</source>
-        <translation>See the structure's overview, preview, and loot</translation>
+        <translation>See the structure&apos;s overview, preview, and loot</translation>
     </message>
     <message>
         <location filename="../pages/WorldMapPage.cpp" line="4619"/>

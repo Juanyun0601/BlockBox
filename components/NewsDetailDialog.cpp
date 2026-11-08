@@ -11,6 +11,7 @@
 #include "utils/news/NewsFeed.h"
 
 #include <QStringList>
+#include <QCoreApplication>
 
 void showNewsDetailDialog(QWidget *parent, const NewsEntry &entry)
 {
@@ -35,8 +36,8 @@ void showNewsDetailDialog(QWidget *parent, const NewsEntry &entry)
     info += entry.summary;
   }
   if (info.isEmpty())
-    info = QStringLiteral("官方暂未提供这条新闻的摘要。");
-  info += QStringLiteral("\n\n内容来自 Minecraft 官方新闻。");
+    info = QCoreApplication::translate("NewsDetailDialog", "官方暂未提供这条新闻的摘要。");
+  info += QCoreApplication::translate("NewsDetailDialog", "\n\n内容来自 Minecraft 官方新闻。");
 
   box.setInformativeText(info);
   box.setStandardButtons(AppMessageBox::Close);

@@ -2,6 +2,7 @@
 #define APPDIALOGBASE_H
 
 #include <QDialog>
+#include <QEventLoop>
 #include <QPixmap>
 #include <QPoint>
 
@@ -27,6 +28,10 @@ public:
     /// 返回要覆盖的宿主窗口（对话框挂载的顶层窗口或活动窗口）
     QWidget *hostWindow() const;
 
+    /// 阻塞式弹出。安卓覆盖层模式下不复用 QDialog::exec 的窗口级模态逻辑
+    /// （父窗口禁用、焦点接管等都基于"弹窗是顶层窗口"的假设），改用嵌套事件循环。
+    int exec();
+
 protected:
     /// 让对话框精确覆盖宿主窗口的客户端区（居中内容随之居中）
     void positionOverWindow();
@@ -38,6 +43,7 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     /// 查找弹窗内的居中卡片（直接子控件中 objectName 以 "Card" 结尾）
@@ -47,6 +53,7 @@ private:
 
     QPixmap m_blurredBackground;
     QPoint m_blurOffset;
+    QEventLoop *m_execLoop = nullptr;
 };
 
 #endif // APPDIALOGBASE_H

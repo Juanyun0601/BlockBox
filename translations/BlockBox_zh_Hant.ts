@@ -13320,6 +13320,11 @@
         <source>刷新</source>
         <translation>重新整理</translation>
     </message>
+    <message>
+        <location filename="../components/InstanceFolderTree.cpp" line="171"/>
+        <source>绑定文件夹</source>
+        <translation>綁定資料夾</translation>
+    </message>
 </context>
 <context>
     <name>InstanceGameSettingsPage</name>
@@ -16176,6 +16181,11 @@
         <translation>讀取中…</translation>
     </message>
     <message>
+        <location filename="../components/LanTransferDialog.cpp" line="376"/>
+        <source>%1    %2（远程）</source>
+        <translation>%1    %2（遠端）</translation>
+    </message>
+    <message>
         <location filename="../components/LanTransferDialog.cpp" line="379"/>
         <source>远程设备 · 通过内网穿透直连
 虚拟地址：%1
@@ -17173,6 +17183,19 @@
         <location filename="../pages/LoaderDetailPage.cpp" line="1047"/>
         <source>已添加 %1 %2</source>
         <translation>已新增 %1 %2</translation>
+    </message>
+</context>
+<context>
+    <name>LoadingOverlay</name>
+    <message>
+        <location filename="../components/LoadingOverlay.cpp" line="187"/>
+        <source>正在加载...</source>
+        <translation>正在載入...</translation>
+    </message>
+    <message>
+        <location filename="../components/LoadingOverlay.cpp" line="196"/>
+        <source>取消</source>
+        <translation>取消</translation>
     </message>
 </context>
 <context>
@@ -19484,27 +19507,60 @@
         <translation>我知道了</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="270"/>
+        <location filename="../main.cpp" line="204"/>
+        <source>安装实例、模组和导入导出存档都需要访问存储</source>
+        <translation>安裝實例、模組和匯入匯出存檔都需要存取儲存空間</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="211"/>
+        <source>需要「所有文件访问」权限</source>
+        <translation>需要「所有檔案存取」權限</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="212"/>
+        <source>%1。
+
+是否前往系统设置授权？授权后返回即可继续使用。</source>
+        <translation>%1。
+
+是否前往系統設定授權？授權後返回即可繼續使用。</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="226"/>
+        <source>需要存储权限</source>
+        <translation>需要儲存權限</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="227"/>
+        <source>%1。
+
+请在接下来的系统弹窗中允许。</source>
+        <translation>%1。
+
+請在接下來的系統彈窗中允許。</translation>
+    </message>
+    <message>
+        <location filename="../main.cpp" line="317"/>
         <source>正在初始化数据目录...</source>
         <translation>正在初始化資料目錄...</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="276"/>
+        <location filename="../main.cpp" line="323"/>
         <source>正在加载语言设置...</source>
         <translation>正在載入語言設定...</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="290"/>
+        <location filename="../main.cpp" line="337"/>
         <source>正在创建主窗口...</source>
         <translation>正在建立主視窗...</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="299"/>
+        <location filename="../main.cpp" line="346"/>
         <source>正在检测Java...</source>
         <translation>正在偵測Java...</translation>
     </message>
     <message>
-        <location filename="../main.cpp" line="316"/>
+        <location filename="../main.cpp" line="363"/>
         <source>启动完成</source>
         <translation>啟動完成</translation>
     </message>
@@ -20970,259 +21026,363 @@
 <context>
     <name>MultiplayerLobbyPage</name>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="73"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="342"/>
         <source>联机大厅</source>
         <translation>多人連線大廳</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="76"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="347"/>
         <source>挑一个房间就能直接进游戏：自动选版本、加载器和模组都合适的本地实例。</source>
         <translation>挑一個房間就能直接進遊戲：自動挑選版本、載入器與模組都合適的本機實例。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="84"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="365"/>
         <source>打开网页大厅</source>
         <translation>開啟網頁大廳</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="93"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="374"/>
         <source>我要开房</source>
         <translation>我要開房</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="109"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="399"/>
         <source>搜房间名、简介或房主</source>
         <translation>搜尋房間名稱、簡介或房主</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="119"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="415"/>
         <source>全部核心</source>
         <translation>全部核心</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="120"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="416"/>
         <source>陶瓦联机</source>
         <translation>陶瓦連線</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="121"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="417"/>
         <source>红石联机</source>
         <translation>紅石連線</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="122"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="418"/>
         <source>内网穿透</source>
         <translation>內網穿透</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="150"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="450"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="806"/>
         <source>加载中…</source>
         <translation>載入中…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="247"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="678"/>
         <source>正在刷新…</source>
         <translation>正在重新整理…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="262"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="699"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="808"/>
         <source>刷新失败：%1</source>
         <translation>重新整理失敗：%1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="281"/>
         <source>大厅里暂时没有房间。
 开好房后，在实例助手的联机页点「发布到联机大厅」就能让所有人看到。</source>
-        <translation>大廳目前沒有房間。
+        <translation type="vanished">大廳目前沒有房間。
 開好房後，在實例助手的連線頁點「發布到多人連線大廳」，就能讓所有人看到。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="288"/>
         <source>去实例助手开房 →</source>
-        <translation>前往實例助手開房 →</translation>
+        <translation type="vanished">前往實例助手開房 →</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="299"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="810"/>
         <source>共 0 个房间</source>
         <translation>共 0 個房間</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="309"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="821"/>
         <source>显示 %1 个 · 在线 %2 个</source>
         <translation>顯示 %1 個 · 線上 %2 個</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="310"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="823"/>
         <source>共 %1 个房间</source>
         <translation>共 %1 個房間</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="347"/>
         <source>游戏中</source>
-        <translation>遊戲中</translation>
+        <translation type="vanished">遊戲中</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="347"/>
         <source>在线</source>
-        <translation>線上</translation>
+        <translation type="vanished">線上</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="354"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="954"/>
         <source>前置整合包：%1</source>
         <translation>前置整合包：%1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="357"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="957"/>
         <source>加入前可以先把这个整合包装上</source>
         <translation>加入前可以先安裝這個整合包</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="358"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="958"/>
         <source>加入前可以先把这个整合包装上：%1</source>
         <translation>加入前可以先安裝這個整合包：%1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="365"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="965"/>
         <source>缺少模组：%1</source>
         <translation>缺少模組：%1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="376"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="913"/>
         <source>MC %1</source>
         <translation>MC %1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="380"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="715"/>
+        <source>正在连接大厅…</source>
+        <translation>正在連線大廳…</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="720"/>
+        <source>暂时连不上大厅，稍后会自动再试</source>
+        <translation>暫時連不上大廳，稍後會自動再試</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="725"/>
+        <source>现在还没有人在大厅开房</source>
+        <translation>現在還沒有人在大廳開房</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="739"/>
+        <source>在线 %1 个房间 · 等待加入 %2 个 · 游戏中 %3 个</source>
+        <translation>線上 %1 個房間 · 等待加入 %2 個 · 遊戲中 %3 個</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="777"/>
+        <source>正在加载房间…</source>
+        <translation>正在載入房間…</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="778"/>
+        <source>正在从联机大厅取房间列表，稍等一下就好。</source>
+        <translation>正在從多人連線大廳取得房間列表，稍等一下就好。</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="784"/>
+        <source>暂时连不上联机大厅</source>
+        <translation>暫時連不上多人連線大廳</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="785"/>
+        <source>%1
+检查一下网络，或者稍后再试一次。</source>
+        <translation>%1
+檢查一下網路，或者稍後再試一次。</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="786"/>
+        <source>重新加载</source>
+        <translation>重新載入</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="792"/>
+        <source>大厅里暂时没有房间</source>
+        <translation>大廳裡暫時沒有房間</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="793"/>
+        <source>开好房后，在实例助手的联机页点「发布到联机大厅」，房间就会出现在这里。</source>
+        <translation>開好房後，在實例助手的多人連線頁點「發布到多人連線大廳」，房間就會出現在這裡。</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="794"/>
+        <source>去实例助手开房</source>
+        <translation>去實例助手開房</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="888"/>
+        <source>未命名房间</source>
+        <translation>未命名房間</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="897"/>
+        <source>我的房间</source>
+        <translation>我的房間</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="920"/>
         <source>房主 %1</source>
         <translation>房主 %1</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="381"/>
         <source>%1 人</source>
-        <translation>%1 人</translation>
+        <translation type="vanished">%1 人</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="399"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="921"/>
+        <source>%1 人上限</source>
+        <translation>%1 人上限</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="923"/>
+        <source>%1 次加入</source>
+        <translation>%1 次加入</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="926"/>
+        <source>%1发布</source>
+        <translation>%1發布</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="980"/>
         <source>未填写邀请码</source>
         <translation>未填寫邀請碼</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="409"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="983"/>
+        <source>房主没有填写邀请码 / 地址</source>
+        <translation>房主沒有填寫邀請碼 / 地址</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="986"/>
         <source>复制</source>
         <translation>複製</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="418"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="995"/>
+        <source>已复制：%1</source>
+        <translation>已複製：%1</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1001"/>
         <source>一键加入</source>
         <translation>一鍵加入</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="443"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1001"/>
+        <source>已下架</source>
+        <translation>已下架</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1008"/>
+        <source>这个房间已经下架，刷新后再看看别的吧</source>
+        <translation>這個房間已經下架，重新整理後再看看別的吧</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1027"/>
         <source>任意版本都能加入</source>
         <translation>任何版本都能加入</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="444"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1028"/>
         <source>本机没有 %1 的实例，需要先装一个</source>
         <translation>本機沒有 %1 的實例，需要先安裝一個</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="448"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1032"/>
         <source>一键用「%1」加入 · 模组齐全</source>
         <translation>一鍵用「%1」加入 · 模組齊全</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="450"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1034"/>
         <source>一键用「%1」加入 · 版本和加载器匹配</source>
         <translation>一鍵用「%1」加入 · 版本與載入器相符</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="451"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1035"/>
         <source>一键用「%1」加入 · 仅版本匹配</source>
         <translation>一鍵用「%1」加入 · 僅版本相符</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="458"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1042"/>
         <source>房间已过期</source>
         <translation>房間已過期</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="458"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1042"/>
         <source>这个房间已经下架，刷新后再看看别的吧。</source>
         <translation>這個房間已經下架，重新整理後再看看其他房間吧。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="471"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1055"/>
         <source>没有邀请码</source>
         <translation>沒有邀請碼</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="471"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1055"/>
         <source>这个房间没有可用的邀请码，请让房主重新发布。</source>
         <translation>這個房間沒有可用的邀請碼，請讓房主重新發布。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="479"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1063"/>
         <source>还没安装陶瓦联机核心</source>
         <translation>尚未安裝陶瓦連線核心</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="480"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1064"/>
         <source>这是陶瓦联机的房间，需要先在实例助手的联机页安装陶瓦联机核心。</source>
         <translation>這是陶瓦連線的房間，需要先在實例助手的連線頁安裝陶瓦連線核心。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="486"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1070"/>
         <source>已在房间中</source>
         <translation>已在房間中</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="487"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1071"/>
         <source>你已经在陶瓦联机的房间里了，先离开当前房间再加入其他房间。</source>
         <translation>你已經在陶瓦連線的房間裡了，請先離開目前房間再加入其他房間。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="504"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="586"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1088"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1170"/>
         <source>BlockBox 玩家</source>
         <translation>BlockBox 玩家</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="510"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="590"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1094"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1174"/>
         <source>无法加入房间，请稍后再试。</source>
         <translation>無法加入房間，請稍後再試。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="513"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="593"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1097"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1177"/>
         <source>正在连接房主…</source>
         <translation>正在連線房主…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="519"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1103"/>
         <source>正在启动陶瓦联机核心，启动后会自动加入…</source>
         <translation>正在啟動陶瓦連線核心，啟動後會自動加入…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="529"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1113"/>
         <source>地址无效</source>
         <translation>位址無效</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="530"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1114"/>
         <source>这个房间没有可用的连接地址，请让房主重新发布。</source>
         <translation>這個房間沒有可用的連線位址，請讓房主重新發布。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="543"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="551"/>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="558"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1127"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1135"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1142"/>
         <source>需要前置整合包</source>
         <translation>需要前置整合包</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="544"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1128"/>
         <source>房主给这个房间标了前置整合包「%1」。
 
 建议先在「资源 &gt; 导入整合包」里下载安装它：
@@ -21237,7 +21397,7 @@
 裝好後再回來加入。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="552"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1136"/>
         <source>房主给这个房间标了前置整合包「%1」。
 
 下载地址：
@@ -21252,27 +21412,27 @@
 請自行裝好後再回來加入。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="559"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1143"/>
         <source>房主给这个房间标了前置整合包「%1」，加入前先确认你装了它。</source>
         <translation>房主為這個房間標註了前置整合包「%1」，加入前請先確認你已安裝。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="575"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1159"/>
         <source>连不上房主，请稍后再试。</source>
         <translation>連不上房主，請稍後再試。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="603"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1187"/>
         <source>联机核心没有返回可用的服务器地址。</source>
         <translation>連線核心沒有傳回可用的伺服器位址。</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="611"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1195"/>
         <source>连接成功，正在启动游戏…</source>
         <translation>連線成功，正在啟動遊戲…</translation>
     </message>
     <message>
-        <location filename="../pages/MultiplayerLobbyPage.cpp" line="629"/>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="1213"/>
         <source>加入失败</source>
         <translation>加入失敗</translation>
     </message>
@@ -21951,12 +22111,12 @@
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="1958"/>
         <source>樱花联机基于樱花内网穿透（SakuraFrp）：在官网注册并创建 TCP 隧道后，把「访问密钥」和「隧道 ID」填到下面，点「启动隧道」即可获得一个联机地址，把地址分享给好友，参与者在 Minecraft 中连接该地址即可共同游玩。&lt;br&gt;&lt;br&gt;创建隧道时类型选 TCP，本地地址填 127.0.0.1，本地端口填游戏「对局域网开放」显示的端口。&lt;br&gt;&lt;br&gt;SakuraFrp 是第三方服务（需实名认证），与本软件无关，如遇问题可前往&lt;a href=&quot;https://doc.natfrp.com/&quot;&gt;SakuraFrp 帮助文档&lt;/a&gt;反馈。&lt;br&gt;&lt;br&gt;在联机过程中，请严格遵守当地法律法规。</source>
-        <translation>櫻花連線基於櫻花內網穿透（SakuraFrp）：在官網註冊並建立 TCP 通道後，將「存取金鑰」和「通道 ID」填入下方，點「啟動通道」即可取得連線位址，把位址分享給好友，參與者在 Minecraft 中連線該位址即可一同遊玩。&lt;br&gt;&lt;br&gt;建立通道時類型選 TCP，本地位址填 127.0.0.1，本地連接埠填遊戲「對區域網路開放」顯示的連接埠。&lt;br&gt;&lt;br&gt;SakuraFrp 是第三方服務（需實名認證），與本軟體無關，如遇問題可前往&lt;a href="https://doc.natfrp.com/"&gt;SakuraFrp 說明文件&lt;/a&gt;回饋。&lt;br&gt;&lt;br&gt;連線過程中，請嚴格遵守當地法律法規。</translation>
+        <translation>櫻花連線基於櫻花內網穿透（SakuraFrp）：在官網註冊並建立 TCP 通道後，將「存取金鑰」和「通道 ID」填入下方，點「啟動通道」即可取得連線位址，把位址分享給好友，參與者在 Minecraft 中連線該位址即可一同遊玩。&lt;br&gt;&lt;br&gt;建立通道時類型選 TCP，本地位址填 127.0.0.1，本地連接埠填遊戲「對區域網路開放」顯示的連接埠。&lt;br&gt;&lt;br&gt;SakuraFrp 是第三方服務（需實名認證），與本軟體無關，如遇問題可前往&lt;a href=&quot;https://doc.natfrp.com/&quot;&gt;SakuraFrp 說明文件&lt;/a&gt;回饋。&lt;br&gt;&lt;br&gt;連線過程中，請嚴格遵守當地法律法規。</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="1968"/>
         <source>OpenFrp 联机基于 OpenFrp 公益内网穿透：在官网注册并创建 TCP 隧道后，把「访问密钥」和「隧道 ID」填到下面，点「启动隧道」即可获得一个联机地址，把地址分享给好友，参与者在 Minecraft 中连接该地址即可共同游玩。&lt;br&gt;&lt;br&gt;创建隧道时类型选 TCP，本地地址填 127.0.0.1，本地端口填游戏「对局域网开放」显示的端口。&lt;br&gt;&lt;br&gt;OpenFrp 是第三方服务，与本软件无关，如遇问题可前往&lt;a href=&quot;https://www.openfrp.net/&quot;&gt;OpenFrp 官网&lt;/a&gt;反馈。&lt;br&gt;&lt;br&gt;在联机过程中，请严格遵守当地法律法规。</source>
-        <translation>OpenFrp 連線基於 OpenFrp 公益內網穿透：在官網註冊並建立 TCP 通道後，將「存取金鑰」和「通道 ID」填入下方，點「啟動通道」即可取得連線位址，把位址分享給好友，參與者在 Minecraft 中連線該位址即可一同遊玩。&lt;br&gt;&lt;br&gt;建立通道時類型選 TCP，本地位址填 127.0.0.1，本地連接埠填遊戲「對區域網路開放」顯示的連接埠。&lt;br&gt;&lt;br&gt;OpenFrp 是第三方服務，與本軟體無關，如遇問題可前往&lt;a href="https://www.openfrp.net/"&gt;OpenFrp 官網&lt;/a&gt;回饋。&lt;br&gt;&lt;br&gt;連線過程中，請嚴格遵守當地法律法規。</translation>
+        <translation>OpenFrp 連線基於 OpenFrp 公益內網穿透：在官網註冊並建立 TCP 通道後，將「存取金鑰」和「通道 ID」填入下方，點「啟動通道」即可取得連線位址，把位址分享給好友，參與者在 Minecraft 中連線該位址即可一同遊玩。&lt;br&gt;&lt;br&gt;建立通道時類型選 TCP，本地位址填 127.0.0.1，本地連接埠填遊戲「對區域網路開放」顯示的連接埠。&lt;br&gt;&lt;br&gt;OpenFrp 是第三方服務，與本軟體無關，如遇問題可前往&lt;a href=&quot;https://www.openfrp.net/&quot;&gt;OpenFrp 官網&lt;/a&gt;回饋。&lt;br&gt;&lt;br&gt;連線過程中，請嚴格遵守當地法律法規。</translation>
     </message>
     <message>
         <location filename="../pages/MultiplayerPage.cpp" line="1987"/>
@@ -22459,6 +22619,23 @@
 %2</source>
         <translation>Job &apos;%1&apos; failed to process:
 %2</translation>
+    </message>
+</context>
+<context>
+    <name>NewsDetailDialog</name>
+    <message>
+        <location filename="../components/NewsDetailDialog.cpp" line="39"/>
+        <source>官方暂未提供这条新闻的摘要。</source>
+        <translation>官方尚未提供這則新聞的摘要。</translation>
+    </message>
+    <message>
+        <location filename="../components/NewsDetailDialog.cpp" line="40"/>
+        <source>
+
+内容来自 Minecraft 官方新闻。</source>
+        <translation>
+
+內容來自 Minecraft 官方新聞。</translation>
     </message>
 </context>
 <context>
@@ -25374,6 +25551,76 @@
         <translation>開啟後，右鍵會把方塊放到所點方塊的相鄰面上；關閉則直接覆蓋所點方塊</translation>
     </message>
     <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="589"/>
+        <source>等轴</source>
+        <translation>等角</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="589"/>
+        <source>等轴视角（默认）</source>
+        <translation>等角視角（預設）</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="590"/>
+        <source>前</source>
+        <translation>前</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="590"/>
+        <source>正视图</source>
+        <translation>正視圖</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="591"/>
+        <source>后</source>
+        <translation>後</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="591"/>
+        <source>后视图</source>
+        <translation>後視圖</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="592"/>
+        <source>左</source>
+        <translation>左</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="592"/>
+        <source>左视图</source>
+        <translation>左視圖</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="593"/>
+        <source>右</source>
+        <translation>右</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="593"/>
+        <source>右视图</source>
+        <translation>右視圖</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="594"/>
+        <source>顶</source>
+        <translation>上</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="594"/>
+        <source>俯视图</source>
+        <translation>上視圖</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="595"/>
+        <source>底</source>
+        <translation>下</translation>
+    </message>
+    <message>
+        <location filename="../components/ProjectionBlockEditorDialog.cpp" line="595"/>
+        <source>仰视图</source>
+        <translation>下視圖</translation>
+    </message>
+    <message>
         <location filename="../components/ProjectionBlockEditorDialog.cpp" line="713"/>
         <source>左键破坏 · 右键放置 · 拖动转向 · 滚轮推进 · WASD 飞行 · 空格/Shift 升降 · 双击 W 或 Ctrl 疾跑</source>
         <translation>左鍵破壞 · 右鍵放置 · 拖曳轉向 · 滾輪推進 · WASD 飛行 · 空格/Shift 升降 · 連按兩下 W 或 Ctrl 疾走</translation>
@@ -27345,6 +27592,196 @@
         <translation>清單缺少 id 或 name 欄位</translation>
     </message>
     <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="35"/>
+        <source>读取方块盒子文件</source>
+        <translation>讀取方塊盒子檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="36"/>
+        <source>修改方块盒子文件/代码</source>
+        <translation>修改方塊盒子檔案/程式碼</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="37"/>
+        <source>读写 Windows 注册表</source>
+        <translation>讀寫 Windows 登錄檔</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="38"/>
+        <source>访问网络</source>
+        <translation>存取網路</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="39"/>
+        <source>请求管理员权限（UAC 提权）</source>
+        <translation>要求系統管理員權限（UAC 提權）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="40"/>
+        <source>执行系统级操作（服务/关机/格式化等）</source>
+        <translation>執行系統層級操作（服務/關機/格式化等）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="41"/>
+        <source>修改启动器界面样式（仅外观）</source>
+        <translation>修改啟動器介面樣式（僅外觀）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="53"/>
+        <source>删除文件/目录（Remove-Item）</source>
+        <translation>刪除檔案/目錄（Remove-Item）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="54"/>
+        <source>递归删除文件/目录</source>
+        <translation>遞迴刪除檔案/目錄</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="55"/>
+        <source>强制递归删除（rm -rf）</source>
+        <translation>強制遞迴刪除（rm -rf）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="56"/>
+        <source>删除目录</source>
+        <translation>刪除目錄</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="57"/>
+        <source>递归删除目录（cmd）</source>
+        <translation>遞迴刪除目錄（cmd）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="58"/>
+        <source>递归删除文件（cmd）</source>
+        <translation>遞迴刪除檔案（cmd）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="59"/>
+        <source>递归删除文件（erase）</source>
+        <translation>遞迴刪除檔案（erase）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="60"/>
+        <source>清空回收站</source>
+        <translation>清空資源回收筒</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="62"/>
+        <source>格式化磁盘卷（Format-Volume）</source>
+        <translation>格式化磁碟區（Format-Volume）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="63"/>
+        <source>格式化磁盘（format）</source>
+        <translation>格式化磁碟（format）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="64"/>
+        <source>磁盘分区操作（diskpart）</source>
+        <translation>磁碟分割操作（diskpart）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="66"/>
+        <source>关机/重启/注销（shutdown）</source>
+        <translation>關機/重新啟動/登出（shutdown）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="67"/>
+        <source>重启计算机</source>
+        <translation>重新啟動電腦</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="68"/>
+        <source>关闭计算机</source>
+        <translation>關閉電腦</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="69"/>
+        <source>停止系统服务</source>
+        <translation>停止系統服務</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="70"/>
+        <source>修改系统服务</source>
+        <translation>修改系統服務</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="71"/>
+        <source>创建系统服务</source>
+        <translation>建立系統服務</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="72"/>
+        <source>删除系统服务（sc delete）</source>
+        <translation>刪除系統服務（sc delete）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="73"/>
+        <source>修改引导配置（bcdedit）</source>
+        <translation>修改開機設定（bcdedit）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="75"/>
+        <source>删除注册表项（reg delete）</source>
+        <translation>刪除登錄機碼（reg delete）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="76"/>
+        <source>修改注册表项（reg add）</source>
+        <translation>修改登錄機碼（reg add）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="77"/>
+        <source>修改注册表值/属性</source>
+        <translation>修改登錄值/屬性</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="78"/>
+        <source>删除注册表值</source>
+        <translation>刪除登錄值</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="79"/>
+        <source>修改 PowerShell 执行策略</source>
+        <translation>修改 PowerShell 執行原則</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="81"/>
+        <source>夺取文件所有权（takeown）</source>
+        <translation>取得檔案擁有權（takeown）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="82"/>
+        <source>修改文件权限（icacls）</source>
+        <translation>修改檔案權限（icacls）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="83"/>
+        <source>修改文件属性（attrib）</source>
+        <translation>修改檔案屬性（attrib）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="84"/>
+        <source>修改 hosts 文件</source>
+        <translation>修改 hosts 檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="86"/>
+        <source>终止进程（Stop-Process）</source>
+        <translation>終止處理程序（Stop-Process）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="87"/>
+        <source>终止进程（taskkill）</source>
+        <translation>終止處理程序（taskkill）</translation>
+    </message>
+    <message>
+        <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="88"/>
+        <source>进程管理（wmic）</source>
+        <translation>處理程序管理（wmic）</translation>
+    </message>
+    <message>
         <location filename="../utils/plugin/PluginSafetyGuard.cpp" line="187"/>
         <source>插件：%1</source>
         <translation>外掛：%1</translation>
@@ -27647,6 +28084,26 @@
         <location filename="../utils/forge/LegacyForgeInstaller.cpp" line="484"/>
         <source>无法写入合并后的 jar：%1</source>
         <translation>無法寫入合併後的 jar：%1</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="274"/>
+        <source>● 已下架</source>
+        <translation>● 已下架</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="279"/>
+        <source>● 已满</source>
+        <translation>● 已滿</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="284"/>
+        <source>● 游戏中</source>
+        <translation>● 遊戲中</translation>
+    </message>
+    <message>
+        <location filename="../pages/MultiplayerLobbyPage.cpp" line="289"/>
+        <source>● 等待加入</source>
+        <translation>● 等待加入</translation>
     </message>
 </context>
 <context>
@@ -28485,6 +28942,631 @@
 </context>
 <context>
     <name>SaveSettingsPage</name>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="91"/>
+        <source>死亡不掉落</source>
+        <translation>保留物品欄</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="91"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="93"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="95"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="97"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="99"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="101"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="103"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="105"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="107"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="109"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="111"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="113"/>
+        <source>玩家</source>
+        <translation>玩家</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="92"/>
+        <source>死亡后保留物品栏和经验，不会掉落</source>
+        <translation>死亡後保留物品欄和經驗，不會掉落</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="93"/>
+        <source>立即重生</source>
+        <translation>立即重生</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="94"/>
+        <source>死亡后跳过死亡界面直接重生</source>
+        <translation>死亡後跳過死亡畫面直接重生</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="95"/>
+        <source>自然回血</source>
+        <translation>自然回血</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="96"/>
+        <source>生命值会随时间自动恢复</source>
+        <translation>生命值會隨時間自動恢復</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="97"/>
+        <source>摔落伤害</source>
+        <translation>摔落傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="98"/>
+        <source>从高处摔落会造成伤害</source>
+        <translation>從高處摔落會造成傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="99"/>
+        <source>火焰伤害</source>
+        <translation>火焰傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="100"/>
+        <source>火焰和岩浆会造成伤害</source>
+        <translation>火焰和岩漿會造成傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="101"/>
+        <source>溺水伤害</source>
+        <translation>溺水傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="102"/>
+        <source>水下憋气耗尽后会造成伤害</source>
+        <translation>水下憋氣耗盡後會造成傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="103"/>
+        <source>冰冻伤害</source>
+        <translation>冰凍傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="104"/>
+        <source>在细雪中冰冻会造成伤害</source>
+        <translation>在粉雪中凍結會造成傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="105"/>
+        <source>队友定位条</source>
+        <translation>隊友定位條</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="106"/>
+        <source>屏幕上显示队友位置的定位条（联机用）</source>
+        <translation>螢幕上顯示隊友位置的定位條（多人遊戲用）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="107"/>
+        <source>死亡珍珠消失</source>
+        <translation>死亡珍珠消失</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="108"/>
+        <source>玩家死亡时，正在飞行的末影珍珠立即消失</source>
+        <translation>玩家死亡時，正在飛行的終界珍珠立即消失</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="109"/>
+        <source>旁观者加载区块</source>
+        <translation>旁觀者載入區塊</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="110"/>
+        <source>旁观者玩家也会促使周围区块加载生成</source>
+        <translation>旁觀者玩家也會促使周圍區塊載入生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="111"/>
+        <source>跳夜所需玩家</source>
+        <translation>跳過夜晚所需玩家</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="112"/>
+        <source>需要入睡的玩家比例（%）达到该数值才能跳过夜晚，0 表示无需有人入睡</source>
+        <translation>需要入睡的玩家比例（%）達到該數值才能跳過夜晚，0 表示無需有人入睡</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="113"/>
+        <source>出生散布半径</source>
+        <translation>出生散佈半徑</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="114"/>
+        <source>新玩家和重生玩家围绕世界出生点散布的范围（格），0 表示固定出生在世界出生点</source>
+        <translation>新玩家和重生玩家圍繞世界重生點散佈的範圍（格），0 表示固定重生於世界重生點</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="116"/>
+        <source>昼夜更替</source>
+        <translation>晝夜更替</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="116"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="118"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="120"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="122"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="124"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="126"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="128"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="130"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="132"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="134"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="136"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="138"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="140"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="142"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="144"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="146"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="148"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="150"/>
+        <source>世界</source>
+        <translation>世界</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="117"/>
+        <source>太阳、月亮和昼夜照常流转</source>
+        <translation>太陽、月亮和晝夜照常流轉</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="118"/>
+        <source>天气更替</source>
+        <translation>天氣更替</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="119"/>
+        <source>晴天、雨天、雷雨会自然变化</source>
+        <translation>晴天、雨天、雷雨會自然變化</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="120"/>
+        <source>火焰蔓延</source>
+        <translation>火焰蔓延</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="121"/>
+        <source>火焰会蔓延、点燃方块并自然熄灭</source>
+        <translation>火焰會蔓延、點燃方塊並自然熄滅</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="122"/>
+        <source>火焰远离燃烧</source>
+        <translation>遠處火焰燃燒</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="123"/>
+        <source>允许火焰蔓延到离玩家很远的地方继续燃烧（25w44a 起已移除）</source>
+        <translation>允許火焰蔓延到離玩家很遠的地方繼續燃燒（25w44a 起已移除）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="124"/>
+        <source>生物破坏方块</source>
+        <translation>生物破壞方塊</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="125"/>
+        <source>苦力怕爆炸毁地形、末影人搬方块、僵尸踩坏农田等行为</source>
+        <translation>苦力怕爆炸毀地形、終界使者搬方塊、殭屍踩壞農田等行為</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="126"/>
+        <source>方块掉落</source>
+        <translation>方塊掉落</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="127"/>
+        <source>破坏方块后会掉落物品</source>
+        <translation>破壞方塊後會掉落物品</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="128"/>
+        <source>实体掉落</source>
+        <translation>實體掉落</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="129"/>
+        <source>矿车、船、物品展示框等被破坏后掉落物品</source>
+        <translation>礦車、船、物品展示框等被破壞後掉落物品</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="130"/>
+        <source>藤蔓蔓延</source>
+        <translation>藤蔓蔓延</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="131"/>
+        <source>藤蔓会向四周生长蔓延</source>
+        <translation>藤蔓會向四周生長蔓延</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="132"/>
+        <source>投射物破坏植物</source>
+        <translation>投射物破壞植物</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="133"/>
+        <source>箭等投射物可以打碎紫水晶簇、滴水石锥等方块</source>
+        <translation>箭等投射物可以打碎紫水晶簇、鐘乳石等方塊</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="134"/>
+        <source>水源汇聚</source>
+        <translation>水源匯聚</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="135"/>
+        <source>流水会互相汇聚成新水源，可以做无限水</source>
+        <translation>流水會互相匯聚成新水源，可以製作無限水</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="136"/>
+        <source>熔岩源汇聚</source>
+        <translation>熔岩源匯聚</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="137"/>
+        <source>熔岩会互相汇聚成新熔岩源（可做无限熔岩）</source>
+        <translation>熔岩會互相匯聚成新熔岩源（可製作無限熔岩）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="138"/>
+        <source>降雪堆积上限</source>
+        <translation>降雪堆積上限</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="139"/>
+        <source>下雪时地表最多能积几层雪，0 表示完全不积雪</source>
+        <translation>下雪時地表最多能積幾層雪，0 表示完全不積雪</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="140"/>
+        <source>方块爆炸掉落衰减</source>
+        <translation>方塊爆炸掉落衰減</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="141"/>
+        <source>下界床等方块类爆炸炸毁方块后，一部分掉落物会消失</source>
+        <translation>地獄床等方塊類爆炸炸毀方塊後，一部分掉落物會消失</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="142"/>
+        <source>生物爆炸掉落衰减</source>
+        <translation>生物爆炸掉落衰減</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="143"/>
+        <source>苦力怕等生物爆炸炸毁方块后，一部分掉落物会消失</source>
+        <translation>苦力怕等生物爆炸炸毀方塊後，一部分掉落物會消失</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="144"/>
+        <source>TNT爆炸掉落衰减</source>
+        <translation>TNT 爆炸掉落衰減</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="145"/>
+        <source>TNT 爆炸炸毁方块后，一部分掉落物会消失（默认全部掉落）</source>
+        <translation>TNT 爆炸炸毀方塊後，一部分掉落物會消失（預設全部掉落）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="146"/>
+        <source>TNT爆炸</source>
+        <translation>TNT 爆炸</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="147"/>
+        <source>点燃的 TNT 能否正常爆炸，关闭后 TNT 和 TNT 矿车都无法引爆</source>
+        <translation>點燃的 TNT 能否正常爆炸，關閉後 TNT 和 TNT 礦車都無法引爆</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="148"/>
+        <source>出生点常加载</source>
+        <translation>重生點常載入</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="149"/>
+        <source>世界出生点周围始终保持加载的区块半径，0 表示不再常加载出生点区块（1.21.9 起已移除）</source>
+        <translation>世界重生點周圍始終保持載入的區塊半徑，0 表示不再常載入重生點區塊（1.21.9 起已移除）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="150"/>
+        <source>随机刻速度</source>
+        <translation>隨機刻速度</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="151"/>
+        <source>作物生长、树叶枯萎等随机事件的速度，0 为停止生长</source>
+        <translation>作物生長、樹葉枯萎等隨機事件的速度，0 為停止生長</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="153"/>
+        <source>生物自然生成</source>
+        <translation>生物自然生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="153"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="155"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="157"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="159"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="161"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="163"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="165"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="167"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="169"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="171"/>
+        <source>生物</source>
+        <translation>生物</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="154"/>
+        <source>动物和怪物会自然生成</source>
+        <translation>動物和怪物會自然生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="155"/>
+        <source>生物掉落物</source>
+        <translation>生物掉落物</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="156"/>
+        <source>生物死亡后掉落战利品</source>
+        <translation>生物死亡後掉落戰利品</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="157"/>
+        <source>幻翼生成</source>
+        <translation>幻翼生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="158"/>
+        <source>玩家长时间不睡觉会生成幻翼</source>
+        <translation>玩家長時間不睡覺會生成幻翼</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="159"/>
+        <source>巡逻队生成</source>
+        <translation>巡邏隊生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="160"/>
+        <source>灾厄巡逻队会生成</source>
+        <translation>災厄巡邏隊會生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="161"/>
+        <source>流浪商人生成</source>
+        <translation>流浪商人生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="162"/>
+        <source>流浪商人和羊驼会生成</source>
+        <translation>流浪商人和駱馬會生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="163"/>
+        <source>监守者生成</source>
+        <translation>監守者生成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="164"/>
+        <source>深暗之域中会生成监守者</source>
+        <translation>深暗之域中會生成監守者</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="165"/>
+        <source>禁止袭击</source>
+        <translation>禁止襲擊</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="166"/>
+        <source>带着不祥之兆进入村庄不再触发袭击</source>
+        <translation>帶著不祥之兆進入村莊不再觸發襲擊</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="167"/>
+        <source>愤怒平息</source>
+        <translation>憤怒平息</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="168"/>
+        <source>被激怒的中立生物在目标玩家死亡后平息怒火</source>
+        <translation>被激怒的中立生物在目標玩家死亡後平息怒火</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="169"/>
+        <source>迁怒所有人</source>
+        <translation>遷怒所有人</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="170"/>
+        <source>被激怒的中立生物会攻击所有玩家</source>
+        <translation>被激怒的中立生物會攻擊所有玩家</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="171"/>
+        <source>实体挤压上限</source>
+        <translation>實體擠壓上限</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="172"/>
+        <source>同一格内实体超过该数量时会受到挤压伤害</source>
+        <translation>同一格內實體超過該數量時會受到擠壓傷害</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="174"/>
+        <source>矿车最大速度</source>
+        <translation>礦車最大速度</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="174"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="176"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="178"/>
+        <source>交通与传送</source>
+        <translation>交通與傳送</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="175"/>
+        <source>普通矿车的最高速度（格/游戏刻）</source>
+        <translation>普通礦車的最高速度（格／遊戲刻）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="176"/>
+        <source>传送门等待时间</source>
+        <translation>傳送門等待時間</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="177"/>
+        <source>玩家（非创造）站在下界传送门里需要等待的时长（游戏刻，默认 80 即 4 秒）</source>
+        <translation>玩家（非創造）站在地獄傳送門裡需要等待的時長（遊戲刻，預設 80 即 4 秒）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="178"/>
+        <source>创造传送门等待</source>
+        <translation>創造傳送門等待</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="179"/>
+        <source>创造模式玩家在下界传送门里需要等待的时长（游戏刻），0 为即进即传</source>
+        <translation>創造模式玩家在地獄傳送門裡需要等待的時長（遊戲刻），0 為即進即傳</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="181"/>
+        <source>公告进度</source>
+        <translation>公告進度</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="181"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="183"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="185"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="187"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="189"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="191"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="193"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="195"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="197"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="199"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="201"/>
+        <location filename="../pages/SaveSettingsPage.cpp" line="203"/>
+        <source>界面与命令</source>
+        <translation>介面與指令</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="182"/>
+        <source>解锁进度、达成挑战时在聊天栏公告</source>
+        <translation>解鎖進度、達成挑戰時在聊天欄公告</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="183"/>
+        <source>死亡消息</source>
+        <translation>死亡訊息</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="184"/>
+        <source>玩家死亡时在聊天栏显示消息</source>
+        <translation>玩家死亡時在聊天欄顯示訊息</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="185"/>
+        <source>简化调试屏</source>
+        <translation>簡化除錯畫面</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="186"/>
+        <source>F3 调试界面隐藏坐标等详细信息</source>
+        <translation>F3 除錯介面隱藏座標等詳細資訊</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="187"/>
+        <source>限定合成</source>
+        <translation>限定合成</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="188"/>
+        <source>只能合成已解锁配方的物品</source>
+        <translation>只能合成已解鎖配方的物品</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="189"/>
+        <source>命令方块播报</source>
+        <translation>指令方塊播報</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="190"/>
+        <source>命令方块的执行结果播报到聊天栏</source>
+        <translation>指令方塊的執行結果播報到聊天欄</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="191"/>
+        <source>命令反馈</source>
+        <translation>指令回饋</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="192"/>
+        <source>执行命令后在聊天栏显示反馈</source>
+        <translation>執行指令後在聊天欄顯示回饋</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="193"/>
+        <source>日志记录命令</source>
+        <translation>記錄指令日誌</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="194"/>
+        <source>把管理员命令写入日志文件</source>
+        <translation>把管理員指令寫入日誌檔案</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="195"/>
+        <source>关闭鞘翅测速</source>
+        <translation>關閉鞘翅測速</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="196"/>
+        <source>服务器不再检测鞘翅飞行是否超速</source>
+        <translation>伺服器不再偵測鞘翅飛行是否超速</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="197"/>
+        <source>全服播报音效</source>
+        <translation>全服播報音效</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="198"/>
+        <source>凋灵召唤、末影龙死亡、末地传送门激活等音效全服都能听到，关闭后只有附近玩家能听到</source>
+        <translation>凋靈召喚、終界龍死亡、終界傳送門啟動等音效全服都能聽到，關閉後只有附近玩家能聽到</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="199"/>
+        <source>命令改方块上限</source>
+        <translation>指令改方塊上限</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="200"/>
+        <source>/fill、/clone 等命令一次最多能改动的方块数</source>
+        <translation>/fill、/clone 等指令一次最多能改動的方塊數</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="201"/>
+        <source>命令分叉数</source>
+        <translation>指令分叉數</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="202"/>
+        <source>一条命令一次最多能同时执行多少个分支</source>
+        <translation>一條指令一次最多能同時執行多少個分支</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="203"/>
+        <source>命令链长度</source>
+        <translation>指令鏈長度</translation>
+    </message>
+    <message>
+        <location filename="../pages/SaveSettingsPage.cpp" line="204"/>
+        <source>一次命令方块链最多可执行的命令数</source>
+        <translation>一次指令方塊鏈最多可執行的指令數</translation>
+    </message>
     <message>
         <location filename="../pages/SaveSettingsPage.cpp" line="275"/>
         <source>存档信息</source>
@@ -33036,6 +34118,16 @@
         <translation>傳送分享</translation>
     </message>
     <message>
+        <location filename="../components/ShareToFriendDialog.cpp" line="250"/>
+        <source>● 在线</source>
+        <translation>● 線上</translation>
+    </message>
+    <message>
+        <location filename="../components/ShareToFriendDialog.cpp" line="251"/>
+        <source>○ 离线</source>
+        <translation>○ 離線</translation>
+    </message>
+    <message>
         <location filename="../components/ShareToFriendDialog.cpp" line="294"/>
         <source>没有匹配「%1」的好友</source>
         <translation>沒有符合「%1」的好友</translation>
@@ -33606,6 +34698,624 @@
     </message>
 </context>
 <context>
+    <name>SkinEditorPage</name>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="83"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1013"/>
+        <source>空白</source>
+        <translation>空白</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="98"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="758"/>
+        <source>画笔</source>
+        <translation>筆刷</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="100"/>
+        <source>橡皮</source>
+        <translation>橡皮擦</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="102"/>
+        <source>填充</source>
+        <translation>填色</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="104"/>
+        <source>吸管</source>
+        <translation>滴管</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="106"/>
+        <source>直线</source>
+        <translation>直線</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="471"/>
+        <source>画笔 (B)</source>
+        <translation>筆刷 (B)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="472"/>
+        <source>橡皮 (E)</source>
+        <translation>橡皮擦 (E)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="473"/>
+        <source>填充 (G)</source>
+        <translation>填色 (G)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="474"/>
+        <source>吸管 (I)</source>
+        <translation>滴管 (I)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="475"/>
+        <source>直线 (L)</source>
+        <translation>直線 (L)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="486"/>
+        <source>撤销 (Ctrl+Z)</source>
+        <translation>復原 (Ctrl+Z)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="487"/>
+        <source>重做 (Ctrl+Y)</source>
+        <translation>重做 (Ctrl+Y)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="488"/>
+        <source>清除</source>
+        <translation>清除</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="493"/>
+        <source>网格</source>
+        <translation>格線</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="494"/>
+        <source>UV 叠加</source>
+        <translation>UV 疊加</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="502"/>
+        <source>新建</source>
+        <translation>新建</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="503"/>
+        <source>打开</source>
+        <translation>開啟</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="504"/>
+        <source>保存</source>
+        <translation>儲存</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="505"/>
+        <source>另存为</source>
+        <translation>另存新檔</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="510"/>
+        <source>从账户加载</source>
+        <translation>從帳戶載入</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="511"/>
+        <source>应用到账户</source>
+        <translation>套用到帳戶</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="610"/>
+        <source>编辑方式</source>
+        <translation>編輯方式</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="615"/>
+        <source>2D 像素</source>
+        <translation>2D 像素</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="615"/>
+        <source>3D 立体</source>
+        <translation>3D 立體</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="617"/>
+        <source>2D 像素：在平面纹理上逐像素绘制；3D 立体：像 BlockBench 一样直接在模型表面绘制，左键绘制、右键旋转、滚轮缩放</source>
+        <translation>2D 像素：在平面材質上逐像素繪製；3D 立體：像 BlockBench 一樣直接在模型表面繪製，左鍵繪製、右鍵旋轉、滾輪縮放</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="628"/>
+        <source>笔刷:</source>
+        <translation>筆刷：</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="632"/>
+        <source>笔刷大小，两种编辑方式共用</source>
+        <translation>筆刷大小，兩種編輯方式共用</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="646"/>
+        <source>3D 预览</source>
+        <translation>3D 預覽</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="667"/>
+        <source>2D 纹理</source>
+        <translation>2D 材質</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="680"/>
+        <source>左键绘制 · 右键/中键旋转 · 滚轮缩放</source>
+        <translation>左鍵繪製 · 右鍵/中鍵旋轉 · 滾輪縮放</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="688"/>
+        <source>模型</source>
+        <translation>模型</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="695"/>
+        <source>Classic 手臂宽 4 像素，Slim 手臂宽 3 像素</source>
+        <translation>Classic 手臂寬 4 像素，Slim 手臂寬 3 像素</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="700"/>
+        <source>绘制外层 (Overlay)</source>
+        <translation>繪製外層 (Overlay)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="701"/>
+        <source>3D 模式下将画笔落到外层叠加区域（帽子/外套等，纹理 y&gt;=32 部分）。仅 64x64 格式可用</source>
+        <translation>3D 模式下將筆刷套用到外層疊加區域（帽子/外套等，材質 y&gt;=32 部分）。僅 64x64 格式可用</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="708"/>
+        <source>选取部分</source>
+        <translation>選取部位</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="713"/>
+        <source>全部（显示整个模型）</source>
+        <translation>全部（顯示整個模型）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="714"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1302"/>
+        <source>头部</source>
+        <translation>頭部</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="715"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1302"/>
+        <source>身体</source>
+        <translation>身體</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="716"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1303"/>
+        <source>右臂</source>
+        <translation>右臂</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="717"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1303"/>
+        <source>左臂</source>
+        <translation>左臂</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="718"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1304"/>
+        <source>右腿</source>
+        <translation>右腿</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="719"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1304"/>
+        <source>左腿</source>
+        <translation>左腿</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="720"/>
+        <source>3D 模式下启用后只显示选中的部位，其余部位隐藏且不可绘制</source>
+        <translation>3D 模式下啟用後只顯示選取的部位，其餘部位隱藏且無法繪製</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="726"/>
+        <source>格式</source>
+        <translation>格式</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="733"/>
+        <source>64x64 支持外层(overlay)，64x32 不含外层</source>
+        <translation>64x64 支援外層(overlay)，64x32 不含外層</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="792"/>
+        <source>前景色 / 背景色</source>
+        <translation>前景色 / 背景色</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="800"/>
+        <source>前景色（左键绘制）</source>
+        <translation>前景色（左鍵繪製）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="803"/>
+        <source>背景色（右键绘制）</source>
+        <translation>背景色（右鍵繪製）</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="810"/>
+        <source>预设颜色</source>
+        <translation>預設顏色</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="844"/>
+        <source>最近使用</source>
+        <translation>最近使用</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="881"/>
+        <source>自定义颜色...</source>
+        <translation>自訂顏色...</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="891"/>
+        <source>预设皮肤</source>
+        <translation>預設皮膚</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="893"/>
+        <source>点击缩略图直接导入官方皮肤模板（Steve/Alex 等），导入后会替换当前画布内容</source>
+        <translation>點擊縮圖即可直接匯入官方皮膚範本（Steve/Alex 等），匯入後會取代目前畫布內容</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="921"/>
+        <source>导入 %1 皮肤</source>
+        <translation>匯入 %1 皮膚</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="938"/>
+        <source>导入失败</source>
+        <translation>匯入失敗</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="939"/>
+        <source>无法加载预设皮肤 %1</source>
+        <translation>無法載入預設皮膚 %1</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1007"/>
+        <source>新建皮肤</source>
+        <translation>建立新皮膚</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1008"/>
+        <source>选择模板:</source>
+        <translation>選擇範本：</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1021"/>
+        <source>打开皮肤</source>
+        <translation>開啟皮膚</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1023"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1040"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1516"/>
+        <source>PNG 图片 (*.png)</source>
+        <translation>PNG 圖片 (*.png)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1038"/>
+        <source>保存皮肤</source>
+        <translation>儲存皮膚</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1049"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1076"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1084"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1438"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1446"/>
+        <source>提示</source>
+        <translation>提示</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1050"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1085"/>
+        <source>请先在账户管理页选择一个账户</source>
+        <translation>請先在帳戶管理頁面選擇一個帳戶</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1077"/>
+        <source>无法获取默认皮肤</source>
+        <translation>無法取得預設皮膚</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1089"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1196"/>
+        <source>确认</source>
+        <translation>確認</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1090"/>
+        <source>确定要将此皮肤应用到账户 %1 吗？</source>
+        <translation>確定要將此皮膚套用到帳戶 %1 嗎？</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1099"/>
+        <source>离线</source>
+        <translation>離線</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1116"/>
+        <source>成功</source>
+        <translation>成功</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1117"/>
+        <source>皮肤已成功应用到账户</source>
+        <translation>皮膚已成功套用到帳戶</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1120"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1526"/>
+        <source>失败</source>
+        <translation>失敗</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1121"/>
+        <source>皮肤保存失败，请重试</source>
+        <translation>皮膚儲存失敗，請重試</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1160"/>
+        <source>选择自定义颜色</source>
+        <translation>選擇自訂顏色</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1197"/>
+        <source>切换到 64x32 格式将丢弃外层(overlay)内容，确定继续吗？</source>
+        <translation>切換到 64x32 格式將捨棄外層(overlay)內容，確定要繼續嗎？</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1293"/>
+        <source>截取部分</source>
+        <translation>擷取部分</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1300"/>
+        <source>部件:</source>
+        <translation>部件：</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1305"/>
+        <source>选择要截取的皮肤部件</source>
+        <translation>選擇要擷取的皮膚部件</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1313"/>
+        <source>面:</source>
+        <translation>面：</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1315"/>
+        <source>前</source>
+        <translation>前</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1315"/>
+        <source>后</source>
+        <translation>後</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1316"/>
+        <source>左</source>
+        <translation>左</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1316"/>
+        <source>右</source>
+        <translation>右</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1317"/>
+        <source>上</source>
+        <translation>上</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1317"/>
+        <source>下</source>
+        <translation>下</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1318"/>
+        <source>选择要截取的面，如头部的前面</source>
+        <translation>選擇要擷取的面，例如頭部的前面</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1324"/>
+        <source>外层 (Overlay)</source>
+        <translation>外層 (Overlay)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1325"/>
+        <source>截取对应部件的外层(overlay)区域，仅 64x64 格式可用</source>
+        <translation>擷取對應部件的外層(overlay)區域，僅 64x64 格式可用</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1329"/>
+        <location filename="../pages/SkinEditorPage.cpp" line="1403"/>
+        <source>请选择部位</source>
+        <translation>請選擇部位</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1340"/>
+        <source>截取所选区域</source>
+        <translation>擷取所選區域</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1341"/>
+        <source>将所选部位区域截取出来，可复制到剪贴板或保存为 PNG</source>
+        <translation>將所選部位區域擷取出來，可複製到剪貼簿或儲存為 PNG</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1439"/>
+        <source>当前没有可截取的皮肤内容</source>
+        <translation>目前沒有可擷取的皮膚內容</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1447"/>
+        <source>所选区域无效，64x32 格式不支持外层(overlay)</source>
+        <translation>所選區域無效，64x32 格式不支援外層(overlay)</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1457"/>
+        <source>截取结果</source>
+        <translation>擷取結果</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1474"/>
+        <source>%1 x %2 像素\n坐标 X:%3-%4  Y:%5-%6</source>
+        <translation>%1 x %2 像素\n座標 X:%3-%4  Y:%5-%6</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1481"/>
+        <source>复制到剪贴板</source>
+        <translation>複製到剪貼簿</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1482"/>
+        <source>将截取区域以透明 PNG 复制到剪贴板</source>
+        <translation>將擷取區域以透明 PNG 複製到剪貼簿</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1483"/>
+        <source>另存为 PNG...</source>
+        <translation>另存為 PNG...</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1484"/>
+        <source>关闭</source>
+        <translation>關閉</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1509"/>
+        <source>已复制</source>
+        <translation>已複製</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1510"/>
+        <source>选区已以透明 PNG 复制到剪贴板</source>
+        <translation>選取範圍已以透明 PNG 複製到剪貼簿</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1514"/>
+        <source>保存截取区域</source>
+        <translation>儲存擷取區域</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1521"/>
+        <source>已保存</source>
+        <translation>已儲存</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1522"/>
+        <source>截取区域已保存到:\n%1</source>
+        <translation>擷取區域已儲存至：\n%1</translation>
+    </message>
+    <message>
+        <location filename="../pages/SkinEditorPage.cpp" line="1526"/>
+        <source>保存失败</source>
+        <translation>儲存失敗</translation>
+    </message>
+</context>
+<context>
+    <name>SkinUVOverlay</name>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="129"/>
+        <location filename="../components/SkinUVOverlay.cpp" line="147"/>
+        <source>头部</source>
+        <translation>頭部</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="130"/>
+        <location filename="../components/SkinUVOverlay.cpp" line="148"/>
+        <source>身体</source>
+        <translation>身體</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="131"/>
+        <location filename="../components/SkinUVOverlay.cpp" line="149"/>
+        <source>右臂</source>
+        <translation>右臂</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="132"/>
+        <location filename="../components/SkinUVOverlay.cpp" line="150"/>
+        <source>右腿</source>
+        <translation>右腿</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="133"/>
+        <source>左臂</source>
+        <translation>左臂</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="134"/>
+        <source>左腿</source>
+        <translation>左腿</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="137"/>
+        <source>头部外层</source>
+        <translation>頭部外層</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="138"/>
+        <source>身体外层</source>
+        <translation>身體外層</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="139"/>
+        <source>右臂外层</source>
+        <translation>右臂外層</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="140"/>
+        <source>右腿外层</source>
+        <translation>右腿外層</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="141"/>
+        <source>左臂外层</source>
+        <translation>左臂外層</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="142"/>
+        <source>左腿外层</source>
+        <translation>左腿外層</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="152"/>
+        <source>左臂(同右臂)</source>
+        <translation>左臂(同右臂)</translation>
+    </message>
+    <message>
+        <location filename="../components/SkinUVOverlay.cpp" line="153"/>
+        <source>左腿(同右腿)</source>
+        <translation>左腿(同右腿)</translation>
+    </message>
+</context>
+<context>
     <name>SpeedChartWidget</name>
     <message>
         <location filename="../components/TaskProgressWidgets.cpp" line="183"/>
@@ -33978,33 +35688,33 @@
 <context>
     <name>SystemTools</name>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="974"/>
-        <location filename="../utils/SystemTools.cpp" line="980"/>
-        <location filename="../utils/SystemTools.cpp" line="987"/>
-        <location filename="../utils/SystemTools.cpp" line="1067"/>
-        <location filename="../utils/SystemTools.cpp" line="1071"/>
-        <location filename="../utils/SystemTools.cpp" line="1100"/>
-        <location filename="../utils/SystemTools.cpp" line="1109"/>
+        <location filename="../utils/SystemTools.cpp" line="975"/>
+        <location filename="../utils/SystemTools.cpp" line="981"/>
+        <location filename="../utils/SystemTools.cpp" line="988"/>
+        <location filename="../utils/SystemTools.cpp" line="1068"/>
+        <location filename="../utils/SystemTools.cpp" line="1072"/>
+        <location filename="../utils/SystemTools.cpp" line="1101"/>
+        <location filename="../utils/SystemTools.cpp" line="1110"/>
         <source>多线程下载</source>
         <translation>多執行緒下載</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="975"/>
+        <location filename="../utils/SystemTools.cpp" line="976"/>
         <source>已有下载任务正在进行中，请等待完成或取消后再试。</source>
         <translation>已有下載任務正在進行中，請等待完成或取消後再試。</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="991"/>
+        <location filename="../utils/SystemTools.cpp" line="992"/>
         <source>下载地址</source>
         <translation>下載網址</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="994"/>
+        <location filename="../utils/SystemTools.cpp" line="995"/>
         <source>请输入直链下载链接 (http/https)...</source>
         <translation>請輸入直連下載連結 (http/https)...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="997"/>
+        <location filename="../utils/SystemTools.cpp" line="998"/>
         <source>注意：百度网盘、夸克网盘等网盘链接不支持多线程下载。
 直链获取方式：在网页的下载按钮右键，点击复制链接地址，在上方粘贴。
 直链特征：以 http:// 或 https:// 开头，且服务器支持 Range 请求（断点续传）。</source>
@@ -34013,227 +35723,439 @@
 直連特徵：以 http:// 或 https:// 開頭，且伺服器支援 Range 請求（斷點續傳）。</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1005"/>
+        <location filename="../utils/SystemTools.cpp" line="1006"/>
         <source>保存路径</source>
         <translation>儲存路徑</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1008"/>
+        <location filename="../utils/SystemTools.cpp" line="1009"/>
         <source>选择保存路径...</source>
         <translation>選擇儲存路徑...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1012"/>
+        <location filename="../utils/SystemTools.cpp" line="1013"/>
         <source>浏览...</source>
         <translation>瀏覽...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1025"/>
+        <location filename="../utils/SystemTools.cpp" line="1026"/>
         <source>选择保存路径</source>
         <translation>選擇儲存路徑</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1032"/>
+        <location filename="../utils/SystemTools.cpp" line="1033"/>
         <source>下载设置</source>
         <translation>下載設定</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1037"/>
+        <location filename="../utils/SystemTools.cpp" line="1038"/>
         <source> 线程</source>
         <translation> 執行緒</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1038"/>
+        <location filename="../utils/SystemTools.cpp" line="1039"/>
         <source>线程数:</source>
         <translation>執行緒數:</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1041"/>
+        <location filename="../utils/SystemTools.cpp" line="1042"/>
         <source>留空则使用默认: BlockBox/1.0</source>
         <translation>留空則使用預設: BlockBox/1.0</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1042"/>
+        <location filename="../utils/SystemTools.cpp" line="1043"/>
         <source>User-Agent:</source>
         <translation>User-Agent:</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1044"/>
+        <location filename="../utils/SystemTools.cpp" line="1045"/>
         <source>推荐 4-16 线程，文件小于 1MB 自动降为单线程。超过 64 线程可能增加服务器压力，实际速度提升有限。</source>
         <translation>建議 4-16 執行緒，檔案小於 1MB 自動降為單執行緒。超過 64 執行緒可能增加伺服器壓力，實際速度提升有限。</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1052"/>
+        <location filename="../utils/SystemTools.cpp" line="1053"/>
         <source>开始下载</source>
         <translation>開始下載</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1053"/>
+        <location filename="../utils/SystemTools.cpp" line="657"/>
+        <location filename="../utils/SystemTools.cpp" line="1054"/>
         <source>取消</source>
         <translation>取消</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1067"/>
+        <location filename="../utils/SystemTools.cpp" line="437"/>
+        <source>Windows 临时文件</source>
+        <translation>Windows 暫存檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="438"/>
+        <source>C:/Windows/Temp 下的系统临时文件</source>
+        <translation>C:/Windows/Temp 下的系統暫存檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="445"/>
+        <source>用户临时文件</source>
+        <translation>使用者暫存檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="446"/>
+        <source>用户临时目录</source>
+        <translation>使用者暫存目錄</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="453"/>
+        <source>Prefetch 预读文件</source>
+        <translation>Prefetch 預讀檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="454"/>
+        <source>系统预读缓存文件，可安全清理</source>
+        <translation>系統預讀快取檔案，可安全清理</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="460"/>
+        <source>DNS 缓存</source>
+        <translation>DNS 快取</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="461"/>
+        <source>刷新 DNS 解析缓存</source>
+        <translation>重新整理 DNS 解析快取</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="467"/>
+        <source>回收站</source>
+        <translation>資源回收筒</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="468"/>
+        <source>清空回收站中的文件</source>
+        <translation>清空資源回收筒中的檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="475"/>
+        <source>浏览器缓存</source>
+        <translation>瀏覽器快取</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="476"/>
+        <source>浏览器缓存文件</source>
+        <translation>瀏覽器快取檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="488"/>
+        <source>最近文档记录</source>
+        <translation>最近文件記錄</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="489"/>
+        <source>最近打开的文件快捷方式列表</source>
+        <translation>最近開啟的檔案捷徑清單</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="497"/>
+        <source>缩略图缓存</source>
+        <translation>縮圖快取</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="498"/>
+        <source>Windows 缩略图缓存文件</source>
+        <translation>Windows 縮圖快取檔案</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="509"/>
+        <source>Windows 日志文件</source>
+        <translation>Windows 記錄檔</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="510"/>
+        <source>C:/Windows/System32/logfiles 下的日志</source>
+        <translation>C:/Windows/System32/logfiles 下的記錄檔</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="517"/>
+        <source>系统内存转储</source>
+        <translation>系統記憶體傾印</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="518"/>
+        <source>系统崩溃时的内存转储文件 (memory.dmp, Minidump)</source>
+        <translation>系統當機時的記憶體傾印檔案 (memory.dmp, Minidump)</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="543"/>
+        <location filename="../utils/SystemTools.cpp" line="750"/>
+        <source>磁盘清理</source>
+        <translation>磁碟清理</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="552"/>
+        <source>选择要清理的项目</source>
+        <translation>選擇要清理的項目</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="557"/>
+        <source>勾选需要清理的类别，系统将删除对应的临时文件和缓存。</source>
+        <translation>勾選需要清理的類別，系統將刪除對應的暫存檔案與快取。</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="598"/>
+        <source>未知</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="615"/>
+        <source>全选</source>
+        <translation>全選</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="620"/>
+        <source>取消全选</source>
+        <translation>取消全選</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="649"/>
+        <source>可释放空间: %1</source>
+        <translation>可釋放空間：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="656"/>
+        <source>开始清理</source>
+        <translation>開始清理</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="682"/>
+        <source>Windows 临时文件: %1</source>
+        <translation>Windows 暫存檔案：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="687"/>
+        <source>用户临时文件: %1</source>
+        <translation>使用者暫存檔案：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="692"/>
+        <source>Prefetch 预读文件: %1</source>
+        <translation>Prefetch 預讀檔案：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="697"/>
+        <source>DNS 缓存: 已清理</source>
+        <translation>DNS 快取：已清理</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="702"/>
+        <source>回收站: 已清空</source>
+        <translation>資源回收筒：已清空</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="704"/>
+        <source>回收站: 清理失败</source>
+        <translation>資源回收筒：清理失敗</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="709"/>
+        <source>浏览器缓存: %1</source>
+        <translation>瀏覽器快取：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="714"/>
+        <source>最近文档记录: %1</source>
+        <translation>最近文件記錄：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="719"/>
+        <source>缩略图缓存: %1</source>
+        <translation>縮圖快取：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="724"/>
+        <source>Windows 日志: %1</source>
+        <translation>Windows 記錄檔：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="729"/>
+        <source>系统内存转储: %1</source>
+        <translation>系統記憶體傾印：%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="736"/>
+        <source>没有选择任何清理项目。</source>
+        <translation>沒有選擇任何清理項目。</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="740"/>
+        <source>磁盘清理完成!\n共释放: %1\n\n%2</source>
+        <translation>磁碟清理完成！\n共釋放：%1\n\n%2</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="746"/>
+        <source>磁盘清理完成!\n没有找到需要清理的文件。\n\n%1</source>
+        <translation>磁碟清理完成！\n沒有找到需要清理的檔案。\n\n%1</translation>
+    </message>
+    <message>
+        <location filename="../utils/SystemTools.cpp" line="1068"/>
         <source>请输入下载链接！</source>
         <translation>請輸入下載連結！</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1071"/>
+        <location filename="../utils/SystemTools.cpp" line="1072"/>
         <source>请选择保存路径！</source>
         <translation>請選擇儲存路徑！</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1079"/>
+        <location filename="../utils/SystemTools.cpp" line="1080"/>
         <source>连接中...</source>
         <translation>連線中...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1096"/>
+        <location filename="../utils/SystemTools.cpp" line="1097"/>
         <source>下载完成</source>
         <translation>下載完成</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1101"/>
+        <location filename="../utils/SystemTools.cpp" line="1102"/>
         <source>下载完成!
 保存至: %1</source>
         <translation>下載完成!
 儲存至: %1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1110"/>
+        <location filename="../utils/SystemTools.cpp" line="1111"/>
         <source>下载失败: %1</source>
         <translation>下載失敗: %1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1113"/>
+        <location filename="../utils/SystemTools.cpp" line="1114"/>
         <source>下载中</source>
         <translation>下載中</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1116"/>
+        <location filename="../utils/SystemTools.cpp" line="1117"/>
         <source>下载任务已启动</source>
         <translation>下載任務已啟動</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1238"/>
+        <location filename="../utils/SystemTools.cpp" line="1239"/>
         <source>无法写入临时文件: %1</source>
         <translation>無法寫入暫存檔: %1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1283"/>
+        <location filename="../utils/SystemTools.cpp" line="1284"/>
         <source>无法写入 PowerShell 脚本</source>
         <translation>無法寫入 PowerShell 指令碼</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1308"/>
+        <location filename="../utils/SystemTools.cpp" line="1309"/>
         <source>已取消管理员授权</source>
         <translation>已取消管理員授權</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1312"/>
+        <location filename="../utils/SystemTools.cpp" line="1313"/>
         <source>无法启动管理员进程 (错误码: %1)</source>
         <translation>無法啟動管理員處理程序 (錯誤碼: %1)</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1341"/>
+        <location filename="../utils/SystemTools.cpp" line="1342"/>
         <source>写入 hosts 文件失败（未知原因，可能被安全软件拦截）</source>
         <translation>寫入 hosts 檔案失敗（未知原因，可能被安全軟體攔截）</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1342"/>
+        <location filename="../utils/SystemTools.cpp" line="1343"/>
         <source>写入 hosts 文件失败：%1</source>
         <translation>寫入 hosts 檔案失敗：%1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1347"/>
+        <location filename="../utils/SystemTools.cpp" line="1348"/>
         <source>管理员进程执行异常，未获取到结果（可能被安全软件拦截）</source>
         <translation>管理員處理程序執行異常，未取得結果（可能被安全軟體攔截）</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1358"/>
+        <location filename="../utils/SystemTools.cpp" line="1359"/>
         <source>此功能仅在 Windows 系统下可用</source>
         <translation>此功能僅在 Windows 系統下可用</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1367"/>
-        <location filename="../utils/SystemTools.cpp" line="1457"/>
-        <location filename="../utils/SystemTools.cpp" line="1465"/>
-        <location filename="../utils/SystemTools.cpp" line="1475"/>
-        <location filename="../utils/SystemTools.cpp" line="1488"/>
-        <location filename="../utils/SystemTools.cpp" line="1495"/>
-        <location filename="../utils/SystemTools.cpp" line="1504"/>
+        <location filename="../utils/SystemTools.cpp" line="1368"/>
+        <location filename="../utils/SystemTools.cpp" line="1458"/>
+        <location filename="../utils/SystemTools.cpp" line="1466"/>
+        <location filename="../utils/SystemTools.cpp" line="1476"/>
+        <location filename="../utils/SystemTools.cpp" line="1489"/>
+        <location filename="../utils/SystemTools.cpp" line="1496"/>
+        <location filename="../utils/SystemTools.cpp" line="1505"/>
         <source>GitHub 加速</source>
         <translation>GitHub 加速</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1373"/>
+        <location filename="../utils/SystemTools.cpp" line="1374"/>
         <source>通过修改本地 hosts 文件，将 GitHub 相关域名指向更快的 IP 地址，从而提升访问速度。
 点击“启用加速”将从网络获取最新 IP 映射并写入 hosts 文件（需要管理员权限）。</source>
         <translation>透過修改本機 hosts 檔案，將 GitHub 相關網域指向更快的 IP 位址，藉此提升存取速度。
 點擊「啟用加速」將從網路取得最新 IP 對應並寫入 hosts 檔案（需要管理員權限）。</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1381"/>
-        <location filename="../utils/SystemTools.cpp" line="1455"/>
+        <location filename="../utils/SystemTools.cpp" line="1382"/>
+        <location filename="../utils/SystemTools.cpp" line="1456"/>
         <source>当前状态：已启用加速</source>
         <translation>目前狀態：已啟用加速</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1382"/>
-        <location filename="../utils/SystemTools.cpp" line="1487"/>
+        <location filename="../utils/SystemTools.cpp" line="1383"/>
+        <location filename="../utils/SystemTools.cpp" line="1488"/>
         <source>当前状态：未启用加速</source>
         <translation>目前狀態：未啟用加速</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1385"/>
+        <location filename="../utils/SystemTools.cpp" line="1386"/>
         <source>即将写入的 hosts 映射：</source>
         <translation>即將寫入的 hosts 對應：</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1390"/>
+        <location filename="../utils/SystemTools.cpp" line="1391"/>
         <source>正在获取最新的 GitHub IP 映射...</source>
         <translation>正在取得最新的 GitHub IP 對應...</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1394"/>
+        <location filename="../utils/SystemTools.cpp" line="1395"/>
         <source>启用加速</source>
         <translation>啟用加速</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1395"/>
+        <location filename="../utils/SystemTools.cpp" line="1396"/>
         <source>恢复默认</source>
         <translation>恢復預設</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1430"/>
+        <location filename="../utils/SystemTools.cpp" line="1431"/>
         <source>（在线数据获取失败，使用内置 IP 映射）
 </source>
         <translation>（線上資料取得失敗，使用內建 IP 對應）
 </translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1458"/>
+        <location filename="../utils/SystemTools.cpp" line="1459"/>
         <source>已成功更新 hosts 文件并刷新 DNS 缓存！</source>
         <translation>已成功更新 hosts 檔案並重新整理 DNS 快取！</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1466"/>
-        <location filename="../utils/SystemTools.cpp" line="1496"/>
+        <location filename="../utils/SystemTools.cpp" line="1467"/>
+        <location filename="../utils/SystemTools.cpp" line="1497"/>
         <source>操作失败：%1</source>
         <translation>操作失敗：%1</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1476"/>
+        <location filename="../utils/SystemTools.cpp" line="1477"/>
         <source>hosts 文件中未发现加速条目，无需恢复。</source>
         <translation>hosts 檔案中未發現加速項目，無需還原。</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1489"/>
+        <location filename="../utils/SystemTools.cpp" line="1490"/>
         <source>已移除加速条目并恢复默认 hosts。</source>
         <translation>已移除加速項目並還原預設 hosts。</translation>
     </message>
     <message>
-        <location filename="../utils/SystemTools.cpp" line="1505"/>
+        <location filename="../utils/SystemTools.cpp" line="1506"/>
         <source>此功能仅在 Windows 系统下可用。</source>
         <translation>此功能僅在 Windows 系統下可用。</translation>
     </message>

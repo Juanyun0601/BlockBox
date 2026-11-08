@@ -19,6 +19,7 @@
 #include <QFrame>
 #include <QGraphicsOpacityEffect>
 #include <QIcon>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>

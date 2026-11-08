@@ -1,0 +1,3 @@
+.syntax_check\t.cpp:1:1: error: 'e' does not name a type
+    1 | e
+      | ^

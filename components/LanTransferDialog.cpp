@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file   LanTransferDialog.cpp
  * @brief  文件传输弹窗实现：选设备 → 内嵌资源管理器选位置 → 发送
  * @author BlockBox Team
@@ -373,7 +373,7 @@ void LanTransferDialog::rebuildDeviceList()
     for (const LanDevice &dev : m_remoteDevices)
     {
         auto *item = new QListWidgetItem(
-            QStringLiteral("%1    %2（远程）").arg(dev.name, dev.address),
+            tr("%1    %2（远程）").arg(dev.name, dev.address),
             m_deviceList);
         item->setData(Qt::UserRole, dev.id);
         item->setToolTip(tr("远程设备 · 通过内网穿透直连\n虚拟地址：%1\n"

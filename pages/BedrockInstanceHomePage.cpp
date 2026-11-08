@@ -199,9 +199,9 @@ void BedrockInstanceHomePage::applyThemeStyles()
         .arg(tc.red()).arg(tc.green()).arg(tc.blue());
 
     // 信息单元格样式
-    QString infoStyle = QString(
+    QString infoStyle = ThemeManager::instance()->resolveTokens(QString(
         "#homeInfoCell {"
-        "  background: palette(base);"
+        "  background: @BG_CARD@;"
         "  border: 1px solid %1;"
         "  border-radius: 6px;"
         "}"
@@ -216,7 +216,7 @@ void BedrockInstanceHomePage::applyThemeStyles()
         "  background: transparent;"
         "  border: none;"
         "}"
-    ).arg(borderColor, textColor, themeColor);
+    ).arg(borderColor, textColor, themeColor));
 
     auto cells = findChildren<QWidget *>("homeInfoCell");
     for (auto *cell : cells)
@@ -245,9 +245,9 @@ void BedrockInstanceHomePage::applyThemeStyles()
     );
 
     // 次级按钮
-    QString dirBtnStyle = QString(
+    QString dirBtnStyle = ThemeManager::instance()->resolveTokens(QString(
         "#bedrockHomeOpenDirBtn {"
-        "  background: palette(base);"
+        "  background: @BG_CARD@;"
         "  color: %1;"
         "  border: 1px solid %2;"
         "  border-radius: 6px;"
@@ -256,7 +256,7 @@ void BedrockInstanceHomePage::applyThemeStyles()
         "#bedrockHomeOpenDirBtn:hover {"
         "  background: %3;"
         "}"
-    ).arg(textColor, borderColor, hoverBg);
+    ).arg(textColor, borderColor, hoverBg));
 
     m_openDataBtn->setStyleSheet(dirBtnStyle);
     m_openMojangBtn->setStyleSheet(dirBtnStyle);

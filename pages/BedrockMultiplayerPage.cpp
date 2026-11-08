@@ -28,26 +28,48 @@
 
 #include "components/AppInputDialog.h"
 #include "components/AppMessageBox.h"
+#include "pages/MultiplayerUiParts.h"
 #include "utils/GravityCone/GravityConeClient.h"
 #include "utils/IconHelper.h"
+#include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
+
+// 版式零件与整页令牌样式与 Java 版联机页共用（见 MultiplayerUiParts.h）
+using MultiplayerUi::ScrollPage;
+using MultiplayerUi::makeScrollPage;
+using MultiplayerUi::makeCard;
+using MultiplayerUi::makeCardTitle;
+using MultiplayerUi::makeFieldLabel;
+using MultiplayerUi::makeHintLabel;
+using MultiplayerUi::makeDivider;
+using MultiplayerUi::makeDot;
+using MultiplayerUi::setDotTone;
+using MultiplayerUi::makeStatusCard;
+using MultiplayerUi::makeNoteCard;
+using MultiplayerUi::makeLatencyRow;
 
 BedrockMultiplayerPage::BedrockMultiplayerPage(QWidget *parent)
     : QWidget(parent)
     , m_client(GravityConeClient::instance())
     , m_stack(nullptr)
-    , m_homePage(nullptr)
-    , m_statusLabel(nullptr)
+    , m_topBar(nullptr)
+    , m_coreLabel(nullptr)
     , m_updateBtn(nullptr)
+    , m_homePage(nullptr)
+    , m_statusDot(nullptr)
+    , m_statusLabel(nullptr)
     , m_descLabel(nullptr)
     , m_joinBtn(nullptr)
     , m_createBtn(nullptr)
     , m_roomPage(nullptr)
+    , m_latencyDot(nullptr)
     , m_latencyLabel(nullptr)
+    , m_addressCard(nullptr)
     , m_addressLabel(nullptr)
     , m_roomCodeLabel(nullptr)
     , m_copyCodeBtn(nullptr)
     , m_leaveBtn(nullptr)
+    , m_playersTitle(nullptr)
     , m_playersScroll(nullptr)
     , m_playersContainer(nullptr)
     , m_playersLayout(nullptr)
@@ -61,11 +83,47 @@ BedrockMultiplayerPage::BedrockMultiplayerPage(QWidget *parent)
     connect(m_client, &GravityConeClient::errorOccurred, this, [this](const QString &err) {
         showInfoDialog(tr("联机错误"), err);
     });
+    // 进度提示复用同一个对话框：核心在加入/创建过程中会推送多条进度，
+    // 每条都弹新窗会形成弹窗轰炸，这里只更新已有窗口的文字
     connect(m_client, &GravityConeClient::progressUpdated, this, [this](const QString &, const QString &message) {
-        showInfoDialog(tr("正在加入"), message);
+        if (message.isEmpty())
+            return;
+        if (!m_progressDialog) {
+            m_progressDialog = new QDialog(this);
+            m_progressDialog->setWindowTitle(tr("正在加入"));
+            m_progressDialog->setMinimumWidth(280);
+            auto *layout = new QVBoxLayout(m_progressDialog);
+            layout->setContentsMargins(16, 16, 16, 16);
+            layout->setSpacing(12);
+            m_progressLabel = new QLabel(m_progressDialog);
+            m_progressLabel->setWordWrap(true);
+            m_progressLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
+            layout->addWidget(m_progressLabel);
+            auto *btnLayout = new QHBoxLayout();
+            btnLayout->addStretch();
+            auto *okBtn = new QPushButton(tr("确定"), m_progressDialog);
+            okBtn->setCursor(Qt::PointingHandCursor);
+            okBtn->setFixedHeight(30);
+            okBtn->setMinimumWidth(80);
+            btnLayout->addWidget(okBtn);
+            layout->addLayout(btnLayout);
+            connect(okBtn, &QPushButton::clicked, m_progressDialog, &QDialog::accept);
+            connect(m_progressDialog, &QDialog::finished, this, [this]() {
+                m_progressDialog->deleteLater();
+                m_progressDialog = nullptr;
+                m_progressLabel = nullptr;
+            });
+            m_progressDialog->setModal(false);
+            m_progressDialog->show();
+        }
+        if (m_progressLabel)
+            m_progressLabel->setText(message);
     });
 
+    // 换主题色、或者亮色/暗色整体切换时都要重算样式
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
+            this, &BedrockMultiplayerPage::applyThemeStyles);
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
             this, &BedrockMultiplayerPage::applyThemeStyles);
 
     // 刷新定时器（用于更新联机时长）
@@ -82,9 +140,46 @@ BedrockMultiplayerPage::~BedrockMultiplayerPage() = default;
 
 void BedrockMultiplayerPage::initUI()
 {
+    // 命名 + 允许样式表铺底：联机页自己铺主题底色，不靠外层窗口的调色板
+    setObjectName(QStringLiteral("bedrockMultiplayerRoot"));
+    setAttribute(Qt::WA_StyledBackground, true);
+
     auto *mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setContentsMargins(14, 12, 14, 0);
     mainLayout->setSpacing(0);
+
+    // ---- 顶部：核心名 + 更新按钮（基岩版核心固定为 GravityCone） ----
+    m_topBar = new QWidget(this);
+    m_topBar->setObjectName(QStringLiteral("multiplayerTopBar"));
+    auto *topLayout = new QHBoxLayout(m_topBar);
+    topLayout->setContentsMargins(0, 0, 0, 10);
+    topLayout->setSpacing(8);
+
+    auto *coreCaption = new QLabel(tr("核心"), m_topBar);
+    coreCaption->setObjectName(QStringLiteral("mpTopCaption"));
+    topLayout->addWidget(coreCaption);
+
+    m_coreLabel = new QLabel(tr("GravityCone"), m_topBar);
+    m_coreLabel->setObjectName(QStringLiteral("multiplayerCoreBadge"));
+    m_coreLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    m_coreLabel->setFixedHeight(32);
+    m_coreLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    m_updateBtn = new QPushButton(tr("更新"), m_topBar);
+    m_updateBtn->setObjectName(QStringLiteral("multiplayerUpdateBtn"));
+    m_updateBtn->setCursor(Qt::PointingHandCursor);
+    m_updateBtn->setFixedHeight(32);
+    m_updateBtn->setMinimumWidth(88);
+    m_updateBtn->setToolTip(tr("检查并下载最新版本联机核心"));
+
+    topLayout->addWidget(m_coreLabel, 1);
+    topLayout->addWidget(m_updateBtn);
+    mainLayout->addWidget(m_topBar);
+
+    auto *topDivider = new QFrame(this);
+    topDivider->setObjectName(QStringLiteral("mpTopDivider"));
+    topDivider->setFixedHeight(1);
+    mainLayout->addWidget(topDivider);
 
     m_stack = new QStackedWidget(this);
     m_stack->setObjectName(QStringLiteral("bedrockMultiplayerStack"));
@@ -106,46 +201,15 @@ void BedrockMultiplayerPage::initUI()
 
 void BedrockMultiplayerPage::buildHomePage(QWidget *page)
 {
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(10);
+    const ScrollPage parts = makeScrollPage(page);
 
-    // ---- 顶部区域：核心选择框 + 更新按钮 ----
-    auto *topBar = new QHBoxLayout();
-    topBar->setSpacing(6);
+    // ---- 顶部状态条：核心装没装、跑没跑，一眼看到 ----
+    parts.body->addWidget(makeStatusCard(page, m_statusDot, m_statusLabel,
+                                         QStringLiteral("multiplayerStatusLabel")));
 
-    auto *coreCombo = new QLabel(page);
-    coreCombo->setObjectName(QStringLiteral("bedrockMpCoreLabel"));
-    coreCombo->setText(tr("GravityCone"));
-    coreCombo->setAlignment(Qt::AlignCenter);
-    coreCombo->setFixedHeight(28);
-    coreCombo->setMinimumWidth(140);
-    coreCombo->setMaximumWidth(220);
-
-    m_updateBtn = new QPushButton(tr("更新"), page);
-    m_updateBtn->setObjectName(QStringLiteral("bedrockMpUpdateBtn"));
-    m_updateBtn->setCursor(Qt::PointingHandCursor);
-    m_updateBtn->setFixedHeight(28);
-    m_updateBtn->setToolTip(tr("检查并下载最新版本联机核心"));
-
-    topBar->addWidget(coreCombo, 1);
-    topBar->addWidget(m_updateBtn);
-    layout->addLayout(topBar);
-
-    // 顶部状态文字
-    m_statusLabel = new QLabel(page);
-    m_statusLabel->setObjectName(QStringLiteral("bedrockMpStatusLabel"));
-    m_statusLabel->setWordWrap(true);
-    m_statusLabel->setAlignment(Qt::AlignCenter);
-    layout->addWidget(m_statusLabel);
-
-    // ---- 中间区域：说明信息 ----
-    m_descLabel = new QLabel(page);
-    m_descLabel->setObjectName(QStringLiteral("bedrockMpDescLabel"));
-    m_descLabel->setWordWrap(true);
-    m_descLabel->setTextFormat(Qt::RichText);
-    m_descLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    m_descLabel->setOpenExternalLinks(true);
+    // ---- 说明卡片 ----
+    QFrame *noteCard = makeNoteCard(page, tr("关于 GravityCone"),
+                                    m_descLabel, QStringLiteral("multiplayerDescLabel"));
     m_descLabel->setText(
         tr("基岩版实例助手可以使用 GravityCone 联机，房主创建房间后与朋友共享邀请码，"
            "即可跨越局域网限制一起游玩基岩版。<br><br>"
@@ -155,25 +219,26 @@ void BedrockMultiplayerPage::buildHomePage(QWidget *page)
            "在联机过程中，请严格遵守当地法律法规。<br><br>"
            "感谢了解与配合，祝你联机愉快！")
     );
-    layout->addWidget(m_descLabel, 1);
+    parts.body->addWidget(noteCard);
+    parts.body->addStretch(1);
 
-    // ---- 加入房间 / 创建房间按钮 ----
+    // ---- 加入房间 / 创建房间按钮（固定在底部） ----
     auto *btnRow = new QHBoxLayout();
-    btnRow->setSpacing(6);
+    btnRow->setSpacing(10);
 
     m_joinBtn = new QPushButton(tr("加入房间"), page);
-    m_joinBtn->setObjectName(QStringLiteral("bedrockMpJoinBtn"));
+    m_joinBtn->setObjectName(QStringLiteral("multiplayerJoinBtn"));
     m_joinBtn->setCursor(Qt::PointingHandCursor);
-    m_joinBtn->setFixedHeight(34);
+    m_joinBtn->setFixedHeight(44);
 
     m_createBtn = new QPushButton(tr("创建房间"), page);
-    m_createBtn->setObjectName(QStringLiteral("bedrockMpCreateBtn"));
+    m_createBtn->setObjectName(QStringLiteral("multiplayerCreateBtn"));
     m_createBtn->setCursor(Qt::PointingHandCursor);
-    m_createBtn->setFixedHeight(34);
+    m_createBtn->setFixedHeight(44);
 
     btnRow->addWidget(m_joinBtn, 1);
     btnRow->addWidget(m_createBtn, 1);
-    layout->addLayout(btnRow);
+    parts.outer->addLayout(btnRow);
 
     // 信号连接
     connect(m_updateBtn, &QPushButton::clicked, this, [this]() {
@@ -211,7 +276,8 @@ void BedrockMultiplayerPage::buildHomePage(QWidget *page)
             return;
         }
         if (m_client->state() == GravityConeClient::State::Fatal) {
-            showInfoDialog(tr("启动失败"), tr("联机核心启动失败，请重试或重新下载安装。"));
+            // 启动失败也允许重试：重新拉起核心，而不是只弹窗让用户重启软件
+            m_client->start();
             return;
         }
         if (m_client->state() != GravityConeClient::State::Waiting) {
@@ -254,7 +320,8 @@ void BedrockMultiplayerPage::buildHomePage(QWidget *page)
             return;
         }
         if (m_client->state() == GravityConeClient::State::Fatal) {
-            showInfoDialog(tr("启动失败"), tr("联机核心启动失败，请重试或重新下载安装。"));
+            // 启动失败也允许重试：重新拉起核心，而不是只弹窗让用户重启软件
+            m_client->start();
             return;
         }
         if (m_client->state() != GravityConeClient::State::Waiting) {
@@ -269,79 +336,96 @@ void BedrockMultiplayerPage::buildHomePage(QWidget *page)
 
 void BedrockMultiplayerPage::buildRoomPage(QWidget *page)
 {
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
+    auto *outer = new QVBoxLayout(page);
+    outer->setContentsMargins(0, 12, 0, 12);
+    outer->setSpacing(12);
 
-    // ---- 顶部：联机状态和联机时长 ----
-    m_latencyLabel = new QLabel(page);
-    m_latencyLabel->setObjectName(QStringLiteral("bedrockMpLatencyLabel"));
+    // ---- 顶部：状态小圆点 + 联机时长 ----
+    outer->addLayout(makeLatencyRow(page, m_latencyDot, m_latencyLabel));
     m_latencyLabel->setAlignment(Qt::AlignCenter);
-    m_latencyLabel->setWordWrap(true);
-    layout->addWidget(m_latencyLabel);
 
-    // 服务器地址（房客模式）：在游戏中输入此地址即可进入
-    m_addressLabel = new QLabel(page);
-    m_addressLabel->setObjectName(QStringLiteral("bedrockMpAddressLabel"));
-    m_addressLabel->setAlignment(Qt::AlignCenter);
+    // ---- 服务器地址（房客模式）：在游戏中输入此地址即可进入 ----
+    m_addressCard = makeCard(QStringLiteral("mpCodeCard"), page);
+    auto *addressRow = new QVBoxLayout(m_addressCard);
+    addressRow->setContentsMargins(16, 12, 16, 12);
+    addressRow->setSpacing(2);
+
+    auto *addressCaption = new QLabel(tr("游戏内服务器地址"), m_addressCard);
+    addressCaption->setObjectName(QStringLiteral("mpCodeCaption"));
+    addressRow->addWidget(addressCaption);
+
+    m_addressLabel = new QLabel(m_addressCard);
+    m_addressLabel->setObjectName(QStringLiteral("multiplayerAddressLabel"));
     m_addressLabel->setWordWrap(true);
     m_addressLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(m_addressLabel);
+    addressRow->addWidget(m_addressLabel);
+    m_addressCard->setVisible(false);
+    outer->addWidget(m_addressCard);
 
-    // ---- 中间：大大的房间邀请码 + 复制按钮 ----
-    auto *codeLayout = new QHBoxLayout();
-    codeLayout->setSpacing(6);
+    // ---- 房间邀请码卡片 ----
+    QFrame *codeCard = makeCard(QStringLiteral("mpCodeCard"), page);
+    auto *codeRow = new QHBoxLayout(codeCard);
+    codeRow->setContentsMargins(16, 12, 12, 12);
+    codeRow->setSpacing(10);
 
-    m_roomCodeLabel = new QLabel(page);
-    m_roomCodeLabel->setObjectName(QStringLiteral("bedrockMpRoomCodeLabel"));
-    m_roomCodeLabel->setAlignment(Qt::AlignCenter);
+    auto *codeColumn = new QVBoxLayout();
+    codeColumn->setSpacing(2);
+    auto *codeCaption = new QLabel(tr("房间邀请码"), codeCard);
+    codeCaption->setObjectName(QStringLiteral("mpCodeCaption"));
+    codeColumn->addWidget(codeCaption);
+
+    m_roomCodeLabel = new QLabel(codeCard);
+    m_roomCodeLabel->setObjectName(QStringLiteral("multiplayerRoomCodeLabel"));
     m_roomCodeLabel->setWordWrap(true);
     m_roomCodeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    codeColumn->addWidget(m_roomCodeLabel);
+    codeRow->addLayout(codeColumn, 1);
 
-    QFont codeFont = m_roomCodeLabel->font();
-    codeFont.setBold(true);
-    codeFont.setPointSize(12);
-    m_roomCodeLabel->setFont(codeFont);
-
-    m_copyCodeBtn = new QPushButton(page);
-    m_copyCodeBtn->setObjectName(QStringLiteral("bedrockMpCopyCodeBtn"));
+    m_copyCodeBtn = new QPushButton(codeCard);
+    m_copyCodeBtn->setObjectName(QStringLiteral("multiplayerCopyCodeBtn"));
     m_copyCodeBtn->setCursor(Qt::PointingHandCursor);
-    m_copyCodeBtn->setFixedSize(28, 28);
+    m_copyCodeBtn->setFixedSize(36, 36);
     m_copyCodeBtn->setToolTip(tr("复制邀请码"));
     m_copyCodeBtn->setIcon(IconHelper::loadColoredIcon(
         QStringLiteral(":/Images/Icons/copy.svg"),
         ThemeManager::instance()->currentThemeColor(), 16));
     m_copyCodeBtn->setIconSize(QSize(16, 16));
+    codeRow->addWidget(m_copyCodeBtn, 0, Qt::AlignVCenter);
+    outer->addWidget(codeCard);
 
-    codeLayout->addStretch(1);
-    codeLayout->addWidget(m_roomCodeLabel, 4);
-    codeLayout->addWidget(m_copyCodeBtn);
-    codeLayout->addStretch(1);
-    layout->addLayout(codeLayout);
+    // ---- 玩家列表 ----
+    auto *playersHeader = new QHBoxLayout();
+    playersHeader->setContentsMargins(2, 2, 2, 0);
+    m_playersTitle = new QLabel(tr("玩家"), page);
+    m_playersTitle->setObjectName(QStringLiteral("mpSectionTitle"));
+    playersHeader->addWidget(m_playersTitle);
+    playersHeader->addStretch(1);
+    outer->addLayout(playersHeader);
 
-    // ---- 玩家列表区域 ----
     m_playersScroll = new QScrollArea(page);
-    m_playersScroll->setObjectName(QStringLiteral("bedrockMpPlayersScroll"));
+    m_playersScroll->setObjectName(QStringLiteral("multiplayerPlayersScroll"));
     m_playersScroll->setWidgetResizable(true);
     m_playersScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_playersScroll->setFrameShape(QFrame::NoFrame);
+    m_playersScroll->viewport()->setAutoFillBackground(false);
+    TouchScroll::enableDragScroll(m_playersScroll);
 
     m_playersContainer = new QWidget();
-    m_playersContainer->setObjectName(QStringLiteral("bedrockMpPlayersContainer"));
+    m_playersContainer->setObjectName(QStringLiteral("multiplayerPlayersContainer"));
     m_playersLayout = new QVBoxLayout(m_playersContainer);
-    m_playersLayout->setContentsMargins(0, 0, 0, 0);
-    m_playersLayout->setSpacing(4);
+    m_playersLayout->setContentsMargins(0, 0, 2, 0);
+    m_playersLayout->setSpacing(8);
     m_playersLayout->addStretch();
 
     m_playersScroll->setWidget(m_playersContainer);
-    layout->addWidget(m_playersScroll, 1);
+    outer->addWidget(m_playersScroll, 1);
 
     // ---- 离开房间按钮 ----
     m_leaveBtn = new QPushButton(tr("离开房间"), page);
-    m_leaveBtn->setObjectName(QStringLiteral("bedrockMpLeaveBtn"));
+    m_leaveBtn->setObjectName(QStringLiteral("multiplayerLeaveBtn"));
     m_leaveBtn->setCursor(Qt::PointingHandCursor);
-    m_leaveBtn->setFixedHeight(32);
-    layout->addWidget(m_leaveBtn);
+    m_leaveBtn->setFixedHeight(44);
+    outer->addWidget(m_leaveBtn);
 
     connect(m_copyCodeBtn, &QPushButton::clicked, this, [this]() {
         const QString code = m_client->roomCode();
@@ -364,180 +448,29 @@ void BedrockMultiplayerPage::buildRoomPage(QWidget *page)
 
 void BedrockMultiplayerPage::applyThemeStyles()
 {
-    const QString themeColor = ThemeManager::instance()->currentThemeColor();
-    const QString textColor = ThemeManager::instance()->currentTextColor();
-    const QString borderColor = ThemeManager::instance()->currentBorderColor();
-    QColor tc(themeColor);
-    const QString hoverBg = QString("rgba(%1, %2, %3, 0.12)")
-        .arg(tc.red()).arg(tc.green()).arg(tc.blue());
-    const bool isBmpDark = (ThemeManager::instance()->currentTheme()
-                            == ThemeManager::DarkTheme);
-    const QString bmpDisabledBg = isBmpDark ? "#3a3a3a" : "#f5f5f5";
-    const QString bmpDisabledText = isBmpDark ? "#8a8a8a" : "#999999";
+    // 与 Java 版联机页共用同一份令牌样式（对象名一致），见 MultiplayerUiParts.h
+    setStyleSheet(StyleKit::resolve(MultiplayerUi::pageStyleSheet()));
 
-    if (m_statusLabel) {
-        m_statusLabel->setStyleSheet(
-            QString("QLabel#bedrockMpStatusLabel {"
-                    "  color: %1;"
-                    "  font-size: 11px;"
-                    "  padding: 4px;"
-                    "  background: transparent;"
-                    "}").arg(textColor));
-    }
-
-    if (m_descLabel) {
-        m_descLabel->setStyleSheet(
-            QString("QLabel#bedrockMpDescLabel {"
-                    "  color: %1;"
-                    "  font-size: 12px;"
-                    "  padding: 8px;"
-                    "  background: palette(base);"
-                    "  border: 1px solid %2;"
-                    "  border-radius: 6px;"
-                    "}").arg(textColor, borderColor));
-    }
-
-    if (m_homePage) {
-        m_homePage->setStyleSheet(
-            QString(
-                "QLabel#bedrockMpCoreLabel {"
-                "  background: palette(base);"
-                "  border: 1px solid %1;"
-                "  border-radius: 4px;"
-                "  color: %2;"
-                "  font-size: 12px;"
-                "  padding: 0 6px;"
-                "}"
-                "QPushButton#bedrockMpUpdateBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %1;"
-                "  border-radius: 4px;"
-                "  color: %2;"
-                "  font-size: 12px;"
-                "  padding: 0 10px;"
-                "}"
-                "QPushButton#bedrockMpUpdateBtn:hover {"
-                "  background: %3;"
-                "  border-color: %4;"
-                "  color: %4;"
-                "}"
-                "QPushButton#bedrockMpUpdateBtn:disabled {"
-                "  color: %6;"
-                "  background: %7;"
-                "}"
-                "QPushButton#bedrockMpJoinBtn, QPushButton#bedrockMpCreateBtn {"
-                "  background: %4;"
-                "  color: white;"
-                "  border: none;"
-                "  border-radius: 6px;"
-                "  font-size: 13px;"
-                "  font-weight: 500;"
-                "}"
-                "QPushButton#bedrockMpJoinBtn:hover, QPushButton#bedrockMpCreateBtn:hover {"
-                "  background: %5;"
-                "}"
-                "QPushButton#bedrockMpJoinBtn:disabled, QPushButton#bedrockMpCreateBtn:disabled {"
-                "  background: %6;"
-                "  color: %7;"
-                "}"
-            ).arg(borderColor, textColor, hoverBg, themeColor,
-                  tc.darker(110).name(), bmpDisabledBg, bmpDisabledText));
-    }
-
-    if (m_roomPage) {
-        m_roomPage->setStyleSheet(
-            QString(
-                "QLabel#bedrockMpRoomCodeLabel {"
-                "  color: %3;"
-                "  font-size: 14px;"
-                "  font-weight: bold;"
-                "  padding: 12px 8px;"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "}"
-                "QLabel#bedrockMpAddressLabel {"
-                "  color: %1;"
-                "  font-size: 12px;"
-                "  padding: 6px;"
-                "  background: rgba(31, 167, 143, 0.10);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "}"
-                "QPushButton#bedrockMpCopyCodeBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 4px;"
-                "}"
-                "QPushButton#bedrockMpCopyCodeBtn:hover {"
-                "  background: %4;"
-                "  border-color: %3;"
-                "}"
-                "QPushButton#bedrockMpLeaveBtn {"
-                "  background: palette(base);"
-                "  border: 1px solid %2;"
-                "  border-radius: 6px;"
-                "  color: #d32f2f;"
-                "  font-size: 12px;"
-                "}"
-                "QPushButton#bedrockMpLeaveBtn:hover {"
-                "  background: rgba(211, 47, 47, 0.12);"
-                "  border-color: #d32f2f;"
-                "}"
-                "QScrollArea#bedrockMpPlayersScroll {"
-                "  background: transparent;"
-                "  border: none;"
-                "}"
-                "QWidget#bedrockMpPlayersContainer {"
-                "  background: transparent;"
-                "}"
-            ).arg(textColor, borderColor, themeColor, hoverBg));
-    }
-
-    // 玩家卡片样式
-    const QString playerCardStyle = QString(
-        "QWidget[cardRole=\"bmpContainer\"] {"
-        "  background: palette(base);"
-        "  border: 1px solid %1;"
-        "  border-radius: 6px;"
-        "}"
-        "QWidget[cardRole=\"bmpContainer\"]:hover {"
-        "  border-color: %2;"
-        "}"
-        "QLabel[cardRole=\"bmpName\"] {"
-        "  font-size: 13px;"
-        "  font-weight: bold;"
-        "  color: %3;"
-        "  background: transparent;"
-        "  border: none;"
-        "}"
-        "QLabel[cardRole=\"bmpChip\"] {"
-        "  background-color: rgba(%4, %5, %6, 26);"
-        "  color: %2;"
-        "  border: 1px solid %1;"
-        "  border-radius: 8px;"
-        "  padding: 2px 6px;"
-        "  font-size: 10px;"
-        "}"
-        "QPushButton[cardRole=\"bmpActionBtn\"] {"
-        "  background: transparent;"
-        "  border: none;"
-        "  border-radius: 4px;"
-        "}"
-        "QPushButton[cardRole=\"bmpActionBtn\"]:hover {"
-        "  background: rgba(%4, %5, %6, 26);"
-        "}"
-    ).arg(borderColor, themeColor, textColor)
-     .arg(tc.red()).arg(tc.green()).arg(tc.blue());
-
-    if (m_playersContainer)
-        m_playersContainer->setStyleSheet(playerCardStyle);
+    // 说明卡片里的超链接：暗色主题下默认的深蓝几乎看不见，按主题重新上色
+    const bool darkTheme = ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme;
+    const QColor linkColor(StyleKit::resolve(darkTheme ? QStringLiteral("@LINK_HOVER@")
+                                                       : QStringLiteral("@LINK@")));
+    for (QLabel *desc : findChildren<QLabel *>(QStringLiteral("multiplayerDescLabel")))
+        MultiplayerUi::applyDescriptionLinkColor(desc, linkColor);
 }
-
 void BedrockMultiplayerPage::refreshPage()
 {
     const auto state = m_client->state();
     const bool inRoom = m_client->isInRoom();
+
+    // 加入/创建已有结果（进房、失败或回到空闲）时自动关掉进度弹窗
+    if (m_progressDialog
+        && (inRoom || state == GravityConeClient::State::Waiting
+            || state == GravityConeClient::State::Exception
+            || state == GravityConeClient::State::Fatal
+            || state == GravityConeClient::State::NotInstalled)) {
+        m_progressDialog->accept();
+    }
 
     if (inRoom) {
         if (m_stack->currentIndex() != 1) {
@@ -586,6 +519,26 @@ void BedrockMultiplayerPage::refreshPage()
             break;
         }
         m_statusLabel->setText(text);
+
+        // 状态圆点跟着状态走：绿=可用，黄=进行中/待操作，红=出错
+        QString tone;
+        switch (state) {
+        case GravityConeClient::State::Waiting:
+            tone = m_client->isProcessRunning() ? QStringLiteral("ok") : QStringLiteral("idle");
+            break;
+        case GravityConeClient::State::HostOk:
+        case GravityConeClient::State::GuestOk:
+            tone = QStringLiteral("ok");
+            break;
+        case GravityConeClient::State::Exception:
+        case GravityConeClient::State::Fatal:
+            tone = QStringLiteral("err");
+            break;
+        default:
+            tone = QStringLiteral("warn");
+            break;
+        }
+        setDotTone(m_statusDot, tone);
     }
 
     // 首页按钮可用性
@@ -594,11 +547,13 @@ void BedrockMultiplayerPage::refreshPage()
             || (state == GravityConeClient::State::NotInstalled
                 && !m_client->installedVersion().isEmpty())
             || (state == GravityConeClient::State::Exception
-                && m_client->isProcessRunning());
+                && m_client->isProcessRunning())
+            || (state == GravityConeClient::State::Fatal); // 启动失败允许点「重试」再拉起核心
         m_joinBtn->setEnabled(canAct);
         m_createBtn->setEnabled(canAct);
 
-        if (state == GravityConeClient::State::Exception) {
+        if (state == GravityConeClient::State::Exception
+            || state == GravityConeClient::State::Fatal) {
             m_createBtn->setText(tr("重试"));
             m_joinBtn->setText(tr("重试"));
         } else {
@@ -630,14 +585,31 @@ void BedrockMultiplayerPage::refreshPlayerList()
     }
 
     const QList<GravityConeClient::Player> players = m_client->players();
+
+    // 玩家列表标题带上人数
+    if (m_playersTitle) {
+        m_playersTitle->setText(players.isEmpty() ? tr("玩家")
+                                                  : tr("玩家 · %1").arg(players.size()));
+    }
+
+    // 一个人都没进来时给一句提示，列表不至于空得莫名
+    if (players.isEmpty()) {
+        auto *emptyLabel = new QLabel(tr("还没有人加入，把邀请码发给好友吧"));
+        emptyLabel->setObjectName(QStringLiteral("mpEmptyPlayers"));
+        emptyLabel->setAlignment(Qt::AlignCenter);
+        emptyLabel->setWordWrap(true);
+        m_playersLayout->insertWidget(m_playersLayout->count() - 1, emptyLabel);
+        return;
+    }
+
     for (const auto &p : players) {
         QWidget *card = new QWidget();
-        card->setProperty("cardRole", "bmpContainer");
-        card->setFixedHeight(60);
+        card->setProperty("cardRole", "mpContainer");
+        card->setFixedHeight(64);
 
         auto *cardLayout = new QHBoxLayout(card);
-        cardLayout->setContentsMargins(8, 6, 8, 6);
-        cardLayout->setSpacing(8);
+        cardLayout->setContentsMargins(10, 8, 10, 8);
+        cardLayout->setSpacing(10);
 
         // 头像占位（首字母圆形）
         QLabel *avatarLabel = new QLabel();
@@ -671,7 +643,7 @@ void BedrockMultiplayerPage::refreshPlayerList()
         infoLayout->setContentsMargins(0, 0, 0, 0);
 
         QLabel *nameLabel = new QLabel(p.name);
-        nameLabel->setProperty("cardRole", "bmpName");
+        nameLabel->setProperty("cardRole", "mpName");
         nameLabel->setToolTip(p.name);
         QFontMetrics fm(nameLabel->font());
         nameLabel->setText(fm.elidedText(p.name, Qt::ElideRight, 180));
@@ -682,11 +654,11 @@ void BedrockMultiplayerPage::refreshPlayerList()
         chipsLayout->setContentsMargins(0, 0, 0, 0);
 
         QLabel *roleChip = new QLabel(p.isRoomHost ? tr("房主") : tr("玩家"));
-        roleChip->setProperty("cardRole", "bmpChip");
+        roleChip->setProperty("cardRole", "mpChip");
         chipsLayout->addWidget(roleChip);
 
         QLabel *onlineChip = new QLabel(tr("在线"));
-        onlineChip->setProperty("cardRole", "bmpChip");
+        onlineChip->setProperty("cardRole", "mpChip");
         chipsLayout->addWidget(onlineChip);
 
         chipsLayout->addStretch();
@@ -696,14 +668,14 @@ void BedrockMultiplayerPage::refreshPlayerList()
 
         // 复制玩家名按钮
         QPushButton *copyNameBtn = new QPushButton();
-        copyNameBtn->setProperty("cardRole", "bmpActionBtn");
-        copyNameBtn->setFixedSize(28, 28);
+        copyNameBtn->setProperty("cardRole", "mpActionBtn");
+        copyNameBtn->setFixedSize(32, 32);
         copyNameBtn->setCursor(Qt::PointingHandCursor);
         copyNameBtn->setToolTip(tr("复制玩家名"));
         copyNameBtn->setIcon(IconHelper::loadColoredIcon(
             QStringLiteral(":/Images/Icons/copy.svg"),
-            ThemeManager::instance()->currentThemeColor(), 14));
-        copyNameBtn->setIconSize(QSize(14, 14));
+            ThemeManager::instance()->currentThemeColor(), 15));
+        copyNameBtn->setIconSize(QSize(15, 15));
 
         const QString playerName = p.name;
         connect(copyNameBtn, &QPushButton::clicked, this, [playerName]() {
@@ -724,6 +696,8 @@ void BedrockMultiplayerPage::refreshStatusBar()
     if (!m_client->isInRoom()) {
         m_latencyLabel->clear();
         m_addressLabel->clear();
+        if (m_addressCard)
+            m_addressCard->setVisible(false);
         return;
     }
 
@@ -761,13 +735,12 @@ void BedrockMultiplayerPage::refreshStatusBar()
     }
     m_latencyLabel->setText(text);
 
-    // 服务器地址：房主显示提示，房客显示游戏内要输入的地址
+    // 服务器地址：房主显示提示，房客显示游戏内要输入的地址；没有内容就整块收起
     if (m_client->state() == GravityConeClient::State::GuestOk) {
         const QString addr = m_client->serverAddress();
         const quint16 port = m_client->gamePort();
         if (!addr.isEmpty()) {
-            m_addressLabel->setText(tr("游戏内服务器地址：%1:%2")
-                .arg(addr).arg(port));
+            m_addressLabel->setText(QStringLiteral("%1:%2").arg(addr).arg(port));
         } else {
             m_addressLabel->clear();
         }
@@ -776,6 +749,8 @@ void BedrockMultiplayerPage::refreshStatusBar()
     } else {
         m_addressLabel->clear();
     }
+    if (m_addressCard)
+        m_addressCard->setVisible(!m_addressLabel->text().isEmpty());
 
     // 根据连接状态切换 status 属性
     QString latencyStatus;
@@ -794,6 +769,11 @@ void BedrockMultiplayerPage::refreshStatusBar()
     }
     m_latencyLabel->setProperty("status", latencyStatus);
     m_latencyLabel->style()->polish(m_latencyLabel);
+    setDotTone(m_latencyDot, latencyStatus == QLatin1String("good")
+                                 ? QStringLiteral("ok")
+                                 : (latencyStatus == QLatin1String("medium")
+                                        ? QStringLiteral("warn")
+                                        : QStringLiteral("err")));
 }
 
 void BedrockMultiplayerPage::refreshInstallStatus()

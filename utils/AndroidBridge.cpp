@@ -15,6 +15,9 @@
 #include <QWidget>
 #include <QWindow>
 
+#include <atomic>
+#include <functional>
+
 using namespace Qt::Literals::StringLiterals;
 
 namespace {
@@ -25,6 +28,14 @@ constexpr auto kAuthority = "com.blockbox.launcher.fileprovider"_L1;
 QJniObject activityContext()
 {
     return QNativeInterface::QAndroidApplication::context();
+}
+
+/// 把一段 JNI 操作调度到 Android UI 线程执行。
+/// ViewRootImpl / InsetsController 等只能由 UI 线程触碰，在 Qt 主线程
+/// 直接调用会抛 CalledFromWrongThreadException（沉浸模式此前一直踩这里）。
+void runOnUiThread(std::function<void()> work)
+{
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread(std::move(work));
 }
 
 /// 组装并启动 Intent；失败时清理挂起的 JNI 异常
@@ -288,72 +299,24 @@ bool openPathWith(const QString &packageName, const QString &path, const QString
     return startActivity(intent);
 }
 
-bool applyImmersiveMode()
-{
-    QJniObject window = activityWindow();
-    if (!window.isValid()) {
-        qWarning() << "[Immersive] 无 activity window";
-        return false;
-    }
+/// 最近一次在 UI 线程读到的系统栏可见状态（供非 UI 线程查询，允许滞后一拍）
+std::atomic<int> g_cachedBarsState{static_cast<int>(SystemBarsState::Unknown)};
 
-    QJniObject decor = windowDecorView(window);
-    if (!decor.isValid()) {
-        qWarning() << "[Immersive] 无 decorView";
-        return false;
-    }
-
-    QJniEnvironment env;
-    bool applied = false;
-
-    if (androidSdkInt() >= kInsetsControllerApi) {
-        // API 30+：WindowInsetsController 隐藏状态栏 + 导航条
-        // （只隐藏状态栏时底部内容会被手势条盖住）
-        QJniObject controller = window.callObjectMethod(
-            "getInsetsController", "()Landroid/view/WindowInsetsController;");
-        if (!controller.isValid()) {
-            // decor 还没挂到 window 上时 window.getInsetsController() 可能拿不到，
-            // 从 decorView 再取一次
-            controller = decor.callObjectMethod(
-                "getWindowInsetsController", "()Landroid/view/WindowInsetsController;");
-        }
-        if (controller.isValid()) {
-            // 2 = BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE：边缘滑动临时呼出、随后自动隐藏
-            controller.callMethod<void>("setSystemBarsBehavior", "(I)V", jint(2));
-            controller.callMethod<void>("hide", "(I)V",
-                                        jint(statusBarsType() | navigationBarsType()));
-            applied = true;
-        }
-    }
-
-    if (!applied) {
-        // API 24-29（以及个别拿不到 controller 的机器）兜底：immersive sticky
-        decor.callMethod<void>("setSystemUiVisibility", "(I)V", kLegacyImmersiveFlags);
-        applied = true;
-    }
-
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-        qWarning() << "[Immersive] 隐藏系统栏时发生 JNI 异常";
-        return false;
-    }
-
-    static bool logged = false;
-    if (!logged) {
-        logged = true;
-        qDebug() << "[Immersive] 已隐藏系统栏，SDK" << androidSdkInt();
-    }
-    return applied;
-}
-
-SystemBarsState systemBarsState()
+/// 在 Android UI 线程上检查并隐藏系统栏（状态栏 + 导航条）。
+/// 读取状态和下发隐藏必须在同一线程里完成，拆到两个线程会有竞态：
+/// 刚判定"已隐藏"就被系统放回来，或者反之重复下发触发窗口重排。
+void ensureSystemBarsHiddenOnUi()
 {
     QJniObject window = activityWindow();
     QJniObject decor = windowDecorView(window);
-    if (!decor.isValid())
-        return SystemBarsState::Unknown;
+    if (!window.isValid() || !decor.isValid()) {
+        g_cachedBarsState.store(static_cast<int>(SystemBarsState::Unknown));
+        return;
+    }
 
     QJniEnvironment env;
-    SystemBarsState state = SystemBarsState::Unknown;
+    bool hidden = false;
+    bool known = false;
 
     if (androidSdkInt() >= kInsetsControllerApi) {
         // View.getRootWindowInsets() 在视图还没挂上时返回 null，这时状态未知
@@ -364,22 +327,68 @@ SystemBarsState systemBarsState()
                 insets.callMethod<jboolean>("isVisible", "(I)Z", statusBarsType());
             const bool navVisible =
                 insets.callMethod<jboolean>("isVisible", "(I)Z", navigationBarsType());
-            state = (statusVisible || navVisible) ? SystemBarsState::Visible
-                                                 : SystemBarsState::Hidden;
+            known = true;
+            hidden = !(statusVisible || navVisible);
+        }
+
+        if (!hidden) {
+            // API 30+：WindowInsetsController 隐藏状态栏 + 导航条
+            // （只隐藏状态栏时底部内容会被手势条盖住）
+            QJniObject controller = window.callObjectMethod(
+                "getInsetsController", "()Landroid/view/WindowInsetsController;");
+            if (!controller.isValid()) {
+                // decor 还没挂到 window 上时 window.getInsetsController() 可能拿不到，
+                // 从 decorView 再取一次
+                controller = decor.callObjectMethod(
+                    "getWindowInsetsController", "()Landroid/view/WindowInsetsController;");
+            }
+            if (controller.isValid()) {
+                // 2 = BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE：边缘滑动临时呼出、随后自动隐藏
+                controller.callMethod<void>("setSystemBarsBehavior", "(I)V", jint(2));
+                controller.callMethod<void>("hide", "(I)V",
+                                            jint(statusBarsType() | navigationBarsType()));
+                hidden = true;
+                known = true;
+            }
         }
     } else {
+        // API 24-29（以及个别拿不到 controller 的机器）兜底：immersive sticky
         const jint visibility = decor.callMethod<jint>("getSystemUiVisibility", "()I");
         const bool fullscreen = (visibility & 0x4) != 0; // SYSTEM_UI_FLAG_FULLSCREEN
         const bool hideNav = (visibility & 0x2) != 0;    // SYSTEM_UI_FLAG_HIDE_NAVIGATION
-        state = (fullscreen && hideNav) ? SystemBarsState::Hidden
-                                        : SystemBarsState::Visible;
+        if (!fullscreen || !hideNav)
+            decor.callMethod<void>("setSystemUiVisibility", "(I)V", kLegacyImmersiveFlags);
+        known = true;
+        hidden = true; // 下发 sticky 后按已隐藏处理，避免每拍重复下发
     }
 
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
-        return SystemBarsState::Unknown;
+        qWarning() << "[Immersive] 隐藏系统栏时发生 JNI 异常";
+        g_cachedBarsState.store(static_cast<int>(SystemBarsState::Unknown));
+        return;
     }
-    return state;
+
+    if (known)
+        g_cachedBarsState.store(static_cast<int>(hidden ? SystemBarsState::Hidden
+                                                        : SystemBarsState::Visible));
+
+    static bool logged = false;
+    if (!logged && hidden) {
+        logged = true;
+        qDebug() << "[Immersive] 已隐藏系统栏，SDK" << androidSdkInt();
+    }
+}
+
+bool applyImmersiveMode()
+{
+    runOnUiThread([]() { ensureSystemBarsHiddenOnUi(); });
+    return true; // 已发起调度，实际结果异步生效
+}
+
+SystemBarsState systemBarsState()
+{
+    return static_cast<SystemBarsState>(g_cachedBarsState.load());
 }
 
 namespace {
@@ -471,8 +480,8 @@ private:
         if (m_throttle.isValid() && m_throttle.elapsed() < 120)
             return;
         m_throttle.restart();
-        if (systemBarsState() == SystemBarsState::Hidden)
-            return; // 已经沉浸，不重复下发，免得白白触发一次窗口重新布局
+        // 检查 + 隐藏整体调度到 Android UI 线程原子完成；
+        // 那边发现已沉浸就不重复下发，免得白白触发一次窗口重新布局
         applyImmersiveMode();
     }
 
@@ -571,6 +580,87 @@ bool ensureAllFilesAccess()
     return false; // 已发起授权跳转，当前尚未授权
 }
 
+bool hasLegacyStoragePermission()
+{
+    const int sdk = QNativeInterface::QAndroidApplication::sdkVersion();
+    if (sdk > 32)
+        return true; // API 33+ 传统存储权限已失效，存储走「所有文件访问」/媒体权限
+
+    QJniObject activity = activityContext();
+    if (!activity.isValid())
+        return true; // 拿不到上下文时不拦用户，由具体功能自行兜底
+
+    QJniEnvironment env;
+    auto granted = [&activity, &env](const QString &permission) {
+        const jint state = activity.callMethod<jint>(
+            "checkSelfPermission", "(Ljava/lang/String;)I",
+            QJniObject::fromString(permission).object<jstring>());
+        if (env->ExceptionCheck())
+        {
+            env->ExceptionClear();
+            return true;
+        }
+        return state == 0 /* PackageManager.PERMISSION_GRANTED */;
+    };
+
+    // 清单里 WRITE 声明到 API 28、READ 到 32：按系统版本只检查还在清单里的权限
+    if (sdk <= 28 && !granted(QStringLiteral("android.permission.WRITE_EXTERNAL_STORAGE")))
+        return false;
+    return granted(QStringLiteral("android.permission.READ_EXTERNAL_STORAGE"));
+}
+
+bool requestLegacyStoragePermissions()
+{
+    const int sdk = QNativeInterface::QAndroidApplication::sdkVersion();
+    if (sdk < 23 || sdk > 32)
+        return false; // API 23 以下无需运行时申请，33+ 无传统权限可申请
+
+    QJniObject activity = activityContext();
+    if (!activity.isValid())
+        return false;
+
+    QJniEnvironment env;
+    if (!env.isValid())
+        return false;
+
+    jclass stringClass = env->FindClass("java/lang/String");
+    if (!stringClass || env->ExceptionCheck())
+    {
+        env->ExceptionClear();
+        return false;
+    }
+
+    // 只申请当前系统版本下清单里还声明着的权限（申请未声明权限会被系统直接拒绝）
+    const int count = sdk <= 28 ? 2 : 1;
+    jobjectArray permissions = env->NewObjectArray(count, stringClass, nullptr);
+    env->DeleteLocalRef(stringClass);
+    if (!permissions || env->ExceptionCheck())
+    {
+        env->ExceptionClear();
+        return false;
+    }
+
+    auto setPermission = [&env, permissions](int index, const QString &value) {
+        jobject text = env->NewStringUTF(value.toUtf8().constData());
+        env->SetObjectArrayElement(permissions, index, text);
+        env->DeleteLocalRef(text);
+    };
+    if (sdk <= 28)
+        setPermission(0, QStringLiteral("android.permission.WRITE_EXTERNAL_STORAGE"));
+    setPermission(sdk <= 28 ? 1 : 0, QStringLiteral("android.permission.READ_EXTERNAL_STORAGE"));
+
+    activity.callMethod<void>("requestPermissions", "([Ljava/lang/String;I)V",
+                              permissions, jint(1001));
+    env->DeleteLocalRef(permissions);
+
+    if (env->ExceptionCheck())
+    {
+        env->ExceptionClear();
+        return false;
+    }
+    return true; // 系统授权框已弹出，结果异步返回
+}
+
 } // namespace AndroidBridge
 
 #else // !Q_OS_ANDROID — 桌面空实现
@@ -583,6 +673,8 @@ SystemBarsState systemBarsState() { return SystemBarsState::Hidden; }
 void installImmersiveMode() {}
 bool hasAllFilesAccess() { return true; }
 bool ensureAllFilesAccess() { return true; }
+bool hasLegacyStoragePermission() { return true; }
+bool requestLegacyStoragePermissions() { return false; }
 bool launchApp(const QString &) { return false; }
 bool launchBedrock() { return false; }
 bool installApk(const QString &) { return false; }

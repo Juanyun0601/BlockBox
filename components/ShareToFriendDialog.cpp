@@ -247,8 +247,8 @@ void ShareToFriendDialog::rebuildFriendRows()
             continue;
 
         // 用小控件行展示头像 + 昵称 + 在线状态
-        const QString onlineMark = friendInfo.online ? QStringLiteral("● 在线")
-                                                     : QStringLiteral("○ 离线");
+        const QString onlineMark = friendInfo.online ? tr("● 在线")
+                                                     : tr("○ 离线");
 
         QListWidgetItem *item = new QListWidgetItem(m_friendList);
         item->setData(Qt::UserRole, friendInfo.id);

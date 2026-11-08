@@ -288,7 +288,17 @@ void HardwareMonitor::refreshMemory()
 
 void HardwareMonitor::refreshNetwork()
 {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_ANDROID)
+    // 安卓 8 起 untrusted 应用读 /proc/net 一律被 SELinux 拒绝（每 2 秒空转
+    // 一次还刷屏日志）。这里直接标记不可用并停止后续轮询，不再白费打开文件的
+    // 开销；换 NetworkStatsManager 需要专门的 Java 桥接，等有需要再接。
+    m_data.networkAvailable = false;
+    static bool logged = false;
+    if (!logged) {
+        logged = true;
+        qDebug() << "[HardwareMonitor] Android 下网络监控不可用（/proc/net 受 SELinux 限制），已停用轮询";
+    }
+#elif defined(Q_OS_WIN)
     ULONG bufSize = 0;
     GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, nullptr, nullptr, &bufSize);
     if (bufSize == 0)

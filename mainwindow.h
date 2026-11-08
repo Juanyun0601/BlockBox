@@ -171,6 +171,13 @@ public:
      */
     void showOnboardingPage(bool firstRun = false);
 
+    /**
+     * @brief 处理外部一键加入链接（blockbox://join?d=...）：解出房间信息后
+     *        走大厅同款加入流程（陶瓦自动连核心，进服前按版本/加载器挑实例）。
+     *        主程序在窗口显示后、或已运行实例收到转发时调用。
+     */
+    void handleExternalJoinUrl(const QString &url);
+
 signals:
     /** 新手引导页走完（首次启动流程用：主程序据此弹入站答题提醒 / 检查更新） */
     void onboardingFinished(bool firstRun);
@@ -219,6 +226,8 @@ private slots:
 
     void onLaunchGameClicked();
     void onLaunchGameClicked(const QString &instancePath);
+    /** 启动前置校验：账户未就绪时给出引导并返回 false，不进入启动流程 */
+    bool ensureLaunchPrerequisites();
     void onQuickLaunchSaveClicked(const QString &saveName);
     void onQuickLaunchServerClicked(const QString &address, quint16 port);
     /** 联机大厅「一键加入」：按房间要求挑最合适的实例，启动游戏并连进房间 */
@@ -265,7 +274,8 @@ protected:
 
 private:
     /// 进社区前先过一道人机验证，已经验过就直接返回 true
-    bool ensureHumanCheck();
+    /// @param force 服务端已经明确要求验证时传 true，忽略本地令牌的有效期
+    bool ensureHumanCheck(bool force = false);
 
     Ui::MainWindow *ui;
     TopBar *m_topBar;
