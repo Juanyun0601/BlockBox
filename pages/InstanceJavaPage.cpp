@@ -13,7 +13,7 @@
 #include <QEvent>
 #include <QEventLoop>
 #include <QFontMetrics>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -286,7 +286,7 @@ void InstanceJavaPage::onDetectClicked()
 
 void InstanceJavaPage::onAddClicked()
 {
-    QString filePath = AppFileDialog::getOpenFileName(
+    QString filePath = QFileDialog::getOpenFileName(
         this, tr("选择 Java 可执行文件"),
         QStringLiteral("C:/Program Files/Java"),
         tr("Java 可执行文件 (java.exe javaw.exe);;所有文件 (*.*)"));

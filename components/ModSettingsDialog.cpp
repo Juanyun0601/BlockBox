@@ -10,6 +10,7 @@
 #include <QVBoxLayout>
 
 #include "../pages/LocalModSettingsPage.h"
+#include "../utils/UiMetrics.h"
 
 ModSettingsDialog::ModSettingsDialog(QWidget *parent)
     : AppDialogBase(parent)
@@ -21,7 +22,7 @@ ModSettingsDialog::ModSettingsDialog(QWidget *parent)
     // 复用 appDialogCard 样式;卡片需容纳完整的设置页表单
     QWidget *card = new QWidget(this);
     card->setObjectName(QStringLiteral("appDialogCard"));
-    card->setFixedSize(820, 640);
+    card->setFixedSize(UiMetrics::fitToScreen(this, QSize(820, 640)));
 
     QVBoxLayout *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(4, 4, 4, 4);

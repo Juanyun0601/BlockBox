@@ -18,18 +18,25 @@
 #pragma once
 
 #include "utils/frp/FrpManager.h"
+#include "utils/ForumLobbyService.h"
 
 #include <QComboBox>
 #include <QDateTime>
 #include <QLabel>
 #include <QLineEdit>
+#include <QList>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QString>
+#include <QStringList>
 #include <QVBoxLayout>
+#include <QVector>
 #include <QWidget>
+#ifdef Q_OS_ANDROID
+#include <QShowEvent>
+#endif
 
 class HongshiClient;
 class TerracottaClient;
@@ -42,8 +49,25 @@ public:
     explicit MultiplayerPage(QWidget *parent = nullptr);
     ~MultiplayerPage() override;
 
+#ifdef Q_OS_ANDROID
+protected:
+    /// 安卓：首次进入联机页时惰性初始化内置陶瓦核心（避免应用启动即拉起原生层）
+    void showEvent(QShowEvent *event) override;
+public:
+#endif
+
+    /**
+     * @brief 注入当前实例上下文（发布到联机大厅时带上版本 / 加载器 / 模组）
+     */
+    void setInstanceContext(const QString &path, const QString &version, const QString &loader);
+
+signals:
+    /** 发布到联机大厅需要登录论坛账号：请求主窗口打开账户页 */
+    void forumLoginRequested();
+
 private:
     void initUI();
+    void buildCorePage(QWidget *page);
     void buildHomePage(QWidget *page);
     void buildRoomPage(QWidget *page);
     void buildHongshiHomePage(QWidget *page);
@@ -73,6 +97,18 @@ private:
     FrpManager::Provider frpProvider() const; ///< 当前 frp 服务商
     void onCoreChanged(int index);
 
+    // ---- 发布到联机大厅 ----
+    void onPublishToLobbyClicked();
+    void publishRoomWithDialog();
+    bool currentPublishTarget(QString *core, QString *joinInfo, QString *address,
+                              QString *error) const;
+    void startPublishHeartbeat();
+    void stopPublishHeartbeat(bool closeRemote, bool notify);
+    void refreshPublishButtons();
+    void ensurePublishStillValid();
+    QStringList instanceMods() const;
+    QString instanceDisplayName() const;
+
     /// 弹出对话框提示（非左下卡片）
     void showInfoDialog(const QString &title, const QString &text);
 
@@ -80,6 +116,20 @@ private:
     TerracottaClient *m_client;
     HongshiClient *m_hongshi;
     QStackedWidget *m_stack;
+
+    // ---- 发布到联机大厅 ----
+    QPushButton *m_pubTerracottaBtn = nullptr;
+    QPushButton *m_pubHongshiBtn = nullptr;
+    QPushButton *m_pubFrpBtn = nullptr;
+    QTimer *m_publishHeartbeatTimer = nullptr;
+    int m_publishedRoomId = 0;
+    QString m_publishedCore;
+    QString m_publishedJoin;
+
+    // ---- 当前实例上下文（发布时带上） ----
+    QString m_instancePath;
+    QString m_instanceVersion;
+    QString m_instanceLoader;
 
     // ---- frp 服务商联机：首页控件 ----
     QWidget *m_frpHomePage;
@@ -147,3 +197,4 @@ private:
 
     QDateTime m_hongshiEnterTime;  ///< 建立隧道时间
 };
+

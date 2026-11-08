@@ -24,6 +24,28 @@
 #include "settings/SettingsKeyBindPage.h"
 #include "settings/SettingsBedrockGamePage.h"
 
+#include "platform.h"
+
+namespace {
+
+/// 手机端把内容包进滚动区：内容装不下时上下滑动查看。
+/// 桌面端布局保持原样（窗口足够高，不出现滚动条）。
+QWidget *scrollableOnMobile(QWidget *content)
+{
+    if (!Platform::isMobile())
+        return content;
+    auto *scroll = new QScrollArea(content->parentWidget());
+    scroll->setObjectName(QStringLiteral("settingsSubPageScroll"));
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setWidget(content);
+    return scroll;
+}
+
+} // namespace
+
 SettingsPage::SettingsPage(QWidget *parent)
     : QWidget(parent), m_currentIndex(0), m_forgeDownloadSourceCombo(nullptr), m_fabricDownloadSourceCombo(nullptr), m_optiFineDownloadSourceCombo(nullptr), m_neoForgeDownloadSourceCombo(nullptr), m_backgroundModeCombo(nullptr), m_solidColorSection(nullptr), m_imageSection(nullptr), m_solidColorBtn(nullptr), m_imagePathEdit(nullptr), m_browseImageBtn(nullptr), m_javaListWidget(nullptr), m_javaEmptyLabel(nullptr), m_globalJavaCombo(nullptr), m_autoSelectJavaCheck(nullptr), m_systemInfoSettings(nullptr), m_aboutSettings(nullptr)
 {
@@ -102,7 +124,8 @@ void SettingsPage::initRightContent()
     m_contentStack->addWidget(m_projectionEditorSettings);
     // 按当前版本模式重建顺序，保证页签索引与侧边栏一致
     rebuildEditionStack();
-    m_rightLayout->addWidget(m_contentStack);
+    // 手机端：内容堆叠整体套一层滚动区，子设置页装不下时上下滑动查看
+    m_rightLayout->addWidget(scrollableOnMobile(m_contentStack));
 }
 
 void SettingsPage::onNavItemClicked(int index)
@@ -110,6 +133,10 @@ void SettingsPage::onNavItemClicked(int index)
     m_contentStack->setCurrentIndex(index);
     m_currentIndex = index;
     resetSettingsScroll();
+    // 手机端：整页滚动区回到顶部，切换子页时从页首开始看
+    if (auto *scroll = findChild<QScrollArea *>(QStringLiteral("settingsSubPageScroll")))
+        if (auto *bar = scroll->verticalScrollBar())
+            bar->setValue(0);
 }
 
 void SettingsPage::resetSettingsScroll()
@@ -425,6 +452,50 @@ QHBoxLayout *SettingsPage::appendSettingRow(QVBoxLayout *cardLayout,
     }
 
     rowLayout->addWidget(info, 1);
+
+    cardLayout->addWidget(row);
+    return rowLayout;
+}
+
+QVBoxLayout *SettingsPage::appendSettingBlock(QVBoxLayout *cardLayout,
+                                              const QString &title,
+                                              const QString &desc,
+                                              const QString &help,
+                                              bool isLast)
+{
+    QFrame *row = new QFrame();
+    row->setObjectName("settingRow");
+    row->setAttribute(Qt::WA_StyledBackground, true);
+    if (isLast) {
+        row->setProperty("lastRow", true);
+    }
+
+    QVBoxLayout *rowLayout = new QVBoxLayout(row);
+    rowLayout->setContentsMargins(24, 16, 24, 16);
+    rowLayout->setSpacing(10);
+
+    if (!title.isEmpty()) {
+        QHBoxLayout *titleRow = new QHBoxLayout();
+        titleRow->setContentsMargins(0, 0, 0, 0);
+        titleRow->setSpacing(6);
+
+        QLabel *titleLabel = new QLabel(title, row);
+        titleLabel->setObjectName("settingTitle");
+        titleRow->addWidget(titleLabel);
+
+        if (!help.isEmpty()) {
+            addHelpTooltip(titleRow, titleLabel, help);
+        }
+        titleRow->addStretch();
+        rowLayout->addLayout(titleRow);
+    }
+
+    if (!desc.isEmpty()) {
+        QLabel *descLabel = new QLabel(desc, row);
+        descLabel->setObjectName("settingDesc");
+        descLabel->setWordWrap(true);
+        rowLayout->addWidget(descLabel);
+    }
 
     cardLayout->addWidget(row);
     return rowLayout;

@@ -280,6 +280,29 @@ QPixmap ThumbnailProvider::getThumbnail(const QString &filePath, int maxSize, Ba
     return QPixmap();
 }
 
+QImage ThumbnailProvider::getThumbnailImage(const QString &filePath, int maxSize)
+{
+    if (filePath.isEmpty())
+        return QImage();
+
+    QFileInfo fileInfo(filePath);
+    if (!fileInfo.exists() || !fileInfo.isFile())
+        return QImage();
+
+    // 仅用 Qt 内置加载器：QImage 可跨线程使用，QPixmap/HBITMAP 不行
+    QImageReader reader(filePath);
+    reader.setAutoTransform(true);
+    QImage img = reader.read();
+    if (img.isNull())
+        return QImage();
+
+    const int w = img.width();
+    const int h = img.height();
+    if (w > maxSize && h > maxSize)
+        img = img.scaled(maxSize, maxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    return img;
+}
+
 bool ThumbnailProvider::isImageFile(const QString &filePath)
 {
     QFileInfo fileInfo(filePath);

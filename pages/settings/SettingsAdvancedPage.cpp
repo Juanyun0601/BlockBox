@@ -16,8 +16,7 @@
 #include <QTextEdit>
 #include <QUrl>
 #include <QVBoxLayout>
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/CustomCheckBox.h"
 #include "components/FileOpStepsDialog.h"
 #include "components/OutlinedLabel.h"
@@ -64,6 +63,7 @@ void SettingsPage::initAdvancedSettings()
     QComboBox *jvmPresetCombo = new QComboBox();
     jvmPresetCombo->setObjectName("jvmPresetCombo");
     jvmPresetCombo->addItems({tr("默认"), tr("优化GC"), tr("优化内存")});
+    jvmPresetCombo->setFixedWidth(160);
     disableWheelEffect(jvmPresetCombo);
 
     QHBoxLayout *jvmPresetRow = appendSettingRow(jvmParamsCard,
@@ -72,15 +72,15 @@ void SettingsPage::initAdvancedSettings()
 
     QTextEdit *jvmParamsEdit = new QTextEdit();
     jvmParamsEdit->setObjectName("jvmParamsEdit");
-    jvmParamsEdit->setPlaceholderText(tr("请输入自定义JVM参数，每行一个"));
+    jvmParamsEdit->setPlaceholderText(tr("请输入自定义 JVM 参数，每行一个"));
     jvmParamsEdit->setFixedHeight(120);
     jvmParamsEdit->setAcceptRichText(false);
 
-    QHBoxLayout *jvmParamsRow = appendSettingRow(jvmParamsCard,
-        tr("自定义JVM参数"), tr("手动编辑传递给 Java 虚拟机的参数。"),
+    QVBoxLayout *jvmParamsBlock = appendSettingBlock(jvmParamsCard,
+        tr("自定义 JVM 参数"), tr("手动编辑传递给 Java 虚拟机的参数，每行一个。"),
         tr("JVM参数用于调整Java虚拟机的运行方式，不正确的设置可能导致游戏无法启动或性能下降。建议仅在了解其含义的情况下修改。"),
         true);
-    jvmParamsRow->addWidget(jvmParamsEdit, 1);
+    jvmParamsBlock->addWidget(jvmParamsEdit);
 
     // ── 运行日志 ──
     QVBoxLayout *runtimeLogCard = createSettingsCard(layout, tr("运行日志"));
@@ -145,7 +145,7 @@ void SettingsPage::initAdvancedSettings()
         const QString defaultName = QStringLiteral("BlockBox_Log_%1.log")
             .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
 
-        const QString path = AppFileDialog::getSaveFileName(
+        const QString path = QFileDialog::getSaveFileName(
             this,
             tr("导出运行日志"),
             defaultName,

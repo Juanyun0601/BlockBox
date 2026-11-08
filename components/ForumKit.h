@@ -15,17 +15,22 @@
 #include <QImage>
 #include <QLabel>
 #include <QPushButton>
+#include <QVector>
 #include <QWidget>
 
 #include <functional>
 
 class QLayout;
 class QPaintEvent;
+class QPlainTextEdit;
 
 namespace ForumKit
 {
 /** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 超过一周显示日期 */
 QString relativeTime(qint64 seconds);
+
+/** 文件大小给人看：B / KB / MB（插件包等附件卡片用） */
+QString humanFileSize(qint64 bytes);
 
 /** 递归清空布局里的控件 */
 void clearLayout(QLayout *layout);
@@ -96,6 +101,27 @@ QPushButton *makeTagChip(QWidget *parent, const QString &tag);
 
 /** 置顶 / 锁定等小徽章 */
 QLabel *makeBadge(QWidget *parent, const QString &text, bool warn = false);
+
+/** Markdown 预设：菜单里显示的名称 + 插进正文的整段模板 */
+struct MarkdownPreset
+{
+    QString label;
+    QString text;
+};
+
+/** 发帖正文预设（求助 / 教程 / 作品分享 / 插件介绍 / 意见建议） */
+QVector<MarkdownPreset> postPresets();
+
+/** 联机大厅「详细介绍」预设（生存 / 建筑 / 小游戏 / 联机须知） */
+QVector<MarkdownPreset> lobbyIntroPresets();
+
+/**
+ * @brief 把预设模板插进 Markdown 输入框
+ *
+ * 正文空着就整段铺满，已经有内容就在光标处另起一段插入；
+ * 插完自动选中标题下面那行提示文字，直接打字就能替换。
+ */
+void applyMarkdownPreset(QPlainTextEdit *edit, const QString &text);
 
 /**
  * @brief 整张卡片可点击（点击空白处也算），列表行用

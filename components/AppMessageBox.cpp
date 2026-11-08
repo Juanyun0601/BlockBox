@@ -1,6 +1,7 @@
 #include "AppMessageBox.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -31,6 +32,7 @@ AppMessageBox::AppMessageBox(QWidget *parent)
     , m_infoBrowser(nullptr)
     , m_buttonRow(nullptr)
     , m_buttonLayout(nullptr)
+    , m_midLayout(nullptr)
     , m_defaultButton(nullptr)
     , m_clickedButton(nullptr)
     , m_resultButton(NoButton)
@@ -80,6 +82,7 @@ void AppMessageBox::initUI()
     QVBoxLayout *midLayout = new QVBoxLayout();
     midLayout->setSpacing(8);
     midLayout->setContentsMargins(0, 0, 0, 0);
+    m_midLayout = midLayout;
 
     m_titleLabel = new QLabel(m_card);
     m_titleLabel->setObjectName(QStringLiteral("appMsgBoxTitleLabel"));
@@ -174,6 +177,13 @@ void AppMessageBox::initStyle()
         "    font-size: 12px;"
         "}"
         ""
+        "QCheckBox#appMsgBoxCheck {"
+        "    color: %5;"
+        "    background-color: transparent;"
+        "    font-size: 12px;"
+        "    spacing: 7px;"
+        "}"
+        ""
         "QTextBrowser#appMsgBoxInfoBrowser {"
         "    color: %4;"
         "    background-color: transparent;"
@@ -266,6 +276,49 @@ void AppMessageBox::setInformativeText(const QString &text)
     }
 }
 
+void AppMessageBox::setCheckBox(const QString &text, bool checked)
+{
+    if (!m_card || !m_buttonRow)
+        return;
+
+    QCheckBox *checkBox = findChild<QCheckBox *>(QStringLiteral("appMsgBoxCheck"));
+    if (text.trimmed().isEmpty())
+    {
+        if (checkBox)
+            checkBox->hide();
+        return;
+    }
+
+    if (checkBox)
+    {
+        checkBox->setText(text);
+        checkBox->setChecked(checked);
+        checkBox->show();
+        return;
+    }
+
+    QVBoxLayout *cardLayout = qobject_cast<QVBoxLayout *>(m_card->layout());
+    if (!cardLayout)
+        return;
+
+    checkBox = new QCheckBox(text, m_card);
+    checkBox->setObjectName(QStringLiteral("appMsgBoxCheck"));
+    checkBox->setCursor(Qt::PointingHandCursor);
+    checkBox->setChecked(checked);
+
+    // 插在按钮行上方，和按钮之间留一点空隙
+    const int at = cardLayout->indexOf(m_buttonRow);
+    const int insertAt = at < 0 ? cardLayout->count() : at;
+    cardLayout->insertWidget(insertAt, checkBox);
+    cardLayout->insertSpacing(insertAt + 1, 12);
+}
+
+bool AppMessageBox::isCheckBoxChecked() const
+{
+    const QCheckBox *checkBox = findChild<QCheckBox *>(QStringLiteral("appMsgBoxCheck"));
+    return checkBox && checkBox->isChecked();
+}
+
 void AppMessageBox::setInformativeMarkdown(const QString &markdown)
 {
     m_informativeText = markdown;
@@ -310,6 +363,25 @@ void AppMessageBox::setInfoBrowserHeightRange(int minHeight, int maxHeight)
     updateMarkdownBrowserHeight();
 }
 
+void AppMessageBox::setInfoBrowserFullWidth()
+{
+    if (!m_infoBrowser || !m_card || !m_buttonRow || !m_midLayout)
+        return;
+    // 已经挪到整卡宽度：重复调用直接返回
+    if (m_midLayout->indexOf(m_infoBrowser) < 0)
+        return;
+
+    QVBoxLayout *cardLayout = qobject_cast<QVBoxLayout *>(m_card->layout());
+    if (!cardLayout)
+        return;
+
+    m_midLayout->removeWidget(m_infoBrowser);
+    const int at = qMax(0, cardLayout->indexOf(m_buttonRow));
+    cardLayout->insertWidget(at, m_infoBrowser);
+    cardLayout->insertSpacing(at + 1, 12); // 说明区与按钮之间留一点空隙
+    updateMarkdownBrowserHeight();
+}
+
 void AppMessageBox::applyMarkdownDocumentStyle()
 {
     if (!m_infoBrowser)
@@ -339,17 +411,24 @@ void AppMessageBox::updateMarkdownBrowserHeight()
     if (!m_infoBrowser || m_infoBrowser->isHidden())
         return;
 
-    // 短内容贴合内容高度；长内容封顶后内部滚动，避免弹窗撑满屏幕
-    m_infoBrowser->document()->adjustSize();
-    const int contentH = qCeil(m_infoBrowser->document()->size().height()) + 12;
+    // 短内容贴合内容高度；长内容封顶后内部滚动，避免弹窗撑满屏幕。
+    // 排版宽度必须用控件的可视宽度：adjustSize() 会把文档缩成内容的自然宽度，
+    // 之后控件不再重排，正文就会挤在左边、右边留出一大片空白
+    QTextDocument *doc = m_infoBrowser->document();
+    const int viewportWidth = m_infoBrowser->viewport()->width();
+    if (viewportWidth >= 80)
+        doc->setTextWidth(viewportWidth);
+    else
+        doc->adjustSize();
+    const int contentH = qCeil(doc->size().height()) + 12;
 
     int minHeight = m_notesMinHeight;
     int maxHeight = m_notesMaxHeight;
     // 宿主窗口不够高时（例如小窗口或手机竖屏）按窗口可用高度收紧，
-    // 避免说明区把卡片顶出窗口边界
+    // 避免说明区把卡片顶出窗口边界（卡片除说明区外的标题、正文、按钮等约占 150~190px）
     QWidget *host = hostWindow();
     if (host && host != this && host->height() > 0)
-        maxHeight = qMin(maxHeight, qMax(minHeight, host->height() - 280));
+        maxHeight = qMin(maxHeight, qMax(minHeight, host->height() - 220));
 
     m_infoBrowser->setFixedHeight(qBound(minHeight, contentH, maxHeight));
 }

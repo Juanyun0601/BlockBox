@@ -55,14 +55,14 @@
 #include <functional>
 #include <limits>
 #include <utility>
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/NotificationManager.h"
 #include "components/StructureDetailDialog.h"
 #include "components/WorldMap3DView.h"
 #include "utils/WorldMap/StructureLoot.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
+#include "utils/UiMetrics.h"
 #include "utils/WorldMap/BiomeCatalog.h"
 #include "utils/WorldMap/BiomeName.h"
 #include "utils/WorldMap/OreFinder.h"
@@ -5014,7 +5014,7 @@ void WorldMapPage::onExportClicked()
         ? QStringLiteral("worldmap.png")
         : m_saveName + QStringLiteral("_") + m_dimCombo->currentText()
               + QStringLiteral(".png");
-    const QString path = AppFileDialog::getSaveFileName(
+    const QString path = QFileDialog::getSaveFileName(
         this, tr("导出地图图片"), suggested,
         tr("PNG 图片 (*.png);;所有文件 (*.*)"));
     if (path.isEmpty())
@@ -5239,8 +5239,8 @@ void WorldMapPage::onExpandToggled(bool on)
         m_contentPopup = new QWidget(this);
         m_contentPopup->setObjectName(QStringLiteral("worldMapContentPopup"));
         m_contentPopup->setAttribute(Qt::WA_StyledBackground, true);
-        m_contentPopup->setMinimumSize(560, 440);
-        m_contentPopup->resize(760, 560);
+        m_contentPopup->setMinimumSize(UiMetrics::fitToScreen(this, QSize(560, 440)));
+        m_contentPopup->resize(UiMetrics::fitToScreen(this, QSize(760, 560)));
         // 柔和投影：让弹窗浮在地图上方，层次一眼可辨
         auto *shadow = new QGraphicsDropShadowEffect(m_contentPopup);
         shadow->setBlurRadius(36);

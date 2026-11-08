@@ -13,8 +13,7 @@
 #include "utils/modpack/ModpackDetector.h"
 #include "utils/modpack/ModpackImporter.h"
 #include "components/NotificationManager.h"
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/AppMessageBox.h"
 #include "components/ProgressDialog.h"
 
@@ -199,7 +198,7 @@ void ModpackImportPage::initUI()
 
 void ModpackImportPage::onSelectFileClicked()
 {
-  QString filePath = AppFileDialog::getOpenFileName(
+  QString filePath = QFileDialog::getOpenFileName(
     this,
     tr("选择整合包文件"),
     QString(),

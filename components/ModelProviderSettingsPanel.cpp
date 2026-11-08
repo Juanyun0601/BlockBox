@@ -31,6 +31,7 @@
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/StyleKit.h"
+#include "utils/UiMetrics.h"
 
 namespace
 {
@@ -78,7 +79,7 @@ ModelProviderSettingsPanel::ModelProviderSettingsPanel(QWidget *parent)
     : QFrame(parent)
 {
     setObjectName(QStringLiteral("mpsPanel"));
-    setFixedHeight(560);
+    setFixedHeight(UiMetrics::fitToScreen(this, QSize(0, 560)).height());
 
     auto *root = new QHBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);

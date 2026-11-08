@@ -72,12 +72,6 @@ enum class DownloadSource {
     Auto
 };
 
-/** 文件选择器类型：系统文件资源管理器 / 软件自带 */
-enum class FilePickerType {
-    System = 0,
-    BuiltIn = 1
-};
-
 /** 存档地图结构标记图标风格：文字旁小图标（默认） / 结构概览缩略图 */
 enum class MapStructureIconStyle {
     Icon = 0,     ///< 生成结构表中文字旁的 16px 小图标（EnvSprite）
@@ -156,6 +150,9 @@ public:
     void setDefaultInstanceFolder(const QString &path);
     InstanceFolderInfo getDefaultInstanceFolder() const;
     QString getDefaultInstancePath() const;
+    /** 未配置实例文件夹时的兜底默认路径：移动端用应用数据目录（程序目录只读），
+     *  桌面端保持跟随启动器所在目录 */
+    static QString defaultInstanceFolderPath();
 
     // Instance category methods (自定义实例分类)
     QStringList getInstanceCategories() const;
@@ -201,9 +198,6 @@ public:
 
     // 文件选择器类型（系统自带 / 软件自带）
     // 电脑端默认系统自带，手机端（Android / HarmonyOS）默认并固定软件自带
-    static FilePickerType defaultFilePickerType();
-    FilePickerType getFilePickerType() const;
-    void setFilePickerType(FilePickerType type);
 
     // 存档地图结构标记图标风格（文字旁小图标 / 结构概览）
     MapStructureIconStyle getMapStructureIconStyle() const;

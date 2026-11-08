@@ -16,6 +16,8 @@
 #include <QVector>
 #include <QWidget>
 
+#include "utils/ForumLobbyService.h"
+
 class PerfMonitorCard;
 class PerformanceDetailDialog;
 class HardwareMonitor;
@@ -25,11 +27,13 @@ class QVBoxLayout;
 class FlowLayout;
 class QLabel;
 class QShowEvent;
+class QHideEvent;
 class QStackedWidget;
 class Skin3DWidget;
 class CarouselView;
 class HomeSkinPanel;
 class HomeAnnouncementBar;
+class HomeFriendsPanel;
 struct InstanceFolderInfo;
 
 struct RecentPlayEntry
@@ -61,6 +65,10 @@ public:
   // 刷新最近游玩区域（游戏启动后调用）
   void refreshRecentPlays();
 
+public slots:
+  /** 顶栏刷新：重新拉取好友与联机大厅房间，并刷新最近游玩 / 实例列表 */
+  void refresh();
+
   // 切换游戏版本模式（Java版 / 基岩版），重建「资源下载」快捷入口卡片
   void setBedrockMode(bool bedrock);
 
@@ -74,6 +82,7 @@ protected:
   bool eventFilter(QObject *watched, QEvent *event) override;
   void resizeEvent(QResizeEvent *event) override;
   void showEvent(QShowEvent *event) override;
+  void hideEvent(QHideEvent *event) override;
 
 signals:
   /** 空态轮播卡片被点击：请求跳到「设置 → 界面设置」添加图片 */
@@ -133,6 +142,16 @@ signals:
   /** 请求打开实例助手窗口 */
   void instanceAssistantRequested();
 
+  // 首页左侧好友列表
+  /** 点击好友卡片：打开与该好友的私信页 */
+  void friendChatRequested(int userId);
+  /** 点击好友卡片上的「一起玩」：加入该好友正在开放的联机房间 */
+  void friendRoomJoinRequested(const ForumLobbyRoom &room);
+  /** 好友面板未登录空态：打开论坛账号登录 */
+  void friendPanelLoginRequested();
+  /** 好友面板「全部」/「去添加好友」：打开好友与私信页 */
+  void friendPanelOpenRequested();
+
 private:
   void initUI();
   void loadPictures();
@@ -147,7 +166,7 @@ private:
   void rebuildContent();
   QWidget* sectionWidget(const QString &type);
 
-  // Section 1: Carousel（轮播 + 右侧当前皮肤预览面板）
+  // Section 1: Carousel（好友列表 + 轮播 + 右侧当前皮肤预览面板）
   QWidget* createCarouselSection();
   QWidget* createSkinPanel();
   /** 依据账户列表切换皮肤模型 / 「添加首个账户」空态，并同步加载当前皮肤 */
@@ -169,6 +188,10 @@ private:
   QVBoxLayout *m_carouselHostLayout = nullptr;
   // 公告栏（封面图 + 皮肤模型下方，内容来自官网 announcement.json）
   HomeAnnouncementBar *m_announcementBar = nullptr;
+  // 轮播左侧好友列表（与右侧皮肤面板对称）
+  HomeFriendsPanel *m_friendsPanel = nullptr;
+  /** 未登录 / 无好友时隐藏左栏，让封面图自动占满；有好友时再展开 */
+  void setFriendsPanelVisible(bool visible);
   // 轮播右侧皮肤面板
   HomeSkinPanel *m_skinPanel = nullptr;
   Skin3DWidget *m_skin3D = nullptr;
@@ -245,8 +268,10 @@ private:
   QWidget* createInstancesSection();
   void rebuildInstancesContent();
   QVector<RecentPlayEntry> m_instances;
-  QWidget *m_instancesContainer;
-  FlowLayout *m_instancesLayout;
+  // 区块是懒创建的：卡片布局里没有「我的实例」时这两个指针保持空，
+  // 刷新时 rebuildInstancesContent 直接跳过（未初始化时会被当成野指针）。
+  QWidget *m_instancesContainer = nullptr;
+  FlowLayout *m_instancesLayout = nullptr;
 
   // 更多卡片（大小不一）
   QWidget* createClockSection();     // 时钟（小）

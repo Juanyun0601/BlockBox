@@ -35,8 +35,37 @@
 
 #include "utils/DownloadTaskManager.h"
 
+#ifdef Q_OS_ANDROID
+#include <QGuiApplication>
+#include <QJniEnvironment>
+#include <QJniObject>
+#include <QtConcurrent/QtConcurrentRun>
+#endif
+
 #ifdef Q_OS_WIN
 #include <windows.h>
+#endif
+
+#ifdef Q_OS_ANDROID
+namespace {
+/// Java 桥：方块盒子 ↔ Terracotta Android（见 android/src/com/blockbox/launcher/TerracottaBridge.java）
+constexpr auto kBridgeClass = "com/blockbox/launcher/TerracottaBridge";
+
+QJniObject androidAppContext()
+{
+    return QNativeInterface::QAndroidApplication::context();
+}
+
+/// 清理桥接调用可能挂起的 Java 异常（桥内已兜底吞异常，这里只是保险）
+void clearPendingJavaException()
+{
+    QJniEnvironment env;
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+}
+} // namespace
 #endif
 
 namespace {
@@ -109,6 +138,16 @@ TerracottaClient::TerracottaClient(QObject *parent)
     scanInstalledVersion();
     loadBuiltinVersionInfo(); // 从内置资源读取最新版本号（瞬间完成，无需网络）
 
+#ifdef Q_OS_ANDROID
+    // 安卓：核心以 libterracotta.so 随 APK 内置，版本与内置清单一致，无本地目录可扫描。
+    // 不自动 start()——等进入联机页（showEvent）或点击加入/创建时再惰性初始化，
+    // 避免应用一启动就拉起原生层。
+    if (m_installedVersion.isEmpty())
+        m_installedVersion = m_latestVersion;
+    m_installStatus = InstallStatus::Ready;
+    m_state = State::NotInstalled; // 原生层尚未初始化
+    QTimer::singleShot(100, this, &TerracottaClient::checkUpdate);
+#else
     if (!m_installedVersion.isEmpty()) {
         m_installStatus = InstallStatus::Ready;
         m_state = State::NotInstalled; // 进程未启动，先标记为未启动状态
@@ -120,6 +159,7 @@ TerracottaClient::TerracottaClient(QObject *parent)
         // 未安装时也立即检查版本（仅本地比较，显示"下载 vX.X.X"）
         QTimer::singleShot(100, this, &TerracottaClient::checkUpdate);
     }
+#endif
 }
 
 TerracottaClient::~TerracottaClient()
@@ -201,12 +241,96 @@ void TerracottaClient::scanInstalledVersion()
     m_installedVersion = latestLocalVersion();
 }
 
+#ifdef Q_OS_ANDROID
+// ============================
+// Android：内置核心（JNI）
+// ============================
+
+void TerracottaClient::onAndroidInitFinished(bool ok)
+{
+    m_androidInitializing = false;
+    if (!ok) {
+        setErrorMessage(tr("联机核心初始化失败，请重启应用后重试"));
+        setState(State::Fatal);
+        return;
+    }
+
+    m_androidReady = true;
+    m_terracottaVersion = QJniObject::callStaticObjectMethod(
+        kBridgeClass, "terracottaVersion", "()Ljava/lang/String;").toString();
+    clearPendingJavaException();
+    if (!m_terracottaVersion.isEmpty() && m_installedVersion.isEmpty()) {
+        m_installedVersion = m_terracottaVersion;
+    }
+    m_installStatus = InstallStatus::Ready;
+    emit installStatusChanged();
+
+    // 与桌面端口就绪后的流程对齐：进入待机并开始轮询
+    setState(State::Waiting);
+    m_pollTimer.start();
+    fetchState();
+}
+
+bool TerracottaClient::androidEnsureVpnAuthorized()
+{
+    QJniObject ctx = androidAppContext();
+    if (ctx.isValid()) {
+        const jboolean ok = QJniObject::callStaticMethod<jboolean>(
+            kBridgeClass, "requestVpnConsent", "(Landroid/content/Context;)Z",
+            ctx.object<jobject>());
+        clearPendingJavaException();
+        if (ok == JNI_TRUE) return true;
+    }
+    setErrorMessage(tr("联机需要一块虚拟网卡：请在系统弹窗中允许「VPN 连接请求」后重试"));
+    return false;
+}
+#endif
+
 // ============================
 // 进程管理
 // ============================
 
 void TerracottaClient::start()
 {
+#ifdef Q_OS_ANDROID
+    // 安卓：核心以内置 so 随 APK 运行，这里只做一次 JNI 初始化，随后靠
+    // getState() 轮询驱动同一套状态机（见 fetchState / handleStateResponse）。
+    if (m_androidReady) {
+        if (m_state == State::NotInstalled || m_state == State::Launching
+            || m_state == State::Fatal) {
+            setState(State::Waiting);
+        }
+        // 连续轮询失败重置后（轮询已停止），这里恢复轮询
+        if (!m_pollTimer.isActive()) {
+            m_pollTimer.start();
+            fetchState();
+        }
+        return;
+    }
+    if (m_androidInitializing) return;
+
+    m_androidInitializing = true;
+    setState(State::Launching);
+
+    // init 可能触碰 libterracotta.so 并建目录，放后台线程；结果回主线程
+    QtConcurrent::run([]() {
+        QJniObject ctx = androidAppContext();
+        const jboolean ok = ctx.isValid()
+            ? QJniObject::callStaticMethod<jboolean>(kBridgeClass, "init",
+                                                     "(Landroid/content/Context;)Z",
+                                                     ctx.object<jobject>())
+            : JNI_FALSE;
+        clearPendingJavaException();
+        const bool okBool = (ok == JNI_TRUE);
+        QMetaObject::invokeMethod(TerracottaClient::instance(),
+                                  [okBool]() {
+                                      TerracottaClient::instance()->onAndroidInitFinished(okBool);
+                                  },
+                                  Qt::QueuedConnection);
+    });
+    return;
+#endif
+
     if (isProcessRunning()) return;
 
     // 仅在版本未知时扫描本地已安装版本（避免清空 extractAndInstall 刚设置的版本号）
@@ -371,6 +495,41 @@ void TerracottaClient::tryReadPortFile()
 
 void TerracottaClient::fetchState()
 {
+#ifdef Q_OS_ANDROID
+    // 安卓：直接取 Java 桥的状态 JSON（与 HTTP /state 同构），喂同一套状态机
+    if (!m_androidReady) return;
+    if (m_androidPollInFlight) return; // getState 可能阻塞 ~1s，避免后台任务堆积
+    m_androidPollInFlight = true;
+
+    QtConcurrent::run([]() {
+        QJniObject json = QJniObject::callStaticObjectMethod(
+            kBridgeClass, "getState", "()Ljava/lang/String;");
+        clearPendingJavaException();
+        const QString state = json.isValid() ? json.toString() : QString();
+        QMetaObject::invokeMethod(TerracottaClient::instance(),
+                                  [state]() {
+                                      auto *self = TerracottaClient::instance();
+                                      self->m_androidPollInFlight = false;
+                                      if (state.isEmpty()) {
+                                          // 与桌面 HTTP 轮询失败同一套连续错误检测
+                                          self->m_consecutiveErrors++;
+                                          if (self->m_consecutiveErrors >= 10) {
+                                              self->m_pollTimer.stop();
+                                              self->m_lastStateIndex = -1;
+                                              self->m_isFakeScanning = false;
+                                              self->m_consecutiveErrors = 0;
+                                              self->setState(State::NotInstalled);
+                                          }
+                                          return;
+                                      }
+                                      self->m_consecutiveErrors = 0;
+                                      self->handleStateResponse(state.toUtf8());
+                                  },
+                                  Qt::QueuedConnection);
+    });
+    return;
+#endif
+
     if (m_serverPort == 0) return;
 
     QUrl url(QStringLiteral("http://127.0.0.1:%1/state").arg(m_serverPort));
@@ -566,6 +725,45 @@ void TerracottaClient::setErrorMessage(const QString &msg)
 
 void TerracottaClient::createRoom(const QString &playerName)
 {
+#ifdef Q_OS_ANDROID
+    if (!m_androidReady) {
+        setErrorMessage(tr("联机核心未就绪，请稍候再试"));
+        return;
+    }
+    if (m_state != State::Waiting) {
+        setErrorMessage(tr("当前状态无法创建房间"));
+        return;
+    }
+    if (!androidEnsureVpnAuthorized()) return;
+
+    // 立即设置本地假状态，让 UI 立即切换到"扫描中"画面
+    m_isFakeScanning = true;
+    m_lastStateIndex = -1;
+    setState(State::HostScanning);
+
+    // 安卓版 setScanning 由原生层自取节点，无需传 public_nodes
+    const QString androidPlayer = playerName.trimmed().isEmpty() ? kDefaultPlayerName : playerName.trimmed();
+    QtConcurrent::run([androidPlayer]() {
+        QJniObject playerName_ = QJniObject::fromString(androidPlayer);
+        const jboolean ok = QJniObject::callStaticMethod<jboolean>(
+            kBridgeClass, "setScanning", "(Ljava/lang/String;Ljava/lang/String;)Z",
+            static_cast<jstring>(nullptr), playerName_.object<jstring>());
+        clearPendingJavaException();
+        const bool okBool = (ok == JNI_TRUE);
+        QMetaObject::invokeMethod(TerracottaClient::instance(),
+                                  [okBool]() {
+                                      auto *self = TerracottaClient::instance();
+                                      if (!okBool) {
+                                          self->m_isFakeScanning = false;
+                                          self->setErrorMessage(self->tr("创建房间失败，请重试"));
+                                          self->setState(State::Waiting);
+                                      }
+                                  },
+                                  Qt::QueuedConnection);
+    });
+    return;
+#endif
+
     // 参考 HMCL TerracottaManager.setScanning()：
     // 1. 检查进程已启动（端口已知）
     // 2. 立即设置本地假状态 HostScanning（UI 立即响应）
@@ -642,6 +840,44 @@ void TerracottaClient::createRoom(const QString &playerName)
 
 bool TerracottaClient::joinRoom(const QString &roomCode, const QString &playerName)
 {
+#ifdef Q_OS_ANDROID
+    if (!verifyRoomCode(roomCode)) {
+        setErrorMessage(tr("邀请码格式无效"));
+        return false;
+    }
+    if (!m_androidReady) {
+        setErrorMessage(tr("联机核心未就绪，请稍候再试"));
+        return false;
+    }
+    if (m_state != State::Waiting) {
+        setErrorMessage(tr("当前状态无法加入房间"));
+        return false;
+    }
+    if (!androidEnsureVpnAuthorized()) return false;
+
+    const QString androidPlayer = playerName.trimmed().isEmpty() ? kDefaultPlayerName : playerName.trimmed();
+    const QString androidCode = roomCode.trimmed().toUpper();
+
+    QtConcurrent::run([androidCode, androidPlayer]() {
+        QJniObject room = QJniObject::fromString(androidCode);
+        QJniObject playerName_ = QJniObject::fromString(androidPlayer);
+        const jboolean ok = QJniObject::callStaticMethod<jboolean>(
+            kBridgeClass, "setGuesting", "(Ljava/lang/String;Ljava/lang/String;)Z",
+            room.object<jstring>(), playerName_.object<jstring>());
+        clearPendingJavaException();
+        const bool okBool = (ok == JNI_TRUE);
+        QMetaObject::invokeMethod(TerracottaClient::instance(),
+                                  [okBool]() {
+                                      if (!okBool) {
+                                          TerracottaClient::instance()->setErrorMessage(
+                                              TerracottaClient::tr("加入房间失败：邀请码无效或当前状态不允许"));
+                                      }
+                                  },
+                                  Qt::QueuedConnection);
+    });
+    return true;
+#endif
+
     if (!verifyRoomCode(roomCode)) {
         setErrorMessage(tr("邀请码格式无效"));
         return false;
@@ -665,6 +901,16 @@ bool TerracottaClient::joinRoom(const QString &roomCode, const QString &playerNa
 
 void TerracottaClient::leaveRoom()
 {
+#ifdef Q_OS_ANDROID
+    if (!m_androidReady) return;
+    // 回到待机；桥接层会顺带释放 TUN 网卡，状态由轮询收敛到 waiting
+    QtConcurrent::run([]() {
+        QJniObject::callStaticMethod<jboolean>(kBridgeClass, "setWaiting", "()Z");
+        clearPendingJavaException();
+    });
+    return;
+#endif
+
     if (m_serverPort == 0) return;
     callApi(QStringLiteral("/state/ide"));
 }
@@ -751,6 +997,15 @@ void TerracottaClient::loadBuiltinVersionInfo()
 
 void TerracottaClient::checkUpdate()
 {
+#ifdef Q_OS_ANDROID
+    // 核心随 APK 内置（JNI），没有独立更新通道，版本更新随应用本体发布
+    if (m_installStatus != InstallStatus::Ready) {
+        m_installStatus = InstallStatus::Ready;
+        emit installStatusChanged();
+    }
+    return;
+#endif
+
     // 仅在空闲状态（未安装/已就绪/已是最新/有更新）时才检查
     if (m_installStatus == InstallStatus::Downloading
         || m_installStatus == InstallStatus::CheckingUpdate) {
@@ -788,6 +1043,11 @@ void TerracottaClient::checkUpdate()
 
 void TerracottaClient::downloadLatest()
 {
+#ifdef Q_OS_ANDROID
+    setErrorMessage(tr("联机核心随应用内置，更新版本请升级方块盒子"));
+    return;
+#endif
+
     if (m_installStatus == InstallStatus::Downloading) return;
 
     if (m_latestVersion.isEmpty()) {

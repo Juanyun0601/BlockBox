@@ -10,6 +10,11 @@
 #ifndef UIMETRICS_H
 #define UIMETRICS_H
 
+#include <QScreen>
+#include <QSize>
+#include <QWidget>
+#include <QGuiApplication>
+
 namespace UiMetrics {
 
 /* ---- 布局骨架 ---- */
@@ -38,6 +43,25 @@ static constexpr int kCardMinWidth = 220;
 static constexpr int kBubbleWidth = 240;
 /** 气泡与宿主边缘 / 侧边栏之间的间距 */
 static constexpr int kBubbleMargin = 10;
+
+/* ---- 屏幕适配 ---- */
+/**
+ * @brief 把期望尺寸限制在所在屏幕可用范围内（不含任务栏等系统栏）
+ *
+ * 界面尺寸按桌面宽屏设计；移动端屏幕小，虽然全局已按 0.6 缩放，
+ * 部分宽高很大的弹窗仍可能超出屏幕，这里统一兜底压回屏内，
+ * 同时四周预留 8% 边距，保证弹窗与系统栏之间留出呼吸空间。
+ */
+inline QSize fitToScreen(QWidget *widget, const QSize &desired)
+{
+    const QScreen *screen = widget ? widget->screen() : nullptr;
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return desired;
+    const QSize avail = screen->availableGeometry().size() * 0.92;
+    return desired.boundedTo(avail);
+}
 
 } // namespace UiMetrics
 

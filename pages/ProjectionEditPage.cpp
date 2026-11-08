@@ -11,7 +11,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -598,7 +598,7 @@ void ProjectionEditPage::onExportSchematicClicked()
     QFileInfo srcInfo(m_filePath);
     const QString baseName = srcInfo.completeBaseName();
     const QString startDir = srcInfo.absolutePath();
-    const QString outputPath = AppFileDialog::getSaveFileName(
+    const QString outputPath = QFileDialog::getSaveFileName(
         this, tr("导出为 .schematic"),
         startDir + QLatin1Char('/') + baseName + QStringLiteral(".schematic"),
         tr("Schematica 文件 (*.schematic)"));
@@ -625,7 +625,7 @@ void ProjectionEditPage::onExportSpongeClicked()
     QFileInfo srcInfo(m_filePath);
     const QString baseName = srcInfo.completeBaseName();
     const QString startDir = srcInfo.absolutePath();
-    const QString outputPath = AppFileDialog::getSaveFileName(
+    const QString outputPath = QFileDialog::getSaveFileName(
         this, tr("导出为 .schem"),
         startDir + QLatin1Char('/') + baseName + QStringLiteral(".schem"),
         tr("Sponge 文件 (*.schem)"));
@@ -689,7 +689,7 @@ void ProjectionEditPage::onConvertVersionClicked()
     QFileInfo srcInfo(m_filePath);
     const QString baseName = srcInfo.completeBaseName();
     const QString startDir = srcInfo.absolutePath();
-    const QString outputPath = AppFileDialog::getSaveFileName(
+    const QString outputPath = QFileDialog::getSaveFileName(
         this, tr("转换为所选版本"),
         startDir + QLatin1Char('/') + baseName + QStringLiteral("_v%1.litematic").arg(targetVersion),
         tr("Litematica 文件 (*.litematic)"));

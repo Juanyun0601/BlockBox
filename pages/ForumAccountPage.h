@@ -28,6 +28,7 @@
 #include <QWidget>
 
 #include "utils/ForumContentService.h"
+#include "utils/FeedbackService.h"
 
 #include "components/Skin3DWidget.h"
 
@@ -44,6 +45,7 @@ class QPushButton;
 class QScrollArea;
 class QShowEvent;
 class QStackedWidget;
+class QTimer;
 class QVBoxLayout;
 
 namespace ForumKit
@@ -116,10 +118,10 @@ protected:
 private:
     enum ViewIndex { OverviewView = 0, AuthView = 1, DetailView = 2 };
     enum TabIndex { CharactersTab = 0, ThreadsTab = 1, RepliesTab = 2, BookmarksTab = 3,
-                    NotificationsTab = 4, SettingsTab = 5 };
+                    NotificationsTab = 4, FeedbackTab = 5, SettingsTab = 6 };
     enum ContentIndex { CharactersContent = 0, ThreadsContent = 1, RepliesContent = 2,
-                        BookmarksContent = 3, NotificationsContent = 4, SettingsContent = 5,
-                        LoggedOutContent = 6 };
+                        BookmarksContent = 3, NotificationsContent = 4, FeedbackContent = 5,
+                        SettingsContent = 6, LoggedOutContent = 7 };
     enum AuthMode { LoginMode = 0, RegisterMode = 1 };
     /** 「我的收藏」页签内的子页：资源收藏（在线资源同步） / 帖子收藏（论坛主题） */
     enum BookmarkSubTab { BookmarkResourceTab = 0, BookmarkThreadTab = 1 };
@@ -158,6 +160,8 @@ private:
     QWidget *buildBookmarksContent(QWidget *parent);
     /** 「通知」页：谁回复 / 提到了我，点击直达帖子并标已读 */
     QWidget *buildNotificationsContent(QWidget *parent);
+    /** 「我的反馈」页：启动器 / 网页提交的反馈和处理进度 */
+    QWidget *buildFeedbackContent(QWidget *parent);
     /** 「角色」页：游戏账户瀑布流卡片 */
     QWidget *buildCharactersContent(QWidget *parent);
     /** 账户详情页：左侧 3D 皮肤预览 + 右侧资料 / 模型动作 / 账户操作 */
@@ -173,6 +177,10 @@ private:
     void setAuthMode(AuthMode mode);
     void submitAuth();
     void setActiveTab(TabIndex tab);
+    /** 登录 / 注册卡按内容高度收紧视图栈，窗口不够高时也不冒出竖向滚动条 */
+    void syncAuthViewHeight();
+    /** 退出登录卡：取消收紧，让总览 / 详情页恢复各自的高度 */
+    void releaseAuthViewHeight();
 
     // ── 资料渲染 ──
     void renderProfile();
@@ -228,6 +236,9 @@ private:
     void renderNotifications();
     void loadNotifications();
     void markAllNotificationsRead();
+    /** 「我的反馈」：拉取当前账号的反馈列表并渲染 */
+    void loadMyFeedbacks(bool force = false);
+    void renderMyFeedbacks();
     void renderLoading(QVBoxLayout *layout);
     void renderRows(QVBoxLayout *layout, const QJsonArray &items, int kind);
     void loadTabData();
@@ -240,6 +251,13 @@ private:
     void pickCoverFile();
     void confirmLogout();
 
+    // ── 邮箱验证 ──
+    void sendEmailCode();
+    void verifyEmailCode();
+    /** 按登录状态 / 验证状态 / 冷却进度刷新徽标和两个按钮 */
+    void updateEmailVerifyUi();
+    void tickCodeCooldown();
+
     void clearLayout(QVBoxLayout *layout);
     void setTabHint(const QString &text);
     void scrollToTop();
@@ -250,6 +268,8 @@ private:
     // 页面骨架
     QScrollArea *m_scroll = nullptr;
     QStackedWidget *m_viewStack = nullptr;
+    /** 登录卡上方的弹性留白：只在登录 / 注册视图显示，把卡片竖直居中 */
+    QWidget *m_authTopSpacer = nullptr;
     /** 页签内容区：手工换页，避免 QStackedWidget 用最长页面把卡片撑高 */
     QWidget *m_contentHost = nullptr;
     QVBoxLayout *m_contentLayout = nullptr;
@@ -279,12 +299,13 @@ private:
     /** 「我的收藏」内层切换按钮（资源收藏 / 帖子收藏） */
     QList<QPushButton *> m_bookmarkSubButtons;
     QLabel *m_tabHint = nullptr;
-    QPushButton *m_refreshBtn = nullptr;
     QVBoxLayout *m_threadListLayout = nullptr;
     QVBoxLayout *m_replyListLayout = nullptr;
     QVBoxLayout *m_bookmarkListLayout = nullptr;
     QVBoxLayout *m_notificationListLayout = nullptr;
     QPushButton *m_markAllReadButton = nullptr;
+    QVBoxLayout *m_feedbackListLayout = nullptr;
+    QPushButton *m_feedbackRefreshButton = nullptr;
     // 角色页（游戏账户瀑布流）
     QWidget *m_charactersPage = nullptr;
     MasonryLayout *m_charactersLayout = nullptr;
@@ -317,11 +338,13 @@ private:
     QJsonArray m_bookmarks;
     QVector<FavoriteItem> m_contentFavorites;   // 资源收藏（云端同步的在线资源）
     QVector<ForumNotificationItem> m_notifications;
+    QVector<FeedbackItem> m_myFeedbacks;
     bool m_threadsLoaded = false;
     bool m_repliesLoaded = false;
     bool m_bookmarksLoaded = false;
     bool m_contentFavoritesLoaded = false;
     bool m_notificationsLoaded = false;
+    bool m_myFeedbacksLoaded = false;
     int m_threadTotal = 0;
     int m_replyTotal = 0;
     int m_bookmarkTotal = 0;
@@ -333,6 +356,14 @@ private:
     // 账号设置
     QLineEdit *m_displayNameEdit = nullptr;
     QLineEdit *m_emailEdit = nullptr;
+    QLabel *m_emailVerifiedChip = nullptr;   ///< 邮箱旁的「已验证 / 未验证」徽标
+    QLineEdit *m_emailCodeEdit = nullptr;
+    QPushButton *m_sendCodeButton = nullptr;
+    QPushButton *m_verifyCodeButton = nullptr;
+    QLabel *m_emailNote = nullptr;
+    QTimer *m_codeTimer = nullptr;
+    int m_codeCooldown = 0;                  ///< 重发验证码剩余秒数
+    bool m_emailBusy = false;                ///< 发码 / 验证请求进行中
     QPlainTextEdit *m_bioEdit = nullptr;
     /** 简介编辑 / 预览切换（预览按 Markdown 渲染，看到的就是别人看到的样子） */
     QWidget *m_bioHost = nullptr;

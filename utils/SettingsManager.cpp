@@ -640,8 +640,18 @@ QString SettingsManager::getDefaultInstancePath() const
     if (!defaultFolder.path.isEmpty()) {
         return defaultFolder.path;
     }
-    QString appDir = QCoreApplication::applicationDirPath();
-    return appDir + "/.minecraft";
+    return defaultInstanceFolderPath();
+}
+
+QString SettingsManager::defaultInstanceFolderPath()
+{
+    // 安卓/鸿蒙的程序目录是只读的（安卓下还是应用更新就会变化的原生库目录，
+    // 鸿蒙为只读沙盒，电脑形态也不例外），默认实例文件夹落在这里会导致
+    // 「安装新实例」从建目录起全部写不进去；
+    // 移动端与鸿蒙端改用应用数据目录下的 .minecraft，桌面端维持跟随启动器目录不变
+    if (Platform::isMobile() || Platform::isHarmony())
+        return Platform::getMinecraftDirectory();
+    return QCoreApplication::applicationDirPath() + QStringLiteral("/.minecraft");
 }
 
 QStringList SettingsManager::getInstanceCategories() const
@@ -803,35 +813,6 @@ DownloadSource SettingsManager::getDownloadSource() const
 void SettingsManager::setDownloadSource(DownloadSource source)
 {
     m_settings->setValue("download/source", static_cast<int>(source));
-}
-
-FilePickerType SettingsManager::defaultFilePickerType()
-{
-    // 手机端没有通用的系统文件选择窗口，使用启动器自带的文件浏览器；
-    // 电脑端默认使用系统自带的文件资源管理器。
-    return Platform::isMobile() ? FilePickerType::BuiltIn : FilePickerType::System;
-}
-
-FilePickerType SettingsManager::getFilePickerType() const
-{
-    // 手机端固定软件自带，避免旧设置或误选系统选择器后弹不出窗口
-    if (Platform::isMobile())
-        return FilePickerType::BuiltIn;
-
-    const int stored = m_settings->value(
-        "filePicker/type", static_cast<int>(defaultFilePickerType())).toInt();
-    if (stored == static_cast<int>(FilePickerType::System)
-        || stored == static_cast<int>(FilePickerType::BuiltIn))
-        return static_cast<FilePickerType>(stored);
-    return defaultFilePickerType();
-}
-
-void SettingsManager::setFilePickerType(FilePickerType type)
-{
-    // 手机端只保存软件自带，防止选择系统选择器后无法正常选择文件
-    if (Platform::isMobile())
-        type = FilePickerType::BuiltIn;
-    m_settings->setValue("filePicker/type", static_cast<int>(type));
 }
 
 MapStructureIconStyle SettingsManager::getMapStructureIconStyle() const
@@ -1006,8 +987,9 @@ void SettingsManager::saveCommandPackList(const QList<QPair<QString, bool>> &pac
 
 void SettingsManager::initDefaultInstanceFolders()
 {
-    QString appDir = QCoreApplication::applicationDirPath();
-    QString defaultPath = appDir + "/.minecraft";
+    // 移动端：程序目录只读，默认实例文件夹用应用数据目录（见 defaultInstanceFolderPath）；
+    // 桌面端：维持跟随启动器所在目录的旧行为，避免影响现有用户
+    QString defaultPath = defaultInstanceFolderPath();
     
     if (m_settings->value("instanceFoldersInitialized", false).toBool()) {
         QList<InstanceFolderInfo> folders = getInstanceFolders();
@@ -1028,8 +1010,20 @@ void SettingsManager::initDefaultInstanceFolders()
         const bool storedDefaultMissing =
             defaultIndex >= 0 && !QDir(folders[defaultIndex].path).exists();
         const bool appDirFolderExists = QDir(defaultPath).exists();
-        if (storedDefaultMissing && appDirFolderExists
-            && folders[defaultIndex].path != defaultPath) {
+        // 移动端历史遗留修复：旧版本把默认实例文件夹放在只读的程序目录（安卓
+        // 原生库目录、鸿蒙只读沙盒）或某个后来不可写的位置里，新实例从建目录起
+        // 就写不进去。这里用真实写探针判断，而不是只比“是否在程序目录下”：
+        // 已经存在但不可写的旧目录（例如外部存储被清理/权限异常）同样要纠正。
+        // 只改“默认”这一项，用户手动添加的其它实例文件夹不受影响。
+        const bool mobile = Platform::isMobile() || Platform::isHarmony();
+        bool mobileDefaultUnwritable = false;
+        if (mobile && defaultIndex >= 0
+            && !folders[defaultIndex].path.trimmed().isEmpty()) {
+            mobileDefaultUnwritable =
+                !Platform::isDirectoryWritable(folders[defaultIndex].path);
+        }
+        if (((storedDefaultMissing && appDirFolderExists) || mobileDefaultUnwritable)
+            && defaultIndex >= 0 && folders[defaultIndex].path != defaultPath) {
             folders[defaultIndex].path = defaultPath;
             
             m_settings->beginWriteArray("instanceFolders");

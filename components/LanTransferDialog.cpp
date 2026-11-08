@@ -10,6 +10,7 @@
 #include "NotificationManager.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 #include "utils/tunnel/TunnelEngine.h"
 #include "utils/tunnel/TunnelManager.h"
 
@@ -83,7 +84,7 @@ void LanTransferDialog::initUI()
 {
     QWidget *card = new QWidget(this);
     card->setObjectName(QString::fromLatin1(kCardName));
-    card->setMinimumSize(720, 520);
+    card->setMinimumSize(UiMetrics::fitToScreen(this, QSize(720, 520)));
 
     QVBoxLayout *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(24, 18, 24, 18);

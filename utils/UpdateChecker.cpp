@@ -41,26 +41,58 @@
 namespace {
 
 constexpr int kRequestTimeoutMs = 12000;
-constexpr int kMaxAttempts = 3; // 直连、用户配置的加速节点、默认镜像
-// 直连 api.github.com 受限时的兜底镜像（前缀拼接式，支持 API 透传），
+// 官网源只给短超时：国内用户秒级拿到结果；国际用户最多等几秒就切 GitHub
+constexpr int kOfficialApiTimeoutMs = 4000;
+constexpr int kMaxAttempts = 4; // 官网源、GitHub 直连、用户配置的加速节点、默认镜像
+// GitHub 直连受限时的兜底镜像（前缀拼接式，支持 API 透传），
 // 优先级低于用户在 GithubAccelerator 中配置的加速节点。
 constexpr const char *kApiMirrorPrefix = "https://gh-proxy.com/";
 // 应用内更新包的存放目录（相对数据目录）
 constexpr const char *kUpdateDirName = "update";
 
-// 第 attempt 次尝试使用的请求地址：
-//   0 = 直连；1 = 用户配置的 GitHub 加速节点（未启用则跳过）；
-//   2 = 默认镜像兜底
-QUrl requestUrlFor(int attempt, const QString &url)
+// 第 attempt 次检查更新使用的请求地址：
+//   0 = 方块盒子官网源（国内优先；超时或后台还没发过版本就往下换）；
+//   1 = GitHub 直连；2 = 用户配置的 GitHub 加速节点（未启用则跳过）；3 = 默认镜像兜底
+QUrl requestUrlFor(int attempt, const QString &githubUrl)
 {
     if (attempt == 0)
-        return QUrl(url);
-    if (attempt == 1) {
-        const QString accelerated = GithubAccelerator::instance()->accelerateUrl(url);
-        if (!accelerated.isEmpty() && accelerated != url)
+        return QUrl(AppVersion::officialReleaseApiUrl());
+    if (attempt == 1)
+        return QUrl(githubUrl);
+    if (attempt == 2) {
+        const QString accelerated = GithubAccelerator::instance()->accelerateUrl(githubUrl);
+        if (!accelerated.isEmpty() && accelerated != githubUrl)
             return QUrl(accelerated);
     }
-    return QUrl(QStringLiteral("%1%2").arg(QLatin1String(kApiMirrorPrefix), url));
+    return QUrl(QStringLiteral("%1%2").arg(QLatin1String(kApiMirrorPrefix), githubUrl));
+}
+
+// 应用内更新包的下载地址：官网直链（含 CDN 域名）本身就是国内友好的源，
+// 重试时原样重发；只有 GitHub 资产才走 直连 -> 加速节点 -> 镜像 的兜底链，
+// 避免把镜像前缀错拼到自家 CDN 地址上。
+QUrl downloadUrlFor(int attempt, const QString &assetUrl)
+{
+    const QUrl url(assetUrl);
+    const QString host = url.host().toLower();
+    const bool githubAsset = host.endsWith(QLatin1String("github.com"))
+        || host.endsWith(QLatin1String("githubusercontent.com"));
+    if (!githubAsset || attempt == 0)
+        return url;
+    if (attempt == 1) {
+        const QString accelerated = GithubAccelerator::instance()->accelerateUrl(assetUrl);
+        if (!accelerated.isEmpty() && accelerated != assetUrl)
+            return QUrl(accelerated);
+    }
+    return QUrl(QStringLiteral("%1%2").arg(QLatin1String(kApiMirrorPrefix), assetUrl));
+}
+
+// 官网源返回的下载地址可能是相对路径（服务端没配直链域名时），按请求地址补全
+QString resolveAssetUrl(const QUrl &apiUrl, const QString &assetUrl)
+{
+    if (assetUrl.isEmpty() || assetUrl.startsWith(QLatin1String("http://"))
+        || assetUrl.startsWith(QLatin1String("https://")))
+        return assetUrl;
+    return QUrl(apiUrl).resolved(QUrl(assetUrl)).toString();
 }
 
 // ───────────────────────────── 版本号解析与比较 ─────────────────────────────
@@ -786,9 +818,11 @@ void UpdateChecker::fetchLatest()
 
 void UpdateChecker::issueRequest()
 {
-    QNetworkRequest req(requestUrlFor(m_attempt, AppVersion::releaseApiUrl()));
+    const QUrl url = requestUrlFor(m_attempt, AppVersion::releaseApiUrl());
+    m_activeApiUrl = url; // 记下本次来源，官网源返回相对下载地址时按它补全
+    QNetworkRequest req(url);
     req.setRawHeader("User-Agent", "BlockBox");
-    req.setTransferTimeout(kRequestTimeoutMs);
+    req.setTransferTimeout(m_attempt == 0 ? kOfficialApiTimeoutMs : kRequestTimeoutMs);
     QNetworkReply *reply = m_nam->get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         handleReply(reply);
@@ -877,6 +911,14 @@ void UpdateChecker::handleReply(QNetworkReply *reply)
             errorText = tr("无法解析版本信息");
     }
 
+    if (chosen.isValid() && !chosen.assetUrl.isEmpty())
+        chosen.assetUrl = resolveAssetUrl(m_activeApiUrl, chosen.assetUrl);
+
+    // 官网源响应正常但还没有发布任何版本时，不要把「后台还没发版」当成「已是最新」：
+    // 当作这次尝试失败，接着试 GitHub；GitHub 也解析不出候选才维持原语义
+    if (errorText.isEmpty() && !chosen.isValid() && m_attempt == 0)
+        errorText = tr("官网源暂无版本数据");
+
     // 请求失败时按 直连 -> 加速节点 -> 默认镜像 依次重试
     const bool failed = !errorText.isEmpty();
     if (failed && m_attempt < kMaxAttempts - 1) {
@@ -939,9 +981,10 @@ void UpdateChecker::showUpdateDialog(const ReleaseCandidate &release)
     AppMessageBox box(m_parent);
     box.setIcon(AppMessageBox::Information);
     box.setWindowTitle(tr("发现新版本"));
-    // 更新说明往往很长：弹窗放宽、加高，阅读更新日志时不用一直挤在窄条里
-    box.setCardWidthRange(700, 880);
-    box.setInfoBrowserHeightRange(220, 520);
+    // 更新说明往往很长：弹窗放宽、加高，让更新日志用整卡宽度阅读
+    box.setCardWidthRange(820, 1080);
+    box.setInfoBrowserHeightRange(240, 640);
+    box.setInfoBrowserFullWidth();
     box.setText(text);
     if (!notes.isEmpty()) {
         // 更新日志按 Markdown 渲染，过长时可在弹窗内上下滚动查看全文
@@ -1167,7 +1210,7 @@ void UpdateChecker::beginDownloadAttempt()
 
 void UpdateChecker::issueDownloadRequest()
 {
-    QNetworkRequest req(requestUrlFor(m_downloadAttempt, m_lastCandidate.assetUrl));
+    QNetworkRequest req(downloadUrlFor(m_downloadAttempt, m_lastCandidate.assetUrl));
     req.setRawHeader("User-Agent", "BlockBox");
     req.setTransferTimeout(0); // 大文件下载不设超时
     QNetworkReply *reply = m_nam->get(req);

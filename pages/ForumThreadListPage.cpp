@@ -302,13 +302,15 @@ void ForumThreadListPage::renderThreads(const QVector<ForumThreadInfo> &threads)
         auto *textColumn = new QVBoxLayout();
         textColumn->setSpacing(4);
 
-        // 标题行（含置顶 / 锁定徽章）
+        // 标题行（含置顶 / 锁定 / 插件徽章）
         auto *titleRow = new QHBoxLayout();
         titleRow->setSpacing(6);
         if (thread.pinned)
             titleRow->addWidget(ForumKit::makeBadge(row, tr("置顶")));
         if (thread.locked)
             titleRow->addWidget(ForumKit::makeBadge(row, tr("锁定"), true));
+        if (thread.plugin.isValid())
+            titleRow->addWidget(ForumKit::makeBadge(row, tr("插件")));
 
         auto *title = new ForumKit::ElidedLabel(row);
         title->setObjectName(QStringLiteral("forumRowTitle"));

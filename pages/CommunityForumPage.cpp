@@ -10,6 +10,7 @@
 #include <QBoxLayout>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QEasingCurve>
 #include <QEnterEvent>
 #include <QFrame>
 #include <QGridLayout>
@@ -21,6 +22,8 @@
 #include <QMouseEvent>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProgressBar>
+#include <QPropertyAnimation>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
@@ -32,6 +35,7 @@
 #include "utils/ForumAccountService.h"
 #include "utils/SettingsManager.h"
 #include "utils/ForumAccountService.h"
+#include "pages/MultiplayerLobbyPage.h"
 
 namespace {
 
@@ -145,6 +149,9 @@ CommunityForumPage::CommunityForumPage(QWidget *parent)
     connect(ForumAccountService::instance(), &ForumAccountService::userChanged, this,
             &CommunityForumPage::updateHeroButtons);
 
+    // 社区页里的「联机大厅」是子页面：在页面内切换，不再跳独立页
+    connect(this, &CommunityForumPage::lobbyOpenRequested, this, &CommunityForumPage::showLobbyPage);
+
     connect(SettingsManager::instance(), &SettingsManager::forumBaseUrlChanged, this, [this]() {
         m_loadedOnce = false;
         refresh();
@@ -158,6 +165,30 @@ void CommunityForumPage::buildUi()
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
+
+    // ── 页面顶部加载进度条：数据加载期间显示，加载完自动收起 ──
+    // 固定占 3px 高度，隐藏时只是变透明，页面内容不会上下跳动
+    auto *loadingStrip = new QWidget(this);
+    loadingStrip->setObjectName(QStringLiteral("communityLoadingStrip"));
+    loadingStrip->setFixedHeight(3);
+    auto *loadingStripLayout = new QVBoxLayout(loadingStrip);
+    loadingStripLayout->setContentsMargins(0, 0, 0, 0);
+    loadingStripLayout->setSpacing(0);
+
+    m_loadingBar = new QProgressBar(loadingStrip);
+    m_loadingBar->setObjectName(QStringLiteral("communityLoadingBar"));
+    m_loadingBar->setRange(0, 100);
+    m_loadingBar->setValue(0);
+    m_loadingBar->setTextVisible(false);
+    m_loadingBar->setFixedHeight(3);
+    m_loadingBar->setVisible(false);
+    loadingStripLayout->addWidget(m_loadingBar);
+
+    m_loadingAnimation = new QPropertyAnimation(m_loadingBar, "value", this);
+    m_loadingAnimation->setDuration(260);
+    m_loadingAnimation->setEasingCurve(QEasingCurve::OutCubic);
+
+    outer->addWidget(loadingStrip);
 
     auto *scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
@@ -293,6 +324,35 @@ void CommunityForumPage::buildUi()
     m_boardsLayout->setSpacing(8);
     m_boardsLayout->addWidget(makeMutedLabel(tr("正在加载板块…"), boardsCard));
     leftLayout->addWidget(boardsCard);
+
+    // 联机大厅：左栏显眼位置放一小块在线房间，点开进实例助手的大厅页
+    leftLayout->addSpacing(6);
+    auto *lobbyTitleRow = new QHBoxLayout();
+    lobbyTitleRow->setContentsMargins(0, 0, 0, 0);
+    lobbyTitleRow->setSpacing(8);
+    lobbyTitleRow->addWidget(makeSectionTitle(tr("联机大厅"), leftColumn));
+    lobbyTitleRow->addStretch(1);
+    auto *lobbyOpenButton = new QPushButton(tr("进入大厅 →"), leftColumn);
+    lobbyOpenButton->setObjectName(QStringLiteral("communityTag"));
+    lobbyOpenButton->setCursor(Qt::PointingHandCursor);
+    lobbyOpenButton->setFlat(true);
+    lobbyOpenButton->setFixedHeight(26);
+    connect(lobbyOpenButton, &QPushButton::clicked, this, &CommunityForumPage::lobbyOpenRequested);
+    lobbyTitleRow->addWidget(lobbyOpenButton);
+    leftLayout->addLayout(lobbyTitleRow);
+
+    auto *lobbyCard = makeCard(leftColumn);
+    auto *lobbyCardLayout = new QVBoxLayout(lobbyCard);
+    lobbyCardLayout->setContentsMargins(10, 6, 10, 8);
+    lobbyCardLayout->setSpacing(4);
+    m_lobbyLayout = new QVBoxLayout();
+    m_lobbyLayout->setContentsMargins(0, 0, 0, 0);
+    m_lobbyLayout->setSpacing(2);
+    lobbyCardLayout->addLayout(m_lobbyLayout);
+    m_lobbyHint = makeMutedLabel(tr("正在加载联机大厅…"), lobbyCard);
+    m_lobbyHint->setWordWrap(true);
+    lobbyCardLayout->addWidget(m_lobbyHint);
+    leftLayout->addWidget(lobbyCard);
 
     leftLayout->addSpacing(6);
     leftLayout->addWidget(makeSectionTitle(tr("最新讨论"), leftColumn));
@@ -443,10 +503,20 @@ void CommunityForumPage::resizeEvent(QResizeEvent *event)
         if (!m_boards.isEmpty())
             renderBoards();
     }
+
+    if (m_lobbyOverlay)
+        m_lobbyOverlay->setGeometry(rect());
 }
 
 void CommunityForumPage::refresh()
 {
+    // 大厅子页面打开时，顶栏刷新改为刷新大厅
+    if (m_lobbyOverlay && m_lobbyOverlay->isVisible() && m_lobbyPage)
+    {
+        m_lobbyPage->refresh();
+        return;
+    }
+
     if (m_pendingRequests > 0)
         return;
 
@@ -454,6 +524,8 @@ void CommunityForumPage::refresh()
     m_boards.clear();
     m_threads.clear();
     m_tags.clear();
+    m_lobbyRooms.clear();
+    m_lobbyError.clear();
     m_siteUsers = m_siteThreads = m_sitePosts = m_siteOnline = 0;
     m_siteNewUsers = 0;
     m_newestUserName.clear();
@@ -461,9 +533,20 @@ void CommunityForumPage::refresh()
     m_pendingRequests = 3;
     m_loadedOnce = true;
 
+    // 页面顶部进度条：3 个论坛接口全部返回后收起
+    m_loadTotalSteps = 3;
+    m_loadDoneSteps = 0;
+    if (m_loadingBar)
+    {
+        m_loadingAnimation->stop();
+        m_loadingBar->setValue(0);
+        m_loadingBar->setVisible(true);
+    }
+
     if (m_refreshButton)
         m_refreshButton->setEnabled(false);
     setStatus(tr("正在连接论坛…"));
+    fetchLobby();
 
     requestJson(QStringLiteral("/api/boards"), [this](const QJsonDocument &doc) {
         const QJsonObject root = doc.object();
@@ -590,6 +673,11 @@ void CommunityForumPage::sendJsonRequest(
 void CommunityForumPage::finishRequest()
 {
     m_pendingRequests -= 1;
+
+    // 每完成一个接口就推进一格进度
+    m_loadDoneSteps += 1;
+    updateLoadingBar();
+
     if (m_pendingRequests > 0)
         return;
 
@@ -604,6 +692,38 @@ void CommunityForumPage::finishRequest()
         setStatus(tr("部分内容加载失败，可以点「刷新」再试"), true);
 
     renderAll();
+}
+
+void CommunityForumPage::updateLoadingBar()
+{
+    if (!m_loadingBar)
+        return;
+
+    const int total = qMax(1, m_loadTotalSteps);
+    const int done = qBound(0, m_loadDoneSteps, total);
+    const int target = (done * 100) / total;
+
+    if (m_loadingAnimation)
+    {
+        m_loadingAnimation->stop();
+        m_loadingAnimation->setStartValue(m_loadingBar->value());
+        m_loadingAnimation->setEndValue(target);
+        m_loadingAnimation->start();
+    }
+    else
+    {
+        m_loadingBar->setValue(target);
+    }
+
+    // 走满后再淡出，避免进度条没到头就消失
+    if (done >= total)
+    {
+        QTimer::singleShot(320, this, [this]() {
+            if (!m_loadingBar || m_loadDoneSteps < m_loadTotalSteps || m_pendingRequests > 0)
+                return;
+            m_loadingBar->setVisible(false);
+        });
+    }
 }
 
 void CommunityForumPage::setStatus(const QString &text, bool isError)
@@ -634,6 +754,7 @@ void CommunityForumPage::renderAll()
 {
     renderStats();
     renderBoards();
+    renderLobby();
     renderThreads();
     renderTags();
 }
@@ -746,6 +867,154 @@ void CommunityForumPage::renderBoards()
     }
 
     m_boardsLayout->addLayout(grid);
+}
+
+void CommunityForumPage::showLobbyPage()
+{
+    if (!m_lobbyOverlay)
+    {
+        m_lobbyOverlay = new QWidget(this);
+        m_lobbyOverlay->setObjectName(QStringLiteral("communityLobbyOverlay"));
+        m_lobbyOverlay->setAttribute(Qt::WA_StyledBackground, true);
+        m_lobbyOverlay->setStyleSheet(
+            QStringLiteral("QWidget#communityLobbyOverlay{background:palette(base);}"));
+
+        auto *layout = new QVBoxLayout(m_lobbyOverlay);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+
+        m_lobbyPage = new MultiplayerLobbyPage(m_lobbyOverlay);
+        layout->addWidget(m_lobbyPage, 1);
+
+        connect(m_lobbyPage, &MultiplayerLobbyPage::joinGameRequested, this,
+                &CommunityForumPage::joinGameRequested);
+        connect(m_lobbyPage, &MultiplayerLobbyPage::openInstanceAssistantRequested, this,
+                &CommunityForumPage::openInstanceAssistantRequested);
+        connect(m_lobbyPage, &MultiplayerLobbyPage::forumLoginRequested, this,
+                &CommunityForumPage::loginRequested);
+    }
+
+    m_lobbyOverlay->setGeometry(rect());
+    m_lobbyOverlay->show();
+    m_lobbyOverlay->raise();
+    if (m_lobbyPage)
+        m_lobbyPage->refresh();
+}
+
+void CommunityForumPage::hideLobbyPage()
+{
+    if (m_lobbyOverlay)
+        m_lobbyOverlay->hide();
+}
+
+bool CommunityForumPage::closeLobbyIfVisible()
+{
+    if (!m_lobbyOverlay || !m_lobbyOverlay->isVisible())
+        return false;
+    hideLobbyPage();
+    return true;
+}
+
+void CommunityForumPage::fetchLobby()
+{
+    m_lobbyLoaded = false;
+    m_lobbyError.clear();
+    if (m_lobbyHint)
+        m_lobbyHint->setText(tr("正在加载联机大厅…"));
+
+    ForumLobbyService::instance()->fetchRooms(
+        QString(), QString(),
+        [this](const QVector<ForumLobbyRoom> &rooms, int) {
+            m_lobbyRooms = rooms;
+            m_lobbyLoaded = true;
+            renderLobby();
+        },
+        [this](const QString &message, int) {
+            m_lobbyRooms.clear();
+            m_lobbyLoaded = true;
+            m_lobbyError = message;
+            renderLobby();
+        });
+}
+
+void CommunityForumPage::renderLobby()
+{
+    if (!m_lobbyLayout)
+        return;
+
+    clearLayout(m_lobbyLayout);
+
+    constexpr int kMaxRows = 4;
+    const int count = qMin(m_lobbyRooms.size(), kMaxRows);
+    for (int i = 0; i < count; ++i)
+    {
+        const ForumLobbyRoom &room = m_lobbyRooms.at(i);
+
+        auto *row = new ClickableCard(this);
+        row->setObjectName(QStringLiteral("communityThreadRow"));
+        row->onClick = [this]() { emit lobbyOpenRequested(); };
+
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(8, 8, 8, 8);
+        rowLayout->setSpacing(10);
+
+        auto *chip = new QLabel(room.coreLabel.isEmpty()
+                                    ? ForumLobbyService::coreDisplayName(room.core)
+                                    : room.coreLabel,
+                                row);
+        chip->setObjectName(QStringLiteral("communityLobbyChip"));
+        chip->setAlignment(Qt::AlignCenter);
+        rowLayout->addWidget(chip);
+
+        auto *textLayout = new QVBoxLayout();
+        textLayout->setSpacing(1);
+        auto *title = new QLabel(truncateText(room.title, 30), row);
+        title->setObjectName(QStringLiteral("communityLobbyTitle"));
+
+        QStringList metaParts;
+        if (!room.gameVersion.isEmpty())
+            metaParts << room.gameVersion;
+        if (!room.loader.isEmpty())
+            metaParts << room.loader;
+        const QString hostName =
+            room.host.displayName.isEmpty() ? room.host.username : room.host.displayName;
+        if (!hostName.isEmpty())
+            metaParts << tr("房主 %1").arg(hostName);
+        metaParts << tr("%1 人").arg(room.joinCount);
+        auto *meta = new QLabel(metaParts.join(QStringLiteral(" · ")), row);
+        meta->setObjectName(QStringLiteral("communityMuted"));
+
+        textLayout->addWidget(title);
+        textLayout->addWidget(meta);
+        rowLayout->addLayout(textLayout, 1);
+
+        const QString code = room.joinTarget();
+        if (!code.isEmpty())
+        {
+            auto *codeLabel = new QLabel(code, row);
+            codeLabel->setObjectName(QStringLiteral("communityLobbyCode"));
+            codeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            codeLabel->setToolTip(tr("邀请码 / 连接地址，进大厅后可一键加入"));
+            rowLayout->addWidget(codeLabel);
+        }
+
+        m_lobbyLayout->addWidget(row);
+    }
+
+    if (!m_lobbyHint)
+        return;
+
+    if (!m_lobbyError.isEmpty())
+        m_lobbyHint->setText(tr("联机大厅暂时连不上：%1").arg(m_lobbyError));
+    else if (!m_lobbyLoaded)
+        m_lobbyHint->setText(tr("正在加载联机大厅…"));
+    else if (m_lobbyRooms.isEmpty())
+        m_lobbyHint->setText(
+            tr("现在还没有人开房间。在实例助手的联机页点「发布到联机大厅」，房间就会出现在这里。"));
+    else
+        m_lobbyHint->setText(
+            tr("共 %1 个房间 · 进入大厅后按版本、加载器和模组自动挑最新的实例，一键加入")
+                .arg(m_lobbyRooms.size()));
 }
 
 void CommunityForumPage::renderThreads()

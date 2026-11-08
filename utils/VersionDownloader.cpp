@@ -29,16 +29,56 @@
 
 #include <QStandardPaths>
 #include <functional>
+#include <memory>
 
 #include "SettingsManager.h"
 
 #include "utils/ManifestCache.h"
+
+namespace {
+
+// 官方地址 ↔ BMCLAPI 镜像地址互转。只处理原版下载会遇到的几类主机，
+// 避免误改写其它 URL（例如社区资源地址）。
+QString bmclMirrorUrl(const QString &url)
+{
+    QString mirror = url;
+    mirror.replace(QStringLiteral("https://launchermeta.mojang.com"),
+                   QStringLiteral("https://bmclapi2.bangbang93.com"));
+    mirror.replace(QStringLiteral("https://piston-meta.mojang.com"),
+                   QStringLiteral("https://bmclapi2.bangbang93.com"));
+    mirror.replace(QStringLiteral("https://piston-data.mojang.com/v1/objects"),
+                   QStringLiteral("https://bmclapi2.bangbang93.com/v1/objects"));
+    mirror.replace(QStringLiteral("https://launcher.mojang.com/v1/objects"),
+                   QStringLiteral("https://bmclapi2.bangbang93.com/v1/objects"));
+    mirror.replace(QStringLiteral("https://libraries.minecraft.net"),
+                   QStringLiteral("https://bmclapi2.bangbang93.com/maven"));
+    mirror.replace(QStringLiteral("https://resources.download.minecraft.net"),
+                   QStringLiteral("https://bmclapi2.bangbang93.com/assets"));
+    return mirror;
+}
+
+QString officialMirrorUrl(const QString &url)
+{
+    QString official = url;
+    official.replace(QStringLiteral("https://bmclapi2.bangbang93.com/maven"),
+                     QStringLiteral("https://libraries.minecraft.net"));
+    official.replace(QStringLiteral("https://bmclapi2.bangbang93.com/assets"),
+                     QStringLiteral("https://resources.download.minecraft.net"));
+    official.replace(QStringLiteral("https://bmclapi2.bangbang93.com/v1/objects"),
+                     QStringLiteral("https://piston-data.mojang.com/v1/objects"));
+    official.replace(QStringLiteral("https://bmclapi2.bangbang93.com"),
+                     QStringLiteral("https://launchermeta.mojang.com"));
+    return official;
+}
+
+} // namespace
 
 VersionDownloader* VersionDownloader::m_instance = nullptr;
 static QMutex s_vdInstanceMutex;
 
 VersionDownloader::VersionDownloader()
     : m_downloadSource(Official)
+    , m_effectiveSource(Official)
     , m_currentPhase(DownloadPhase::Idle)
     , m_isDownloading(false)
     , m_isPaused(false)
@@ -120,7 +160,68 @@ void VersionDownloader::downloadVanillaTo(const QString &versionId, const QStrin
     emit statusChanged(QString("开始下载 Minecraft %1...").arg(versionId));
     updateTaskStatus(tr("开始下载"));
 
-    fetchManifest();
+    // 先探测官方 CDN：国内网络常见的不是“连不上立刻报错”，而是一直挂到
+    // 超时；如果每个文件都先等官方超时再换镜像，安装会看起来卡在 0%/几十%。
+    // 探测失败时整条任务改用 BMCL 镜像，后续文件不再逐个等官方超时。
+    m_effectiveSource = m_downloadSource;
+    if (m_effectiveSource == Official)
+    {
+        emit statusChanged(tr("正在检测官方下载源..."));
+        probeOfficialCdn([this]() { fetchManifest(); });
+    }
+    else
+    {
+        fetchManifest();
+    }
+}
+
+void VersionDownloader::probeOfficialCdn(std::function<void()> onReady)
+{
+    struct ProbeState {
+        int pending = 2;
+        bool failed = false;
+        bool finished = false;
+    };
+    auto state = std::make_shared<ProbeState>();
+
+    auto finish = [this, state, onReady]() {
+        if (state->finished)
+            return;
+        state->finished = true;
+        if (!m_isDownloading || m_isPaused)
+            return;
+        if (state->failed)
+        {
+            m_effectiveSource = BMCL;
+            emit statusChanged(tr("官方下载源不可用，已自动改用 BMCL 镜像"));
+            updateTaskStatus(tr("改用 BMCL 镜像下载"));
+        }
+        onReady();
+    };
+
+    // 只探测大文件 CDN 是否可连通：只要服务器有任何 HTTP 响应就算通，
+    // 404/403 不代表网络不通；连接超时/拒绝/域名解析失败才算不可用
+    auto probe = [this, state, finish](const QUrl &url) {
+        QNetworkRequest request(url);
+        request.setTransferTimeout(4000);
+        QNetworkReply *reply = Net::networkAccessManager()->head(request);
+        // 探测请求不放进 m_activeReplies：取消下载时让它在 4 秒超时后自行收尾，
+        // 避免和 abortAllActiveReplies 的 deleteLater 重复释放
+        connect(reply, &QNetworkReply::finished, this, [this, reply, state, finish]() {
+            reply->deleteLater();
+            if (!reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).isValid()
+                && reply->error() != QNetworkReply::NoError)
+            {
+                state->failed = true;
+            }
+            --state->pending;
+            if (state->pending <= 0)
+                finish();
+        });
+    };
+
+    probe(QUrl(QStringLiteral("https://piston-data.mojang.com/")));
+    probe(QUrl(QStringLiteral("https://resources.download.minecraft.net/")));
 }
 
 void VersionDownloader::cancelDownload()
@@ -344,7 +445,7 @@ void VersionDownloader::fetchManifest()
     const QString bmclUrl =
         QStringLiteral("https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json");
     QStringList urls;
-    if (m_downloadSource == BMCL)
+    if (m_effectiveSource == BMCL)
         urls << bmclUrl << officialUrl;
     else
         urls << officialUrl << bmclUrl;
@@ -412,7 +513,7 @@ void VersionDownloader::fetchVersionJson()
                     QStringLiteral("https://bmclapi2.bangbang93.com"));
 
     QStringList urls;
-    if (m_downloadSource == BMCL)
+    if (m_effectiveSource == BMCL)
         urls << bmclUrl << versionUrl;
     else
         urls << versionUrl << bmclUrl;
@@ -507,16 +608,16 @@ void VersionDownloader::downloadClientJarFromNetwork()
         return;
     }
 
-    // BMCL 源保留官方地址作为兜底：镜像 302 的后端可能故障，官方地址仍在清单里
+    // 无论首选源是官方还是 BMCL，都登记另一个源作为兜底：
+    // 国内网络经常能打开清单/版本 JSON，却连不上 piston-data / libraries /
+    // resources 这几个 CDN，此时只有清单有回退、客户端 JAR 没有回退，
+    // 安装会停在 0% 或依赖库阶段报「下载失败」。
     m_clientJarFallbackUrl.clear();
-    if (m_downloadSource == BMCL && clientUrl.contains("bmclapi2.bangbang93.com"))
-    {
-        m_clientJarFallbackUrl = clientUrl;
-        m_clientJarFallbackUrl.replace("https://bmclapi2.bangbang93.com/v1/objects",
-                                       "https://piston-data.mojang.com/v1/objects");
-        m_clientJarFallbackUrl.replace("https://bmclapi2.bangbang93.com/objects",
-                                       "https://piston-data.mojang.com/v1/objects");
-    }
+    const QString clientMirror = (m_effectiveSource == BMCL)
+        ? officialMirrorUrl(clientUrl)
+        : bmclMirrorUrl(clientUrl);
+    if (!clientMirror.isEmpty() && clientMirror != clientUrl)
+        m_clientJarFallbackUrl = clientMirror;
     m_clientJarSha1.clear();
     if (m_currentVersionManifest.contains("downloads"))
     {
@@ -671,8 +772,16 @@ void VersionDownloader::downloadLogConfigs()
 
     // 该文件不在 calculateTotalSize 的估算里，计入总量避免进度越界
     m_totalBytes += clientLogSize;
-    downloadSingleFile(clientLogUrl, logConfigPath, clientLogSize, clientLogSha1,
-                       QString(), false);
+    // 日志配置同样双源：首选源失败后换另一个镜像，失败也不阻塞安装
+    QString logPrimary = clientLogUrl;
+    QString logFallback = bmclMirrorUrl(clientLogUrl);
+    if (m_effectiveSource == BMCL)
+    {
+        logPrimary = logFallback;
+        logFallback = clientLogUrl;
+    }
+    downloadSingleFile(logPrimary, logConfigPath, clientLogSize, clientLogSha1,
+                       logFallback, false);
 }
 
 void VersionDownloader::onNetFileSucceeded(const NetFileParams &params)
@@ -698,7 +807,8 @@ void VersionDownloader::onNetFileFailed(const NetFileParams &params)
 
     if (params.isClientJar)
     {
-        failDownload(tr("下载失败 (已重试多次): %1").arg(QFileInfo(params.filePath).fileName()));
+        failDownload(tr("下载失败（已自动重试并切换下载源）：%1\n请检查网络连接后重试。")
+                         .arg(QFileInfo(params.filePath).fileName()));
         return;
     }
     // 日志配置属于锦上添花的文件：失败不阻塞安装，仅提示
@@ -827,7 +937,7 @@ void VersionDownloader::onPhaseJobFinished(const NetJob::Ptr &job)
     if (!job->wasSuccessful())
     {
         const QStringList failed = job->getFailedFiles();
-        failDownload(tr("下载失败 (已重试多次): %1")
+        failDownload(tr("下载失败（已自动重试并切换下载源）：%1\n请检查网络连接后重试。")
                          .arg(failed.isEmpty() ? tr("未知文件")
                                                : QFileInfo(failed.first()).fileName()));
         return;
@@ -886,11 +996,20 @@ void VersionDownloader::startLibrariesDownload()
                     dl.fileSize = artifact["size"].toVariant().toLongLong();
                     dl.expectedHash = artifact["sha1"].toString();
 
-                    if (m_downloadSource == BMCL)
+                    // 首选源失败后自动换另一个源：BMCL 镜像后端可能单个故障，
+                    // 官方 CDN 在国内也可能连不上，两边互为兜底
+                    const QString libraryMirror = bmclMirrorUrl(dl.url);
+                    if (!libraryMirror.isEmpty() && libraryMirror != dl.url)
                     {
-                        // 保留官方地址：BMCL 的镜像后端可能单个故障（403/429），用于兜底重试
-                        dl.fallbackUrl = dl.url;
-                        dl.url.replace("https://libraries.minecraft.net", "https://bmclapi2.bangbang93.com/maven");
+                        if (m_effectiveSource == BMCL)
+                        {
+                            dl.fallbackUrl = dl.url;
+                            dl.url = libraryMirror;
+                        }
+                        else
+                        {
+                            dl.fallbackUrl = libraryMirror;
+                        }
                     }
 
                     all.append(dl);
@@ -1025,7 +1144,7 @@ void VersionDownloader::fetchAssetIndex()
                     QStringLiteral("https://bmclapi2.bangbang93.com"));
 
     QStringList urls;
-    if (m_downloadSource == BMCL)
+    if (m_effectiveSource == BMCL)
         urls << bmclUrl << assetUrl;
     else
         urls << assetUrl << bmclUrl;
@@ -1096,15 +1215,20 @@ void VersionDownloader::startAssetsFromIndex(const QJsonObject &objects, const Q
         QString hashPrefix = hash.left(2);
 
         PendingDownload dl;
-        if (m_downloadSource == BMCL)
+        const QString officialAssetUrl =
+            QString("https://resources.download.minecraft.net/%1/%2").arg(hashPrefix, hash);
+        const QString bmclAssetUrl =
+            QString("https://bmclapi2.bangbang93.com/assets/%1/%2").arg(hashPrefix, hash);
+        if (m_effectiveSource == BMCL)
         {
-            // 保留官方地址：BMCL 的镜像后端可能单个故障（403/429），用于兜底重试
-            dl.url = QString("https://bmclapi2.bangbang93.com/assets/%1/%2").arg(hashPrefix).arg(hash);
-            dl.fallbackUrl = QString("https://resources.download.minecraft.net/%1/%2").arg(hashPrefix).arg(hash);
+            // 官方 CDN 与 BMCL 互为主备：镜像后端可能单个故障，官方 CDN 也可能被网络阻断
+            dl.url = bmclAssetUrl;
+            dl.fallbackUrl = officialAssetUrl;
         }
         else
         {
-            dl.url = QString("https://resources.download.minecraft.net/%1/%2").arg(hashPrefix).arg(hash);
+            dl.url = officialAssetUrl;
+            dl.fallbackUrl = bmclAssetUrl;
         }
         dl.filePath = assetsPath + "/objects/" + hashPrefix + "/" + hash;
         dl.fileSize = asset["size"].toVariant().toLongLong();
@@ -1264,7 +1388,7 @@ QString VersionDownloader::getClientDownloadUrl(const QJsonObject &versionManife
     QJsonObject client = downloads["client"].toObject();
     QString url = client["url"].toString();
 
-    if (m_downloadSource == BMCL)
+    if (m_effectiveSource == BMCL)
     {
         // BMCLAPI 的客户端镜像端点保留 /v1 路径段（/objects/<hash>/client.jar 会 429）
         url.replace("https://launcher.mojang.com/v1/objects", "https://bmclapi2.bangbang93.com/v1/objects");

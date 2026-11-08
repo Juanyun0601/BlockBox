@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
 
     const QVector<CaseConfig> cases = {
         { QStringLiteral("内置场景 overworld"), QStringLiteral("overworld"), QString() },
-        { QStringLiteral("内置实景场景 alps_field（单张等距图）"), QStringLiteral("alps_field"), QString() },
+        { QStringLiteral("已删除旧场景名（alps_field）应回退默认"), QStringLiteral("alps_field"), QString() },
         { QStringLiteral("自定义图片未选图（场景名与图片都为空）"), QString(), QString() },
         { QStringLiteral("场景名无效（nosuchscene）"), QStringLiteral("nosuchscene"), QString() },
         { QStringLiteral("自定义图片路径不存在"), QString(), QStringLiteral("D:/no_such_dir/no_such.png") },

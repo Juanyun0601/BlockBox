@@ -7,7 +7,7 @@
 
 #include "AiChatPage.h"
 
-#include "components/AppFileDialog.h"
+#include "components/AiComposeDialog.h"
 #include "components/MarkdownOutlinedLabel.h"
 #include "components/OutlinedLabel.h"
 #include "components/OutlinedTextEdit.h"
@@ -81,6 +81,8 @@
 #include "utils/NeoForgeInstaller.h"
 #include "utils/optifine/OptiFineInstaller.h"
 #include "utils/content/ContentDownloader.h"
+
+#include "platform.h"
 
 namespace
 {
@@ -482,6 +484,13 @@ AiChatPage::AiChatPage(QWidget *parent)
     , m_systemPromptBtn(nullptr)
     , m_promptOptimizeBtn(nullptr)
     , m_promptOptimizeBusy(false)
+    , m_mobileMode(false)
+    , m_mobileBar(nullptr)
+    , m_mobileInputBtn(nullptr)
+    , m_mobileBusyRow(nullptr)
+    , m_mobileBusyDetail(nullptr)
+    , m_mobileStopBtn(nullptr)
+    , m_mobileComposeDialog(nullptr)
     , m_referenceBtn(nullptr)
     , m_referenceChipsWidget(nullptr)
     , m_referenceChipsLayout(nullptr)
@@ -607,6 +616,8 @@ AiChatPage::~AiChatPage()
 void AiChatPage::initUI()
 {
     setObjectName(QStringLiteral("aiChatPage"));
+    // 手机端（安卓 / 鸿蒙）：输入卡片默认收进居中弹窗，底部只留一个输入按钮
+    m_mobileMode = Platform::isMobile();
     // 深色 + 自定义背景时页面自身提供暗色底，避免消息区全透明
     setAttribute(Qt::WA_StyledBackground, true);
 
@@ -1005,6 +1016,15 @@ void AiChatPage::initUI()
     inputBoxLayout->addWidget(m_toolsArea);
     inputLayout->addWidget(inputBox);
 
+    if (m_mobileMode)
+    {
+        // 手机端：输入卡片默认不显示，底部换成「输入」按钮；
+        // 点按钮时整块输入卡片搬进居中弹窗，收起后再搬回这里（保持隐藏）。
+        m_inputBox->hide();
+        buildMobileInputBar();
+        inputLayout->addWidget(m_mobileBar);
+    }
+
     rightLayout->addWidget(m_inputPanel);
 
     bodyLayout->addWidget(rightPanel, 1);
@@ -1074,6 +1094,175 @@ void AiChatPage::rebuildToolsRows()
     m_permissionCombo->setFixedWidth(m_compactMode ? 92 : 122);
     updateModelBtnText();
     updateWorkspaceBtnText();
+}
+
+// ============================================================================
+// 手机端底部输入栏与居中输入窗口
+// ============================================================================
+
+void AiChatPage::buildMobileInputBar()
+{
+    if (m_mobileBar || !m_inputPanel)
+    {
+        return;
+    }
+
+    m_mobileBar = new QWidget(m_inputPanel);
+    m_mobileBar->setObjectName("aiChatMobileBar");
+    auto *barLayout = new QHBoxLayout(m_mobileBar);
+    barLayout->setContentsMargins(0, 0, 0, 0);
+    barLayout->setSpacing(10);
+
+    // 空闲态：一个占满整行的输入按钮，点开后弹出居中输入窗口
+    m_mobileInputBtn = new QPushButton(m_mobileBar);
+    m_mobileInputBtn->setObjectName("aiChatMobileInputBtn");
+    m_mobileInputBtn->setCursor(Qt::PointingHandCursor);
+    m_mobileInputBtn->setMinimumHeight(46);
+    m_mobileInputBtn->setIcon(IconHelper::loadColoredIcon(
+                                  ":/Images/Icons/topbar_chat.svg", mutedIconColor(), 16));
+    m_mobileInputBtn->setIconSize(QSize(16, 16));
+    m_mobileInputBtn->setText(tr("输入消息，问问 AI"));
+    connect(m_mobileInputBtn, &QPushButton::clicked, this, &AiChatPage::openMobileCompose);
+    barLayout->addWidget(m_mobileInputBtn, 1);
+
+    // 进行中态：状态文字 + 中止按钮（任务跑起来时替换输入按钮）
+    m_mobileBusyRow = new QWidget(m_mobileBar);
+    m_mobileBusyRow->setObjectName("aiChatMobileBusyRow");
+    auto *busyLayout = new QHBoxLayout(m_mobileBusyRow);
+    busyLayout->setContentsMargins(4, 0, 2, 0);
+    busyLayout->setSpacing(8);
+
+    auto *busyDot = new QLabel(m_mobileBusyRow);
+    busyDot->setObjectName("aiChatMobileBusyDot");
+    busyDot->setFixedSize(8, 8);
+    busyLayout->addWidget(busyDot);
+
+    auto *busyLabel = new QLabel(tr("进行中"), m_mobileBusyRow);
+    busyLabel->setObjectName("aiChatMobileBusyLabel");
+    busyLayout->addWidget(busyLabel);
+
+    m_mobileBusyDetail = new QLabel(m_mobileBusyRow);
+    m_mobileBusyDetail->setObjectName("aiChatMobileBusyDetail");
+    m_mobileBusyDetail->setVisible(false);
+    busyLayout->addWidget(m_mobileBusyDetail);
+
+    busyLayout->addStretch();
+
+    m_mobileStopBtn = new QPushButton(tr("中止"), m_mobileBusyRow);
+    m_mobileStopBtn->setObjectName("aiChatMobileStopBtn");
+    m_mobileStopBtn->setCursor(Qt::PointingHandCursor);
+    m_mobileStopBtn->setMinimumHeight(38);
+    m_mobileStopBtn->setIcon(IconHelper::loadColoredIcon(
+                                 ":/Images/Icons/stop.svg", QColor("#ffffff"), 12));
+    m_mobileStopBtn->setIconSize(QSize(12, 12));
+    m_mobileStopBtn->setToolTip(tr("中止当前任务"));
+    connect(m_mobileStopBtn, &QPushButton::clicked, this, &AiChatPage::onStopStreaming);
+    busyLayout->addWidget(m_mobileStopBtn);
+
+    barLayout->addWidget(m_mobileBusyRow, 1);
+    m_mobileBusyRow->hide();
+
+    syncMobileInputBar();
+}
+
+void AiChatPage::syncMobileInputBar()
+{
+    if (!m_mobileBar)
+    {
+        return;
+    }
+
+    const bool busy = m_isStreaming;
+    if (m_mobileInputBtn)
+    {
+        m_mobileInputBtn->setVisible(!busy);
+    }
+    if (m_mobileBusyRow)
+    {
+        m_mobileBusyRow->setVisible(busy);
+    }
+    if (!busy || !m_mobileBusyDetail)
+    {
+        return;
+    }
+
+    // 「进行中」后面补一句当前阶段的细节，方便知道 AI 在忙什么
+    QString detail;
+    switch (m_chatStatus)
+    {
+    case ChatStatus::Thinking:           detail = tr("· 思考中"); break;
+    case ChatStatus::Searching:          detail = tr("· 搜索中"); break;
+    case ChatStatus::CallingTool:        detail = tr("· 调用工具中"); break;
+    case ChatStatus::CompressingContext: detail = tr("· 压缩上下文中"); break;
+    default: break;
+    }
+    m_mobileBusyDetail->setText(detail);
+    m_mobileBusyDetail->setVisible(!detail.isEmpty());
+}
+
+void AiChatPage::openMobileCompose()
+{
+    if (!m_mobileMode || m_isStreaming || !isVisible())
+    {
+        return;
+    }
+
+    if (!m_mobileComposeDialog)
+    {
+        m_mobileComposeDialog = new AiComposeDialog(this);
+        // 弹窗关闭：输入卡片与引用标签条搬回页面（保持隐藏，等下次弹出）
+        connect(m_mobileComposeDialog, &QDialog::finished, this, [this]() {
+            if (m_referenceChipsWidget)
+            {
+                m_referenceChipsWidget->hide();
+                if (m_inputPanel && m_inputPanel->layout())
+                {
+                    m_inputPanel->layout()->addWidget(m_referenceChipsWidget);
+                }
+            }
+            if (m_inputBox)
+            {
+                m_inputBox->hide();
+                if (m_inputPanel && m_inputPanel->layout())
+                {
+                    m_inputPanel->layout()->addWidget(m_inputBox);
+                }
+            }
+        });
+    }
+
+    QVBoxLayout *content = m_mobileComposeDialog->contentLayout();
+    if (!content)
+    {
+        return;
+    }
+
+    if (m_referenceChipsWidget)
+    {
+        content->addWidget(m_referenceChipsWidget);
+        m_referenceChipsWidget->setVisible(!m_pendingReferences.isEmpty());
+    }
+    if (m_inputBox)
+    {
+        content->addWidget(m_inputBox);
+        m_inputBox->show();
+    }
+
+    m_mobileComposeDialog->show();
+    m_mobileComposeDialog->raise();
+    m_mobileComposeDialog->activateWindow();
+
+    // 直接把光标放进输入框，弹出即可开始打字（延迟一拍，等窗口真正映射完成）
+    QTimer::singleShot(0, m_inputEdit, [this]() { m_inputEdit->setFocus(); });
+}
+
+void AiChatPage::closeMobileCompose()
+{
+    if (!m_mobileMode || !m_mobileComposeDialog || !m_mobileComposeDialog->isVisible())
+    {
+        return;
+    }
+    m_mobileComposeDialog->reject();
 }
 
 void AiChatPage::initDefaultModels()
@@ -1517,6 +1706,9 @@ void AiChatPage::onNewConversation()
         updateModelBtnText();
     }
 
+    // 手机端底部栏回到「输入」按钮（切新对话时可能刚中断了正在跑的任务）
+    syncMobileInputBar();
+
     m_inputEdit->setFocus();
 }
 
@@ -1663,6 +1855,9 @@ void AiChatPage::switchToMode(int mode)
 
     // 滑动模式指示器
     slideModeIndicator(mode);
+
+    // 手机端底部栏回到「输入」按钮（切模式会中断流式）
+    syncMobileInputBar();
 }
 
 void AiChatPage::switchToConversation(int index)
@@ -1843,6 +2038,7 @@ void AiChatPage::onConversationSelected(int index)
         m_streamAborting = true;
         m_aiService->stopStreaming();
         m_isStreaming = false;
+        syncMobileInputBar();
     }
 
     switchToConversation(index);
@@ -2302,6 +2498,12 @@ void AiChatPage::injectPromptToInput(const QString &prompt)
     cursor.movePosition(QTextCursor::End);
     m_inputEdit->setTextCursor(cursor);
     m_inputEdit->setFocus();
+
+    // 手机端输入框藏在弹窗里，注入提示词后直接把弹窗弹出来给用户看
+    if (m_mobileMode && !m_isStreaming)
+    {
+        openMobileCompose();
+    }
 }
 
 void AiChatPage::slideModeIndicator(int targetIndex)
@@ -2575,6 +2777,9 @@ void AiChatPage::updateChatStatus(ChatStatus status)
                 !m_inputEdit->toPlainText().trimmed().isEmpty());
         }
     }
+
+    // 手机端底部栏：AI 干活时显示「进行中 + 中止」，其余时间显示输入按钮
+    syncMobileInputBar();
 }
 
 void AiChatPage::onStopStreaming()
@@ -2741,6 +2946,8 @@ void AiChatPage::onSendMessage()
         m_conversations[m_currentConvIndex].messages.append(errorMsg);
         addMessageBubble(errorMsg);
         saveConversations();
+        // 手机端收起输入弹窗，让用户看到聊天区里的提示
+        closeMobileCompose();
         return;
     }
 
@@ -2759,6 +2966,7 @@ void AiChatPage::onSendMessage()
             m_conversations[m_currentConvIndex].messages.append(errorMsg);
             addMessageBubble(errorMsg);
             saveConversations();
+            closeMobileCompose();
             return;
         }
         socket.disconnectFromHost();
@@ -2782,6 +2990,9 @@ void AiChatPage::onSendMessage()
     m_sendBtn->setEnabled(false);
     // 引用随消息发出后清空，避免下一条消息重复携带
     clearPendingReferences();
+
+    // 手机端：消息已发出，收起输入弹窗，底部栏随即切换到「进行中 + 中止」
+    closeMobileCompose();
 
     // 标题不再立即截取，改由 onStreamFinished 完成后异步调用 AI 生成更贴切的标题。
     // 期间标题保持"新对话"占位，AI 标题到达后通过 onTitleGenerated 替换。
@@ -4586,7 +4797,7 @@ void AiChatPage::showWorkspaceMenu()
         tr("绑定新文件夹..."));
     connect(bindAction, &QAction::triggered, this, [this, &menu]() {
         menu.close();
-        QString dir = AppFileDialog::getExistingDirectory(this, tr("选择要绑定的工作区文件夹"),
+        QString dir = QFileDialog::getExistingDirectory(this, tr("选择要绑定的工作区文件夹"),
                                                           QCoreApplication::applicationDirPath());
         if (dir.isEmpty())
         {
@@ -5902,6 +6113,17 @@ void AiChatPage::addExternalReference(const ResourceReference &ref)
         m_pendingReferences.append(ref);
         rebuildReferenceChips();
     }
+
+    // 手机端：引用标签条在输入弹窗里，等外部入口把页面切过来后再弹出
+    if (m_mobileMode && !m_isStreaming)
+    {
+        QTimer::singleShot(380, this, [this]() {
+            if (m_mobileMode && isVisible() && !m_isStreaming)
+            {
+                openMobileCompose();
+            }
+        });
+    }
 }
 
 void AiChatPage::onReferenceClicked()
@@ -5941,8 +6163,14 @@ void AiChatPage::rebuildReferenceChips()
         delete item;
     }
 
-    // 无引用时隐藏标签条
-    m_referenceChipsWidget->setVisible(!m_pendingReferences.isEmpty());
+    // 无引用时隐藏标签条；手机端标签条只跟随居中输入弹窗显示，
+    // 避免弹窗关着时标签条孤零零飘在页面上
+    bool showChips = !m_pendingReferences.isEmpty();
+    if (m_mobileMode && (!m_mobileComposeDialog || !m_mobileComposeDialog->isVisible()))
+    {
+        showChips = false;
+    }
+    m_referenceChipsWidget->setVisible(showChips);
 
     // 标号从 1 开始，资源引用与 AI 回答引用统一连续编号
     for (int i = 0; i < m_pendingReferences.size(); ++i)

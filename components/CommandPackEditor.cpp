@@ -10,7 +10,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -30,6 +30,8 @@
 #include <QTableWidgetItem>
 #include <QTabWidget>
 #include <QVBoxLayout>
+
+#include "utils/UiMetrics.h"
 
 namespace {
 
@@ -92,7 +94,7 @@ QList<ParamInfo> editParamsJson(QWidget *parent, const QList<ParamInfo> &params,
 {
     QDialog dialog(parent);
     dialog.setWindowTitle(CommandPackEditor::tr("参数编辑（JSON）"));
-    dialog.setMinimumSize(560, 400);
+    dialog.setMinimumSize(UiMetrics::fitToScreen(&dialog, QSize(560, 400)));
 
     auto *layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(8, 8, 8, 8);
@@ -256,7 +258,7 @@ CommandPackEditor::CommandPackEditor(QWidget *parent)
     , m_cancelBtn(nullptr)
 {
     setWindowTitle(tr("制作指令包"));
-    setMinimumSize(820, 540);
+    setMinimumSize(UiMetrics::fitToScreen(this, QSize(820, 540)));
     buildUI();
     loadFromPack();
 }
@@ -488,7 +490,7 @@ bool CommandPackEditor::saveAs()
     }
 
     const QString startDir = QDir::homePath() + QStringLiteral("/") + m_pack.name();
-    const QString filePath = AppFileDialog::getSaveFileName(
+    const QString filePath = QFileDialog::getSaveFileName(
         this, tr("保存指令包"), startDir, tr("指令包文件 (*.json)"));
     if (filePath.isEmpty())
     {

@@ -8,12 +8,12 @@
  *   顶部：品牌绿渐变头图（论坛名 / 简介 / 地址 / 刷新 / 打开网页）
  *   数据行：成员 / 主题 / 回复 / 在线
  *   左右两栏：
- *     左栏：板块（卡片网格）+ 最新讨论（帖子列表）
+ *     左栏：板块（卡片网格）+ 联机大厅（在线房间）+ 最新讨论（帖子列表）
  *     右栏：社区情况 + 热门标签 + 发帖小提示
  *   窄窗口（手机 / 小窗）自动改成上下堆叠，板块改成单列。
  *
- * 数据来源：论坛的 /api/boards、/api/threads、/api/tags。
- * 论坛地址取自 SettingsManager::forumBaseUrl()，可以改成 http://127.0.0.1:3210 本地调试。
+ * 数据来源：论坛的 /api/boards、/api/threads、/api/tags、/api/lobby/rooms。
+ * 论坛地址取自 SettingsManager::forumBaseUrl()（默认官方论坛）。
  */
 
 #pragma once
@@ -25,16 +25,21 @@
 
 #include <functional>
 
+#include "utils/ForumLobbyService.h"
+
 class QBoxLayout;
 class QGridLayout;
 class QHBoxLayout;
 class QJsonDocument;
 class QLabel;
 class QLayout;
+class QProgressBar;
+class QPropertyAnimation;
 class QPushButton;
 class QResizeEvent;
 class QShowEvent;
 class QVBoxLayout;
+class MultiplayerLobbyPage;
 
 class CommunityForumPage : public QWidget
 {
@@ -44,8 +49,11 @@ public:
     explicit CommunityForumPage(QWidget *parent = nullptr);
     ~CommunityForumPage() override;
 
-    /** 重新拉取论坛数据（进入页面 / 点击刷新时调用） */
-    void refresh();
+    /** 重新拉取论坛数据；联机大厅子页面打开时改为刷新大厅 */
+    Q_INVOKABLE void refresh();
+
+    /** 联机大厅子页面打开时关闭它并返回 true（顶栏返回键用） */
+    bool closeLobbyIfVisible();
 
 signals:
     /** 点击一个主题行：在启动器内打开帖子详情 */
@@ -68,6 +76,16 @@ signals:
 
     /** 未登录时点「登录」：跳到论坛账户页 */
     void loginRequested();
+
+    /** 点击联机大厅的房间或「进入联机大厅」：在社区页内打开大厅子页面 */
+    void lobbyOpenRequested();
+
+    /** 联机大厅「一键加入」：交给主窗口按房间要求启动本地实例 */
+    void joinGameRequested(const QString &address, quint16 port, const QString &gameVersion,
+                           const QString &loader, const QStringList &mods);
+
+    /** 联机大厅「我要开房」：打开实例助手 */
+    void openInstanceAssistantRequested();
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -110,11 +128,17 @@ private:
     void sendJsonRequest(const QString &path,
                          const std::function<void(const QJsonDocument &)> &onSuccess, int attempt);
     void finishRequest();
+    /** 刷新页面顶部加载进度条（done/total 为已完成 / 总请求数） */
+    void updateLoadingBar();
     void renderAll();
     void renderStats();
     void renderBoards();
+    void renderLobby();
     void renderThreads();
     void renderTags();
+    void fetchLobby();
+    void showLobbyPage();
+    void hideLobbyPage();
     void clearLayout(QLayout *layout);
     void setStatus(const QString &text, bool isError = false);
     void openUrl(const QString &path);
@@ -122,6 +146,12 @@ private:
 
     QNetworkAccessManager *m_network = nullptr;
     QString m_baseUrl;
+
+    // 页面顶部加载进度条（数据加载期间显示）
+    QProgressBar *m_loadingBar = nullptr;
+    QPropertyAnimation *m_loadingAnimation = nullptr;
+    int m_loadTotalSteps = 0;   ///< 本轮加载的总请求数
+    int m_loadDoneSteps = 0;    ///< 本轮已完成的请求数
 
     // 头图
     QLabel *m_titleLabel = nullptr;
@@ -141,10 +171,17 @@ private:
     // 各区块
     QGridLayout *m_statsLayout = nullptr;
     QVBoxLayout *m_boardsLayout = nullptr;
+    QVBoxLayout *m_lobbyLayout = nullptr;
+    QLabel *m_lobbyHint = nullptr;
     QVBoxLayout *m_threadsLayout = nullptr;
     QVBoxLayout *m_tagsLayout = nullptr;
 
     QVector<BoardInfo> m_boards;
+    QVector<ForumLobbyRoom> m_lobbyRooms;
+    bool m_lobbyLoaded = false;
+    QString m_lobbyError;
+    QWidget *m_lobbyOverlay = nullptr;
+    MultiplayerLobbyPage *m_lobbyPage = nullptr;
     QVector<ThreadInfo> m_threads;
     QVector<TagInfo> m_tags;
     int m_siteUsers = 0;

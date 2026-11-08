@@ -7,6 +7,7 @@
 
 #include <QObject>
 #include <QString>
+#include "utils/SettingsManager.h"
 
 class ForgeInstaller : public QObject
 {
@@ -21,6 +22,7 @@ public:
     explicit ForgeInstaller(QObject *parent = nullptr) : QObject(parent) {}
 
     void setCurrentTaskId(const QString &) {}
+    void setDownloadSource(ForgeDownloadSource) {}
     void setVersionIsolationEnabled(bool) {}
     void downloadForgeInstaller(const QString &, const QString &, const QString &,
                                 const QString & = QString()) {}

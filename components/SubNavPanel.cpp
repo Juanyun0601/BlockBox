@@ -6,6 +6,8 @@
  */
 #include "SubNavPanel.h"
 
+#include "platform.h"
+
 #include <QPainter>
 #include <QEvent>
 #include <QGraphicsDropShadowEffect>
@@ -20,6 +22,7 @@
 #include "utils/IconHelper.h"
 #include "utils/ResourceManager.h"
 #include "utils/ThemeManager.h"
+#include "utils/TouchScroll.h"
 
 SubNavPanel::SubNavPanel(QWidget *parent)
     : QWidget(parent)
@@ -159,6 +162,9 @@ SubNavPanel::SubNavPanel(QWidget *parent)
     m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_scrollArea->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 
+    // 手机端：子导航条目多到装不下时，手指直接上下拖动滚动（桌面端不受影响）
+    TouchScroll::enableDragScroll(m_scrollArea);
+
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
     m_scrollContent = new QWidget(m_scrollArea);
@@ -296,7 +302,18 @@ void SubNavPanel::updateFloatGeometry()
     }
     const int x = (m_sideBar ? m_sideBar->width() : 0) + kMargin;
     const int y = kMargin;
-    const int h = qMax(120, host->height() - 2 * kMargin);
+    int h = host->height() - 2 * kMargin;
+#if defined(Q_OS_ANDROID) || defined(HARMONY_OS)
+    // 手机屏幕矮，不设最小高度：可用高度有多少就用多少，
+    // 条目装不下时直接在面板里上下滚动，避免内容被挤出屏幕。
+    // 鸿蒙电脑（2in1）按桌面规则保留最小高度。
+    if (Platform::isMobile())
+        h = qMax(h, 1);
+    else
+        h = qMax(120, h);
+#else
+    h = qMax(120, h);
+#endif
     setGeometry(x, y, kWidth, h);
     raise();
 }
@@ -531,6 +548,10 @@ void SubNavPanel::slideHighlightTo(int childIndex)
         return;
     }
     m_highlightRetryCount = 0;
+
+    // 选中项在滚动区域外时（手机屏幕矮、条目多），自动滚到能看见的位置
+    if (m_scrollArea)
+        m_scrollArea->ensureWidgetVisible(target, 0, 8);
 
     m_selectionHighlight->setVisible(true);
 

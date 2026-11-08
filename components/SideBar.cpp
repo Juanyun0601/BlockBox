@@ -18,10 +18,22 @@
 #include <QShowEvent>
 
 #include "utils/SettingsManager.h"
+#include "utils/TouchScroll.h"
 #include "utils/IconHelper.h"
 #include "utils/FavoritesManager.h"
 #include "utils/plugin/PluginManager.h"
 #include "utils/ThemeManager.h"
+
+namespace {
+
+/** 手机屏幕矮、导航项多时，把选中的一级导航滚进可视区域 */
+void ensureParentVisible(QScrollArea *scrollArea, QPushButton *button)
+{
+    if (scrollArea && button)
+        scrollArea->ensureWidgetVisible(button, 0, 8);
+}
+
+} // namespace
 
 SideBar::SideBar(QWidget *parent)
     : QWidget(parent)
@@ -56,6 +68,9 @@ void SideBar::initUI()
     m_scrollArea->setFrameShape(QFrame::NoFrame);
     m_scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    // 手机端：导航列比屏幕高时，手指可以直接上下拖动滚动（桌面端不受影响）
+    TouchScroll::enableDragScroll(m_scrollArea);
 
     // Create scroll content widget
     m_scrollContent = new QWidget(m_scrollArea);
@@ -248,6 +263,11 @@ void SideBar::buildNavStructure()
             worlds.text = tr("世界");
             worlds.iconPath = ":/Images/Icons/nav_worlds.svg";
             gameResSection.children.append(worlds);
+
+            NavItem forumPlugins;
+            forumPlugins.text = tr("插件");
+            forumPlugins.iconPath = ":/Images/Icons/nav_plugin.svg";
+            gameResSection.children.append(forumPlugins);
 
             resources.children.append(gameResSection);
         }
@@ -532,13 +552,31 @@ void SideBar::buildNavStructure()
         m_parentItems.append(plugin);
     }
 
-    // 社区 - 方块盒子论坛首页，无子项（常驻显示）
+    // 社区 - 方块盒子论坛首页，无子项（常驻显示）；联机大厅是社区页内的子页面
     {
         NavItem community;
         community.text = tr("社区");
         community.iconPath = ":/Images/Icons/nav_forum.svg";
         community.isParentItem = true;
         m_parentItems.append(community);
+    }
+
+    // 发布 - 内容发布入口（资源 / 帖子），无子项
+    {
+        NavItem publish;
+        publish.text = tr("发布");
+        publish.iconPath = ":/Images/Icons/nav_publish.svg";
+        publish.isParentItem = true;
+        m_parentItems.append(publish);
+    }
+
+    // 反馈 - 侧边栏底部的反馈列表入口，无子项
+    {
+        NavItem feedback;
+        feedback.text = tr("反馈");
+        feedback.iconPath = ":/Images/Icons/feedback.svg";
+        feedback.isParentItem = true;
+        m_parentItems.append(feedback);
     }
 }
 
@@ -624,6 +662,7 @@ void SideBar::setSelectedIndex(int index)
         if (button->property("parentIndex").toInt() == index)
         {
             button->setChecked(true);
+            ensureParentVisible(m_scrollArea, button);
             break;
         }
     }
@@ -654,7 +693,15 @@ void SideBar::refreshNavStructure()
     if (savedIndex >= 0 && savedIndex < m_parentButtons.size())
     {
         m_selectedParentIndex = savedIndex;
-        m_parentButtons[savedIndex]->setChecked(true);
+        for (QPushButton *button : m_parentButtons)
+        {
+            if (button->property("parentIndex").toInt() == savedIndex)
+            {
+                button->setChecked(true);
+                ensureParentVisible(m_scrollArea, button);
+                break;
+            }
+        }
         refreshNavIcons();
     }
 }
@@ -741,6 +788,7 @@ void SideBar::initSelectionHighlight()
             m_selectionHighlight->setGeometry(indicatorRect(btn));
             m_selectionHighlight->setVisible(true);
             m_selectionHighlight->lower();
+            ensureParentVisible(m_scrollArea, btn);
             break;
         }
     }

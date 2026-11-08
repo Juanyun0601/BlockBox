@@ -24,8 +24,14 @@
 #include <QSysInfo>
 #include <QTimer>
 #include <QUrl>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+
+#ifdef Q_OS_ANDROID
+#include <QJniEnvironment>
+#include <QJniObject>
+#endif
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -119,6 +125,54 @@ const QStringList &controlHostHints()
     return hints;
 }
 
+/** frpc 程序文件名（Windows 带 .exe，其余平台为无后缀 ELF） */
+QString frpcFileName()
+{
+#ifdef Q_OS_WIN
+    return QStringLiteral("frpc.exe");
+#else
+    return QStringLiteral("frpc");
+#endif
+}
+
+#ifndef Q_OS_WIN
+/** 给下载/解压出来的核心补执行权限 */
+void makeExecutable(const QString &path)
+{
+    QFile::setPermissions(path,
+        QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+        | QFile::ReadGroup | QFile::ExeGroup
+        | QFile::ReadOther | QFile::ExeOther);
+}
+#endif
+
+/** 当前 CPU 对应的 frpc 架构名（下载清单匹配用） */
+QString frpcArch()
+{
+    const QString cpu = QSysInfo::currentCpuArchitecture().toLower();
+    if (cpu.contains(QStringLiteral("arm64")) || cpu.contains(QStringLiteral("aarch64")))
+        return QStringLiteral("arm64");
+    if (cpu.contains(QStringLiteral("x86_64")) || cpu.contains(QStringLiteral("amd64")))
+        return QStringLiteral("amd64");
+    if (cpu.contains(QStringLiteral("arm")))
+        return QStringLiteral("arm");
+    return QStringLiteral("386");
+}
+
+/** 当前运行平台对应的 frpc OS 名 */
+QString frpcOs()
+{
+#ifdef Q_OS_WIN
+    return QStringLiteral("windows");
+#elif defined(Q_OS_ANDROID)
+    return QStringLiteral("android");
+#elif defined(Q_OS_MACOS)
+    return QStringLiteral("darwin");
+#else
+    return QStringLiteral("linux");
+#endif
+}
+
 } // namespace
 
 FrpManager *FrpManager::m_instance = nullptr;
@@ -189,14 +243,15 @@ void FrpManager::locateFrpc(Provider p)
         return;
     }
 
-    // 精确 frpc.exe 优先，其次任意 frpc*.exe
-    QDirIterator exact(root, QStringList() << QStringLiteral("frpc.exe"),
+    // 精确 frpc 优先，其次任意 frpc*（Windows 带 .exe，其余平台无后缀）
+    QDirIterator exact(root, QStringList() << frpcFileName(),
                        QDir::Files, QDirIterator::Subdirectories);
     if (exact.hasNext()) {
         m_frpcPaths.insert(providerId(p), exact.next());
         return;
     }
-    QDirIterator loose(root, QStringList() << QStringLiteral("frpc*.exe"),
+    const QString loosePattern = frpcFileName() + QStringLiteral("*");
+    QDirIterator loose(root, QStringList() << loosePattern,
                        QDir::Files, QDirIterator::Subdirectories);
     if (loose.hasNext()) {
         m_frpcPaths.insert(providerId(p), loose.next());
@@ -243,10 +298,13 @@ bool FrpManager::importFrpc(Provider p, const QString &exePath)
 
     const QString root = installRoot(p);
     QDir().mkpath(root);
-    const QString target = root + QStringLiteral("/frpc.exe");
+    const QString target = root + QLatin1Char('/') + frpcFileName();
     QFile::remove(target);
     if (!QFile::copy(exePath, target))
         return false;
+#ifndef Q_OS_WIN
+    makeExecutable(target);
+#endif
 
     locateFrpc(p);
     if (m_frpcPaths.value(providerId(p)).isEmpty())
@@ -305,7 +363,11 @@ void FrpManager::fetchSakuraDownload()
         m_latestVersion = frpc.value(QStringLiteral("ver")).toString();
         const QJsonObject archs = frpc.value(QStringLiteral("archs")).toObject();
 
-        // 平台/架构键名不确定，按优先级模糊匹配：windows+amd64 > amd64 > windows
+        // 平台/架构键名不确定，按优先级模糊匹配：
+        //   安卓：android+本机架构 > linux+本机架构（Go 静态包通用）> android 任意架构
+        //   Windows：windows+amd64 > amd64 > windows（保持原有行为）
+        const QString os = frpcOs();
+        const QString arch = frpcArch();
         QString chosenUrl;
         QString fallbackUrl;
         for (auto it = archs.constBegin(); it != archs.constEnd(); ++it) {
@@ -314,20 +376,39 @@ void FrpManager::fetchSakuraDownload()
                                     .value(QStringLiteral("url")).toString();
             if (url.isEmpty())
                 continue;
-            if (key.contains(QStringLiteral("windows")) && key.contains(QStringLiteral("amd64"))) {
-                chosenUrl = url;
-                break;
+            if (os == QStringLiteral("windows")) {
+                if (key.contains(QStringLiteral("windows")) && key.contains(QStringLiteral("amd64"))) {
+                    chosenUrl = url;
+                    break;
+                }
+                if (key.contains(QStringLiteral("amd64")) && fallbackUrl.isEmpty())
+                    fallbackUrl = url;
+                else if (key.contains(QStringLiteral("windows")) && fallbackUrl.isEmpty())
+                    fallbackUrl = url;
+            } else {
+                const bool osHit = key.contains(os);
+                const bool linuxHit = key.contains(QStringLiteral("linux"));
+                const bool archHit = key.contains(arch);
+                if (osHit && archHit) {
+                    chosenUrl = url;
+                    break;
+                }
+                // linux 包是安卓上的通用回退（frpc 为 Go 静态编译）
+                if (linuxHit && archHit && fallbackUrl.isEmpty())
+                    fallbackUrl = url;
+                else if (osHit && fallbackUrl.isEmpty())
+                    fallbackUrl = url;
             }
-            if (key.contains(QStringLiteral("amd64")) && fallbackUrl.isEmpty())
-                fallbackUrl = url;
-            else if (key.contains(QStringLiteral("windows")) && fallbackUrl.isEmpty())
-                fallbackUrl = url;
         }
         if (chosenUrl.isEmpty())
             chosenUrl = fallbackUrl;
 
         if (chosenUrl.isEmpty()) {
+#ifdef Q_OS_ANDROID
+            finishInstall(false, tr("樱花 frpc 版本清单中没有适用的安卓安装包"));
+#else
             finishInstall(false, tr("樱花 frpc 版本清单中没有适用的 Windows 安装包"));
+#endif
             return;
         }
 
@@ -360,23 +441,25 @@ void FrpManager::fetchOpenFrpDownload()
                                      .value(QStringLiteral("data"))
                                      .toObject();
         const QString version = data.value(QStringLiteral("latest_full")).toString();
-        QString arch = QStringLiteral("amd64");
-        const QString cpu = QSysInfo::currentCpuArchitecture().toLower();
-        if (cpu.contains(QStringLiteral("arm64")) || cpu.contains(QStringLiteral("aarch64")))
-            arch = QStringLiteral("arm64");
-        else if (cpu.contains(QStringLiteral("x86_64")) || cpu.contains(QStringLiteral("amd64")))
-            arch = QStringLiteral("amd64");
-        else
-            arch = QStringLiteral("386");
+        const QString arch = frpcArch();
+
+        // 资产名候选：按平台拼接，安卓优先 android 包、回退 linux 包（Go 静态包通用）
+        QStringList fileNames;
+#ifdef Q_OS_ANDROID
+        fileNames << QStringLiteral("frpc_android_%1.zip").arg(arch)
+                  << QStringLiteral("frpc_linux_%1.zip").arg(arch);
+#else
+        fileNames << QStringLiteral("frpc_windows_%1.zip").arg(arch);
+#endif
 
         m_latestVersion = version;
-        const QString fileName =
-            QStringLiteral("frpc_windows_%1.zip").arg(arch);
-        for (const QJsonValue &value : data.value(QStringLiteral("source")).toArray()) {
-            const QString base = value.toObject().value(QStringLiteral("value")).toString();
-            if (!base.isEmpty())
-                m_downloadQueue << base + QLatin1Char('/') + version + QLatin1Char('/')
-                                       + fileName;
+        for (const QString &fileName : fileNames) {
+            for (const QJsonValue &value : data.value(QStringLiteral("source")).toArray()) {
+                const QString base = value.toObject().value(QStringLiteral("value")).toString();
+                if (!base.isEmpty())
+                    m_downloadQueue << base + QLatin1Char('/') + version + QLatin1Char('/')
+                                           + fileName;
+            }
         }
         if (m_downloadQueue.isEmpty()) {
             finishInstall(false, tr("OpenFrp 版本清单中没有可用的下载源"));
@@ -485,12 +568,14 @@ bool FrpManager::validateArchive(const QString &path, bool isZip,
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly))
         return false;
-    const QByteArray head = f.read(2);
+    const QByteArray head = f.read(4);
     f.close();
 
     if (isZip)
-        return head == QByteArrayLiteral("PK"); // ZIP 文件头
-    if (head != QByteArrayLiteral("MZ"))        // Windows PE 文件头
+        return head.startsWith(QByteArrayLiteral("PK")); // ZIP 文件头
+    // Windows PE（MZ）或 Linux/Android ELF（\x7fELF）
+    if (!head.startsWith(QByteArrayLiteral("MZ"))
+        && !head.startsWith(QByteArrayLiteral("\x7f" "ELF")))
         return false;
 
     if (expectedSize > 0 && info.size() != expectedSize)
@@ -505,13 +590,16 @@ void FrpManager::extractAndInstall(const QString &archivePath, Provider p,
     QDir().mkpath(targetDir);
 
     if (!isZip) {
-        // 直链是单个 exe：已落在安装目录，改名后即完成
-        const QString target = targetDir + QStringLiteral("/frpc.exe");
+        // 直链是单个可执行文件：已落在安装目录，改名后即完成
+        const QString target = targetDir + QLatin1Char('/') + frpcFileName();
         QFile::remove(target);
         if (!QFile::rename(archivePath, target)) {
             finishInstall(false, tr("安装 frpc 失败：无法写入程序文件"));
             return;
         }
+#ifndef Q_OS_WIN
+        makeExecutable(target);
+#endif
         emitDownloadInfo(QString());
         locateFrpc(p);
         SettingsManager::instance()->setProperty(
@@ -521,6 +609,42 @@ void FrpManager::extractAndInstall(const QString &archivePath, Provider p,
                                        : tr("安装后仍未找到 frpc 程序"));
         return;
     }
+
+#ifdef Q_OS_ANDROID
+    // 安卓自带的 tar 不认 zip，改走 Java 侧 java.util.zip 解压
+    const QString archive = archivePath;
+    const auto provider = p;
+    const QString ver = version;
+    QtConcurrent::run([archive, targetDir]() {
+        QJniObject::callStaticMethod<jboolean>(
+            "com/blockbox/launcher/AndroidTools", "unzip",
+            "(Ljava/lang/String;Ljava/lang/String;)Z",
+            QJniObject::fromString(archive).object<jstring>(),
+            QJniObject::fromString(targetDir).object<jstring>());
+        QJniEnvironment env;
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+    }).then(this, [this, archivePath, provider, ver, targetDir]() {
+        QFile::remove(archivePath);
+        emitDownloadInfo(QString());
+
+        // 给解压出来的 frpc 补执行权限
+        QDirIterator it(targetDir, QStringList() << QStringLiteral("frpc*"),
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext())
+            makeExecutable(it.next());
+
+        locateFrpc(provider);
+        SettingsManager::instance()->setProperty(
+            QStringLiteral("frp/%1/version").arg(providerId(provider)), ver);
+        finishInstall(isFrpcPresent(provider),
+                      isFrpcPresent(provider) ? tr("frpc 安装完成")
+                                              : tr("安装后仍未找到 frpc 程序"));
+    });
+    return;
+#endif
 
     // Windows 10+ 自带 bsdtar，可直接解开 zip（与联机核心安装方式一致）
     auto *tar = new QProcess(this);

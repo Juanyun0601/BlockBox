@@ -46,6 +46,8 @@ signals:
     void carouselImagesChanged();
     /** 关于页点了「意见反馈」：跳到软件内反馈页 */
     void openFeedbackRequested();
+    /** 通用设置里点了「打开新手引导」：跳到新手引导页（独立整页） */
+    void openOnboardingRequested();
 
 private slots:
     void onNavItemClicked(int index);
@@ -128,6 +130,15 @@ private:
                                   const QString &desc = QString(),
                                   const QString &help = QString(),
                                   bool isLast = false);
+
+    // Appends a setting block: title + description on top, with the control
+    // area stacked underneath at full row width (for multi-line editors).
+    // Returns the block's vertical layout for the caller to add widgets to.
+    QVBoxLayout *appendSettingBlock(QVBoxLayout *cardLayout,
+                                    const QString &title,
+                                    const QString &desc = QString(),
+                                    const QString &help = QString(),
+                                    bool isLast = false);
 
     // Java 管理页辅助
     void refreshJavaList();

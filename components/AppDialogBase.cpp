@@ -9,9 +9,13 @@
 #include <QPaintEvent>
 #include <QResizeEvent>
 #include <QScreen>
+#include <QScrollArea>
 #include <QShowEvent>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <QWindow>
+
+#include "utils/UiMetrics.h"
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -31,6 +35,7 @@ AppDialogBase::AppDialogBase(QWidget *parent)
 
     // 首次显示前先按宿主窗口预定位，并标记为“已手动定位”，
     // 避免无边框对话框以默认位置（屏幕左上角）映射，超出软件范围。
+    fitCardToScreen();
     positionOverWindow();
     setAttribute(Qt::WA_Moved, true);
 }
@@ -43,6 +48,62 @@ QWidget *AppDialogBase::findCardWidget() const
             return w;
     }
     return nullptr;
+}
+
+void AppDialogBase::fitCardToScreen()
+{
+    // 居中卡片兜底：无论子类把卡片设计成多大，都不能超过所在屏幕的可用范围。
+    // 移动端屏幕小，卡片被压回屏内后内容可能仍放不下，这里统一包一层垂直滚动区：
+    // 弹窗整体始终完整显示在屏幕内，卡内内容上下滚动查看。
+    // 桌面端内容放得下时滚动条不出现，外观与行为无任何变化。
+    QWidget *card = findCardWidget();
+    if (!card)
+        return;
+
+    const QSize avail = UiMetrics::fitToScreen(this, QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX));
+    if (avail.isEmpty())
+        return;
+
+    // 只把最小尺寸压到屏内；最小尺寸缩小后最大尺寸（若设置过）仍然更大，
+    // resize 可以正常生效，卡片内部布局继续按缩小后的宽度自适应/滚动
+    const QSize minSize = card->minimumSize();
+    const QSize clamped = minSize.boundedTo(avail);
+
+    // 已经包过滚动区（重复 showEvent / 子类自带）：只继续压最小尺寸，不重复包
+    const QList<QScrollArea *> scrolls =
+        card->findChildren<QScrollArea *>(QString(), Qt::FindDirectChildrenOnly);
+    if (!scrolls.isEmpty()) {
+        if (clamped != minSize)
+            card->setMinimumSize(clamped);
+        return;
+    }
+
+    QLayout *lay = card->layout();
+    if (!lay)
+        return;
+
+    // 把卡片原有布局整体挪进内容容器，再套一层滚动区：
+    // 布局边距（卡片内边距）跟着内容一起滚动，视觉与原排版一致
+    QWidget *inner = new QWidget(card);
+    inner->setObjectName(QStringLiteral("appDialogCardContent"));
+    inner->setLayout(lay);
+
+    QScrollArea *scroll = new QScrollArea(card);
+    scroll->setObjectName(QStringLiteral("appDialogCardScroll"));
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setWidget(inner);
+
+    QVBoxLayout *cardLay = new QVBoxLayout(card);
+    cardLay->setContentsMargins(0, 0, 0, 0);
+    cardLay->setSpacing(0);
+    cardLay->addWidget(scroll);
+
+    if (clamped != minSize)
+        card->setMinimumSize(clamped);
+    card->resize(clamped.boundedTo(card->maximumSize()));
 }
 
 QWidget *AppDialogBase::hostWindow() const
@@ -163,6 +224,7 @@ void AppDialogBase::showEvent(QShowEvent *event)
     // 并用事件循环延迟重新定位：在 Windows 上首次映射窗口时，
     // showEvent 期间直接 setGeometry 可能被显示流程覆盖，
     // 延迟到事件循环执行可确保弹窗最终精确居中覆盖宿主窗口。
+    fitCardToScreen();
     positionOverWindow();
     setAttribute(Qt::WA_Moved, true);
 

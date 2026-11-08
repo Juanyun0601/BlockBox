@@ -19,6 +19,8 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+#include "utils/UiMetrics.h"
+
 FileOpStepsDialog::FileOpStepsDialog(QWidget *parent)
     : AppDialogBase(parent)
     , m_sessionCombo(nullptr)
@@ -41,7 +43,7 @@ void FileOpStepsDialog::initUI()
 
     auto *card = new QWidget(this);
     card->setObjectName(QStringLiteral("fileOpDialogCard"));
-    card->setMinimumSize(640, 480);
+    card->setMinimumSize(UiMetrics::fitToScreen(this, QSize(640, 480)));
     card->setMaximumSize(820, 680);
     outer->addWidget(card, 0, Qt::AlignCenter);
 

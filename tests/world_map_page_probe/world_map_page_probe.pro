@@ -8,7 +8,7 @@ CONFIG   -= app_bundle
 TEMPLATE = app
 TARGET   = world_map_page_probe
 
-# fake 目录在前：#include "utils/ThemeManager.h" / "components/AppFileDialog.h" 命中探针桩
+# fake 目录在前：#include "utils/ThemeManager.h" 命中探针桩
 INCLUDEPATH += $$PWD/fake $$PWD/../.. $$PWD/../../third_party/cubiomes
 
 SOURCES += world_map_page_probe.cpp \
@@ -86,7 +86,6 @@ HEADERS += ../../pages/WorldMapPage.h \
            fake/utils/SettingsManager.h \
            fake/utils/GameLauncher.h \
            fake/utils/CommandAssistant/GameDetector.h \
-           fake/components/AppFileDialog.h \
            fake/components/NotificationManager.h
 
 RESOURCES += ../../resources.qrc ../../resources_data.qrc

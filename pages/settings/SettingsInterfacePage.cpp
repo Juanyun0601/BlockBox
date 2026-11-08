@@ -19,7 +19,7 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QToolButton>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/AppMessageBox.h"
 #include <functional>
 #include <QLabel>
@@ -335,15 +335,6 @@ void SettingsPage::initInterfaceSettings()
     m_sceneCombo->insertSeparator(m_sceneCombo->count());
     m_sceneCombo->addItem(tr("主菜单·经典"), QStringLiteral("menu_classic"));
     m_sceneCombo->addItem(tr("主菜单·现代"), QStringLiteral("menu_modern"));
-    m_sceneCombo->addItem(tr("高山草甸"), QStringLiteral("alps_field"));
-    m_sceneCombo->addItem(tr("秋日林坡"), QStringLiteral("ahornsteig"));
-    m_sceneCombo->addItem(tr("林间公园"), QStringLiteral("autumn_forest_01"));
-    m_sceneCombo->addItem(tr("雪原桦林"), QStringLiteral("birchwood"));
-    m_sceneCombo->addItem(tr("幽谷飞瀑"), QStringLiteral("blue_grotto"));
-    m_sceneCombo->addItem(tr("海岸远眺"), QStringLiteral("dalkey_view"));
-    m_sceneCombo->addItem(tr("冬日冰河"), QStringLiteral("frozen_lake"));
-    m_sceneCombo->addItem(tr("荒漠砾原"), QStringLiteral("goegap"));
-    m_sceneCombo->addItem(tr("月夜草原"), QStringLiteral("clarens_night_01"));
     m_sceneCombo->insertSeparator(m_sceneCombo->count());
     m_sceneCombo->addItem(tr("自定义图片"), QString());
     {
@@ -630,7 +621,7 @@ void SettingsPage::initInterfaceSettings()
     });
 
     connect(m_browseImageBtn, &QPushButton::clicked, [this]() {
-        QString filePath = AppFileDialog::getOpenFileName(
+        QString filePath = QFileDialog::getOpenFileName(
             this, tr("选择背景图片"),
             QString(),
             tr("图片文件 (*.png *.jpg *.jpeg *.bmp *.gif);;所有文件 (*)"));
@@ -849,7 +840,7 @@ void SettingsPage::refreshHomeCarouselRows()
 
 void SettingsPage::addHomeCarouselImages()
 {
-    const QStringList files = AppFileDialog::getOpenFileNames(
+    const QStringList files = QFileDialog::getOpenFileNames(
         this, tr("选择轮播图片"), QString(), HomeCarouselStore::imageFileFilter());
     if (files.isEmpty())
         return;

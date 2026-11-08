@@ -13,6 +13,7 @@
 #include <QDebug>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFontMetrics>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -27,18 +28,34 @@
 #include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
+#include "components/LobbyPublishDialog.h"
 #include "components/NotificationManager.h"
+#include "utils/ForumAccountService.h"
+#include "utils/ForumLobbyService.h"
 #include "utils/frp/FrpManager.h"
 #include "utils/Hongshi/HongshiClient.h"
 #include "utils/IconHelper.h"
+#include "utils/Lobby/LobbyInstanceMatcher.h"
+#include "utils/StyleKit.h"
 #include "utils/Terracotta/TerracottaClient.h"
 #include "utils/ThemeManager.h"
 
 #include <QDesktopServices>
 #include <QIntValidator>
+#include <QTabBar>
 #include <QUrl>
+
+#ifdef Q_OS_ANDROID
+void MultiplayerPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // 安卓：陶瓦核心以内置 so 随应用分发，首次进入联机页时做一次惰性初始化；
+    // start() 自身幂等（已初始化/正在初始化时直接返回）
+    if (!hongshiActive() && !frpActive())
+        TerracottaClient::instance()->start();
+}
+#endif
 
 MultiplayerPage::MultiplayerPage(QWidget *parent)
     : QWidget(parent)
@@ -94,6 +111,28 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
 {
     initUI();
     applyThemeStyles();
+
+    // 发布到联机大厅：每 40 秒续一次期，服务端 2 分钟没收到心跳就会把房间下架
+    if (m_publishHeartbeatTimer) {
+        connect(m_publishHeartbeatTimer, &QTimer::timeout, this, [this]() {
+            if (m_publishedRoomId <= 0)
+                return;
+            ForumLobbyService::instance()->sendHeartbeat(
+                m_publishedRoomId, QStringLiteral("waiting"), nullptr,
+                [this](const QString &message, int status) {
+                    Q_UNUSED(message);
+                    if (status != 404)
+                        return;
+                    // 房间已经在服务端过期：本地同步清掉发布状态
+                    m_publishedRoomId = 0;
+                    m_publishedCore.clear();
+                    m_publishedJoin.clear();
+                    if (m_publishHeartbeatTimer)
+                        m_publishHeartbeatTimer->stop();
+                    refreshPublishButtons();
+                });
+        });
+    }
 
     connect(m_client, &TerracottaClient::stateChanged, this, &MultiplayerPage::refreshPage);
     connect(m_client, &TerracottaClient::profilesChanged, this, &MultiplayerPage::refreshPlayerList);
@@ -167,12 +206,22 @@ MultiplayerPage::~MultiplayerPage() = default;
 
 void MultiplayerPage::initUI()
 {
-    auto *mainLayout = new QVBoxLayout(this);
+    // 联机大厅已经独立成主窗口的一级页面，这里只保留联机核心本身
+    buildCorePage(this);
+
+    // 发布心跳：40 秒一次，服务端 2 分钟没收到就下架
+    m_publishHeartbeatTimer = new QTimer(this);
+    m_publishHeartbeatTimer->setInterval(40000);
+}
+
+void MultiplayerPage::buildCorePage(QWidget *page)
+{
+    auto *mainLayout = new QVBoxLayout(page);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
     // ---- 顶部：核心选择 + 更新按钮（跨核心共享） ----
-    m_topBarContainer = new QWidget(this);
+    m_topBarContainer = new QWidget(page);
     m_topBarContainer->setObjectName(QStringLiteral("multiplayerTopBar"));
     auto *topLayout = new QHBoxLayout(m_topBarContainer);
     topLayout->setContentsMargins(8, 8, 8, 0);
@@ -212,7 +261,7 @@ void MultiplayerPage::initUI()
     mainLayout->addWidget(m_topBarContainer);
 
     // ---- 页面栈 ----
-    m_stack = new QStackedWidget(this);
+    m_stack = new QStackedWidget(page);
     m_stack->setObjectName(QStringLiteral("multiplayerStack"));
 
     m_homePage = new QWidget();
@@ -251,6 +300,14 @@ void MultiplayerPage::initUI()
             this, &MultiplayerPage::onCoreChanged);
 
     m_stack->setCurrentIndex(0);
+}
+
+void MultiplayerPage::setInstanceContext(const QString &path, const QString &version,
+                                         const QString &loader)
+{
+    m_instancePath = path;
+    m_instanceVersion = version;
+    m_instanceLoader = loader;
 }
 
 bool MultiplayerPage::hongshiActive() const
@@ -512,6 +569,16 @@ void MultiplayerPage::buildRoomPage(QWidget *page)
     codeLayout->addStretch(1);
     layout->addLayout(codeLayout);
 
+    // ---- 发布到联机大厅：把邀请码挂到论坛，朋友在软件里能一键进房 ----
+    m_pubTerracottaBtn = new QPushButton(tr("发布到联机大厅"), page);
+    m_pubTerracottaBtn->setObjectName(QStringLiteral("multiplayerPublishBtn"));
+    m_pubTerracottaBtn->setCursor(Qt::PointingHandCursor);
+    m_pubTerracottaBtn->setFixedHeight(30);
+    m_pubTerracottaBtn->setToolTip(tr("把当前房间发到论坛联机大厅，网页端只能看邀请码，软件端可一键加入"));
+    connect(m_pubTerracottaBtn, &QPushButton::clicked,
+            this, &MultiplayerPage::onPublishToLobbyClicked);
+    layout->addWidget(m_pubTerracottaBtn);
+
     // ---- 玩家列表区域 ----
     m_playersScroll = new QScrollArea(page);
     m_playersScroll->setObjectName(QStringLiteral("multiplayerPlayersScroll"));
@@ -717,6 +784,16 @@ void MultiplayerPage::buildHongshiTunnelPage(QWidget *page)
     hint->setAlignment(Qt::AlignCenter);
     layout->addWidget(hint);
 
+    // ---- 发布到联机大厅 ----
+    m_pubHongshiBtn = new QPushButton(tr("发布到联机大厅"), page);
+    m_pubHongshiBtn->setObjectName(QStringLiteral("multiplayerPublishBtn"));
+    m_pubHongshiBtn->setCursor(Qt::PointingHandCursor);
+    m_pubHongshiBtn->setFixedHeight(30);
+    m_pubHongshiBtn->setToolTip(tr("把隧道地址发到论坛联机大厅，网页端只能查看地址，软件端可一键加入"));
+    connect(m_pubHongshiBtn, &QPushButton::clicked,
+            this, &MultiplayerPage::onPublishToLobbyClicked);
+    layout->addWidget(m_pubHongshiBtn);
+
     layout->addStretch(1);
 
     // ---- 停止联机按钮 ----
@@ -897,6 +974,16 @@ void MultiplayerPage::buildFrpRoomPage(QWidget *page)
     m_frpRoomHint->setWordWrap(true);
     m_frpRoomHint->setAlignment(Qt::AlignCenter);
     layout->addWidget(m_frpRoomHint);
+
+    // ---- 发布到联机大厅 ----
+    m_pubFrpBtn = new QPushButton(tr("发布到联机大厅"), page);
+    m_pubFrpBtn->setObjectName(QStringLiteral("multiplayerPublishBtn"));
+    m_pubFrpBtn->setCursor(Qt::PointingHandCursor);
+    m_pubFrpBtn->setFixedHeight(30);
+    m_pubFrpBtn->setToolTip(tr("把远程地址发到论坛联机大厅，网页端只能查看地址，软件端可一键加入"));
+    connect(m_pubFrpBtn, &QPushButton::clicked,
+            this, &MultiplayerPage::onPublishToLobbyClicked);
+    layout->addWidget(m_pubFrpBtn);
 
     layout->addStretch(1);
 
@@ -1371,6 +1458,46 @@ QString themeColor = ThemeManager::instance()->currentThemeColor();
     if (m_playersContainer) {
         m_playersContainer->setStyleSheet(playerCardStyle);
     }
+
+    // 顶部分页 / 发布按钮 / 联机大厅：这些控件跨页面存在，统一挂在 MultiplayerPage 上
+    setStyleSheet(StyleKit::resolve(QString(
+        "QTabBar#multiplayerSectionTabs {"
+        "  background: transparent;"
+        "}"
+        "QTabBar#multiplayerSectionTabs::tab {"
+        "  background: transparent;"
+        "  color: %2;"
+        "  border: none;"
+        "  border-bottom: 2px solid transparent;"
+        "  padding: 6px 14px;"
+        "  font-size: 12px;"
+        "  font-weight: 500;"
+        "}"
+        "QTabBar#multiplayerSectionTabs::tab:selected {"
+        "  color: %1;"
+        "  border-bottom: 2px solid %1;"
+        "}"
+        "QTabBar#multiplayerSectionTabs::tab:hover {"
+        "  color: %1;"
+        "}"
+        "QPushButton#multiplayerPublishBtn {"
+        "  background: palette(base);"
+        "  border: 1px solid %3;"
+        "  border-radius: 6px;"
+        "  color: %1;"
+        "  font-size: 12px;"
+        "}"
+        "QPushButton#multiplayerPublishBtn:hover {"
+        "  border-color: %1;"
+        "  color: %1;"
+        "  background: %4;"
+        "}"
+        "QPushButton#multiplayerPublishBtn:disabled {"
+        "  color: %5;"
+        "  background: %6;"
+        "}"
+    )).arg(themeColor, textColor, borderColor, hoverBg, mpDisabledText, mpDisabledBg,
+            tc.darker(110).name()));
 }
 void MultiplayerPage::refreshPage()
 {
@@ -1406,11 +1533,18 @@ void MultiplayerPage::refreshPage()
         QString text;
         switch (state) {
         case TerracottaClient::State::NotInstalled:
+#ifdef Q_OS_ANDROID
+            // 安卓：核心随应用内置，这里只是「原生层还没初始化」
+            text = m_client->installedVersion().isEmpty()
+                ? tr("联机核心待启动")
+                : tr("联机核心待启动（内置 v%1）").arg(m_client->installedVersion());
+#else
             if (m_client->installedVersion().isEmpty()) {
                 text = tr("未安装联机核心");
             } else {
                 text = tr("联机核心未运行（已安装 v%1）").arg(m_client->installedVersion());
             }
+#endif
             break;
         case TerracottaClient::State::Launching:
             text = tr("正在启动联机核心...");
@@ -1502,6 +1636,8 @@ void MultiplayerPage::refreshPage()
 
     refreshStatusBar();
     refreshPlayerList();
+    refreshPublishButtons();
+    ensurePublishStillValid();
 }
 
 void MultiplayerPage::refreshHongshiPage()
@@ -1570,6 +1706,9 @@ void MultiplayerPage::refreshHongshiPage()
     if (target == 3) {
         refreshTunnelStatusBar();
     }
+
+    refreshPublishButtons();
+    ensurePublishStillValid();
 }
 
 void MultiplayerPage::refreshTunnelStatusBar()
@@ -1680,6 +1819,18 @@ void MultiplayerPage::refreshInstallStatus()
         refreshHongshiInstallStatus();
         return;
     }
+
+#ifdef Q_OS_ANDROID
+    // 安卓：陶瓦核心随 APK 内置（JNI），没有独立下载/更新入口
+    if (!m_updateBtn) return;
+    const QString builtinVer = m_client->installedVersion();
+    m_updateBtn->setText(builtinVer.isEmpty()
+                             ? tr("内置核心")
+                             : tr("内置核心 v%1").arg(builtinVer));
+    m_updateBtn->setToolTip(tr("陶瓦联机核心随应用内置，更新版本请升级方块盒子"));
+    m_updateBtn->setEnabled(false);
+    return;
+#endif
 
     if (!m_updateBtn) return;
     auto status = m_client->installStatus();
@@ -1880,6 +2031,9 @@ void MultiplayerPage::refreshFrpPage()
 
     if (target == 5)
         refreshFrpStatusBar();
+
+    refreshPublishButtons();
+    ensurePublishStillValid();
 }
 
 void MultiplayerPage::refreshFrpInstallStatus()
@@ -2007,7 +2161,7 @@ void MultiplayerPage::openFrpPanel()
 void MultiplayerPage::pickFrpcManually()
 {
     const auto provider = frpProvider();
-    const QString file = AppFileDialog::getOpenFileName(
+    const QString file = QFileDialog::getOpenFileName(
         this, tr("选择 frpc 程序"), QString(),
         tr("frpc 程序 (frpc*.exe);;所有文件 (*.*)"));
     if (file.isEmpty())
@@ -2233,6 +2387,276 @@ void MultiplayerPage::onCoreChanged(int index)
     refreshPage();
     refreshInstallStatus();
     refreshPlayerList();
+}
+
+
+// ============================
+// 发布到联机大厅
+// ============================
+
+bool MultiplayerPage::currentPublishTarget(QString *core, QString *joinInfo,
+                                           QString *address, QString *error) const
+{
+    if (core)
+        core->clear();
+    if (joinInfo)
+        joinInfo->clear();
+    if (address)
+        address->clear();
+    if (error)
+        error->clear();
+
+    if (frpActive())
+    {
+        auto *frp = FrpManager::instance();
+        const QString addr = frp->remoteAddress().trimmed();
+        if (!frp->isRunning() || addr.isEmpty())
+        {
+            if (error)
+                *error = tr("隧道还没建立，等房间页显示连接地址后再发布。");
+            return false;
+        }
+        if (core)
+            *core = QStringLiteral("frp");
+        if (joinInfo)
+            *joinInfo = addr;
+        if (address)
+            *address = addr;
+        return true;
+    }
+
+    if (hongshiActive())
+    {
+        const QString addr = m_hongshi->tunnelAddress().trimmed();
+        if (!m_hongshi->isTunnelActive() || addr.isEmpty())
+        {
+            if (error)
+                *error = tr("隧道还没建立，等房间页显示连接地址后再发布。");
+            return false;
+        }
+        if (core)
+            *core = QStringLiteral("hongshi");
+        if (joinInfo)
+            *joinInfo = addr;
+        if (address)
+            *address = addr;
+        return true;
+    }
+
+    if (m_client->state() != TerracottaClient::State::HostOk || m_client->roomCode().isEmpty())
+    {
+        if (error)
+            *error = tr("只有房主创建好房间后才能发布：先在「联机」页创建房间并进入游戏开服。");
+        return false;
+    }
+    if (core)
+        *core = QStringLiteral("terracotta");
+    if (joinInfo)
+        *joinInfo = m_client->roomCode();
+    return true;
+}
+
+void MultiplayerPage::onPublishToLobbyClicked()
+{
+    if (m_publishedRoomId > 0)
+    {
+        const AppMessageBox::StandardButton answer = AppMessageBox::question(
+            this, tr("取消发布"), tr("要把当前房间从联机大厅下架吗？"),
+            AppMessageBox::StandardButtons(AppMessageBox::Yes | AppMessageBox::No),
+            AppMessageBox::No);
+        if (answer == AppMessageBox::Yes)
+            stopPublishHeartbeat(true, true);
+        return;
+    }
+
+    if (!ForumAccountService::instance()->isLoggedIn())
+    {
+        showInfoDialog(tr("需要登录论坛"),
+                       tr("发布到联机大厅需要先登录方块盒子论坛账号。登录后再回来点一次即可。"));
+        emit forumLoginRequested();
+        return;
+    }
+
+    publishRoomWithDialog();
+}
+
+void MultiplayerPage::publishRoomWithDialog()
+{
+    QString core;
+    QString joinInfo;
+    QString address;
+    QString error;
+    if (!currentPublishTarget(&core, &joinInfo, &address, &error))
+    {
+        showInfoDialog(tr("现在还不能发布"), error);
+        return;
+    }
+
+    const QStringList mods = instanceMods();
+
+    // 新版发布对话框：房间名 / 简介 / 人数 + 封面图 + Markdown 介绍
+    // + 前置整合包（在线挑选或名称+网盘链接），可勾「存为模板」下次一键填回
+    LobbyPublishDialog dlg(this);
+    if (!ForumLobbyService::loadPublishTemplate().isEmpty())
+        dlg.setWindowTitle(tr("发布到联机大厅（已套用上次的模板）"));
+    else
+        dlg.setWindowTitle(tr("发布到联机大厅"));
+    dlg.setDefaultTitle(tr("%1 的联机房间").arg(instanceDisplayName()));
+
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    ForumLobbyRoom room;
+    if (!dlg.validateAndFill(&room))
+        return;
+    room.core = core;
+    room.coreLabel = ForumLobbyService::coreDisplayName(core);
+    if (core == QStringLiteral("terracotta"))
+        room.inviteCode = joinInfo;
+    else
+        room.address = address;
+    room.gameVersion = m_instanceVersion;
+    room.loader = m_instanceLoader;
+    room.mods = mods;
+    room.status = QStringLiteral("waiting");
+
+    refreshPublishButtons();
+    if (m_pubTerracottaBtn)
+        m_pubTerracottaBtn->setText(tr("发布中…"));
+    if (m_pubHongshiBtn)
+        m_pubHongshiBtn->setText(tr("发布中…"));
+    if (m_pubFrpBtn)
+        m_pubFrpBtn->setText(tr("发布中…"));
+
+    // 模板在对话框还活着时就抽出来（发布回调是异步的，不能引用栈上的对话框）
+    const bool saveTemplate = dlg.shouldSaveTemplate();
+    const ForumLobbyRoom templateRoom = room;
+
+    ForumLobbyService::instance()->publishRoom(
+        room,
+        [this, templateRoom, saveTemplate](const ForumLobbyRoom &published) {
+            m_publishedRoomId = published.id;
+            m_publishedCore = published.core;
+            m_publishedJoin = published.inviteCode.isEmpty() ? published.address
+                                                             : published.inviteCode;
+            startPublishHeartbeat();
+            refreshPublishButtons();
+            // 发布成功才算「模板定型」：把确认时抽出的这套设置写回本机
+            if (saveTemplate)
+            {
+                ForumLobbyService::PublishTemplate tpl;
+                tpl.title = templateRoom.title;
+                tpl.description = templateRoom.description;
+                tpl.maxPlayers = templateRoom.maxPlayers;
+                tpl.cover = templateRoom.cover;
+                tpl.md = templateRoom.md;
+                tpl.modpackMode = templateRoom.modpackMode;
+                tpl.modpackName = templateRoom.modpackName;
+                tpl.modpackUrl = templateRoom.modpackUrl;
+                tpl.modpackMeta = templateRoom.modpackMeta;
+                ForumLobbyService::savePublishTemplate(tpl);
+            }
+            NotificationManager::showSuccess(
+                window(), tr("已发布到联机大厅，朋友在软件里可以一键加入"));
+        },
+        [this](const QString &message, int status) {
+            refreshPublishButtons();
+            if (status == 401)
+            {
+                showInfoDialog(tr("需要登录论坛"),
+                               tr("登录方块盒子论坛账号后才能发布到联机大厅。"));
+                emit forumLoginRequested();
+                return;
+            }
+            showInfoDialog(tr("发布失败"), message);
+        });
+}
+
+void MultiplayerPage::startPublishHeartbeat()
+{
+    if (m_publishHeartbeatTimer)
+        m_publishHeartbeatTimer->start();
+}
+
+void MultiplayerPage::stopPublishHeartbeat(bool closeRemote, bool notify)
+{
+    const int roomId = m_publishedRoomId;
+    m_publishedRoomId = 0;
+    m_publishedCore.clear();
+    m_publishedJoin.clear();
+    if (m_publishHeartbeatTimer)
+        m_publishHeartbeatTimer->stop();
+    refreshPublishButtons();
+
+    if (!closeRemote || roomId <= 0)
+        return;
+
+    ForumLobbyService::instance()->closeRoom(
+        roomId,
+        [this, notify]() {
+            if (notify)
+                NotificationManager::showSuccess(window(), tr("已从联机大厅下架"));
+        },
+        nullptr);
+}
+
+void MultiplayerPage::refreshPublishButtons()
+{
+    const bool published = m_publishedRoomId > 0;
+    QString core;
+    QString joinInfo;
+    QString address;
+    QString error;
+    const bool canPublish = currentPublishTarget(&core, &joinInfo, &address, &error);
+    const bool sameRoom = published && core == m_publishedCore;
+
+    const QString text = sameRoom ? tr("取消发布") : tr("发布到联机大厅");
+    const QString tip = sameRoom
+        ? tr("房间正在联机大厅展示，点这里下架")
+        : (canPublish ? tr("把当前房间发到论坛联机大厅，网页端只能看邀请码，软件端可一键加入")
+                      : error);
+
+    QPushButton *buttons[] = {m_pubTerracottaBtn, m_pubHongshiBtn, m_pubFrpBtn};
+    for (QPushButton *button : buttons)
+    {
+        if (!button)
+            continue;
+        button->setText(text);
+        button->setEnabled(published ? (sameRoom || canPublish) : canPublish);
+        button->setToolTip(tip);
+    }
+}
+
+void MultiplayerPage::ensurePublishStillValid()
+{
+    if (m_publishedRoomId <= 0)
+        return;
+
+    QString core;
+    QString joinInfo;
+    QString address;
+    QString error;
+    if (!currentPublishTarget(&core, &joinInfo, &address, &error)
+        || core != m_publishedCore || joinInfo != m_publishedJoin)
+    {
+        stopPublishHeartbeat(true, false);
+    }
+}
+
+QStringList MultiplayerPage::instanceMods() const
+{
+    return LobbyInstanceMatcher::scanMods(m_instancePath);
+}
+
+QString MultiplayerPage::instanceDisplayName() const
+{
+    if (!m_instancePath.isEmpty())
+    {
+        const QString name = QDir(m_instancePath).dirName();
+        if (!name.isEmpty())
+            return name;
+    }
+    return tr("本机");
 }
 
 void MultiplayerPage::showInfoDialog(const QString &title, const QString &text)

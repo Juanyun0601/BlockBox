@@ -8,6 +8,8 @@
 #include "mainwindow.h"
 
 #include <atomic>
+#include <functional>
+#include <memory>
 
 #include <QApplication>
 #include <QDebug>
@@ -24,9 +26,10 @@
 #include <QTranslator>
 
 #include "platform.h"
+#include "components/AppMessageBox.h"
 #include "components/QuizReminder.h"
-#include "pages/OnboardingWizard.h"
 
+#include "utils/AndroidBridge.h"
 #include "utils/AsyncInitializer.h"
 #include "utils/ContentFavoriteSync.h"
 #include "utils/ForumAccountService.h"
@@ -41,6 +44,7 @@
 #include "utils/StartupProgressWidget.h"
 #include "utils/ThemeManager.h"
 #include "utils/UpdateChecker.h"
+#include "utils/news/AnnouncementFeed.h"
 
 namespace {
 
@@ -67,6 +71,110 @@ void showQuizReminder(QWidget *parent)
     reminder->showReminder();
 }
 
+/// 这条重要公告是不是已经被用户勾选过「不再弹出」
+bool isImportantAnnouncementDismissed(const QString &id)
+{
+    return !id.isEmpty()
+           && SettingsManager::instance()->getProperty("announcement/important_dismissed_id").toString() == id;
+}
+
+/// 记住用户不想再看到的这条重要公告（公告更新后 id 会变，新公告仍会弹出）
+void dismissImportantAnnouncement(const QString &id)
+{
+    if (!id.isEmpty())
+        SettingsManager::instance()->setProperty("announcement/important_dismissed_id", id);
+}
+
+/// 弹出启动重要公告：正文按 Markdown 渲染，底部可勾选「不再弹出这条公告」
+void showImportantAnnouncement(QWidget *parent, const ImportantAnnouncement &notice)
+{
+    AppMessageBox box(parent);
+    box.setWindowTitle(QCoreApplication::translate("MainWindow", "重要公告"));
+    box.setIcon(AppMessageBox::Information);
+
+    const QString title = notice.title.trimmed().isEmpty()
+                              ? QCoreApplication::translate("MainWindow", "重要公告")
+                              : notice.title;
+    box.setText(title);
+
+    // 后台可以单独填一个跳转链接；正文里没写链接时，在末尾补一条可点击的「查看详情」
+    QString markdown = notice.markdown;
+    if (!notice.link.trimmed().isEmpty())
+        markdown += QStringLiteral("\n\n[%1](%2)")
+                        .arg(QCoreApplication::translate("MainWindow", "查看详情"), notice.link);
+    box.setInformativeMarkdown(markdown);
+
+    box.setCardWidthRange(560, 760);
+    box.setInfoBrowserHeightRange(180, 440);
+    box.setInfoBrowserFullWidth();
+    box.setCheckBox(QCoreApplication::translate("MainWindow", "不再弹出这条公告"));
+    box.setStandardButtons(AppMessageBox::Ok);
+    box.setButtonText(AppMessageBox::Ok, QCoreApplication::translate("MainWindow", "我知道了"));
+    box.exec();
+
+    if (box.isCheckBoxChecked())
+        dismissImportantAnnouncement(notice.id);
+}
+
+/**
+ * @brief 启动时拉取并展示重要公告
+ *
+ * 弹窗只显示一次：拉取完成（成功或失败）后看当前数据，公告已被勾选
+ * 「不再弹出」就跳过。网络很慢时先用本地缓存兜底，不让弹窗一直迟到。
+ * 无论是否弹出，结束后都会调用 finished，让启动检查更新等后续动作
+ * 排在公告之后，避免两个弹窗叠在一起。
+ */
+void maybeShowImportantAnnouncement(QWidget *parent, const std::function<void()> &finished)
+{
+    AnnouncementFeed *feed = AnnouncementFeed::instance();
+    auto done = std::make_shared<bool>(false);
+    auto showing = std::make_shared<bool>(false);
+
+    auto complete = [done, finished]() {
+        if (*done)
+            return;
+        *done = true;
+        if (finished)
+            finished();
+    };
+
+    // 展示当前数据里的重要公告（没有 / 已勾选不再弹出时直接收尾）
+    auto present = [feed, parent, showing, complete]() {
+        if (*showing) {
+            complete();
+            return;
+        }
+        const ImportantAnnouncement notice = feed->important();
+        if (!notice.isValid() || isImportantAnnouncementDismissed(notice.id)) {
+            complete();
+            return;
+        }
+        *showing = true;
+        showImportantAnnouncement(parent, notice);
+        complete();
+    };
+
+    QObject::connect(feed, &AnnouncementFeed::loadingChanged, parent, [present](bool loading) {
+        if (!loading)
+            present();
+    });
+
+    // 网络迟迟没结果时先用上一次的缓存弹出，等真拿到新数据也已经弹过了
+    QTimer::singleShot(3500, parent, [feed, parent, done, showing, complete]() {
+        if (*done || *showing)
+            return;
+        const ImportantAnnouncement notice = feed->important();
+        if (!notice.isValid() || isImportantAnnouncementDismissed(notice.id))
+            return;
+        *showing = true;
+        showImportantAnnouncement(parent, notice);
+        complete();
+    });
+
+    // 每次启动都强制拉一次，保证重要公告的时效性
+    feed->refresh(true);
+}
+
 /// 启动后按设置检查更新（静默模式：仅发现新版本时提示，失败不打扰）
 void maybeCheckUpdates(QWidget *parent)
 {
@@ -82,6 +190,19 @@ void maybeCheckUpdates(QWidget *parent)
 
 int main(int argc, char *argv[])
 {
+    // 移动端界面缩放：把整套 UI 按 0.6 倍缩小后再渲染。
+    // 界面是按桌面宽屏（最小 1200×800）设计的，手机横屏逻辑高度通常只有 ~360，
+    // 等比缩放后 1200×800 → 720×480，布局骨架（侧边栏/顶栏/卡片/弹窗）全部同步变小，
+    // 避免逐页手工改尺寸，也保证不出现内容超出屏幕。
+    // 必须在 QApplication 构造前设置环境变量；只对移动形态（手机/平板）生效：
+    // 桌面 Windows/macOS/Linux 与鸿蒙电脑（2in1）都按 1.0 渲染电脑版布局。
+    // 若用户设备上已手动设过该变量，则以用户设置为准。
+#if defined(Q_OS_ANDROID) || defined(HARMONY_OS)
+    if (qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR")
+        && Platform::getFormFactor() == Platform::FormFactor::Mobile)
+        qputenv("QT_SCALE_FACTOR", "0.6");
+#endif
+
     // 设置 OpenGL 表面格式（必须在 QApplication 之前）
     // 桌面端用 OpenGL 3.3 Core Profile；安卓 / 鸿蒙只有 OpenGL ES（版本号最高 3.2），
     // 沿用 3.3 Core 会让 EGL 直接报 EGL_BAD_CONFIG（Unknown ES version 3.3），
@@ -104,6 +225,13 @@ int main(int argc, char *argv[])
 
     // 设置应用程序图标
     a.setWindowIcon(QIcon(":/Images/icon.ico"));
+
+#if defined(Q_OS_ANDROID)
+    // 沉浸模式：隐藏系统状态栏（时间/电量/信号）和导航条，界面铺满整屏。
+    // 系统会在切前后台、窗口重新获得焦点、旋转、软键盘收放后自己把栏放回来，
+    // 所以交给维持器：启动先隐藏一次，之后按这些时机自动补回，并低频自检。
+    AndroidBridge::installImmersiveMode();
+#endif
 
     // 初始化运行日志：尽早装上，把启动过程也记进去
     LauncherLogger::install();
@@ -192,28 +320,22 @@ int main(int argc, char *argv[])
             startupWidget->hideStartup();
             w.show();
 
-            // 首次运行（未检测到 BlockBox 数据文件夹）：弹出新手引导
+            // 首次运行（未走完引导）：直接进入新手引导页
             if (isFirstRun) {
                 QTimer::singleShot(400, [&w]() {
-                    OnboardingWizard wizard(&w);
-                    wizard.exec();
-                    // 新手引导中可能新添加了实例文件夹，刷新首页最近游玩卡片
-                    w.refreshHomeRecentPlays();
-                    // 语言切换会请求重启：启动新进程并退出当前进程，
-                    // 新进程启动时 loadLanguageSync() 干净加载所选语言，且因 onboarding 未完成会再次弹出引导。
-                    if (wizard.restartRequested()) {
-                        w.hide();
-                        QProcess::startDetached(QCoreApplication::applicationFilePath(), QStringList());
-                        QCoreApplication::quit();
-                        return;
-                    }
-                    // 新手引导之后在右下角提醒入站答题（可直接跳过，不阻塞使用）
-                    showQuizReminder(&w);
-                    maybeCheckUpdates(&w);
+                    // 引导页走完后再做首次启动的后续动作（入站答题提醒 / 检查更新）。
+                    // onboardingFinished() 只在首次启动进入引导时发出一次，设置里再次打开不会重复打扰。
+                    QObject::connect(&w, &MainWindow::onboardingFinished, &w, [&w](bool) {
+                        // 新手引导之后在右下角提醒入站答题（可直接跳过，不阻塞使用）
+                        showQuizReminder(&w);
+                        // 重要公告弹窗结束后再检查更新，避免两个弹窗叠在一起
+                        maybeShowImportantAnnouncement(&w, [&w]() { maybeCheckUpdates(&w); });
+                    });
+                    w.showOnboardingPage(true);
                 });
             } else {
                 showQuizReminder(&w);
-                maybeCheckUpdates(&w);
+                maybeShowImportantAnnouncement(&w, [&w]() { maybeCheckUpdates(&w); });
             }
         });
 

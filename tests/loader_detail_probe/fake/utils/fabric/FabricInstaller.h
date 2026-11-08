@@ -6,6 +6,7 @@
 
 #include <QObject>
 #include <QString>
+#include "utils/SettingsManager.h"
 
 class FabricInstaller : public QObject
 {
@@ -18,6 +19,7 @@ public:
     }
 
     void setCurrentTaskId(const QString &) {}
+    void setDownloadSource(FabricDownloadSource) {}
     void downloadFabricInstaller(const QString &, const QString &, const QString &) {}
 
 signals:

@@ -10,6 +10,7 @@
 #include "components/ContentViewSwitch.h"
 #include "components/MasonryContentCard.h"
 #include "utils/mod/ModData.h"
+#include "utils/PageFilter.h"
 
 class QComboBox;
 class QGridLayout;
@@ -43,6 +44,12 @@ public:
     /** 设置分类并触发搜索；classId 为 0 表示全部分类 */
     void setCategory(int classId);
     void setSearchText(const QString &text);
+
+    /**
+     * 子导航搜索框分发：按卡片可见文本（名称/标签等）过滤卡片；
+     * 清空查询时恢复全部卡片可见。
+     */
+    Q_INVOKABLE void applyPageFilter(const QString &query);
 
     static constexpr const char *MCIM_BASE = "https://mod.mcimirror.top";
     static constexpr const char *CF_BASE   = "https://api.curseforge.com";
@@ -122,6 +129,10 @@ private:
     QList<ModInfo> m_cardInfos;
     QList<ModInfo> m_allMods;
     QMap<int, QList<ModInfo>> m_pageCache;
+
+    // ── 子导航搜索：卡片过滤 ──
+    QString m_pageFilterQuery;
+    PageFilter::VisibilityFilter m_pageFilter;
 
     QString m_currentQuery;
     int m_currentCategory = 0;   // 0 = 全部

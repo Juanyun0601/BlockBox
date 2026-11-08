@@ -155,6 +155,8 @@ private:
     QString m_currentFilter;
     // 是否已自动加载过版本列表（首次 showEvent 触发，避免重复请求）
     bool m_versionsLoaded;
+    // 官方源获取版本列表失败后是否已经自动试过 BMCL 源（每次刷新重置）
+    bool m_fallbackTried;
 
     // ── 子导航搜索：版本列表/瀑布流卡片过滤状态（重建后重新应用） ──
     QString m_pageFilterQuery;

@@ -7,7 +7,14 @@
 
 #include "ForumContentService.h"
 
+#include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonParseError>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QUrl>
 #include <QUrlQuery>
 
 namespace {
@@ -296,6 +303,145 @@ void ForumContentService::createThread(const QString &boardSlug, const QString &
         std::move(onFail));
 }
 
+void ForumContentService::createPluginThread(const QString &boardSlug, const QString &title,
+                                             const QString &content, const QStringList &tags,
+                                             int pluginUploadId,
+                                             std::function<void(int threadId)> onOk,
+                                             FailHandler onFail)
+{
+    if (pluginUploadId <= 0)
+    {
+        createThread(boardSlug, title, content, tags, std::move(onOk), std::move(onFail));
+        return;
+    }
+    QJsonObject body;
+    if (!boardSlug.isEmpty())
+        body.insert(QStringLiteral("board"), boardSlug);
+    body.insert(QStringLiteral("title"), title);
+    body.insert(QStringLiteral("content"), content);
+    if (!tags.isEmpty())
+    {
+        QJsonArray tagArray;
+        for (const QString &tag : tags)
+            tagArray.append(tag);
+        body.insert(QStringLiteral("tags"), tagArray);
+    }
+    body.insert(QStringLiteral("plugin_upload_id"), pluginUploadId);
+
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/threads"), body,
+        [onOk](const QJsonObject &root) {
+            if (onOk)
+                onOk(root.value(QStringLiteral("id")).toInt());
+        },
+        std::move(onFail));
+}
+
+void ForumContentService::uploadPluginPackage(
+    const QString &filePath, std::function<void(int percent)> onProgress,
+    std::function<void(const ForumPluginUpload &)> onOk, FailHandler onFail)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        if (onFail)
+            onFail(tr("插件包读不出来，文件可能被占用"), 0);
+        return;
+    }
+    const QByteArray data = file.readAll();
+    file.close();
+    if (data.isEmpty())
+    {
+        if (onFail)
+            onFail(tr("插件包是空的"), 0);
+        return;
+    }
+
+    static QNetworkAccessManager *s_manager = nullptr;
+    if (!s_manager)
+        s_manager = new QNetworkAccessManager();
+
+    QNetworkRequest request{QUrl(ForumAccountService::instance()->absoluteUrl(
+        QStringLiteral("/api/upload/plugin")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/octet-stream"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BlockBoxLauncher"));
+    request.setRawHeader("Accept", "application/json");
+    request.setTransferTimeout(120000);
+    const QString token = ForumAccountService::instance()->token();
+    if (!token.isEmpty())
+        request.setRawHeader("Cookie", QStringLiteral("bbf_sid=%1").arg(token).toUtf8());
+    const QString humanToken = ForumAccountService::instance()->humanCheckToken();
+    if (!humanToken.isEmpty())
+        request.setRawHeader("X-Human-Token", humanToken.toUtf8());
+
+    QNetworkReply *reply = s_manager->post(request, data);
+    QObject::connect(reply, &QNetworkReply::uploadProgress, reply,
+                     [onProgress](qint64 sent, qint64 total) {
+                         if (onProgress && total > 0)
+                             onProgress(int(sent * 100 / total));
+                     });
+    QObject::connect(reply, &QNetworkReply::finished, reply,
+                     [reply, onOk, onFail]() {
+                         reply->deleteLater();
+                         const QByteArray raw = reply->readAll();
+                         if (reply->error() != QNetworkReply::NoError)
+                         {
+                             QJsonParseError parseError{};
+                             const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
+                             QString message = parseError.error == QJsonParseError::NoError
+                                                   ? doc.object().value(QStringLiteral("error")).toString()
+                                                   : QString();
+                             if (message.isEmpty())
+                                 message = tr("插件上传失败，请稍后再试");
+                             if (onFail)
+                                 onFail(message,
+                                        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt());
+                             return;
+                         }
+                         const QJsonObject root = QJsonDocument::fromJson(raw).object();
+                         ForumPluginUpload upload;
+                         upload.uploadId = root.value(QStringLiteral("upload_id")).toInt();
+                         upload.pluginId = root.value(QStringLiteral("plugin_id")).toString();
+                         upload.name = root.value(QStringLiteral("name")).toString();
+                         upload.version = root.value(QStringLiteral("version")).toString();
+                         upload.author = root.value(QStringLiteral("author")).toString();
+                         upload.description = root.value(QStringLiteral("description")).toString();
+                         upload.icon = root.value(QStringLiteral("icon")).toString();
+                         upload.fileSize = static_cast<qint64>(root.value(QStringLiteral("file_size")).toDouble());
+                         upload.fileHash = root.value(QStringLiteral("file_hash")).toString();
+                         upload.url = root.value(QStringLiteral("url")).toString();
+                         if (!upload.isValid())
+                         {
+                             if (onFail)
+                                 onFail(tr("插件上传失败，请稍后再试"), 0);
+                             return;
+                         }
+                         if (onOk)
+                             onOk(upload);
+                     });
+}
+
+void ForumContentService::fetchPluginDownload(int threadId,
+                                              std::function<void(const ForumPluginDownload &)> onOk,
+                                              FailHandler onFail)
+{
+    ForumAccountService::instance()->getJson(
+        QStringLiteral("/api/threads/%1/plugin/download").arg(threadId),
+        [onOk](const QJsonObject &root) {
+            ForumPluginDownload download;
+            const QString url = root.value(QStringLiteral("url")).toString();
+            if (url.startsWith(QLatin1String("/uploads/")))
+                download.url = ForumAccountService::instance()->absoluteUrl(url);
+            else
+                download.url = url;   // 配了 CDN 时直接是绝对地址
+            download.fileSize = static_cast<qint64>(root.value(QStringLiteral("size")).toDouble());
+            download.filename = root.value(QStringLiteral("filename")).toString();
+            if (onOk)
+                onOk(download);
+        },
+        std::move(onFail));
+}
+
 void ForumContentService::replyToThread(int threadId, const QString &content, int replyToPostId,
                                         std::function<void()> onOk, FailHandler onFail)
 {
@@ -558,11 +704,12 @@ void ForumContentService::deleteThread(int threadId, std::function<void()> onOk,
         std::move(onFail));
 }
 
-void ForumContentService::reportPost(int postId, const QString &reason,
+void ForumContentService::reportPost(int postId, const QString &category, const QString &reason,
                                      std::function<void()> onOk, FailHandler onFail)
 {
     QJsonObject body;
     body.insert(QStringLiteral("post_id"), postId);
+    body.insert(QStringLiteral("category"), category);
     body.insert(QStringLiteral("reason"), reason);
     ForumAccountService::instance()->sendJson(
         QByteArrayLiteral("POST"), QStringLiteral("/api/reports"), body,
@@ -722,7 +869,24 @@ ForumThreadInfo ForumContentService::parseThreadInfo(const QJsonObject &object)
     info.authorId = author.value(QStringLiteral("id")).toInt();
     info.authorName = authorName(author);
     info.authorAvatar = author.value(QStringLiteral("avatar")).toString();
+    info.plugin = parsePluginInfo(object.value(QStringLiteral("plugin")).toObject());
     return info;
+}
+
+ForumPluginInfo ForumContentService::parsePluginInfo(const QJsonObject &object)
+{
+    ForumPluginInfo plugin;
+    plugin.id = object.value(QStringLiteral("id")).toInt();
+    plugin.uploadId = object.value(QStringLiteral("upload_id")).toInt();
+    plugin.pluginId = object.value(QStringLiteral("plugin_id")).toString();
+    plugin.name = object.value(QStringLiteral("name")).toString();
+    plugin.version = object.value(QStringLiteral("version")).toString();
+    plugin.author = object.value(QStringLiteral("author")).toString();
+    plugin.description = object.value(QStringLiteral("description")).toString();
+    plugin.icon = object.value(QStringLiteral("icon")).toString();
+    plugin.fileSize = static_cast<qint64>(object.value(QStringLiteral("file_size")).toDouble());
+    plugin.downloads = object.value(QStringLiteral("downloads")).toInt();
+    return plugin;
 }
 
 ForumPost ForumContentService::parsePost(const QJsonObject &object)

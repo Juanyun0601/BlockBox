@@ -20,6 +20,8 @@
 #include "utils/DownloadTaskManager.h"
 #include "utils/content/ContentData.h"
 #include "utils/FavoritesManager.h"
+#include "utils/ForumLobbyService.h"
+#include "components/PublishKit.h"
 
 class BackgroundWidget;
 class TopBar;
@@ -45,6 +47,10 @@ class ContentDownloadPage;
 class ContentDetailPage;
 class ContentListPage;
 class ResourcesPage;
+class BedrockContentPage;
+class BedrockContentDetailPage;
+class BedrockDownloadPage;
+class BedrockVersionDetailPage;
 class InstanceManagePage;
 class AiChatPage;
 class JavaDownloadPage;
@@ -59,7 +65,15 @@ class ForumThreadListPage;
 class ForumComposerPage;
 class ForumUserProfilePage;
 class ForumFriendsPage;
+class ForumPluginListPage;
 class FeedbackPage;
+class FeedbackComposePage;
+class ForumReportPage;
+class PublishPage;
+class PublishResourcePage;
+class PublishPlatformPage;
+class PublishBoardPage;
+class OnboardingWizard;
 struct ModInfo;
 struct ModVersionFile;
 class GameLauncher;
@@ -117,8 +131,20 @@ enum class PageIndex {
     ForumComposerPage = 30,
     ForumUserProfilePage = 31,
     FeedbackPage = 32,
-    ForumFriendsPage = 33
+    ForumFriendsPage = 33,
+    FeedbackComposePage = 34,
+    ForumPluginListPage = 35,
+    PublishPage = 36,
+    PublishResourcePage = 37,
+    PublishPlatformPage = 38,
+    PublishBoardPage = 39,
+    OnboardingPage = 40,
+    ForumReportPage = 41
 };
+
+/** 侧边栏导航索引（SideBar::buildNavStructure 的顺序）：0首页 1资源 2设置 3AI助手 4实例管理(隐藏) 5插件 6社区 7发布 8反馈 */
+constexpr int PublishNavIndex = 7;
+constexpr int FeedbackNavIndex = 8;
 
 class MainWindow : public QMainWindow
 {
@@ -133,6 +159,21 @@ public:
 
     /// 打开账号页并切到论坛登录表单（答题弹窗「去登录」等外部入口用）
     Q_INVOKABLE void openForumAccountLogin();
+
+    /** 当前是否为基岩版模式（顶栏「Java版/基岩版」切换驱动，导航/收藏夹/资源主页随版本重建） */
+    bool isBedrockEdition() const { return m_bedrockEdition; }
+
+    /**
+     * @brief 打开新手引导页（整页，隐藏侧边栏）
+     * @param firstRun true=首次启动自动进入；走完后发出 onboardingFinished()
+     *
+     * 设置里的「打开新手引导」入口同样调用本方法，只是不做首次启动的后续动作。
+     */
+    void showOnboardingPage(bool firstRun = false);
+
+signals:
+    /** 新手引导页走完（首次启动流程用：主程序据此弹入站答题提醒 / 检查更新） */
+    void onboardingFinished(bool firstRun);
 
 private slots:
     void onSideBarItemClicked(int parentIndex);
@@ -180,6 +221,13 @@ private slots:
     void onLaunchGameClicked(const QString &instancePath);
     void onQuickLaunchSaveClicked(const QString &saveName);
     void onQuickLaunchServerClicked(const QString &address, quint16 port);
+    /** 联机大厅「一键加入」：按房间要求挑最合适的实例，启动游戏并连进房间 */
+    void onLobbyJoinRequested(const QString &address, quint16 port, const QString &gameVersion,
+                              const QString &loader, const QStringList &mods);
+    /** 首页好友卡片「一起玩」：直接加入好友正在开放的联机房间 */
+    void onFriendRoomJoinRequested(const ForumLobbyRoom &room);
+    /** 首页好友房间的陶瓦联机状态变化：核心就绪后自动连进房间 */
+    void onFriendRoomJoinStateChanged();
     void onSaveSettingsOpened();
     void onSaveMapOpened();
     void onShaderSettingsOpened();
@@ -203,6 +251,9 @@ private slots:
     void onTaskDetailPageBack();
     void onTaskCancelled(const QString &taskId);
 
+    /// 论坛请求被人机验证拦下时弹滑块
+    void onHumanCheckRequired();
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -213,6 +264,9 @@ protected:
     void dropEvent(QDropEvent *event) override;
 
 private:
+    /// 进社区前先过一道人机验证，已经验过就直接返回 true
+    bool ensureHumanCheck();
+
     Ui::MainWindow *ui;
     TopBar *m_topBar;
     TaskBar *m_taskBar;
@@ -245,6 +299,12 @@ private:
     ContentListPage *m_contentListPage;
     ResourcesPage *m_resourcesPage;
     InstanceManagePage *m_instanceManagePage;
+    /** 基岩版社区资源浏览页/详情页（CurseForge 源，基岩版模式下使用） */
+    BedrockContentPage *m_bedrockContentPage = nullptr;
+    BedrockContentDetailPage *m_bedrockContentDetailPage = nullptr;
+    /** 基岩版版本下载页（多源 mcappx/mcapks/bbk 版本列表）与版本详情下载页 */
+    BedrockDownloadPage *m_bedrockDownloadPage = nullptr;
+    BedrockVersionDetailPage *m_bedrockVersionDetailPage = nullptr;
     AiChatPage *m_aiChatPage = nullptr;
     JavaDownloadPage *m_javaDownloadPage = nullptr;
     HomePage *m_homePage = nullptr;
@@ -253,6 +313,8 @@ private:
     PluginPage *m_pluginPage = nullptr;
     NewsPage *m_newsPage = nullptr;
     CommunityForumPage *m_communityPage = nullptr;
+    /// 人机验证弹窗是否正在显示（防止并发请求弹出多个）
+    bool m_humanCheckRunning = false;
     /** 论坛深度集成四页：帖子详情 / 主题列表（板块·搜索·标签）/ 发帖 / 用户主页 */
     ForumThreadDetailPage *m_forumThreadDetailPage = nullptr;
     ForumThreadListPage *m_forumThreadListPage = nullptr;
@@ -260,10 +322,29 @@ private:
     ForumUserProfilePage *m_forumUserProfilePage = nullptr;
     /** 论坛好友与私信页 */
     ForumFriendsPage *m_forumFriendsPage = nullptr;
-    /** 软件内反馈页（设置 > 关于 的意见反馈入口），提交走论坛账号 */
+    /** 资源页「插件」子页：论坛插件帖聚合成可安装列表 */
+    ForumPluginListPage *m_forumPluginListPage = nullptr;
+    /** 软件内反馈页（左侧导航栏底部入口），只显示反馈列表 */
     FeedbackPage *m_feedbackPage = nullptr;
+    /** 提交新反馈页（反馈页顶部「提交新反馈」进入），提交走论坛账号 */
+    FeedbackComposePage *m_feedbackComposePage = nullptr;
+    /** 举报楼层页（帖子详情页「举报」进入），分类 + 补充说明走论坛账号 */
+    ForumReportPage *m_forumReportPage = nullptr;
+    /** 发布中心：入口页 / 资源类型页 / 平台跳转页 / 帖子板块页 */
+    PublishPage *m_publishPage = nullptr;
+    PublishResourcePage *m_publishResourcePage = nullptr;
+    PublishPlatformPage *m_publishPlatformPage = nullptr;
+    PublishBoardPage *m_publishBoardPage = nullptr;
+    /** 新手引导页（独立整页，按需创建后常驻；不随侧边栏导航出现） */
+    OnboardingWizard *m_onboardingPage = nullptr;
+    /** 本次进入引导页是否为首次启动自动进入（决定走完后是否触发首次启动后续动作） */
+    bool m_onboardingFirstRun = false;
     /** 论坛内层页（详情 / 发帖 / 用户主页）的返回动作，由进入入口决定 */
     std::function<void()> m_forumReturnAction;
+    /** 从发帖页去登录前的返回落点，登录完回到发帖页后恢复 */
+    std::function<void()> m_pendingComposerReturn;
+    /** 发帖页顶栏标题（发布中心进入时用「发布>插件 / 发布>帖子」，空则用默认） */
+    QString m_forumComposerTopTitle;
 
     ClipboardMonitor *m_clipboardMonitor = nullptr;
     bool m_clipboardDialogOpen = false; ///< 剪贴板确认框是否已弹出（防剪贴板变化重入叠加弹窗）
@@ -293,6 +374,13 @@ private:
     /** 从论坛账户详情进入皮肤编辑器时要应用的账户（一次性，用后清空） */
     QString m_pendingSkinEditorAccount;
     QString m_pendingSkinEditorAccountType;
+    /** 首页好友房间：陶瓦联机加入流程的待启动参数（GuestOk 后启动游戏） */
+    bool m_friendRoomJoinPending = false;
+    bool m_friendRoomJoinWaitingCore = false;
+    QString m_friendRoomJoinCode;
+    QString m_friendRoomJoinVersion;
+    QString m_friendRoomJoinLoader;
+    QStringList m_friendRoomJoinMods;
     bool m_launchRetryAttempted = false; // 标记本次启动是否已执行过"补全文件后重试"，避免无限重试
     bool m_launchRetryPending = false;  // 标记重试已调度但尚未执行（防止重复 gameCrashed 信号清除任务）
 
@@ -301,7 +389,9 @@ private:
     PageIndex m_previousPage;
     bool m_hasPreviousPage;
     int m_lastSidebarIndex;
-    int m_lastChildSidebarIndex[8];
+    int m_lastChildSidebarIndex[10];
+    /** 当前版本模式（true=基岩版），由顶栏「Java版/基岩版」切换驱动 */
+    bool m_bedrockEdition = false;
 
     void initUI();
     void initPages();
@@ -377,15 +467,47 @@ private:
     void initForumComposerPage();
     void initForumUserProfilePage();
     void initFeedbackPage();
+    void initFeedbackComposePage();
+    void initForumReportPage();
     void initForumFriendsPage();
+    void initForumPluginListPage();
+    void initPublishPage();
+    void initPublishResourcePage();
+    void initPublishPlatformPage();
+    void initPublishBoardPage();
+    /** 新手引导页（首次启动时懒加载创建） */
+    void initOnboardingPage();
+    /** 引导页走完：回到首页，必要时通知主程序做首次启动后续动作 */
+    void onOnboardingFinished();
+    /** 引导页「返回设置」/ 顶栏返回 */
+    void onOnboardingBackRequested();
+    /** 引导页切换语言：重启进程以干净加载新语言 */
+    void onOnboardingRestartRequested();
+    // ── 发布中心：入口 / 资源类型 / 平台跳转 / 帖子板块 ──
+    void showPublishPage();
+    void showPublishResourcePage();
+    void showPublishPlatformPage(PublishKit::ResourceKind kind);
+    void showPublishBoardPage();
+    /** 插件发布页（复用论坛发帖页，预选「插件与开发」板块） */
+    void showPublishPluginCompose();
+    /** 帖子发帖详情页（复用论坛发帖页，预选所选板块） */
+    void showPublishPostCompose(const QString &boardSlug);
     // ── 论坛深度集成：内层页的打开与返回 ──
     void showForumThread(int threadId);
     void showForumBoard(const QString &slug, const QString &boardName);
     void showForumSearch(const QString &query);
     void showForumTag(const QString &tag);
-    void showForumComposer(const QString &preselectSlug = QString());
+    void showForumComposer(const QString &preselectSlug = QString(),
+                           const QString &topTitle = QString());
     void showForumUserProfile(int userId);
+    /** 打开资源页「插件」子页（论坛插件帖列表） */
+    void showForumPluginListPage();
     void showFeedbackPage();
+    /** 提交新反馈页（从反馈列表页进入，返回落点也是反馈列表页） */
+    void showFeedbackComposePage();
+    /** 举报楼层页（从帖子详情页进入，返回落点是帖子详情页） */
+    void showForumReportPage(int postId, int floor, const QString &authorName,
+                             const QString &excerpt);
     /** 打开好友与私信页；userId > 0 时直接和这个人开聊天 */
     void showForumFriends(int userId = 0);
     void onForumPageBack();
@@ -395,11 +517,15 @@ private:
     void presentForumComposer();
     void presentForumUserProfile();
     void presentFeedbackPage();
+    void presentFeedbackComposePage();
+    void presentForumReportPage();
     void presentForumFriends();
     /** 回到社区页（恢复侧边栏选中与顶栏标题） */
     void returnToCommunityPage();
-    /** 回到「设置 > 关于」（反馈页的返回落点） */
+    /** 回到「设置 > 关于」（设置里反馈入口的返回落点） */
     void returnToSettingsAbout();
+    /** 回到反馈列表页（提交新反馈页的返回落点） */
+    void returnToFeedbackList();
     void initSettingsPage();
     void showJavaDownloadPage();
     void showFavoritesPage(const QString &folderId);
@@ -494,6 +620,24 @@ private:
      */
     void onQuickInstallModRequested(const QString &modKey);
     void onClipboardLinkDetected(const ClipboardLinkInfo &info);
+
+    // ===== 基岩版社区资源（CurseForge 游戏 ID 78022） =====
+    /**
+     * @brief 应用版本模式（Java/基岩）并同步到侧边栏/首页/收藏夹/资源主页
+     *
+     * 顶栏「Java版/基岩版」切换与启动时初始化共用；只在模式真正变化时重建。
+     */
+    void applyBedrockEdition(bool bedrock);
+    /** 打开基岩版社区资源浏览页（childIndex 按基岩子导航：1=资源包 2=材质包 3=地图 4=脚本 10=附加包） */
+    void showBedrockContentPage(int classId);
+    /** 打开基岩版社区资源详情页（item 的 bedrockClassId 决定分类语义） */
+    void showBedrockContentDetailPage(const ModInfo &info, int bedrockClassId);
+    /** 基岩版子导航 childIndex → CurseForge classId（1资源包/2材质包/3地图/4脚本/10附加包，其余 0=全部） */
+    static int bedrockClassIdForChildIndex(int childIndex);
+    /** 基岩版版本下载页（mcappx/mcapks/bbk 多源列表；顶栏返回回资源主页） */
+    void showBedrockDownloadPage();
+    /** 打开基岩版版本详情下载页 */
+    void showBedrockVersionDetailPage(const struct BedrockVersionEntry &entry);
 
     static constexpr int kMaxCardDownloadDepth = 3; ///< 一键下载递归前置的最大深度，防止循环依赖
     QSet<QString> m_cardDownloadVisited;            ///< 一次"一键下载"流程中已处理的资源 ID（source:id）

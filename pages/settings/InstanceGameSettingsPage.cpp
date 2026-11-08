@@ -7,7 +7,7 @@
 #include "InstanceGameSettingsPage.h"
 
 #include <QCoreApplication>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/CustomCheckBox.h"
 #include <QDir>
 #include <QFile>
@@ -84,7 +84,7 @@ void InstanceGameSettingsPage::chooseInstanceIcon()
 {
     if (m_instancePath.isEmpty())
         return;
-    QString iconFile = AppFileDialog::getOpenFileName(
+    QString iconFile = QFileDialog::getOpenFileName(
         this, tr("选择实例图标"),
         m_instancePath, tr("图片文件 (*.png *.jpg *.jpeg *.ico *.webp *.svg)"));
     if (iconFile.isEmpty())
@@ -498,7 +498,7 @@ void InstanceGameSettingsPage::initUI()
 
     connect(javaBrowseBtn, &QPushButton::clicked, this, [this]()
     {
-        QString path = AppFileDialog::getOpenFileName(
+        QString path = QFileDialog::getOpenFileName(
             this, tr("选择 Java 可执行文件"),
             QCoreApplication::applicationDirPath(), tr("可执行文件 (*.exe)"));
         if (!path.isEmpty())

@@ -111,6 +111,11 @@
         <file>Images/Icons/nav_ai.svg</file>
         <!-- 社区（方块盒子论坛）导航图标 -->
         <file>Images/Icons/nav_forum.svg</file>
+        <file>Images/Icons/nav_multiplayer.svg</file>
+        <!-- 反馈（侧边栏底部入口）图标 -->
+        <file>Images/Icons/feedback.svg</file>
+        <!-- 发布（侧边栏入口）图标 -->
+        <file>Images/Icons/nav_publish.svg</file>
         <!-- Plugin icons -->
         <file>Images/Icons/nav_plugin.svg</file>
         <file>Images/Icons/plugin.svg</file>

@@ -14,8 +14,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/CustomCheckBox.h"
 #include "components/OutlinedLabel.h"
 #include "utils/Schematic/ProjectionEditorSettings.h"
@@ -177,7 +176,7 @@ void SettingsPage::initProjectionEditorSettings()
     });
     connect(browseBtn, &QPushButton::clicked, this, [this]() {
         const QString start = m_projSourceInstanceEdit->text().trimmed();
-        const QString dir = AppFileDialog::getExistingDirectory(this, tr("选择游戏实例目录"), start);
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("选择游戏实例目录"), start);
         if (!dir.isEmpty()) {
             m_projSourceInstanceEdit->setText(dir);
             ProjectionEditorSettings::setValue(QStringLiteral("sourceInstance"), dir);

@@ -16,10 +16,11 @@
 #include <QMenu>
 #include <QCursor>
 #include "components/AppMessageBox.h"
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "utils/Safety.h"
 #include <QMouseEvent>
 #include <QPropertyAnimation>
+#include <QScreen>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QShortcut>
@@ -52,6 +53,8 @@
 #include "components/TopBar.h"
 #include "components/UpdateProgressButton.h"
 #include "components/FileDropOverlay.h"
+#include "components/HumanCheckDialog.h"
+#include "utils/Lobby/LobbyInstanceMatcher.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
 #include "utils/ThemeManager.h"
@@ -72,6 +75,10 @@
 #include "pages/ContentDownloadPage.h"
 #include "pages/ContentDetailPage.h"
 #include "pages/ContentListPage.h"
+#include "pages/BedrockContentPage.h"
+#include "pages/BedrockContentDetailPage.h"
+#include "pages/BedrockDownloadPage.h"
+#include "pages/BedrockVersionDetailPage.h"
 #include "pages/InstanceManagePage.h"
 #include "pages/InstanceLogPage.h"
 #include "pages/SearchPage.h"
@@ -93,6 +100,7 @@
 #include "utils/SettingsManager.h"
 #include "utils/McimHelper.h"
 #include "utils/SkinDownloader.h"
+#include "utils/TouchScroll.h"
 #include "utils/net/NetJob.h"
 #include "utils/net/Download.h"
 #include "utils/net/ChecksumValidator.h"
@@ -102,6 +110,7 @@
 #include "utils/PageTransitionAnimator.h"
 #include "utils/ContentAnimator.h"
 #include "utils/UpdateChecker.h"
+#include "utils/Terracotta/TerracottaClient.h"
 
 #include <QPainter>
 #include <QDragEnterEvent>
@@ -141,6 +150,42 @@ void startResourceDownload(QObject *context, const QStringList &candidateUrls,
     }, Qt::SingleShotConnection);
     job->start();
 }
+
+// 联机大厅地址（host:port / http(s)://host:port）→ host + 端口，默认 25565
+bool parseLobbyAddress(const QString &text, QString *host, quint16 *port)
+{
+    QString value = text.trimmed();
+    if (value.isEmpty())
+        return false;
+    if (value.startsWith(QStringLiteral("http://")))
+        value.remove(0, 7);
+    else if (value.startsWith(QStringLiteral("https://")))
+        value.remove(0, 8);
+    while (value.endsWith(QLatin1Char('/')))
+        value.chop(1);
+
+    quint16 parsedPort = 25565;
+    QString parsedHost = value;
+    const int colon = value.lastIndexOf(QLatin1Char(':'));
+    if (colon > 0 && value.indexOf(QLatin1Char(':')) == colon)
+    {
+        bool ok = false;
+        const int candidate = value.mid(colon + 1).toInt(&ok);
+        if (ok && candidate > 0 && candidate <= 65535)
+        {
+            parsedPort = quint16(candidate);
+            parsedHost = value.left(colon);
+        }
+    }
+
+    if (parsedHost.isEmpty())
+        return false;
+    if (host)
+        *host = parsedHost;
+    if (port)
+        *port = parsedPort;
+    return true;
+}
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -176,7 +221,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_previousPage(PageIndex::HomePage)
     , m_hasPreviousPage(false)
     , m_lastSidebarIndex(0)
-    , m_lastChildSidebarIndex{-1, -1, -1, -1, -1, -1, -1, -1}
+    , m_lastChildSidebarIndex{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
 {
     ui->setupUi(this);
 
@@ -243,12 +288,15 @@ MainWindow::MainWindow(QWidget *parent)
         if (!SettingsManager::instance()->isExperimentalBedrockEnabled())
             return;
         m_topBar->setJavaEdition(javaEdition);
+        // 版本模式同步到侧边栏子导航/首页快捷入口/收藏夹存储/资源主页
+        applyBedrockEdition(!javaEdition);
         NotificationManager::showInfo(this, javaEdition ? tr("已切换到 Java 版") : tr("已切换到基岩版"));
     });
     connect(SettingsManager::instance(), &SettingsManager::experimentalBedrockChanged, this, [this](bool enabled) {
         m_topBar->setEditionSwitchVisible(enabled);
         if (!enabled && !m_topBar->isJavaEdition()) {
             m_topBar->setJavaEdition(true);
+            applyBedrockEdition(false);
             NotificationManager::showInfo(this, tr("已关闭基岩版实验性功能，已切回 Java 版"));
         }
     });
@@ -291,6 +339,9 @@ MainWindow::MainWindow(QWidget *parent)
             [this](const ForumUser &) { syncTopBarAccount(); });
     connect(forumAccount, &ForumAccountService::sessionExpired, this,
             [this]() { syncTopBarAccount(); });
+    // 论坛开了人机验证：请求被拦下来就弹滑块，验完再继续
+    connect(forumAccount, &ForumAccountService::humanCheckRequired, this,
+            &MainWindow::onHumanCheckRequired);
 
     // 自动登录：从保存的账户文件中恢复默认账户
     restoreDefaultAccount();
@@ -304,6 +355,10 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 加载保存的实例路径
     loadCurrentInstancePath();
+
+    // 基岩版实验功能：顶栏当前若停在基岩版模式，启动时恢复基岩版界面
+    if (!m_topBar->isJavaEdition())
+        applyBedrockEdition(true);
 
     // 初始化剪贴板监听
     m_clipboardMonitor = new ClipboardMonitor(this);
@@ -326,7 +381,19 @@ void MainWindow::initUI()
 
     // Set window properties
     setWindowTitle(tr(""));
-    setMinimumSize(1200, 800);
+#if defined(Q_OS_ANDROID) || defined(HARMONY_OS)
+    if (Platform::isMobile()) {
+        // 移动端：不限制最小尺寸——任何最小高度都可能比屏幕高，把底部内容挤出屏幕。
+        // 窗口直接按当前屏幕可用区域给尺寸，之后完全跟随系统给的窗口大小。
+        // （此前只有安卓生效，鸿蒙手机同样存在该问题；鸿蒙电脑仍走桌面分支）
+        setMinimumSize(1, 1);
+        if (QScreen *screen = QGuiApplication::primaryScreen())
+            resize(screen->availableSize());
+    } else
+#endif
+    {
+        setMinimumSize(1200, 800);
+    }
     
     // Remove system title bar and use custom title bar
     setWindowFlags(Qt::FramelessWindowHint);
@@ -461,6 +528,9 @@ void MainWindow::initUI()
     // 页面切换后：把当前查询重新应用到新页面（新页实现 applyPageFilter 时生效）
     connect(m_stackedWidget, &QStackedWidget::currentChanged, this, [this](int)
     {
+        // 手机端：新页面的内容滚动区统一支持手指拖动滚动（懒加载页在切换时补挂）
+        if (m_stackedWidget->currentWidget())
+            TouchScroll::enablePageDragScroll(m_stackedWidget->currentWidget());
         if (m_subNavPanel)
             onSubNavSearchQueryChanged(m_subNavPanel->searchQuery());
     });
@@ -632,9 +702,16 @@ void MainWindow::onSideBarItemClicked(int parentIndex)
         m_topBar->setTitle(tr("社区"));
         m_topBar->setAccountCardVisible(true);
         m_topBar->setWindowControlCardVisible(true);
-        if (m_communityPage) {
+        // 论坛开了人机验证的话，进社区前先过一道滑块
+        if (!ensureHumanCheck())
+            NotificationManager::showInfo(this, tr("社区需要先完成人机验证"));
+        else if (m_communityPage) {
+            // 从其它页面切回社区时，先退出大厅子页面，回到社区首页
+            m_communityPage->closeLobbyIfVisible();
             m_communityPage->refresh();
         }
+    } else if (parentIndex == FeedbackNavIndex) { // 反馈（侧边栏底部入口）
+        showFeedbackPage();
     }
 
     m_lastSidebarIndex = parentIndex;
@@ -709,9 +786,18 @@ void MainWindow::onParentNavClicked(int parentIndex)
         m_topBar->setTitle(tr("社区"));
         m_topBar->setAccountCardVisible(true);
         m_topBar->setWindowControlCardVisible(true);
-        if (m_communityPage) {
+        // 论坛开了人机验证的话，进社区前先过一道滑块
+        if (!ensureHumanCheck())
+            NotificationManager::showInfo(this, tr("社区需要先完成人机验证"));
+        else if (m_communityPage) {
+            // 从其它页面切回社区时，先退出大厅子页面，回到社区首页
+            m_communityPage->closeLobbyIfVisible();
             m_communityPage->refresh();
         }
+    } else if (parentIndex == PublishNavIndex) { // 发布中心（资源 / 帖子）
+        showPublishPage();
+    } else if (parentIndex == FeedbackNavIndex) { // 反馈（侧边栏底部入口）
+        showFeedbackPage();
     }
 
     m_lastSidebarIndex = parentIndex;
@@ -737,7 +823,36 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
     }
 
     if (parentIndex == 1) { // Resources child
-        if (childIndex == 0) {
+        // ── 基岩版子导航：0安装新实例 / 1资源包 / 2材质包 / 3地图 / 4脚本 / 5新建收藏夹 / 6+收藏夹 ──
+        if (FavoritesManager::instance()->isBedrockMode()) {
+            if (childIndex == 0) {
+                // 基岩版安装入口 → 基岩版本下载页（mcappx/mcapks/bbk 多源列表）
+                showBedrockDownloadPage();
+            } else if (childIndex >= 1 && childIndex <= 4) {
+                restoreSideBarWithSubNav(1, childIndex);
+                showBedrockContentPage(bedrockClassIdForChildIndex(childIndex));
+                // 子导航标题：资源包/材质包/地图/脚本（材质包与资源包同库但标题区分入口）
+                const QStringList bedrockTitles = {
+                    tr("资源>资源包"), tr("资源>材质包"), tr("资源>地图"), tr("资源>脚本")
+                };
+                if (childIndex - 1 >= 0 && childIndex - 1 < bedrockTitles.size())
+                    m_topBar->setTitle(bedrockTitles[childIndex - 1]);
+            } else if (childIndex == 10) {
+                // 资源主页「附加包」分组卡：CurseForge Addons 分类
+                restoreSideBarWithSubNav(1, -1);
+                showBedrockContentPage(bedrockClassIdForChildIndex(childIndex));
+                m_topBar->setTitle(tr("资源>附加包"));
+            } else if (childIndex == 5) {
+                onCreateFavoriteFolderRequested();
+            } else {
+                // childIndex >= 6: 收藏夹列表
+                QList<FavoriteFolder> folders = FavoritesManager::instance()->folders();
+                int folderIdx = childIndex - 6;
+                if (folderIdx >= 0 && folderIdx < folders.size())
+                    showFavoritesPage(folders[folderIdx].id);
+            }
+        }
+        else if (childIndex == 0) {
             ensurePageInitialized(PageIndex::InstallInstancePage);
             setSideBarVisible(true);
             m_topBar->setTitle(tr("资源>安装新实例"));
@@ -765,12 +880,15 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
         } else if (childIndex == 7) {
             showContentDownloadPage(ContentType::World);
         } else if (childIndex == 8) {
+            // 论坛插件列表（资源页「插件」子项）
+            showForumPluginListPage();
+        } else if (childIndex == 9) {
             // 新建收藏夹
             onCreateFavoriteFolderRequested();
         } else {
-            // childIndex >= 9: 收藏夹列表
+            // childIndex >= 10: 收藏夹列表
             QList<FavoriteFolder> folders = FavoritesManager::instance()->folders();
-            int folderIdx = childIndex - 9;
+            int folderIdx = childIndex - 10;
             if (folderIdx >= 0 && folderIdx < folders.size())
             {
                 showFavoritesPage(folders[folderIdx].id);
@@ -782,7 +900,7 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
                     tr("资源>安装新实例"), tr("资源>下载整合包"), tr("资源>导入整合包"),
                     tr("资源>模组"), tr("资源>数据包"), tr("资源>资源包"),
                     tr("资源>光影包"), tr("资源>世界"),
-                    tr("资源>新建收藏夹")
+                    tr("资源>插件"), tr("资源>新建收藏夹")
                 };
                 if (childIndex >= 0 && childIndex < resourceTitles.size()) {
                     m_topBar->setTitle(resourceTitles[childIndex]);
@@ -888,7 +1006,7 @@ void MainWindow::onImportPluginRequested()
 {
     ensurePageInitialized(PageIndex::PluginPage);
     // 批量导入：支持多选 .BlockBox 文件
-    const QStringList files = AppFileDialog::getOpenFileNames(
+    const QStringList files = QFileDialog::getOpenFileNames(
         this, tr("批量导入插件"), PluginManager::instance()->pluginsDir(),
         tr("BlockBox 插件 (*.BlockBox)"));
     if (files.isEmpty())
@@ -1095,6 +1213,12 @@ void MainWindow::onResourcesNavItemClicked(int index)
 
 void MainWindow::onBackToMain()
 {
+    // 社区页里还开着联机大厅子页面：顶栏返回先退回社区，而不是直接回主页
+    if (m_communityPage && m_stackedWidget
+        && m_stackedWidget->currentWidget() == m_communityPage
+        && m_communityPage->closeLobbyIfVisible())
+        return;
+
     // 放弃修改现有实例流程：回到主页时复位安装/加载器页的修改模式状态
     if (m_installInstancePage)
         m_installInstancePage->exitModifyMode();
@@ -1141,6 +1265,8 @@ void MainWindow::openInstanceAssistant()
         // 转发资源管理页的存档快捷启动信号到主窗口处理
         connect(m_instanceAssistantWindow, &InstanceAssistantWindow::quickLaunchSaveRequested,
                 this, &MainWindow::onQuickLaunchSaveClicked);
+        connect(m_instanceAssistantWindow, &InstanceAssistantWindow::forumLoginRequested,
+                this, &MainWindow::openForumAccountLogin);
     }
     // 注入当前实例上下文（路径、版本、loader）
     m_instanceAssistantWindow->setInstanceContext(
@@ -1606,13 +1732,63 @@ void MainWindow::onScrollToTop()
 
 void MainWindow::onRefreshClicked()
 {
-    QWidget *currentPage = m_stackedWidget->currentWidget();
+    QWidget *currentPage = m_stackedWidget ? m_stackedWidget->currentWidget() : nullptr;
     if (!currentPage)
         return;
 
-    // Try to call common refresh methods on the current page
-    if (!QMetaObject::invokeMethod(currentPage, "onRefreshVersions", Qt::DirectConnection))
-        QMetaObject::invokeMethod(currentPage, "refresh", Qt::DirectConnection);
+    // 页面外层可能还包着容器：账户管理页在 QStackedWidget 里（论坛账户界面），
+    // 首页 / 设置页在 QScrollArea 里。一路往下收集候选，先试页面本身再试里面那层，
+    // 让整页级的刷新槽（refreshAccount 等）优先于内层内容列表
+    QList<QWidget *> candidates;
+    candidates.append(currentPage);
+    for (int guard = 0; guard < 4 && currentPage; ++guard)
+    {
+        QWidget *inner = nullptr;
+        if (auto *stack = qobject_cast<QStackedWidget *>(currentPage))
+            inner = stack->currentWidget();
+        else if (auto *scrollArea = qobject_cast<QScrollArea *>(currentPage))
+            inner = scrollArea->widget();
+        else if (auto *stack = currentPage->findChild<QStackedWidget *>())
+            inner = stack->currentWidget();
+
+        if (!inner || candidates.contains(inner))
+            break;
+        candidates.append(inner);
+        currentPage = inner;
+    }
+
+    // 各页的刷新槽名字不统一，按「越通用越靠前」逐个试，命中一个就停
+    static const char *const refreshMethods[] = {
+        "onRefreshVersions",   // 版本列表页
+        "refresh",             // 实例管理 / 世界地图 / 社区等
+        "refreshAccount",      // 账户管理（论坛资料 + 角色卡片）
+        "onRefreshClicked",    // 内容列表 / 收藏 / 联机大厅
+        "refreshPage",         // 联机页
+        "refreshList",         // 插件 / 资源 / 实例资源
+        "refreshContentList",  // 资源列表
+        "refreshModList",      // 模组列表
+        "refreshFileList",     // 实例文件 / 录像
+        "refreshRecentPlays",  // 首页最近游玩
+        "reloadCharacters",    // 角色页兜底
+        "reload"               // 好友 / 帖子详情
+    };
+
+    for (QWidget *candidate : candidates)
+    {
+        for (const char *method : refreshMethods)
+        {
+            // 先查一次元对象，避免对没有该槽的页面刷一堆「No such method」警告
+            const QByteArray signature = QByteArray(method) + "()";
+            if (candidate->metaObject()->indexOfMethod(signature.constData()) < 0)
+                continue;
+
+            QMetaObject::invokeMethod(candidate, method, Qt::DirectConnection);
+            NotificationManager::showSuccess(this, tr("已刷新"));
+            return;
+        }
+    }
+
+    NotificationManager::showInfo(this, tr("当前页面没有可刷新的内容"));
 }
 
 // ── 子导航搜索框 → 当前页内容过滤 ─────────────────────────────────────────
@@ -1686,6 +1862,27 @@ void MainWindow::loadCurrentInstancePath()
             }
         }
     }
+}
+
+bool MainWindow::ensureHumanCheck()
+{
+    ForumAccountService *service = ForumAccountService::instance();
+    if (service->humanCheckSatisfied())
+        return true;
+
+    // 已经在弹了就别叠第二个（页面刷新时会并发好几个请求，每个都会触发一次）
+    if (m_humanCheckRunning)
+        return false;
+
+    m_humanCheckRunning = true;
+    const bool passed = HumanCheckDialog::verify(this);
+    m_humanCheckRunning = false;
+    return passed;
+}
+
+void MainWindow::onHumanCheckRequired()
+{
+    ensureHumanCheck();
 }
 
 void MainWindow::restoreDefaultAccount()
@@ -1919,8 +2116,9 @@ void MainWindow::toggleGameAssistantOverlay()
         // 转发资源管理页的存档快捷启动信号到主窗口处理
         connect(m_instanceAssistantWindow, &InstanceAssistantWindow::quickLaunchSaveRequested,
                 this, &MainWindow::onQuickLaunchSaveClicked);
+        connect(m_instanceAssistantWindow, &InstanceAssistantWindow::forumLoginRequested,
+                this, &MainWindow::openForumAccountLogin);
     }
-
     // 再次点击悬浮图标收起侧栏
     if (m_instanceAssistantWindow->isVisible()) {
         m_instanceAssistantWindow->hide();
@@ -2258,6 +2456,226 @@ void MainWindow::onQuickLaunchServerClicked(const QString &address, quint16 port
     QStringList extraArgs;
     extraArgs << "--server" << address << "--port" << QString::number(port);
     launchGameWithExtraArgs(extraArgs);
+}
+
+void MainWindow::onLobbyJoinRequested(const QString &address, quint16 port,
+                                      const QString &gameVersion, const QString &loader,
+                                      const QStringList &mods)
+{
+    if (m_currentInstancePath.isEmpty() && LobbyInstanceMatcher::scanInstances().isEmpty()) {
+        NotificationManager::showError(this, tr("本机还没有安装任何实例，请先安装一个游戏实例。"));
+        return;
+    }
+
+    if (m_gameLauncher->status() == GameLauncher::Running
+        || m_gameLauncher->status() == GameLauncher::Launching) {
+        NotificationManager::showError(this, tr("游戏已经在运行了，先关掉游戏再加入大厅房间。"));
+        return;
+    }
+
+    // 按版本 / 加载器 / 模组挑一个，「最新」由匹配器用版本 JSON 的修改时间决定
+    LobbyInstanceInfo best;
+    LobbyInstanceMatcher::MatchLevel level = LobbyInstanceMatcher::MatchLevel::None;
+    QStringList missing;
+    if (!LobbyInstanceMatcher::pickBest(gameVersion, loader, mods, &best, &level, &missing)) {
+        QString wanted = gameVersion.isEmpty() ? tr("任意版本") : gameVersion;
+        if (!loader.isEmpty())
+            wanted += QStringLiteral(" + ") + loader;
+        NotificationManager::showError(
+            this, tr("没有找到 %1 的实例，装一个对应版本后再加入大厅房间。").arg(wanted));
+        return;
+    }
+
+    const QString instanceName = QDir(best.path).dirName();
+    if (best.path != m_currentInstancePath) {
+        // 切到匹配的实例（同时刷新顶栏、AI 页等上下文）
+        updateCurrentInstance(best.path);
+    }
+
+    QString tip = tr("正在用实例「%1」加入联机房间").arg(instanceName);
+    if (!missing.isEmpty())
+        tip += tr("（还缺 %1 个模组，进游戏后可能不完全一致）").arg(missing.size());
+    NotificationManager::showSuccess(this, tip);
+
+    onQuickLaunchServerClicked(address, port);
+}
+
+void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)
+{
+    if (!room.isOnline())
+    {
+        AppMessageBox::information(this, tr("房间已过期"),
+                                   tr("这个好友的房间已经下架，首页好友列表稍后会自动刷新。"));
+        return;
+    }
+
+    if (m_friendRoomJoinPending)
+    {
+        NotificationManager::showInfo(this, tr("正在加入好友的联机房间，请稍候…"));
+        return;
+    }
+
+    if (m_gameLauncher->status() == GameLauncher::Running
+        || m_gameLauncher->status() == GameLauncher::Launching)
+    {
+        NotificationManager::showError(this, tr("游戏已经在运行了，先关掉游戏再加入好友的房间。"));
+        return;
+    }
+
+    if (m_currentInstancePath.isEmpty() && LobbyInstanceMatcher::scanInstances().isEmpty())
+    {
+        NotificationManager::showError(this, tr("本机还没有安装任何实例，请先安装一个游戏实例。"));
+        return;
+    }
+
+    const QString friendName = room.host.displayName.trimmed().isEmpty()
+                                   ? tr("好友")
+                                   : room.host.displayName;
+
+    if (room.isTerracotta())
+    {
+        const QString code = room.inviteCode.trimmed();
+        if (code.isEmpty())
+        {
+            AppMessageBox::information(this, tr("没有邀请码"),
+                                       tr("这个房间没有可用的邀请码，请让房主重新发布。"));
+            return;
+        }
+
+        TerracottaClient *terracotta = TerracottaClient::instance();
+        // 只在真的要点「一起玩」时才拉起联机核心；首次使用时补上状态回调
+        connect(terracotta, &TerracottaClient::stateChanged, this,
+                &MainWindow::onFriendRoomJoinStateChanged, Qt::UniqueConnection);
+        if (terracotta->installedVersion().isEmpty())
+        {
+            AppMessageBox::information(
+                this, tr("还没安装陶瓦联机核心"),
+                tr("这是陶瓦联机的房间，需要先在实例助手的联机页安装陶瓦联机核心。"));
+            openInstanceAssistant();
+            return;
+        }
+        if (terracotta->isInRoom())
+        {
+            AppMessageBox::information(this, tr("已在房间中"),
+                                       tr("你已经在陶瓦联机的房间里了，先离开当前房间再加入好友的房间。"));
+            return;
+        }
+        if (terracotta->state() == TerracottaClient::State::Exception
+            || terracotta->state() == TerracottaClient::State::Fatal)
+        {
+            AppMessageBox::information(
+                this, tr("联机核心状态异常"),
+                tr("先打开实例助手的联机页处理一下，再回来加入好友的房间。"));
+            openInstanceAssistant();
+            return;
+        }
+
+        m_friendRoomJoinPending = true;
+        m_friendRoomJoinWaitingCore = false;
+        m_friendRoomJoinCode = code;
+        m_friendRoomJoinVersion = room.gameVersion;
+        m_friendRoomJoinLoader = room.loader;
+        m_friendRoomJoinMods = room.mods;
+        ForumLobbyService::instance()->recordJoin(room.id, nullptr, nullptr);
+
+        QString playerName;
+        if (ForumAccountService::instance()->isLoggedIn())
+            playerName = ForumAccountService::instance()->user().displayName;
+        if (playerName.trimmed().isEmpty())
+            playerName = tr("BlockBox 玩家");
+
+        if (terracotta->state() == TerracottaClient::State::Waiting)
+        {
+            if (!terracotta->joinRoom(code, playerName))
+            {
+                m_friendRoomJoinPending = false;
+                NotificationManager::showError(this, tr("无法加入好友的房间，请稍后再试。"));
+                return;
+            }
+            NotificationManager::showInfo(
+                this, tr("正在连接好友「%1」的联机房间…").arg(friendName));
+        }
+        else
+        {
+            m_friendRoomJoinWaitingCore = true;
+            terracotta->start();
+            NotificationManager::showInfo(
+                this, tr("正在启动联机核心，连上后会自动进入好友的房间…"));
+        }
+        return;
+    }
+
+    // 红石 / frp / 直连：地址本身就能启动游戏
+    QString host;
+    quint16 port = 0;
+    if (!parseLobbyAddress(room.address, &host, &port))
+    {
+        AppMessageBox::information(this, tr("地址无效"),
+                                   tr("这个房间没有可用的连接地址，请让房主重新发布。"));
+        return;
+    }
+
+    ForumLobbyService::instance()->recordJoin(room.id, nullptr, nullptr);
+    onLobbyJoinRequested(host, port, room.gameVersion, room.loader, room.mods);
+}
+
+void MainWindow::onFriendRoomJoinStateChanged()
+{
+    if (!m_friendRoomJoinPending)
+        return;
+
+    TerracottaClient *terracotta = TerracottaClient::instance();
+    const auto state = terracotta->state();
+
+    if (state == TerracottaClient::State::Exception
+        || state == TerracottaClient::State::Fatal)
+    {
+        m_friendRoomJoinPending = false;
+        m_friendRoomJoinWaitingCore = false;
+        const QString detail = terracotta->errorMessage().trimmed().isEmpty()
+                                   ? tr("请稍后再试。")
+                                   : terracotta->errorMessage();
+        NotificationManager::showError(this, tr("连不上好友的房间：%1").arg(detail));
+        return;
+    }
+
+    if (m_friendRoomJoinWaitingCore && state == TerracottaClient::State::Waiting)
+    {
+        m_friendRoomJoinWaitingCore = false;
+        QString playerName;
+        if (ForumAccountService::instance()->isLoggedIn())
+            playerName = ForumAccountService::instance()->user().displayName;
+        if (playerName.trimmed().isEmpty())
+            playerName = tr("BlockBox 玩家");
+
+        if (!terracotta->joinRoom(m_friendRoomJoinCode, playerName))
+        {
+            m_friendRoomJoinPending = false;
+            NotificationManager::showError(this, tr("无法加入好友的房间，请稍后再试。"));
+            return;
+        }
+        NotificationManager::showInfo(this, tr("正在连接好友的联机房间…"));
+        return;
+    }
+
+    if (state != TerracottaClient::State::GuestOk)
+        return;
+
+    QString host;
+    quint16 port = 0;
+    if (!parseLobbyAddress(terracotta->serverUrl(), &host, &port))
+    {
+        m_friendRoomJoinPending = false;
+        NotificationManager::showError(this, tr("联机核心没有返回可用的服务器地址。"));
+        return;
+    }
+
+    const QString version = m_friendRoomJoinVersion;
+    const QString loader = m_friendRoomJoinLoader;
+    const QStringList mods = m_friendRoomJoinMods;
+    m_friendRoomJoinPending = false;
+    m_friendRoomJoinWaitingCore = false;
+    onLobbyJoinRequested(host, port, version, loader, mods);
 }
 
 void MainWindow::onSaveSettingsOpened()
@@ -2610,6 +3028,183 @@ static int resourcesChildIndexForContentType(ContentType type)
     return -1;
 }
 
+/** 基岩版子导航 childIndex → CurseForge classId：1资源包/2材质包/3地图/4脚本/10附加包，0=分类不限 */
+int MainWindow::bedrockClassIdForChildIndex(int childIndex)
+{
+    switch (childIndex)
+    {
+    case 1:  return 6929;   // 资源包 Texture Packs
+    case 2:  return 6929;   // 材质包（与资源包同库，CurseForge 混用两个入口词）
+    case 3:  return 6913;   // 地图 Maps
+    case 4:  return 6940;   // 脚本 Scripts
+    case 10: return 4984;   // 附加包 Addons
+    }
+    return 0;
+}
+
+void MainWindow::applyBedrockEdition(bool bedrock)
+{
+    m_bedrockEdition = bedrock;
+    const bool oldMode = FavoritesManager::instance()->isBedrockMode();
+    if (oldMode == bedrock)
+        return;
+
+    // 收藏夹先切（favorites.json / favorites_bedrock.json 独立存储），
+    // SideBar 与 ResourcesPage 重建时读到的就是新版本的收藏夹列表
+    FavoritesManager::instance()->setBedrockMode(bedrock);
+    m_sideBar->setBedrockMode(bedrock);
+    if (m_homePage)
+        m_homePage->setBedrockMode(bedrock);
+    if (m_resourcesPage)
+        m_resourcesPage->setBedrockMode(bedrock);
+    // 设置页在首次进入时才创建，这里跳过（initSettingsPage 时按当前模式初始化）
+}
+
+void MainWindow::showBedrockContentPage(int classId)
+{
+    if (!m_bedrockContentPage)
+    {
+        m_bedrockContentPage = new BedrockContentPage(this);
+        m_stackedWidget->addWidget(m_bedrockContentPage);
+        // 卡片点击进入基岩版详情页
+        connect(m_bedrockContentPage, &BedrockContentPage::contentDetailRequested, this,
+                [this](const ModInfo &info, int bedrockClassId) {
+            showBedrockContentDetailPage(info, bedrockClassId);
+        });
+    }
+
+    if (m_pageAnimator)
+        m_pageAnimator->animateToWidget(m_bedrockContentPage);
+    else
+        m_stackedWidget->setCurrentWidget(m_bedrockContentPage);
+
+    setSideBarVisible(true);
+    // 顶栏返回键回资源主页
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    if (classId > 0)
+        m_bedrockContentPage->setCategory(classId);
+}
+
+void MainWindow::showBedrockContentDetailPage(const ModInfo &info, int bedrockClassId)
+{
+    if (m_bedrockContentDetailPage)
+    {
+        m_stackedWidget->removeWidget(m_bedrockContentDetailPage);
+        m_bedrockContentDetailPage->deleteLater();
+        m_bedrockContentDetailPage = nullptr;
+    }
+
+    m_bedrockContentDetailPage = new BedrockContentDetailPage(this);
+    m_stackedWidget->addWidget(m_bedrockContentDetailPage);
+    m_stackedWidget->setCurrentWidget(m_bedrockContentDetailPage);
+
+    // 从浏览页进入详情页时保持资源子导航可见
+    setSideBarVisible(true);
+    const QString category = FavoritesManager::bedrockClassIdToCategoryName(bedrockClassId);
+    m_topBar->setTitle(tr("资源>%1>%2").arg(category, info.name));
+
+    m_bedrockContentDetailPage->setBedrockClassId(bedrockClassId);
+    m_bedrockContentDetailPage->setBedrockCategory(category);
+    m_bedrockContentDetailPage->setModInfo(info);
+
+    // 详情页返回键回到资源主页
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, [this]() {
+        // 不带子项高亮（入口可能是子导航 1~4，也可能是主页「附加包」卡）
+        restoreSideBarWithSubNav(1, -1);
+        m_topBar->setTitle(tr("资源>社区资源"));
+        if (m_bedrockContentPage)
+        {
+            if (m_pageAnimator)
+                m_pageAnimator->animateToWidget(m_bedrockContentPage);
+            else
+                m_stackedWidget->setCurrentWidget(m_bedrockContentPage);
+        }
+        else
+        {
+            onBackToMain();
+        }
+    });
+
+    // 用户在详情页点「新建收藏夹...」时，弹出对话框并直接收藏到新分组
+    connect(m_bedrockContentDetailPage, &BedrockContentDetailPage::addToFavoritesRequested,
+            this, [this](const ModInfo &modInfo, ContentType type, const QString &source,
+                         int classId, const QString &categoryName)
+    {
+        FavoriteFolderDialog dlg(FavoriteFolderDialog::CreateMode, this);
+        if (dlg.exec() != QDialog::Accepted)
+            return;
+        QString newId = FavoritesManager::instance()->createFolder(dlg.folderName());
+        if (!newId.isEmpty())
+        {
+            // 收藏条目带上基岩分类（classId/分类名随详情页传入）
+            FavoritesManager::instance()->addFavorite(newId, modInfo, type, source,
+                                                      classId, categoryName);
+            NotificationManager::showSuccess(this, tr("已添加到新收藏夹“%1”").arg(dlg.folderName()));
+            if (m_bedrockContentDetailPage)
+                m_bedrockContentDetailPage->refreshFavoriteState();
+        }
+    });
+}
+
+void MainWindow::showBedrockDownloadPage()
+{
+    if (!m_bedrockDownloadPage)
+    {
+        // 注册页面（懒创建）：versionDetailRequested 由列表页翻卡时发出
+        m_bedrockDownloadPage = new BedrockDownloadPage(this);
+        m_stackedWidget->addWidget(m_bedrockDownloadPage);
+        connect(m_bedrockDownloadPage, &BedrockDownloadPage::versionDetailRequested,
+                this, &MainWindow::showBedrockVersionDetailPage);
+    }
+    else
+    {
+        if (m_stackedWidget->indexOf(m_bedrockDownloadPage) < 0)
+            m_stackedWidget->addWidget(m_bedrockDownloadPage);
+        connect(m_bedrockDownloadPage, &BedrockDownloadPage::versionDetailRequested,
+                this, &MainWindow::showBedrockVersionDetailPage, Qt::UniqueConnection);
+    }
+
+    setSideBarVisible(true);
+    m_topBar->setTitle(tr("资源>安装新实例"));
+    // 顶栏返回键回资源主页
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    // 首次/每次进入刷新一次版本列表
+    if (m_pageAnimator)
+        m_pageAnimator->animateToWidget(m_bedrockDownloadPage);
+    else
+        m_stackedWidget->setCurrentWidget(m_bedrockDownloadPage);
+    m_bedrockDownloadPage->refresh();
+}
+
+void MainWindow::showBedrockVersionDetailPage(const BedrockVersionEntry &entry)
+{
+    if (!m_bedrockVersionDetailPage)
+    {
+        m_bedrockVersionDetailPage = new BedrockVersionDetailPage(this);
+        m_stackedWidget->addWidget(m_bedrockVersionDetailPage);
+    }
+
+    setSideBarVisible(true);
+    m_topBar->setTitle(tr("资源>安装新实例>%1").arg(entry.version));
+    // 顶栏返回键回版本列表
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, [this]() {
+        if (m_bedrockDownloadPage)
+            showBedrockDownloadPage();
+        else
+            onBackToMain();
+    });
+
+    m_bedrockVersionDetailPage->setVersionEntry(entry);
+    if (m_pageAnimator)
+        m_pageAnimator->animateToWidget(m_bedrockVersionDetailPage);
+    else
+        m_stackedWidget->setCurrentWidget(m_bedrockVersionDetailPage);
+}
+
 void MainWindow::showContentDownloadPage(ContentType type)
 {
     ContentTypeConfig config = ContentTypeConfig::getConfig(type);
@@ -2828,6 +3423,14 @@ void MainWindow::showContentDetailFromFavorite(const FavoriteItem &item)
 
     // 用最少的展示字段构造 ModInfo，详情页加载时会按 id/source 重新拉取完整信息
     ModInfo info = item.toModInfo();
+
+    // 基岩版收藏条目带 bedrockClassId：走基岩详情页（CurseForge 游戏 ID 78022），
+    // Java 详情页按 432 拉 数据会张冠李戴
+    if (item.bedrockClassId > 0)
+    {
+        showBedrockContentDetailPage(info, item.bedrockClassId);
+        return;
+    }
 
     showContentDetailPage(info, type);
 }

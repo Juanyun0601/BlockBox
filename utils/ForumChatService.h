@@ -32,6 +32,7 @@ struct ForumFriendInfo
     QString displayName;
     QString avatar;
     bool online = false;       ///< 最近 10 分钟内活跃过
+    bool official = false;     ///< 方块盒子官方客服（默认好友，不能删除）
     qint64 lastSeenAt = 0;
 
     // 好友列表行专属（搜索结果没有这些字段）

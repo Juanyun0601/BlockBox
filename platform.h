@@ -83,12 +83,25 @@ namespace Platform {
 #endif
     }
 
-    // 检查是否为移动端（Android / HarmonyOS）
+    // 设备形态：桌面（键鼠、可自由调整大小的窗口）或移动（手机 / 平板触屏）
+    enum class FormFactor { Desktop, Mobile };
+
+    // 运行期设备形态判定（结果缓存）。
+    // 鸿蒙端同时覆盖电脑（2in1 设备）与手机 / 平板：通过系统 deviceInfo.deviceType
+    // 区分——phone/tablet 为移动端，2in1/pc 为桌面端；查询失败时按手机处理
+    //（保持既有触屏表现）。其余平台编译期即可确定。
+    // 可用环境变量 BLOCKBOX_FORM_FACTOR=mobile/desktop 强制指定（测试排障用）。
+    FormFactor getFormFactor();
+
+    // 检查是否为移动端形态（手机 / 平板）
     // 注意：不能依赖上面的 PLATFORM_xxx 宏。Android 构建同时定义 Q_OS_LINUX，
     // 会在上方被判定为 Linux；这里直接按 Qt / 工程宏判断。
+    // 鸿蒙不在此列：它同时包含电脑与手机两种形态，须运行期查询（见 getFormFactor）。
     inline bool isMobile() {
-#if defined(Q_OS_ANDROID) || defined(ANDROID_OS) || defined(HARMONY_OS)
+#if defined(Q_OS_ANDROID) || defined(ANDROID_OS)
         return true;
+#elif defined(HARMONY_OS) || defined(Q_OS_HARMONY)
+        return getFormFactor() == FormFactor::Mobile;
 #else
         return false;
 #endif
@@ -96,6 +109,11 @@ namespace Platform {
 
     // 获取应用数据目录
     QString getDataDirectory();
+
+    // 目录是否可写：会实际创建目录并写入一个探针文件。
+    // 用于「安装新实例」前的检查，以及纠正指向只读位置的旧默认实例目录；
+    // 只看路径是否存在无法判断 Program Files、安卓程序目录这类只读位置。
+    bool isDirectoryWritable(const QString &dir);
     
     // 获取配置文件路径
     QString getConfigFilePath();

@@ -3,7 +3,10 @@
     <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
         <item name="android:windowBackground">@android:color/white</item>
         <item name="android:windowNoTitle">true</item>
-        <item name="android:windowFullscreen">false</item>
+        <!-- 启动即全屏：主界面是沉浸式的，这里让状态栏在第一帧就不出现，
+             避免启动后先露一下再被收起（导航条仍由 AndroidBridge 里的
+             WindowInsetsController / setSystemUiVisibility 负责隐藏） -->
+        <item name="android:windowFullscreen">true</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:backgroundDimEnabled">true</item>
     </style>

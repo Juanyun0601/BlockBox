@@ -1,13 +1,12 @@
 /**
  * @file   OnboardingWizard.h
- * @brief  新手引导向导声明（首次运行配置：语言 → [下载源] → 引导方式 → 账户/导入 → Java → 文件夹 → 样式）
+ * @brief  新手引导页面声明（首次运行配置：语言 → [下载源] → 引导方式 → 账户/导入 → Java → 文件夹 → 样式）
  * @author BlockBox Team
  * @date   2026-08-13
  */
 #ifndef ONBOARDINGWIZARD_H
 #define ONBOARDINGWIZARD_H
 
-#include "components/AppDialogBase.h"
 #include "utils/JavaDownloader.h"  // JavaBinaryInfo（Step3 下载回调参数）
 #include "utils/SettingsManager.h" // AccountInfo
 
@@ -18,6 +17,7 @@
 #include <QStackedWidget>
 #include <QString>
 #include <QStringList>
+#include <QWidget>
 
 class QLabel;
 class QPushButton;
@@ -29,27 +29,39 @@ class QHBoxLayout;
 struct LauncherDetect;
 
 /**
- * @brief 首次运行新手引导：语言设置 → 引导方式 → 账户/导入 → Java → 实例文件夹 → 样式
+ * @brief 首次运行新手引导（整页，占满主窗口内容区）：语言设置 → 引导方式 → 账户/导入 → Java → 实例文件夹 → 样式
  *
- * 覆盖宿主窗口的模态向导（基于 AppDialogBase 模糊遮罩），
- * 顶部品牌 + 步骤条 + 底部导航，完成或跳过后写入
- * SettingsManager 的 onboarding/completed 标记。
+ * 作为一个独立页面放进 MainWindow 的页面栈（PageIndex::OnboardingPage），
+ * 进入时隐藏侧边栏，顶部品牌 + 步骤条 + 底部导航铺满内容区。
+ * 完成或跳过后写入 SettingsManager 的 onboarding/completed 标记，并发出 finished()，
+ * 由主窗口决定回到首页还是设置页。
  * 第 1 步语言设置为多语言页面（用户在选定语言前需看到多语言提示）。
  * 下载源联动：选择非中文（English / Español）时自动切到官方源；
  * 选择繁體中文时，引导中会新增一步「下载源选择」由用户自行决定。
  */
-class OnboardingWizard : public AppDialogBase
+class OnboardingWizard : public QWidget
 {
     Q_OBJECT
 
 public:
     explicit OnboardingWizard(QWidget *parent = nullptr);
 
-    /** 在向导 exec() 返回后查询：是否请求重启（语言切换后由主程序重启以干净加载语言） */
-    bool restartRequested() const { return m_restartRequested; }
-
     /** 引导方式枚举：手动填写 / 从现有启动器导入 / 跳过 */
     enum Method { MethodManual = 0, MethodImport = 1, MethodSkip = 2 };
+
+    /** 重新从第一步开始（从设置里再次打开本页时调用，清掉上一次的完成态） */
+    void resetToFirstStep();
+
+    /** 完成页是否显示「返回设置」按钮（首次启动进入时没有「设置」这个来路，隐藏） */
+    void setReturnToSettingsAvailable(bool available);
+
+signals:
+    /** 引导走完（完成页「开始使用方块盒子」/ 跳过引导后的完成页） */
+    void finished();
+    /** 完成页「返回设置」或顶栏返回：请求离开本页 */
+    void backRequested();
+    /** 语言切换已写入偏好：需要主程序重启进程才能干净加载新语言 */
+    void restartRequested();
 
 private slots:
     void onPickLanguage(int index);
@@ -87,7 +99,6 @@ private slots:
 
 private:
     void initUI();
-    QWidget *buildHeader(QWidget *parent);
     void buildStepper(QWidget *parent);
     void buildStep0();
     void buildStepDlSource();
@@ -118,7 +129,7 @@ protected:
     void goDone();
     void updateFooterState();
     void syncStepper();
-    /// 写入语言偏好并请求重启（reject 本对话框；由主程序启动新进程）
+    /// 写入语言偏好并请求重启（发出 restartRequested()；由主程序启动新进程）
     void requestLanguageRestart(int langIndex);
     /** 将原版 + 各加载器下载源统一切到官方源（选择英文/西班牙文时调用） */
     void setAllDownloadSourcesOfficial();
@@ -148,15 +159,8 @@ protected:
     int m_method = MethodManual;      ///< 当前选择的引导方式
     int m_currentStep = 0;            ///< 当前逻辑步骤（语言 0 / 引导方式 1 / … / 完成页=doneStep()）
     bool m_scanningJava = false;      ///< Java 轻量检测进行中
-    bool m_restartRequested = false;  ///< 语言切换已请求重启
     bool m_hasDlSourceStep = false;   ///< 当前语言为繁體中文，引导中插入「下载源选择」步骤
     QStringList m_imported;           ///< 已导入的启动器 key
-
-    // 头部
-    QLabel *m_brandLogo = nullptr;
-    QLabel *m_brandTitle = nullptr;
-    QLabel *m_brandSub = nullptr;
-    QPushButton *m_skipBtn = nullptr;
 
     // 步骤条
     QWidget *m_stepperWidget = nullptr;
@@ -172,6 +176,7 @@ protected:
     // 底部
     QLabel *m_footerHint = nullptr;
     QPushButton *m_prevBtn = nullptr;
+    QPushButton *m_skipBtn = nullptr;   ///< 跳过引导（底部，紧挨「下一步」左侧）
     QPushButton *m_nextBtn = nullptr;
 
     // Step0 语言设置
@@ -223,6 +228,8 @@ protected:
 
     // 完成页
     QWidget *m_doneSummaryWidget = nullptr;
+    QPushButton *m_doneBackBtn = nullptr;     ///< 完成页「返回设置」（首次启动进入时隐藏）
+    bool m_doneBackAvailable = true;
 };
 
 #endif // ONBOARDINGWIZARD_H

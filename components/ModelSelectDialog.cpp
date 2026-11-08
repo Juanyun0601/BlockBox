@@ -13,7 +13,7 @@
 #include <QDialogButtonBox>
 #include <QEvent>
 #include <QFile>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/LocalModelDialog.h"
 #include <QFormLayout>
 #include <QFrame>
@@ -41,6 +41,7 @@
 #include "utils/AiProviderPresets.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 
 namespace {
 
@@ -232,7 +233,7 @@ void ModelSelectDialog::initUI()
 
     auto* card = new QWidget(this);
     card->setObjectName("modelSelectCard");
-    card->setMinimumSize(560, 640);
+    card->setMinimumSize(UiMetrics::fitToScreen(this, QSize(560, 640)));
     card->setMaximumSize(780, 760);   // 保证不超出主窗口（主窗口最小 1200x800）
     outer->addWidget(card, 0, Qt::AlignCenter);
 
@@ -1109,7 +1110,7 @@ void ModelSelectDialog::onCustomJsonClicked()
 
 void ModelSelectDialog::onImportJsonFile()
 {
-    QString filePath = AppFileDialog::getOpenFileName(
+    QString filePath = QFileDialog::getOpenFileName(
         this, tr("导入模型配置"), QString(),
         tr("JSON 文件 (*.json);;所有文件 (*)"));
     if (filePath.isEmpty())
@@ -1171,7 +1172,7 @@ void ModelSelectDialog::onImportJsonFile()
 
 void ModelSelectDialog::onExportJsonFile()
 {
-    QString filePath = AppFileDialog::getSaveFileName(
+    QString filePath = QFileDialog::getSaveFileName(
         this, tr("导出模型配置"), QString(),
         tr("JSON 文件 (*.json);;所有文件 (*)"));
     if (filePath.isEmpty())

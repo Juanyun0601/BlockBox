@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="styles/style.qss">D:/BlockBox/C-BlockBox/styles/style.qss</file>
+  </qresource>
+</RCC>

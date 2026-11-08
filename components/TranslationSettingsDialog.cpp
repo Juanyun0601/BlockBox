@@ -9,6 +9,7 @@
 #include "utils/AiProviderPresets.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 #include "utils/translation/TranslationService.h"
 
 #include <QButtonGroup>
@@ -36,7 +37,7 @@ void TranslationSettingsDialog::initUI()
     // 居中卡片
     m_card = new QWidget(this);
     m_card->setObjectName("translationSettingsCard");
-    m_card->setFixedSize(560, 620);
+    m_card->setFixedSize(UiMetrics::fitToScreen(this, QSize(560, 620)));
 
     QGraphicsDropShadowEffect *shadow = new QGraphicsDropShadowEffect(m_card);
     shadow->setBlurRadius(40);

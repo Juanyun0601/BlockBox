@@ -14,7 +14,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QDirIterator>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include "components/AppMessageBox.h"
 #include <QFrame>
@@ -1302,7 +1302,7 @@ void ModpackExportPage::onBrowseSavePath()
   else if (m_selectedFormat == "packwiz")
   {
     // Packwiz 格式使用目录选择对话框
-    QString dirPath = AppFileDialog::getExistingDirectory(
+    QString dirPath = QFileDialog::getExistingDirectory(
       this,
       tr("选择保存目录"),
       QDir::homePath() + "/" + defaultName
@@ -1324,7 +1324,7 @@ void ModpackExportPage::onBrowseSavePath()
     filter = tr("ZIP 整合包 (*.zip)");
   }
 
-  QString filePath = AppFileDialog::getSaveFileName(
+  QString filePath = QFileDialog::getSaveFileName(
     this,
     tr("选择保存路径"),
     QDir::homePath() + "/" + defaultName + ext,

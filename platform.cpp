@@ -8,12 +8,22 @@
 #include "platform.h"
 
 #include <QCoreApplication>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTextStream>
+
+#if defined(HARMONY_OS) || defined(Q_OS_HARMONY)
+// Qt for OpenHarmony 的 JS 线程通道与 NAPI 封装（QtCore 私有接口）。
+// 与 utils/HarmonyBridge.cpp 相同的次序：先引入 <napi.h> 让 NAPI_VERSION 取
+// SDK 兼容值，再引私有头，避免重复展开时踩到本 SDK 未提供的实验性符号。
+#include <napi.h>
+#include <napi/native_api.h>
+#include <QtCore/private/qcore_ohos_p.h>
+#endif
 
 namespace Platform {
 
@@ -31,14 +41,20 @@ namespace Platform {
                 return false;
 
             QDir path(dir);
-            if (!path.exists() && !path.mkpath(dir))
+            if (!path.exists() && !path.mkpath(dir)) {
+                qWarning() << "[Platform] 目录不存在且无法创建：" << dir;
                 return false;
+            }
 
             const QString probePath = dir + QStringLiteral("/.bb_write_test_")
                                       + QString::number(QCoreApplication::applicationPid());
             QFile probe(probePath);
-            if (!probe.open(QIODevice::WriteOnly))
+            if (!probe.open(QIODevice::WriteOnly)) {
+                // 安卓上这里最常见的两种原因：公共目录没给「所有文件访问」权限，
+                // 或外部存储被卸载 / 挂载为只读
+                qWarning() << "[Platform] 目录不可写：" << dir << "原因：" << probe.errorString();
                 return false;
+            }
 
             const bool ok = (probe.write("bb") == 2);
             probe.close();
@@ -92,7 +108,108 @@ namespace Platform {
             return resolveDataDir() + QStringLiteral("/.minecraft");
         }
 
+#ifdef PLATFORM_ANDROID
+        /**
+         * @brief 安卓端启动器数据根目录：优先沿用外部应用目录，不可写时退回内部目录
+         *
+         * 外部存储（/storage/emulated/0/Android/data/<包名>/files）不是每台设备、
+         * 每个时刻都可用（未挂载、被系统清理、权限异常）。旧实现只拼外部路径，
+         * 一旦不可写，新实例从建目录起就全部失败；内部目录
+         * （/data/user/0/<包名>/files）始终可写，作为兜底。
+         * 已经存在且可写的外部目录优先沿用，避免老用户数据“失踪”。
+         */
+        QString androidWritableDataRoot()
+        {
+            static const QString cached = []() {
+                QStringList candidates;
+                const QString external =
+                    QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+                if (!external.isEmpty())
+                    candidates << external + QStringLiteral("/BlockBox");
+                const QString internal =
+                    QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+                if (!internal.isEmpty())
+                    candidates << internal + QStringLiteral("/BlockBox");
+
+                for (const QString &candidate : candidates) {
+                    if (directoryWritable(candidate))
+                        return candidate;
+                }
+                if (!candidates.isEmpty())
+                    return candidates.first();
+                return QDir::homePath() + QStringLiteral("/BlockBox");
+            }();
+            return cached;
+        }
+#endif
+
     } // namespace
+
+    bool isDirectoryWritable(const QString &dir)
+    {
+        const QString trimmed = dir.trimmed();
+        if (trimmed.isEmpty())
+            return false;
+        return directoryWritable(QDir::cleanPath(trimmed));
+    }
+
+    FormFactor getFormFactor()
+    {
+#if defined(Q_OS_ANDROID) || defined(ANDROID_OS)
+        return FormFactor::Mobile;
+#elif defined(HARMONY_OS) || defined(Q_OS_HARMONY)
+        static const FormFactor cached = []() {
+            // 测试 / 排障：允许强制指定形态
+            const QByteArray forced = qgetenv("BLOCKBOX_FORM_FACTOR");
+            if (forced.compare("mobile", Qt::CaseInsensitive) == 0)
+                return FormFactor::Mobile;
+            if (forced.compare("desktop", Qt::CaseInsensitive) == 0)
+                return FormFactor::Desktop;
+
+            // 查询系统设备形态（等价于 ArkTS 侧 import deviceInfo from '@ohos.deviceInfo'）
+            // phone / tablet → 移动端；2in1 / pc → 电脑端。
+            // 必须在 JS 线程上调用 NAPI，借 QOhosJsThreadGateway 阻塞等待结果；
+            // 网关在 Qt 主线程跑起来之前就可用（QStandardPaths 鸿蒙实现同样依赖它）。
+            QString deviceType;
+            try {
+                deviceType = QOhosJsThreadGateway::eval(
+                    [](QOhosJsState &js) -> QString {
+                        try {
+                            Napi::Env env(js.env());
+                            Napi::HandleScope scope(env);
+
+                            napi_value moduleValue = nullptr;
+                            if (napi_load_module(env, "@ohos.deviceInfo", &moduleValue) != napi_ok
+                                || moduleValue == nullptr)
+                                return {};
+                            Napi::Value value = Napi::Object(env, moduleValue).Get("deviceType");
+                            if (!value.IsString())
+                                return {};
+                            std::string type = value.As<Napi::String>().Utf8Value();
+                            return QString::fromStdString(type);
+                        } catch (...) {
+                            // NAPI 抛出的异常必须清掉，否则会污染后续 JS 调用
+                            Napi::Env(js.env()).GetAndClearPendingException();
+                            return {};
+                        }
+                    },
+                    "Platform::getFormFactor");
+            } catch (...) {
+                deviceType.clear();
+            }
+
+            if (deviceType == QStringLiteral("phone") || deviceType == QStringLiteral("tablet"))
+                return FormFactor::Mobile;
+            if (deviceType == QStringLiteral("2in1") || deviceType == QStringLiteral("pc"))
+                return FormFactor::Desktop;
+            // 查询失败时按手机处理：鸿蒙用户以手机为主，维持既有触屏表现
+            return FormFactor::Mobile;
+        }();
+        return cached;
+#else
+        return FormFactor::Desktop;
+#endif
+    }
 
     // Windows: HKCU 注册表 Run 键；macOS: LaunchAgents plist；Linux: autostart .desktop
     namespace AutoStart {
@@ -187,8 +304,8 @@ namespace Platform {
     }
     QString getDataDirectory() {
 #ifdef PLATFORM_ANDROID
-        // Android: 使用外部存储的Documents目录（应用私有）
-        QString dataDir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/BlockBox";
+        // Android: 优先外部应用目录，外部存储不可用时退回内部应用目录（保证可写）
+        QString dataDir = androidWritableDataRoot();
         QDir dataPath(dataDir);
         if (!dataPath.exists()) {
             dataPath.mkpath(dataDir);

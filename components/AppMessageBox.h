@@ -16,6 +16,7 @@ class QPaintEvent;
 class QResizeEvent;
 class QShowEvent;
 class QTextBrowser;
+class QVBoxLayout;
 
 /**
  * @brief 软件内嵌的居中弹窗，替代原生 QMessageBox
@@ -80,6 +81,13 @@ public:
     QString text() const;
     void setInformativeText(const QString &text);
     /**
+     * @brief 在按钮上方加一个可勾选的选项（如「不再弹出这条公告」）
+     *
+     * 传空字符串隐藏该项。勾选状态由调用方在 exec() 返回后读取。
+     */
+    void setCheckBox(const QString &text, bool checked = false);
+    bool isCheckBoxChecked() const;
+    /**
      * @brief 设置 Markdown 格式的说明文字（如更新日志）
      *
      * 内容按 Markdown 渲染（标题/列表/加粗/链接等），过长时在固定高度内
@@ -100,6 +108,13 @@ public:
      * 宿主窗口高度不够时会自动收紧。
      */
     void setInfoBrowserHeightRange(int minHeight, int maxHeight);
+    /**
+     * @brief 让 Markdown 说明区占满整张卡片的宽度
+     *
+     * 默认说明区缩在图标右侧的内容列里；更新日志这类长文用整卡宽度阅读更舒服，
+     * 标题和图标仍留在顶部一行。
+     */
+    void setInfoBrowserFullWidth();
     void setIcon(Icon icon);
     void setIconPixmap(const QPixmap &pixmap);
     void setStandardButtons(StandardButtons buttons);
@@ -158,6 +173,7 @@ private:
     QTextBrowser *m_infoBrowser;
     QWidget *m_buttonRow;
     QHBoxLayout *m_buttonLayout;
+    QVBoxLayout *m_midLayout;
 
     QPixmap m_customPixmap;
     QMap<QPushButton *, StandardButton> m_buttonMap;

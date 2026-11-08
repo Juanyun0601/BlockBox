@@ -37,7 +37,8 @@ QList<QPair<QString, QString>> scanInstalledInstances()
     if (folders.isEmpty()) {
         InstanceFolderInfo info;
         info.name = QObject::tr("默认实例文件夹");
-        info.path = QCoreApplication::applicationDirPath() + QStringLiteral("/.minecraft");
+        // 未配置实例文件夹时的兜底：移动端用应用数据目录，桌面端跟随启动器目录
+        info.path = SettingsManager::defaultInstanceFolderPath();
         folders.append(info);
     }
 

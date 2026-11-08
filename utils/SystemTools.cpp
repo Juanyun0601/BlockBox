@@ -15,7 +15,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -1022,7 +1022,7 @@ void SystemTools::startMultiThreadDownload(QWidget* parentWidget)
         {
             defaultName = url.fileName();
         }
-        QString filePath = AppFileDialog::getSaveFileName(&dialog, tr("选择保存路径"), defaultName);
+        QString filePath = QFileDialog::getSaveFileName(&dialog, tr("选择保存路径"), defaultName);
         if (!filePath.isEmpty())
         {
             saveEdit->setText(filePath);

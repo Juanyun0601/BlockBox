@@ -21,7 +21,7 @@
 #include <QUrl>
 #include <QtConcurrent/QtConcurrentRun>
 
-#include "../components/AppFileDialog.h"
+#include <QFileDialog>
 #include "../components/AppInputDialog.h"
 #include "../components/AppMessageBox.h"
 #include "../components/MasonryContentCard.h"
@@ -725,7 +725,7 @@ void BedrockInstanceSelectPage::onCreateInstanceClicked()
 
 void BedrockInstanceSelectPage::onImportInstanceClicked()
 {
-    const QString srcDir = AppFileDialog::getExistingDirectory(this, tr("选择要导入的基岩版游戏数据目录"));
+    const QString srcDir = QFileDialog::getExistingDirectory(this, tr("选择要导入的基岩版游戏数据目录"));
     if (srcDir.isEmpty())
         return;
 

@@ -39,7 +39,6 @@ HEADERS += ../../pages/LoaderDetailPage.h \
            fake/utils/optifine/OptiFineInstaller.h \
            fake/utils/LiteLoaderInstaller.h \
            fake/utils/CleanroomInstaller.h \
-           fake/utils/OptiFabricInstaller.h \
-           fake/components/AppFileDialog.h
+           fake/utils/OptiFabricInstaller.h
 
 RESOURCES += ../../resources.qrc ../../resources_data.qrc

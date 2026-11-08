@@ -61,6 +61,9 @@ QString messageTime(qint64 seconds)
 /** 在线状态一句话 */
 QString onlineText(const ForumFriendInfo &peer)
 {
+    // 官方客服是默认好友，状态固定成客服说明，不让用户以为没人接待
+    if (peer.official)
+        return QObject::tr("官方客服 · 随时提问");
     if (peer.online)
         return QObject::tr("在线");
     if (peer.lastSeenAt > 0)
@@ -381,6 +384,11 @@ void ForumFriendsPage::buildUi()
     connect(m_chatRemoveButton, &QPushButton::clicked, this, [this]() {
         if (m_peer.id <= 0)
             return;
+        if (m_peer.official)
+        {
+            NotificationManager::showInfo(this, tr("官方客服是默认好友，不能删除"));
+            return;
+        }
         const int peerId = m_peer.id;
         const QString peerName = m_peer.displayName;
         if (QMessageBox::question(this, tr("删除好友"),
@@ -633,9 +641,18 @@ void ForumFriendsPage::renderFriendRows()
         name->setObjectName(QStringLiteral("forumRowTitle"));
         name->setFullText(friendInfo.displayName);
         nameRow->addWidget(name, 1);
+        if (friendInfo.official)
+        {
+            auto *official = new QLabel(tr("官方"), row);
+            official->setObjectName(QStringLiteral("forumOfficialBadge"));
+            official->setToolTip(tr("方块盒子官方客服，遇到问题可以随时提问"));
+            nameRow->addWidget(official);
+        }
         auto *online = new QLabel(row);
         online->setText(friendInfo.online ? QStringLiteral("●") : QStringLiteral("○"));
         online->setToolTip(onlineText(friendInfo));
+        // 官方客服行已经有「官方」徽章，不再用在线圆点占位
+        online->setVisible(!friendInfo.official);
         online->setStyleSheet(StyleKit::resolve(friendInfo.online
                                                     ? QStringLiteral("color: @SUCCESS@; font-size: 11px;")
                                                     : QStringLiteral("color: @TEXT_TERTIARY@; font-size: 11px;")));
@@ -1025,6 +1042,8 @@ void ForumFriendsPage::openConversation(const ForumFriendInfo &peer)
     m_chatInput->clear();
     m_chatName->setText(peer.isValid() ? peer.displayName : tr("…"));
     m_chatStatus->setText(peer.isValid() ? onlineText(peer) : QString());
+    // 官方客服是默认好友，没有「删除好友」这一项
+    m_chatRemoveButton->setVisible(!peer.official);
     renderChatAvatar();
     ForumKit::clearLayout(m_msgsLayout);
     m_msgsLayout->addStretch(1);
@@ -1090,9 +1109,11 @@ void ForumFriendsPage::renderChatHead()
 {
     m_chatName->setText(m_peer.displayName);
     m_chatStatus->setText(onlineText(m_peer));
-    m_chatStatus->setStyleSheet(StyleKit::resolve(m_peer.online
-        ? QStringLiteral("font-size: 11px; color: @SUCCESS@;")
-        : QStringLiteral("font-size: 11px; color: @TEXT_TERTIARY@;")));
+    m_chatStatus->setStyleSheet(StyleKit::resolve(
+        m_peer.official ? QStringLiteral("font-size: 11px; color: @PRIMARY@;")
+                        : m_peer.online ? QStringLiteral("font-size: 11px; color: @SUCCESS@;")
+                                        : QStringLiteral("font-size: 11px; color: @TEXT_TERTIARY@;")));
+    m_chatRemoveButton->setVisible(!m_peer.official);
     renderChatAvatar();
 }
 
@@ -1564,6 +1585,7 @@ void ForumFriendsPage::pickAndSendImage()
 {
     if (m_peer.id <= 0 || m_sending)
         return;
+    // 系统文件选择器
     const QString path = QFileDialog::getOpenFileName(
         this, tr("选择图片"), QString(),
         tr("图片 (*.png *.jpg *.jpeg *.webp *.gif *.bmp)"));

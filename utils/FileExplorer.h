@@ -11,25 +11,23 @@
 class QWidget;
 
 /**
- * @brief 打开目录与选择文件的统一入口
+ * @brief 打开目录的统一入口
  *
- * 设置页「文件资源管理器」决定后端：
- *  - System    ：系统默认（选择框用原生对话框，打开目录用系统资源管理器）
- *  - Builtin   ：方块盒子内置文件浏览器（可浏览、预览与管理文件）
- *  - MtManager ：MT 管理器（仅安卓，未安装或启动失败时回退到 Builtin）
+ * 后端：
+ *  - System    ：系统默认（打开目录用系统资源管理器）
+ *  - MtManager ：MT 管理器（仅安卓，未安装或启动失败时回退到系统）
  */
 class FileExplorer
 {
 public:
     enum class Backend {
         System,     ///< 系统文件资源管理器
-        Builtin,    ///< 软件自带
         MtManager   ///< MT 管理器（仅安卓）
     };
 
     /**
      * @brief 按当前设置打开目录
-     * @param parent 弹出内置浏览器时的父控件（为空时回退到系统资源管理器）
+     * @param parent 父控件（当前后端未用到，保留参数兼容旧调用）
      * @param path   目录路径；若为文件则打开其所在目录；为空则忽略
      */
     static void open(QWidget *parent, const QString &path);

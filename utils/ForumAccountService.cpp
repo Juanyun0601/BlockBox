@@ -7,6 +7,7 @@
 #include "ForumAccountService.h"
 
 #include <QBuffer>
+#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
@@ -29,7 +30,11 @@ constexpr auto kTokenKey = "forum/sessionToken";
 constexpr auto kTokenBaseUrlKey = "forum/sessionBaseUrl";
 constexpr auto kUserCacheKey = "forum/cachedUser";
 constexpr auto kQuizSyncedKey = "quiz/syncedToAccount";
+constexpr auto kHumanTokenKey = "forum/humanToken";
+constexpr auto kHumanExpiresKey = "forum/humanExpires";
+constexpr auto kHumanBaseUrlKey = "forum/humanBaseUrl";
 constexpr auto kSessionCookieName = "bbf_sid";
+constexpr auto kHumanHeaderName = "X-Human-Token";
 constexpr int kRequestTimeoutMs = 15000;
 
 // 头像 / 封面的上限跟论坛服务器保持一致：超过就直接被服务器拒收（头像 512 KB、封面 3 MB），
@@ -232,6 +237,7 @@ ForumAccountService::ForumAccountService(QObject *parent) : QObject(parent)
     m_token = m_settings->value(QString::fromLatin1(kTokenKey)).toString();
     m_tokenBaseUrl = m_settings->value(QString::fromLatin1(kTokenBaseUrlKey)).toString();
     loadCachedUser();
+    loadHumanCheck();
 
     // 论坛地址换了：旧令牌属于另一个站点，直接丢弃
     if (!m_token.isEmpty() && m_tokenBaseUrl != baseUrl())
@@ -242,12 +248,14 @@ ForumAccountService::ForumAccountService(QObject *parent) : QObject(parent)
     // 运行中改了论坛地址，同样要让本地登录状态跟着失效，免得拿 A 站令牌请求 B 站
     connect(SettingsManager::instance(), &SettingsManager::forumBaseUrlChanged, this,
             [this](const QString &) {
+                // 人机验证令牌也是绑站点签发的，换了论坛地址一律作废
+                if (!m_humanToken.isEmpty() && m_humanTokenBaseUrl != baseUrl())
+                    clearHumanCheck();
                 if (m_token.isEmpty() || m_tokenBaseUrl == baseUrl())
                     return;
                 clearSession();
                 emit userChanged(m_user);
-            });
-}
+            });}
 
 ForumAccountService::~ForumAccountService() = default;
 
@@ -337,6 +345,15 @@ void ForumAccountService::sendAuth(const QString &path, const QJsonObject &body,
         }
         if (status >= 400)
         {
+            // 登录 / 注册同样过不了人机验证这关：先弹验证框，通过后自动重发一次
+            if (status == 403 && errorCode(raw) == QLatin1String("human_required"))
+            {
+                m_humanCheckPending = true;
+                if (m_humanReplays.size() < 12)
+                    m_humanReplays.append([this, path, body]() { sendAuth(path, body, 1); });
+                emit humanCheckRequired();
+                return;
+            }
             emit requestFailed(errorMessage(raw, reply), status);
             return;
         }
@@ -437,6 +454,37 @@ void ForumAccountService::updateProfile(const QString &displayName, const QStrin
             if (!userObject.isEmpty())
                 setUser(parseUser(userObject));
             emit requestSucceeded(tr("个人资料已保存"));
+            emit userChanged(m_user);
+        },
+        [this](const QString &message, int status) { emit requestFailed(message, status); });
+}
+
+void ForumAccountService::sendEmailCode(const QString &email)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("email"), email);
+
+    sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/me/email/code"), body,
+        [this](const QJsonObject &root) {
+            emit emailCodeSent(root.value(QStringLiteral("expires_in")).toInt(600));
+        },
+        [this](const QString &message, int status) { emit requestFailed(message, status); });
+}
+
+void ForumAccountService::verifyEmailCode(const QString &email, const QString &code)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("email"), email);
+    body.insert(QStringLiteral("code"), code);
+
+    sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/me/email/verify"), body,
+        [this](const QJsonObject &root) {
+            const QJsonObject userObject = root.value(QStringLiteral("user")).toObject();
+            if (!userObject.isEmpty())
+                setUser(parseUser(userObject));
+            emit requestSucceeded(tr("邮箱验证成功"));
             emit userChanged(m_user);
         },
         [this](const QString &message, int status) { emit requestFailed(message, status); });
@@ -686,6 +734,9 @@ void ForumAccountService::prepareRequest(QNetworkRequest &request, bool withSess
                                  .arg(QString::fromLatin1(kSessionCookieName), m_token)
                                  .toUtf8());
     }
+    // 论坛开了人机验证时，所有接口都要这个令牌；没有就等着被 403 拦一次
+    if (!m_humanToken.isEmpty())
+        request.setRawHeader(kHumanHeaderName, m_humanToken.toUtf8());
 }
 
 void ForumAccountService::handleReply(QNetworkReply *reply, JsonHandler onOk, FailHandler onFail,
@@ -717,6 +768,22 @@ void ForumAccountService::handleReply(QNetworkReply *reply, JsonHandler onOk, Fa
 
                 if (status >= 400)
                 {
+                    // 被人机验证拦下：不发 onFail（界面弹出验证框就是回应），
+                    // 顺手把这次请求记下来，验证通过后原样重发
+                    if (status == 403 && errorCode(raw) == QLatin1String("human_required"))
+                    {
+                        m_humanCheckPending = true;
+                        if (retry && m_humanReplays.size() < 12)
+                        {
+                            m_humanReplays.append([this, retry, onOk, onFail]() {
+                                QNetworkReply *again = retry(1);
+                                if (again)
+                                    handleReply(again, onOk, onFail, retry, 1);
+                            });
+                        }
+                        emit humanCheckRequired();
+                        return;
+                    }
                     if (status == 401 && !m_token.isEmpty())
                     {
                         // 令牌过期或被管理员踢下线：本地会话一起作废，界面回到未登录
@@ -881,6 +948,7 @@ ForumUser ForumAccountService::parseUser(const QJsonObject &object)
     user.quizPassed = object.value(QStringLiteral("quiz_passed")).toBool();
     user.createdAt = static_cast<qint64>(object.value(QStringLiteral("created_at")).toDouble());
     user.email = object.value(QStringLiteral("email")).toString();
+    user.emailVerified = object.value(QStringLiteral("email_verified")).toBool();
     return user;
 }
 
@@ -903,6 +971,7 @@ void ForumAccountService::setUser(const ForumUser &user, bool cache)
             {QStringLiteral("quiz_passed"), m_user.quizPassed},
             {QStringLiteral("created_at"), static_cast<double>(m_user.createdAt)},
             {QStringLiteral("email"), m_user.email},
+            {QStringLiteral("email_verified"), m_user.emailVerified},
         };
         m_settings->setValue(QString::fromLatin1(kUserCacheKey),
                              QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)));
@@ -997,4 +1066,121 @@ void ForumAccountService::loadCachedUser()
     const ForumUser cachedUser = parseUser(doc.object());
     if (cachedUser.isValid())
         m_user = cachedUser;
+}
+
+// ────────────────────────────────────────────────────────────── 人机验证
+
+bool ForumAccountService::humanCheckSatisfied() const
+{
+    if (m_humanToken.isEmpty())
+        return false;
+    if (m_humanTokenBaseUrl != baseUrl())
+        return false;
+    return m_humanExpiresAt > QDateTime::currentSecsSinceEpoch();
+}
+
+void ForumAccountService::requestHumanChallenge()
+{
+    getJson(
+        QStringLiteral("/api/human/challenge"),
+        [this](const QJsonObject &root) {
+            if (root.value(QStringLiteral("id")).toString().isEmpty())
+            {
+                emit humanCheckFailed(tr("验证题没拿全，稍后再试"));
+                return;
+            }
+            emit humanChallengeReady(root);
+        },
+        [this](const QString &message, int) { emit humanCheckFailed(message); });
+}
+
+void ForumAccountService::submitHumanCheck(const QString &challengeId, int answer, int durationMs)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("id"), challengeId);
+    body.insert(QStringLiteral("answer"), answer);
+    body.insert(QStringLiteral("duration"), durationMs);
+
+    sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/human/verify"), body,
+        [this](const QJsonObject &root) {
+            const QString token = root.value(QStringLiteral("token")).toString();
+            if (token.isEmpty())
+            {
+                emit humanCheckFailed(tr("验证通过了，但没拿到令牌，请重试"));
+                return;
+            }
+            const qint64 expires = qint64(root.value(QStringLiteral("expires")).toDouble());
+            saveHumanCheck(token, expires);
+            m_humanCheckPending = false;
+            emit humanCheckPassed();
+            flushHumanCheckQueue();
+        },
+        [this](const QString &message, int) { emit humanCheckFailed(message); });
+}
+
+void ForumAccountService::clearHumanCheck()
+{
+    m_humanToken.clear();
+    m_humanExpiresAt = 0;
+    m_humanTokenBaseUrl.clear();
+    if (m_settings)
+    {
+        m_settings->remove(QString::fromLatin1(kHumanTokenKey));
+        m_settings->remove(QString::fromLatin1(kHumanExpiresKey));
+        m_settings->remove(QString::fromLatin1(kHumanBaseUrlKey));
+        m_settings->sync();
+    }
+}
+
+void ForumAccountService::saveHumanCheck(const QString &token, qint64 expiresAt)
+{
+    m_humanToken = token;
+    // 服务端没给到期时间就按 1 小时算，最坏情况只是多验一次
+    m_humanExpiresAt = expiresAt > 0 ? expiresAt : QDateTime::currentSecsSinceEpoch() + 3600;
+    m_humanTokenBaseUrl = baseUrl();
+    if (m_settings)
+    {
+        m_settings->setValue(QString::fromLatin1(kHumanTokenKey), m_humanToken);
+        m_settings->setValue(QString::fromLatin1(kHumanExpiresKey), m_humanExpiresAt);
+        m_settings->setValue(QString::fromLatin1(kHumanBaseUrlKey), m_humanTokenBaseUrl);
+        m_settings->sync();
+    }
+}
+
+void ForumAccountService::loadHumanCheck()
+{
+    m_humanToken = m_settings->value(QString::fromLatin1(kHumanTokenKey)).toString();
+    m_humanExpiresAt = m_settings->value(QString::fromLatin1(kHumanExpiresKey)).toLongLong();
+    m_humanTokenBaseUrl = m_settings->value(QString::fromLatin1(kHumanBaseUrlKey)).toString();
+
+    // 换了论坛地址、或者令牌已经过期：本地这份就别再往外发了
+    if (!m_humanToken.isEmpty() && !humanCheckSatisfied())
+        clearHumanCheck();
+}
+
+void ForumAccountService::flushHumanCheckQueue()
+{
+    if (m_humanReplays.isEmpty())
+        return;
+
+    const QVector<std::function<void()>> pending = m_humanReplays;
+    m_humanReplays.clear();
+    for (const auto &replay : pending)
+    {
+        if (replay)
+            replay();
+    }
+}
+
+QString ForumAccountService::errorCode(const QByteArray &raw)
+{
+    if (raw.isEmpty())
+        return QString();
+
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+        return QString();
+    return doc.object().value(QStringLiteral("code")).toString();
 }

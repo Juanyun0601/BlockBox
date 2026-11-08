@@ -107,6 +107,9 @@ private:
     void failDownload(const QString &error);
 
     void fetchManifest();
+    /// 下载前探测官方 CDN 是否可用；不可用时整条任务改用 BMCL 镜像，
+    /// 避免每个文件都先等官方连接超时再回退。
+    void probeOfficialCdn(std::function<void()> onReady);
     void fetchVersionJson();
     void downloadClientJar();
     void downloadClientJarFromNetwork();
@@ -169,6 +172,9 @@ private:
     static const int MAX_RETRY_COUNT = 3;
 
     DownloadSource m_downloadSource;
+    // 本次任务实际使用的源：官方 CDN 探测失败时这里会切成 BMCL，
+    // 界面上的「下载源」选择保持不变（仍显示用户选的那个）
+    DownloadSource m_effectiveSource;
     DownloadPhase m_currentPhase;
 
     QString m_currentVersionId;

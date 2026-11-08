@@ -1,5 +1,5 @@
 #include "InstanceLogPage.h"
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "utils/ThemeManager.h"
 
 #include <QVBoxLayout>
@@ -271,7 +271,7 @@ void InstanceLogPage::exportLog()
     QString defaultName = QString("BlockBox_%1_%2.txt")
         .arg(tabName, QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
 
-    QString filePath = AppFileDialog::getSaveFileName(
+    QString filePath = QFileDialog::getSaveFileName(
         this,
         tr("导出%1").arg(tabName),
         defaultName,

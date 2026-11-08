@@ -64,6 +64,8 @@ signals:
     void quickLaunchSaveRequested(const QString &saveName);
     /** 请求打开资源详情页进行替换（由资源管理页模组卡片触发） */
     void resourceDetailForReplaceRequested(const ModInfo &info, const QString &instancePath, const ModInfo &localMod);
+    /** 发布到联机大厅前需要登录论坛账号 */
+    void forumLoginRequested();
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;

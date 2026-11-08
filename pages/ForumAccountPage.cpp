@@ -35,6 +35,7 @@
 #include <QPushButton>
 #include <QRadialGradient>
 #include <QResizeEvent>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QShowEvent>
@@ -50,12 +51,14 @@
 #include "components/ForumPostBrowser.h"
 #include "components/NotificationManager.h"
 #include "layouts/MasonryLayout.h"
+#include "utils/FeedbackService.h"
 #include "utils/ForumAccountService.h"
 #include "utils/FavoritesManager.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/SkinDownloader.h"
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 
 namespace
 {
@@ -435,6 +438,8 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
         if (m_service->isLoggedIn())
         {
             m_threadsLoaded = m_repliesLoaded = m_bookmarksLoaded = false;
+            m_myFeedbacksLoaded = false;
+            m_myFeedbacks.clear();
             m_contentFavorites.clear();
             m_contentFavoritesLoaded = false;
             m_contentFavoriteTotal = 0;
@@ -448,6 +453,8 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
         m_replies = QJsonArray();
         m_bookmarks = QJsonArray();
         m_threadsLoaded = m_repliesLoaded = m_bookmarksLoaded = false;
+        m_myFeedbacksLoaded = false;
+        m_myFeedbacks.clear();
         m_threadTotal = m_replyTotal = m_bookmarkTotal = 0;
         m_contentFavorites.clear();
         m_contentFavoritesLoaded = false;
@@ -484,6 +491,29 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
         NotificationManager::showSuccess(this, message);
     });
 
+    // 邮箱验证码：发码成功后进入 60 秒重发冷却；成败都会刷新验证区按钮
+    connect(m_service, &ForumAccountService::emailCodeSent, this, [this](int) {
+        m_emailBusy = false;
+        m_codeCooldown = 60;
+        if (m_codeTimer)
+            m_codeTimer->start();
+        updateEmailVerifyUi();
+        if (m_emailNote)
+            m_emailNote->setText(tr("验证码已发送，10 分钟内有效；没收到的话看看垃圾邮件箱"));
+    });
+    connect(m_service, &ForumAccountService::requestFailed, this, [this](const QString &, int) {
+        m_emailBusy = false;
+        updateEmailVerifyUi();
+    });
+    connect(m_service, &ForumAccountService::userChanged, this, [this](const ForumUser &) {
+        m_emailBusy = false;
+        if (m_service->user().emailVerified && m_emailCodeEdit && !m_emailCodeEdit->text().isEmpty())
+            m_emailCodeEdit->clear();
+        updateEmailVerifyUi();
+        if (m_emailNote)
+            m_emailNote->setText(tr("验证码发到上面填的邮箱，10 分钟内有效；没收到的话看看垃圾邮件箱"));
+    });
+
     // 论坛地址 / 主题变化
     connect(SettingsManager::instance(), &SettingsManager::forumBaseUrlChanged, this,
             [this](const QString &) {
@@ -518,6 +548,14 @@ bool ForumAccountPage::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_detailSkinWidget && event->type() == QEvent::Resize)
         fitDetailCamera();
+
+    // 登录卡内容变了（切到注册多一栏、冒出错误提示）：等这一轮布局走完，
+    // 再按新高度收紧一次，避免卡片被压扁、输入框被裁。
+    if (m_viewStack && watched == m_viewStack->widget(AuthView)
+        && event->type() == QEvent::LayoutRequest)
+    {
+        QTimer::singleShot(0, this, &ForumAccountPage::syncAuthViewHeight);
+    }
     return QWidget::eventFilter(watched, event);
 }
 
@@ -563,8 +601,18 @@ void ForumAccountPage::buildUi()
 
     m_viewStack = new AdaptiveStack(content);
     m_viewStack->setObjectName(QStringLiteral("fbViewStack"));
+
+    // 登录 / 注册视图上方的弹性留白：平时隐藏（不占高度），只在登录卡显示时
+    // 与下方留白平分剩余空间，让卡片始终竖直居中。
+    m_authTopSpacer = new QWidget(content);
+    m_authTopSpacer->setObjectName(QStringLiteral("fbAuthTopSpacer"));
+    contentLayout->addWidget(m_authTopSpacer, 1);
+    m_authTopSpacer->hide();
+
     m_viewStack->addWidget(buildOverview(m_viewStack));
-    m_viewStack->addWidget(buildAuthCard(m_viewStack));
+    QWidget *authView = buildAuthCard(m_viewStack);
+    authView->installEventFilter(this);
+    m_viewStack->addWidget(authView);
     m_viewStack->addWidget(buildAccountDetailView(m_viewStack));
     // 卡片按内容高度排布（和论坛网页一致），窗口更高时留白在下方，不把卡片拉长
     contentLayout->addWidget(m_viewStack, 0);
@@ -746,7 +794,7 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // 工具条：分段页签 + 提示 + 刷新
+    // 工具条：分段页签 + 提示（刷新统一走顶栏的刷新按钮）
     auto *toolbar = new QWidget(card);
     auto *toolbarLayout = new QHBoxLayout(toolbar);
     toolbarLayout->setContentsMargins(14, 12, 14, 12);
@@ -759,7 +807,7 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     tabsLayout->setSpacing(4);
 
     const QStringList tabLabels = {tr("角色"), tr("我的主题"), tr("我的回复"), tr("我的收藏"),
-                                   tr("通知"), tr("账号设置")};
+                                   tr("通知"), tr("我的反馈"), tr("账号设置")};
     for (int i = 0; i < tabLabels.size(); ++i)
     {
         auto *tab = new QPushButton(tabLabels.at(i), tabsTrack);
@@ -780,13 +828,6 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     toolbarLayout->addWidget(m_tabHint);
     toolbarLayout->addStretch();
 
-    m_refreshBtn = new QPushButton(tr("刷新"), toolbar);
-    m_refreshBtn->setObjectName(QStringLiteral("fbBtnGhost"));
-    m_refreshBtn->setFixedHeight(30);
-    m_refreshBtn->setCursor(Qt::PointingHandCursor);
-    connect(m_refreshBtn, &QPushButton::clicked, this, &ForumAccountPage::refreshAccount);
-    toolbarLayout->addWidget(m_refreshBtn);
-
     layout->addWidget(toolbar);
     layout->addWidget(makeDivider(card));
 
@@ -802,6 +843,7 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     m_contentPages.append(buildListContent(m_contentHost, &m_replyListLayout));     // RepliesContent
     m_contentPages.append(buildBookmarksContent(m_contentHost));                    // BookmarksContent
     m_contentPages.append(buildNotificationsContent(m_contentHost));                // NotificationsContent
+    m_contentPages.append(buildFeedbackContent(m_contentHost));                     // FeedbackContent
     m_contentPages.append(buildSettingsContent(m_contentHost));                     // SettingsContent
     m_contentPages.append(buildLoggedOutContent(m_contentHost));                    // LoggedOutContent
     for (QWidget *page : m_contentPages)
@@ -870,7 +912,8 @@ QWidget *ForumAccountPage::buildCharactersContent(QWidget *parent)
     layout->setContentsMargins(14, 14, 14, 16);
     layout->setSpacing(10);
 
-    // 顶部提示 + 「添加角色」/「制作皮肤」：账户的增删和皮肤都在这一页完成
+    // 顶部提示 + 「制作皮肤」/「添加角色」：账户的增删和皮肤都在这一页完成
+    // 两个按钮做成纯文字按钮（无外框），和右侧页签条的轻量感保持一致
     auto *header = new QWidget(m_charactersPage);
     auto *headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(0, 0, 0, 0);
@@ -882,7 +925,7 @@ QWidget *ForumAccountPage::buildCharactersContent(QWidget *parent)
     headerLayout->addStretch();
 
     auto *skinBtn = new QPushButton(tr("制作皮肤"), header);
-    skinBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    skinBtn->setObjectName(QStringLiteral("fbBtnText"));
     skinBtn->setFixedHeight(30);
     skinBtn->setCursor(Qt::PointingHandCursor);
     skinBtn->setToolTip(tr("为当前角色制作或更换皮肤"));
@@ -914,7 +957,7 @@ QWidget *ForumAccountPage::buildCharactersContent(QWidget *parent)
     headerLayout->addWidget(skinBtn);
 
     auto *addBtn = new QPushButton(tr("添加角色"), header);
-    addBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    addBtn->setObjectName(QStringLiteral("fbBtnText"));
     addBtn->setFixedHeight(30);
     addBtn->setCursor(Qt::PointingHandCursor);
     addBtn->setToolTip(tr("添加离线、微软正版或第三方账户"));
@@ -1091,8 +1134,54 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     m_emailEdit = new QLineEdit(page);
     m_emailEdit->setObjectName(QStringLiteral("fbInput"));
     m_emailEdit->setPlaceholderText(tr("选填，方便找回账号"));
-    layout->addWidget(buildField(tr("邮箱"), m_emailEdit, page));
+    m_emailVerifiedChip = new QLabel(page);
+    m_emailVerifiedChip->setObjectName(QStringLiteral("fbChipMuted"));
+    m_emailVerifiedChip->hide();
+    layout->addWidget(buildField(tr("邮箱"), m_emailEdit, page, m_emailVerifiedChip));
     layout->addSpacing(12);
+
+    // ── 邮箱验证码：填邮箱 → 发码 → 填码 → 验证，通过后绑定并标记已验证 ──
+    m_emailCodeEdit = new QLineEdit(page);
+    m_emailCodeEdit->setObjectName(QStringLiteral("fbInput"));
+    m_emailCodeEdit->setPlaceholderText(tr("邮箱收到的 6 位验证码"));
+    m_emailCodeEdit->setMaxLength(6);
+
+    m_sendCodeButton = new QPushButton(tr("发送验证码"), page);
+    m_sendCodeButton->setObjectName(QStringLiteral("fbBtnGhost"));
+    m_sendCodeButton->setFixedHeight(36);
+    m_sendCodeButton->setCursor(Qt::PointingHandCursor);
+    connect(m_sendCodeButton, &QPushButton::clicked, this, &ForumAccountPage::sendEmailCode);
+
+    m_verifyCodeButton = new QPushButton(tr("验证邮箱"), page);
+    m_verifyCodeButton->setObjectName(QStringLiteral("fbBtnPrimary"));
+    m_verifyCodeButton->setFixedHeight(36);
+    m_verifyCodeButton->setCursor(Qt::PointingHandCursor);
+    connect(m_verifyCodeButton, &QPushButton::clicked, this, &ForumAccountPage::verifyEmailCode);
+
+    m_emailNote = new QLabel(tr("验证码发到上面填的邮箱，10 分钟内有效；没收到的话看看垃圾邮件箱"), page);
+    m_emailNote->setObjectName(QStringLiteral("fbNote"));
+    m_emailNote->setWordWrap(true);
+
+    auto *codeRow = new QHBoxLayout();
+    codeRow->setContentsMargins(0, 0, 0, 0);
+    codeRow->setSpacing(8);
+    codeRow->addWidget(m_emailCodeEdit, 1);
+    codeRow->addWidget(m_sendCodeButton);
+    codeRow->addWidget(m_verifyCodeButton);
+
+    auto *codeHost = new QWidget(page);
+    auto *codeHostLayout = new QVBoxLayout(codeHost);
+    codeHostLayout->setContentsMargins(0, 0, 0, 0);
+    codeHostLayout->setSpacing(6);
+    codeHostLayout->addLayout(codeRow);
+    codeHostLayout->addWidget(m_emailNote);
+
+    layout->addWidget(buildField(tr("邮箱验证"), codeHost, page));
+    layout->addSpacing(12);
+
+    m_codeTimer = new QTimer(codeHost);
+    m_codeTimer->setInterval(1000);
+    connect(m_codeTimer, &QTimer::timeout, this, &ForumAccountPage::tickCodeCooldown);
 
     m_bioEdit = new QPlainTextEdit(page);
     m_bioEdit->setObjectName(QStringLiteral("fbInput"));
@@ -1431,6 +1520,18 @@ QPushButton#fbBtnGhost {
 }
 QPushButton#fbBtnGhost:hover { border-color: %BRAND_LINE%; color: %BRAND%; }
 QPushButton#fbBtnGhost:disabled { background: transparent; color: %INK3%; border-color: %LINE%; }
+/* 纯文字按钮：没有外框，悬停时只铺一层品牌色浅底（角色页的「制作皮肤 / 添加角色」） */
+QPushButton#fbBtnText {
+    background: transparent;
+    color: %BRAND%;
+    border: none;
+    border-radius: 15px;
+    padding: 0 10px;
+    font-size: 13px;
+    font-weight: 700;
+}
+QPushButton#fbBtnText:hover { background: %BRAND_SOFT%; }
+QPushButton#fbBtnText:pressed { background: %BRAND_LINE%; }
 QPushButton#fbBtnPrimary {
     background: %BRAND%;
     color: %ON_BRAND%;
@@ -1549,6 +1650,15 @@ QLabel#fbChip {
     color: %BRAND%;
     border-radius: 11px;
     padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 700;
+}
+QLabel#fbChipMuted {
+    background: transparent;
+    color: %INK3%;
+    border: 1px solid %LINE2%;
+    border-radius: 11px;
+    padding: 1px 9px;
     font-size: 12px;
     font-weight: 700;
 }
@@ -1771,9 +1881,39 @@ void ForumAccountPage::showOverview()
 {
     if (!m_viewStack)
         return;
+    // 总览 / 详情恢复自适应高度，之前给登录卡收紧的尺寸约束要放开
+    releaseAuthViewHeight();
     // 详情页会把容器撑高，回到总览时恢复自适应
     m_viewStack->setMinimumHeight(0);
     m_viewStack->setCurrentIndex(OverviewView);
+}
+
+void ForumAccountPage::releaseAuthViewHeight()
+{
+    if (m_authTopSpacer)
+        m_authTopSpacer->hide();
+    if (m_viewStack)
+        m_viewStack->setMaximumHeight(QWIDGETSIZE_MAX);
+}
+
+void ForumAccountPage::syncAuthViewHeight()
+{
+    if (!m_viewStack || m_viewStack->currentIndex() != AuthView)
+        return;
+
+    // 登录 / 注册卡只有几百像素高，但视图栈此前被总览页撑得很高，
+    // 外层滚动区会按那个高度算最小尺寸，窗口稍矮就冒出竖向滚动条。
+    // 这里按登录卡的实际高度收紧视图栈，窗口再矮也不用上下滚动。
+    QWidget *authPage = m_viewStack->currentWidget();
+    if (!authPage)
+        return;
+    const int needed = authPage->layout() ? authPage->layout()->totalSizeHint().height()
+                                          : authPage->sizeHint().height();
+    if (needed > 0 && m_viewStack->maximumHeight() != needed)
+        m_viewStack->setMaximumHeight(needed);
+    if (m_authTopSpacer && m_authTopSpacer->isHidden())
+        m_authTopSpacer->show();
+    m_viewStack->updateGeometry();
 }
 
 void ForumAccountPage::openAuth(AuthMode mode)
@@ -1789,6 +1929,7 @@ void ForumAccountPage::openAuth(AuthMode mode)
     setAuthMode(mode);
     if (m_viewStack)
         m_viewStack->setCurrentIndex(AuthView);
+    syncAuthViewHeight();
     scrollToTop();
     QTimer::singleShot(0, this, [this]() { m_authNameEdit->setFocus(); });
 }
@@ -1816,6 +1957,9 @@ void ForumAccountPage::setAuthMode(AuthMode mode)
     }
     if (m_authError && !m_authError->text().isEmpty())
         m_authError->hide();
+    // 切到注册时多出「确认密码」一栏、错误提示出现 / 消失都会改变卡片高度，
+    // 收紧后的高度要跟着卡片重新算一次
+    syncAuthViewHeight();
 }
 
 void ForumAccountPage::submitAuth()
@@ -1829,6 +1973,8 @@ void ForumAccountPage::submitAuth()
     auto showError = [this](const QString &message) {
         m_authError->setText(message);
         m_authError->show();
+        // 错误提示会撑高卡片：同步放宽视图栈，别把提示或按钮裁掉
+        syncAuthViewHeight();
     };
 
     if (username.isEmpty())
@@ -1930,6 +2076,8 @@ void ForumAccountPage::openLoginForm()
 void ForumAccountPage::refreshAccount()
 {
     m_threadsLoaded = m_repliesLoaded = m_bookmarksLoaded = false;
+    m_myFeedbacksLoaded = false;
+    m_myFeedbacks.clear();
     m_threads = QJsonArray();
     m_replies = QJsonArray();
     m_bookmarks = QJsonArray();
@@ -2443,7 +2591,7 @@ void ForumAccountPage::switchGameAccount(const QString &accountName)
 QWidget *ForumAccountPage::buildAccountDetailView(QWidget *parent)
 {
     m_detailPage = new QWidget(parent);
-    m_detailPage->setFixedHeight(620);
+    m_detailPage->setFixedHeight(UiMetrics::fitToScreen(this, QSize(0, 620)).height());
 
     auto *outer = new QVBoxLayout(m_detailPage);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -2643,6 +2791,8 @@ void ForumAccountPage::openAccountDetail(const QString &accountName)
 
     m_detailAccountName = accountName;
     refreshAccountDetail();
+    // 详情页有独立的高度要求，先放开登录卡留下的收紧约束
+    releaseAuthViewHeight();
     if (m_viewStack)
         // 详情页比总览高：先把容器撑到详情页高度，避免被上一页的尺寸裁掉
     m_viewStack->setMinimumHeight(m_detailPage ? m_detailPage->height() : 620);
@@ -2957,13 +3107,8 @@ void ForumAccountPage::renderContentArea()
     {
         showContentPage(LoggedOutContent);
         setTabHint(tr("登录后可查看"));
-        if (m_refreshBtn)
-            m_refreshBtn->setEnabled(true);
         return;
     }
-
-    if (m_refreshBtn)
-        m_refreshBtn->setEnabled(true);
 
     switch (m_activeTab)
     {
@@ -2985,6 +3130,10 @@ void ForumAccountPage::renderContentArea()
     case NotificationsTab:
         showContentPage(NotificationsContent);
         renderNotifications();
+        break;
+    case FeedbackTab:
+        showContentPage(FeedbackContent);
+        loadMyFeedbacks(false);
         break;
     case SettingsTab:
         showContentPage(SettingsContent);
@@ -3354,6 +3503,216 @@ QWidget *ForumAccountPage::buildNotificationsContent(QWidget *parent)
     return page;
 }
 
+QWidget *ForumAccountPage::buildFeedbackContent(QWidget *parent)
+{
+    auto *page = new QWidget(parent);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(12, 12, 12, 14);
+    layout->setSpacing(10);
+
+    // 页头：说明 + 刷新。常驻在页面布局里，刷新列表时不重建，免得按钮闪烁。
+    auto *head = new QWidget(page);
+    auto *headLayout = new QHBoxLayout(head);
+    headLayout->setContentsMargins(0, 0, 0, 0);
+    headLayout->setSpacing(9);
+
+    auto *hint = new QLabel(tr("你在启动器或网页里提交的反馈，处理进度和管理员回复都在这里"), head);
+    hint->setObjectName(QStringLiteral("fbNote"));
+    hint->setWordWrap(true);
+    headLayout->addWidget(hint, 1);
+
+    m_feedbackRefreshButton = new QPushButton(tr("刷新"), head);
+    m_feedbackRefreshButton->setObjectName(QStringLiteral("fbBtnGhost"));
+    m_feedbackRefreshButton->setCursor(Qt::PointingHandCursor);
+    m_feedbackRefreshButton->setFixedHeight(28);
+    connect(m_feedbackRefreshButton, &QPushButton::clicked, this,
+            [this]() { loadMyFeedbacks(true); });
+    headLayout->addWidget(m_feedbackRefreshButton, 0, Qt::AlignVCenter);
+
+    layout->addWidget(head);
+
+    // 列表容器：刷新时只重建这层内容
+    auto *listHost = new QWidget(page);
+    auto *listLayout = new QVBoxLayout(listHost);
+    listLayout->setContentsMargins(0, 0, 0, 0);
+    listLayout->setSpacing(8);
+    m_feedbackListLayout = listLayout;
+
+    layout->addWidget(listHost);
+    layout->addStretch();
+    return page;
+}
+
+/** 账户页「我的反馈」条目的状态徽章（沿用反馈页的绿 / 紫 / 灰配色） */
+QLabel *makeFeedbackStateBadge(QWidget *parent, const QString &status)
+{
+    QLabel *badge = new QLabel(parent);
+    badge->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    if (status == QStringLiteral("resolved"))
+    {
+        badge->setText(QLabel::tr("已处理"));
+        badge->setStyleSheet(QStringLiteral(
+            "QLabel{background:#8250df;color:#ffffff;border:none;border-radius:9px;"
+            "font-size:11px;font-weight:700;padding:2px 9px;}"));
+    }
+    else if (status == QStringLiteral("ignored"))
+    {
+        badge->setText(QLabel::tr("已忽略"));
+        badge->setStyleSheet(QStringLiteral(
+            "QLabel{background:rgba(128,128,128,0.18);color:rgba(128,128,128,1);"
+            "border:none;border-radius:9px;font-size:11px;font-weight:700;padding:2px 9px;}"));
+    }
+    else
+    {
+        badge->setText(QLabel::tr("待处理"));
+        badge->setStyleSheet(QStringLiteral(
+            "QLabel{background:#10b981;color:#ffffff;border:none;border-radius:9px;"
+            "font-size:11px;font-weight:700;padding:2px 9px;}"));
+    }
+    return badge;
+}
+
+void ForumAccountPage::loadMyFeedbacks(bool force)
+{
+    if (!m_service->isLoggedIn() || !m_feedbackListLayout)
+        return;
+
+    if (m_myFeedbacksLoaded && !force)
+    {
+        renderMyFeedbacks();
+        return;
+    }
+
+    if (m_feedbackRefreshButton)
+        m_feedbackRefreshButton->setEnabled(false);
+    clearLayout(m_feedbackListLayout);
+    auto *loading = makeMutedLabel(tr("正在加载反馈…"), m_feedbackListLayout->parentWidget(), "fbEmpty");
+    loading->setAlignment(Qt::AlignCenter);
+    m_feedbackListLayout->addSpacing(24);
+    m_feedbackListLayout->addWidget(loading);
+    m_feedbackListLayout->addSpacing(24);
+    m_feedbackListLayout->addStretch();
+
+    FeedbackService::instance()->fetchMyFeedbacks(
+        1,
+        [this](const QVector<FeedbackItem> &items, const ForumPagination &) {
+            if (m_feedbackRefreshButton)
+                m_feedbackRefreshButton->setEnabled(true);
+            m_myFeedbacks = items;
+            m_myFeedbacksLoaded = true;
+            if (m_feedbackListLayout && m_activeTab == FeedbackTab)
+                renderMyFeedbacks();
+        },
+        [this](const QString &message, int) {
+            if (m_feedbackRefreshButton)
+                m_feedbackRefreshButton->setEnabled(true);
+            if (!m_feedbackListLayout)
+                return;
+            clearLayout(m_feedbackListLayout);
+            auto *error = makeMutedLabel(tr("加载失败：%1").arg(message),
+                                         m_feedbackListLayout->parentWidget(), "fbEmpty");
+            error->setAlignment(Qt::AlignCenter);
+            m_feedbackListLayout->addSpacing(24);
+            m_feedbackListLayout->addWidget(error);
+            m_feedbackListLayout->addSpacing(24);
+            m_feedbackListLayout->addStretch();
+        });
+}
+
+/** 反馈正文里的 GitHub 模板标题（### xxx）转成加粗富文本 */
+QString renderFeedbackContent(const QString &content)
+{
+    const QStringList lines = content.split(QLatin1Char('\n'));
+    QStringList out;
+    for (const QString &line : lines)
+    {
+        if (line.startsWith(QStringLiteral("### ")))
+            out.append(QStringLiteral("<b>%1</b>").arg(line.mid(4).toHtmlEscaped()));
+        else
+            out.append(line.toHtmlEscaped());
+    }
+    return out.join(QLatin1String("<br>"));
+}
+
+void ForumAccountPage::renderMyFeedbacks()
+{
+    if (!m_feedbackListLayout)
+        return;
+    clearLayout(m_feedbackListLayout);
+
+    if (m_myFeedbacks.isEmpty())
+    {
+        auto *empty = makeMutedLabel(tr("还没有提交过反馈。遇到软件问题，欢迎到左侧「反馈」里提交。"),
+                                     m_feedbackListLayout->parentWidget(), "fbEmpty");
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setWordWrap(true);
+        m_feedbackListLayout->addSpacing(24);
+        m_feedbackListLayout->addWidget(empty);
+        m_feedbackListLayout->addSpacing(24);
+        m_feedbackListLayout->addStretch();
+        return;
+    }
+
+    for (const FeedbackItem &item : m_myFeedbacks)
+    {
+        auto *card = new QFrame(m_feedbackListLayout->parentWidget());
+        card->setObjectName(QStringLiteral("fbCard"));
+        auto *rowLayout = new QVBoxLayout(card);
+        rowLayout->setContentsMargins(14, 12, 14, 12);
+        rowLayout->setSpacing(6);
+
+        // 头行：类型徽章 + 状态徽章 + 来源 + 时间
+        auto *headRow = new QHBoxLayout();
+        headRow->setSpacing(8);
+        auto *typeBadge = new QLabel(card);
+        typeBadge->setText(item.type == QStringLiteral("feature") ? tr("功能建议") : tr("问题反馈"));
+        typeBadge->setStyleSheet(QStringLiteral(
+            "QLabel{background:rgba(128,128,128,0.18);color:rgba(128,128,128,1);border:none;"
+            "border-radius:8px;font-size:11px;font-weight:600;padding:1px 8px;}"));
+        headRow->addWidget(typeBadge);
+        headRow->addWidget(makeFeedbackStateBadge(card, item.status));
+
+        QStringList headParts;
+        if (item.source == QStringLiteral("launcher"))
+            headParts << (item.appVersion.isEmpty()
+                              ? tr("来自启动器")
+                              : tr("来自启动器 v%1").arg(item.appVersion));
+        else
+            headParts << tr("来自网页版");
+        auto *sourceLabel = new QLabel(headParts.join(QStringLiteral(" ")), card);
+        sourceLabel->setObjectName(QStringLiteral("fbNote"));
+        headRow->addWidget(sourceLabel);
+        headRow->addStretch(1);
+        auto *timeLabel = new QLabel(ForumKit::relativeTime(item.createdAt), card);
+        timeLabel->setObjectName(QStringLiteral("fbNote"));
+        headRow->addWidget(timeLabel);
+        rowLayout->addLayout(headRow);
+
+        // 反馈正文（### 模板标题渲染成加粗）
+        auto *contentLabel = new QLabel(renderFeedbackContent(item.content), card);
+        contentLabel->setWordWrap(true);
+        contentLabel->setTextFormat(Qt::RichText);
+        contentLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        rowLayout->addWidget(contentLabel);
+
+        // 管理员回复
+        if (!item.reply.isEmpty())
+        {
+            auto *replyLabel = new QLabel(tr("管理员回复：%1").arg(item.reply), card);
+            replyLabel->setObjectName(QStringLiteral("fbNote"));
+            replyLabel->setWordWrap(true);
+            replyLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            replyLabel->setStyleSheet(QStringLiteral(
+                "QLabel{background:rgba(128,128,128,0.12);border:1px solid rgba(128,128,128,0.3);"
+                "border-radius:10px;padding:9px 12px;}"));
+            rowLayout->addWidget(replyLabel);
+        }
+
+        m_feedbackListLayout->addWidget(card);
+    }
+    m_feedbackListLayout->addStretch();
+}
+
 void ForumAccountPage::loadNotifications()
 {
     ForumContentService::instance()->fetchNotifications(
@@ -3572,7 +3931,7 @@ void ForumAccountPage::renderNotifications()
         if (item.type == QStringLiteral("mention"))
             action = tr("提到了你");
         else if (item.type == QStringLiteral("system"))
-            action = tr("系统公告");
+            action = item.targetKind == QStringLiteral("admin") ? tr("管理团队发来消息") : tr("系统公告");
         else if (item.targetKind == QStringLiteral("post"))
             action = tr("回复了你的楼层");
         else
@@ -3834,6 +4193,10 @@ void ForumAccountPage::loadTabData()
         renderLoading(m_notificationListLayout);
         loadNotifications();
     }
+    else if (m_activeTab == FeedbackTab)
+    {
+        loadMyFeedbacks(false);
+    }
 }
 
 void ForumAccountPage::fillSettingsForm()
@@ -3851,6 +4214,7 @@ void ForumAccountPage::fillSettingsForm()
     // 正在看预览时重新填表，预览同步成最新内容
     if (m_bioPreview && !m_bioPreview->isHidden())
         m_bioPreview->setPostMarkdown(user.bio.trimmed());
+    updateEmailVerifyUi();
 }
 
 void ForumAccountPage::setTabHint(const QString &text)
@@ -3923,8 +4287,110 @@ void ForumAccountPage::savePasswordForm()
     m_confirmPasswordEdit->clear();
 }
 
+// ════════════════════════════════════════════════════════════════ 邮箱验证
+
+void ForumAccountPage::sendEmailCode()
+{
+    if (!m_service->isLoggedIn() || m_emailBusy || m_codeCooldown > 0)
+        return;
+
+    const QString email = m_emailEdit->text().trimmed();
+    static const QRegularExpression mailPattern(
+        QStringLiteral("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"));
+    if (!mailPattern.match(email).hasMatch())
+    {
+        NotificationManager::showError(this, tr("请先在上面填写正确的邮箱地址"));
+        return;
+    }
+
+    m_emailBusy = true;
+    updateEmailVerifyUi();
+    m_service->sendEmailCode(email);
+}
+
+void ForumAccountPage::verifyEmailCode()
+{
+    if (!m_service->isLoggedIn() || m_emailBusy)
+        return;
+
+    const QString email = m_emailEdit->text().trimmed();
+    const QString code = m_emailCodeEdit->text().trimmed();
+    if (email.isEmpty())
+    {
+        NotificationManager::showError(this, tr("请先在上面填写邮箱地址"));
+        return;
+    }
+    if (code.length() != 6)
+    {
+        NotificationManager::showError(this, tr("请输入 6 位数字验证码"));
+        return;
+    }
+    for (const QChar ch : code)
+    {
+        if (!ch.isDigit())
+        {
+            NotificationManager::showError(this, tr("验证码是 6 位数字，请检查一下"));
+            return;
+        }
+    }
+
+    m_emailBusy = true;
+    updateEmailVerifyUi();
+    m_service->verifyEmailCode(email, code);
+}
+
+void ForumAccountPage::tickCodeCooldown()
+{
+    if (m_codeCooldown > 0)
+        --m_codeCooldown;
+    if (m_codeCooldown <= 0 && m_codeTimer)
+        m_codeTimer->stop();
+    updateEmailVerifyUi();
+}
+
+void ForumAccountPage::updateEmailVerifyUi()
+{
+    if (!m_emailVerifiedChip || !m_sendCodeButton || !m_verifyCodeButton || !m_emailCodeEdit)
+        return;
+
+    // 状态徽标：绑定了邮箱才显示，已验证用品牌绿、未验证用灰
+    const ForumUser user = m_service->user();
+    if (!m_service->isLoggedIn() || user.email.isEmpty())
+    {
+        m_emailVerifiedChip->hide();
+    }
+    else
+    {
+        const QString name = user.emailVerified ? QStringLiteral("fbChip")
+                                                : QStringLiteral("fbChipMuted");
+        if (m_emailVerifiedChip->objectName() != name)
+        {
+            m_emailVerifiedChip->setObjectName(name);
+            if (QStyle *chipStyle = m_emailVerifiedChip->style())
+            {
+                chipStyle->unpolish(m_emailVerifiedChip);
+                chipStyle->polish(m_emailVerifiedChip);
+            }
+        }
+        m_emailVerifiedChip->setText(user.emailVerified ? tr("已验证") : tr("未验证"));
+        m_emailVerifiedChip->show();
+    }
+
+    m_emailCodeEdit->setEnabled(!m_emailBusy);
+    m_verifyCodeButton->setEnabled(!m_emailBusy);
+    m_verifyCodeButton->setText(m_emailBusy ? tr("验证中…") : tr("验证邮箱"));
+    m_sendCodeButton->setEnabled(!m_emailBusy && m_codeCooldown <= 0);
+    if (m_emailBusy)
+        m_sendCodeButton->setText(tr("发送中…"));
+    else if (m_codeCooldown > 0)
+        m_sendCodeButton->setText(tr("重新发送(%1s)").arg(m_codeCooldown));
+    else
+        m_sendCodeButton->setText(tr("发送验证码"));
+}
+
 void ForumAccountPage::pickAvatarFile()
 {
+    // 系统文件选择器
     const QString path = QFileDialog::getOpenFileName(
         this, tr("选择头像"), QString(),
         tr("图片 (*.png *.jpg *.jpeg *.webp *.gif);;所有文件 (*.*)"));
@@ -3935,6 +4401,7 @@ void ForumAccountPage::pickAvatarFile()
 
 void ForumAccountPage::pickCoverFile()
 {
+    // 系统文件选择器
     const QString path = QFileDialog::getOpenFileName(
         this, tr("选择封面图"), QString(),
         tr("图片 (*.png *.jpg *.jpeg *.webp *.gif);;所有文件 (*.*)"));

@@ -9,6 +9,7 @@
 
 #include "utils/AppVersion.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -27,7 +28,7 @@
 namespace {
 
 /// 官网根目录下的公告文件（与仓库 方块盒子官网/announcement.json 对应）
-const char *const kAnnouncementUrl = "https://blockbox.cc.cd/announcement.json";
+const char *const kAnnouncementUrl = "https://mcblockbox.top/announcement.json";
 
 /// 最多展示条数（缓存里也按此上限截断，避免文件无限长、界面翻不完）
 constexpr int kMaxEntries = 20;
@@ -65,7 +66,7 @@ bool isDisabled(const QJsonObject &object)
 }
 
 /// 官网站点根地址（用于把站内相对路径补全成可点击的完整链接）
-const char *const kSiteOrigin = "https://blockbox.cc.cd";
+const char *const kSiteOrigin = "https://mcblockbox.top";
 
 /**
  * @brief 补全公告链接
@@ -123,6 +124,54 @@ QJsonArray pickArray(const QJsonDocument &doc)
     }
   }
   return QJsonArray();
+}
+
+/**
+ * @brief 解析根对象里的启动重要公告（important 字段）
+ *
+ * 正文是 Markdown，换行必须原样保留；没有正文、或被显式关闭时返回 invalid。
+ * 缺少 id 时用「标题 + 正文」算一个稳定摘要，保证同一条公告每次启动
+ * 得到的 id 一致（「不再弹出」靠它判断）。
+ */
+ImportantAnnouncement parseImportant(const QJsonObject &root)
+{
+  ImportantAnnouncement result;
+
+  const QJsonValue value = root.value(QStringLiteral("important"));
+  if (!value.isObject())
+    return result;
+
+  const QJsonObject object = value.toObject();
+  if (isDisabled(object))
+    return result;
+
+  result.title = pickString(object, {QStringLiteral("title"), QStringLiteral("name")}).simplified();
+  result.markdown = pickString(object, {QStringLiteral("content"), QStringLiteral("markdown"),
+                                        QStringLiteral("body")});
+  if (result.markdown.isEmpty())
+    result.markdown = pickString(object, {QStringLiteral("text")});
+  if (result.markdown.isEmpty())
+    return result;
+
+  result.link = normalizeLink(pickString(object, {QStringLiteral("link"), QStringLiteral("url"),
+                                                  QStringLiteral("href")}));
+  result.date = pickString(object, {QStringLiteral("date"), QStringLiteral("time")});
+  result.id = pickString(object, {QStringLiteral("id")});
+
+  if (result.id.isEmpty())
+  {
+    const QByteArray digest = QCryptographicHash::hash(
+        (result.title + QLatin1Char('\n') + result.markdown).toUtf8(), QCryptographicHash::Sha1);
+    result.id = QStringLiteral("i:%1").arg(QString::fromLatin1(digest.toHex()));
+  }
+
+  return result;
+}
+
+/// 两条重要公告内容是否完全一致（用于决定要不要通知界面刷新）
+bool sameImportant(const ImportantAnnouncement &a, const ImportantAnnouncement &b)
+{
+  return a.id == b.id && a.title == b.title && a.markdown == b.markdown && a.link == b.link;
 }
 
 } // namespace
@@ -210,10 +259,11 @@ void AnnouncementFeed::refresh(bool force)
       // 但文件为空、或内容不是合法 JSON（发布过程中被清空 / 部署了一半）时，
       // 保留上一次的公告，避免用户眼前的内容突然消失
       QVector<AnnouncementEntry> entries;
-      if (!parseEntries(payload, entries))
+      ImportantAnnouncement important;
+      if (!parsePayload(payload, entries, important))
         finishWithError(tr("公告文件内容格式有误"));
       else
-        finishWithSuccess(payload, entries);
+        finishWithSuccess(payload, entries, important);
       return;
     }
     if (status > 0)
@@ -224,14 +274,18 @@ void AnnouncementFeed::refresh(bool force)
 }
 
 void AnnouncementFeed::finishWithSuccess(const QByteArray &payload,
-                                         const QVector<AnnouncementEntry> &entries)
+                                         const QVector<AnnouncementEntry> &entries,
+                                         const ImportantAnnouncement &important)
 {
   // 只有内容真的变了才通知界面重建，避免每次进首页都闪一下
   bool changed = entries.size() != m_entries.size();
   for (int i = 0; !changed && i < entries.size(); ++i)
     changed = entries.at(i).id != m_entries.at(i).id;
 
+  const bool importantDidChange = !sameImportant(m_important, important);
+
   m_entries = entries;
+  m_important = important;
   m_lastUpdated = QDateTime::currentDateTime();
   m_lastError.clear();
   saveCache(payload);
@@ -239,6 +293,8 @@ void AnnouncementFeed::finishWithSuccess(const QByteArray &payload,
   m_loading = false;
   if (changed)
     emit entriesChanged();
+  if (importantDidChange)
+    emit importantChanged();
   emit loadingChanged(false);
 }
 
@@ -271,12 +327,15 @@ void AnnouncementFeed::abortReply()
  * @brief 解析公告文件
  *
  * @param payload 官网公告文件的原始内容
- * @param entries 解析结果（合法但一条公告都没有时为空）
+ * @param entries 首页公告解析结果（合法但一条公告都没有时为空）
+ * @param important 启动重要公告解析结果（没有时为空对象）
  * @return false 表示文件为空或不是合法 JSON（调用方应保留旧数据）
  */
-bool AnnouncementFeed::parseEntries(const QByteArray &payload, QVector<AnnouncementEntry> &entries)
+bool AnnouncementFeed::parsePayload(const QByteArray &payload, QVector<AnnouncementEntry> &entries,
+                                    ImportantAnnouncement &important)
 {
   entries.clear();
+  important = ImportantAnnouncement();
 
   if (payload.trimmed().isEmpty())
     return false;
@@ -288,6 +347,9 @@ bool AnnouncementFeed::parseEntries(const QByteArray &payload, QVector<Announcem
     qWarning() << "[AnnouncementFeed] 公告 JSON 解析失败:" << parseError.errorString();
     return false;
   }
+
+  if (doc.isObject())
+    important = parseImportant(doc.object());
 
   const QJsonArray array = pickArray(doc);
   QSet<QString> seen;
@@ -362,10 +424,13 @@ void AnnouncementFeed::loadCache()
   file.close();
 
   QVector<AnnouncementEntry> entries;
-  if (!parseEntries(payload, entries) || entries.isEmpty())
+  ImportantAnnouncement important;
+  if (!parsePayload(payload, entries, important))
     return;
 
+  // 缓存里可能只有重要公告、首页公告为空，两者互不影响
   m_entries = entries;
+  m_important = important;
   m_lastUpdated = QFileInfo(path).lastModified();
 }
 

@@ -1,5 +1,5 @@
 #include "LaunchDetailsPage.h"
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/OutlinedLabel.h"
 #include "components/OutlinedTextEdit.h"
 #include "utils/GameLauncher.h"
@@ -174,7 +174,7 @@ void LaunchDetailsPage::exportLog()
     QString defaultName = QString("BlockBox_launch_log_%1.txt")
         .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
     
-    QString filePath = AppFileDialog::getSaveFileName(
+    QString filePath = QFileDialog::getSaveFileName(
         this,
         tr("导出启动日志"),
         defaultName,

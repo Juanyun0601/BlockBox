@@ -15,9 +15,11 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPlainTextEdit>
 #include <QPointer>
 #include <QRadialGradient>
 #include <QResizeEvent>
+#include <QTextCursor>
 #include <QVBoxLayout>
 
 #include "utils/ForumAccountService.h"
@@ -55,6 +57,17 @@ QString relativeTime(qint64 seconds)
     if (diff < 86400 * 7)
         return QObject::tr("%1 天前").arg(diff / 86400);
     return QDateTime::fromSecsSinceEpoch(seconds).toString(QStringLiteral("yyyy-MM-dd"));
+}
+
+QString humanFileSize(qint64 bytes)
+{
+    if (bytes <= 0)
+        return QObject::tr("0 B");
+    if (bytes < 1024)
+        return QObject::tr("%1 B").arg(bytes);
+    if (bytes < 1024 * 1024)
+        return QStringLiteral("%1 KB").arg(qMax(1.0, bytes / 1024.0), 0, 'f', 0);
+    return QStringLiteral("%1 MB").arg(bytes / 1024.0 / 1024.0, 0, 'f', 1);
 }
 
 void clearLayout(QLayout *layout)
@@ -391,6 +404,172 @@ void ForumPager::emitPage(int page)
     if (clamped == m_current)
         return;
     emit pageRequested(clamped);
+}
+
+// ────────────────────────────────────────────────────────────── 预设模板
+
+QVector<MarkdownPreset> postPresets()
+{
+    return {
+        {QObject::tr("求助"),
+         QObject::tr("## 现象\n"
+                     "简单说清发生了什么，什么时候开始的\n"
+                     "\n"
+                     "## 复现步骤\n"
+                     "1. \n"
+                     "2. \n"
+                     "\n"
+                     "## 环境\n"
+                     "- 启动器版本：\n"
+                     "- 游戏版本 / 加载器：\n"
+                     "- 报错截图或日志：\n")},
+        {QObject::tr("教程"),
+         QObject::tr("## 准备\n"
+                     "动手前需要准备的东西\n"
+                     "\n"
+                     "## 步骤\n"
+                     "1. \n"
+                     "2. \n"
+                     "\n"
+                     "## 常见问题\n"
+                     "- \n")},
+        {QObject::tr("作品分享"),
+         QObject::tr("## 简介\n"
+                     "一句话介绍你的作品\n"
+                     "\n"
+                     "## 特色\n"
+                     "- \n"
+                     "\n"
+                     "## 截图\n"
+                     "![](图片链接)\n"
+                     "\n"
+                     "## 下载\n"
+                     "- \n")},
+        {QObject::tr("插件介绍"),
+         QObject::tr("## 功能\n"
+                     "这个插件能做什么\n"
+                     "\n"
+                     "## 用法\n"
+                     "- 安装后在左侧导航的「插件」里就能打开\n"
+                     "\n"
+                     "## 配置\n"
+                     "- \n"
+                     "\n"
+                     "## 更新记录\n"
+                     "- \n")},
+        {QObject::tr("意见建议"),
+         QObject::tr("## 想反馈的问题\n"
+                     "简单描述一下你遇到的情况\n"
+                     "\n"
+                     "## 期望的做法\n"
+                     "- \n"
+                     "\n"
+                     "## 补充说明\n"
+                     "- \n")},
+    };
+}
+
+QVector<MarkdownPreset> lobbyIntroPresets()
+{
+    return {
+        {QObject::tr("生存服"),
+         QObject::tr("## 玩法\n"
+                     "- 模式：生存\n"
+                     "- 难度：\n"
+                     "- 版本：\n"
+                     "\n"
+                     "## 规则\n"
+                     "- 禁止作弊、刷物品\n"
+                     "\n"
+                     "## 加入方式\n"
+                     "点「一键加入」即可，需要的整合包会自动下载安装。\n")},
+        {QObject::tr("建筑服"),
+         QObject::tr("## 玩法\n"
+                     "- 模式：创造\n"
+                     "- 版本：\n"
+                     "\n"
+                     "## 规则\n"
+                     "- 各自认领地皮，别拆别人的建筑\n"
+                     "\n"
+                     "## 加入方式\n"
+                     "点「一键加入」即可。\n")},
+        {QObject::tr("小游戏"),
+         QObject::tr("## 玩法\n"
+                     "- 小游戏：\n"
+                     "- 人数：\n"
+                     "- 版本：\n"
+                     "\n"
+                     "## 规则\n"
+                     "- 听房主口令开局\n"
+                     "\n"
+                     "## 加入方式\n"
+                     "点「一键加入」，人齐就开始。\n")},
+        {QObject::tr("联机须知"),
+         QObject::tr("## 前置要求\n"
+                     "- 需要安装的整合包已填在上面的「前置整合包」里，加入时会提示\n"
+                     "\n"
+                     "## 注意事项\n"
+                     "- 进服先看公告和群号\n")},
+    };
+}
+
+void applyMarkdownPreset(QPlainTextEdit *edit, const QString &text)
+{
+    if (!edit || text.isEmpty())
+        return;
+
+    const QString body = edit->toPlainText();
+    const bool empty = body.trimmed().isEmpty();
+
+    // 选区先删掉再插，光标停在原选区开头
+    QTextCursor cursor = edit->textCursor();
+    int insertPos = 0;
+    QString prefix;
+    if (empty)
+    {
+        edit->selectAll();
+        cursor = edit->textCursor();
+    }
+    else
+    {
+        insertPos = cursor.selectionStart();
+        // 接在正文后面时另起一段，别和上一段黏在一起
+        if (insertPos > 0)
+            prefix = QStringLiteral("\n\n");
+    }
+
+    cursor.beginEditBlock();
+    cursor.insertText(prefix + text);
+    cursor.endEditBlock();
+
+    const int blockStart = insertPos + prefix.size();
+    const QString plain = edit->toPlainText();
+
+    // 选中标题下面那行提示文字，用户直接打字就能替换
+    int lineStart = plain.indexOf(QLatin1Char('\n'), blockStart);
+    if (lineStart >= 0)
+    {
+        ++lineStart;
+        int lineEnd = plain.indexOf(QLatin1Char('\n'), lineStart);
+        if (lineEnd < 0)
+            lineEnd = plain.size();
+        if (lineEnd > lineStart)
+        {
+            QTextCursor select = edit->textCursor();
+            select.setPosition(lineStart);
+            select.setPosition(lineEnd, QTextCursor::KeepAnchor);
+            edit->setTextCursor(select);
+            edit->ensureCursorVisible();
+            edit->setFocus();
+            return;
+        }
+    }
+
+    QTextCursor tail = edit->textCursor();
+    tail.setPosition(qMin(plain.size(), blockStart + text.size()));
+    edit->setTextCursor(tail);
+    edit->ensureCursorVisible();
+    edit->setFocus();
 }
 
 } // namespace ForumKit

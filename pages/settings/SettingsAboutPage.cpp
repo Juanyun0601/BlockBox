@@ -211,7 +211,7 @@ void SettingsPage::initAboutSettings()
     // 意见反馈：跳到软件内反馈页（登录论坛账号后提交，后台统一处理）
     QHBoxLayout *feedbackRow = appendSettingRow(linkCard,
         tr("意见反馈"),
-        tr("提交软件问题与建议，处理进度会在反馈页里显示。"));
+        tr("提交软件问题与建议，处理进度会在反馈页的反馈列表里显示。"));
     QPushButton *feedbackBtn = new QPushButton(tr("去反馈"), m_aboutSettings);
     feedbackBtn->setObjectName("primaryButton");
     feedbackBtn->setCursor(Qt::PointingHandCursor);
@@ -307,6 +307,10 @@ void SettingsPage::initAboutSettings()
         "GPL-3.0", "https://github.com/PrismLauncher/PrismLauncher");
     addOpenSourceRow("ProjBobcat", tr(".NET 启动器核心库，参考账户登录与资源下载流程设计。"),
         "MIT", "https://github.com/Corona-Studio/ProjBobcat");
+    addOpenSourceRow("PojavLauncher", tr("安卓端 Java 版启动器，安卓实例存储位置（应用私有数据目录、外部存储不可用时退回内部目录）与移动端 Java 运行方案参考。"),
+        "GPL-3.0", "https://github.com/PojavLauncherTeam/PojavLauncher");
+    addOpenSourceRow("FCL（Fold Craft Launcher）", tr("安卓端 Java 版启动器，参考移动端游戏数据目录布局与触屏实例管理方式。"),
+        "GPL-3.0", "https://github.com/FCL-Team/FoldCraftLauncher");
 
     // 联机服务
     appendSettingRow(opensourceCard, tr("联机服务"), QString(), QString(), true);
@@ -361,7 +365,7 @@ void SettingsPage::initAboutSettings()
 
     addOpenSourceRow("CurseForge / Modrinth", tr("Mod 搜索与下载 API。"),
         tr("API 服务"), "https://modrinth.com/");
-    addOpenSourceRow("BMCLAPI", tr("国内镜像加速源，用于 Forge / Fabric / OptiFine 等资源下载。"),
+    addOpenSourceRow("BMCLAPI", tr("国内镜像加速源，原版游戏文件与 Forge / Fabric / OptiFine 等资源下载的双源回退参考。"),
         "Beerware", "https://github.com/bangbang93/BMCL");
     addOpenSourceRow("Cleanroom", tr("1.7.10 版 Forge 延续分支，支持其安装与版本获取。"),
         tr("源码可见许可"), "https://github.com/CleanroomMC/Cleanroom");

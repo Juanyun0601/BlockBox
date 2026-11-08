@@ -19,6 +19,7 @@
 #include <algorithm>
 
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 
 CompatibilityCheckDialog::CompatibilityCheckDialog(QWidget *parent)
     : AppDialogBase(parent)
@@ -65,7 +66,7 @@ void CompatibilityCheckDialog::initUI()
 {
     QWidget *card = new QWidget(this);
     card->setObjectName(QStringLiteral("compatCheckCard"));
-    card->setMinimumSize(620, 520);
+    card->setMinimumSize(UiMetrics::fitToScreen(this, QSize(620, 520)));
     card->setMaximumSize(720, 640);
 
     QVBoxLayout *cardLayout = new QVBoxLayout(card);

@@ -18,8 +18,7 @@
 #include <QTextEdit>
 #include <QUrl>
 #include <QVBoxLayout>
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/AppMessageBox.h"
 #include "utils/ThemeManager.h"
 #include "utils/plugin/PluginManager.h"
@@ -313,7 +312,7 @@ void CreatePluginDialog::validateIdFromName(const QString &name)
 
 void CreatePluginDialog::onBrowseDir()
 {
-    const QString dir = AppFileDialog::getExistingDirectory(
+    const QString dir = QFileDialog::getExistingDirectory(
         this, tr("选择模板保存位置"), m_dirEdit->text());
     if (!dir.isEmpty())
         m_dirEdit->setText(dir);

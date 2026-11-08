@@ -22,6 +22,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <QVersionNumber>
@@ -49,12 +50,17 @@ QString downloadApiPath()
     QString platform;
 #if defined(Q_OS_MACOS)
     platform = QStringLiteral("darwin");
+#elif defined(Q_OS_ANDROID)
+    // 红石联机服务端按平台分发核心，安卓有独立入口；拿不到时由调用方提示
+    platform = QStringLiteral("android");
 #else
     platform = QStringLiteral("linux");
 #endif
     QString arch;
 #if defined(Q_PROCESSOR_ARM_64)
     arch = QStringLiteral("arm64");
+#elif defined(Q_PROCESSOR_ARM)
+    arch = QStringLiteral("arm");
 #else
     arch = QStringLiteral("amd64");
 #endif
@@ -123,8 +129,14 @@ HongshiClient::~HongshiClient()
 
 QString HongshiClient::hongshiRootDir() const
 {
+#ifdef Q_OS_ANDROID
+    // 安卓上应用安装目录只读，核心放到应用私有数据目录
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+           + QStringLiteral("/hongshi");
+#else
     // 与陶瓦联机一致，存放在 BlockBox 可执行文件所在目录下的 hongshi 子目录
     return QCoreApplication::applicationDirPath() + QStringLiteral("/hongshi");
+#endif
 }
 
 QString HongshiClient::hongshiExecutablePath() const
@@ -329,7 +341,11 @@ void HongshiClient::startDownload()
     auto tryBase = std::make_shared<std::function<void(int)>>();
     *tryBase = [this, tryBase](int index) {
         if (index >= 2) {
+#ifdef Q_OS_ANDROID
+            downloadFailed(tr("获取下载地址失败：红石联机可能尚未提供安卓版核心，请检查网络后重试"), QString());
+#else
             downloadFailed(tr("获取下载地址失败，请检查网络后重试"), QString());
+#endif
             return;
         }
         const QString base = (index == 0) ? kPrimaryBase : kMirrorBase;
@@ -380,7 +396,12 @@ void HongshiClient::startDownloadFile(const QString &url)
         taskId, DownloadTaskStatus::Downloading, tr("下载中"));
     DownloadTaskManager::instance()->updateTaskStep(taskId, tr("下载联机核心"));
 
+    // 临时下载文件：Windows 沿用 hongshi.exe.download，其余平台核心无 .exe 后缀
+#ifdef Q_OS_WIN
     QString tmpPath = rootDir + QStringLiteral("/hongshi.exe.download");
+#else
+    QString tmpPath = rootDir + QStringLiteral("/hongshi.download");
+#endif
 
     QNetworkRequest req((QUrl(url)));
     req.setRawHeader("User-Agent", "BlockBox");

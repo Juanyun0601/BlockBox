@@ -9,8 +9,10 @@
 #include "utils/mod/ModrinthAPI.h"
 #include "components/AutoHeightTextBrowser.h"
 #include "components/NotificationManager.h"
+#include "components/ShareToFriendDialog.h"
 #include "components/ScreenshotViewer.h"
 #include "components/SourceSwitchBar.h"
+#include "utils/ForumAccountService.h"
 #include <QDesktopServices>
 #include <QEvent>
 #include <QGraphicsDropShadowEffect>
@@ -1324,6 +1326,7 @@ void ContentDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
         {tr("Modrinth"), QString(), false},
         {tr("必应搜索"), QString("https://www.bing.com/search?q=%1").arg(m_modInfo.name), true},
         {tr("百度搜索"), QString("https://www.baidu.com/s?wd=%1").arg(m_modInfo.name), true},
+        {tr("分享给好友"), QString("shareFriend"), ForumAccountService::instance()->isLoggedIn()},
         {tr("问问AI"), QString(), true}
     };
 
@@ -1367,6 +1370,20 @@ void ContentDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
                 if (!info.source.isEmpty())
                     ref.extra = tr("来源: %1").arg(info.source);
                 emit askAiRequested(ref);
+            });
+        } else if (link.label == tr("分享给好友")) {
+            connect(btn, &QPushButton::clicked, this, [this]() {
+                QString category;
+                switch (m_contentType) {
+                case ContentType::Mod: category = tr("网络模组"); break;
+                case ContentType::ResourcePack: category = tr("网络资源包"); break;
+                case ContentType::ShaderPack: category = tr("网络光影包"); break;
+                case ContentType::DataPack: category = tr("网络数据包"); break;
+                case ContentType::World: category = tr("网络存档"); break;
+                case ContentType::Modpack: category = tr("网络整合包"); break;
+                default: category = tr("网络资源"); break;
+                }
+                ShareToFriendDialog::share(this, m_modInfo.name, m_modInfo.pageUrl, category);
             });
         } else if (!link.url.isEmpty()) {
             connect(btn, &QPushButton::clicked, this, [link]() {

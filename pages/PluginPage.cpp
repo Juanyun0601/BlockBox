@@ -13,7 +13,7 @@
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFile>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "../utils/Safety.h"
 #include <QFileInfo>
 #include <QFormLayout>
@@ -483,7 +483,7 @@ void PluginPage::initUI()
         if (m_currentDetailIndex < 0 || m_currentDetailIndex >= m_plugins.size())
             return;
         const PluginInfo info = m_plugins[m_currentDetailIndex];
-        const QString dir = AppFileDialog::getExistingDirectory(this, tr("导出插件到"));
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("导出插件到"));
         if (dir.isEmpty())
             return;
         QString outPath, error;
@@ -498,7 +498,7 @@ void PluginPage::initUI()
         if (m_currentDetailIndex < 0 || m_currentDetailIndex >= m_plugins.size())
             return;
         const PluginInfo info = m_plugins[m_currentDetailIndex];
-        const QString dir = AppFileDialog::getExistingDirectory(this, tr("解包插件源码到"));
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("解包插件源码到"));
         if (dir.isEmpty())
             return;
         const QString dest = QDir::cleanPath(dir) + QStringLiteral("/")
@@ -741,7 +741,7 @@ void PluginPage::rebuildCards()
         connect(exportBtn, &QPushButton::clicked, this, [this, i]() {
             if (i < 0 || i >= m_plugins.size())
                 return;
-            const QString dir = AppFileDialog::getExistingDirectory(this, tr("导出插件到"));
+            const QString dir = QFileDialog::getExistingDirectory(this, tr("导出插件到"));
             if (dir.isEmpty())
                 return;
             QString outPath, error;
@@ -1062,7 +1062,7 @@ QWidget *PluginPage::createUiFieldWidget(const PluginUiField &field)
         row->addWidget(edit, 1);
         row->addWidget(browse);
         connect(browse, &QPushButton::clicked, this, [this, edit]() {
-            const QString path = AppFileDialog::getSaveFileName(this, tr("选择保存路径"));
+            const QString path = QFileDialog::getSaveFileName(this, tr("选择保存路径"));
             if (!path.isEmpty())
                 edit->setText(path);
         });
@@ -1901,7 +1901,7 @@ void PluginPage::openProjectionInEditor(const PluginInfo &info)
         const QFileInfo def(defaultProj);
         const QString startDir = def.isDir() ? defaultProj
                                 : (def.exists() ? def.absolutePath() : QString());
-        file = AppFileDialog::getOpenFileName(this, tr("选择投影以编辑方块"),
+        file = QFileDialog::getOpenFileName(this, tr("选择投影以编辑方块"),
                                               startDir,
                                               tr("投影文件 (*.litematic *.nbt *.schematic *.schem);;Litematica (*.litematic);;全部文件 (*)"));
         if (file.isEmpty())
@@ -1919,7 +1919,7 @@ void PluginPage::openProjectionInEditor(const PluginInfo &info)
     QString instancePath = pm->pluginSetting(info, QStringLiteral("sourceInstance")).trimmed();
     if (!QDir(instancePath).exists())
     {
-        const QString picked = AppFileDialog::getExistingDirectory(
+        const QString picked = QFileDialog::getExistingDirectory(
             this, tr("选择游戏实例（用于加载方块材质，可取消）"),
             instancePath);
         if (!picked.isEmpty())

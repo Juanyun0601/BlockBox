@@ -118,7 +118,12 @@ public:
     /// 下载进度（0.0~1.0，-1 表示无下载任务）
     qreal downloadProgress() const { return m_downloadProgress; }
     /// 是否已启动 Terracotta 进程
+#ifdef Q_OS_ANDROID
+    /// 安卓端核心以内置 so 形式随应用运行，等价于「已初始化」
+    bool isProcessRunning() const { return m_androidReady; }
+#else
     bool isProcessRunning() const { return m_process != nullptr && m_process->state() != QProcess::NotRunning; }
+#endif
     /// 是否处于联机房间中（HostOk / GuestOk / 各种过渡状态）
     bool isInRoom() const;
 
@@ -213,6 +218,15 @@ private:
     // ---- 状态切换 ----
     void setState(State newState);
     void setErrorMessage(const QString &msg);
+
+#ifdef Q_OS_ANDROID
+    // ---- Android：内置核心走 JNI（TerracottaBridge），无进程/端口文件 ----
+    void onAndroidInitFinished(bool ok);      ///< init 完成回调（回主线程）
+    bool androidEnsureVpnAuthorized();        ///< VPN 授权预检（未授权时弹系统页并返回 false）
+    bool m_androidReady = false;              ///< JNI 初始化完成
+    bool m_androidInitializing = false;       ///< 正在初始化
+    bool m_androidPollInFlight = false;       ///< getState 后台调用在途
+#endif
 
     // ---- 下载安装 ----
     void loadBuiltinVersionInfo();           ///< 从内置资源读取版本配置（无需网络）

@@ -10,6 +10,7 @@
 #include "utils/FileExplorer.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -104,7 +105,7 @@ void WorldBackupDialog::initUI()
     // 居中卡片（全局 QSS 提供卡片外观，行条目使用本弹窗的内联样式）
     QWidget *card = new QWidget(this);
     card->setObjectName(QStringLiteral("appDialogCard"));
-    card->setFixedSize(680, 660);
+    card->setFixedSize(UiMetrics::fitToScreen(this, QSize(680, 660)));
 
     QVBoxLayout *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(24, 20, 24, 20);

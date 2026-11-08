@@ -1,6 +1,7 @@
 /**
  * @file   UpdateChecker.h
- * @brief  启动器更新检查器：从 GitHub Releases 获取最新版本并比较，支持应用内下载安装
+ * @brief  启动器更新检查器：优先从方块盒子官网源获取最新版本（国内友好），
+ *         失败时回退 GitHub Releases，支持应用内下载安装
  * @author BlockBox Team
  * @date   2026-10-05
  *
@@ -174,6 +175,8 @@ private:
     bool m_silent = true;
     bool m_checking = false;
     int m_attempt = 0;
+    // 本次检查更新实际使用的接口地址（官网源或 GitHub），用于补全相对下载地址
+    QUrl m_activeApiUrl;
 
     ReleaseCandidate m_lastCandidate;
 

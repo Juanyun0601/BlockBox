@@ -35,7 +35,9 @@
 #include "../layouts/FlowLayout.h"
 #include "../layouts/MasonryLayout.h"
 #include "../components/NotificationManager.h"
+#include "../components/ShareToFriendDialog.h"
 #include "../utils/McimHelper.h"
+#include "utils/ForumAccountService.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 
@@ -660,6 +662,11 @@ void FavoritesPage::onCardContextMenu(const QPoint &pos)
 
     QAction *detailAction = menu.addAction(tr("查看详情"));
     menu.addSeparator();
+    QAction *shareAction = nullptr;
+    if (ForumAccountService::instance()->isLoggedIn() && !item.pageUrl.isEmpty())
+    {
+        shareAction = menu.addAction(tr("分享给好友"));
+    }
     QAction *copyNameAction = menu.addAction(tr("复制名称"));
     QAction *copyLinkAction = nullptr;
     if (!item.pageUrl.isEmpty())
@@ -683,6 +690,22 @@ void FavoritesPage::onCardContextMenu(const QPoint &pos)
     if (chosen == detailAction)
     {
         emit favoriteClicked(item);
+    }
+    else if (chosen == shareAction)
+    {
+        // 收藏项存的 contentType 是枚举值，转成「模组/资源包...」给人看
+        QString typeName = tr("资源");
+        switch (static_cast<ContentType>(item.contentType))
+        {
+        case ContentType::Mod: typeName = tr("模组"); break;
+        case ContentType::DataPack: typeName = tr("数据包"); break;
+        case ContentType::ResourcePack: typeName = tr("资源包"); break;
+        case ContentType::ShaderPack: typeName = tr("光影包"); break;
+        case ContentType::World: typeName = tr("世界"); break;
+        case ContentType::Modpack: typeName = tr("整合包"); break;
+        default: break;
+        }
+        ShareToFriendDialog::share(this, item.displayName(), item.pageUrl, typeName);
     }
     else if (chosen == copyNameAction)
     {

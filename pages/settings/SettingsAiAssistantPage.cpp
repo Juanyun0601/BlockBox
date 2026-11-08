@@ -27,11 +27,12 @@
 #include <QVBoxLayout>
 
 #include "components/AiModelFetchRow.h"
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/CustomCheckBox.h"
 #include "components/OutlinedLabel.h"
 #include "utils/AiProviderPresets.h"
 #include "utils/SettingsManager.h"
+#include "utils/UiMetrics.h"
 
 void SettingsPage::initAiAssistantSettings()
 {
@@ -164,7 +165,7 @@ void SettingsPage::initAiAssistantSettings()
         if (providerKey == QStringLiteral("__custom__")) {
             QDialog dlg(this);
             dlg.setWindowTitle(tr("自定义服务商"));
-            dlg.setMinimumSize(520, 420);
+            dlg.setMinimumSize(UiMetrics::fitToScreen(&dlg, QSize(520, 420)));
 
             QVBoxLayout *dlgLayout = new QVBoxLayout(&dlg);
             dlgLayout->setContentsMargins(16, 16, 16, 16);
@@ -418,7 +419,7 @@ void SettingsPage::initAiAssistantSettings()
 
             // 导入
             connect(importBtn, &QPushButton::clicked, &dlg, [&, modelList, loadModels, item]() {
-                QString filePath = AppFileDialog::getOpenFileName(&dlg, tr("导入模型配置"), QString(),
+                QString filePath = QFileDialog::getOpenFileName(&dlg, tr("导入模型配置"), QString(),
                     tr("JSON 文件 (*.json);;所有文件 (*)"));
                 if (filePath.isEmpty()) return;
 
@@ -467,7 +468,7 @@ void SettingsPage::initAiAssistantSettings()
                 QSettings s(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
                 QString json = s.value("ai/customModels", "").toString();
                 if (json.isEmpty()) return;
-                QString filePath = AppFileDialog::getSaveFileName(&dlg, tr("导出模型配置"), QString(),
+                QString filePath = QFileDialog::getSaveFileName(&dlg, tr("导出模型配置"), QString(),
                     tr("JSON 文件 (*.json)"));
                 if (filePath.isEmpty()) return;
                 QFile file(filePath);
@@ -488,7 +489,7 @@ void SettingsPage::initAiAssistantSettings()
 
         QDialog dialog(this);
         dialog.setWindowTitle(tr("配置 %1").arg(providerName));
-        dialog.setMinimumSize(520, 460);
+        dialog.setMinimumSize(UiMetrics::fitToScreen(&dialog, QSize(520, 460)));
 
         QVBoxLayout *dlgMainLayout = new QVBoxLayout(&dialog);
         dlgMainLayout->setContentsMargins(16, 16, 16, 16);
@@ -828,7 +829,7 @@ void SettingsPage::initAiAssistantSettings()
     connect(chatPromptEditBtn, &QPushButton::clicked, this, [this, settings, loadDefaultPrompt, updateChatSummary]() {
         QDialog dlg(this);
         dlg.setWindowTitle(tr("编辑聊天模式系统提示词"));
-        dlg.setMinimumSize(600, 450);
+        dlg.setMinimumSize(UiMetrics::fitToScreen(&dlg, QSize(600, 450)));
 
         QVBoxLayout *dlgLayout = new QVBoxLayout(&dlg);
         dlgLayout->setContentsMargins(16, 16, 16, 16);
@@ -917,7 +918,7 @@ void SettingsPage::initAiAssistantSettings()
     connect(workPromptEditBtn, &QPushButton::clicked, this, [this, settings, loadDefaultPrompt, updateWorkSummary]() {
         QDialog dlg(this);
         dlg.setWindowTitle(tr("编辑工作模式系统提示词"));
-        dlg.setMinimumSize(600, 450);
+        dlg.setMinimumSize(UiMetrics::fitToScreen(&dlg, QSize(600, 450)));
 
         QVBoxLayout *dlgLayout = new QVBoxLayout(&dlg);
         dlgLayout->setContentsMargins(16, 16, 16, 16);
@@ -1055,7 +1056,7 @@ void SettingsPage::initAiAssistantSettings()
     connect(addPromptBtn, &QPushButton::clicked, this, [this, settings, promptLibList, loadPromptLibrary]() {
         QDialog dlg(this);
         dlg.setWindowTitle(tr("添加系统提示词"));
-        dlg.setMinimumSize(520, 400);
+        dlg.setMinimumSize(UiMetrics::fitToScreen(&dlg, QSize(520, 400)));
         QVBoxLayout *dlgLayout = new QVBoxLayout(&dlg);
         dlgLayout->setContentsMargins(16, 16, 16, 16);
         dlgLayout->setSpacing(12);
@@ -1118,7 +1119,7 @@ void SettingsPage::initAiAssistantSettings()
 
         QDialog dlg(this);
         dlg.setWindowTitle(tr("编辑系统提示词"));
-        dlg.setMinimumSize(520, 400);
+        dlg.setMinimumSize(UiMetrics::fitToScreen(&dlg, QSize(520, 400)));
         QVBoxLayout *dlgLayout = new QVBoxLayout(&dlg);
         dlgLayout->setContentsMargins(16, 16, 16, 16);
         dlgLayout->setSpacing(12);

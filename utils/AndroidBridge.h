@@ -20,9 +20,34 @@ namespace AndroidBridge
 /// 编译期是否为安卓目标（桌面恒为 false）
 bool isAndroidRuntime();
 
+/// 系统栏（顶部状态栏 / 底部导航条）当前状态
+enum class SystemBarsState
+{
+    Unknown, ///< 窗口还没拿到 insets，无法判断
+    Hidden,  ///< 已沉浸：两条系统栏都不显示
+    Visible  ///< 至少有一条系统栏正露在外面
+};
+
 /// 隐藏状态栏等系统栏（沉浸式，顶部时间/电量不再显示）；
-/// 必须在 Qt 主线程（即 Android UI 线程）调用，切回前台后需重新调用
-void applyImmersiveMode();
+/// 必须在 Qt 主线程（即 Android UI 线程）调用。返回是否成功下发。
+bool applyImmersiveMode();
+
+/// 查询系统栏现在是否还露着（用来判断需不需要重新下发隐藏）
+SystemBarsState systemBarsState();
+
+/**
+ * @brief 安装沉浸模式维持器：启动时先隐藏一次，之后在窗口显示/重新获得
+ *        焦点、从后台切回、旋转屏幕时自动补回，并低频自检系统是否又把
+ *        系统栏放了回来。必须在 QApplication 构造之后、Qt 主线程调用。
+ *        桌面端为空实现。
+ */
+void installImmersiveMode();
+
+/**
+ * @brief 安卓 11+：仅检查是否已获得"所有文件访问"权限，不跳转
+ * @return 当前是否已授权。API 30 以下恒返回 true（走 requestLegacyExternalStorage）。
+ */
+bool hasAllFilesAccess();
 
 /**
  * @brief 安卓 11+：检查"所有文件访问"权限（MANAGE_EXTERNAL_STORAGE）

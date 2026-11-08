@@ -8,6 +8,8 @@
 #include "components/FavoriteFolderDialog.h"
 #include "components/MasonryContentCard.h"
 #include "components/NotificationManager.h"
+#include "components/ShareToFriendDialog.h"
+#include "utils/ForumAccountService.h"
 #include "utils/FavoritesManager.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
@@ -22,6 +24,7 @@
 #include <QCursor>
 #include <QDesktopServices>
 #include <QDir>
+#include "utils/PageFilter.h"
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QJsonObject>
@@ -434,6 +437,9 @@ void BedrockContentPage::onSearchCompleted(const ModSearchResult &result)
     m_isLoading = false;
     showLoading(false);
     placeCards();
+    // 子导航搜索词仍然生效时，把过滤重新套到刚加进来的卡片上
+    if (!m_pageFilterQuery.isEmpty())
+        applyPageFilter(m_pageFilterQuery);
     updatePaginationControls();
     m_loadingOverlay->clearError();
 }
@@ -457,6 +463,8 @@ void BedrockContentPage::onFirstPage()
             m_isLoading = false;
             showLoading(false);
             placeCards();
+            if (!m_pageFilterQuery.isEmpty())
+                applyPageFilter(m_pageFilterQuery);
             updatePaginationControls();
             m_loadingOverlay->clearError();
         } else {
@@ -476,6 +484,8 @@ void BedrockContentPage::onPrevPage()
             m_isLoading = false;
             showLoading(false);
             placeCards();
+            if (!m_pageFilterQuery.isEmpty())
+                applyPageFilter(m_pageFilterQuery);
             updatePaginationControls();
             m_loadingOverlay->clearError();
         } else {
@@ -495,6 +505,8 @@ void BedrockContentPage::onNextPage()
             m_isLoading = false;
             showLoading(false);
             placeCards();
+            if (!m_pageFilterQuery.isEmpty())
+                applyPageFilter(m_pageFilterQuery);
             updatePaginationControls();
             m_loadingOverlay->clearError();
         } else {
@@ -517,6 +529,8 @@ void BedrockContentPage::onLastPage()
                 m_isLoading = false;
                 showLoading(false);
                 placeCards();
+                if (!m_pageFilterQuery.isEmpty())
+                    applyPageFilter(m_pageFilterQuery);
                 updatePaginationControls();
                 m_loadingOverlay->clearError();
             } else {
@@ -564,6 +578,8 @@ void BedrockContentPage::addListCard(const ModInfo &info)
         QMenu menu(this);
         QAction *detailAction = menu.addAction(tr("查看详情"));
         menu.addSeparator();
+        QAction *shareAction = ForumAccountService::instance()->isLoggedIn()
+            ? menu.addAction(tr("分享给好友")) : nullptr;
         QAction *copyNameAction = menu.addAction(tr("复制名称"));
         QAction *copyLinkAction = info.pageUrl.isEmpty() ? nullptr
             : menu.addAction(tr("复制链接"));
@@ -573,6 +589,13 @@ void BedrockContentPage::addListCard(const ModInfo &info)
         QAction *chosen = menu.exec(card->mapToGlobal(pos));
         if (chosen == detailAction)
             emit contentDetailRequested(info, m_currentCategory);
+        else if (chosen == shareAction)
+        {
+            QString sourceLabel = (info.source == QStringLiteral("modrinth"))
+                                      ? tr("Modrinth 资源")
+                                      : tr("CurseForge 资源");
+            ShareToFriendDialog::share(this, info.name, info.pageUrl, sourceLabel);
+        }
         else if (chosen == copyNameAction)
             QApplication::clipboard()->setText(info.name);
         else if (chosen == copyLinkAction)
@@ -666,6 +689,18 @@ QList<MasonryContentCard::ActionSpec> BedrockContentPage::buildMasonryActions(co
     QList<MasonryContentCard::ActionSpec> actions;
     actions.append({ QStringLiteral(":/Images/Icons/star.svg"), tr("收藏"), QColor("#888888"),
                      [this, info]() { showFavoriteMenu(info, nullptr); } });
+    actions.append({ QStringLiteral(":/Images/Icons/share.svg"), tr("分享给好友"), QColor(),
+                     [this, info]() {
+        if (!ForumAccountService::instance()->isLoggedIn())
+        {
+            NotificationManager::showInfo(this, tr("分享给好友需要先登录论坛账号"));
+            return;
+        }
+        QString sourceLabel = (info.source == QStringLiteral("modrinth"))
+                                  ? tr("Modrinth 资源")
+                                  : tr("CurseForge 资源");
+        ShareToFriendDialog::share(this, info.name, info.pageUrl, sourceLabel);
+    } });
     actions.append({ QStringLiteral(":/Images/Icons/download.svg"), tr("查看详情"), QColor(),
                      [this, info]() { emit contentDetailRequested(info, m_currentCategory); } });
     return actions;
@@ -683,6 +718,8 @@ void BedrockContentPage::addMasonryCard(const ModInfo &info)
         QMenu menu(this);
         QAction *detailAction = menu.addAction(tr("查看详情"));
         menu.addSeparator();
+        QAction *shareAction = ForumAccountService::instance()->isLoggedIn()
+            ? menu.addAction(tr("分享给好友")) : nullptr;
         QAction *copyNameAction = menu.addAction(tr("复制名称"));
         QAction *copyLinkAction = info.pageUrl.isEmpty() ? nullptr
             : menu.addAction(tr("复制链接"));
@@ -692,6 +729,13 @@ void BedrockContentPage::addMasonryCard(const ModInfo &info)
         QAction *chosen = menu.exec(card->mapToGlobal(pos));
         if (chosen == detailAction)
             emit contentDetailRequested(info, m_currentCategory);
+        else if (chosen == shareAction)
+        {
+            QString sourceLabel = (info.source == QStringLiteral("modrinth"))
+                                      ? tr("Modrinth 资源")
+                                      : tr("CurseForge 资源");
+            ShareToFriendDialog::share(this, info.name, info.pageUrl, sourceLabel);
+        }
         else if (chosen == copyNameAction)
             QApplication::clipboard()->setText(info.name);
         else if (chosen == copyLinkAction)
@@ -723,6 +767,9 @@ void BedrockContentPage::rebuildCards()
     for (const ModInfo &info : infos)
         addCard(info);
     placeCards();
+    // 视图切换重建卡片后恢复子导航搜索过滤
+    if (!m_pageFilterQuery.isEmpty())
+        applyPageFilter(m_pageFilterQuery);
 }
 
 void BedrockContentPage::showFavoriteMenu(const ModInfo &info, QWidget *anchor)
@@ -924,3 +971,16 @@ void BedrockContentPage::showLoading(bool show)
         m_loadingOverlay->hideOverlay();
     }
 }
+
+void BedrockContentPage::applyPageFilter(const QString &query)
+{
+    m_pageFilterQuery = query;
+    if (m_pageFilterQuery.isEmpty()) {
+        m_pageFilter.clear();
+        return;
+    }
+    // 按卡片可见文本（名称/作者/标签等）匹配，不依赖卡片与数据的下标平行
+    for (QWidget *card : std::as_const(m_cardWidgets))
+        m_pageFilter.setShow(card, PageFilter::matches(PageFilter::collectText(card), m_pageFilterQuery));
+}
+

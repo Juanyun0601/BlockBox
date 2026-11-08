@@ -77,6 +77,7 @@ components/CustomCheckBox.cpp \
      components/CollapsibleSectionCard.cpp \
      components/InstanceFolderTree.cpp \
     components/LanTransferDialog.cpp \
+    components/ShareToFriendDialog.cpp \
      components/DownloadTaskCard.cpp \
      components/TaskProgressWidgets.cpp \
 components/ProgressWidget.cpp \
@@ -87,13 +88,16 @@ components/ProgressDialog.cpp \
       components/BlurLoadingOverlay.cpp \
      components/AppMessageBox.cpp \
      components/AppDialogBase.cpp \
+     components/LobbyPublishDialog.cpp \
      components/WorldConvertDialog.cpp \
      components/HighRiskConfirmDialog.cpp \
      components/QuizDialog.cpp \
      components/QuizReminder.cpp \
+     components/HumanCheckDialog.cpp \
      components/AppInputDialog.cpp \
+     components/AiComposeDialog.cpp \
      components/AppColorDialog.cpp \
-     components/AppFileDialog.cpp \
+     components/OnlineResourceDialog.cpp \
       components/ScreenshotViewer.cpp \
       components/NotificationCard.cpp \
      components/NotificationManager.cpp \
@@ -132,6 +136,7 @@ components/ProgressDialog.cpp \
     components/WorldMap3DView.cpp \
 components/ProjectionBlockEditorDialog.cpp \
      components/HomeDataVisuals.cpp \
+     components/HomeFriendsPanel.cpp \
      components/FileDropOverlay.cpp \
      components/InstanceSelectDialog.cpp \
      pages/ShaderPackSettingsPage.cpp \
@@ -377,13 +382,24 @@ utils/WorldMap/MineshaftModel.cpp \
     pages/ForumComposerPage.cpp \
     pages/ForumUserProfilePage.cpp \
     pages/ForumFriendsPage.cpp \
+    pages/ForumPluginListPage.cpp \
+    pages/MultiplayerLobbyPage.cpp \
     pages/FeedbackPage.cpp \
+    pages/FeedbackComposePage.cpp \
+    pages/ForumReportPage.cpp \
     utils/ForumContentService.cpp \
+    utils/ForumLobbyService.cpp \
+    utils/Lobby/LobbyInstanceMatcher.cpp \
     utils/ForumChatService.cpp \
     utils/FeedbackService.cpp \
     utils/ForumImageStore.cpp \
     components/ForumKit.cpp \
-    components/ForumPostBrowser.cpp
+    components/ForumPostBrowser.cpp \
+    components/PublishKit.cpp \
+    pages/PublishPage.cpp \
+    pages/PublishResourcePage.cpp \
+    pages/PublishPlatformPage.cpp \
+    pages/PublishBoardPage.cpp
 
 HEADERS += \
     platform.h \
@@ -400,6 +416,7 @@ components/CustomCheckBox.h \
      components/CollapsibleSectionCard.h \
      components/InstanceFolderTree.h \
     components/LanTransferDialog.h \
+    components/ShareToFriendDialog.h \
      components/DownloadTaskCard.h \
      components/TaskProgressWidgets.h \
 components/ProgressWidget.h \
@@ -410,13 +427,16 @@ components/ProgressDialog.h \
        components/BlurLoadingOverlay.h \
        components/AppMessageBox.h \
        components/AppDialogBase.h \
+       components/LobbyPublishDialog.h \
        components/WorldConvertDialog.h \
        components/HighRiskConfirmDialog.h \
        components/QuizDialog.h \
        components/QuizReminder.h \
+       components/HumanCheckDialog.h \
        components/AppInputDialog.h \
+       components/AiComposeDialog.h \
        components/AppColorDialog.h \
-       components/AppFileDialog.h \
+       components/OnlineResourceDialog.h \
       components/ScreenshotViewer.h \
        components/NotificationCard.h \
      components/NotificationManager.h \
@@ -429,6 +449,7 @@ components/ProgressDialog.h \
        components/BedrockInstanceAssistantWindow.h \
        components/NewsCard.h \
      components/HomeAnnouncementBar.h \
+     components/HomeFriendsPanel.h \
      components/NewsDetailDialog.h \
       components/PerfMonitorCard.h \
       components/PerformanceDetailDialog.h \
@@ -702,14 +723,26 @@ utils/WorldMap/MineshaftModel.h \
     pages/ForumComposerPage.h \
     pages/ForumUserProfilePage.h \
     pages/ForumFriendsPage.h \
+    pages/ForumPluginListPage.h \
+    pages/MultiplayerLobbyPage.h \
     pages/FeedbackPage.h \
+    pages/FeedbackComposePage.h \
+    pages/ForumReportPage.h \
     utils/ForumContentService.h \
+    utils/ForumLobbyService.h \
+    utils/Lobby/LobbyInstanceMatcher.h \
     utils/ForumChatService.h \
     utils/FeedbackService.h \
     utils/ForumImageStore.h \
     components/ForumKit.h \
     components/ForumPostBrowser.h \
-    components/AiModelFetchRow.h
+    components/PublishKit.h \
+    pages/PublishPage.h \
+    pages/PublishResourcePage.h \
+    pages/PublishPlatformPage.h \
+    pages/PublishBoardPage.h \
+    components/AiModelFetchRow.h \
+    utils/TouchScroll.h
 
 FORMS += \
     mainwindow.ui
@@ -822,6 +855,55 @@ android: {
 
     # Android-specific libraries
     LIBS += -llog -landroid
+
+    # ── 陶瓦联机（Terracotta）安卓内置核心 ──
+    # 打包前先运行 软件发布/packaging/fetch_terracotta_android.ps1 下载各 ABI 的
+    # libterracotta.so；打包脚本按单一 ABI 调 qmake，这里按 ANDROID_ABIS 逐个挂载，
+    # 缺失时跳过（联机页会提示核心未内置），不影响其余功能。
+    TERRACOTTA_SO_DIR = $$PWD/third_party/terracotta
+    for (abi, ANDROID_ABIS) {
+        tc_so = $$TERRACOTTA_SO_DIR/$$abi/libterracotta.so
+        exists($$tc_so) {
+            ANDROID_EXTRA_LIBS += $$tc_so
+        } else {
+            message("Terracotta android core missing for $$abi — run 软件发布/packaging/fetch_terracotta_android.ps1 (联机页将提示核心未内置)")
+        }
+    }
+
+    # ── OpenSSL（安卓端 HTTPS 必需）──
+    # Qt 的 TLS 后端是运行时才 dlopen 的插件（plugins/tls/qopensslbackend），
+    # androiddeployqt 只打包插件本体，不会自动带上 libssl_3.so / libcrypto_3.so。
+    # 缺这两个库时 QSslSocket 起不来，所有 https 请求直接失败——表现为
+    # 「安卓端不能联网」（下载、社区、检查更新全部报错），而电脑版一切正常。
+    # 直接从当前 Qt 安卓套件的 lib 目录取，套件路径随构建的 ABI 自动对应。
+    # 注意：这两个 exists 必须分开写，qmake 的 for 循环不认字面量列表。
+    OPENSSL_SSL_SO = $$[QT_INSTALL_LIBS]/libssl_3.so
+    OPENSSL_CRYPTO_SO = $$[QT_INSTALL_LIBS]/libcrypto_3.so
+    exists($$OPENSSL_SSL_SO) {
+        ANDROID_EXTRA_LIBS += $$OPENSSL_SSL_SO
+    } else {
+        message("OpenSSL for Android missing: $$OPENSSL_SSL_SO — 安卓端将无法访问 https")
+    }
+    exists($$OPENSSL_CRYPTO_SO) {
+        ANDROID_EXTRA_LIBS += $$OPENSSL_CRYPTO_SO
+    } else {
+        message("OpenSSL for Android missing: $$OPENSSL_CRYPTO_SO — 安卓端将无法访问 https")
+    }
+    # ⚠ 上面这对库不能只包 `_3` 后缀的名字：Qt 套件里 libssl_3.so 的内部
+    # 依赖（DT_NEEDED）写的是「libcrypto.so」，而套件里的文件偏偏叫
+    # libcrypto_3.so —— APK 里缺这个名字时，Qt 启动加载 SSL 库会直接
+    # dlopen 失败，应用开屏即闪退（UnsatisfiedLinkError），手机端整个打不开。
+    # 所以必须额外打一份按 SONAME 命名的 libcrypto.so（由一键打包.bat 在
+    # qmake 前从套件复制到 third_party/openssl/<abi>/，目录名与 terracotta
+    # 一致用连字符 ABI 名）。
+    for (abi, ANDROID_ABIS) {
+        OPENSSL_CRYPTO_SONAME_SO = $$PWD/third_party/openssl/$$abi/libcrypto.so
+        exists($$OPENSSL_CRYPTO_SONAME_SO) {
+            ANDROID_EXTRA_LIBS += $$OPENSSL_CRYPTO_SONAME_SO
+        } else {
+            warning("libcrypto.so (SONAME copy) missing: $$OPENSSL_CRYPTO_SONAME_SO — 安卓端启动会闪退！请先跑一键打包.bat 的 OpenSSL 复制步骤")
+        }
+    }
 }
 
 

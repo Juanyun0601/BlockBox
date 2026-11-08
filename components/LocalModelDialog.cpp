@@ -16,6 +16,8 @@
 #include <QScrollArea>
 #include <QShowEvent>
 
+#include "utils/UiMetrics.h"
+
 // ============================================================================
 // 构造与显示
 // ============================================================================
@@ -85,7 +87,7 @@ void LocalModelDialog::initUI()
 
     m_card = new QWidget(this);
     m_card->setObjectName("localModelCard");
-    m_card->setMinimumSize(620, 640);
+    m_card->setMinimumSize(UiMetrics::fitToScreen(this, QSize(620, 640)));
     m_card->setMaximumSize(820, 800);
     outer->addWidget(m_card, 0, Qt::AlignCenter);
 

@@ -399,9 +399,6 @@ void TopBar::updateEditionCard()
     if (m_editionJavaText)     m_editionJavaText->move(0, 0);
     if (m_editionBedrockText)  m_editionBedrockText->move(0, java ? 20 : 0);
     if (m_dotOpacity)          m_dotOpacity->setOpacity(1.0);
-
-    // 基岩版模式隐藏顶栏账户卡片
-    if (m_accountCard) m_accountCard->setVisible(java);
 }
 
 void TopBar::setJavaEdition(bool java)
@@ -411,7 +408,6 @@ void TopBar::setJavaEdition(bool java)
     m_isJavaEdition = java;
     animateEditionSwitch();
     updateGameCardForEdition();
-    if (m_accountCard) m_accountCard->setVisible(java);
 }
 
 void TopBar::toggleEdition()
@@ -1114,8 +1110,7 @@ void TopBar::setAccountAvatar(const QPixmap &pixmap)
 void TopBar::setAccountCardVisible(bool visible)
 {
     if (!m_accountCard) return;
-    // 基岩版模式下始终隐藏账户卡片
-    m_accountCard->setVisible(visible && m_isJavaEdition);
+    m_accountCard->setVisible(visible);
 }
 
 void TopBar::setWindowControlCardVisible(bool visible)

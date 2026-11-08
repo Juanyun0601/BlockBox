@@ -119,6 +119,8 @@ int main(int argc, char *argv[])
     settle(&host, 200);
 
     OnboardingWizard *wiz = new OnboardingWizard(&host);
+    // 新手引导已是主窗口里的独立整页：探针里手动铺满宿主窗口
+    wiz->setGeometry(host.rect());
     wiz->show();
     settle(wiz, 250);
 

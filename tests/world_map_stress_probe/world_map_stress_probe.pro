@@ -46,7 +46,6 @@ HEADERS += ../../pages/WorldMapPage.h \
            ../../utils/Saves/LevelDatEditor.h \
            ../world_map_page_probe/fake/utils/ThemeManager.h \
            ../world_map_page_probe/fake/utils/SettingsManager.h \
-           ../world_map_page_probe/fake/components/AppFileDialog.h
 
 RESOURCES += ../../resources.qrc ../../resources_data.qrc
 LIBS    += -lz

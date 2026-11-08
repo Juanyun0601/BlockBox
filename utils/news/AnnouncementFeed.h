@@ -5,7 +5,8 @@
  * @date   2026-10-25
  *
  * 数据来自官网根目录的 announcement.json
- * （https://blockbox.cc.cd/announcement.json），由官网维护者手动编辑：
+ * （https://mcblockbox.top/announcement.json），可以在论坛管理后台「首页公告」
+ * 一键发布，也可以由官网维护者手动编辑：
  *  - 首页显示时异步拉取，成功后写入本地缓存；
  *  - 下次启动先显示缓存，再按需在后台更新（默认 10 分钟内不重复请求）；
  *  - 断网时保留上一次成功的数据，界面照常展示旧公告；
@@ -15,6 +16,10 @@
  *   { "announcements": [ { "text": "...", "link": "https://..." } ] }
  *   [ { "text": "...", "link": "https://..." } ]
  *   { "announcements": [ "纯文字公告" ] }
+ *
+ * 同一个文件里还可以带一条启动重要公告（根对象的 important 字段）：
+ *   { "important": { "id": "n1", "title": "...", "content": "Markdown 正文", "link": "..." } }
+ * 启动器在启动时弹窗展示它，用户可以勾选「不再弹出这条公告」。
  */
 
 #ifndef ANNOUNCEMENTFEED_H
@@ -37,6 +42,18 @@ struct AnnouncementEntry
   QString date;  ///< 发布日期文字（可选，仅作数据留存）
 };
 
+/// 启动重要公告（带标题的 Markdown 正文，启动时弹窗展示）
+struct ImportantAnnouncement
+{
+  QString id;        ///< 稳定标识（用于「不再弹出」去重）
+  QString title;     ///< 标题
+  QString markdown;  ///< Markdown 正文
+  QString link;      ///< 可选跳转地址（正文里的链接也会按 Markdown 渲染）
+  QString date;      ///< 发布日期文字（可选，仅作数据留存）
+
+  bool isValid() const { return !markdown.trimmed().isEmpty(); }
+};
+
 /**
  * @brief 官网公告的拉取与缓存（全局单例，主线程使用）
  *
@@ -52,6 +69,8 @@ public:
   static AnnouncementFeed *instance();
 
   const QVector<AnnouncementEntry> &entries() const { return m_entries; }
+  /// 当前生效的启动重要公告（没有时返回一个 invalid 的对象）
+  const ImportantAnnouncement &important() const { return m_important; }
   bool hasData() const { return !m_entries.isEmpty(); }
   bool isLoading() const { return m_loading; }
   /// 当前数据对应的拉取（或读缓存）时间
@@ -70,6 +89,8 @@ signals:
   void loadingChanged(bool loading);
   /// 拿到新数据（或数据与上次不同）后发出
   void entriesChanged();
+  /// 启动重要公告有变化（新公告、公告被撤下、或内容更新）
+  void importantChanged();
   /// 本次拉取失败（已保留旧数据）
   void requestFailed(const QString &error);
 
@@ -77,11 +98,13 @@ private:
   explicit AnnouncementFeed(QObject *parent = nullptr);
   ~AnnouncementFeed() override;
 
-  void finishWithSuccess(const QByteArray &payload, const QVector<AnnouncementEntry> &entries);
+  void finishWithSuccess(const QByteArray &payload, const QVector<AnnouncementEntry> &entries,
+                         const ImportantAnnouncement &important);
   void finishWithError(const QString &error);
   void abortReply();
 
-  static bool parseEntries(const QByteArray &payload, QVector<AnnouncementEntry> &entries);
+  static bool parsePayload(const QByteArray &payload, QVector<AnnouncementEntry> &entries,
+                           ImportantAnnouncement &important);
   static QString cacheFilePath();
 
   void loadCache();
@@ -93,6 +116,7 @@ private:
   bool m_loading = false;
 
   QVector<AnnouncementEntry> m_entries;
+  ImportantAnnouncement m_important;
   QDateTime m_lastUpdated;    ///< 当前数据的拉取时间（读缓存时为文件修改时间）
   QDateTime m_lastAttempt;    ///< 最近一次请求的发起时间（失败后短时间内不重试）
   QString m_lastError;

@@ -12,7 +12,7 @@
 #include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/AppInputDialog.h"
 #include "components/MasonryContentCard.h"
 #include "../layouts/MasonryLayout.h"
@@ -344,8 +344,8 @@ void InstanceSelectPage::initInstanceFolders()
     QList<InstanceFolderInfo> instanceFolders = SettingsManager::instance()->getInstanceFolders();
 
     if (instanceFolders.isEmpty()) {
-        // Default .minecraft folder in the same directory as the launcher
-        QString defaultMinecraftPath = QCoreApplication::applicationDirPath() + "/.minecraft";
+        // 未配置实例文件夹时的兜底：移动端用应用数据目录，桌面端跟随启动器目录
+        QString defaultMinecraftPath = SettingsManager::defaultInstanceFolderPath();
 
         // Check if default folder exists, if not create it
         QDir defaultDir(defaultMinecraftPath);
@@ -1173,7 +1173,7 @@ static QString instanceFolderKey(const QString &path)
 
 void InstanceSelectPage::onBindFolderClicked()
 {
-    QString folderPath = AppFileDialog::getExistingDirectory(this, tr("选择 Minecraft 文件夹"), QCoreApplication::applicationDirPath());
+    QString folderPath = QFileDialog::getExistingDirectory(this, tr("选择 Minecraft 文件夹"), QCoreApplication::applicationDirPath());
     if (folderPath.isEmpty())
         return;
 

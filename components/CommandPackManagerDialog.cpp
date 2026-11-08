@@ -8,7 +8,7 @@
 #include "CommandPackManagerDialog.h"
 
 #include <QDir>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -23,6 +23,7 @@
 #include "components/CommandPackEditor.h"
 #include "utils/CommandAssistant/CommandPack.h"
 #include "utils/SettingsManager.h"
+#include "utils/UiMetrics.h"
 
 namespace {
 
@@ -65,7 +66,7 @@ CommandPackManagerDialog::CommandPackManagerDialog(QWidget *parent)
     , m_closeBtn(nullptr)
 {
     setWindowTitle(tr("指令包管理"));
-    setMinimumSize(680, 420);
+    setMinimumSize(UiMetrics::fitToScreen(this, QSize(680, 420)));
     buildUI();
     reloadPackList();
 }
@@ -229,7 +230,7 @@ void CommandPackManagerDialog::persist()
 void CommandPackManagerDialog::onAddPack()
 {
     const QString startDir = QDir::homePath();
-    const QString filePath = AppFileDialog::getOpenFileName(
+    const QString filePath = QFileDialog::getOpenFileName(
         this, tr("选择指令包文件"), startDir, tr("指令包文件 (*.json);;所有文件 (*.*)"));
     if (filePath.isEmpty())
     {

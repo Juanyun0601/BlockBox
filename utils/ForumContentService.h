@@ -45,6 +45,23 @@ struct ForumBoard
     int posts = 0;
 };
 
+/** 主题上挂载的插件包（发帖人上传后由服务端解清单，一帖一个） */
+struct ForumPluginInfo
+{
+    int id = 0;                ///< thread_plugins 行 id（用于下载地址）
+    int uploadId = 0;
+    QString pluginId;          ///< 清单里的 id（安装判定同款）
+    QString name;
+    QString version;
+    QString author;
+    QString description;
+    QString icon;              ///< 包内图标站内路径（/uploads/...），可空
+    qint64 fileSize = 0;
+    int downloads = 0;
+
+    bool isValid() const { return id > 0 && !pluginId.isEmpty(); }
+};
+
 /** 主题（列表行与帖子详情头部共用） */
 struct ForumThreadInfo
 {
@@ -64,6 +81,7 @@ struct ForumThreadInfo
     QStringList tags;
     bool bookmarked = false;
     QString snippet;   ///< 搜索结果带命中片段，其余场景为空
+    ForumPluginInfo plugin;   ///< 插件帖才有（有插件 isValid() 为真）
 
     bool isValid() const { return id > 0; }
 };
@@ -130,6 +148,33 @@ struct ForumUserProfile
     QVector<ForumUserReplyItem> recentReplies;
 };
 
+/** 插件包上传结果（POST /api/upload/plugin 的解析结果） */
+struct ForumPluginUpload
+{
+    int uploadId = 0;
+    QString pluginId;
+    QString name;
+    QString version;
+    QString author;
+    QString description;
+    QString icon;
+    qint64 fileSize = 0;
+    QString fileHash;   ///< sha256，安装前比对用
+    QString url;        ///< 站内路径，日志用
+
+    bool isValid() const { return uploadId > 0; }
+};
+
+/** 插件包下载信息（GET /api/threads/:id/plugin/download 的解析结果） */
+struct ForumPluginDownload
+{
+    QString url;          ///< 完整下载地址（配置了 CDN 时即 CDN 域名）
+    qint64 fileSize = 0;
+    QString filename;
+
+    bool isValid() const { return !url.isEmpty(); }
+};
+
 class ForumContentService : public QObject
 {
     Q_OBJECT
@@ -182,6 +227,24 @@ public:
                       const QStringList &tags, std::function<void(int threadId)> onOk,
                       FailHandler onFail = nullptr);
 
+    /** 带插件发帖：pluginUploadId 为 /api/upload/plugin 返回的上传 id */
+    void createPluginThread(const QString &boardSlug, const QString &title, const QString &content,
+                            const QStringList &tags, int pluginUploadId,
+                            std::function<void(int threadId)> onOk, FailHandler onFail = nullptr);
+
+    // ── 插件帖（发帖人上传插件包；下载匿名可用，门禁在人机验证层） ──
+
+    /** 上传一个 .BlockBox 插件包（服务端解清单为准）。progress 0~100，局域网里大包有用 */
+    void uploadPluginPackage(const QString &filePath,
+                             std::function<void(int percent)> onProgress,
+                             std::function<void(const ForumPluginUpload &)> onOk,
+                             FailHandler onFail = nullptr);
+
+    /** 取插件下载地址（CDN 域名或论坛自供），下载由调用方自己发请求 */
+    void fetchPluginDownload(int threadId,
+                             std::function<void(const ForumPluginDownload &)> onOk,
+                             FailHandler onFail = nullptr);
+
     /** 回复主题；replyToPostId > 0 时是楼中楼（挂到该楼层下） */
     void replyToThread(int threadId, const QString &content, int replyToPostId,
                        std::function<void()> onOk, FailHandler onFail = nullptr);
@@ -223,8 +286,9 @@ public:
 
     void deleteThread(int threadId, std::function<void()> onOk, FailHandler onFail = nullptr);
 
-    void reportPost(int postId, const QString &reason, std::function<void()> onOk,
-                    FailHandler onFail = nullptr);
+    /** 举报楼层：category 为分类 slug（服务端白名单校验），reason 为补充说明（≤200 字） */
+    void reportPost(int postId, const QString &category, const QString &reason,
+                    std::function<void()> onOk, FailHandler onFail = nullptr);
 
     /** 管理员：置顶 / 取消置顶主题 */
     void setThreadPinned(int threadId, bool pinned, std::function<void()> onOk,
@@ -249,6 +313,7 @@ private:
 
     static ForumBoard parseBoard(const QJsonObject &object);
     static ForumThreadInfo parseThreadInfo(const QJsonObject &object);
+    static ForumPluginInfo parsePluginInfo(const QJsonObject &object);
     static ForumPost parsePost(const QJsonObject &object);
     static ForumPagination parsePagination(const QJsonObject &object);
     static QString authorName(const QJsonObject &author);

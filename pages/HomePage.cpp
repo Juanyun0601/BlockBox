@@ -9,6 +9,7 @@
 #include "components/MasonryContentCard.h"
 #include "components/OutlinedLabel.h"
 #include "components/HomeDataVisuals.h"
+#include "components/HomeFriendsPanel.h"
 #include "components/NewsCard.h"
 #include "components/NewsDetailDialog.h"
 #include "components/Skin3DWidget.h"
@@ -37,6 +38,7 @@
 #include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QIcon>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -125,6 +127,8 @@ static bool sameRecentPlayList(const QVector<RecentPlayEntry> &a, const QVector<
 static constexpr qreal kHeroRadius = 16.0;
 // 轮播右侧皮肤预览面板固定宽度 / 与轮播的间距
 static constexpr int kSkinPanelWidth = 220;
+// 轮播左侧好友面板固定宽度：与右侧皮肤面板同宽，保持左右对称
+static constexpr int kFriendsPanelWidth = 220;
 static constexpr int kHeroSpacing = 16;
 // 皮肤面板底部「默认/经典」切换条中心距面板底部的距离（32px 高的一半 + 3px 外边距 + 1px 描边内缩），
 // 轮播指示点浮层据此对齐到同一水平线
@@ -473,15 +477,19 @@ void HomePage::resizeEvent(QResizeEvent *event)
 
 void HomePage::updateCarouselHeight()
 {
-  // 轮播位于「轮播 + 皮肤面板」横排左侧，以其实际宽度按 16:9 计算高度；
-  // 尺寸未定（布局未激活）时按槽宽度减去面板宽度估算
+  // 轮播位于「好友面板 + 轮播 + 皮肤面板」横排中间，以其实际宽度按 16:9 计算高度；
+  // 尺寸未定（布局未激活）时按槽宽度减去两侧面板与间距估算
   int carouselWidth = (m_carouselView && m_carouselView->width() > 0)
                           ? m_carouselView->width() : 0;
   if (carouselWidth <= 0)
   {
     QWidget *cw = m_sectionWidgets.value(HomeCardType::Carousel);
-    int rowWidth = (cw && cw->width() > 0) ? cw->width() : width();
-    carouselWidth = qMax(100, rowWidth - kSkinPanelWidth - kHeroSpacing);
+    int rowWidth = (cw && cw->width() > 0) ? cw->width() : qMax(100, width() - 48);
+    // 好友左栏只在已登录且确实有好友时出现；隐藏时封面图自动占满左侧
+    const bool friendsVisible = m_friendsPanel && !m_friendsPanel->isHidden();
+    const int sidePanels = kSkinPanelWidth + (friendsVisible ? kFriendsPanelWidth : 0);
+    const int sideGaps = kHeroSpacing * (friendsVisible ? 2 : 1);
+    carouselWidth = qMax(100, rowWidth - sidePanels - sideGaps);
   }
   int carouselHeight = carouselWidth * 9 / 16;
   if (carouselHeight < 160)
@@ -498,6 +506,19 @@ void HomePage::updateCarouselHeight()
     m_carouselPlaceholder->setFixedHeight(carouselHeight);
   }
   // 皮肤面板与轮播同排（垂直 Expanding），高度随行高自动对齐
+}
+
+void HomePage::setFriendsPanelVisible(bool visible)
+{
+  if (!m_friendsPanel)
+    return;
+  // isHidden 记录的是显式隐藏状态，父页面暂时不可见时也能正确判断
+  if (visible == !m_friendsPanel->isHidden())
+    return;
+
+  m_friendsPanel->setVisible(visible);
+  // 左栏出现 / 收起会改变封面图可用宽度，布局稳定后重算 16:9 高度
+  QTimer::singleShot(0, this, [this]() { updateCarouselHeight(); });
 }
 
 HomePage::~HomePage()
@@ -1049,12 +1070,30 @@ QWidget* HomePage::createCarouselSection()
   vlay->setContentsMargins(0, 0, 0, 0);
   vlay->setSpacing(8);
 
-  // ── 横排：左侧轮播（自适应缩小），右侧当前皮肤预览面板 ──
+  // ── 横排：左侧好友列表 + 中间轮播（自适应缩小）+ 右侧当前皮肤预览面板 ──
   auto *heroRow = new QHBoxLayout();
   heroRow->setContentsMargins(0, 0, 0, 0);
   heroRow->setSpacing(kHeroSpacing);
 
-  // 轮播放进独立容器：换图时只重建这块，右侧皮肤面板与下方公告栏都不动
+  // 左侧好友面板：与右侧皮肤面板同宽同高，保持视觉对称
+  m_friendsPanel = new HomeFriendsPanel();
+  m_friendsPanel->setFixedWidth(kFriendsPanelWidth);
+  m_friendsPanel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+  connect(m_friendsPanel, &HomeFriendsPanel::friendChatRequested,
+          this, &HomePage::friendChatRequested);
+  connect(m_friendsPanel, &HomeFriendsPanel::joinRoomRequested,
+          this, &HomePage::friendRoomJoinRequested);
+  connect(m_friendsPanel, &HomeFriendsPanel::loginRequested,
+          this, &HomePage::friendPanelLoginRequested);
+  connect(m_friendsPanel, &HomeFriendsPanel::openFriendsPageRequested,
+          this, &HomePage::friendPanelOpenRequested);
+  connect(m_friendsPanel, &HomeFriendsPanel::panelVisibilityChanged,
+          this, &HomePage::setFriendsPanelVisible);
+  // 未登录 / 没有好友时先不占位，等数据确认有好友再展开
+  m_friendsPanel->setVisible(false);
+  heroRow->addWidget(m_friendsPanel);
+
+  // 轮播放进独立容器：换图时只重建这块，两侧面板与下方公告栏都不动
   m_carouselHost = new QWidget();
   m_carouselHostLayout = new QVBoxLayout(m_carouselHost);
   m_carouselHostLayout->setContentsMargins(0, 0, 0, 0);
@@ -1820,6 +1859,10 @@ void HomePage::showEvent(QShowEvent *event)
 {
   QWidget::showEvent(event);
 
+  // 首页可见期间才轮询好友与联机大厅；左栏即使因无好友被隐藏也继续同步
+  if (m_friendsPanel)
+    m_friendsPanel->setActive(true);
+
   // 硬件采样含 GPU 计数器枚举，首次执行会阻塞主线程一段时间；
   // 延迟到首页显示之后再启动，避免拖慢软件启动
   if (!m_perfMonitorStarted)
@@ -1846,6 +1889,14 @@ void HomePage::showEvent(QShowEvent *event)
   NewsFeed::instance()->refresh(false);
   // 官网公告：公告栏首次显示时自己是隐藏的（等数据），这里统一拉起一次请求
   AnnouncementFeed::instance()->refresh(false);
+}
+
+void HomePage::hideEvent(QHideEvent *event)
+{
+  QWidget::hideEvent(event);
+  // 离开首页后停掉好友轮询，避免后台一直请求论坛
+  if (m_friendsPanel)
+    m_friendsPanel->setActive(false);
 }
 
 /* 最近游玩卡片构建（一行四个横排；parent 为挂载图层） */
@@ -2001,6 +2052,13 @@ QWidget* HomePage::buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *pa
 
     cardLayout->addWidget(body);
     return card;
+}
+
+void HomePage::refresh()
+{
+  if (m_friendsPanel)
+    m_friendsPanel->refresh();
+  refreshRecentPlays();
 }
 
 void HomePage::refreshRecentPlays()

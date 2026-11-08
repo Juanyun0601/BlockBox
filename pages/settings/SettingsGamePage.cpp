@@ -9,7 +9,7 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDebug>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include "components/AppMessageBox.h"
@@ -113,7 +113,7 @@ void SettingsPage::initGlobalGameSettings()
         qDebug() << "[SettingsPage]" << "已保存 Java 路径:" << selectedJavaPath;
     });
     connect(javaBrowseBtn, &QPushButton::clicked, [=]() {
-        QString javaPath = AppFileDialog::getOpenFileName(this, tr("选择Java可执行文件"), QCoreApplication::applicationDirPath(), tr("可执行文件 (*.exe)"));
+        QString javaPath = QFileDialog::getOpenFileName(this, tr("选择Java可执行文件"), QCoreApplication::applicationDirPath(), tr("可执行文件 (*.exe)"));
         if (!javaPath.isEmpty()) {
             GameLauncher::JavaInfo javaInfo;
             if (GameLauncher::instance()->validateJavaPath(javaPath, javaInfo)) {

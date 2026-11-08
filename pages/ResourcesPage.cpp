@@ -183,6 +183,14 @@ ResourcesPage::~ResourcesPage()
 {
 }
 
+void ResourcesPage::setBedrockMode(bool bedrock)
+{
+    if (m_bedrockMode == bedrock)
+        return;
+    m_bedrockMode = bedrock;
+    rebuildPageCards();
+}
+
 // ── 事件过滤器：处理卡片点击 ───────────────────────────────────────────────
 
 bool ResourcesPage::eventFilter(QObject *watched, QEvent *event)
@@ -215,73 +223,157 @@ void ResourcesPage::initUI()
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     m_scrollContent = new QWidget(scrollArea);
-    QVBoxLayout *mainLayout = new QVBoxLayout(m_scrollContent);
-    mainLayout->setContentsMargins(28, 24, 28, 28);
-    mainLayout->setSpacing(16);
+    m_mainLayout = new QVBoxLayout(m_scrollContent);
+    m_mainLayout->setContentsMargins(28, 24, 28, 28);
+    m_mainLayout->setSpacing(16);
+
+    scrollArea->setWidget(m_scrollContent);
+    outerLayout->addWidget(scrollArea);
+
+    rebuildPageCards();
+}
+
+// ── 页面卡片主体（Java/基岩版共样式，卡片内容随版本切换） ─────────────────
+
+void ResourcesPage::rebuildPageCards()
+{
+    if (!m_scrollContent || !m_mainLayout)
+        return;
+
+    // 清空旧内容（标题/副标题/卡片行/收藏夹容器一并重建）
+    QLayoutItem *item;
+    while ((item = m_mainLayout->takeAt(0)) != nullptr) {
+        if (QWidget *w = item->widget())
+            w->deleteLater();
+        delete item;
+    }
+    m_favoritesContainer = nullptr;
+    m_favoritesLayout = nullptr;
 
     // ── Page Hero（对齐原型 page-hero） ──
     OutlinedLabel *pageTitle = new OutlinedLabel(tr("资源中心"), m_scrollContent);
     pageTitle->setObjectName("resourcesPageTitle");
-    mainLayout->addWidget(pageTitle);
+    m_mainLayout->addWidget(pageTitle);
 
     QLabel *pageSubtitle = new QLabel(
-        tr("从云端下载或本地导入你需要的全部游戏资源"),
+        m_bedrockMode
+            ? tr("从 CurseForge 获取基岩版社区资源，一键装进你的实例")
+            : tr("从云端下载或本地导入你需要的全部游戏资源"),
         m_scrollContent);
     pageSubtitle->setObjectName("resourcesPageSubtitle");
-    mainLayout->addWidget(pageSubtitle);
+    m_mainLayout->addWidget(pageSubtitle);
 
-    mainLayout->addSpacing(12);
+    m_mainLayout->addSpacing(12);
 
-    // ── 新游戏分组 ──
-    mainLayout->addWidget(createSectionHeader(tr("新游戏")));
+    if (m_bedrockMode)
     {
-        QWidget *row = new QWidget(m_scrollContent);
-        FlowLayout *flow = new FlowLayout(row, 0, 12, 12);
+        // ── 基岩版：新游戏分组 ──
+        m_mainLayout->addWidget(createSectionHeader(tr("新游戏")));
+        {
+            QWidget *row = new QWidget(m_scrollContent);
+            FlowLayout *flow = new FlowLayout(row, 0, 12, 12);
 
-        flow->addWidget(createResourceCard(
-            tr("安装新实例"), tr("选择 Minecraft 版本与加载器，安装全新游戏"),
-            QColor("#10B981"), QColor("#047857"),
-            ":/Images/Icons/nav_install.svg", 0));
-        flow->addWidget(createResourceCard(
-            tr("下载整合包"), tr("浏览 CurseForge / Modrinth 上的整合包"),
-            QColor("#6366F1"), QColor("#4338CA"),
-            ":/Images/Icons/nav_download.svg", 1));
-        flow->addWidget(createResourceCard(
-            tr("导入整合包"), tr("从本地 zip 文件导入整合包"),
-            QColor("#F59E0B"), QColor("#D97706"),
-            ":/Images/Icons/nav_import.svg", 2));
+            flow->addWidget(createResourceCard(
+                tr("安装新实例"), tr("选择基岩版版本，安装全新游戏"),
+                QColor("#10B981"), QColor("#047857"),
+                ":/Images/Icons/nav_install.svg", 0));
 
-        mainLayout->addWidget(row);
+            m_mainLayout->addWidget(row);
+        }
+
+        // ── 基岩版：社区资源分组（childIndex 与 ThreePoint 子导航一致：1~4） ──
+        m_mainLayout->addWidget(createSectionHeader(tr("社区资源")));
+        {
+            QWidget *row = new QWidget(m_scrollContent);
+            FlowLayout *flow = new FlowLayout(row, 0, 12, 12);
+
+            flow->addWidget(createResourceCard(
+                tr("资源包"), tr("更改游戏贴图与音效，来自 CurseForge"),
+                QColor("#06B6D4"), QColor("#0E7490"),
+                ":/Images/Icons/nav_resourcepacks.svg", 1));
+            flow->addWidget(createResourceCard(
+                tr("材质包"), tr("为世界换上创作者的材质外观"),
+                QColor("#6366F1"), QColor("#4338CA"),
+                ":/Images/Icons/nav_textures.svg", 2));
+            flow->addWidget(createResourceCard(
+                tr("地图"), tr("探索社区制作的冒险与生存地图"),
+                QColor("#84CC16"), QColor("#4D7C0F"),
+                ":/Images/Icons/nav_worlds.svg", 3));
+            flow->addWidget(createResourceCard(
+                tr("脚本"), tr("扩展玩法的脚与服务端脚本模块"),
+                QColor("#8B5CF6"), QColor("#6D28D9"),
+                ":/Images/Icons/nav_scripts.svg", 4));
+
+            m_mainLayout->addWidget(row);
+        }
+
+        // ── 基岩版：附加包自成一组（对应 CurseForge Addons 分类） ──
+        m_mainLayout->addWidget(createSectionHeader(tr("附加包")));
+        {
+            QWidget *row = new QWidget(m_scrollContent);
+            FlowLayout *flow = new FlowLayout(row, 0, 12, 12);
+
+            flow->addWidget(createResourceCard(
+                tr("附加包"), tr("行为包与资源包组合的全内容资源"),
+                QColor("#EC4899"), QColor("#BE185D"),
+                ":/Images/Icons/nav_mods.svg", 10));
+
+            m_mainLayout->addWidget(row);
+        }
     }
-
-    // ── 社区资源分组 ──
-    mainLayout->addWidget(createSectionHeader(tr("社区资源")));
+    else
     {
-        QWidget *row = new QWidget(m_scrollContent);
-        FlowLayout *flow = new FlowLayout(row, 0, 12, 12);
+        // ── Java 版：新游戏分组 ──
+        m_mainLayout->addWidget(createSectionHeader(tr("新游戏")));
+        {
+            QWidget *row = new QWidget(m_scrollContent);
+            FlowLayout *flow = new FlowLayout(row, 0, 12, 12);
 
-        flow->addWidget(createResourceCard(
-            tr("模组"), tr("扩展游戏玩法的修改文件"),
-            QColor("#EC4899"), QColor("#BE185D"),
-            ":/Images/Icons/nav_mods.svg", 3));
-        flow->addWidget(createResourceCard(
-            tr("数据包"), tr("自定义游戏数据和机制"),
-            QColor("#8B5CF6"), QColor("#6D28D9"),
-            ":/Images/Icons/nav_datapacks.svg", 4));
-        flow->addWidget(createResourceCard(
-            tr("资源包"), tr("更改游戏材质和音效"),
-            QColor("#06B6D4"), QColor("#0E7490"),
-            ":/Images/Icons/nav_resourcepacks.svg", 5));
-        flow->addWidget(createResourceCard(
-            tr("光影包"), tr("提升画面光影与渲染效果"),
-            QColor("#F59E0B"), QColor("#D97706"),
-            ":/Images/Icons/nav_shaders.svg", 6));
-        flow->addWidget(createResourceCard(
-            tr("世界"), tr("导入或备份你的存档"),
-            QColor("#84CC16"), QColor("#4D7C0F"),
-            ":/Images/Icons/nav_worlds.svg", 7));
+            flow->addWidget(createResourceCard(
+                tr("安装新实例"), tr("选择 Minecraft 版本与加载器，安装全新游戏"),
+                QColor("#10B981"), QColor("#047857"),
+                ":/Images/Icons/nav_install.svg", 0));
+            flow->addWidget(createResourceCard(
+                tr("下载整合包"), tr("浏览 CurseForge / Modrinth 上的整合包"),
+                QColor("#6366F1"), QColor("#4338CA"),
+                ":/Images/Icons/nav_download.svg", 1));
+            flow->addWidget(createResourceCard(
+                tr("导入整合包"), tr("从本地 zip 文件导入整合包"),
+                QColor("#F59E0B"), QColor("#D97706"),
+                ":/Images/Icons/nav_import.svg", 2));
 
-        mainLayout->addWidget(row);
+            m_mainLayout->addWidget(row);
+        }
+
+        // ── Java 版：社区资源分组 ──
+        m_mainLayout->addWidget(createSectionHeader(tr("社区资源")));
+        {
+            QWidget *row = new QWidget(m_scrollContent);
+            FlowLayout *flow = new FlowLayout(row, 0, 12, 12);
+
+            flow->addWidget(createResourceCard(
+                tr("模组"), tr("扩展游戏玩法的修改文件"),
+                QColor("#EC4899"), QColor("#BE185D"),
+                ":/Images/Icons/nav_mods.svg", 3));
+            flow->addWidget(createResourceCard(
+                tr("数据包"), tr("自定义游戏数据和机制"),
+                QColor("#8B5CF6"), QColor("#6D28D9"),
+                ":/Images/Icons/nav_datapacks.svg", 4));
+            flow->addWidget(createResourceCard(
+                tr("资源包"), tr("更改游戏材质和音效"),
+                QColor("#06B6D4"), QColor("#0E7490"),
+                ":/Images/Icons/nav_resourcepacks.svg", 5));
+            flow->addWidget(createResourceCard(
+                tr("光影包"), tr("提升画面光影与渲染效果"),
+                QColor("#F59E0B"), QColor("#D97706"),
+                ":/Images/Icons/nav_shaders.svg", 6));
+            flow->addWidget(createResourceCard(
+                tr("世界"), tr("导入或备份你的存档"),
+                QColor("#84CC16"), QColor("#4D7C0F"),
+                ":/Images/Icons/nav_worlds.svg", 7));
+
+            m_mainLayout->addWidget(row);
+        }
     }
 
     // ── 收藏夹分组（标题右侧挂“新建收藏夹”按钮，对齐原型 ghost-btn） ──
@@ -290,23 +382,24 @@ void ResourcesPage::initUI()
     newFavBtn->setText(tr("＋ 新建收藏夹"));
     newFavBtn->setCursor(Qt::PointingHandCursor);
     connect(newFavBtn, &QPushButton::clicked, this, [this]() {
-        emit navItemClicked(8);   // 与左侧导航“新建收藏夹”行为一致
+        // Java 版 9 / 基岩版 5：与左侧导航「新建收藏夹」行为一致
+        emit navItemClicked(m_bedrockMode ? 5 : 9);
     });
 
-    mainLayout->addWidget(createSectionHeader(tr("收藏夹"), newFavBtn));
+    m_mainLayout->addWidget(createSectionHeader(tr("收藏夹"), newFavBtn));
 
     m_favoritesContainer = new QWidget(m_scrollContent);
     m_favoritesLayout = new QVBoxLayout(m_favoritesContainer);
     m_favoritesLayout->setContentsMargins(0, 0, 0, 0);
     m_favoritesLayout->setSpacing(12);
-    mainLayout->addWidget(m_favoritesContainer);
+    m_mainLayout->addWidget(m_favoritesContainer);
 
     rebuildFavoriteCards();
 
-    mainLayout->addStretch();
+    m_mainLayout->addStretch();
 
-    scrollArea->setWidget(m_scrollContent);
-    outerLayout->addWidget(scrollArea);
+    // 模式重建后重新应用子导航搜索过滤
+    applyCurrentFilter();
 }
 
 // ── 收藏夹卡片（动态） ────────────────────────────────────────────────────
@@ -350,7 +443,9 @@ void ResourcesPage::rebuildFavoriteCards()
     };
     const int paletteSize = int(sizeof(palette) / sizeof(palette[0]));
 
-    // 收藏夹卡片（childIndex = 9 + idx），FlowLayout 自适应换行（对齐原型 auto-fill）
+    // 收藏夹卡片（Java 版 childIndex = 9 + idx / 基岩版 = 6 + idx），
+    // FlowLayout 自适应换行（对齐原型 auto-fill）
+    const int favBase = m_bedrockMode ? 6 : 9;
     QWidget *gridHolder = new QWidget(m_favoritesContainer);
     FlowLayout *flow = new FlowLayout(gridHolder, 0, 12, 12);
     for (int i = 0; i < folders.size(); ++i) {
@@ -359,15 +454,20 @@ void ResourcesPage::rebuildFavoriteCards()
         QString desc = tr("共 %1 项资源").arg(f.items.size());
         flow->addWidget(createResourceCard(
             f.name, desc, QColor(g.c1), QColor(g.c2),
-            ":/Images/Icons/nav_folder.svg", 9 + i));
+            ":/Images/Icons/nav_folder.svg", favBase + i));
     }
     m_favoritesLayout->addWidget(gridHolder);
 
     // 收藏夹卡片是动态重建的：重建后重新应用子导航搜索过滤
-    applyPageFilter(m_pageFilterQuery);
+    applyCurrentFilter();
 }
 
 // ── 子导航搜索：卡片过滤 + 分组标题联动 ──────────────────────────────────
+
+void ResourcesPage::applyCurrentFilter()
+{
+    applyPageFilter(m_pageFilterQuery);
+}
 
 void ResourcesPage::applyPageFilter(const QString &query)
 {

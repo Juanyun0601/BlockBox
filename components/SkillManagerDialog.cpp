@@ -15,9 +15,9 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/AppMessageBox.h"
+#include "utils/UiMetrics.h"
 #include "utils/plugin/PluginSafetyGuard.h"
 #include "utils/skill/SkillManager.h"
 
@@ -43,7 +43,7 @@ void SkillManagerDialog::initUI()
 
     m_card = new QWidget(this);
     m_card->setObjectName(QStringLiteral("skillManagerCard"));
-    m_card->setFixedSize(640, 520);
+    m_card->setFixedSize(UiMetrics::fitToScreen(this, QSize(640, 520)));
     outer->addWidget(m_card, 0, Qt::AlignCenter);
 
     QVBoxLayout *cardLayout = new QVBoxLayout(m_card);
@@ -250,7 +250,7 @@ QWidget *SkillManagerDialog::createSkillCard(const SkillInfo &info)
 void SkillManagerDialog::onImportSkill()
 {
     QString filter = tr("技能文件 (*.skill);;所有文件 (*.*)");
-    QString file = AppFileDialog::getOpenFileName(this, tr("导入技能"), QString(), filter);
+    QString file = QFileDialog::getOpenFileName(this, tr("导入技能"), QString(), filter);
     if (file.isEmpty())
         return;
 

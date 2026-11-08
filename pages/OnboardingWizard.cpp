@@ -1,6 +1,6 @@
 /**
  * @file   OnboardingWizard.cpp
- * @brief  新手引导向导实现（首次运行 6 步配置）
+ * @brief  新手引导页面实现（首次运行 6 步配置，整页展示）
  * @author BlockBox Team
  * @date   2026-08-13
  *
@@ -37,7 +37,7 @@
 #include <QDir>
 #include <QEvent>
 #include <QFontMetrics>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
 #include <QPalette>
@@ -143,11 +143,10 @@ QString javaDownloadMirrorId()
 } // namespace
 
 OnboardingWizard::OnboardingWizard(QWidget *parent)
-    : AppDialogBase(parent)
+    : QWidget(parent)
 {
     setObjectName(QStringLiteral("OnboardingWizard"));
-    setWindowTitle(tr("\u65B0\u624B\u5F15\u5BFC"));   // 新手引导
-    setMinimumSize(1000, 720);
+    // 独立页面：不再自己开窗，尺寸由主窗口页面栈决定（铺满内容区）
     // 当前语言为繁體中文时，引导中插入「下载源选择」步骤（切换语言重启后同样命中）。
     m_hasDlSourceStep = (LanguageManager::instance()->currentLanguage()
                          == LanguageManager::ChineseTraditional);
@@ -155,29 +154,25 @@ OnboardingWizard::OnboardingWizard(QWidget *parent)
 }
 
 /* ============================================================
- * UI 骨架：卡片（header + stepper + stack + footer）
+ * UI 骨架：页面容器（stepper + stack + footer）
  * ============================================================ */
 void OnboardingWizard::initUI()
 {
-    // 居中卡片（objectName 以 "Card" 结尾，AppDialogBase 自动定位关闭按钮）
+    // 页面主容器：铺满内容区（小屏时由中间的滚动区兜底，不再把整页撑出屏幕）
     QFrame *card = new QFrame(this);
     card->setObjectName(QStringLiteral("OnboardingWizardCard"));
-    card->setMinimumSize(960, 680);
-    card->setMaximumWidth(1040);
-    card->setMaximumHeight(740);   // 对齐 HTML .onboard: height min(740px, 94vh)
+    card->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    card->setMinimumSize(0, 0);
 
     QVBoxLayout *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(0, 0, 0, 0);
     cardLayout->setSpacing(0);
 
-    QWidget *header = buildHeader(card);   // 品牌 + 跳过
-    cardLayout->addWidget(header, 0);
-    buildStepper(card);                    // 5 步步骤条
+    buildStepper(card);                    // 步骤条（页首不再放标题）
     cardLayout->addWidget(m_stepperWidget, 0);
 
     m_stack = new QStackedWidget(card);
     m_stack->setObjectName(QStringLiteral("obwStack"));
-    m_stack->setMinimumHeight(430);
 
     buildStep0();
     buildStepDlSource();
@@ -194,58 +189,29 @@ void OnboardingWizard::initUI()
     for (int i = 0; i < m_stack->count(); ++i)
         m_pages.append(m_stack->widget(i));
 
-    cardLayout->addWidget(m_stack, 1);
+    // 中间步骤内容包进滚动区：手机上 0.6 缩放后卡片高度不足时，
+    // 头部 / 步骤条 / 底部「上一步 / 下一步」始终固定可见，中间内容滚动查看，
+    // 不再把底部按钮挤出屏幕（原 430 最小高度会让卡片内部最小高度超过屏幕）
+    QScrollArea *stackScroll = new QScrollArea(card);
+    stackScroll->setObjectName(QStringLiteral("obwStackScroll"));
+    stackScroll->setWidgetResizable(true);
+    stackScroll->setFrameShape(QFrame::NoFrame);
+    stackScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    stackScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    stackScroll->setWidget(m_stack);
+    cardLayout->addWidget(stackScroll, 1);
 
     QWidget *footer = buildFooter(card);
     cardLayout->addWidget(footer, 0);
 
     QVBoxLayout *main = new QVBoxLayout(this);
     main->setContentsMargins(0, 0, 0, 0);
-    main->addWidget(card, 0, Qt::AlignCenter);
+    main->setSpacing(0);
+    main->addWidget(card, 1);
 
     // 初始化状态
     m_currentStep = 0;
     showStep(0);
-}
-
-/* ============================================================
- * 头部：品牌 + 跳过引导
- * ============================================================ */
-QWidget *OnboardingWizard::buildHeader(QWidget *parent)
-{
-    QFrame *header = new QFrame(parent);
-    header->setObjectName(QStringLiteral("obwHeader"));
-    header->setFixedHeight(64);
-
-    QHBoxLayout *lay = new QHBoxLayout(header);
-    lay->setContentsMargins(24, 12, 20, 12);
-    lay->setSpacing(12);
-
-    m_brandLogo = new QLabel(QStringLiteral("\u65B9"), header);  // 方
-    m_brandLogo->setObjectName(QStringLiteral("obwBrandLogo"));
-    m_brandLogo->setFixedSize(40, 40);
-    m_brandLogo->setAlignment(Qt::AlignCenter);
-
-    QVBoxLayout *brandText = new QVBoxLayout();
-    brandText->setSpacing(0);
-    m_brandTitle = new QLabel(tr("\u65B9\u5757\u76D2\u5B50"), header);  // 方块盒子
-    m_brandTitle->setObjectName(QStringLiteral("obwBrandTitle"));
-    m_brandSub = new QLabel(tr("\u9996\u6B21\u4F7F\u7528\u5F15\u5BFC"), header);  // 首次使用引导
-    m_brandSub->setObjectName(QStringLiteral("obwBrandSub"));
-    brandText->addWidget(m_brandTitle);
-    brandText->addWidget(m_brandSub);
-
-    lay->addWidget(m_brandLogo);
-    lay->addLayout(brandText);
-    lay->addStretch();
-
-    m_skipBtn = new QPushButton(tr("\u8DF3\u8FC7\u5F15\u5BFC"), header);  // 跳过引导
-    m_skipBtn->setObjectName(QStringLiteral("obwSkipBtn"));
-    m_skipBtn->setCursor(Qt::PointingHandCursor);
-    connect(m_skipBtn, &QPushButton::clicked, this, &OnboardingWizard::onSkipClicked);
-    lay->addWidget(m_skipBtn);
-
-    return header;
 }
 
 /* ============================================================
@@ -255,11 +221,12 @@ void OnboardingWizard::buildStepper(QWidget *parent)
 {
     m_stepperWidget = new QWidget(parent);
     m_stepperWidget->setObjectName(QStringLiteral("obwStepper"));
-    // 圆点 34 + 间距 3 + 标签 ~18 ≈ 55，再加上下留白；过矮会把步骤文字裁掉
-    m_stepperWidget->setFixedHeight(72);
+    // 圆点 34 + 间距 3 + 标签 ~18 ≈ 55，再加上下留白；过矮会把步骤文字裁掉。
+    // 页首的标题行已去掉，这里多留一点上边距，避免步骤条贴着顶栏
+    m_stepperWidget->setFixedHeight(86);
 
     QHBoxLayout *lay = new QHBoxLayout(m_stepperWidget);
-    lay->setContentsMargins(32, 8, 32, 10);
+    lay->setContentsMargins(32, 20, 32, 12);
     lay->setSpacing(10);
 
     const QStringList labels = {
@@ -335,12 +302,18 @@ QWidget *OnboardingWizard::buildFooter(QWidget *parent)
     m_prevBtn->setObjectName(QStringLiteral("obwBtnSecondary"));
     m_prevBtn->setCursor(Qt::PointingHandCursor);
     m_prevBtn->setVisible(false);
+    // 跳过引导：页首不再放标题/跳过行，改为贴着「下一步」左侧的次要入口
+    m_skipBtn = new QPushButton(tr("\u8DF3\u8FC7\u5F15\u5BFC"), footer);
+    m_skipBtn->setObjectName(QStringLiteral("obwSkipBtn"));
+    m_skipBtn->setCursor(Qt::PointingHandCursor);
     m_nextBtn = new QPushButton(tr("\u4E0B\u4E00\u6B65"), footer);
     m_nextBtn->setObjectName(QStringLiteral("obwBtnPrimary"));
     m_nextBtn->setCursor(Qt::PointingHandCursor);
     connect(m_prevBtn, &QPushButton::clicked, this, &OnboardingWizard::onPrevClicked);
+    connect(m_skipBtn, &QPushButton::clicked, this, &OnboardingWizard::onSkipClicked);
     connect(m_nextBtn, &QPushButton::clicked, this, &OnboardingWizard::onNextClicked);
     lay->addWidget(m_prevBtn);
+    lay->addWidget(m_skipBtn);
     lay->addWidget(m_nextBtn);
 
     return footer;
@@ -1724,7 +1697,7 @@ void OnboardingWizard::buildStep5()
         rotateBrowse->setObjectName(QStringLiteral("obwBtnSecondary"));
         rotateBrowse->setCursor(Qt::PointingHandCursor);
         connect(rotateBrowse, &QPushButton::clicked, this, [this]() {
-            const QString path = AppFileDialog::getOpenFileName(
+            const QString path = QFileDialog::getOpenFileName(
                 this, tr("\u9009\u62E9\u80CC\u666F\u56FE\u7247"), QDir::homePath(),
                 tr("\u56FE\u7247\u6587\u4EF6 (*.png *.jpg *.jpeg *.bmp *.webp)"));
             if (path.isEmpty())
@@ -1934,11 +1907,13 @@ void OnboardingWizard::buildDonePage()
     QPushButton *backBtn = new QPushButton(tr("\u8FD4\u56DE\u8BBE\u7F6E"), page);
     backBtn->setObjectName(QStringLiteral("obwBtnSecondary"));
     backBtn->setCursor(Qt::PointingHandCursor);
+    m_doneBackBtn = backBtn;
     QPushButton *startBtn = new QPushButton(tr("\u5F00\u59CB\u4F7F\u7528\u65B9\u5757\u76D2\u5B50"), page);
     startBtn->setObjectName(QStringLiteral("obwBtnPrimary"));
     startBtn->setCursor(Qt::PointingHandCursor);
-    connect(backBtn, &QPushButton::clicked, this, &QDialog::reject);
-    connect(startBtn, &QPushButton::clicked, this, &QDialog::accept);
+    // 页面没有「关闭」概念：交给主窗口决定回到哪一页（首页 / 设置）
+    connect(backBtn, &QPushButton::clicked, this, &OnboardingWizard::backRequested);
+    connect(startBtn, &QPushButton::clicked, this, &OnboardingWizard::finished);
     actions->addWidget(backBtn);
     actions->addWidget(startBtn);
     actions->addStretch();
@@ -2162,15 +2137,14 @@ void OnboardingWizard::onPickDownloadSource(int index)
 
 void OnboardingWizard::requestLanguageRestart(int langIndex)
 {
-    // 仅持久化偏好（不调用 setLanguage，避免在已构建的向导上触发
+    // 仅持久化偏好（不调用 setLanguage，避免在已构建的页面上触发
     // LanguageChange 实时重译导致崩溃）；由主程序重启并在下次启动 loadLanguageSync() 应用。
     LanguageManager::instance()->setLanguagePreference(
         static_cast<LanguageManager::Language>(langIndex));
-    m_restartRequested = true;
     m_footerHint->setText(tr("\u6B63\u5728\u91CD\u542F\u4EE5\u5E94\u7528\u8BED\u8A00\u2026"));
-    // reject() 让 exec() 返回；主程序检测 restartRequested() 后启动新进程并退出当前进程。
-    // 注意：此处不经过 goDone()，故不打 onboarding/completed 标记，下次启动将再次弹出引导以继续。
-    QDialog::reject();
+    // 由主窗口收到 restartRequested() 后启动新进程并退出当前进程。
+    // 注意：此处不经过 goDone()，故不打 onboarding/completed 标记，下次启动会再次进入引导以继续。
+    emit restartRequested();
 }
 
 void OnboardingWizard::onMethodPicked(int method)
@@ -2186,7 +2160,7 @@ void OnboardingWizard::onMethodPicked(int method)
 
 void OnboardingWizard::resizeEvent(QResizeEvent *event)
 {
-    AppDialogBase::resizeEvent(event);
+    QWidget::resizeEvent(event);
     // 将 Step1 卡片右上角对勾徽章钉在卡片右上角内侧
     for (int i = 0; i < 3; ++i) {
         if (m_methodCards[i] && i < m_methodChecks.size()) {
@@ -2287,7 +2261,34 @@ void OnboardingWizard::goDone()
     }
     m_prevBtn->setVisible(false);
     m_nextBtn->setVisible(false);
+    // 已经走完引导：完成页不再需要「跳过引导」，「返回设置」按进入来源决定
+    m_skipBtn->setVisible(false);
+    if (m_doneBackBtn)
+        m_doneBackBtn->setVisible(m_doneBackAvailable);
     m_footerHint->setText(tr("\u5DF2\u5B8C\u6210\u5168\u90E8\u5F15\u5BFC"));
+}
+
+/* ============================================================
+ * 再次进入本页（设置 → 新手引导）
+ * ============================================================ */
+void OnboardingWizard::resetToFirstStep()
+{
+    // 复位流程状态，回到第一步；底部按钮由 updateFooterState 恢复
+    m_method = MethodManual;
+    m_imported.clear();
+    m_skipBtn->setVisible(true);
+    showStep(0);
+    // 上一次引导之后用户可能又改过账户 / Java / 实例文件夹，这里重新读一遍配置
+    refreshAccountList();
+    refreshJavaList();
+    refreshFolderList();
+}
+
+void OnboardingWizard::setReturnToSettingsAvailable(bool available)
+{
+    m_doneBackAvailable = available;
+    if (m_doneBackBtn)
+        m_doneBackBtn->setVisible(available);
 }
 
 /* ============================================================
@@ -3176,7 +3177,7 @@ void OnboardingWizard::onPickSolidColor(const QString &hex)
 
 void OnboardingWizard::onBrowseImage()
 {
-    const QString path = AppFileDialog::getOpenFileName(
+    const QString path = QFileDialog::getOpenFileName(
         this, tr("\u9009\u62E9\u80CC\u666F\u56FE\u7247"), QDir::homePath(),
         tr("\u56FE\u7247\u6587\u4EF6 (*.png *.jpg *.jpeg *.bmp *.webp)"));
     if (path.isEmpty())

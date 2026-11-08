@@ -15,7 +15,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFileInfo>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFont>
 #include <QFrame>
 #include <QGridLayout>
@@ -44,6 +44,7 @@
 #include "utils/SkinDownloader.h"
 #include "utils/SkinEditorDocument.h"
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 
 namespace {
 
@@ -551,7 +552,7 @@ void SkinEditorPage::initCanvasArea()
   scroll2D->setAlignment(Qt::AlignCenter);
   scroll2D->setFrameShape(QFrame::NoFrame);
   m_canvas = new SkinTextureCanvas;
-  m_canvas->setMinimumSize(512, 512);
+  m_canvas->setMinimumSize(UiMetrics::fitToScreen(this, QSize(512, 512)));
   scroll2D->setWidget(m_canvas);
   m_canvasPage = scroll2D;
   m_centerStack->addWidget(m_canvasPage);
@@ -1016,7 +1017,7 @@ void SkinEditorPage::onNewFromTemplate()
 
 void SkinEditorPage::onOpenFile()
 {
-  QString path = AppFileDialog::getOpenFileName(this, QStringLiteral("打开皮肤"),
+  QString path = QFileDialog::getOpenFileName(this, QStringLiteral("打开皮肤"),
                                               QString(),
                                               QStringLiteral("PNG 图片 (*.png)"));
   if (!path.isEmpty())
@@ -1033,7 +1034,7 @@ void SkinEditorPage::onSaveFile()
 
 void SkinEditorPage::onSaveAsFile()
 {
-  QString path = AppFileDialog::getSaveFileName(this, QStringLiteral("保存皮肤"),
+  QString path = QFileDialog::getSaveFileName(this, QStringLiteral("保存皮肤"),
                                               QString(),
                                               QStringLiteral("PNG 图片 (*.png)"));
   if (!path.isEmpty())
@@ -1509,7 +1510,7 @@ void SkinEditorPage::onCropSelected()
   }
   else if (result == 2)
   {
-    QString path = AppFileDialog::getSaveFileName(this, QStringLiteral("保存截取区域"),
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("保存截取区域"),
                                                 QString(),
                                                 QStringLiteral("PNG 图片 (*.png)"));
     if (!path.isEmpty())

@@ -7,7 +7,7 @@
  * 版本号规则：
  *   正式版：X.Y.Z           （如 1.0.0、2.15.3）
  *   测试版：X.Y.Z-betaN     （如 1.0.0-beta1、1.11.16-beta15）
- *   当前处于初始公测阶段，版本号为 beta7（历史遗留格式，比较时视为 0.0.0-beta7）。
+ *   当前处于初始公测阶段，版本号为 beta7.1（历史遗留格式，比较时视为 0.0.0-beta7）。
  *
  * 每次发布新版本时，只需修改 current() 返回的字符串；
  * 更新检查（UpdateChecker）会拿它与 GitHub Releases 的最新版本做比较，
@@ -23,7 +23,7 @@ namespace AppVersion {
 /** 启动器当前版本号（发布新版本时改这里） */
 inline QString current()
 {
-    return QStringLiteral("beta7");
+    return QStringLiteral("beta7.1");
 }
 
 /** GitHub 仓库所有者 */
@@ -54,6 +54,18 @@ inline QString releasePageUrl()
 {
     return QStringLiteral("https://github.com/%1/%2/releases/latest")
         .arg(repoOwner(), repoName());
+}
+
+/**
+ * 方块盒子官网更新源（国内优先）。
+ * 返回与 GitHub Releases 列表同构的 JSON（tag_name / body / prerelease / assets），
+ * 由论坛后台「版本发布」维护，安装包走官网 CDN 直链；
+ * 检查更新时先试这个源，超时或暂无数据再回退 GitHub（国际线路）。
+ * 若官网论坛域名有变，只需改这里。
+ */
+inline QString officialReleaseApiUrl()
+{
+    return QStringLiteral("https://forum.mcblockbox.top/api/app/releases");
 }
 
 } // namespace AppVersion

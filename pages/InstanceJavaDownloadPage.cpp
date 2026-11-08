@@ -8,7 +8,7 @@
 
 #include <QComboBox>
 #include <QDebug>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QDir>
 #include <QFileInfo>
 #include <QFrame>
@@ -187,7 +187,7 @@ void InstanceJavaDownloadPage::initUI()
 
     m_binaryListWidget = new QListWidget(versionFrame);
     m_binaryListWidget->setObjectName("javaBinaryList");
-    m_binaryListWidget->setMaximumHeight(96);
+    m_binaryListWidget->setMaximumHeight(110);
     m_binaryListWidget->setVisible(false);
     connect(m_binaryListWidget, &QListWidget::currentRowChanged,
             this, &InstanceJavaDownloadPage::onBinarySelectionChanged);
@@ -236,9 +236,10 @@ void InstanceJavaDownloadPage::initUI()
     progressTitle->setObjectName("javaSectionLabel");
 
     m_progressBar = new QProgressBar(progressFrame);
+    m_progressBar->setObjectName(QStringLiteral("javaDlProgress"));
     m_progressBar->setRange(0, 100);
     m_progressBar->setValue(0);
-    m_progressBar->setTextVisible(true);
+    m_progressBar->setTextVisible(false);
 
     m_progressDetailLabel = new QLabel(progressFrame);
     m_progressDetailLabel->setObjectName("hintLabel");
@@ -382,7 +383,7 @@ void InstanceJavaDownloadPage::onDownloadClicked()
 
 void InstanceJavaDownloadPage::onBrowseClicked()
 {
-    QString dir = AppFileDialog::getExistingDirectory(this, tr("选择 Java 安装目录"),
+    QString dir = QFileDialog::getExistingDirectory(this, tr("选择 Java 安装目录"),
                                                      m_extractPath);
     if (!dir.isEmpty())
     {
@@ -432,12 +433,12 @@ void InstanceJavaDownloadPage::onVersionListFetched(const QVector<JavaBinaryInfo
 
     for (const JavaBinaryInfo &bin : binaries)
     {
-        QString label = QString("%1 | %2 | %3")
+        QString label = QString("%1 · %2 · %3")
                             .arg(bin.packageType.toUpper())
                             .arg(bin.architecture)
                             .arg(bin.osName);
         if (bin.fileSize > 0)
-            label += QString(" | %1").arg(formatFileSize(bin.fileSize));
+            label += QString(" · %1").arg(formatFileSize(bin.fileSize));
         m_binaryListWidget->addItem(label);
     }
 
@@ -450,12 +451,15 @@ void InstanceJavaDownloadPage::onVersionListFetched(const QVector<JavaBinaryInfo
     {
         m_binaryDetailLabel->setText(tr("未找到可用的二进制包"));
     }
+
+    updateUIState();
 }
 
 void InstanceJavaDownloadPage::onFetchError(const QString &error)
 {
     m_binaryDetailLabel->setText(tr("获取失败: %1").arg(error));
     m_binaryListWidget->setVisible(false);
+    updateUIState();
 }
 
 void InstanceJavaDownloadPage::onDownloadProgress(const QString &fileName, int percent)

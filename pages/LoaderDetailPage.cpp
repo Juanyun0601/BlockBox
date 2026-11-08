@@ -5,6 +5,8 @@
 #include "utils/SettingsManager.h"
 #include "components/NotificationManager.h"
 #include "components/MasonryContentCard.h"
+#include "platform.h"
+#include "utils/AndroidBridge.h"
 #include "utils/VersionDownloader.h"
 #include "utils/forge/ForgeInstaller.h"
 #include "utils/NeoForgeInstaller.h"
@@ -16,13 +18,14 @@
 
 #include <QCoreApplication>
 #include <QDir>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QGraphicsOpacityEffect>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include "components/AppMessageBox.h"
+#include <QFrame>
 #include <QMouseEvent>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -33,6 +36,8 @@
 #include <QDateTime>
 #include <functional>
 #include <QRegularExpression>
+#include <QStandardPaths>
+#include <QStorageInfo>
 #include <QTimer>
 #include <QVersionNumber>
 
@@ -112,6 +117,8 @@ QString resolveInstalledInstanceDir(const QString &gameRoot, const QStringList &
 LoaderDetailPage::LoaderDetailPage(QWidget *parent)
     : QWidget(parent)
     , m_mainLayout(nullptr)
+    , m_topCard(nullptr)
+    , m_topCardLayout(nullptr)
     , m_topBarWidget(nullptr)
     , m_topBarLayout(nullptr)
     , m_instanceNameEdit(nullptr)
@@ -159,7 +166,16 @@ void LoaderDetailPage::initUI()
     m_mainLayout->setContentsMargins(20, 20, 20, 20);
     m_mainLayout->setSpacing(10);
 
-    m_topBarWidget = new QWidget(this);
+    // 顶部安装信息卡片：实例名称、安装位置、下载源、已选加载器统一包进一张卡片，
+    // 与下方的加载器列表分成「填写区」和「内容区」两块
+    m_topCard = new QFrame(this);
+    m_topCard->setObjectName("loaderTopCard");
+    m_topCard->setAttribute(Qt::WA_StyledBackground, true);
+    m_topCardLayout = new QVBoxLayout(m_topCard);
+    m_topCardLayout->setContentsMargins(18, 16, 18, 16);
+    m_topCardLayout->setSpacing(12);
+
+    m_topBarWidget = new QWidget(m_topCard);
     m_topBarLayout = new QHBoxLayout(m_topBarWidget);
     m_topBarLayout->setContentsMargins(0, 0, 0, 0);
     m_topBarLayout->setSpacing(15);
@@ -178,9 +194,9 @@ void LoaderDetailPage::initUI()
     m_installButton->setEnabled(false);
     m_topBarLayout->addWidget(m_installButton);
 
-    m_mainLayout->addWidget(m_topBarWidget);
+    m_topCardLayout->addWidget(m_topBarWidget);
 
-    m_pathWidget = new QWidget(this);
+    m_pathWidget = new QWidget(m_topCard);
     m_pathLayout = new QHBoxLayout(m_pathWidget);
     m_pathLayout->setContentsMargins(0, 0, 0, 0);
     m_pathLayout->setSpacing(15);
@@ -215,9 +231,9 @@ void LoaderDetailPage::initUI()
     });
     m_pathLayout->addWidget(m_sourceComboBox);
 
-    m_mainLayout->addWidget(m_pathWidget);
+    m_topCardLayout->addWidget(m_pathWidget);
 
-    m_selectedLoadersWidget = new QWidget(this);
+    m_selectedLoadersWidget = new QWidget(m_topCard);
     m_selectedLoadersLayout = new QHBoxLayout(m_selectedLoadersWidget);
     m_selectedLoadersLayout->setContentsMargins(0, 0, 0, 0);
     m_selectedLoadersLayout->setSpacing(10);
@@ -234,7 +250,9 @@ void LoaderDetailPage::initUI()
     m_selectedLoadersLayout->addWidget(m_selectedCardsContainer);
 
     m_selectedLoadersWidget->setVisible(false);
-    m_mainLayout->addWidget(m_selectedLoadersWidget);
+    m_topCardLayout->addWidget(m_selectedLoadersWidget);
+
+    m_mainLayout->addWidget(m_topCard);
 
     m_loaderListWidget = new QListWidget(this);
     m_loaderListWidget->setObjectName("loaderListWidget");
@@ -287,8 +305,8 @@ void LoaderDetailPage::initUI()
     });
 
     connect(m_addFolderButton, &QPushButton::clicked, this, [this]() {
-        QString dir = AppFileDialog::getExistingDirectory(this, tr("选择实例文件夹"),
-            QDir::homePath(), AppFileDialog::ShowDirsOnly | AppFileDialog::DontResolveSymlinks);
+        QString dir = QFileDialog::getExistingDirectory(this, tr("选择实例文件夹"),
+            QDir::homePath(), QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
         if (!dir.isEmpty()) {
             SettingsManager::instance()->addInstanceFolder(QFileInfo(dir).fileName(), dir, false);
             loadInstanceFolders();
@@ -297,71 +315,90 @@ void LoaderDetailPage::initUI()
 
     connect(m_installButton, &QPushButton::clicked, this, [this]() {
         QString instanceName = m_instanceNameEdit->text().trimmed();
-        if (!instanceName.isEmpty() && !m_currentVersion.isEmpty()) {
-            if (m_selectedLoaders.isEmpty()) {
-                if (m_isInstalling) return;
-                m_isInstalling = true;
-                m_installButton->setEnabled(false);
-                QString source = m_sourceComboBox->currentData().toString();
-                VersionDownloader::DownloadSource downloadSource =
-                    (source == "bmcl") ? VersionDownloader::BMCL : VersionDownloader::Official;
-                VersionDownloader::instance()->setDownloadSource(downloadSource);
-                // 游戏根目录：新实例取用户选择的实例文件夹，修改实例则由实例目录反推；
-                // 版本文件必须落到 <游戏根>/versions/<实例名>，否则实例列表/启动器都找不到它
-                QString gameRoot = m_modifyMode ? gameRootFromInstancePath(m_modifyInstancePath)
-                                                : m_pathComboBox->currentData().toString();
-                if (gameRoot.trimmed().isEmpty())
-                    gameRoot = SettingsManager::instance()->getDefaultInstancePath();
-                const QString instanceFolderName =
-                    sanitizeInstanceFolderName(instanceName, m_currentVersion);
-                const QString targetPath = m_modifyMode
-                    ? m_modifyInstancePath
-                    : gameRoot + "/versions/" + instanceFolderName;
-                disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted, this, nullptr);
-                disconnect(VersionDownloader::instance(), &VersionDownloader::downloadFailed, this, nullptr);
-                disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCancelled, this, nullptr);
-                disconnect(VersionDownloader::instance(), &VersionDownloader::statusChanged, this, nullptr);
-                disconnect(VersionDownloader::instance(), &VersionDownloader::downloadProgressUpdated, this, nullptr);
-                connect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted,
-                    this, [this, instanceName](const QString &, const QString &actualVersionPath) {
-                        m_isInstalling = false;
-                        m_installButton->setEnabled(true);
-                        NotificationManager::showSuccess(this,
-                            NotificationManager::withDetail(
-                                tr("Minecraft %1 已成功安装到\r\n%2"),
-                                m_currentVersion, actualVersionPath));
-                        if (m_modifyMode)
-                            emit instanceModified(m_modifyInstancePath);
-                        else
-                            emit installRequested(actualVersionPath, instanceName, m_currentVersion,
-                                                  m_selectedLoaders);
-                    });
-                connect(VersionDownloader::instance(), &VersionDownloader::downloadFailed,
-                    this, [this](const QString &error) {
-                        m_isInstalling = false;
-                        m_installButton->setEnabled(true);
-                        NotificationManager::showError(this, error);
-                    });
-                connect(VersionDownloader::instance(), &VersionDownloader::downloadCancelled,
-                    this, [this]() {
-                        m_isInstalling = false;
-                        m_installButton->setEnabled(true);
-                    });
-                VersionDownloader::instance()->downloadVanillaTo(m_currentVersion, targetPath, instanceName);
-            } else {
-                if (m_isInstalling) return;
-                m_isInstalling = true;
-                m_installButton->setEnabled(false);
-                // 本次安装统一使用页面所选下载源：原版与 Forge/Fabric/NeoForge/OptiFine 一致
-                const bool useBmcl = m_sourceComboBox->currentData().toString() == QLatin1String("bmcl");
-                // 加载器安装器大多以「游戏根目录」为参数（内部自行拼 versions/），
-                // 只有 Forge 需要 <游戏根>/versions/<版本> 形式的实例目录；
-                // 原版基准版本必须先落到 <游戏根>/versions/<mcVersion>，加载器才能继承它
-                QString gameRoot = m_modifyMode ? gameRootFromInstancePath(m_modifyInstancePath)
-                                                : m_pathComboBox->currentData().toString();
-                if (gameRoot.trimmed().isEmpty())
-                    gameRoot = SettingsManager::instance()->getDefaultInstancePath();
-                const QString baseVersionDir = gameRoot + "/versions/" + m_currentVersion;
+        if (instanceName.isEmpty() || m_currentVersion.isEmpty())
+            return;
+        if (m_isInstalling) return;
+
+        // 游戏根目录：新实例取用户选择的实例文件夹，修改实例则由实例目录反推；
+        // 版本文件必须落到 <游戏根>/versions/<实例名>，否则实例列表/启动器都找不到它
+        QString gameRoot = m_modifyMode ? gameRootFromInstancePath(m_modifyInstancePath)
+                                        : m_pathComboBox->currentData().toString();
+        if (gameRoot.trimmed().isEmpty())
+            gameRoot = SettingsManager::instance()->getDefaultInstancePath();
+        const QString instanceFolderName =
+            sanitizeInstanceFolderName(instanceName, m_currentVersion);
+        const QString targetPath = m_modifyMode ? m_modifyInstancePath
+                                                : gameRoot + "/versions/" + instanceFolderName;
+
+        // 手机/平板：安装前先确认目标目录真的能写、剩余空间不至于明显不足，
+        // 避免下载到一半才失败（桌面端维持原有行为，不做额外拦截）
+        if (Platform::isMobile() || Platform::isHarmony()) {
+            const QString writableProbe =
+                m_modifyMode && !m_modifyInstancePath.isEmpty() ? m_modifyInstancePath : gameRoot;
+            if (!ensureInstallDirWritable(writableProbe))
+                return;
+            QStorageInfo storage(gameRoot);
+            if (storage.isValid() && storage.isReady()
+                && storage.bytesAvailable() < 512LL * 1024 * 1024) {
+                const auto answer = AppMessageBox::question(
+                    this, tr("剩余空间可能不足"),
+                    tr("实例目录所在位置剩余空间约 %1 MB，安装原版实例通常需要数百 MB。\n仍要继续吗？")
+                        .arg(storage.bytesAvailable() / (1024 * 1024)),
+                    AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
+                if (answer != AppMessageBox::Yes)
+                    return;
+            }
+        }
+
+        if (m_selectedLoaders.isEmpty()) {
+            if (m_isInstalling) return;
+            m_isInstalling = true;
+            m_installButton->setEnabled(false);
+            QString source = m_sourceComboBox->currentData().toString();
+            VersionDownloader::DownloadSource downloadSource =
+                (source == "bmcl") ? VersionDownloader::BMCL : VersionDownloader::Official;
+            VersionDownloader::instance()->setDownloadSource(downloadSource);
+            disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted, this, nullptr);
+            disconnect(VersionDownloader::instance(), &VersionDownloader::downloadFailed, this, nullptr);
+            disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCancelled, this, nullptr);
+            disconnect(VersionDownloader::instance(), &VersionDownloader::statusChanged, this, nullptr);
+            disconnect(VersionDownloader::instance(), &VersionDownloader::downloadProgressUpdated, this, nullptr);
+            connect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted,
+                this, [this, instanceName](const QString &, const QString &actualVersionPath) {
+                    m_isInstalling = false;
+                    m_installButton->setEnabled(true);
+                    NotificationManager::showSuccess(this,
+                        NotificationManager::withDetail(
+                            tr("Minecraft %1 已成功安装到\r\n%2"),
+                            m_currentVersion, actualVersionPath));
+                    if (m_modifyMode)
+                        emit instanceModified(m_modifyInstancePath);
+                    else
+                        emit installRequested(actualVersionPath, instanceName, m_currentVersion,
+                                              m_selectedLoaders);
+                });
+            connect(VersionDownloader::instance(), &VersionDownloader::downloadFailed,
+                this, [this](const QString &error) {
+                    m_isInstalling = false;
+                    m_installButton->setEnabled(true);
+                    NotificationManager::showError(this, error);
+                });
+            connect(VersionDownloader::instance(), &VersionDownloader::downloadCancelled,
+                this, [this]() {
+                    m_isInstalling = false;
+                    m_installButton->setEnabled(true);
+                });
+            VersionDownloader::instance()->downloadVanillaTo(m_currentVersion, targetPath, instanceName);
+        } else {
+            if (m_isInstalling) return;
+            m_isInstalling = true;
+            m_installButton->setEnabled(false);
+            // 本次安装统一使用页面所选下载源：原版与 Forge/Fabric/NeoForge/OptiFine 一致
+            const bool useBmcl = m_sourceComboBox->currentData().toString() == QLatin1String("bmcl");
+            // 加载器安装器大多以「游戏根目录」为参数（内部自行拼 versions/），
+            // 只有 Forge 需要 <游戏根>/versions/<版本> 形式的实例目录；
+            // 原版基准版本必须先落到 <游戏根>/versions/<mcVersion>，加载器才能继承它
+            const QString baseVersionDir = gameRoot + "/versions/" + m_currentVersion;
                 const QStringList versionsBefore = versionDirNames(gameRoot);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadCompleted, this, nullptr);
                 disconnect(VersionDownloader::instance(), &VersionDownloader::downloadFailed, this, nullptr);
@@ -621,7 +658,6 @@ void LoaderDetailPage::initUI()
                 // 加载器安装器会在此基础上创建各自的版本目录
                 VersionDownloader::instance()->downloadVanillaTo(m_currentVersion, baseVersionDir,
                                                                 instName, loaderList);
-            }
         }
     });
 }
@@ -795,11 +831,98 @@ void LoaderDetailPage::loadInstanceFolders()
         m_pathComboBox->setCurrentIndex(defaultIndex);
         m_instancePath = folders[defaultIndex].path;
     } else {
-        QString appDir = QCoreApplication::applicationDirPath();
-        m_instancePath = appDir + "/.minecraft";
+        // 未配置实例文件夹时的兜底：移动端用应用数据目录，桌面端跟随启动器目录
+        m_instancePath = SettingsManager::defaultInstanceFolderPath();
         m_pathComboBox->addItem(tr("默认实例文件夹"), m_instancePath);
         m_pathComboBox->setCurrentIndex(0);
     }
+}
+
+bool LoaderDetailPage::ensureInstallDirWritable(const QString &dir)
+{
+    if (Platform::isDirectoryWritable(dir))
+        return true;
+
+    if (AndroidBridge::isAndroidRuntime())
+    {
+        // 应用私有目录（Android/data/<包名>/files、内部 files）本来就不需要
+        // 「所有文件访问」权限；写不进去说明存储不可用，直接走可写目录兜底。
+        // 只有用户自选的公共目录才需要引导授权。
+        const QString clean = QDir::cleanPath(dir);
+        const QString appData = QDir::cleanPath(
+            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+        const QString genericData = QDir::cleanPath(
+            QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
+        const bool appPrivate =
+            (!appData.isEmpty() && (clean == appData || clean.startsWith(appData + '/')))
+            || (!genericData.isEmpty()
+                && (clean == genericData || clean.startsWith(genericData + '/')));
+
+        if (!appPrivate)
+        {
+            if (AndroidBridge::hasAllFilesAccess())
+            {
+                // 已经授权过，再探一次；仍失败说明目录本身不可写
+                if (Platform::isDirectoryWritable(dir))
+                    return true;
+            }
+            else
+            {
+                const auto answer = AppMessageBox::question(
+                    this, tr("需要「所有文件访问」权限"),
+                    tr("这个文件夹在公共存储里，安卓 11 及以上需要「所有文件访问」权限才能写入：\n%1\n\n"
+                       "是否前往系统设置授权？授权后回来再点一次「安装」即可。")
+                        .arg(QDir::toNativeSeparators(dir)),
+                    AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::Yes);
+                if (answer == AppMessageBox::Yes)
+                {
+                    AndroidBridge::ensureAllFilesAccess();
+                    return false;
+                }
+            }
+        }
+    }
+
+    // 兜底：优先用平台解析出的可写游戏目录（安卓外部存储不可写时会解析到内部目录），
+    // 再退回设置里的默认实例目录
+    const QString defaultPath = (Platform::isMobile() || Platform::isHarmony())
+        ? Platform::getMinecraftDirectory()
+        : SettingsManager::instance()->getDefaultInstancePath();
+    if (!defaultPath.isEmpty()
+        && QDir::cleanPath(defaultPath) != QDir::cleanPath(dir)
+        && Platform::isDirectoryWritable(defaultPath))
+    {
+        const auto fallback = AppMessageBox::question(
+            this, tr("目录无法写入"),
+            tr("实例目录无法写入：\n%1\n\n是否改用应用默认可写目录？\n%2")
+                .arg(QDir::toNativeSeparators(dir),
+                     QDir::toNativeSeparators(defaultPath)),
+            AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::Yes);
+        if (fallback == AppMessageBox::Yes)
+            useDefaultInstallFolder();
+        return false;
+    }
+
+    AppMessageBox::warning(this, tr("无法安装实例"),
+        tr("实例目录无法写入：\n%1\n\n请点「安装位置」旁的 + 选择其他可写文件夹后再试。")
+            .arg(QDir::toNativeSeparators(dir)));
+    return false;
+}
+
+void LoaderDetailPage::useDefaultInstallFolder()
+{
+    const QString defaultPath = (Platform::isMobile() || Platform::isHarmony())
+        ? Platform::getMinecraftDirectory()
+        : SettingsManager::instance()->getDefaultInstancePath();
+    int index = m_pathComboBox->findData(defaultPath);
+    if (index < 0)
+    {
+        m_pathComboBox->addItem(tr("默认实例文件夹"), defaultPath);
+        index = m_pathComboBox->count() - 1;
+    }
+    m_pathComboBox->setCurrentIndex(index);
+    m_instancePath = defaultPath;
+    NotificationManager::showInfo(this, tr("已改用默认实例文件夹，请再点一次「安装」"));
 }
 
 void LoaderDetailPage::addSelectedLoader(const QString &loaderName, const QString &loaderVersion,

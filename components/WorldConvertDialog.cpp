@@ -21,10 +21,10 @@
 #include <QTextEdit>
 #include <QUrl>
 #include <QVBoxLayout>
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/AppMessageBox.h"
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 
 using WorldConverter::Direction;
 using WorldConverter::WorldEdition;
@@ -45,7 +45,7 @@ WorldConvertDialog::WorldConvertDialog(const QString &worldDir, const QString &w
 {
     setObjectName(QStringLiteral("worldConvertDialog"));
     setWindowTitle(tr("存档版本转换"));
-    setMinimumSize(720, 640);
+    setMinimumSize(UiMetrics::fitToScreen(this, QSize(720, 640)));
 
     m_task = new WorldConverter::WorldConvertTask(this);
     connect(m_task, &WorldConverter::WorldConvertTask::progress,
@@ -428,7 +428,7 @@ void WorldConvertDialog::onRescanJava()
 
 void WorldConvertDialog::onPickJava()
 {
-    const QString path = AppFileDialog::getOpenFileName(
+    const QString path = QFileDialog::getOpenFileName(
         this, tr("选择 java.exe"), QString(),
 #ifdef Q_OS_WIN
         tr("Java 可执行文件 (java.exe);;所有文件 (*.*)")
@@ -494,7 +494,7 @@ void WorldConvertDialog::onBrowseOutput()
     const QString start = m_outputEdit->text().isEmpty()
         ? QFileInfo(m_worldDir).absolutePath()
         : m_outputEdit->text();
-    const QString dir = AppFileDialog::getExistingDirectory(
+    const QString dir = QFileDialog::getExistingDirectory(
         this, tr("选择输出文件夹（需为空或不存在的路径）"), start);
     if (!dir.isEmpty())
         m_outputEdit->setText(dir);

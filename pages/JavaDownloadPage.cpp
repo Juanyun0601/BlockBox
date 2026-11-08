@@ -9,18 +9,66 @@
 
 #include <QComboBox>
 #include <QDebug>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QGroupBox>
+#include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include "components/AppMessageBox.h"
+#include <QScrollArea>
 #include <QStandardPaths>
 #include <QStyle>
 
 #include "components/NotificationManager.h"
 #include "utils/SettingsManager.h"
+
+namespace {
+
+/// 统一下载页卡片：步骤徽标 + 标题 + 内容区
+QVBoxLayout *createCard(QFrame **cardOut, QWidget *parent,
+                        const QString &step, const QString &title)
+{
+  auto *card = new QFrame(parent);
+  card->setObjectName(QStringLiteral("javaDlCard"));
+  card->setAttribute(Qt::WA_StyledBackground, true);
+
+  auto *layout = new QVBoxLayout(card);
+  layout->setContentsMargins(18, 14, 18, 16);
+  layout->setSpacing(10);
+
+  auto *head = new QHBoxLayout();
+  head->setSpacing(8);
+
+  auto *badge = new QLabel(step, card);
+  badge->setObjectName(QStringLiteral("javaDlStep"));
+  badge->setAlignment(Qt::AlignCenter);
+  badge->setFixedSize(20, 20);
+
+  auto *titleLabel = new QLabel(title, card);
+  titleLabel->setObjectName(QStringLiteral("javaDlCardTitle"));
+
+  head->addWidget(badge);
+  head->addWidget(titleLabel);
+  head->addStretch(1);
+  layout->addLayout(head);
+
+  *cardOut = card;
+  return layout;
+}
+
+/// 卡片内分隔线
+QFrame *createDivider(QWidget *parent)
+{
+  auto *divider = new QFrame(parent);
+  divider->setObjectName(QStringLiteral("javaDlDivider"));
+  divider->setAttribute(Qt::WA_StyledBackground, true);
+  divider->setFixedHeight(1);
+  return divider;
+}
+
+} // namespace
 
 JavaDownloadPage::JavaDownloadPage(QWidget *parent)
   : QWidget(parent)
@@ -44,6 +92,8 @@ JavaDownloadPage::JavaDownloadPage(QWidget *parent)
           this, &JavaDownloadPage::onDownloadCompleted);
   connect(downloader, &JavaDownloader::downloadFailed,
           this, &JavaDownloadPage::onDownloadFailed);
+  connect(downloader, &JavaDownloader::extractProgress,
+          this, &JavaDownloadPage::onExtractProgress);
   connect(downloader, &JavaDownloader::extractCompleted,
           this, &JavaDownloadPage::onExtractCompleted);
   connect(downloader, &JavaDownloader::extractFailed,
@@ -52,6 +102,7 @@ JavaDownloadPage::JavaDownloadPage(QWidget *parent)
   // 默认安装路径
   m_extractPath = defaultJavaInstallPath();
   m_extractPathLabel->setText(m_extractPath);
+  m_extractPathLabel->setToolTip(m_extractPath);
 
   // 默认镜像源：官方源（GitHub）在国内网络不稳定，默认走清华 TUNA 镜像
   int idxTuna = m_mirrorCombo->findData("tuna");
@@ -69,43 +120,82 @@ JavaDownloadPage::JavaDownloadPage(QWidget *parent)
 
 void JavaDownloadPage::initUI()
 {
-  QVBoxLayout *mainLayout = new QVBoxLayout(this);
-  mainLayout->setContentsMargins(32, 24, 32, 24);
-  mainLayout->setSpacing(16);
+  auto *rootLayout = new QVBoxLayout(this);
+  rootLayout->setContentsMargins(0, 0, 0, 0);
+  rootLayout->setSpacing(0);
 
-  // --- 标题区域 ---
-  m_titleLabel = new OutlinedLabel(tr("Java 下载管理"), this);
+  // 窗口高度较小时可滚动，避免底部按钮被裁掉
+  auto *scroll = new QScrollArea(this);
+  scroll->setObjectName(QStringLiteral("javaDlScroll"));
+  scroll->setWidgetResizable(true);
+  scroll->setFrameShape(QFrame::NoFrame);
+  scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+  auto *content = new QWidget(scroll);
+  content->setObjectName(QStringLiteral("javaDlContent"));
+
+  QVBoxLayout *mainLayout = new QVBoxLayout(content);
+  mainLayout->setContentsMargins(32, 24, 32, 20);
+  mainLayout->setSpacing(14);
+
+  // ── 标题区域 ──
+  auto *headerRow = new QHBoxLayout();
+  headerRow->setSpacing(12);
+
+  auto *titleBox = new QVBoxLayout();
+  titleBox->setSpacing(4);
+
+  m_titleLabel = new OutlinedLabel(tr("Java 下载管理"), content);
   m_titleLabel->setObjectName("sectionTitle");
 
-  m_subtitleLabel = new QLabel(tr("选择 Java 发行版、版本和镜像源，下载并安装 Java 运行环境"), this);
+  m_subtitleLabel = new QLabel(tr("选择 Java 发行版、版本和镜像源，下载并安装 Java 运行环境"), content);
   m_subtitleLabel->setObjectName("sectionSubtitle");
   m_subtitleLabel->setWordWrap(true);
 
-  // --- 发行版选择 ---
-  QGroupBox *distGroup = new QGroupBox(tr("发行版"), this);
-  QVBoxLayout *distLayout = new QVBoxLayout(distGroup);
+  titleBox->addWidget(m_titleLabel);
+  titleBox->addWidget(m_subtitleLabel);
 
-  m_distributionCombo = new QComboBox(distGroup);
+  m_statusPill = new QLabel(content);
+  m_statusPill->setObjectName(QStringLiteral("javaDlStatus"));
+  m_statusPill->setProperty("state", QStringLiteral("idle"));
+  m_statusPill->setAlignment(Qt::AlignCenter);
+  m_statusPill->setVisible(false);
+
+  headerRow->addLayout(titleBox, 1);
+  headerRow->addWidget(m_statusPill, 0, Qt::AlignVCenter);
+  mainLayout->addLayout(headerRow);
+
+  // ── 第一行：发行版 + 版本 ──
+  auto *topGrid = new QGridLayout();
+  topGrid->setContentsMargins(0, 0, 0, 0);
+  topGrid->setHorizontalSpacing(14);
+  topGrid->setVerticalSpacing(14);
+  topGrid->setColumnStretch(0, 1);
+  topGrid->setColumnStretch(1, 1);
+
+  // 发行版卡片（发行版 + 镜像源）
+  QFrame *distCard = nullptr;
+  QVBoxLayout *distLayout = createCard(&distCard, content, QStringLiteral("1"), tr("发行版"));
+
+  m_distributionCombo = new QComboBox(distCard);
+  m_distributionCombo->setObjectName(QStringLiteral("javaDlCombo"));
   QVector<JavaDistribution> dists = JavaDownloader::instance()->availableDistributions();
   for (const JavaDistribution &d : dists)
     m_distributionCombo->addItem(d.name, d.id);
 
-  m_distributionDescLabel = new QLabel(distGroup);
-  m_distributionDescLabel->setObjectName("hintLabel");
+  m_distributionDescLabel = new QLabel(distCard);
+  m_distributionDescLabel->setObjectName(QStringLiteral("javaDlDesc"));
   m_distributionDescLabel->setWordWrap(true);
   m_distributionDescLabel->setText(dists.first().description);
 
   connect(m_distributionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &JavaDownloadPage::onDistributionChanged);
 
-  distLayout->addWidget(m_distributionCombo);
-  distLayout->addWidget(m_distributionDescLabel);
+  auto *mirrorLabel = new QLabel(tr("镜像源"), distCard);
+  mirrorLabel->setObjectName(QStringLiteral("javaDlFieldLabel"));
 
-  // --- 镜像源选择 ---
-  QGroupBox *mirrorGroup = new QGroupBox(tr("镜像源"), this);
-  QVBoxLayout *mirrorLayout = new QVBoxLayout(mirrorGroup);
-
-  m_mirrorCombo = new QComboBox(mirrorGroup);
+  m_mirrorCombo = new QComboBox(distCard);
+  m_mirrorCombo->setObjectName(QStringLiteral("javaDlCombo"));
   QVector<JavaMirror> mirrors = JavaDownloader::instance()->availableMirrors();
   for (const JavaMirror &m : mirrors)
     m_mirrorCombo->addItem(m.name, m.id);
@@ -113,93 +203,122 @@ void JavaDownloadPage::initUI()
   connect(m_mirrorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &JavaDownloadPage::onMirrorChanged);
 
-  mirrorLayout->addWidget(m_mirrorCombo);
+  distLayout->addWidget(m_distributionCombo);
+  distLayout->addWidget(m_distributionDescLabel);
+  distLayout->addWidget(createDivider(distCard));
+  distLayout->addWidget(mirrorLabel);
+  distLayout->addWidget(m_mirrorCombo);
+  distLayout->addStretch(1);
 
-  // --- 版本选择 ---
-  QGroupBox *versionGroup = new QGroupBox(tr("Java 版本"), this);
-  QVBoxLayout *versionLayout = new QVBoxLayout(versionGroup);
+  // 版本卡片（版本 + 安装包列表）
+  QFrame *versionCard = nullptr;
+  QVBoxLayout *verLayout = createCard(&versionCard, content, QStringLiteral("2"), tr("Java 版本"));
 
-  m_versionCombo = new QComboBox(versionGroup);
+  m_versionCombo = new QComboBox(versionCard);
+  m_versionCombo->setObjectName(QStringLiteral("javaDlCombo"));
   connect(m_versionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &JavaDownloadPage::onVersionChanged);
 
-  m_binaryListWidget = new QListWidget(versionGroup);
-  m_binaryListWidget->setMaximumHeight(80);
+  m_binaryListWidget = new QListWidget(versionCard);
+  m_binaryListWidget->setObjectName(QStringLiteral("javaDlBinaryList"));
+  m_binaryListWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   m_binaryListWidget->setVisible(false);
+  connect(m_binaryListWidget, &QListWidget::currentRowChanged,
+          this, [this](int) { updateBinaryInfo(); });
 
-  m_binaryDetailLabel = new QLabel(versionGroup);
-  m_binaryDetailLabel->setObjectName("hintLabel");
+  m_binaryDetailLabel = new QLabel(versionCard);
+  m_binaryDetailLabel->setObjectName(QStringLiteral("javaDlSummary"));
   m_binaryDetailLabel->setWordWrap(true);
 
-  versionLayout->addWidget(m_versionCombo);
-  versionLayout->addWidget(m_binaryListWidget);
-  versionLayout->addWidget(m_binaryDetailLabel);
+  verLayout->addWidget(m_versionCombo);
+  verLayout->addWidget(m_binaryListWidget);
+  verLayout->addWidget(m_binaryDetailLabel);
+  verLayout->addStretch(1);
 
-  // --- 安装路径 ---
-  QGroupBox *pathGroup = new QGroupBox(tr("安装路径"), this);
-  QHBoxLayout *pathLayout = new QHBoxLayout(pathGroup);
+  topGrid->addWidget(distCard, 0, 0);
+  topGrid->addWidget(versionCard, 0, 1);
+  mainLayout->addLayout(topGrid);
 
-  m_extractPathLabel = new QLabel(pathGroup);
-  m_extractPathLabel->setObjectName("hintLabel");
+  // ── 安装路径卡片 ──
+  QFrame *pathCard = nullptr;
+  QVBoxLayout *pathLayout = createCard(&pathCard, content, QStringLiteral("3"), tr("安装路径"));
+
+  auto *pathRow = new QHBoxLayout();
+  pathRow->setSpacing(10);
+
+  m_extractPathLabel = new QLabel(pathCard);
+  m_extractPathLabel->setObjectName(QStringLiteral("javaDlPath"));
   m_extractPathLabel->setWordWrap(true);
+  m_extractPathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-  m_extractPathBrowseBtn = new QPushButton(tr("浏览..."), pathGroup);
+  m_extractPathBrowseBtn = new QPushButton(tr("浏览..."), pathCard);
+  m_extractPathBrowseBtn->setObjectName(QStringLiteral("javaDlBrowseBtn"));
+  m_extractPathBrowseBtn->setCursor(Qt::PointingHandCursor);
   connect(m_extractPathBrowseBtn, &QPushButton::clicked,
           this, &JavaDownloadPage::onExtractPathBrowseClicked);
 
-  pathLayout->addWidget(m_extractPathLabel, 1);
-  pathLayout->addWidget(m_extractPathBrowseBtn);
+  m_pathHintLabel = new QLabel(pathCard);
+  m_pathHintLabel->setObjectName(QStringLiteral("javaDlHint"));
+  m_pathHintLabel->setWordWrap(true);
+  m_pathHintLabel->setVisible(false);
 
-  // --- 进度 ---
-  QGroupBox *progressGroup = new QGroupBox(tr("下载进度"), this);
-  QVBoxLayout *progressLayout = new QVBoxLayout(progressGroup);
+  pathRow->addWidget(m_extractPathLabel, 1);
+  pathRow->addWidget(m_extractPathBrowseBtn, 0, Qt::AlignVCenter);
+  pathLayout->addLayout(pathRow);
+  pathLayout->addWidget(m_pathHintLabel);
 
-  m_progressBar = new QProgressBar(progressGroup);
+  mainLayout->addWidget(pathCard);
+
+  // ── 下载进度卡片（开始下载后才出现，空闲时不占版面）──
+  QFrame *progressCard = nullptr;
+  QVBoxLayout *progressLayout = createCard(&progressCard, content, QStringLiteral("4"), tr("下载进度"));
+  m_progressCard = progressCard;
+  m_progressCard->setVisible(false);
+
+  m_progressBar = new QProgressBar(progressCard);
+  m_progressBar->setObjectName(QStringLiteral("javaDlProgress"));
   m_progressBar->setRange(0, 100);
   m_progressBar->setValue(0);
-  m_progressBar->setTextVisible(true);
+  m_progressBar->setTextVisible(false);
 
-  m_progressDetailLabel = new QLabel(progressGroup);
-  m_progressDetailLabel->setObjectName("hintLabel");
+  m_progressDetailLabel = new QLabel(progressCard);
+  m_progressDetailLabel->setObjectName(QStringLiteral("javaDlProgressText"));
 
   progressLayout->addWidget(m_progressBar);
   progressLayout->addWidget(m_progressDetailLabel);
 
-  // --- 状态 ---
-  m_statusLabel = new QLabel(this);
-  m_statusLabel->setObjectName("statusLabel");
+  mainLayout->addWidget(progressCard);
+  mainLayout->addStretch(1);
 
-  // --- 按钮区域 ---
-  QHBoxLayout *buttonLayout = new QHBoxLayout();
-  buttonLayout->setSpacing(12);
+  // ── 底部按钮 ──
+  auto *buttonLayout = new QHBoxLayout();
+  buttonLayout->setSpacing(10);
 
-  m_backBtn = new QPushButton(tr("返回"), this);
+  m_backBtn = new QPushButton(QStringLiteral("‹  ") + tr("返回"), content);
+  m_backBtn->setObjectName(QStringLiteral("javaDlBackBtn"));
+  m_backBtn->setCursor(Qt::PointingHandCursor);
   connect(m_backBtn, &QPushButton::clicked, this, &JavaDownloadPage::backToSettingsRequested);
 
-  m_cancelBtn = new QPushButton(tr("取消"), this);
+  m_cancelBtn = new QPushButton(tr("取消"), content);
+  m_cancelBtn->setObjectName(QStringLiteral("javaDlCancelBtn"));
+  m_cancelBtn->setCursor(Qt::PointingHandCursor);
   m_cancelBtn->setVisible(false);
   connect(m_cancelBtn, &QPushButton::clicked, this, &JavaDownloadPage::onCancelClicked);
 
-  m_downloadBtn = new QPushButton(tr("下载并安装"), this);
-  m_downloadBtn->setObjectName("primaryButton");
+  m_downloadBtn = new QPushButton(tr("下载并安装"), content);
+  m_downloadBtn->setObjectName(QStringLiteral("javaDlPrimaryBtn"));
+  m_downloadBtn->setCursor(Qt::PointingHandCursor);
   connect(m_downloadBtn, &QPushButton::clicked, this, &JavaDownloadPage::onDownloadClicked);
 
   buttonLayout->addWidget(m_backBtn);
-  buttonLayout->addStretch();
+  buttonLayout->addStretch(1);
   buttonLayout->addWidget(m_cancelBtn);
   buttonLayout->addWidget(m_downloadBtn);
 
-  // --- 组装 ---
-  mainLayout->addWidget(m_titleLabel);
-  mainLayout->addWidget(m_subtitleLabel);
-  mainLayout->addWidget(distGroup);
-  mainLayout->addWidget(mirrorGroup);
-  mainLayout->addWidget(versionGroup);
-  mainLayout->addWidget(pathGroup);
-  mainLayout->addWidget(progressGroup);
-  mainLayout->addWidget(m_statusLabel);
-  mainLayout->addStretch();
   mainLayout->addLayout(buttonLayout);
+
+  scroll->setWidget(content);
+  rootLayout->addWidget(scroll);
 }
 
 // --- Slots ---
@@ -259,10 +378,13 @@ void JavaDownloadPage::onVersionChanged(int index)
   QString distId = m_distributionCombo->currentData().toString();
   QString mirrorId = m_mirrorCombo->currentData().toString();
 
-  m_binaryDetailLabel->setText(tr("正在获取可用版本..."));
+  setSummaryText(tr("正在获取可用版本..."), QStringLiteral("normal"));
   m_binaryListWidget->clear();
   m_binaryListWidget->setVisible(false);
   m_currentBinaries.clear();
+  m_progressCard->setVisible(false);
+  m_progressBar->setValue(0);
+  m_progressDetailLabel->clear();
 
   JavaDownloader::instance()->fetchAvailableBinaries(distId, mirrorId, majorVersion);
 }
@@ -295,6 +417,9 @@ void JavaDownloadPage::onDownloadClicked()
   }
 
   m_isDownloading = true;
+  m_progressCard->setVisible(true);
+  m_progressBar->setValue(0);
+  m_progressDetailLabel->clear();
   updateUIState();
 
   JavaDownloader::instance()->downloadAndExtract(m_selectedBinary, m_extractPath);
@@ -302,12 +427,13 @@ void JavaDownloadPage::onDownloadClicked()
 
 void JavaDownloadPage::onExtractPathBrowseClicked()
 {
-  QString dir = AppFileDialog::getExistingDirectory(this, tr("选择 Java 安装目录"),
+  QString dir = QFileDialog::getExistingDirectory(this, tr("选择 Java 安装目录"),
                                                     m_extractPath);
   if (!dir.isEmpty())
   {
     m_extractPath = dir;
     m_extractPathLabel->setText(dir);
+    m_extractPathLabel->setToolTip(dir);
   }
 }
 
@@ -317,6 +443,7 @@ void JavaDownloadPage::onCancelClicked()
   m_isDownloading = false;
   m_progressBar->setValue(0);
   m_progressDetailLabel->clear();
+  m_progressCard->setVisible(false);
   updateUIState();
 }
 
@@ -334,30 +461,38 @@ void JavaDownloadPage::onVersionListFetched(const QVector<JavaBinaryInfo> &binar
 
   for (const JavaBinaryInfo &bin : binaries)
   {
-    QString label = QString("%1 | %2 | %3")
+    QString label = QString("%1 · %2 · %3")
                         .arg(bin.packageType.toUpper())
                         .arg(bin.architecture)
                         .arg(bin.osName);
     if (bin.fileSize > 0)
-      label += QString(" | %1").arg(formatFileSize(bin.fileSize));
+      label += QString(" · %1").arg(formatFileSize(bin.fileSize));
     m_binaryListWidget->addItem(label);
   }
 
   if (!binaries.isEmpty())
   {
+    // 列表高度跟随条目数（最多 3 条，其余滚动），避免只显示半行
+    const int rows = qMin(binaries.size(), 3);
+    const int rowHeight = qMax(30, m_binaryListWidget->sizeHintForRow(0));
+    m_binaryListWidget->setFixedHeight(rows * rowHeight + 16);
     m_binaryListWidget->setCurrentRow(0);
     updateBinaryInfo();
   }
   else
   {
-    m_binaryDetailLabel->setText(tr("未找到可用的二进制包"));
+    m_binaryListWidget->setVisible(false);
+    setSummaryText(tr("未找到可用的二进制包"), QStringLiteral("normal"));
   }
+
+  updateUIState();
 }
 
 void JavaDownloadPage::onFetchError(const QString &error)
 {
-  m_binaryDetailLabel->setText(tr("获取失败: %1").arg(error));
+  setSummaryText(tr("获取失败: %1").arg(error), QStringLiteral("error"));
   m_binaryListWidget->setVisible(false);
+  updateUIState();
 }
 
 void JavaDownloadPage::onDownloadProgress(const QString &fileName, int percent)
@@ -371,6 +506,7 @@ void JavaDownloadPage::onDownloadBytesProgress(qint64 bytesReceived, qint64 byte
 {
   if (bytesTotal > 0)
   {
+    m_progressBar->setValue(static_cast<int>(bytesReceived * 100 / bytesTotal));
     m_progressDetailLabel->setText(tr("正在下载... %1 / %2")
                                        .arg(formatFileSize(bytesReceived))
                                        .arg(formatFileSize(bytesTotal)));
@@ -393,6 +529,12 @@ void JavaDownloadPage::onDownloadFailed(const QString &error)
   updateUIState();
 }
 
+void JavaDownloadPage::onExtractProgress(int percent)
+{
+  m_progressBar->setValue(percent);
+  m_progressDetailLabel->setText(tr("正在解压安装..."));
+}
+
 void JavaDownloadPage::onExtractCompleted(const QString &javaPath)
 {
   m_isDownloading = false;
@@ -400,7 +542,8 @@ void JavaDownloadPage::onExtractCompleted(const QString &javaPath)
   m_progressDetailLabel->setText(tr("安装完成!"));
 
   QString javaExe = findJavaExecutable(javaPath);
-  m_statusLabel->setText(tr("Java 已安装至: %1\n可执行文件: %2").arg(javaPath).arg(javaExe));
+  m_pathHintLabel->setText(tr("Java 已安装至: %1\n可执行文件: %2").arg(javaPath).arg(javaExe));
+  m_pathHintLabel->setVisible(true);
 
   NotificationManager::showSuccess(this, tr("Java 安装成功!"));
 
@@ -422,44 +565,82 @@ void JavaDownloadPage::onExtractFailed(const QString &error)
 void JavaDownloadPage::updateUIState()
 {
   JavaDownloadStatus status = JavaDownloader::instance()->status();
-  bool isBusy = (status == JavaDownloadStatus::FetchingBinaries ||
+  bool isBusy = (status == JavaDownloadStatus::FetchingVersions ||
+                 status == JavaDownloadStatus::FetchingBinaries ||
                  status == JavaDownloadStatus::Downloading ||
                  status == JavaDownloadStatus::Extracting);
 
   m_distributionCombo->setEnabled(!isBusy);
   m_versionCombo->setEnabled(!isBusy);
+  m_mirrorCombo->setEnabled(!isBusy &&
+                            m_distributionCombo->currentData().toString() == "adoptium");
   m_extractPathBrowseBtn->setEnabled(!isBusy);
   m_downloadBtn->setEnabled(!isBusy && !m_currentBinaries.isEmpty());
   m_cancelBtn->setVisible(isBusy);
   m_backBtn->setEnabled(!isBusy);
 
-  if (status == JavaDownloadStatus::FetchingBinaries)
-    m_statusLabel->setText(tr("正在获取可用版本列表..."));
+  if (status == JavaDownloadStatus::FetchingVersions ||
+      status == JavaDownloadStatus::FetchingBinaries)
+    setStatusPill(QStringLiteral("busy"), tr("正在获取可用版本列表..."));
   else if (status == JavaDownloadStatus::Downloading)
-    m_statusLabel->setText(tr("正在下载 Java..."));
+  {
+    m_progressCard->setVisible(true);
+    setStatusPill(QStringLiteral("busy"), tr("正在下载 Java..."));
+  }
   else if (status == JavaDownloadStatus::Extracting)
-    m_statusLabel->setText(tr("正在解压安装..."));
+  {
+    m_progressCard->setVisible(true);
+    setStatusPill(QStringLiteral("busy"), tr("正在解压安装..."));
+  }
+  else if (status == JavaDownloadStatus::Completed)
+    setStatusPill(QStringLiteral("success"), tr("安装完成!"));
   else if (status == JavaDownloadStatus::Failed)
-    m_statusLabel->setText(tr("操作失败，请重试"));
+    setStatusPill(QStringLiteral("error"), tr("操作失败，请重试"));
   else
-    m_statusLabel->clear();
+    setStatusPill(QStringLiteral("idle"), QString());
 }
 
 void JavaDownloadPage::updateBinaryInfo()
 {
   int row = m_binaryListWidget->currentRow();
   if (row < 0 || row >= m_currentBinaries.size())
+  {
+    m_binaryDetailLabel->clear();
     return;
+  }
 
   const JavaBinaryInfo &bin = m_currentBinaries[row];
-  QString info = QString("发行版: %1\n版本: %2\n架构: %3 | 系统: %4")
-                     .arg(bin.distributionName)
-                     .arg(bin.versionName)
-                     .arg(bin.architecture)
-                     .arg(bin.osName);
-  if (bin.fileSize > 0)
-    info += QString("\n大小: %1").arg(formatFileSize(bin.fileSize));
-  m_binaryDetailLabel->setText(info);
+  setSummaryText(QString("%1 · %2").arg(bin.distributionName).arg(bin.versionName),
+                 QStringLiteral("normal"));
+}
+
+void JavaDownloadPage::setSummaryText(const QString &text, const QString &state)
+{
+  if (!m_binaryDetailLabel)
+    return;
+  if (m_binaryDetailLabel->property("state").toString() != state)
+  {
+    m_binaryDetailLabel->setProperty("state", state);
+    m_binaryDetailLabel->style()->unpolish(m_binaryDetailLabel);
+    m_binaryDetailLabel->style()->polish(m_binaryDetailLabel);
+  }
+  m_binaryDetailLabel->setText(text);
+}
+
+void JavaDownloadPage::setStatusPill(const QString &state, const QString &text)
+{
+  if (!m_statusPill)
+    return;
+
+  m_statusPill->setText(text);
+  m_statusPill->setVisible(!text.isEmpty());
+
+  if (m_statusPill->property("state").toString() != state)
+  {
+    m_statusPill->setProperty("state", state);
+    m_statusPill->style()->unpolish(m_statusPill);
+    m_statusPill->style()->polish(m_statusPill);
+  }
 }
 
 QString JavaDownloadPage::formatFileSize(qint64 bytes) const

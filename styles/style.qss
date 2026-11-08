@@ -2829,6 +2829,124 @@ QPushButton#homeSkinAddBtn:hover {
     background-color: @BG_HOVER@;
 }
 
+/* 首页轮播左侧好友面板：标题 / 好友卡片 / 开房置顶的「一起玩」按钮 */
+QLabel#homeFriendsTitle {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 700;
+    border: none;
+}
+
+QLabel#homeFriendsCount {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    border: none;
+}
+
+QPushButton#homeFriendsOpenBtn {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    border: none;
+    padding: 0 4px;
+    font-size: 11px;
+}
+
+QPushButton#homeFriendsOpenBtn:hover {
+    color: @PRIMARY@;
+}
+
+QScrollArea#homeFriendsScroll,
+QScrollArea#homeFriendsScroll > QWidget > QWidget,
+QWidget#homeFriendsListHost,
+QWidget#homeFriendsState {
+    background: transparent;
+    border: none;
+}
+
+QFrame#homeFriendCard {
+    background-color: @BG_PRESSED@;
+    border: 1px solid transparent;
+    border-radius: 10px;
+}
+
+QFrame#homeFriendCard:hover {
+    background-color: @BG_HOVER@;
+}
+
+QFrame#homeFriendCard[roomActive="true"] {
+    background-color: @PRIMARY_RGBA_12@;
+    border: 1px solid @PRIMARY_RGBA_38@;
+}
+
+QLabel#homeFriendOnlineDot {
+    background-color: @TEXT_TERTIARY@;
+    border-radius: 3px;
+}
+
+QLabel#homeFriendOnlineDot[online="true"] {
+    background-color: @SUCCESS@;
+}
+
+QLabel#homeFriendName {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+}
+
+QLabel#homeFriendStatus {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 10px;
+    border: none;
+}
+
+QLabel#homeFriendStatus[roomActive="true"] {
+    color: @PRIMARY@;
+}
+
+QPushButton#homeFriendPlayBtn {
+    background-color: @PRIMARY@;
+    color: @TEXT_ON_PRIMARY@;
+    border: none;
+    border-radius: 13px;
+    padding: 0 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QPushButton#homeFriendPlayBtn:hover {
+    background-color: @PRIMARY_HOVER@;
+}
+
+QPushButton#homeFriendPlayBtn:pressed {
+    background-color: @PRIMARY_PRESSED@;
+}
+
+QLabel#homeFriendsStateText {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    border: none;
+}
+
+QPushButton#homeFriendsStateBtn {
+    background-color: @PRIMARY_RGBA_12@;
+    color: @PRIMARY@;
+    border: none;
+    border-radius: 15px;
+    padding: 0 14px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#homeFriendsStateBtn:hover {
+    background-color: @PRIMARY_RGBA_20@;
+}
+
 QLabel#carouselTag {
     background: @WHITE_RGBA_30@;
     color: @TEXT_ON_PRIMARY@;
@@ -8711,62 +8829,15 @@ QLabel#settingWarningLabel {
     font-size: 11px;
 }
 
-/* JVM参数预设下拉框 */
-QComboBox#jvmPresetCombo {
-    background-color: @BG_CARD@;
-    color: @TEXT_PRIMARY@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 13px;
-    min-width: 120px;
-}
-
-QComboBox#jvmPresetCombo:hover {
-    border-color: @BORDER_STRONG@;
-}
-
-QComboBox#jvmPresetCombo:focus {
-    border: 2px solid @PRIMARY@;
-    padding: 5px 11px;
-}
-
-QComboBox#jvmPresetCombo::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: center right;
-    width: 24px;
-    border: none;
-}
-
-QComboBox#jvmPresetCombo::down-arrow {
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid @TEXT_TERTIARY@;
-    width: 0;
-    height: 0;
-}
-
-QComboBox#jvmPresetCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    color: @TEXT_PRIMARY@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    selection-background-color: @PRIMARY_RGBA_38@;
-    selection-color: @TEXT_PRIMARY@;
-    padding: 4px;
-}
-
-/* JVM参数编辑框 */
+/* JVM参数编辑框（等宽字体，与全局输入框保持一致的圆角与内边距） */
 QTextEdit#jvmParamsEdit {
     background-color: @BG_CARD@;
     color: @TEXT_PRIMARY@;
     border: 1px solid @BORDER@;
     border-radius: 12px;
-    padding: 10px 14px;
+    padding: 8px 12px;
     font-size: 13px;
     font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-    line-height: 1.5;
     selection-background-color: @PRIMARY_RGBA_38@;
     selection-color: @TEXT_PRIMARY@;
 }
@@ -8777,11 +8848,7 @@ QTextEdit#jvmParamsEdit:hover {
 
 QTextEdit#jvmParamsEdit:focus {
     border: 2px solid @PRIMARY@;
-    padding: 9px 13px;
-}
-
-QTextEdit#jvmParamsEdit::placeholder {
-    color: @TEXT_DISABLED@;
+    padding: 7px 11px;
 }
 
 /* 颜色选择/调色板按�?�?玻璃�?*/
@@ -11740,6 +11807,26 @@ QWidget#taskListRow:hover {
 /* ============================================================
  * Section 42. LoaderDetailPage 样式
  * ============================================================ */
+/* 顶部安装信息卡片：实例名称 / 安装位置 / 下载源 / 已选加载器收进一张卡片 */
+QFrame#loaderTopCard {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+}
+
+/* 卡片内的输入控件换成浅一档的填充色，避免白底白框糊成一片 */
+QFrame#loaderTopCard QLineEdit#loaderInstanceNameEdit,
+QFrame#loaderTopCard QComboBox#loaderPathCombo,
+QFrame#loaderTopCard QComboBox#loaderSourceCombo,
+QFrame#loaderTopCard QPushButton#loaderAddFolderBtn {
+    background-color: @BG_CONTENT@;
+}
+
+/* 已选加载器的小卡片同样用浅底衬托主色边框 */
+QFrame#loaderTopCard QWidget#selectedLoaderCard {
+    background-color: @BG_CONTENT@;
+}
+
 QLabel#loaderSectionLabel {
     font-size: 12px;
     font-weight: 600;
@@ -12405,8 +12492,13 @@ QFrame#OnboardingWizardCard {
     border: 1px solid @BORDER@;
     border-radius: 28px;
 }
+/* 新手引导已是主窗口里的独立整页：铺满内容区，去掉浮动卡片的圆角与边框 */
+QWidget#OnboardingWizard QFrame#OnboardingWizardCard {
+    border: none;
+    border-radius: 0;
+}
 /* 容器自身透明（让父级页面透出主对话框背景） */
-QFrame#obwHeader, QWidget#obwStepper, QWidget#obwStepNode,
+QWidget#obwStepper, QWidget#obwStepNode,
 QStackedWidget#obwStack, QWidget#obwPage0, QWidget#obwPageDlSource, QWidget#obwPage1,
 QWidget#obwPage2Import, QWidget#obwPage2Manual, QWidget#obwPage3, QWidget#obwPage4,
 QWidget#obwPage5, QWidget#obwPageDone, QScrollArea#obwScroll,
@@ -12420,28 +12512,7 @@ QWidget#obwAccountList, QWidget#obwFolderList, QWidget#obwJavaList {
     border-radius: 14px;
 }
 
-/* --- 50.2 头部 --- */
-QFrame#obwHeader {
-    background-color: transparent;
-    border-bottom: 1px solid @BORDER@;
-}
-QLabel#obwBrandLogo {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 @PRIMARY@, stop:1 @PRIMARY_DARK@);
-    border-radius: 12px;
-    color: #FFFFFF;
-    font-size: 18px;
-    font-weight: 800;
-}
-QLabel#obwBrandTitle {
-    color: @TEXT_PRIMARY@;
-    font-size: 16px;
-    font-weight: 800;
-}
-QLabel#obwBrandSub {
-    color: @TEXT_TERTIARY@;
-    font-size: 11.5px;
-    margin-top: 1px;
-}
+/* --- 50.2 跳过引导（底部「下一步」左侧的次要入口） --- */
 QPushButton#obwSkipBtn {
     background-color: transparent;
     border: 1px solid transparent;
@@ -15550,6 +15621,27 @@ QPushButton#communityHeroButton:disabled {
     border-color: rgba(255, 255, 255, 0.25);
 }
 
+/* 社区页顶部加载进度条：细条 + 主题色渐变 */
+QWidget#communityLoadingStrip {
+    background: transparent;
+    border: none;
+}
+
+QProgressBar#communityLoadingBar {
+    background-color: transparent;
+    border: none;
+    border-radius: 2px;
+    min-height: 3px;
+    max-height: 3px;
+}
+
+QProgressBar#communityLoadingBar::chunk {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_LIGHT@);
+    border-radius: 2px;
+}
+
 QFrame#communityCard {
     background: @BG_CARD@;
     border: 1px solid @BORDER@;
@@ -15625,6 +15717,29 @@ QLabel#communityThreadTitle {
     color: @TEXT_PRIMARY@;
     font-size: 14px;
     font-weight: 600;
+}
+
+QLabel#communityLobbyChip {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    padding: 2px 8px;
+    color: @TEXT_SECONDARY@;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#communityLobbyTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#communityLobbyCode {
+    color: @PRIMARY@;
+    font-family: Consolas, "Microsoft YaHei";
+    font-size: 12px;
+    font-weight: 700;
 }
 
 QLabel#communityThreadCount {
@@ -15857,6 +15972,39 @@ QPushButton#forumSortButton:checked {
     border-color: @PRIMARY@;
     color: @PRIMARY@;
     font-weight: 700;
+}
+
+/* 发布详情页顶部「帖子 / 资源」分段切换（与登录方式切换同款） */
+QWidget#composerSegBar {
+    background-color: @BG_BASE@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+}
+
+QPushButton#composerSegBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: @TEXT_TERTIARY@;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+QPushButton#composerSegBtn:hover {
+    background-color: @BG_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#composerSegBtn:checked {
+    background-color: @BG_CARD@;
+    color: @PRIMARY@;
+    font-weight: 600;
+}
+
+QPushButton#composerSegBtn:checked:hover {
+    background-color: @BG_CARD@;
+    color: @PRIMARY@;
 }
 
 QPushButton#forumPageButton {
@@ -16329,6 +16477,17 @@ QLabel#forumUnreadBadge {
     padding: 1px 7px;
 }
 
+/* 官方客服标识：聊天页好友行与首页好友卡片共用 */
+QLabel#forumOfficialBadge,
+QLabel#homeFriendOfficialBadge {
+    background: @PRIMARY_RGBA_20@;
+    color: @PRIMARY@;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+}
+
 /* ── 左栏：与侧边栏子导航面板同款（玻璃底气泡 + 头部 + 分组标题 + 条目） ── */
 QFrame#forumSidePanel {
     background-color: rgba(255, 255, 255, 0.7);
@@ -16558,4 +16717,495 @@ QLabel#forumOnlineDot {
     background: @SUCCESS@;
     border: 2px solid @BG_CARD@;
     border-radius: 6px;
+}
+
+/* ============================================================
+ * Section 52. Java 下载页样式（主程序 JavaDownloadPage / 实例助手 InstanceJavaDownloadPage）
+ * 视觉方向：步骤编号卡片 + 玻璃态表单，下拉/安装包列表/进度条统一
+ * ============================================================ */
+
+/* ── 主程序：滚动容器透明，内容铺在页面背景上 ── */
+QScrollArea#javaDlScroll {
+    background: transparent;
+    border: none;
+}
+
+QWidget#javaDlContent {
+    background: transparent;
+}
+
+/* ── 卡片：白底细边框，与设置页卡片同语言 ── */
+QFrame#javaDlCard {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+}
+
+/* ── 步骤徽标：主色软底 + 主色数字 ── */
+QLabel#javaDlStep {
+    background-color: @PRIMARY_RGBA_18@;
+    color: @TEXT_ACCENT@;
+    border: 1px solid @PRIMARY_RGBA_26@;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+/* ── 卡片标题 / 字段名 / 描述 ── */
+QLabel#javaDlCardTitle {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 14px;
+    font-weight: 700;
+    border: none;
+}
+
+QLabel#javaDlFieldLabel {
+    background: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+}
+
+QLabel#javaDlDesc {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    border: none;
+}
+
+/* ── 卡片内分隔线 ── */
+QFrame#javaDlDivider {
+    background-color: @BORDER@;
+    border: none;
+}
+
+/* ── 下拉框：中性玻璃态，聚焦时才出现主色边 ── */
+QComboBox#javaDlCombo {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 10px;
+    padding: 8px 14px;
+    min-height: 20px;
+    font-size: 13px;
+    color: @TEXT_PRIMARY@;
+    selection-background-color: @PRIMARY@;
+    selection-color: @TEXT_ON_PRIMARY@;
+}
+
+QComboBox#javaDlCombo:hover {
+    background-color: @BG_HOVER@;
+    border-color: @BORDER_HOVER@;
+}
+
+QComboBox#javaDlCombo:focus {
+    background-color: @BG_CARD@;
+    border: 1px solid @PRIMARY@;
+}
+
+QComboBox#javaDlCombo:disabled {
+    background-color: @BG_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+
+QComboBox#javaDlCombo::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    border: none;
+    width: 28px;
+}
+
+QComboBox#javaDlCombo::down-arrow {
+    image: url(:/Images/Icons/arrow_down_triangle.svg);
+    width: 10px;
+    height: 10px;
+    margin-right: 11px;
+    border: none;
+}
+
+QComboBox#javaDlCombo QAbstractItemView {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 4px;
+    selection-background-color: @PRIMARY_BG@;
+    selection-color: @TEXT_ACCENT@;
+    outline: none;
+}
+
+QComboBox#javaDlCombo QAbstractItemView::item {
+    padding: 6px 12px;
+    border-radius: 8px;
+    min-height: 26px;
+}
+
+QComboBox#javaDlCombo QAbstractItemView::item:hover {
+    background-color: @BG_HOVER@;
+}
+
+/* ── 安装包列表 ── */
+QListWidget#javaDlBinaryList {
+    background-color: @BG_CONTENT@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+    padding: 6px;
+    outline: none;
+}
+
+QListWidget#javaDlBinaryList::item {
+    padding: 8px 12px;
+    border-radius: 8px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12.5px;
+}
+
+QListWidget#javaDlBinaryList::item:hover {
+    background-color: @BG_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+QListWidget#javaDlBinaryList::item:selected {
+    background-color: @PRIMARY_RGBA_18@;
+    color: @TEXT_ACCENT@;
+    font-weight: 600;
+}
+
+/* ── 安装包摘要 / 元信息 ── */
+QLabel#javaDlSummary {
+    background: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 12.5px;
+    border: none;
+}
+
+QLabel#javaDlSummary[state="error"] {
+    color: @DANGER_TEXT@;
+}
+
+/* ── 安装路径：等宽只读框，选中可复制 ── */
+QLabel#javaDlPath {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 9px 14px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-family: "Consolas", "Cascadia Code", "Courier New", monospace;
+}
+
+QLabel#javaDlHint {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 11.5px;
+    border: none;
+}
+
+/* ── 进度条：细轨道 + 主色渐变 ── */
+QProgressBar#javaDlProgress {
+    background-color: @BG_TRACK@;
+    border: none;
+    border-radius: 999px;
+    min-height: 8px;
+    max-height: 8px;
+}
+
+QProgressBar#javaDlProgress::chunk {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_DARK@);
+    border-radius: 999px;
+}
+
+QLabel#javaDlProgressText {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    border: none;
+}
+
+/* ── 顶部状态胶囊 ── */
+QLabel#javaDlStatus {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 999px;
+    padding: 5px 12px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QLabel#javaDlStatus[state="busy"] {
+    background-color: @PRIMARY_RGBA_18@;
+    border-color: @PRIMARY_RGBA_38@;
+    color: @TEXT_ACCENT@;
+}
+
+QLabel#javaDlStatus[state="success"] {
+    background-color: @PRIMARY_RGBA_18@;
+    border-color: @PRIMARY_RGBA_38@;
+    color: @SUCCESS@;
+}
+
+QLabel#javaDlStatus[state="error"] {
+    background-color: @DANGER_BG@;
+    border-color: @DANGER_BORDER@;
+    color: @DANGER_TEXT@;
+}
+
+/* ── 底部操作按钮 ── */
+QPushButton#javaDlPrimaryBtn {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_DARK@);
+    border: 1px solid @PRIMARY_DARK@;
+    border-radius: 10px;
+    padding: 9px 22px;
+    min-width: 118px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#javaDlPrimaryBtn:hover {
+    background-color: @PRIMARY_HOVER@;
+    border-color: @PRIMARY_HOVER@;
+}
+
+QPushButton#javaDlPrimaryBtn:pressed {
+    background-color: @PRIMARY_PRESSED@;
+}
+
+QPushButton#javaDlPrimaryBtn:disabled {
+    background-color: @BG_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+
+QPushButton#javaDlCancelBtn {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 10px;
+    padding: 9px 18px;
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+}
+
+QPushButton#javaDlCancelBtn:hover {
+    background-color: @BG_HOVER@;
+    border-color: @BORDER_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#javaDlBackBtn {
+    background: transparent;
+    border: none;
+    padding: 6px 8px;
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+}
+
+QPushButton#javaDlBackBtn:hover {
+    color: @PRIMARY@;
+}
+
+QPushButton#javaDlBrowseBtn {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 10px;
+    padding: 8px 16px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12.5px;
+}
+
+QPushButton#javaDlBrowseBtn:hover {
+    background-color: @BG_HOVER@;
+    border-color: @BORDER_HOVER@;
+}
+
+QPushButton#javaDlBrowseBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+QPushButton#javaDlBrowseBtn:disabled {
+    background-color: @BG_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+
+/* ── 实例助手（窄窗口）Java 下载页：区块也做成卡片 ── */
+QFrame#javaDownloadSection {
+    background-color: @BG_CONTENT@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+}
+
+QLabel#javaSectionLabel {
+    background: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+}
+
+QListWidget#javaBinaryList {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 4px;
+    outline: none;
+}
+
+QListWidget#javaBinaryList::item {
+    padding: 7px 10px;
+    border-radius: 7px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QListWidget#javaBinaryList::item:selected {
+    background-color: @PRIMARY_RGBA_18@;
+    color: @TEXT_ACCENT@;
+}
+
+QPushButton#javaCancelBtn {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 8px;
+    padding: 7px 16px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12.5px;
+}
+
+QPushButton#javaCancelBtn:hover {
+    background-color: @BG_HOVER@;
+    border-color: @BORDER_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+/* 窄窗口页的下拉箭头与主页面统一成细箭头 */
+InstanceJavaDownloadPage QComboBox::down-arrow {
+    image: url(:/Images/Icons/arrow_down_triangle.svg);
+    width: 10px;
+    height: 10px;
+    margin-right: 10px;
+    border: none;
+}
+
+/* 窄窗口页：下载按钮跟随主页面用主色实心，避免软主色底在深色主题下发灰 */
+InstanceJavaDownloadPage QPushButton#downloadJavaBtn {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_DARK@);
+    border: 1px solid @PRIMARY_DARK@;
+    border-radius: 10px;
+    padding: 8px 20px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+InstanceJavaDownloadPage QPushButton#downloadJavaBtn:hover {
+    background-color: @PRIMARY_HOVER@;
+    border-color: @PRIMARY_HOVER@;
+}
+
+InstanceJavaDownloadPage QPushButton#downloadJavaBtn:pressed {
+    background-color: @PRIMARY_PRESSED@;
+}
+
+InstanceJavaDownloadPage QPushButton#downloadJavaBtn:disabled {
+    background-color: @BG_DISABLED@;
+    border-color: @BORDER_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+
+/* ============================================================
+ * 手机端 AI 助手：底部输入栏 + 居中输入弹窗
+ * ============================================================ */
+QWidget#aiChatMobileBar {
+    background: transparent;
+    border: none;
+}
+
+QPushButton#aiChatMobileInputBtn {
+    background: @BG_GLASS@;
+    border: 1.5px solid @BORDER@;
+    border-radius: 25px;
+    padding: 0 18px;
+    text-align: left;
+    font-size: 14px;
+    color: @TEXT_SECONDARY@;
+}
+
+QPushButton#aiChatMobileInputBtn:hover {
+    border: 1.5px solid @BORDER_STRONG@;
+    color: @TEXT_SECONDARY@;
+}
+
+QPushButton#aiChatMobileInputBtn:pressed {
+    background: @BG_HOVER@;
+}
+
+QWidget#aiChatMobileBusyRow {
+    background: transparent;
+    border: none;
+}
+
+QLabel#aiChatMobileBusyDot {
+    background: @PRIMARY@;
+    border-radius: 4px;
+}
+
+QLabel#aiChatMobileBusyLabel {
+    background: transparent;
+    border: none;
+    color: @PRIMARY@;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#aiChatMobileBusyDetail {
+    background: transparent;
+    border: none;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QPushButton#aiChatMobileStopBtn {
+    background: @DANGER@;
+    border: none;
+    border-radius: 20px;
+    padding: 0 20px;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton#aiChatMobileStopBtn:hover {
+    background: @DANGER_HOVER@;
+}
+
+QWidget#aiComposeCard {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 18px;
+}
+
+QLabel#aiComposeTitle {
+    background: transparent;
+    border: none;
+    color: @TEXT_PRIMARY@;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QToolButton#aiComposeCloseBtn {
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+}
+
+QToolButton#aiComposeCloseBtn:hover {
+    background: @BLACK_RGBA_0.06@;
 }

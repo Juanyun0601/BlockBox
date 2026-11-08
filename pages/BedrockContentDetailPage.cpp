@@ -35,6 +35,8 @@
 #include "components/BlurLoadingOverlay.h"
 #include "components/NotificationManager.h"
 #include "components/ScreenshotViewer.h"
+#include "components/ShareToFriendDialog.h"
+#include "utils/ForumAccountService.h"
 #include "utils/DownloadTaskManager.h"
 #include "utils/FavoritesManager.h"
 #include "utils/IconHelper.h"
@@ -632,6 +634,10 @@ void BedrockContentDetailPage::buildLinksBlock()
 
     struct LinkInfo { QString label; QString url; };
     QList<LinkInfo> links;
+    if (ForumAccountService::instance()->isLoggedIn()) {
+        // 登录后才有分享入口；占位 url 只用于走点击分支，实际发送在 lambda 里
+        links.append({ tr("分享给好友"), QStringLiteral("shareFriend") });
+    }
     links.append({ tr("CurseForge"), m_modInfo.pageUrl });
     links.append({ tr("必应搜索"), QStringLiteral("https://www.bing.com/search?q=%1").arg(m_modInfo.name) });
     links.append({ tr("百度搜索"), QStringLiteral("https://www.baidu.com/s?wd=%1").arg(m_modInfo.name) });
@@ -640,7 +646,14 @@ void BedrockContentDetailPage::buildLinksBlock()
         QPushButton *btn = new QPushButton(link.label);
         btn->setObjectName("modDetailLinkBtn");
         btn->setCursor(Qt::PointingHandCursor);
-        if (!link.url.isEmpty()) {
+        if (link.label == tr("分享给好友")) {
+            connect(btn, &QPushButton::clicked, this, [this]() {
+                QString sourceLabel = (m_modInfo.source == QStringLiteral("modrinth"))
+                                          ? tr("Modrinth 资源")
+                                          : tr("CurseForge 资源");
+                ShareToFriendDialog::share(this, m_modInfo.name, m_modInfo.pageUrl, sourceLabel);
+            });
+        } else if (!link.url.isEmpty()) {
             connect(btn, &QPushButton::clicked, this, [link]() {
                 QDesktopServices::openUrl(QUrl(link.url));
             });

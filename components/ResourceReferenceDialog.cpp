@@ -12,7 +12,7 @@
 #include <QCoreApplication>
 #include <QDialogButtonBox>
 #include <QDir>
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
 #include <QHBoxLayout>
@@ -35,6 +35,7 @@
 #include <QVBoxLayout>
 
 #include "utils/SettingsManager.h"
+#include "utils/UiMetrics.h"
 #include "utils/mod/ModrinthAPI.h"
 
 namespace
@@ -111,7 +112,7 @@ void ResourceReferenceDialog::initUI()
 
     auto *card = new QWidget(this);
     card->setObjectName(QStringLiteral("referenceDialogCard"));
-    card->setMinimumSize(680, 520);
+    card->setMinimumSize(UiMetrics::fitToScreen(this, QSize(680, 520)));
     card->setMaximumSize(860, 700);
     outer->addWidget(card, 0, Qt::AlignCenter);
 
@@ -807,7 +808,7 @@ void ResourceReferenceDialog::addCustomFileItem(const QString &filePath)
 
 void ResourceReferenceDialog::onAddAnyFileClicked()
 {
-    const QStringList files = AppFileDialog::getOpenFileNames(
+    const QStringList files = QFileDialog::getOpenFileNames(
         this, tr("选择要引用的文件"), QString(), tr("所有文件 (*.*)"));
     for (const QString &f : files)
     {

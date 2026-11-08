@@ -7,7 +7,7 @@
 #include "components/LocalCategoryDialog.h"
 #include "components/FavoriteFolderDialog.h"
 #include "components/ProjectionBlockEditorDialog.h"
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/ContentViewSwitch.h"
 #include "components/MasonryContentCard.h"
 #include "layouts/MasonryLayout.h"
@@ -1118,7 +1118,7 @@ void ProjectionManagePage::onBlockEditorClicked()
 
     // 优先用方块盒子文件资源管理器选择 .litematic 投影
     const QString filter = tr("投影文件 (*.litematic *.nbt *.schematic *.schem);;Litematica (*.litematic);;全部文件 (*)");
-    const QString file = AppFileDialog::getOpenFileName(this, tr("选择投影以编辑方块"),
+    const QString file = QFileDialog::getOpenFileName(this, tr("选择投影以编辑方块"),
                                                         dirPath, filter);
     if (file.isEmpty())
         return;

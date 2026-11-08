@@ -10,7 +10,7 @@
 #include "VoxelViewWidget.h"
 #include "AppMessageBox.h"
 #include "AppInputDialog.h"
-#include "AppFileDialog.h"
+#include <QFileDialog>
 #include "utils/Schematic/ProjectionEditorSettings.h"
 #include "utils/Schematic/InstanceBlockNames.h"
 #include "utils/Schematic/InstanceTextureLoader.h"
@@ -1763,7 +1763,7 @@ void ProjectionBlockEditorDialog::onSaveAs()
     if (!m_doc.isLoaded())
         return;
     const QFileInfo fi(m_filePath);
-    const QString out = AppFileDialog::getSaveFileName(
+    const QString out = QFileDialog::getSaveFileName(
         this, tr("另存为投影"),
         fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName() + QStringLiteral("_edit.litematic"),
         tr("Litematica 文件 (*.litematic)"));
@@ -2139,7 +2139,7 @@ void ProjectionBlockEditorDialog::onExportScreenshot()
         QStringLiteral("%1-%2.png").arg(base,
             QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"))));
 
-    QString out = AppFileDialog::getSaveFileName(this, tr("导出视图截图"), suggested,
+    QString out = QFileDialog::getSaveFileName(this, tr("导出视图截图"), suggested,
                                                  tr("PNG 图片 (*.png)"));
     if (out.isEmpty())
         return;

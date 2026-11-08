@@ -5,12 +5,13 @@
 #include <QVBoxLayout>
 
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 
 NotificationHistoryDialog::NotificationHistoryDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("提示信息历史"));
-    setFixedSize(600, 450);
+    setFixedSize(UiMetrics::fitToScreen(this, QSize(600, 450)));
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     initUI();
     loadHistory();

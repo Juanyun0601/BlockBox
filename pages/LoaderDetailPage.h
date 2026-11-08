@@ -21,6 +21,7 @@
 
 #include "components/CustomCheckBox.h"
 
+class QFrame;
 class QNetworkAccessManager;
 struct SelectedLoader {
     QString name;
@@ -69,6 +70,10 @@ private:
     void loadInstanceFolders();
     QWidget* createSelectedLoaderCard(const QString &loaderName, const QString &loaderVersion);
     bool checkLoaderCompatibility(const QString &loaderName);
+    /// 安装前确认目录可写；安卓公共目录会引导授予「所有文件访问」权限
+    bool ensureInstallDirWritable(const QString &dir);
+    /// 把「安装位置」切到应用默认可写目录
+    void useDefaultInstallFolder();
 
 private:
     void tryAddLoaderWithCompatibility(const QString &loaderName, const QString &loaderVersion, const QString &fileName = QString());
@@ -76,6 +81,8 @@ private:
 
     // UI components
     QVBoxLayout *m_mainLayout;
+    QFrame *m_topCard;
+    QVBoxLayout *m_topCardLayout;
     QWidget *m_topBarWidget;
     QHBoxLayout *m_topBarLayout;
     QLineEdit *m_instanceNameEdit;

@@ -20,6 +20,7 @@
 #include <QFrame>
 
 #include "utils/SettingsManager.h"
+#include "utils/UiMetrics.h"
 
 InstanceSelectDialog::InstanceSelectDialog(QWidget *parent, const QString &defaultPath)
     : AppDialogBase(parent)
@@ -46,7 +47,7 @@ void InstanceSelectDialog::initUI()
     // 居中卡片（使用全局 QSS 样式）
     QWidget *card = new QWidget(this);
     card->setObjectName(QStringLiteral("appDialogCard"));
-    card->setFixedSize(480, 520);
+    card->setFixedSize(UiMetrics::fitToScreen(this, QSize(480, 520)));
 
     QVBoxLayout *cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(24, 20, 24, 20);

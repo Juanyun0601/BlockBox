@@ -42,6 +42,8 @@ protected:
 private:
     /// 查找弹窗内的居中卡片（直接子控件中 objectName 以 "Card" 结尾）
     QWidget *findCardWidget() const;
+    /// 兜底：把居中卡片的最小尺寸压回所在屏幕可用范围，防止弹窗超出屏幕
+    void fitCardToScreen();
 
     QPixmap m_blurredBackground;
     QPoint m_blurOffset;

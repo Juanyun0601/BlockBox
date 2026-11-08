@@ -9,6 +9,7 @@
 
 #include <QString>
 #include <QPixmap>
+#include <QImage>
 #include <QSize>
 
 class ThumbnailProvider
@@ -30,6 +31,17 @@ public:
      * @return 缩略图，如果失败返回空QPixmap
      */
     static QPixmap getThumbnail(const QString &filePath, int maxSize = 48, Backend backend = Auto);
+
+    /**
+     * 获取文件缩略图（线程安全版本，可在工作线程调用）
+     *
+     * 仅使用 Qt 内置图片加载器（QImageReader），不触碰 QPixmap/HBITMAP 等
+     * GUI 专属资源；自动处理 EXIF 旋转。适合后台批量生成后回主线程转 QPixmap。
+     * @param filePath 文件路径
+     * @param maxSize 缩略图最大尺寸（宽或高）
+     * @return 缩略图，如果失败返回空QImage
+     */
+    static QImage getThumbnailImage(const QString &filePath, int maxSize = 48);
 
     /**
      * 检查文件是否为支持的图片格式

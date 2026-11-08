@@ -114,6 +114,7 @@ InstallInstancePage::InstallInstancePage(QWidget *parent)
     , m_currentSource("official")
     , m_currentFilter("release")
     , m_versionsLoaded(false)
+    , m_fallbackTried(false)
 {
     initUI();
     initNetworkManager();
@@ -299,6 +300,7 @@ void InstallInstancePage::onVersionTypeFilterChanged(int id)
 
 void InstallInstancePage::onRefreshVersions()
 {
+    m_fallbackTried = false;
     m_loadingOverlay->showOverlay(tr("正在获取版本列表..."));
     m_loadingOverlay->updateProgress(30);
     m_versionList->clear();
@@ -322,11 +324,20 @@ void InstallInstancePage::getVersionsFromOfficial()
             QJsonDocument doc = QJsonDocument::fromJson(responseData);
             parseVersionsResponse(doc);
         } else {
-            QString errorMsg = tr("获取版本列表失败: %1").arg(reply->errorString());
-            NotificationManager::showError(this, errorMsg);
-            m_loadingOverlay->showError(errorMsg);
-            // 加载失败，下次进入页面时重试
-            m_versionsLoaded = false;
+            // 官方清单在部分网络下会被阻断，但 BMCL 镜像仍可用：
+            // 自动再试一次镜像，避免用户在「版本列表都加载不出来」这一步就卡死
+            if (!m_fallbackTried) {
+                m_fallbackTried = true;
+                NotificationManager::showInfo(this, tr("官方源获取失败，正在尝试 BMCL 源..."));
+                m_loadingOverlay->updateProgress(45, tr("正在尝试 BMCL 源..."));
+                getVersionsFromBMCL();
+            } else {
+                QString errorMsg = tr("获取版本列表失败: %1").arg(reply->errorString());
+                NotificationManager::showError(this, errorMsg);
+                m_loadingOverlay->showError(errorMsg);
+                // 加载失败，下次进入页面时重试
+                m_versionsLoaded = false;
+            }
         }
         reply->deleteLater();
     });

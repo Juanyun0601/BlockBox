@@ -18,16 +18,12 @@
 #include "components/NotificationManager.h"
 #include "components/OutlinedLabel.h"
 #include "components/QuizDialog.h"
-#include "pages/OnboardingWizard.h"
 #include "platform.h"
 #include "utils/ForumAccountService.h"
 #include "utils/QuizBank.h"
 #include "utils/SettingsManager.h"
 #include "utils/UpdateChecker.h"
 #include "utils/WorldMap/StructureIcons.h"
-
-#include <QCoreApplication>
-#include <QProcess>
 
 void SettingsPage::initGeneralSettings()
 {
@@ -207,45 +203,6 @@ void SettingsPage::initGeneralSettings()
     threadCountRow->addWidget(threadCountLabel);
     threadCountRow->addWidget(threadCountWarning);
 
-    // ── 文件选择器 ──
-    const bool mobilePicker = Platform::isMobile();
-    QVBoxLayout *pickerCard = createSettingsCard(layout, tr("文件选择器"));
-
-    QHBoxLayout *pickerTypeRow = appendSettingRow(pickerCard,
-        tr("选择器类型"),
-        mobilePicker ? tr("手机端固定使用软件自带的文件浏览器。")
-                     : tr("选择打开文件、文件夹时使用的窗口，电脑端默认使用系统自带。"),
-        tr("系统自带会打开操作系统提供的文件选择窗口；软件自带使用启动器内置的文件浏览器，"
-           "可以直接浏览实例里的模组、资源包、光影包、存档等文件。手机端固定使用软件自带。"),
-        true);
-
-    if (mobilePicker) {
-        QLabel *fixedPickerLabel = new QLabel(tr("软件自带"));
-        fixedPickerLabel->setObjectName("settingValueLabel");
-        pickerTypeRow->addWidget(fixedPickerLabel);
-    } else {
-        QComboBox *pickerTypeCombo = new QComboBox();
-        pickerTypeCombo->addItem(tr("系统自带（文件资源管理器）"),
-                                 static_cast<int>(FilePickerType::System));
-        pickerTypeCombo->addItem(tr("软件自带（内置文件浏览器）"),
-                                 static_cast<int>(FilePickerType::BuiltIn));
-        disableWheelEffect(pickerTypeCombo);
-
-        int pickerIndex = pickerTypeCombo->findData(
-            static_cast<int>(settings->getFilePickerType()));
-        if (pickerIndex < 0)
-            pickerIndex = pickerTypeCombo->findData(
-                static_cast<int>(SettingsManager::defaultFilePickerType()));
-        pickerTypeCombo->setCurrentIndex(pickerIndex >= 0 ? pickerIndex : 0);
-
-        connect(pickerTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-                [pickerTypeCombo](int idx) {
-            SettingsManager::instance()->setFilePickerType(
-                static_cast<FilePickerType>(pickerTypeCombo->itemData(idx).toInt()));
-        });
-        pickerTypeRow->addWidget(pickerTypeCombo);
-    }
-
     // ── 地图结构图标：文字旁小图标（默认） / 结构概览 ──
     QVBoxLayout *mapIconCard = createSettingsCard(layout, tr("地图结构图标"));
 
@@ -358,18 +315,12 @@ void SettingsPage::initGeneralSettings()
     openGuideBtn->setObjectName("historyBtn");
     openGuideBtn->setCursor(Qt::PointingHandCursor);
     connect(openGuideBtn, &QPushButton::clicked, this, [this]() {
-        QWidget *host = window();
-        OnboardingWizard wizard(host);
-        wizard.exec();
-        if (wizard.restartRequested() && host) {
-            host->hide();
-            QProcess::startDetached(QCoreApplication::applicationFilePath(), QStringList());
-            QCoreApplication::quit();
-        }
+        // 新手引导已改为独立整页：交给主窗口切过去（语言切换的重启由主窗口负责）
+        emit openOnboardingRequested();
     });
 
     QHBoxLayout *onboardingRow = appendSettingRow(onboardingCard,
-        tr("新手引导"), tr("重新打开首次启动时的配置向导，可重新设置语言、下载源、账户、Java 与实例文件夹等。"), QString(), true);
+        tr("新手引导"), tr("重新打开首次启动时的引导页面，可重新设置语言、下载源、账户、Java 与实例文件夹等。"), QString(), true);
     onboardingRow->addWidget(openGuideBtn);
 
     // ── 入站答题 ──

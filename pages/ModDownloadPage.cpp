@@ -8,6 +8,8 @@
 #include "../layouts/MasonryLayout.h"
 #include "components/FavoriteFolderDialog.h"
 #include "components/NotificationManager.h"
+#include "components/ShareToFriendDialog.h"
+#include "utils/ForumAccountService.h"
 #include "utils/SettingsManager.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
@@ -1236,6 +1238,19 @@ QList<MasonryContentCard::ActionSpec> ModDownloadPage::buildMasonryActions(const
         }
     }});
 
+    actions.append({ QStringLiteral(":/Images/Icons/share.svg"), tr("分享给好友"), QColor(), [this, info]() {
+        if (!ForumAccountService::instance()->isLoggedIn())
+        {
+            NotificationManager::showInfo(this, tr("分享给好友需要先登录论坛账号"));
+            return;
+        }
+        QString displayName = info.chineseName.isEmpty() ? info.name : info.chineseName;
+        QString sourceLabel = (info.source == QStringLiteral("modrinth"))
+                                  ? tr("Modrinth 模组")
+                                  : tr("CurseForge 模组");
+        ShareToFriendDialog::share(this, displayName, info.pageUrl, sourceLabel);
+    }});
+
     actions.append({ QStringLiteral(":/Images/Icons/download.svg"), tr("另存为"), QColor(),
                      []() {} });
 
@@ -1355,6 +1370,11 @@ void ModDownloadPage::onCardContextMenu(const QPoint &pos)
 
     QAction *detailAction = menu.addAction(tr("查看详情"));
     menu.addSeparator();
+    QAction *shareAction = nullptr;
+    if (ForumAccountService::instance()->isLoggedIn())
+    {
+        shareAction = menu.addAction(tr("分享给好友"));
+    }
     QAction *copyNameAction = menu.addAction(tr("复制Mod名称"));
     QAction *copyLinkAction = nullptr;
     if (!info.pageUrl.isEmpty())
@@ -1373,6 +1393,14 @@ void ModDownloadPage::onCardContextMenu(const QPoint &pos)
     if (chosen == detailAction)
     {
         emit modClicked(info);
+    }
+    else if (chosen == shareAction)
+    {
+        QString displayName = info.chineseName.isEmpty() ? info.name : info.chineseName;
+        QString sourceLabel = (info.source == QStringLiteral("modrinth"))
+                                  ? tr("Modrinth 模组")
+                                  : tr("CurseForge 模组");
+        ShareToFriendDialog::share(this, displayName, info.pageUrl, sourceLabel);
     }
     else if (chosen == copyNameAction)
     {

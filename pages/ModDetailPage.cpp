@@ -10,6 +10,8 @@
 #include "components/ScreenshotViewer.h"
 #include "components/SourceSwitchBar.h"
 #include "components/NotificationManager.h"
+#include "components/ShareToFriendDialog.h"
+#include "utils/ForumAccountService.h"
 #include <QDesktopServices>
 #include <QEvent>
 #include <QGraphicsDropShadowEffect>
@@ -1071,6 +1073,7 @@ void ModDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
         {tr("Modrinth"), QString(), false},
         {tr("必应搜索"), QString("https://www.bing.com/search?q=%1").arg(m_modInfo.name), true},
         {tr("百度搜索"), QString("https://www.baidu.com/s?wd=%1").arg(m_modInfo.name), true},
+        {tr("分享给好友"), QString("shareFriend"), ForumAccountService::instance()->isLoggedIn()},
         {tr("问问AI"), QString(), true}
     };
 
@@ -1103,6 +1106,13 @@ void ModDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
                 if (!info.source.isEmpty())
                     ref.extra = tr("来源: %1").arg(info.source);
                 emit askAiRequested(ref);
+            });
+        } else if (link.label == tr("分享给好友")) {
+            connect(btn, &QPushButton::clicked, this, [this]() {
+                QString sourceLabel = (m_modInfo.source == QStringLiteral("modrinth"))
+                                          ? tr("Modrinth 模组")
+                                          : tr("CurseForge 模组");
+                ShareToFriendDialog::share(this, m_modInfo.name, m_modInfo.pageUrl, sourceLabel);
             });
         } else if (!link.url.isEmpty()) {
             connect(btn, &QPushButton::clicked, this, [link]() {

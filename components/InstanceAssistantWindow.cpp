@@ -657,6 +657,10 @@ void InstanceAssistantWindow::buildMultiplayerPage(QWidget *page)
     // （Terracotta 进程管理、HTTP 轮询、房间创建/加入、玩家列表等）
     m_multiplayerPage = new MultiplayerPage(page);
     layout->addWidget(m_multiplayerPage, 1);
+
+    // 发布到联机大厅前未登录 → 打开账户页
+    connect(m_multiplayerPage, &MultiplayerPage::forumLoginRequested,
+            this, &InstanceAssistantWindow::forumLoginRequested);
 }
 
 // ============================
@@ -1138,9 +1142,14 @@ void InstanceAssistantWindow::detectContextFromLevelDat()
 
 void InstanceAssistantWindow::setInstanceContext(const QString &path, const QString &version, const QString &loader)
 {
-    Q_UNUSED(loader);
     m_instancePath = path;
     m_commandContext.version = version;
+
+    // 联机页发布到联机大厅时要带上当前实例的版本 / 加载器 / 模组
+    if (m_multiplayerPage)
+    {
+        m_multiplayerPage->setInstanceContext(path, version, loader);
+    }
 
     // 后台执行耗时检测（进程检测 / JAR 解析 / level.dat 扫描），完成后回主线程应用。
     // 避免在 UI 线程同步启动 PowerShell 或解析游戏 JAR 造成窗口卡顿。

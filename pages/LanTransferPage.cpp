@@ -5,8 +5,7 @@
  * @date   2026-09-26
  */
 #include "LanTransferPage.h"
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/AppMessageBox.h"
 #include "components/LanTransferDialog.h"
 #include "components/NotificationManager.h"
@@ -629,7 +628,7 @@ void LanTransferPage::switchMode(int mode)
 
 void LanTransferPage::pickFiles()
 {
-    const QStringList paths = AppFileDialog::getOpenFileNames(
+    const QStringList paths = QFileDialog::getOpenFileNames(
         this, tr("选择要发送的文件"));
     for (const QString &path : paths)
     {
@@ -641,7 +640,7 @@ void LanTransferPage::pickFiles()
 
 void LanTransferPage::pickFolder()
 {
-    const QString path = AppFileDialog::getExistingDirectory(
+    const QString path = QFileDialog::getExistingDirectory(
         this, tr("选择要发送的文件夹"));
     if (!path.isEmpty() && !m_filePaths.contains(path))
         m_filePaths << path;

@@ -46,6 +46,7 @@ private slots:
   void onDownloadBytesProgress(qint64 bytesReceived, qint64 bytesTotal);
   void onDownloadCompleted(const QString &filePath);
   void onDownloadFailed(const QString &error);
+  void onExtractProgress(int percent);
   void onExtractCompleted(const QString &javaPath);
   void onExtractFailed(const QString &error);
 
@@ -54,6 +55,8 @@ private:
   void updateUIState();
   void updateBinaryInfo();
   void repopulateVersionCombo(const QString &distId);
+  void setSummaryText(const QString &text, const QString &state);
+  void setStatusPill(const QString &state, const QString &text);
   QString formatFileSize(qint64 bytes) const;
   QString defaultJavaInstallPath() const;
   QString findJavaExecutable(const QString &dir) const;
@@ -61,6 +64,7 @@ private:
   // 顶部区域
   OutlinedLabel *m_titleLabel;
   QLabel *m_subtitleLabel;
+  QLabel *m_statusPill;
 
   // 发行版选择
   QComboBox *m_distributionCombo;
@@ -79,8 +83,10 @@ private:
   // 安装路径
   QLabel *m_extractPathLabel;
   QPushButton *m_extractPathBrowseBtn;
+  QLabel *m_pathHintLabel;
 
   // 进度
+  QWidget *m_progressCard;
   QProgressBar *m_progressBar;
   QLabel *m_progressDetailLabel;
 
@@ -88,9 +94,6 @@ private:
   QPushButton *m_downloadBtn;
   QPushButton *m_cancelBtn;
   QPushButton *m_backBtn;
-
-  // 状态
-  QLabel *m_statusLabel;
 
   // 数据
   QVector<JavaBinaryInfo> m_currentBinaries;

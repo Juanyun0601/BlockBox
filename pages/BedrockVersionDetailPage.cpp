@@ -16,8 +16,7 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <QVBoxLayout>
-
-#include "components/AppFileDialog.h"
+#include <QFileDialog>
 #include "components/AppMessageBox.h"
 #include "components/NotificationManager.h"
 #include "components/OutlinedLabel.h"
@@ -364,7 +363,7 @@ void BedrockVersionDetailPage::installPackage(const QString &packagePath)
 
 void BedrockVersionDetailPage::onBrowseSavePathClicked()
 {
-    const QString dir = AppFileDialog::getExistingDirectory(this, tr("选择下载保存目录"), saveDir());
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("选择下载保存目录"), saveDir());
     if (dir.isEmpty())
         return;
     m_savePathCombo->setCurrentText(dir);

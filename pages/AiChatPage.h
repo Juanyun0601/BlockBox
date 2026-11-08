@@ -30,6 +30,7 @@ class QFrame;
 class QHBoxLayout;
 
 class AiService;
+class AiComposeDialog;
 class ModelSelectDialog;
 
 /**
@@ -175,6 +176,18 @@ private:
      * 首次在 initUI 中调用，setCompactMode 切换时重新调用。
      */
     void rebuildToolsRows();
+
+    /**
+     * @brief 手机端底部输入栏
+     *
+     * 手机上页面底部只保留一个「输入消息」按钮；点击后弹出居中的输入窗口
+     * （AiComposeDialog），输入卡片整体搬进弹窗。AI 干活期间按钮换成
+     * 「进行中 + 中止」，点中止即可停下当前任务。
+     */
+    void buildMobileInputBar();
+    void openMobileCompose();   ///< 打开居中输入窗口
+    void closeMobileCompose();  ///< 收起居中输入窗口（输入卡片搬回页面）
+    void syncMobileInputBar();  ///< 按流式状态切换「输入按钮 / 进行中 + 中止」
 
     // 对话管理
     void addConversation(const Conversation &conv);
@@ -467,6 +480,15 @@ private:
     QPushButton *m_promptOptimizeBtn; ///< 提示词优化按钮（AI 改写输入框草稿）
     bool m_promptOptimizeBusy;        ///< 提示词优化请求是否正在飞行（防并发、锁定按钮）
     QStringList m_selectedPromptIds; ///< 当前选中的系统提示词 ID
+
+    // 手机端底部输入栏（Android / 鸿蒙）
+    bool m_mobileMode;                  ///< 是否手机端（输入卡片默认收进居中弹窗）
+    QWidget *m_mobileBar;               ///< 底部输入栏容器
+    QPushButton *m_mobileInputBtn;      ///< 「输入消息」按钮（点击弹窗输入）
+    QWidget *m_mobileBusyRow;           ///< 进行中态容器（状态 + 中止按钮）
+    QLabel *m_mobileBusyDetail;         ///< 进行中态的细分状态（思考中 / 搜索中…）
+    QPushButton *m_mobileStopBtn;       ///< 中止按钮
+    AiComposeDialog *m_mobileComposeDialog; ///< 居中输入窗口（首次点击时创建）
 
     // 资源引用区域
     QPushButton *m_referenceBtn;       ///< 「引用」按钮，弹出资源选择对话框

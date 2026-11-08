@@ -37,8 +37,19 @@
 #include "components/AppMessageBox.h"
 #include "components/NotificationManager.h"
 #include "components/QuizDialog.h"
+#include "components/ShareToFriendDialog.h"
 #include "utils/ForumAccountService.h"
+#include "utils/ForumImageStore.h"
 #include "utils/StyleKit.h"
+#include "utils/plugin/PluginManager.h"
+#include "utils/plugin/PluginSafetyGuard.h"
+
+#include <QDir>
+#include <QJsonDocument>
+#include <QJsonParseError>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 
 namespace {
 
@@ -58,6 +69,24 @@ QString authorDisplay(const ForumUser &author)
     if (!author.username.isEmpty())
         return author.username;
     return QObject::tr("未知用户");
+}
+
+/** 楼层正文摘要：去掉常见 Markdown 标记后取前 80 字，给举报页展示 */
+QString postExcerptOf(const QString &content)
+{
+    QString text = content;
+    text.remove(QRegularExpression(QStringLiteral("!\\[[^\\]]*\\]\\([^)]*\\)")));   // 图片
+    text.replace(QRegularExpression(QStringLiteral("\\[([^\\]]*)\\]\\([^)]*\\)")),
+                 QStringLiteral("\\1"));                                            // 链接留文字
+    text.remove(QRegularExpression(QStringLiteral("`{1,3}")));                      // 行内代码 / 代码块
+    text.remove(QRegularExpression(QStringLiteral("\\*\\*|__|~~|\\*|_")));          // 强调
+    text.remove(QRegularExpression(QStringLiteral("(?m)^#{1,6}\\s*")));             // 标题
+    text.remove(QRegularExpression(QStringLiteral("(?m)^>\\s?")));                  // 引用
+    text.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+    text = text.trimmed();
+    if (text.size() > 80)
+        text = text.left(80) + QStringLiteral("…");
+    return text;
 }
 
 QString joinedText(const ForumUser &author)
@@ -414,6 +443,9 @@ void ForumThreadDetailPage::renderHero()
         m_heroBody->addLayout(tagsRow);
     }
 
+    // ── 插件帖：主题头下挂插件卡 ──
+    renderPluginCard();
+
     // ── 管理行（仅作者与管理员看得到） ──
     auto *account = ForumAccountService::instance();
     const bool admin = account->isLoggedIn() && account->user().role == QStringLiteral("admin");
@@ -443,6 +475,210 @@ void ForumThreadDetailPage::renderHero()
         }
         m_heroBody->addLayout(adminRow);
     }
+}
+
+// ────────────────────────────────────────────────────────────── 插件帖
+
+void ForumThreadDetailPage::renderPluginCard()
+{
+    m_pluginCardSlot = nullptr;
+    m_pluginInstallButton = nullptr;
+    m_pluginStatusLabel = nullptr;
+    if (!m_info.plugin.isValid())
+        return;
+
+    auto *card = ForumKit::makeCard(m_heroCard, QStringLiteral("forumPluginCard"));
+    auto *row = new QHBoxLayout(card);
+    row->setContentsMargins(14, 12, 14, 12);
+    row->setSpacing(12);
+
+    // 图标：站内图片异步加载；本地已装同款插件时直接用本地缓存兜底
+    auto *icon = new QLabel(card);
+    icon->setFixedSize(44, 44);
+    icon->setAlignment(Qt::AlignCenter);
+    icon->setStyleSheet(QStringLiteral(
+        "background:@BG_MUTED@;border:1px solid @BORDER@;border-radius:9px;"));
+    if (!m_info.plugin.icon.isEmpty())
+    {
+        ForumImageStore::instance()->requestImage(
+            ForumAccountService::instance()->absoluteUrl(m_info.plugin.icon),
+            [icon](const QImage &image) {
+                if (!image.isNull())
+                    icon->setPixmap(QPixmap::fromImage(
+                        image.scaled(44, 44, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+            });
+    }
+    else
+    {
+        icon->setText(QStringLiteral("🧩"));
+    }
+    row->addWidget(icon, 0, Qt::AlignTop);
+
+    auto *textLayout = new QVBoxLayout();
+    textLayout->setSpacing(3);
+    auto *name = new QLabel(card);
+    name->setObjectName(QStringLiteral("forumThreadTitle"));
+    name->setText(m_info.plugin.name
+                      + (m_info.plugin.version.isEmpty()
+                             ? QString()
+                             : QStringLiteral("  v%1").arg(m_info.plugin.version)));
+    name->setWordWrap(true);
+    textLayout->addWidget(name);
+
+    const QString metaBits = QStringList{
+        m_info.plugin.author.isEmpty() ? tr("作者未知") : tr("作者 %1").arg(m_info.plugin.author),
+        ForumKit::humanFileSize(m_info.plugin.fileSize),
+        tr("%1 次下载").arg(m_info.plugin.downloads),
+    }.join(QStringLiteral(" · "));
+    auto *meta = new QLabel(metaBits, card);
+    meta->setObjectName(QStringLiteral("forumMuted"));
+    meta->setWordWrap(true);
+    textLayout->addWidget(meta);
+
+    if (!m_info.plugin.description.isEmpty())
+    {
+        auto *description = new QLabel(m_info.plugin.description, card);
+        description->setObjectName(QStringLiteral("forumMuted"));
+        description->setWordWrap(true);
+        textLayout->addWidget(description);
+    }
+
+    auto *status = new QLabel(card);
+    status->setObjectName(QStringLiteral("forumMuted"));
+    status->setWordWrap(true);
+    status->hide();
+    textLayout->addWidget(status);
+
+    row->addLayout(textLayout, 1);
+
+    auto *installButton = new QPushButton(tr("下载并安装"), card);
+    installButton->setObjectName(QStringLiteral("forumPrimaryButton"));
+    installButton->setCursor(Qt::PointingHandCursor);
+    installButton->setFixedHeight(32);
+    installButton->setMinimumWidth(110);
+    connect(installButton, &QPushButton::clicked, this,
+            &ForumThreadDetailPage::downloadAndInstallPlugin);
+    row->addWidget(installButton, 0, Qt::AlignTop);
+
+    m_pluginCardSlot = card;
+    m_pluginInstallButton = installButton;
+    m_pluginStatusLabel = status;
+    m_heroBody->addWidget(card);
+}
+
+void ForumThreadDetailPage::downloadAndInstallPlugin()
+{
+    if (m_pluginBusy || !m_info.plugin.isValid())
+        return;
+    m_pluginBusy = true;
+    if (m_pluginInstallButton)
+        m_pluginInstallButton->setEnabled(false);
+    if (m_pluginStatusLabel)
+    {
+        m_pluginStatusLabel->setText(tr("正在下载…"));
+        m_pluginStatusLabel->show();
+    }
+
+    const auto restore = [this]() {
+        m_pluginBusy = false;
+        if (m_pluginInstallButton)
+            m_pluginInstallButton->setEnabled(true);
+    };
+    const auto progress = [this](int percent) {
+        if (m_pluginStatusLabel)
+        {
+            m_pluginStatusLabel->setText(tr("正在下载 %1%").arg(percent));
+            m_pluginStatusLabel->show();
+        }
+    };
+
+    ForumContentService::instance()->fetchPluginDownload(
+        m_threadId,
+        [this, restore, progress](const ForumPluginDownload &download) {
+            if (!download.isValid())
+            {
+                restore();
+                setStatus(tr("拿不到插件下载地址，稍后再试"), true);
+                return;
+            }
+
+            // 落到临时目录：导入成功与否都不留垃圾
+            const QString dir = QDir::tempPath() + QStringLiteral("/BlockBox/forum-plugin");
+            QDir().mkpath(dir);
+            QString target = dir + QLatin1Char('/') + download.filename;
+            if (!target.endsWith(QLatin1String(".BlockBox"), Qt::CaseInsensitive))
+                target += QStringLiteral(".BlockBox");
+
+            auto *manager = new QNetworkAccessManager(this);
+            QNetworkRequest request{QUrl(download.url)};
+            request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BlockBoxLauncher"));
+            request.setTransferTimeout(120000);
+
+            auto *reply = manager->get(request);
+            connect(reply, &QNetworkReply::downloadProgress, this, [progress](qint64 received, qint64 total) {
+                if (total > 0)
+                    progress(int(received * 100 / total));
+            });
+            connect(reply, &QNetworkReply::finished, this,
+                    [this, reply, manager, target, restore]() {
+                        reply->deleteLater();
+                        manager->deleteLater();
+                        const QByteArray data = reply->readAll();
+                        if (reply->error() != QNetworkReply::NoError || data.isEmpty())
+                        {
+                            restore();
+                            setStatus(tr("插件包下载失败，请检查网络后再试"), true);
+                            return;
+                        }
+                        QFile file(target);
+                        if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size())
+                        {
+                            restore();
+                            setStatus(tr("插件包写不进临时目录"), true);
+                            return;
+                        }
+                        file.close();
+
+                        // 与「导入插件」完全一致：解析→信任确认→导入（安全闸不跳过）
+                        PluginInfo info = PluginManager::instance()->inspectPluginFile(target);
+                        if (!info.loaded)
+                        {
+                            restore();
+                            setStatus(tr("下载的文件不是有效插件包"), true);
+                            return;
+                        }
+                        const QString scripts = PluginManager::instance()->collectScriptsContent(target);
+                        if (!PluginSafetyGuard::confirmBeforeInstall(
+                                window(), info.name, info.author, info.version,
+                                info.permissions, PluginSafetyGuard::RiskMedium,
+                                QString(),   // 顶层清单没有风险说明字段，风险由扫描/权限综合判定
+                                scripts))
+                        {
+                            restore();
+                            setStatus(tr("已取消安装"));
+                            return;
+                        }
+                        QString error;
+                        if (!PluginManager::instance()->importPlugin(target, &error))
+                        {
+                            restore();
+                            setStatus(tr("插件安装失败：%1").arg(error), true);
+                            return;
+                        }
+                        PluginManager::instance()->refresh();
+                        emit pluginInstalled();
+                        if (m_pluginStatusLabel)
+                        {
+                            m_pluginStatusLabel->setText(tr("安装成功！到「插件」列表里查看"));
+                            m_pluginStatusLabel->show();
+                        }
+                        restore();
+                    });
+        },
+        [this, restore](const QString &message, int) {
+            restore();
+            setStatus(message, true);
+        });
 }
 
 // ────────────────────────────────────────────────────────────── 楼层
@@ -1281,6 +1517,12 @@ void ForumThreadDetailPage::shareThread()
             QStringLiteral("%1\n%2").arg(m_info.title, url));
         NotificationManager::showSuccess(this, tr("标题和链接已复制，去聊天窗口粘贴给朋友吧"));
     });
+    if (ForumAccountService::instance()->isLoggedIn())
+    {
+        menu.addAction(tr("分享给好友"), this, [this, url]() {
+            ShareToFriendDialog::share(this, m_info.title, url, m_info.boardName);
+        });
+    }
     menu.exec(button ? button->mapToGlobal(QPoint(0, button->height() + 4))
                      : QCursor::pos());
 }
@@ -1422,40 +1664,9 @@ void ForumThreadDetailPage::editThreadMeta()
 
 void ForumThreadDetailPage::reportPost(const ForumPost &post)
 {
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("举报楼层"));
-    dialog.setMinimumWidth(420);
-    auto *layout = new QVBoxLayout(&dialog);
-    layout->addWidget(new QLabel(tr("说明举报原因（最多 200 字）"), &dialog));
-    auto *reasonEdit = new QPlainTextEdit(&dialog);
-    reasonEdit->setPlaceholderText(tr("广告 / 人身攻击 / 刷屏…"));
-    reasonEdit->setFixedHeight(90);
-    layout->addWidget(reasonEdit);
-    auto *buttons = new QHBoxLayout();
-    buttons->addStretch(1);
-    auto *cancel = new QPushButton(tr("取消"), &dialog);
-    auto *submit = new QPushButton(tr("提交举报"), &dialog);
-    submit->setObjectName(QStringLiteral("forumPrimaryButton"));
-    buttons->addWidget(cancel);
-    buttons->addWidget(submit);
-    layout->addLayout(buttons);
-    connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
-    connect(submit, &QPushButton::clicked, &dialog, &QDialog::accept);
-
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    const QString reason = reasonEdit->toPlainText().trimmed();
-    if (reason.isEmpty())
-    {
-        NotificationManager::showInfo(this, tr("先填写举报原因"));
-        return;
-    }
-
-    ForumContentService::instance()->reportPost(
-        post.id, reason,
-        [this]() { NotificationManager::showSuccess(this, tr("已提交举报，管理员会尽快处理")); },
-        [this](const QString &message, int) { NotificationManager::showError(this, message); });
+    // 举报走独立整页：带上楼层信息，由 MainWindow 打开举报页
+    emit reportRequested(post.id, post.floor, authorDisplay(post.author),
+                         postExcerptOf(post.content));
 }
 
 // ────────────────────────────────────────────────────────────── 右栏

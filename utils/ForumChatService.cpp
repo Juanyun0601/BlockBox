@@ -37,6 +37,7 @@ ForumFriendInfo ForumChatService::parsePeer(const QJsonObject &object)
         peer.displayName = peer.username;
     peer.avatar = object.value(QStringLiteral("avatar")).toString();
     peer.online = object.value(QStringLiteral("online")).toBool();
+    peer.official = object.value(QStringLiteral("official")).toBool();
     peer.lastSeenAt = static_cast<qint64>(object.value(QStringLiteral("last_seen_at")).toDouble());
     return peer;
 }
@@ -335,6 +336,10 @@ void ForumChatService::uploadImage(const QByteArray &data, const QString &mime,
     const QString token = ForumAccountService::instance()->token();
     if (!token.isEmpty())
         request.setRawHeader("Cookie", QStringLiteral("bbf_sid=%1").arg(token).toUtf8());
+    // 论坛开了人机验证时，上传也要带免验令牌
+    const QString humanToken = ForumAccountService::instance()->humanCheckToken();
+    if (!humanToken.isEmpty())
+        request.setRawHeader("X-Human-Token", humanToken.toUtf8());
 
     QNetworkReply *reply = m_network->post(request, data);
     QObject::connect(reply, &QNetworkReply::finished, reply,

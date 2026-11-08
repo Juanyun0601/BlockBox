@@ -72,11 +72,17 @@ signals:
     /** 自己删除了主题，通知列表页等刷新 */
     void threadDeleted();
 
+    /** 从帖子下载安装了一个插件：侧边栏插件列表需要刷新 */
+    void pluginInstalled();
+
     /** 点了「回到论坛」面包屑 */
     void backRequested();
 
     /** 右栏点开同版块的其他主题 */
     void threadOpenRequested(int threadId);
+
+    /** 点了「举报」：打开整页举报流程（带上被举报楼层的信息） */
+    void reportRequested(int postId, int floor, const QString &authorName, const QString &excerpt);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -103,6 +109,7 @@ private:
     // ── 渲染 ──
     void renderCrumbs();
     void renderHero();
+    void renderPluginCard();
     void renderPosts(const QVector<ForumPost> &posts);
     QWidget *buildPostRow(const ForumPost &post);
     QWidget *buildChildRow(const ForumPost &child);
@@ -125,6 +132,7 @@ private:
     void toggleBookmark();
     void togglePin();
     void toggleLock();
+    void downloadAndInstallPlugin();
     void startEditPost(const ForumPost &post);
     void confirmDeletePost(const ForumPost &post);
     void confirmDeleteThread();
@@ -171,6 +179,12 @@ private:
     QFrame *m_heroCard = nullptr;
     QVBoxLayout *m_heroBody = nullptr;
     QPushButton *m_bookmarkButton = nullptr;
+
+    // 插件帖的插件卡（renderPluginCard 填充）
+    QWidget *m_pluginCardSlot = nullptr;
+    QPushButton *m_pluginInstallButton = nullptr;
+    QLabel *m_pluginStatusLabel = nullptr;
+    bool m_pluginBusy = false;
 
     // 楼层
     QVBoxLayout *m_floorsLayout = nullptr;
