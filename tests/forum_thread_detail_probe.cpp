@@ -179,6 +179,75 @@ QJsonObject threadsResponse(int page)
     return root;
 }
 
+/** 插件帖：主题上挂了 .BlockBox 插件包，详情页应该换成资源详情页的版面 */
+QJsonObject pluginThreadResponse(int page)
+{
+    QJsonObject root;
+
+    QJsonObject thread;
+    thread.insert(QStringLiteral("id"), 2);
+    thread.insert(QStringLiteral("title"), QStringLiteral("快捷指令面板：一键跑常用命令"));
+    thread.insert(QStringLiteral("pinned"), false);
+    thread.insert(QStringLiteral("locked"), false);
+    thread.insert(QStringLiteral("views"), 1286);
+    thread.insert(QStringLiteral("reply_count"), 9);
+    thread.insert(QStringLiteral("created_at"), epochDaysAgo(6));
+    thread.insert(QStringLiteral("last_post_at"), epochDaysAgo(0));
+    thread.insert(QStringLiteral("bookmarked"), false);
+
+    QJsonObject board;
+    board.insert(QStringLiteral("slug"), QStringLiteral("plugins"));
+    board.insert(QStringLiteral("name"), QStringLiteral("插件分享"));
+    thread.insert(QStringLiteral("board"), board);
+
+    QJsonArray tags;
+    tags.append(QStringLiteral("插件"));
+    tags.append(QStringLiteral("指令"));
+    thread.insert(QStringLiteral("tags"), tags);
+
+    thread.insert(QStringLiteral("author"),
+                  makeAuthor(QStringLiteral("方块开发者"), QStringLiteral("user"), 21, 88, 12, 300));
+
+    QJsonObject plugin;
+    plugin.insert(QStringLiteral("id"), 7);
+    plugin.insert(QStringLiteral("upload_id"), 3);
+    plugin.insert(QStringLiteral("plugin_id"), QStringLiteral("blockbox.command-panel"));
+    plugin.insert(QStringLiteral("name"), QStringLiteral("快捷指令面板"));
+    plugin.insert(QStringLiteral("version"), QStringLiteral("1.2.0"));
+    plugin.insert(QStringLiteral("author"), QStringLiteral("方块开发者"));
+    plugin.insert(QStringLiteral("description"),
+                  QStringLiteral("把常用的传送、调试和设置指令做成一排按钮，进游戏按一个键就能用。"));
+    plugin.insert(QStringLiteral("icon"), QString());   // 没有图标，走渐变占位
+    plugin.insert(QStringLiteral("file_size"), 84213);
+    plugin.insert(QStringLiteral("downloads"), 326);
+    thread.insert(QStringLiteral("plugin"), plugin);
+    root.insert(QStringLiteral("thread"), thread);
+
+    QJsonArray posts;
+    posts.append(makePost(
+        201, 1, 0,
+        QStringLiteral("**快捷指令面板**\n\n"
+                       "把常用的几条指令收进一个面板：\n\n"
+                       "- 传送：`/home`、`/spawn`、`/back`\n"
+                       "- 调试：`/gamerule`、`/time set day`\n"
+                       "- 开关：`/gamemode creative`\n\n"
+                       "按 `K` 呼出面板，按钮可以自己改。"),
+        QStringLiteral("方块开发者"), QStringLiteral("user"), 12, false, false, 0, 6));
+    posts.append(makePost(202, 2, 0, QStringLiteral("装上了，`/home` 和 `/spawn` 两键直连，舒服。"),
+                          QStringLiteral("老K"), QStringLiteral("user"), 3, false, false, 0, 2));
+    posts.append(makePost(203, 3, 0, QStringLiteral("建议加个「复制当前坐标」的按钮。"),
+                          QStringLiteral("萌新"), QStringLiteral("user"), 1, false, false, 0, 1));
+    root.insert(QStringLiteral("posts"), posts);
+
+    QJsonObject pagination;
+    pagination.insert(QStringLiteral("page"), page);
+    pagination.insert(QStringLiteral("per_page"), 20);
+    pagination.insert(QStringLiteral("total"), 9);
+    pagination.insert(QStringLiteral("pages"), 1);
+    root.insert(QStringLiteral("pagination"), pagination);
+    return root;
+}
+
 QJsonObject boardResponse(int page)
 {
     QJsonObject root;
@@ -256,7 +325,12 @@ protected:
 
             QJsonObject body;
             if (path.startsWith("/api/threads/"))
-                body = threadsResponse(qMax(1, page));
+            {
+                // 1 号是普通求助帖，2 号是挂了插件包的插件帖
+                const int threadId = path.mid(13).split('/').value(0).toInt();
+                body = threadId == 2 ? pluginThreadResponse(qMax(1, page))
+                                     : threadsResponse(qMax(1, page));
+            }
             else if (path.startsWith("/api/boards/"))
                 body = boardResponse(qMax(1, page));
             else
@@ -311,6 +385,20 @@ int main(int argc, char **argv)
     const bool dark = QCoreApplication::arguments().value(1) == QStringLiteral("dark");
     ThemeManager::setTheme(&app, dark ? ThemeManager::DarkTheme : ThemeManager::LightTheme);
 
+    // 探针直接吃源码里的 style.qss：改样式不用重编 36MB 的资源包
+    // （排查时可加参数 noqss 跳过，用资源包里编译好的样式）
+    if (QCoreApplication::arguments().contains(QStringLiteral("noqss")))
+    {
+        // 跳过源码样式
+    }
+    else if (QFile styleFile(QStringLiteral("D:/BlockBox/C-BlockBox/styles/style.qss"));
+             styleFile.open(QFile::ReadOnly))
+    {
+        app.setStyleSheet(ThemeManager::instance()->resolveTokens(
+            QString::fromUtf8(styleFile.readAll())));
+        std::fprintf(stderr, "[probe] style.qss 从源码加载\n");
+    }
+
     // 2) 假论坛服务
     FakeForumServer server;
     if (!server.listen(QHostAddress::LocalHost, 0))
@@ -330,12 +418,40 @@ int main(int argc, char **argv)
     win.show();
     QApplication::processEvents();
 
+    // 排查用：notread 只建页面不加载主题，plain 只出普通帖截图，noqss 用资源包里的样式
+    if (QCoreApplication::arguments().contains(QStringLiteral("notread")))
+    {
+        QTimer::singleShot(10, &app, &QCoreApplication::quit);
+        return app.exec();
+    }
+
     page->openThread(1);
     waitMs(1500);
     QApplication::processEvents();
 
     grab(page, outDir + QStringLiteral("/forum_thread_detail_%1.png").arg(dark ? QStringLiteral("dark")
                                                                               : QStringLiteral("light")));
+
+    // 第二个参数给 plain 就只出普通帖的截图（排查用）
+    if (QCoreApplication::arguments().value(2) == QStringLiteral("plain"))
+    {
+        QTimer::singleShot(10, &app, &QCoreApplication::quit);
+        return app.exec();
+    }
+
+    // 4) 插件帖：版面应该换成资源详情页那套（通栏头部 + 左下载 / 右介绍讨论）
+    page->openThread(2);
+    waitMs(1500);
+    QApplication::processEvents();
+    grab(page, outDir + QStringLiteral("/forum_thread_detail_plugin_%1.png")
+                     .arg(dark ? QStringLiteral("dark") : QStringLiteral("light")));
+
+    // 5) 窄窗口：左栏折到正文上方，主题头仍然通栏
+    page->resize(900, 2200);
+    waitMs(600);
+    QApplication::processEvents();
+    grab(page, outDir + QStringLiteral("/forum_thread_detail_plugin_narrow_%1.png")
+                     .arg(dark ? QStringLiteral("dark") : QStringLiteral("light")));
 
     QTimer::singleShot(10, &app, &QCoreApplication::quit);
     return app.exec();

@@ -29,7 +29,12 @@
 
 #include "OnboardingWizard.h"
 
+#include "components/AppColorDialog.h"
 #include "components/OutlinedLabel.h"
+
+#include "layouts/FlowLayout.h"
+
+#include "utils/RuntimeDependencyManager.h"
 
 #include <QButtonGroup>
 #include <QColorDialog>
@@ -56,6 +61,7 @@
 #include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QtMath>
 
 #include "components/CustomCheckBox.h"
 #include "utils/BackgroundManager.h"
@@ -91,20 +97,6 @@ protected:
         }
         return QObject::eventFilter(obj, event);
     }
-};
-
-const char *kAccentNames[6] = {
-    "\u7FE1\u7EFF",     // 翡翠绿
-    "\u975B\u84DD",     // 靛蓝
-    "\u7D2B\u7F57\u5170", // 紫罗兰
-    "\u7C89\u7EA2",     // 粉红
-    "\u7425\u73C0",     // 琥珀
-    "\u5929\u9752",     // 天青
-};
-// 首色必须与应用一贯的翡翠绿主色（#2E7D32）一致，否则当前主题色不在这 6 个预设里时
-// 会被回落到第 0 格，界面上会把一个偏亮的 #10B981 当成「当前强调色」显示。
-const char *kAccentHex[6] = {
-    "#2E7D32", "#6366F1", "#8B5CF6", "#EC4899", "#F59E0B", "#06B6D4",
 };
 
 /// 在下载目录里查找 bin/java(.exe)：解压后的目录层级由压缩包决定，逐层向下找
@@ -599,7 +591,7 @@ void OnboardingWizard::buildStep1()
         clay->addWidget(topBar);
 
         // 右上角对勾徽章（默认隐藏；选中时由 QButtonGroup::idClicked 控制显示）
-        QLabel *check = new QLabel(QStringLiteral("\u2714"), card);
+        QLabel *check = new QLabel(QStringLiteral("\u2713"), card);
         check->setObjectName(QStringLiteral("obwMethodCheck"));
         check->setFixedSize(22, 22);
         check->setAlignment(Qt::AlignCenter);
@@ -918,7 +910,7 @@ void OnboardingWizard::applyLauncherDetect(int idx, const LauncherDetect &det)
             brief << (det.detail.isEmpty() ? tr("可导入") : det.detail);
     }
     statusText->setText(
-        found ? ((imported ? tr("\u2714 \u5DF2\u5BFC\u5165") : tr("\u5DF2\u68C0\u6D4B\u5230"))
+        found ? ((imported ? tr("\u2713 \u5DF2\u5BFC\u5165") : tr("\u5DF2\u68C0\u6D4B\u5230"))
                      + (brief.isEmpty() ? QString() : QStringLiteral(" \u00B7 ") + brief.join(QStringLiteral(" \u00B7 "))))
               : tr("\u672A\u68C0\u6D4B\u5230\u5B89\u88C5"));
 
@@ -1055,11 +1047,11 @@ void OnboardingWizard::buildStep2Manual()
     msLogin->setObjectName(QStringLiteral("obwBtnPrimary"));
     msLogin->setCursor(Qt::PointingHandCursor);
     connect(msLogin, &QPushButton::clicked, this, [this]() {
-        m_footerHint->setText(tr("\u5FAE\u8F6F\u6388\u6743\u6D41\u7A0B\u5C06\u5728\u5B8C\u6210\u5F15\u5BFC\u540E\u63D0\u4F9B\uFF0C\u53EF\u5728\u8D26\u6237\u7BA1\u7406\u4E2D\u5B8C\u6210\u3002"));
+        m_footerHint->setText(tr("\u5F53\u524D\u6682\u4E0D\u53EF\u7528\uFF0C\u5DF2\u5411 Mojang \u7533\u8BF7\u767B\u5F55 API\uFF0C\u8BF7\u7B49\u5F85\u3002"));
     });
     mForm->addWidget(msLogin);
     QLabel *msHint = new QLabel(
-        tr("\u5C06\u6253\u5F00\u6D4F\u89C8\u5668\u5B8C\u6210 Xbox / Microsoft \u6388\u6743\uFF0C\u767B\u5F55\u540E\u53EF\u540C\u6B65\u6B63\u7248\u76AE\u80A4\u4E0E\u62AB\u98CE\u3002"), m_formMicrosoft);
+        tr("\u5FAE\u8F6F\u8D26\u6237\u767B\u5F55\u6682\u4E0D\u53EF\u7528\uFF1A\u767B\u5F55 API \u6B63\u5728\u5411 Mojang \u7533\u8BF7\u4E2D\uFF0C\u53EF\u5148\u6DFB\u52A0\u79BB\u7EBF\u8D26\u6237\u3002"), m_formMicrosoft);
     msHint->setObjectName(QStringLiteral("obwMutedText"));
     msHint->setWordWrap(true);
     mForm->addWidget(msHint);
@@ -1601,7 +1593,7 @@ void OnboardingWizard::buildStep5()
             m_colorSwatches.append(sw);
             colorRow->addWidget(sw);
             connect(sw, &QPushButton::toggled, this, [this, sw, hex](bool on) {
-                sw->setText(on ? QStringLiteral("\u2714") : QString());
+                sw->setText(on ? QStringLiteral("\u2713") : QString());
                 sw->setStyleSheet(QStringLiteral(
                     "background-color: %1; border-radius: 15px;"
                     "border: 2px solid %2; color: #FFFFFF; font-size: 13px; font-weight: 800;")
@@ -1616,7 +1608,9 @@ void OnboardingWizard::buildStep5()
         customBtn->setCursor(Qt::PointingHandCursor);
         connect(customBtn, &QPushButton::clicked, this, [this]() {
             const QColor cur = QColor(BackgroundManager::instance()->solidColor());
-            const QColor c = QColorDialog::getColor(cur.isValid() ? cur : QColor(QStringLiteral("#10B981")),
+            // 应用内嵌颜色弹窗：原生 QColorDialog 在手机上以独立系统小窗口弹出，
+            // 遮罩盖不满、缩放错位（与 beta8 修过的弹窗问题同类）
+            const QColor c = AppColorDialog::getColor(cur.isValid() ? cur : QColor(QStringLiteral("#10B981")),
                                                     this, tr("\u9009\u62E9\u80CC\u666F\u989C\u8272"));
             if (!c.isValid())
                 return;
@@ -1769,11 +1763,17 @@ void OnboardingWizard::buildStep5()
     aTitle->setObjectName(QStringLiteral("obwStyleBlockTitle"));
     aLay->addWidget(aTitle);
 
-    QHBoxLayout *swatchRow = new QHBoxLayout();
-    swatchRow->setSpacing(10);
+    // 色板直接用「设置 > 界面 > 主题色」的同一份预设（ThemeManager::presetColors），
+    // 不再在引导里另藏一套写死的颜色：两边选项一致，当前主题色也永远能找到对应色块。
+    const QList<ThemeManager::PresetColor> accentPresets =
+        ThemeManager::instance()->presetColors();
+
+    // 16 个色块一行放不下（窄窗口 / 手机上更明显），用流式布局自动换行
+    FlowLayout *swatchRow = new FlowLayout(nullptr, 0, 10, 10);
     QButtonGroup *accentGroup = new QButtonGroup(this);
     accentGroup->setExclusive(true);
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < accentPresets.size(); ++i) {
+        const ThemeManager::PresetColor preset = accentPresets.at(i);
         QPushButton *swatch = new QPushButton(accentBlock);
         swatch->setObjectName(QStringLiteral("obwAccentSwatch"));
         swatch->setFixedSize(32, 32);
@@ -1781,49 +1781,69 @@ void OnboardingWizard::buildStep5()
         swatch->setCursor(Qt::PointingHandCursor);
         swatch->setCheckable(true);
         swatch->setFlat(true);
-        swatch->setStyleSheet(QStringLiteral(
-            "background-color: %1; border-radius: 16px; border: 2px solid transparent; color: #FFFFFF; font-size: 13px; font-weight: 800;")
-            .arg(QString::fromLatin1(kAccentHex[i])));
+        swatch->setToolTip(preset.name + QStringLiteral(" \u00B7 ") + preset.color);
+        swatch->setProperty("accentHex", preset.color);
         accentGroup->addButton(swatch, i);
         swatchRow->addWidget(swatch);
     }
-    swatchRow->addStretch();
     aLay->addLayout(swatchRow);
 
     m_accentNameLabel = new QLabel(accentBlock);
     m_accentNameLabel->setObjectName(QStringLiteral("obwAccentName"));
+    m_accentNameLabel->setWordWrap(true);
     aLay->addWidget(m_accentNameLabel);
 
-    const QString curColor = ThemeManager::instance()->currentThemeColor();
-    int curIdx = 0;
-    for (int i = 0; i < 6; ++i) {
-        if (QString::fromLatin1(kAccentHex[i]).compare(curColor, Qt::CaseInsensitive) == 0) {
-            curIdx = i;
-            break;
-        }
-    }
-    accentGroup->button(curIdx)->setChecked(true);
-    m_accentNameLabel->setText(QString::fromUtf8(kAccentNames[curIdx])
-                               + QStringLiteral(" \u00B7 ")
-                               + QString::fromLatin1(kAccentHex[curIdx]));
-    // 选中色块显示对勾 + 白色描边（内联 QSS 无法写 :checked，用代码切换）
-    for (int i = 0; i < 6; ++i) {
+    // 色块样式的唯一出口：底色固定为预设色，对勾与描边取对勾在底色上看得清的颜色，
+    // 免得白/黄/天蓝这类浅色块上「白对勾看不见」、深色块上又「黑对勾看不见」。
+    const auto readableOn = [](const QColor &bg) -> QColor {
+        // 相对亮度决定取深色还是白色对勾（0.23 是白/深两色对比度相等的分界）
+        const auto toLinear = [](int v) {
+            const double c = v / 255.0;
+            return c <= 0.03928 ? c / 12.92 : qPow((c + 0.055) / 1.055, 2.4);
+        };
+        const double lum = 0.2126 * toLinear(bg.red()) + 0.7152 * toLinear(bg.green())
+                           + 0.0722 * toLinear(bg.blue());
+        return lum > 0.23 ? QColor(QStringLiteral("#1F2937"))
+                          : QColor(QStringLiteral("#FFFFFF"));
+    };
+    // 对勾用 U+2713（U+2714 在 Windows 会被彩色 emoji 字体接管，固定渲染成紫色，
+    // 怎么设 color 都不变；U+2713 才会吃 QSS 的 color），颜色按底色明暗取深/白
+    const auto applySwatchStyle = [readableOn](QPushButton *swatch, bool on) {
+        const QString hex = swatch->property("accentHex").toString();
+        const QColor ink = readableOn(QColor(hex));
+        const QString inkHex = ink.name();
+        const bool lightSwatch = inkHex.compare(QStringLiteral("#ffffff"),
+                                                Qt::CaseInsensitive) != 0;
+        const QString border = on ? inkHex
+                                  : (lightSwatch ? QStringLiteral("rgba(0,0,0,0.20)")
+                                                 : QStringLiteral("rgba(255,255,255,0.35)"));
+        swatch->setText(on ? QStringLiteral("\u2713") : QString());
+        swatch->setStyleSheet(QStringLiteral(
+            "background-color: %1; border-radius: 16px;"
+            "border: 2px solid %2; color: %3; font-size: 13px; font-weight: 800;")
+            .arg(hex, border, inkHex));
+    };
+
+    // 选中色块显示对勾（内联 QSS 无法写 :checked，用代码切换）
+    for (int i = 0; i < accentPresets.size(); ++i) {
         QPushButton *swatch = qobject_cast<QPushButton *>(accentGroup->button(i));
         if (!swatch)
             continue;
-        const QString hex = QString::fromLatin1(kAccentHex[i]);
-        const auto applyStyle = [swatch, hex](bool on) {
-            swatch->setText(on ? QStringLiteral("\u2714") : QString());
-            swatch->setStyleSheet(QStringLiteral(
-                "background-color: %1; border-radius: 16px;"
-                "border: 2px solid %2; color: #FFFFFF; font-size: 13px; font-weight: 800;")
-                .arg(hex, on ? QStringLiteral("#FFFFFF") : QStringLiteral("rgba(255,255,255,0.35)")));
-        };
-        applyStyle(swatch->isChecked());
-        connect(swatch, &QPushButton::toggled, this, [applyStyle](bool on) { applyStyle(on); });
+        applySwatchStyle(swatch, false);
+        connect(swatch, &QPushButton::toggled, this, [applySwatchStyle, swatch](bool on) {
+            applySwatchStyle(swatch, on);
+        });
     }
     connect(accentGroup, &QButtonGroup::idClicked, this,
-            [this](int idx) { onPickAccent(QString::fromLatin1(kAccentHex[idx])); });
+            [this, accentPresets](int idx) {
+                if (idx < 0 || idx >= accentPresets.size())
+                    return;
+                onPickAccent(accentPresets.at(idx).color);
+            });
+    // 自定义色（不在预设里）不点亮任何色块，只在下方标出实际色值，
+    // 避免像以前那样被回落到第 0 格、把一个不是当前色的色块标成「当前强调色」
+    m_accentGroup = accentGroup;
+    syncAccentSelection();
     rightCol->addWidget(accentBlock);
 
     QFrame *detailBlock = new QFrame(page);
@@ -2253,7 +2273,7 @@ void OnboardingWizard::goDone()
                       : tr("\u5916\u89C2\uFF1A\u6D45\u8272\u4E3B\u9898"));
 
         for (const QString &chip : chips) {
-            QLabel *c = new QLabel(QStringLiteral("\u2714 ") + chip, m_doneSummaryWidget);
+            QLabel *c = new QLabel(QStringLiteral("\u2713 ") + chip, m_doneSummaryWidget);
             c->setObjectName(QStringLiteral("obwDoneChip"));
             sum->addWidget(c);
         }
@@ -2282,6 +2302,8 @@ void OnboardingWizard::resetToFirstStep()
     refreshAccountList();
     refreshJavaList();
     refreshFolderList();
+    // 主题色也可能在设置里改过：重新点亮强调色色板，避免停在上次引导时的选中项
+    syncAccentSelection();
 }
 
 void OnboardingWizard::setReturnToSettingsAvailable(bool available)
@@ -2814,6 +2836,62 @@ void OnboardingWizard::onScanJava()
  * ============================================================ */
 void OnboardingWizard::startJavaDownload(int majorVersion, const QString &mirrorId)
 {
+#ifdef Q_OS_ANDROID
+    // 安卓：Adoptium 等厂商没有 android 平台的安装包，桌面下载链路必然失败
+    // （fetch 到空列表、兜底还会下到 bionic 跑不了的桌面 Linux JDK）。
+    // 改走运行依赖通道：按设备芯片架构自动下载适配的 Java 运行环境
+    Q_UNUSED(mirrorId);
+    RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
+    if (deps->isChecking() || deps->isInstalling()) {
+        m_javaDlStatusLabel->setText(tr("已有运行环境安装任务在进行中，请稍候。"));
+        return;
+    }
+    if (!m_runtimeDepsWired) {
+        // 进度与完成只接一次，避免重复下载时信号叠加
+        connect(deps, &RuntimeDependencyManager::installProgress, this,
+                [this](const QString &, int percent, const QString &stage) {
+            m_javaDlStatusLabel->setText(stage +
+                (percent > 0 ? QStringLiteral(" (%1%)").arg(percent) : QString()));
+        });
+        connect(deps, &RuntimeDependencyManager::allInstallsFinished, this,
+                [this](bool allSucceeded) {
+            setJavaDownloadBusy(false);
+            m_javaDlMajor = 0;
+            if (allSucceeded) {
+                m_javaDlStatusLabel->setText(tr("Java 运行环境安装完成，已加入上方列表。"));
+                m_footerHint->setText(tr("Java 已就绪，可继续下一步。"));
+            } else {
+                m_javaDlStatusLabel->setText(tr("Java 运行环境安装失败，可稍后在设置里重试。"));
+            }
+            refreshJavaList();
+        });
+        m_runtimeDepsWired = true;
+    }
+    m_javaDlMajor = majorVersion;
+    setJavaDownloadBusy(true);
+    m_javaDlStatusLabel->setText(tr("正在获取适配安卓的 Java 运行环境…"));
+    m_footerHint->setText(tr("正在下载 Java 运行环境，完成后会自动安装。"));
+    auto *checkConnection = new QMetaObject::Connection;
+    *checkConnection = connect(deps, &RuntimeDependencyManager::checkFinished, deps,
+                               [this, deps, checkConnection](bool ok, const QString &message) {
+        disconnect(*checkConnection);
+        delete checkConnection;
+        if (!ok) {
+            setJavaDownloadBusy(false);
+            m_javaDlStatusLabel->setText(tr("获取运行环境清单失败：%1").arg(message));
+            return;
+        }
+        if (deps->pendingCount() <= 0) {
+            setJavaDownloadBusy(false);
+            m_javaDlMajor = 0;
+            m_javaDlStatusLabel->setText(tr("运行环境已是最新，无需安装。"));
+            return;
+        }
+        deps->installAll();
+    });
+    deps->checkForUpdates(this, true);
+    return;
+#endif
     JavaDownloader *downloader = JavaDownloader::instance();
     if (!downloader || !m_javaDlStatusLabel)
         return;
@@ -3209,16 +3287,59 @@ void OnboardingWizard::updateImagePreview(const QString &path)
     m_imagePathLabel->setText(path);
 }
 
+/* ============================================================
+ * 强调色：把色板选中项同步到当前主题色
+ * ============================================================ */
+void OnboardingWizard::syncAccentSelection()
+{
+    if (!m_accentGroup)
+        return;
+
+    const QList<ThemeManager::PresetColor> presets = ThemeManager::instance()->presetColors();
+    const QString curColor = ThemeManager::instance()->currentThemeColor();
+
+    int curIdx = -1;
+    for (int i = 0; i < presets.size(); ++i) {
+        if (presets.at(i).color.compare(curColor, Qt::CaseInsensitive) == 0) {
+            curIdx = i;
+            break;
+        }
+    }
+    // 自定义色不在预设里：一个都不点亮，只在下方写实际色值。
+    // 独占组里已选中的按钮不允许被程序直接取消选中，先临时关掉独占再清零。
+    m_accentGroup->setExclusive(false);
+    for (int i = 0; i < presets.size(); ++i) {
+        if (QPushButton *swatch = qobject_cast<QPushButton *>(m_accentGroup->button(i)))
+            swatch->setChecked(false);
+    }
+    if (curIdx >= 0) {
+        if (QPushButton *swatch = qobject_cast<QPushButton *>(m_accentGroup->button(curIdx)))
+            swatch->setChecked(true);
+    }
+    m_accentGroup->setExclusive(true);
+
+    if (m_accentNameLabel) {
+        m_accentNameLabel->setText(
+            curIdx >= 0 ? presets.at(curIdx).name + QStringLiteral(" \u00B7 ")
+                              + presets.at(curIdx).color
+                        : tr("\u81EA\u5B9A\u4E49") + QStringLiteral(" \u00B7 ") + curColor);
+    }
+}
+
 void OnboardingWizard::onPickAccent(const QString &colorName)
 {
     ThemeManager::instance()->setThemeColor(colorName);
-    for (int i = 0; i < 6; ++i) {
-        if (QString::fromLatin1(kAccentHex[i]).compare(colorName, Qt::CaseInsensitive) == 0) {
-            m_accentNameLabel->setText(QString::fromUtf8(kAccentNames[i])
-                                       + QStringLiteral(" \u00B7 ")
-                                       + colorName);
-            break;
+    if (m_accentNameLabel) {
+        // 名称取自同一份预设色板；自定义色（不在预设里）只标「自定义 · #色值」
+        QString presetName = tr("\u81EA\u5B9A\u4E49");
+        const QList<ThemeManager::PresetColor> presets = ThemeManager::instance()->presetColors();
+        for (const ThemeManager::PresetColor &preset : presets) {
+            if (preset.color.compare(colorName, Qt::CaseInsensitive) == 0) {
+                presetName = preset.name;
+                break;
+            }
         }
+        m_accentNameLabel->setText(presetName + QStringLiteral(" \u00B7 ") + colorName);
     }
     m_footerHint->setText(tr("\u5F3A\u8C03\u8272\u5DF2\u5207\u6362\uFF0C\u5B9E\u65F6\u751F\u6548\u3002"));
 }

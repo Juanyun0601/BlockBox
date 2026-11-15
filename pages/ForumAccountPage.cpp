@@ -56,6 +56,7 @@
 #include "utils/ForumAccountService.h"
 #include "utils/FavoritesManager.h"
 #include "utils/IconHelper.h"
+#include "utils/LocalFavoritesManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/SkinDownloader.h"
 #include "utils/ThemeManager.h"
@@ -65,6 +66,8 @@ namespace
 {
 
 constexpr int kAvatarSize = 76;
+/** 资料编辑页头像：圆形头像本体的尺寸（标签再加 1px 描边圈） */
+constexpr int kSettingsAvatarSize = 56;
 /** 资料卡顶部封面横幅：高度跟着卡片宽度走（3:1），和网页版、裁剪比例一致 */
 /** 角色卡片封面统一高度（卡片等高，瀑布流按等宽等高排布） */
 constexpr int kCharacterCoverHeight = 190;
@@ -332,6 +335,26 @@ QFrame *makeDivider(QWidget *parent)
     return line;
 }
 
+/** 编辑表单的小节标题：文字前加一段品牌色竖条，把「资料 / 密码 / 登录状态」分段衬出来 */
+QWidget *makeSectionHeader(const QString &text, QWidget *parent)
+{
+    auto *row = new QWidget(parent);
+    auto *rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->setSpacing(8);
+
+    auto *mark = new QFrame(row);
+    mark->setObjectName(QStringLiteral("fbSectionMark"));
+    mark->setFixedSize(4, 14);
+    rowLayout->addWidget(mark, 0, Qt::AlignVCenter);
+
+    auto *label = new QLabel(text, row);
+    label->setObjectName(QStringLiteral("fbSectionTitle"));
+    rowLayout->addWidget(label, 0, Qt::AlignVCenter);
+    rowLayout->addStretch();
+    return row;
+}
+
 /**
  * 把一张皮肤纹理拼成 16×32 的正面角色图（像素风）：
  * 头 / 身体 / 双臂 / 双腿，modern（64×64）皮肤连同帽子、外套、袖子等覆盖层一起叠上去。
@@ -422,6 +445,18 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
     applyTheme();
     renderProfile();
     renderContentArea();
+
+    // 本地收藏增删（任意资源页点星标 / 账户页移除）：
+    // 资料卡「收藏」统计与「我的收藏 → 本地收藏」列表实时刷新
+    connect(LocalFavoritesManager::instance(), &LocalFavoritesManager::favoritesChanged, this,
+            [this]() {
+                if (m_statBookmarks && m_service->isLoggedIn())
+                    m_statBookmarks->setText(
+                        QString::number(m_bookmarkTotal + m_contentFavoriteTotal
+                                        + LocalFavoritesManager::instance()->count()));
+                if (m_activeTab == BookmarksTab && m_bookmarkSubTab == BookmarkLocalTab)
+                    renderLocalFavorites();
+            });
 
     // 论坛账号状态
     connect(m_service, &ForumAccountService::userChanged, this, [this](const ForumUser &user) {
@@ -773,6 +808,14 @@ QWidget *ForumAccountPage::buildProfileCard(QWidget *parent)
     connect(editBtn, &QPushButton::clicked, this, [this]() { setActiveTab(SettingsTab); });
     userActionsLayout->addWidget(editBtn);
 
+    auto *creationBtn = new QPushButton(tr("创作中心"), m_profileUserActions);
+    creationBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    creationBtn->setFixedHeight(36);
+    creationBtn->setMinimumWidth(78);
+    creationBtn->setCursor(Qt::PointingHandCursor);
+    connect(creationBtn, &QPushButton::clicked, this, &ForumAccountPage::creationCenterRequested);
+    userActionsLayout->addWidget(creationBtn);
+
     auto *logoutBtn = new QPushButton(tr("退出登录"), m_profileUserActions);
     logoutBtn->setObjectName(QStringLiteral("fbDangerGhost"));
     logoutBtn->setFixedHeight(36);
@@ -885,7 +928,7 @@ QWidget *ForumAccountPage::buildBookmarksContent(QWidget *parent)
     subLayout->setSpacing(4);
     subLayout->addStretch();  // 让切换胶囊靠右，与上方页签条错开层次
 
-    const QStringList subLabels = {tr("资源收藏"), tr("帖子收藏")};
+    const QStringList subLabels = {tr("资源收藏"), tr("帖子收藏"), tr("本地收藏")};
     for (int i = 0; i < subLabels.size(); ++i)
     {
         auto *sub = new QPushButton(subLabels.at(i), subTrack);
@@ -1042,7 +1085,7 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     coverRow->setSpacing(12);
 
     m_settingsCover = new ForumKit::CoverBanner(page);
-    m_settingsCover->setFixedSize(136, 46);
+    m_settingsCover->setFixedSize(150, 50);
     m_settingsCover->setRadius(8);
     coverRow->addWidget(m_settingsCover, 0, Qt::AlignVCenter);
 
@@ -1082,19 +1125,30 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     layout->addLayout(coverRow);
     layout->addSpacing(14);
 
-    // ── 头像 ──
+    // ── 头像 ──（结构与封面行一致：预览在左，提示在上、按钮在下）
     auto *avatarRow = new QHBoxLayout();
     avatarRow->setContentsMargins(0, 0, 0, 0);
     avatarRow->setSpacing(12);
 
     m_settingsAvatar = new QLabel(page);
-    m_settingsAvatar->setFixedSize(48, 48);
+    m_settingsAvatar->setObjectName(QStringLiteral("fbSettingsAvatar"));
+    // 描边圈两侧各占 1px，头像本体仍是 kSettingsAvatarSize 的正方形
+    m_settingsAvatar->setFixedSize(kSettingsAvatarSize + 2, kSettingsAvatarSize + 2);
     m_settingsAvatar->setAlignment(Qt::AlignCenter);
     avatarRow->addWidget(m_settingsAvatar, 0, Qt::AlignVCenter);
 
-    auto *avatarButtons = new QVBoxLayout();
+    auto *avatarColumn = new QVBoxLayout();
+    avatarColumn->setContentsMargins(0, 0, 0, 0);
+    avatarColumn->setSpacing(6);
+
+    auto *avatarHint = new QLabel(tr("建议用正方形图片，超过 512 KB 会自动压缩后再上传"), page);
+    avatarHint->setObjectName(QStringLiteral("fbNote"));
+    avatarHint->setWordWrap(true);
+    avatarColumn->addWidget(avatarHint);
+
+    auto *avatarButtons = new QHBoxLayout();
     avatarButtons->setContentsMargins(0, 0, 0, 0);
-    avatarButtons->setSpacing(4);
+    avatarButtons->setSpacing(8);
 
     auto *uploadBtn = new QPushButton(tr("上传新头像"), page);
     uploadBtn->setObjectName(QStringLiteral("fbBtnGhost"));
@@ -1112,21 +1166,15 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     connect(removeAvatarBtn, &QPushButton::clicked, this,
             [this]() { m_service->removeAvatar(); });
     avatarButtons->addWidget(removeAvatarBtn);
+    avatarButtons->addStretch();
 
-    avatarRow->addLayout(avatarButtons);
-    avatarRow->addStretch();
+    avatarColumn->addLayout(avatarButtons);
+    avatarRow->addLayout(avatarColumn, 1);
     layout->addLayout(avatarRow);
-
-    auto *avatarHint = new QLabel(tr("建议用正方形图片，超过 512 KB 会自动压缩后再上传"), page);
-    avatarHint->setObjectName(QStringLiteral("fbNote"));
-    avatarHint->setWordWrap(true);
-    layout->addWidget(avatarHint);
     layout->addSpacing(14);
 
     // ── 资料 ──
-    auto *profileTitle = new QLabel(tr("账号资料"), page);
-    profileTitle->setObjectName(QStringLiteral("fbSectionTitle"));
-    layout->addWidget(profileTitle);
+    layout->addWidget(makeSectionHeader(tr("账号资料"), page));
     layout->addSpacing(10);
 
     m_displayNameEdit = new QLineEdit(page);
@@ -1150,6 +1198,7 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     m_emailCodeEdit->setObjectName(QStringLiteral("fbInput"));
     m_emailCodeEdit->setPlaceholderText(tr("邮箱收到的 6 位验证码"));
     m_emailCodeEdit->setMaxLength(6);
+    m_emailCodeEdit->setFixedHeight(36);   // 与右侧「发送 / 验证」按钮等高
 
     m_sendCodeButton = new QPushButton(tr("发送验证码"), page);
     m_sendCodeButton->setObjectName(QStringLiteral("fbBtnGhost"));
@@ -1259,9 +1308,7 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     layout->addSpacing(16);
 
     // ── 密码 ──
-    auto *passwordTitle = new QLabel(tr("修改密码"), page);
-    passwordTitle->setObjectName(QStringLiteral("fbSectionTitle"));
-    layout->addWidget(passwordTitle);
+    layout->addWidget(makeSectionHeader(tr("修改密码"), page));
     layout->addSpacing(10);
 
     m_currentPasswordEdit = new QLineEdit(page);
@@ -1304,10 +1351,8 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     layout->addSpacing(16);
 
     // ── 会话 ──
-    auto *sessionTitle = new QLabel(tr("登录状态"), page);
-    sessionTitle->setObjectName(QStringLiteral("fbSectionTitle"));
-    layout->addWidget(sessionTitle);
-    layout->addSpacing(8);
+    layout->addWidget(makeSectionHeader(tr("登录状态"), page));
+    layout->addSpacing(10);
 
     m_settingsAccountLine = new QLabel(page);
     m_settingsAccountLine->setObjectName(QStringLiteral("fbNote"));
@@ -1808,8 +1853,20 @@ QLineEdit#fbInput, QPlainTextEdit#fbInput {
     selection-background-color: %BRAND%;
     selection-color: %ON_BRAND%;
 }
-QLineEdit#fbInput:focus, QPlainTextEdit#fbInput:focus { border-color: %BRAND%; }
+QLineEdit#fbInput:hover, QPlainTextEdit#fbInput:hover { border-color: %BRAND_LINE%; }
+QLineEdit#fbInput:focus, QPlainTextEdit#fbInput:focus {
+    border-color: %BRAND%;
+    background: %BG_TINT%;
+}
 QLineEdit#fbInput:disabled { color: %INK3%; }
+/* 编辑页小节标题前的品牌色竖条 */
+QFrame#fbSectionMark { background: %BRAND%; border-radius: 2px; }
+/* 编辑页头像描边圈：圆环贴着圆形头像，没头像时露出淡色底 */
+QLabel#fbSettingsAvatar {
+    background: %BG_TINT%;
+    border: 1px solid %LINE2%;
+    border-radius: 29px;
+}
 
 QLabel#fbAuthTitle { color: %INK%; font-size: 21px; font-weight: 800; }
 QLabel#fbAuthSub { color: %INK3%; font-size: 13px; }
@@ -2260,9 +2317,11 @@ void ForumAccountPage::renderProfile()
     if (m_settingsAvatar && m_loadedAvatarPath.isEmpty())
     {
         if (loggedIn)
-            m_settingsAvatar->setPixmap(letterAvatar(user.displayName, 48, QColor(currentPalette().brand)));
+            m_settingsAvatar->setPixmap(letterAvatar(user.displayName, kSettingsAvatarSize,
+                                                     QColor(currentPalette().brand)));
         else
-            m_settingsAvatar->setPixmap(guestAvatar(48, QColor(currentPalette().brand)));
+            m_settingsAvatar->setPixmap(guestAvatar(kSettingsAvatarSize,
+                                                    QColor(currentPalette().brand)));
     }
 
     if (m_settingsAccountLine)
@@ -2333,7 +2392,7 @@ void ForumAccountPage::setAvatarPixmap(const QPixmap &pixmap)
     m_avatarLabel->setPixmap(rounded);
 
     if (m_settingsAvatar)
-        m_settingsAvatar->setPixmap(roundPixmap(pixmap, 48));
+        m_settingsAvatar->setPixmap(roundPixmap(pixmap, kSettingsAvatarSize));
 }
 
 void ForumAccountPage::loadRemoteAvatar(const QString &avatarPath)
@@ -2345,7 +2404,8 @@ void ForumAccountPage::loadRemoteAvatar(const QString &avatarPath)
         setAvatarPlaceholder(displayName);
         m_loadedAvatarPath.clear();
         if (m_settingsAvatar && m_service->isLoggedIn())
-            m_settingsAvatar->setPixmap(letterAvatar(displayName, 48, QColor(currentPalette().brand)));
+            m_settingsAvatar->setPixmap(letterAvatar(displayName, kSettingsAvatarSize,
+                                                     QColor(currentPalette().brand)));
         return;
     }
 
@@ -3288,6 +3348,11 @@ void ForumAccountPage::renderBookmarks()
         renderContentFavorites();
         return;
     }
+    if (m_bookmarkSubTab == BookmarkLocalTab)
+    {
+        renderLocalFavorites();
+        return;
+    }
 
     clearLayout(m_bookmarkListLayout);
 
@@ -3504,19 +3569,108 @@ void ForumAccountPage::removeAccountContentFavorite(const FavoriteItem &item)
         });
 }
 
+void ForumAccountPage::renderLocalFavorites()
+{
+    clearLayout(m_bookmarkListLayout);
+    QWidget *host = m_bookmarkListLayout->parentWidget();
+    const Palette p = currentPalette();
+
+    const QVector<LocalFavoriteEntry> favorites = LocalFavoritesManager::instance()->favorites();
+    if (favorites.isEmpty())
+    {
+        auto *empty =
+            makeMutedLabel(tr("还没有收藏的本地资源，去实例资源页点 ★ 收藏吧"), host, "fbEmpty");
+        empty->setAlignment(Qt::AlignCenter);
+        m_bookmarkListLayout->addSpacing(28);
+        m_bookmarkListLayout->addWidget(empty);
+        m_bookmarkListLayout->addStretch();
+        setTabHint(tr("共 0 个本地收藏"));
+        return;
+    }
+
+    for (const LocalFavoriteEntry &entry : favorites)
+    {
+        auto *row = new ClickableFrame(host);
+        row->setObjectName(QStringLiteral("fbListRow"));
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(10, 8, 10, 8);
+        rowLayout->setSpacing(10);
+
+        const QString name = entry.displayName.isEmpty() ? entry.fileName : entry.displayName;
+
+        // 图标：本地资源没有网络图，用首字母头像
+        auto *iconLabel = new QLabel(row);
+        iconLabel->setObjectName(QStringLiteral("fbRowIcon"));
+        iconLabel->setFixedSize(40, 40);
+        iconLabel->setAlignment(Qt::AlignCenter);
+        iconLabel->setPixmap(letterAvatar(name, 40, QColor(p.brand)));
+        rowLayout->addWidget(iconLabel);
+
+        auto *contentLayout = new QVBoxLayout();
+        contentLayout->setContentsMargins(0, 0, 0, 0);
+        contentLayout->setSpacing(3);
+
+        auto *titleLabel = new ElidedLabel(row);
+        titleLabel->setObjectName(QStringLiteral("fbRowTitle"));
+        titleLabel->setFullText(name);
+        titleLabel->setToolTip(name);
+        contentLayout->addWidget(titleLabel);
+
+        // 元信息：类型 · 实例文件夹 · 收藏时间（文件被移动/删除后提示「文件丢失」）
+        QString meta = LocalFavoritesManager::typeDisplayName(entry.resourceType);
+        const QString instanceName = QFileInfo(entry.instancePath).fileName();
+        if (!instanceName.isEmpty())
+            meta += QStringLiteral(" · ") + instanceName;
+        if (entry.addedAt > 0)
+            meta += QStringLiteral(" · ") + relativeTime(entry.addedAt / 1000);
+        if (!entry.filePath.isEmpty() && !QFileInfo::exists(entry.filePath))
+            meta += QStringLiteral(" · ") + tr("文件丢失");
+        auto *metaLabel = new QLabel(meta, row);
+        metaLabel->setObjectName(QStringLiteral("fbRowMeta"));
+        metaLabel->setWordWrap(true);
+        contentLayout->addWidget(metaLabel);
+
+        rowLayout->addLayout(contentLayout, 1);
+
+        auto *removeBtn = new QPushButton(tr("移除"), row);
+        removeBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+        removeBtn->setFixedHeight(28);
+        removeBtn->setCursor(Qt::PointingHandCursor);
+        removeBtn->setToolTip(tr("从本地收藏中移除"));
+        const LocalFavoriteEntry removed = entry;
+        connect(removeBtn, &QPushButton::clicked, this, [this, removed]() {
+            LocalFavoritesManager::instance()->setFavorite(removed, false);
+            NotificationManager::showSuccess(this, tr("已从本地收藏中移除"));
+        });
+        rowLayout->addWidget(removeBtn);
+
+        const LocalFavoriteEntry openEntry = entry;
+        row->onClick = [this, openEntry]() {
+            emit localFavoriteOpenRequested(openEntry);
+        };
+
+        m_bookmarkListLayout->addWidget(row);
+    }
+
+    m_bookmarkListLayout->addStretch();
+    setTabHint(tr("共 %1 个本地收藏").arg(favorites.size()));
+}
+
 void ForumAccountPage::refreshBookmarkStat()
 {
     if (!m_service->isLoggedIn())
         return;
 
-    // 「收藏」统计 = 论坛帖子收藏 + 资源收藏，两个轻量请求各取 total
+    // 「收藏」统计 = 论坛帖子收藏 + 资源收藏 + 本地收藏，前两个轻量请求各取 total
+    const int localFavCount = LocalFavoritesManager::instance()->count();
     m_service->getJson(
         QStringLiteral("/api/me/bookmarks?per_page=1"),
-        [this](const QJsonObject &root) {
+        [this, localFavCount](const QJsonObject &root) {
             m_bookmarkTotal =
                 root.value(QStringLiteral("pagination")).toObject().value(QStringLiteral("total")).toInt();
             if (m_statBookmarks)
-                m_statBookmarks->setText(QString::number(m_bookmarkTotal + m_contentFavoriteTotal));
+                m_statBookmarks->setText(
+                    QString::number(m_bookmarkTotal + m_contentFavoriteTotal + localFavCount));
             if (m_activeTab == BookmarksTab && m_bookmarkSubTab == BookmarkThreadTab &&
                 m_bookmarksLoaded)
                 setTabHint(tr("共 %1 个帖子收藏").arg(m_bookmarkTotal));
@@ -3525,10 +3679,11 @@ void ForumAccountPage::refreshBookmarkStat()
 
     ForumContentService::instance()->fetchContentFavorites(
         1, 1,
-        [this](const QVector<FavoriteItem> &, int total) {
+        [this, localFavCount](const QVector<FavoriteItem> &, int total) {
             m_contentFavoriteTotal = total;
             if (m_statBookmarks)
-                m_statBookmarks->setText(QString::number(m_bookmarkTotal + m_contentFavoriteTotal));
+                m_statBookmarks->setText(
+                    QString::number(m_bookmarkTotal + m_contentFavoriteTotal + localFavCount));
             if (m_activeTab == BookmarksTab && m_bookmarkSubTab == BookmarkResourceTab &&
                 m_contentFavoritesLoaded)
                 setTabHint(tr("共 %1 个资源收藏").arg(m_contentFavoriteTotal));
@@ -4839,6 +4994,11 @@ void ForumAccountPage::loadTabData()
         {
             if (!m_contentFavoritesLoaded)
                 loadContentFavorites();
+        }
+        else if (m_bookmarkSubTab == BookmarkLocalTab)
+        {
+            // 本地收藏不走网络：直接从 LocalFavoritesManager 渲染
+            renderLocalFavorites();
         }
         else if (!m_bookmarksLoaded)
         {

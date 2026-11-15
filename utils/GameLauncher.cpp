@@ -88,6 +88,9 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     m_gameStartedSuccessfully = false;
     // 每次新启动重置用户取消标记
     m_userCancelled = false;
+    // 每次新启动重置 Java 缺失自救标记，并推进自救代数（失效旧的扫描超时定时器）
+    m_javaRescueAttempted = false;
+    m_rescueGeneration++;
 
     // 自动内存分配: 如果启用了自动分配，根据系统内存覆盖配置中的内存值
     if (SettingsManager::instance()->isAutoMemoryEnabled())
@@ -161,28 +164,43 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
         // Find best Java version for the game version
         JavaInfo bestJavaInfo = findBestJavaVersion(gameVersion, jsonJavaMajor);
 
-        if (bestJavaInfo.valid) {
+        // findBestJavaVersion 在没有满足约束的版本时会用"最高版本兜底"，
+        // 这里再按需求区间严格复核：兜底出的 Java 不兼容同样算"没有合适的 Java"
+        const JavaRequirement requirement = javaRequirementFor(gameVersion, jsonJavaMajor);
+        const auto compatibleWithRequirement = [&requirement](const JavaInfo& info) {
+            if (!info.valid) return false;
+            const int major = javaMajorOf(info.version);
+            return major >= requirement.minJava && major <= requirement.maxJava;
+        };
+
+        if (compatibleWithRequirement(bestJavaInfo)) {
             javaPath = bestJavaInfo.path;
             emit launchProgressChanged(25, QString("自动选择了Java: %1 (%2)").arg(bestJavaInfo.version).arg(bestJavaInfo.path));
             emit launchDetailAdded(QString("检测到Java版本: %1").arg(bestJavaInfo.version));
             emit launchDetailAdded(QString("Java路径: %1").arg(bestJavaInfo.path));
         } else {
+            if (bestJavaInfo.valid) {
+                emit launchDetailAdded(QString("检测到的 Java %1 与游戏版本 %2 的 Java 要求 (%3) 不兼容")
+                    .arg(bestJavaInfo.version, gameVersion, requirement.rangeDesc()));
+            }
             // Fallback to basic Java detection
             emit launchDetailAdded("未找到合适的Java版本，尝试基本检测...");
             JavaInfo basicJavaInfo = detectJava();
-            if (basicJavaInfo.valid) {
+            if (compatibleWithRequirement(basicJavaInfo)) {
                 javaPath = basicJavaInfo.path;
                 emit launchProgressChanged(25, QString("使用基本检测到的Java: %1 (%2)").arg(basicJavaInfo.version).arg(basicJavaInfo.path));
                 emit launchDetailAdded(QString("检测到Java版本: %1").arg(basicJavaInfo.version));
                 emit launchDetailAdded(QString("Java路径: %1").arg(basicJavaInfo.path));
-            } else {
-                m_errorMessage = RuntimeDependencyManager::isSupportedPlatform()
-                    ? QStringLiteral("未检测到 Java 运行环境，请到「设置 → 关于 → 运行依赖」一键安装后重试")
-                    : QStringLiteral("无法自动检测到Java，请在设置中手动指定Java路径");
+            } else if (RuntimeDependencyManager::isSupportedPlatform()) {
+                m_errorMessage = QStringLiteral("未检测到 Java 运行环境，请到「设置 → 关于 → 运行依赖」一键安装后重试");
                 m_status = Failed;
                 emit launchStatusChanged(m_status);
                 emit launchDetailAdded("错误: 未检测到Java");
                 return false;
+            } else {
+                // 桌面端：先启动 Java 查找（全盘扫描），仍没有合适的 Java 就自动安装后继续启动
+                beginJavaRescue(gameVersion, jsonJavaMajor);
+                return true;
             }
         }
     } else {
@@ -194,14 +212,23 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     emit launchDetailAdded("验证Java路径...");
     JavaInfo javaInfo;
     if (!validateJavaPath(javaPath, javaInfo)) {
-        m_errorMessage = RuntimeDependencyManager::isSupportedPlatform()
-            ? QStringLiteral("Java 运行环境不可用，请到「设置 → 关于 → 运行依赖」重新安装后再试")
-            : QStringLiteral("无效的Java路径，请检查设置");
-        m_status = Failed;
-        emit launchStatusChanged(m_status);
-        emit gameCrashed(m_errorMessage);
-        emit launchDetailAdded("错误: Java路径无效");
-        return false;
+        if (RuntimeDependencyManager::isSupportedPlatform()) {
+            m_errorMessage = QStringLiteral("Java 运行环境不可用，请到「设置 → 关于 → 运行依赖」重新安装后再试");
+            m_status = Failed;
+            emit launchStatusChanged(m_status);
+            emit gameCrashed(m_errorMessage);
+            emit launchDetailAdded("错误: Java路径无效");
+            return false;
+        }
+        // 桌面端：指定的 Java 失效（被卸载/移动）同样视为 Java 缺失，
+        // 转入自救流程（先查找、必要时自动安装）后继续启动
+        emit launchDetailAdded(QString("错误: Java路径无效: %1").arg(javaPath));
+        const QString gameVersion = resolveVersionId(config.instancePath);
+        const int jsonJavaMajor =
+            m_cachedMergedJson.value(QStringLiteral("javaVersion")).toObject()
+                             .value(QStringLiteral("majorVersion")).toInt();
+        beginJavaRescue(gameVersion, jsonJavaMajor);
+        return true;
     }
     emit launchDetailAdded(QString("Java版本验证成功: %1").arg(javaInfo.version));
 
@@ -414,35 +441,49 @@ void GameLauncher::analyzeError(const QString& errorOutput)
 void GameLauncher::waitForGameWindow()
 {
     emit launchDetailAdded("等待游戏窗口出现...");
-    
+
     const int checkInterval = 100;
-    
+
     if (!m_windowCheckTimer) {
         m_windowCheckTimer = new QTimer(this);
     }
-    
+
     m_windowCheckTimer->setInterval(checkInterval);
-    
+
     disconnect(m_windowCheckTimer, &QTimer::timeout, this, nullptr);
-    
+    m_windowWaitElapsedMs = 0;
+
     connect(m_windowCheckTimer, &QTimer::timeout, this, [this, checkInterval]() {
-        static int elapsedTime = 0;
-        elapsedTime += checkInterval;
-        
-        if (elapsedTime >= 30000) {
+        m_windowWaitElapsedMs += checkInterval;
+
+        if (m_windowWaitElapsedMs >= 30000) {
             m_windowCheckTimer->stop();
             emit launchDetailAdded("等待游戏窗口超时");
-            elapsedTime = 0;
+            m_windowWaitElapsedMs = 0;
             return;
         }
-        
+
         if (!isGameRunning()) {
             m_windowCheckTimer->stop();
             emit launchDetailAdded("游戏进程已结束");
-            elapsedTime = 0;
+            m_windowWaitElapsedMs = 0;
             return;
         }
-        
+
+#if defined(Q_OS_ANDROID)
+        // 安卓：游戏是子进程，不会在本进程里出现名为 Minecraft 的 Qt 窗口，
+        // 桌面版的窗口检测在安卓永远判不中。改为进程存活确认法：进程跑着
+        // 且已有输出（说明 JVM 真起来了），或进程稳定存活超过 10 秒，即认定
+        // 启动成功 —— 悬浮图标、任务卡"运行中"、运行期崩溃分类据此生效
+        if (m_processOutput.isEmpty() && m_windowWaitElapsedMs < 10000)
+            return;
+        m_gameStartedSuccessfully = true;
+        m_windowCheckTimer->stop();
+        emit launchDetailAdded("游戏进程已稳定运行");
+        emit launchProgressChanged(100, "游戏启动成功！");
+        emit gameStarted();
+        m_windowWaitElapsedMs = 0;
+#else
         bool foundGameWindow = false;
         for (QWindow* window : QApplication::allWindows()) {
             if (window->title().contains("Minecraft", Qt::CaseInsensitive)) {
@@ -450,7 +491,7 @@ void GameLauncher::waitForGameWindow()
                 break;
             }
         }
-        
+
         if (foundGameWindow) {
             m_windowCheckTimer->stop();
             // 标记游戏窗口已成功出现，用于区分启动期崩溃与运行期崩溃
@@ -458,14 +499,15 @@ void GameLauncher::waitForGameWindow()
             emit launchDetailAdded("游戏窗口已出现");
             emit launchProgressChanged(100, "游戏启动成功！");
             emit gameStarted();
-            elapsedTime = 0;
+            m_windowWaitElapsedMs = 0;
             return;
         }
-        
-        int progress = (elapsedTime * 100) / 30000;
+
+        int progress = (m_windowWaitElapsedMs * 100) / 30000;
         emit launchProgressChanged(95 + (progress / 20), QString("等待游戏窗口出现 (%1%)").arg(progress));
+#endif
     });
-    
+
     m_windowCheckTimer->start();
 }
 

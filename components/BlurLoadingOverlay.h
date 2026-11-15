@@ -32,6 +32,7 @@ private slots:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
 private:
@@ -40,6 +41,7 @@ private:
     void captureBlurBackground();
     void adjustGeometryToFullArea();
     void updateLayoutState();
+    void refreshTrivia();
 
     QPixmap m_blurredBackground;
 
@@ -49,9 +51,11 @@ private:
     QProgressBar *m_progressBar;
     QLabel *m_percentLabel;
     QLabel *m_errorLabel;
+    QLabel *m_triviaLabel;
     QPushButton *m_diagnoseBtn;
     QWidget *m_progressArea;
     QNetworkAccessManager *m_diagnosisNAM;
+    QTimer *m_triviaTimer;
 
     QString m_currentProcessName;
     int m_currentPercent;

@@ -45,6 +45,9 @@ public:
     /** 注入当前激活的基岩版实例 ID，同步到各子页面 */
     void setInstanceId(const QString &instanceId);
 
+    /** 切换到指定标签（0首页 1AI助手 2快捷指令 3联机 4资源管理 5设置） */
+    void switchToTab(int index);
+
 protected:
     void showEvent(QShowEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -52,7 +55,6 @@ protected:
 private:
     void initUI();
     QPushButton *createNavButton(const QString &text, int index);
-    void switchToTab(int index);
     void updateHighlightGeometry();
     void ensureTabVisible(int index);
     void applyThemeStyles();

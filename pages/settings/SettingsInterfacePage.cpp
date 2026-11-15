@@ -57,9 +57,31 @@ void SettingsPage::initInterfaceSettings()
     QVBoxLayout *themeCard = createSettingsCard(layout, tr("启动器主题"));
 
     QComboBox *themeCombo = new QComboBox();
+    themeCombo->setObjectName("themeCombo");
     themeCombo->addItems({tr("浅色主题"), tr("深色主题"), tr("自定义主题")});
     disableWheelEffect(themeCombo);
+    // 按当前实际生效的主题预选，避免已处于深色/自定义主题时下拉仍停在「浅色主题」
+    auto themeToIndex = [](ThemeManager::ThemeType theme) {
+        switch (theme) {
+        case ThemeManager::DarkTheme:   return 1;
+        case ThemeManager::CustomTheme: return 2;
+        default:                        return 0;
+        }
+    };
+    {
+        const QSignalBlocker blocker(themeCombo);
+        themeCombo->setCurrentIndex(themeToIndex(ThemeManager::instance()->currentTheme()));
+    }
     connect(themeCombo, &QComboBox::currentIndexChanged, this, &SettingsPage::onThemeChanged);
+    // 主题在别处被切换（新手引导、其他入口）时同步下拉选中项
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged, themeCombo,
+            [themeCombo, themeToIndex](ThemeManager::ThemeType theme) {
+        const int index = themeToIndex(theme);
+        if (themeCombo->currentIndex() == index)
+            return;
+        const QSignalBlocker blocker(themeCombo);
+        themeCombo->setCurrentIndex(index);
+    });
 
     QHBoxLayout *themeRow = appendSettingRow(themeCard,
         tr("启动器主题"), tr("切换整个应用的外观主题。"), QString(), true);

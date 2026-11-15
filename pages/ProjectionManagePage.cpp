@@ -2,6 +2,7 @@
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
+#include "utils/LocalFavoritesManager.h"
 #include "utils/mod/ModData.h"
 #include "utils/Schematic/SchematicCoverRenderer.h"
 #include "components/LocalCategoryDialog.h"
@@ -10,6 +11,7 @@
 #include <QFileDialog>
 #include "components/ContentViewSwitch.h"
 #include "components/MasonryContentCard.h"
+#include "components/CardSelectionOverlay.h"
 #include "layouts/MasonryLayout.h"
 #include "utils/CommandAssistant/LitematicReader.h"
 
@@ -25,8 +27,6 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QMimeData>
-#include <QGraphicsOpacityEffect>
-#include <QPropertyAnimation>
 #include <QPointer>
 #include "components/AppMessageBox.h"
 #include <QSpacerItem>
@@ -316,6 +316,9 @@ connect(m_categoryManager, &LocalCategoryManager::categoriesChanged,
             this, &ProjectionManagePage::onCategoriesChanged);
     connect(m_categoryManager, &LocalCategoryManager::assignmentsChanged,
             this, &ProjectionManagePage::onAssignmentsChanged);
+    // 本地收藏增删（含账户页移除）：同步刷新卡片星标
+    connect(LocalFavoritesManager::instance(), &LocalFavoritesManager::favoritesChanged,
+            this, &ProjectionManagePage::refreshCardFavButtons);
     connect(m_viewSwitch, &ContentViewSwitch::viewModeChanged,
             this, &ProjectionManagePage::onViewModeChanged);
 
@@ -390,8 +393,6 @@ void ProjectionManagePage::clearCards()
 
     m_cardWidgets.clear();
     m_selectionOverlays.clear();
-    m_selectionEffects.clear();
-    m_selectionAnims.clear();
     m_selectedCardIndices.clear();
     m_allSelected = false;
     m_dragSelectActive = false;
@@ -565,6 +566,18 @@ QWidget *ProjectionManagePage::createMasonryCard(const QFileInfo &fi)
         return btn;
     };
 
+    // 收藏星标按钮：金色 = 已收藏（状态由 localFavTag 属性标记，增删后统一刷新）
+    {
+        QPushButton *favBtn = createBtn(":/Images/Icons/star.svg", tr("收藏"));
+        favBtn->setProperty("localFavTag", LocalCategoryManager::normalizeFileName(fi.fileName()));
+        setFavButtonVisual(favBtn, LocalFavoritesManager::instance()->isFavorite(
+                                       m_instancePath, QStringLiteral("schematics"), fi.fileName()));
+        connect(favBtn, &QPushButton::clicked, this, [this, filePath, size]() {
+            toggleFileFavorite(filePath, QFileInfo(filePath).fileName(), size);
+        });
+        btnLayout->addWidget(favBtn);
+    }
+
     QPushButton *editBtn = createBtn(":/Images/Icons/modify.svg", tr("编辑投影"));
     connect(editBtn, &QPushButton::clicked, this, [this, filePath]() {
         emit projectionEditRequested(filePath);
@@ -724,6 +737,18 @@ QWidget *ProjectionManagePage::createListCard(const QFileInfo &fi, int row)
         btn->setIconSize(QSize(18, 18));
         return btn;
     };
+
+    // 收藏星标按钮：金色 = 已收藏（状态由 localFavTag 属性标记，增删后统一刷新）
+    {
+        QPushButton *favBtn = createBtn(":/Images/Icons/star.svg", tr("收藏"));
+        favBtn->setProperty("localFavTag", LocalCategoryManager::normalizeFileName(fi.fileName()));
+        setFavButtonVisual(favBtn, LocalFavoritesManager::instance()->isFavorite(
+                                       m_instancePath, QStringLiteral("schematics"), fi.fileName()));
+        connect(favBtn, &QPushButton::clicked, this, [this, fi]() {
+            toggleFileFavorite(fi.absoluteFilePath(), fi.fileName(), fi.size());
+        });
+        btnLayout->addWidget(favBtn);
+    }
 
     QPushButton *editBtn = createBtn(":/Images/Icons/modify.svg", tr("编辑投影"));
     connect(editBtn, &QPushButton::clicked, this, [this, fi]() {
@@ -1011,11 +1036,22 @@ bool ProjectionManagePage::eventFilter(QObject *watched, QEvent *event)
         if (ctxCard && ctxCard->property("projectionFilePath").isValid())
         {
             QContextMenuEvent *ctx = static_cast<QContextMenuEvent *>(event);
-            const QString fileName = QFileInfo(
-                ctxCard->property("projectionFilePath").toString()).fileName();
+            const QString filePath =
+                ctxCard->property("projectionFilePath").toString();
+            const QString fileName = QFileInfo(filePath).fileName();
             QMenu menu(this);
+
+            // 收藏 / 取消收藏（本地收藏，账户页「我的收藏 → 本地收藏」可见）
+            const bool fav = LocalFavoritesManager::instance()->isFavorite(
+                m_instancePath, QStringLiteral("schematics"), fileName);
+            QAction *favAction = menu.addAction(fav ? tr("取消收藏") : tr("收藏"));
+
             appendCategoryMenu(&menu, fileName);
-            menu.exec(ctx->globalPos());
+            QAction *chosen = menu.exec(ctx->globalPos());
+            if (chosen == favAction)
+            {
+                toggleFileFavorite(filePath, fileName, QFileInfo(filePath).size());
+            }
             return true;
         }
     }
@@ -1259,30 +1295,12 @@ void ProjectionManagePage::deselectCardDuringDrag(int cardIdx)
 
 QWidget *ProjectionManagePage::createSelectionOverlay(QWidget *card)
 {
-    QWidget *overlay = new QWidget(card);
-    overlay->setObjectName("cardSelectionOverlay");
-    overlay->setGeometry(card->rect());
-    overlay->setStyleSheet(selectionOverlayStyle());
-    overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+    // 自绘遮罩：不再用 QGraphicsOpacityEffect（效果控件在滚动区内
+    // 滚一次就不再重绘，选中高亮会整个消失），详见 CardSelectionOverlay
+    CardSelectionOverlay *overlay = new CardSelectionOverlay(card);
     overlay->raise();
-    overlay->hide();
-
-    QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(overlay);
-    effect->setOpacity(0.0);
-    overlay->setGraphicsEffect(effect);
-
-    QPropertyAnimation *anim = new QPropertyAnimation(effect, "opacity", this);
-    anim->setDuration(180);
-    anim->setEasingCurve(QEasingCurve::OutCubic);
-    // 淡出结束后隐藏遮罩（overlay 销毁时自动断开，避免悬空指针）
-    connect(anim, &QPropertyAnimation::finished, overlay, [overlay, effect]() {
-        if (effect->opacity() <= 0.01)
-            overlay->hide();
-    });
 
     m_selectionOverlays.append(overlay);
-    m_selectionEffects.append(effect);
-    m_selectionAnims.append(anim);
     return overlay;
 }
 
@@ -1291,24 +1309,7 @@ void ProjectionManagePage::animateCardHighlight(int idx, bool selected)
     if (idx < 0 || idx >= m_selectionOverlays.size())
         return;
 
-    QWidget *overlay = m_selectionOverlays[idx];
-    QGraphicsOpacityEffect *effect = m_selectionEffects[idx];
-    QPropertyAnimation *anim = m_selectionAnims[idx];
-
-    anim->stop();
-    anim->setStartValue(effect->opacity());
-    anim->setEndValue(selected ? 1.0 : 0.0);
-    if (selected)
-        overlay->show();
-    anim->start();
-}
-
-QString ProjectionManagePage::selectionOverlayStyle() const
-{
-    QColor c = ThemeManager::instance()->currentThemeColor();
-    return QString("#cardSelectionOverlay { background-color: rgba(%1, %2, %3, 40); "
-                   "border: 2px solid %4; border-radius: 6px; }")
-        .arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.name());
+    m_selectionOverlays[idx]->setSelected(selected);
 }
 
 void ProjectionManagePage::updateSelectionBar()
@@ -1494,6 +1495,58 @@ void ProjectionManagePage::onCategoriesChanged()
 void ProjectionManagePage::onAssignmentsChanged()
 {
     placeCards();
+}
+
+// ── 本地资源收藏 ──────────────────────────────────────────────
+
+void ProjectionManagePage::toggleFileFavorite(const QString &filePath, const QString &fileName,
+                                              qint64 fileSize)
+{
+    LocalFavoriteEntry entry;
+    entry.instancePath = m_instancePath;
+    entry.resourceType = QStringLiteral("schematics");
+    entry.fileName = fileName;
+    entry.displayName = QFileInfo(filePath).completeBaseName();
+    entry.filePath = filePath;
+    entry.fileSize = fileSize;
+
+    auto *mgr = LocalFavoritesManager::instance();
+    const bool fav = mgr->isFavorite(m_instancePath, QStringLiteral("schematics"), fileName);
+    mgr->setFavorite(entry, !fav);
+}
+
+void ProjectionManagePage::setFavButtonVisual(QPushButton *btn, bool fav)
+{
+    if (!btn)
+        return;
+    if (fav)
+    {
+        btn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/star.svg", QColor("#FFB300"), 18));
+        btn->setToolTip(tr("取消收藏"));
+    }
+    else
+    {
+        btn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/star.svg", ThemeManager::instance()->currentThemeColor(), 18));
+        btn->setToolTip(tr("收藏"));
+    }
+}
+
+void ProjectionManagePage::refreshCardFavButtons()
+{
+    auto *mgr = LocalFavoritesManager::instance();
+    for (QWidget *card : m_cardWidgets)
+    {
+        const QList<QPushButton *> btns = card->findChildren<QPushButton *>();
+        for (QPushButton *btn : btns)
+        {
+            const QVariant tag = btn->property("localFavTag");
+            if (!tag.isValid() || tag.toString().isEmpty())
+                continue;
+            setFavButtonVisual(btn,
+                               mgr->isFavorite(m_instancePath, QStringLiteral("schematics"), tag.toString()));
+        }
+    }
 }
 
 void ProjectionManagePage::onTimeFilterChanged(int index)

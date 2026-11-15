@@ -15,8 +15,12 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QStandardPaths>
+#include <QThread>
+#include <QTimer>
 #include <QtConcurrent>
 
+#include "platform.h"
+#include "utils/JavaDownloader.h"
 #include "utils/JavaScanWorker.h"
 #include "utils/SettingsManager.h"
 
@@ -99,6 +103,19 @@ int GameLauncher::javaBitness(const QString &javaExe)
         return 32;
     }
     return 0;
+}
+
+int GameLauncher::javaMajorOf(const QString& version)
+{
+    // "1.8.0_301"→8，"17.0.1"→17，"21"→21；兼容 Java 8 的 "1.x" 老写法
+    static const QRegularExpression re(QStringLiteral("(?:1\\.)?([0-9]+)"));
+    const QRegularExpressionMatch m = re.match(version);
+    return m.hasMatch() ? m.captured(1).toInt() : 0;
+}
+
+bool GameLauncher::wasJavaRescueAttempted() const
+{
+    return m_javaRescueAttempted;
 }
 
 GameLauncher::JavaInfo GameLauncher::detectJava()
@@ -254,6 +271,11 @@ QList<GameLauncher::JavaInfo> GameLauncher::findAllJavaInstallations(
 #if defined(Q_OS_ANDROID) || defined(Q_OS_HARMONY)
     commonPaths << "/system/bin";
     commonPaths << "/data/data/com.termux/files/usr/bin";
+#if defined(Q_OS_ANDROID)
+    // 一键安装运行环境的落点与全局数据目录同根（外部存储不可写时退内部目录）；
+    // 旧版通用数据路径仍保留扫描，兼容老安装不被"失踪"
+    commonPaths << Platform::getDataDirectory() + "/java";
+#endif
     commonPaths << QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/BlockBox/java";
     commonPaths << QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + "/java";
 #else
@@ -330,6 +352,10 @@ QList<GameLauncher::JavaInfo> GameLauncher::findJavaOnSystem()
     QStringList androidPaths;
     androidPaths << "/system/bin";
     androidPaths << "/data/data/com.termux/files/usr/bin";
+#if defined(Q_OS_ANDROID)
+    // 一键安装落点（与全局数据目录同根）+ 旧版通用数据路径（兼容老安装）
+    androidPaths << Platform::getDataDirectory() + "/java";
+#endif
     androidPaths << QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/BlockBox/java";
     androidPaths << QStandardPaths::writableLocation(QStandardPaths::HomeLocation) + "/java";
 
@@ -741,4 +767,383 @@ GameLauncher::JavaInfo GameLauncher::findBestJavaVersion(const QString& gameVers
     }
 
     return bestJavaInfo;
+}
+
+// ────────────────────────────────────────────────────────────
+// Java 缺失自救：启动时没有合适的 Java，先全盘查找本机已装的 Java，
+// 仍没有合适的就按游戏版本需求自动安装一个，装好后继续启动
+// ────────────────────────────────────────────────────────────
+
+void GameLauncher::beginJavaRescue(const QString& gameVersion, int jsonJavaMajor)
+{
+    m_javaRescueAttempted = true;
+    m_rescueGeneration++;
+    m_rescueConfig = m_currentConfig;
+    m_rescueGameVersion = gameVersion;
+    m_rescueJsonJavaMajor = jsonJavaMajor;
+    m_rescueInstallAttempted = false;
+    m_rescueOfficialMirrorRetried = false;
+    m_rescueSelectedMajor = 0;
+    m_rescueLastProgressBucket = -1;
+    m_rescueStage = RescueStage::Scanning;
+
+    emit launchDetailAdded(QStringLiteral("未找到合适的 Java，正在全盘查找本机已安装的 Java..."));
+    emit launchProgressChanged(20, QStringLiteral("正在查找Java..."));
+
+    // 全盘 Java 查找：复用设置页「Java检测」的 JavaScanWorker 后台线程模式，
+    // 扫描结果回来后仍会合并进缓存供以后启动使用
+    m_rescueScanWorker = new JavaScanWorker;
+    QThread* scanThread = new QThread;
+    m_rescueScanWorker->moveToThread(scanThread);
+
+    connect(scanThread, &QThread::started, m_rescueScanWorker, &JavaScanWorker::doScan);
+    connect(m_rescueScanWorker, &JavaScanWorker::scanProgress,
+            this, &GameLauncher::onRescueScanProgress, Qt::QueuedConnection);
+    connect(m_rescueScanWorker, &JavaScanWorker::scanFinished,
+            this, &GameLauncher::onRescueScanFinished, Qt::QueuedConnection);
+    connect(m_rescueScanWorker, &JavaScanWorker::scanFinished, scanThread, &QThread::quit);
+    connect(scanThread, &QThread::finished, m_rescueScanWorker, &QObject::deleteLater);
+    connect(scanThread, &QThread::finished, scanThread, &QObject::deleteLater);
+
+    // 全盘深扫限时 120 秒：超时取消（取消后仍带回部分结果）并转入自动安装；
+    // generation 守卫防止旧一轮的定时器误杀下一次启动触发的扫描
+    const int generation = m_rescueGeneration;
+    QTimer::singleShot(120000, this, [this, generation]() {
+        if (m_rescueGeneration == generation && m_rescueStage == RescueStage::Scanning
+            && m_rescueScanWorker)
+        {
+            emit launchDetailAdded(QStringLiteral("全盘查找超时，转为自动安装合适的 Java..."));
+            m_rescueScanWorker->cancel();
+        }
+    });
+
+    scanThread->start();
+}
+
+void GameLauncher::onRescueScanProgress(const QString& currentPath, int percent, int etaMinutes,
+                                        int scannedMB, int totalMB, int foundCount)
+{
+    Q_UNUSED(currentPath);
+    Q_UNUSED(etaMinutes);
+    Q_UNUSED(scannedMB);
+    Q_UNUSED(totalMB);
+    if (m_rescueStage != RescueStage::Scanning) return;
+
+    // 进度按 10% 粒度回显，避免刷屏
+    const int bucket = (percent < 0) ? -1 : percent / 10;
+    if (bucket == m_rescueLastProgressBucket) return;
+    m_rescueLastProgressBucket = bucket;
+
+    emit launchDetailAdded(percent >= 0
+        ? QStringLiteral("正在查找Java: %1%（已发现 %2 个）").arg(percent).arg(foundCount)
+        : QStringLiteral("正在查找Java...（已发现 %1 个）").arg(foundCount));
+    emit launchProgressChanged(20 + qBound(0, percent, 100) / 12,
+                               QStringLiteral("正在查找Java..."));
+}
+
+void GameLauncher::onRescueScanFinished(const QList<QPair<QString, QString>>& installations)
+{
+    m_rescueScanWorker = nullptr;
+    if (m_rescueStage != RescueStage::Scanning) return;
+    m_rescueStage = RescueStage::None;
+
+    // 合并去重后写回 Java 缓存（与设置页「Java检测」的合并逻辑一致）
+    QList<QPair<QString, QString>> existing = SettingsManager::instance()->getJavaInstallations();
+    QSet<QString> seenPaths;
+    for (const auto& e : existing) seenPaths.insert(e.first);
+    int newCount = 0;
+    for (const auto& inst : installations) {
+        if (!seenPaths.contains(inst.first)) {
+            existing.append(inst);
+            seenPaths.insert(inst.first);
+            newCount++;
+        }
+    }
+    SettingsManager::instance()->setJavaInstallations(existing);
+    emit launchDetailAdded(QString("Java 查找完成: 共发现 %1 个，新增 %2 个")
+        .arg(installations.size()).arg(newCount));
+
+    // 在合并后的缓存里按需求区间严格挑选
+    //（不能用 findBestJavaVersion：它有"最高版本兜底"，不兼容的版本不能拿来用）
+    const QString javaPath = selectRescueJava(cachedJavaInstallations());
+    if (!javaPath.isEmpty())
+    {
+        emit launchDetailAdded(QString("已找到合适的 Java: %1，继续启动游戏").arg(javaPath));
+        finishJavaRescue(javaPath);
+        return;
+    }
+
+    startJavaAutoInstall();
+}
+
+QString GameLauncher::selectRescueJava(const QList<JavaInfo>& candidates)
+{
+    const JavaRequirement req = javaRequirementFor(m_rescueGameVersion, m_rescueJsonJavaMajor);
+    emit launchDetailAdded(QString("正在筛选满足 %1 的 Java...").arg(req.rangeDesc()));
+
+    // 与 findBestJavaVersion 相同的取舍：最低兼容主版本优先，
+    // 同主版本再比 tier（真实 JVM > 转发存根、64 位 > 32 位）；
+    // 缓存里的路径可能早已失效，每个候选都实际跑一次 java -version 验证
+    QString bestPath;
+    int bestMajor = -1;
+    int bestTier = -1;
+    for (const JavaInfo& info : candidates)
+    {
+        const int major = javaMajorOf(info.version);
+        if (major < req.minJava || major > req.maxJava) continue;
+
+        JavaInfo validated;
+        if (!validateJavaPath(info.path, validated)) continue;
+
+        const bool hasRealJvm = QFile::exists(serverJvmDllOf(info.path));
+        const int bitness = javaBitness(info.path);
+        int tier = 0;
+        if (hasRealJvm) tier += 2;
+        if (bitness == 64) tier += 1;
+
+        if (bestMajor < 0 || major < bestMajor || (major == bestMajor && tier > bestTier))
+        {
+            bestPath = info.path;
+            bestMajor = major;
+            bestTier = tier;
+        }
+    }
+    return bestPath;
+}
+
+void GameLauncher::startJavaAutoInstall()
+{
+    // 自动安装只尝试一次，避免查找/安装来回打转
+    if (m_rescueInstallAttempted)
+    {
+        failJavaRescue(QStringLiteral("自动安装 Java 失败：无可用的安装方案"));
+        return;
+    }
+    m_rescueInstallAttempted = true;
+
+    // 用户正在手动下载 Java（下载页/设置页）时不能抢用同一个下载器
+    if (JavaDownloader::instance()->status() != JavaDownloadStatus::Idle)
+    {
+        failJavaRescue(QStringLiteral("检测到正在进行的 Java 下载任务，请等待其完成后再启动游戏"));
+        return;
+    }
+
+    // ── 确定要安装的 Java 主版本 ──
+    // 取发行版实际提供的主版本与需求区间的交集的最小值：
+    // 例如 MC 1.17 需要 Java 16+，而各家都不再提供 16，就改装满足 16+ 的 17
+    const JavaRequirement req = javaRequirementFor(m_rescueGameVersion, m_rescueJsonJavaMajor);
+    const QVector<int> provided =
+        JavaDownloader::instance()->supportedMajorVersions(QStringLiteral("adoptium"));
+    int installMajor = 0;
+    for (int major : provided)
+    {
+        if (major >= req.minJava && major <= req.maxJava)
+        {
+            if (installMajor == 0 || major < installMajor) installMajor = major;
+        }
+    }
+    if (installMajor == 0)
+    {
+        failJavaRescue(QStringLiteral("没有适合游戏版本 %1 的可下载 Java（需要 %2）")
+            .arg(m_rescueGameVersion, req.rangeDesc()));
+        return;
+    }
+    m_rescueSelectedMajor = installMajor;
+
+    m_rescueStage = RescueStage::Installing;
+    emit launchDetailAdded(QString("未找到合适的 Java，正在自动安装 Java %1（Eclipse Adoptium），"
+                                   "安装完成后将自动继续启动").arg(installMajor));
+    emit launchProgressChanged(28, QString("正在下载 Java %1...").arg(installMajor));
+
+    // 与「设置 → Java下载页」的默认选择一致：Adoptium Temurin + 清华 TUNA 镜像
+    connectJavaDownloaderRescue();
+    JavaDownloader::instance()->fetchAvailableBinaries(QStringLiteral("adoptium"),
+                                                       QStringLiteral("tuna"),
+                                                       installMajor);
+}
+
+void GameLauncher::connectJavaDownloaderRescue()
+{
+    JavaDownloader* dl = JavaDownloader::instance();
+    m_rescueDownloaderConnections.clear();
+    m_rescueDownloaderConnections
+        << connect(dl, &JavaDownloader::versionListFetched, this,
+                   [this](const QVector<JavaBinaryInfo>& binaries) {
+                       onRescueVersionListFetched(binaries);
+                   })
+        << connect(dl, &JavaDownloader::fetchError,         this, &GameLauncher::onRescueFetchError)
+        << connect(dl, &JavaDownloader::downloadProgress,   this, &GameLauncher::onRescueDownloadProgress)
+        << connect(dl, &JavaDownloader::downloadBytesProgress, this, &GameLauncher::onRescueDownloadBytesProgress)
+        << connect(dl, &JavaDownloader::downloadCompleted,  this, &GameLauncher::onRescueDownloadCompleted)
+        << connect(dl, &JavaDownloader::downloadFailed,     this, &GameLauncher::onRescueDownloadFailed)
+        << connect(dl, &JavaDownloader::extractProgress,    this, &GameLauncher::onRescueExtractProgress)
+        << connect(dl, &JavaDownloader::extractCompleted,   this, &GameLauncher::onRescueExtractCompleted)
+        << connect(dl, &JavaDownloader::extractFailed,      this, &GameLauncher::onRescueExtractFailed);
+}
+
+void GameLauncher::disconnectJavaDownloaderRescue()
+{
+    for (const QMetaObject::Connection& c : m_rescueDownloaderConnections)
+        disconnect(c);
+    m_rescueDownloaderConnections.clear();
+}
+
+void GameLauncher::retryOrFailRescueDownload(const QString& reason)
+{
+    if (!m_rescueOfficialMirrorRetried)
+    {
+        // TUNA 镜像拉取/下载失败 → 换官方源再试一次
+        m_rescueOfficialMirrorRetried = true;
+        emit launchDetailAdded(QString("清华镜像不可用（%1），改用官方源重试...").arg(reason));
+        JavaDownloader::instance()->fetchAvailableBinaries(QStringLiteral("adoptium"),
+                                                           QStringLiteral("official"),
+                                                           m_rescueSelectedMajor);
+        return;
+    }
+    failJavaRescue(QString("自动安装 Java 失败: %1").arg(reason));
+}
+
+void GameLauncher::onRescueVersionListFetched(const QVector<JavaBinaryInfo>& binaries)
+{
+    if (m_rescueStage != RescueStage::Installing) return;
+
+    // 优先挑 JRE（体积小、够用），再挑与当前架构匹配的；都没有就取第一个
+    const QString arch = JavaDownloader::instance()->currentArchitecture();
+    const JavaBinaryInfo* chosen = nullptr;
+    for (const JavaBinaryInfo& bin : binaries)
+    {
+        if (bin.packageType == QLatin1String("jre") && bin.architecture == arch) { chosen = &bin; break; }
+    }
+    if (!chosen)
+    {
+        for (const JavaBinaryInfo& bin : binaries)
+        {
+            if (bin.packageType == QLatin1String("jre")) { chosen = &bin; break; }
+        }
+    }
+    if (!chosen && !binaries.isEmpty()) chosen = &binaries.first();
+
+    if (!chosen || chosen->downloadUrl.isEmpty())
+    {
+        retryOrFailRescueDownload(QString("未找到可下载的 Java %1 安装包").arg(m_rescueSelectedMajor));
+        return;
+    }
+
+    // 安装目录与「设置 → Java下载页」的默认安装路径一致，
+    // 装在这里的 Java 会被启动器的 Java 扫描自动发现
+    QString installDir = SettingsManager::instance()->getDefaultInstancePath();
+    if (installDir.isEmpty())
+        installDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    installDir += QStringLiteral("/java");
+
+    emit launchDetailAdded(QString("开始下载 Java %1: %2").arg(m_rescueSelectedMajor)
+                                                         .arg(chosen->versionName));
+    JavaDownloader::instance()->downloadAndExtract(*chosen, installDir);
+}
+
+void GameLauncher::onRescueFetchError(const QString& error)
+{
+    if (m_rescueStage != RescueStage::Installing) return;
+    retryOrFailRescueDownload(error);
+}
+
+void GameLauncher::onRescueDownloadProgress(const QString& fileName, int percent)
+{
+    Q_UNUSED(fileName);
+    if (m_rescueStage != RescueStage::Installing) return;
+    emit launchProgressChanged(28 + percent * 15 / 100,
+        QString("正在下载 Java %1... %2%").arg(m_rescueSelectedMajor).arg(percent));
+}
+
+void GameLauncher::onRescueDownloadBytesProgress(qint64 bytesReceived, qint64 bytesTotal)
+{
+    if (m_rescueStage != RescueStage::Installing) return;
+    if (bytesTotal <= 0) return;
+    const int percent = static_cast<int>(bytesReceived * 100 / bytesTotal);
+    emit launchProgressChanged(28 + percent * 15 / 100,
+        QString("正在下载 Java %1... %2%").arg(m_rescueSelectedMajor).arg(percent));
+}
+
+void GameLauncher::onRescueDownloadCompleted(const QString& filePath)
+{
+    Q_UNUSED(filePath);
+    if (m_rescueStage != RescueStage::Installing) return;
+    emit launchProgressChanged(43, QString("下载完成，正在解压安装 Java %1...").arg(m_rescueSelectedMajor));
+    emit launchDetailAdded(QStringLiteral("下载完成，正在解压安装..."));
+}
+
+void GameLauncher::onRescueDownloadFailed(const QString& error)
+{
+    if (m_rescueStage != RescueStage::Installing) return;
+    retryOrFailRescueDownload(error);
+}
+
+void GameLauncher::onRescueExtractProgress(int percent)
+{
+    if (m_rescueStage != RescueStage::Installing) return;
+    emit launchProgressChanged(43 + percent * 7 / 100,
+        QString("正在解压安装 Java %1...").arg(m_rescueSelectedMajor));
+}
+
+void GameLauncher::onRescueExtractCompleted(const QString& javaPath)
+{
+    if (m_rescueStage != RescueStage::Installing) return;
+    disconnectJavaDownloaderRescue();
+    m_rescueStage = RescueStage::None;
+
+    // JavaDownloader::extractCompleted 发的是 Java Home 目录，可执行文件在其 bin/ 下
+    QString javaExe = javaPath;
+#ifdef Q_OS_WIN
+    javaExe += QStringLiteral("/bin/java.exe");
+#else
+    javaExe += QStringLiteral("/bin/java");
+#endif
+    JavaInfo info;
+    if (!validateJavaPath(javaExe, info))
+    {
+        failJavaRescue(QString("自动安装的 Java 验证失败: %1").arg(javaExe));
+        return;
+    }
+
+    // 写入 Java 安装缓存，之后的启动就能自动选到这个 Java
+    QList<QPair<QString, QString>> installations = SettingsManager::instance()->getJavaInstallations();
+    bool exists = false;
+    for (const auto& inst : installations)
+    {
+        if (inst.first == javaExe) { exists = true; break; }
+    }
+    if (!exists)
+    {
+        installations.append(qMakePair(javaExe, info.version));
+        SettingsManager::instance()->setJavaInstallations(installations);
+    }
+
+    emit launchDetailAdded(QString("Java %1 安装成功: %2，继续启动游戏")
+        .arg(info.version, javaExe));
+    finishJavaRescue(javaExe);
+}
+
+void GameLauncher::onRescueExtractFailed(const QString& error)
+{
+    if (m_rescueStage != RescueStage::Installing) return;
+    failJavaRescue(QString("自动安装 Java 失败（解压）: %1").arg(error));
+}
+
+void GameLauncher::finishJavaRescue(const QString& javaPath)
+{
+    m_rescueStage = RescueStage::None;
+    proceedWithLaunch(m_rescueConfig, javaPath);
+}
+
+void GameLauncher::failJavaRescue(const QString& reason)
+{
+    disconnectJavaDownloaderRescue();
+    m_rescueStage = RescueStage::None;
+    m_errorMessage = reason;
+    m_status = Failed;
+    emit launchStatusChanged(m_status);
+    emit launchDetailAdded(QString("错误: %1").arg(reason));
+    // 与"Java 路径无效"失败路径保持一致的信号模式；
+    // MainWindow 会因 wasJavaRescueAttempted 跳过文件补全重启，只把启动卡片标为失败
+    emit gameCrashed(reason);
 }

@@ -18,7 +18,10 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <platform.h>
+#include <QUrl>
 #include <QUrlQuery>
+
+#include "utils/Lobby/LobbyShareLink.h"
 
 ForumLobbyService *ForumLobbyService::instance()
 {
@@ -86,6 +89,28 @@ ForumLobbyRoom ForumLobbyService::parseRoom(const QJsonObject &object)
             room.mods.append(name);
     }
 
+    // 辅助模组只是 mods 的子集标注：服务端 / 老房间可能没有这些列
+    auto readNameList = [&object](const QString &key) {
+        QStringList names;
+        const QJsonArray array = object.value(key).toArray();
+        for (const QJsonValue &value : array)
+        {
+            const QString name = value.toString().trimmed();
+            if (!name.isEmpty() && !names.contains(name, Qt::CaseInsensitive))
+                names.append(name);
+        }
+        return names;
+    };
+    room.auxMods = readNameList(QStringLiteral("mods_aux"));
+    room.resourcePacks = readNameList(QStringLiteral("resource_packs"));
+    room.shaderPacks = readNameList(QStringLiteral("shader_packs"));
+    // 服务端理论上已经把 aux 收进 mods，这里再兜一次，避免两边对不上
+    for (const QString &name : room.auxMods)
+    {
+        if (!room.mods.contains(name, Qt::CaseInsensitive))
+            room.mods.append(name);
+    }
+
     const QJsonObject host = object.value(QStringLiteral("host")).toObject();
     if (!host.isEmpty())
     {
@@ -96,7 +121,53 @@ ForumLobbyRoom ForumLobbyService::parseRoom(const QJsonObject &object)
         if (room.host.displayName.isEmpty())
             room.host.displayName = room.host.username;
     }
+
+    // 正在游玩的人：老服务端没有这个字段，空着就行
+    const QJsonArray players = object.value(QStringLiteral("players")).toArray();
+    for (const QJsonValue &value : players)
+    {
+        const QJsonObject item = value.toObject();
+        ForumLobbyPlayer player;
+        player.id = item.value(QStringLiteral("id")).toInt();
+        player.username = item.value(QStringLiteral("username")).toString();
+        player.displayName = item.value(QStringLiteral("display_name")).toString();
+        player.avatar = item.value(QStringLiteral("avatar")).toString();
+        player.joinedAt = qint64(item.value(QStringLiteral("joined_at")).toDouble());
+        player.isHost = item.value(QStringLiteral("is_host")).toBool();
+        if (player.id <= 0 || player.display().isEmpty())
+            continue;
+        bool duplicate = false;
+        for (const ForumLobbyPlayer &known : room.players)
+        {
+            if (known.id == player.id)
+            {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate)
+            room.players.append(player);
+    }
     return room;
+}
+
+ForumLobbyComment ForumLobbyService::parseComment(const QJsonObject &object)
+{
+    ForumLobbyComment comment;
+    comment.id = object.value(QStringLiteral("id")).toInt();
+    comment.content = object.value(QStringLiteral("content")).toString();
+    comment.createdAt = qint64(object.value(QStringLiteral("created_at")).toDouble());
+    comment.isHost = object.value(QStringLiteral("is_host")).toBool();
+    comment.mine = object.value(QStringLiteral("mine")).toBool();
+
+    const QJsonObject user = object.value(QStringLiteral("user")).toObject();
+    comment.userId = user.value(QStringLiteral("id")).toInt();
+    comment.username = user.value(QStringLiteral("username")).toString();
+    comment.displayName = user.value(QStringLiteral("display_name")).toString();
+    comment.avatar = user.value(QStringLiteral("avatar")).toString();
+    if (comment.displayName.isEmpty())
+        comment.displayName = comment.username;
+    return comment;
 }
 
 void ForumLobbyService::fetchRooms(const QString &keyword, const QString &core,
@@ -145,6 +216,20 @@ void ForumLobbyService::publishRoom(const ForumLobbyRoom &room, RoomHandler onOk
     for (const QString &name : room.mods)
         mods.append(name);
     body.insert(QStringLiteral("mods"), mods);
+
+    // 辅助模组 / 资源包 / 光影包：加入时按需询问是否一起装
+    QJsonArray auxMods;
+    for (const QString &name : room.auxMods)
+        auxMods.append(name);
+    body.insert(QStringLiteral("mods_aux"), auxMods);
+    QJsonArray resourcePacks;
+    for (const QString &name : room.resourcePacks)
+        resourcePacks.append(name);
+    body.insert(QStringLiteral("resource_packs"), resourcePacks);
+    QJsonArray shaderPacks;
+    for (const QString &name : room.shaderPacks)
+        shaderPacks.append(name);
+    body.insert(QStringLiteral("shader_packs"), shaderPacks);
 
     // 封面 / Markdown 介绍 / 前置整合包：空值也照发，让再次发布能清掉旧值
     body.insert(QStringLiteral("cover"), room.cover);
@@ -350,6 +435,218 @@ void ForumLobbyService::recordJoin(int roomId, RoomHandler onOk, FailHandler onF
         [onOk](const QJsonObject &root) {
             if (onOk)
                 onOk(parseRoom(root.value(QStringLiteral("room")).toObject()));
+        },
+        std::move(onFail));
+}
+
+// ────────────────────────────────────────────── 正在游玩（进房上报 / 离开撤销）
+
+void ForumLobbyService::sendPresence(int roomId, RoomHandler onOk, FailHandler onFail)
+{
+    if (roomId <= 0)
+        return;
+    // 没登录就没有可显示的身份，服务端也会拒收，干脆不发
+    if (!ForumAccountService::instance()->isLoggedIn())
+        return;
+
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("POST"),
+        QStringLiteral("/api/lobby/rooms/%1/presence").arg(roomId), QJsonObject(),
+        [onOk](const QJsonObject &root) {
+            if (onOk)
+                onOk(parseRoom(root.value(QStringLiteral("room")).toObject()));
+        },
+        std::move(onFail));
+}
+
+void ForumLobbyService::clearPresence(int roomId, OkHandler onOk, FailHandler onFail)
+{
+    if (roomId <= 0)
+    {
+        if (onOk)
+            onOk();
+        return;
+    }
+
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("DELETE"),
+        QStringLiteral("/api/lobby/rooms/%1/presence").arg(roomId), QJsonObject(),
+        [onOk](const QJsonObject &) {
+            if (onOk)
+                onOk();
+        },
+        std::move(onFail));
+}
+
+// ────────────────────────────────────────────── 房间评论（详情页留言）
+
+void ForumLobbyService::fetchComments(int roomId, CommentListHandler onOk, FailHandler onFail)
+{
+    // 分享链接进来的房间没有服务端 id，没有评论可拉
+    if (roomId <= 0)
+    {
+        if (onOk)
+            onOk(QVector<ForumLobbyComment>(), 0);
+        return;
+    }
+
+    ForumAccountService::instance()->getJson(
+        QStringLiteral("/api/lobby/rooms/%1/comments").arg(roomId),
+        [onOk](const QJsonObject &root) {
+            QVector<ForumLobbyComment> comments;
+            const QJsonArray array = root.value(QStringLiteral("comments")).toArray();
+            comments.reserve(array.size());
+            for (const QJsonValue &value : array)
+                comments.append(parseComment(value.toObject()));
+            if (onOk)
+                onOk(comments, root.value(QStringLiteral("total")).toInt(comments.size()));
+        },
+        std::move(onFail));
+}
+
+void ForumLobbyService::postComment(int roomId, const QString &content, CommentHandler onOk,
+                                    FailHandler onFail)
+{
+    if (roomId <= 0)
+    {
+        if (onFail)
+            onFail(tr("这个房间没有评论区"), 404);
+        return;
+    }
+    if (!ForumAccountService::instance()->isLoggedIn())
+    {
+        if (onFail)
+            onFail(tr("登录论坛账号后才能评论"), 401);
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("content"), content);
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/lobby/rooms/%1/comments").arg(roomId), body,
+        [onOk](const QJsonObject &root) {
+            if (onOk)
+                onOk(parseComment(root.value(QStringLiteral("comment")).toObject()));
+        },
+        std::move(onFail));
+}
+
+void ForumLobbyService::deleteComment(int commentId, OkHandler onOk, FailHandler onFail)
+{
+    if (commentId <= 0)
+    {
+        if (onOk)
+            onOk();
+        return;
+    }
+
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("DELETE"), QStringLiteral("/api/lobby/comments/%1").arg(commentId),
+        QJsonObject(),
+        [onOk](const QJsonObject &) {
+            if (onOk)
+                onOk();
+        },
+        std::move(onFail));
+}
+
+// ────────────────────────────────────────────── 分享短链
+
+namespace {
+/** 房间号拼进接口路径前转义一遍，防着将来房间号里出现怪字符 */
+QString sharePath(const QString &token, const QString &suffix = QString())
+{
+    return QStringLiteral("/api/lobby/shares/%1%2")
+        .arg(QString::fromLatin1(QUrl::toPercentEncoding(token.trimmed())), suffix);
+}
+} // namespace
+
+void ForumLobbyService::createShare(const ForumLobbyRoom &room, ShareHandler onOk,
+                                   FailHandler onFail)
+{
+    // 紧凑字段（t / ds / c / ic / ad / v / ld / md / ma / rp / sp）：网页 join.html 直接按这套展示
+    const QJsonObject body = LobbyShareLink::roomToPayload(room);
+    const FailHandler fail = onFail;
+
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/lobby/shares"), body,
+        [onOk, fail](const QJsonObject &root) {
+            const QString token = root.value(QStringLiteral("token")).toString().trimmed();
+            const QString secret = root.value(QStringLiteral("secret")).toString();
+            if (token.isEmpty())
+            {
+                if (fail)
+                    fail(tr("分享链接没生成成功，稍后再试一次"), 0);
+                return;
+            }
+            if (onOk)
+                onOk(token, secret);
+        },
+        std::move(onFail));
+}
+
+void ForumLobbyService::sendShareHeartbeat(const QString &token, const QString &secret,
+                                           OkHandler onOk, FailHandler onFail)
+{
+    if (token.trimmed().isEmpty())
+    {
+        if (onFail)
+            onFail(tr("分享链接已经失效"), 404);
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("secret"), secret);
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("POST"), sharePath(token, QStringLiteral("/heartbeat")), body,
+        [onOk](const QJsonObject &) {
+            if (onOk)
+                onOk();
+        },
+        std::move(onFail));
+}
+
+void ForumLobbyService::deleteShare(const QString &token, const QString &secret,
+                                    OkHandler onOk, FailHandler onFail)
+{
+    if (token.trimmed().isEmpty())
+    {
+        if (onOk)
+            onOk();
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("secret"), secret);
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("DELETE"), sharePath(token), body,
+        [onOk](const QJsonObject &) {
+            if (onOk)
+                onOk();
+        },
+        std::move(onFail));
+}
+
+void ForumLobbyService::fetchShare(const QString &token, RoomHandler onOk, FailHandler onFail)
+{
+    if (token.trimmed().isEmpty())
+    {
+        if (onFail)
+            onFail(tr("链接里没有房间号，请让对方重新创建分享链接"), 0);
+        return;
+    }
+
+    ForumAccountService::instance()->getJson(
+        sharePath(token),
+        [onOk](const QJsonObject &root) {
+            if (!onOk)
+                return;
+            ForumLobbyRoom room =
+                LobbyShareLink::payloadToRoom(root.value(QStringLiteral("share")).toObject());
+            const int expiresIn = root.value(QStringLiteral("expires_in")).toInt();
+            if (expiresIn > 0)
+                room.expiresIn = expiresIn;
+            onOk(room);
         },
         std::move(onFail));
 }

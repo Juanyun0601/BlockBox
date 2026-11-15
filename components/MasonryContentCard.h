@@ -26,6 +26,7 @@ public:
         QString tooltip;
         QColor iconColor;    // 空 = 主题色
         std::function<void()> onClick;
+        QString tag;         // 可选标记：写到按钮动态属性 localFavTag（页面按属性刷新按钮状态用）
     };
 
     /* 构建瀑布流卡片；actions 为空则不渲染按钮区 */
@@ -43,6 +44,8 @@ public:
     /* 本地图源封面：KeepAspectRatioByExpanding 居中裁剪 + 圆角 16 */
     static QPixmap makeCoverPixmap(const QPixmap &src, int w, int h);
     static void paletteFor(const ModInfo &info, QColor &c1, QColor &c2);
+    /* 按任意稳定种子（例如 lobby:12）取同一套色板，供大厅房间卡等非模组卡片复用 */
+    static void paletteForSeed(const QString &seed, QColor &c1, QColor &c2);
     /* 从图标位图提取"最抢眼"的主色（绝对色彩度 × 亮度加权，排除灰/白/黑与过小色块），
      * 生成同色系渐变（c1 亮 / c2 暗），让居中徽标下方的 banner 底色与图标同色系。
      * 图标为空、或没有可用彩色色块时返回 false，调用方回退 paletteFor */

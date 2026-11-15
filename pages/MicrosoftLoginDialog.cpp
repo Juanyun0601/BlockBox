@@ -10,6 +10,22 @@
 #include <QTimer>
 #include <QUrlQuery>
 
+bool MicrosoftLoginDialog::isLoginUnavailable()
+{
+    // 登录 API 仍在向 Mojang 申请中：批下来后把这里改成 false，微软登录即可照常使用
+    return true;
+}
+
+QString MicrosoftLoginDialog::loginUnavailableMessage()
+{
+    return tr("当前暂不可用，已向 Mojang 申请登录 API，请等待。");
+}
+
+void MicrosoftLoginDialog::showUnavailableNotice(QWidget *parent)
+{
+    AppMessageBox::information(parent, tr("微软登录暂不可用"), loginUnavailableMessage());
+}
+
 MicrosoftLoginDialog::MicrosoftLoginDialog(QWidget *parent) : QDialog(parent)
 {
     m_authManager = AuthManager::instance();
@@ -90,6 +106,15 @@ void MicrosoftLoginDialog::setupUI()
 
 void MicrosoftLoginDialog::startLogin()
 {
+    // 兜底：任何入口走到这里都先拦一下，避免真的去请求微软授权
+    if (isLoginUnavailable())
+    {
+        m_statusLabel->setText(loginUnavailableMessage());
+        showUnavailableNotice(this);
+        reject();
+        return;
+    }
+
     m_isLoginInProgress = true;
     m_statusLabel->setText(tr("正在准备登录..."));
     m_progressBar->setVisible(true);

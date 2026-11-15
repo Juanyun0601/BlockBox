@@ -8,7 +8,9 @@
 #include "ServersDatIO.h"
 
 #include <QDebug>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 
 #ifdef Q_OS_WIN
 #include <QtZlib/zlib.h>
@@ -474,23 +476,27 @@ bool loadRoot(const QString &path, NbtTag &root)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return false;
-    const QByteArray compressed = file.readAll();
+    const QByteArray content = file.readAll();
     file.close();
+    if (content.isEmpty())
+        return false;
 
+    // 正常是 gzip 包裹的 NBT；少数旧版本 / 第三方工具写的是未压缩 NBT
     QByteArray raw;
-    if (!decompressGzip(compressed, raw) || raw.isEmpty())
+    if (decompressGzip(content, raw) && !raw.isEmpty())
     {
-        qWarning() << "[ServersDatIO] gzip 解压失败:" << path;
-        return false;
+        NbtReader reader(raw);
+        if (reader.readTag(root) && root.type == NbtType::Compound)
+            return true;
     }
 
-    NbtReader reader(raw);
-    if (!reader.readTag(root) || root.type != NbtType::Compound)
-    {
-        qWarning() << "[ServersDatIO] NBT 解析失败:" << path;
-        return false;
-    }
-    return true;
+    // gzip 解不开就按原始 NBT 再试一次，避免整份列表被当成空表
+    NbtReader plainReader(content);
+    if (plainReader.readTag(root) && root.type == NbtType::Compound)
+        return true;
+
+    qWarning() << "[ServersDatIO] NBT 解析失败:" << path;
+    return false;
 }
 
 bool saveRoot(const QString &path, const NbtTag &root)
@@ -579,6 +585,48 @@ QString ServersDatIO::addressKey(const QString &host, quint16 port)
     if (port == 25565)
         return h.toLower();
     return h.toLower() + QLatin1Char(':') + QString::number(port);
+}
+
+QStringList ServersDatIO::candidatePaths(const QString &instancePath)
+{
+    QStringList candidates;
+    if (instancePath.trimmed().isEmpty())
+        return candidates;
+
+    // 版本隔离：游戏直接写在版本目录下
+    candidates << QDir(instancePath).absoluteFilePath(QStringLiteral("servers.dat"));
+
+    // 非版本隔离：--gameDir 是版本目录的上两级（共享 .minecraft），游戏把
+    // servers.dat 写在那里。以前只认版本目录，关掉隔离的玩家在游戏里加的
+    // 服务器就一直扫不到。
+    const QString sharedDir =
+        QDir::cleanPath(QDir(instancePath).absoluteFilePath(QStringLiteral("../..")));
+    const QString sharedDat = QDir(sharedDir).absoluteFilePath(QStringLiteral("servers.dat"));
+    if (!candidates.contains(sharedDat))
+        candidates << sharedDat;
+
+    return candidates;
+}
+
+QString ServersDatIO::existingPath(const QStringList &candidates)
+{
+    QString existing;
+    qint64 newest = -1;
+    for (const QString &path : candidates)
+    {
+        if (path.trimmed().isEmpty())
+            continue;
+        const QFileInfo info(path);
+        if (!info.exists())
+            continue;
+        const qint64 stamp = info.lastModified().toMSecsSinceEpoch();
+        if (stamp >= newest)
+        {
+            newest = stamp;
+            existing = path;
+        }
+    }
+    return existing;
 }
 
 bool ServersDatIO::parseAddress(const QString &ip, QString &hostOut, quint16 &portOut)

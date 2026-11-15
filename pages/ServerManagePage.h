@@ -13,6 +13,7 @@
 #include <QSet>
 #include <QPoint>
 #include <QString>
+#include <QStringList>
 #include <QHash>
 
 #include "utils/McServerPinger.h"
@@ -26,9 +27,8 @@ struct ServerEntry
 };
 
 class LocalCategoryManager;
+class CardSelectionOverlay;
 class QMenu;
-class QGraphicsOpacityEffect;
-class QPropertyAnimation;
 class QShowEvent;
 
 class ServerManagePage : public QWidget
@@ -43,6 +43,12 @@ public:
 
     /** 子导航搜索框分发：同步到页内搜索框（复用现有过滤管线） */
     Q_INVOKABLE void applyPageFilter(const QString &query);
+
+    /** 重新扫描磁盘上的服务器列表（游戏内新加的服务器会在这里出现） */
+    Q_INVOKABLE void reloadServers();
+
+    /** 顶栏刷新 / F5：重新扫描服务器列表，并重新探测在线状态 */
+    Q_INVOKABLE void refresh();
 
 signals:
     void connectToServerRequested(const QString &address);
@@ -73,7 +79,17 @@ private:
     void placeCards();
     void showEmptyHint(bool show);
     QString serversFilePath() const;
+    /**
+     * 游戏实际写入 servers.dat 的路径（用于写回）：
+     * 优先取已存在的那个文件（多个时取最近改动的），都不存在时按版本隔离设置推断
+     */
     QString serversDatPath() const;
+    /** 游戏可能写出 servers.dat 的全部位置：版本目录 + 共享 .minecraft 目录 */
+    QStringList serversDatCandidates() const;
+    /** 磁盘上服务器数据的指纹（大小 + 修改时间），用于判断是否需要重新扫描 */
+    qint64 diskStamp() const;
+    /** 记录「磁盘内容已同步到界面」，避免重复扫描 */
+    void markDiskSynced();
     /** 把一条服务器写入/更新到游戏列表 servers.dat */
     void upsertGameServer(const ServerEntry &entry);
     /** 从游戏列表 servers.dat 删除一条服务器 */
@@ -98,8 +114,6 @@ private:
     QWidget *createSelectionOverlay(QWidget *card);
     /** 播放卡片选中高亮过渡动画 */
     void animateCardHighlight(int idx, bool selected);
-    /** 选中高亮遮罩样式（随主题色） */
-    QString selectionOverlayStyle() const;
     /** 刷新统计栏文案与底栏按钮（全选/删除选中）状态 */
     void updateSelectionBar();
 
@@ -135,6 +149,8 @@ private:
     QList<ServerEntry> m_servers;
     QString m_currentSearch;
     QString m_instancePath;
+    /** 上次扫描磁盘时的指纹；-1 表示尚未扫描 */
+    qint64 m_lastDiskStamp = -1;
 
     // 服务器状态探测（Minecraft Server List Ping）
     McServerPinger *m_pinger = nullptr;
@@ -144,9 +160,7 @@ private:
 
     // 多选状态
     QList<QWidget *> m_cardWidgets;               // 当前可见卡片（与卡片索引一一对应）
-    QList<QWidget *> m_selectionOverlays;         // 选中高亮遮罩（与卡片索引对齐）
-    QList<QGraphicsOpacityEffect *> m_selectionEffects;
-    QList<QPropertyAnimation *> m_selectionAnims;
+    QList<CardSelectionOverlay *> m_selectionOverlays; // 选中高亮遮罩（与卡片索引对齐）
     QSet<int> m_selectedCardIndices;              // 多选索引集合
     bool m_allSelected = false;
     // 滑动快速多选状态

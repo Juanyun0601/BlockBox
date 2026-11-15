@@ -9,7 +9,6 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
-#include <QDialog>
 #include <QFont>
 #include <QFontMetrics>
 #include <QFrame>
@@ -18,6 +17,7 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QPixmap>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSize>
@@ -26,9 +26,11 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-#include "components/AppInputDialog.h"
 #include "components/AppMessageBox.h"
+#include "components/NotificationManager.h"
 #include "pages/MultiplayerUiParts.h"
+#include "utils/ForumAccountService.h"
+#include "utils/ForumImageStore.h"
 #include "utils/GravityCone/GravityConeClient.h"
 #include "utils/IconHelper.h"
 #include "utils/StyleKit.h"
@@ -47,6 +49,8 @@ using MultiplayerUi::setDotTone;
 using MultiplayerUi::makeStatusCard;
 using MultiplayerUi::makeNoteCard;
 using MultiplayerUi::makeLatencyRow;
+using MultiplayerUi::letterAvatarPixmap;
+using MultiplayerUi::roundAvatarPixmap;
 
 BedrockMultiplayerPage::BedrockMultiplayerPage(QWidget *parent)
     : QWidget(parent)
@@ -58,9 +62,15 @@ BedrockMultiplayerPage::BedrockMultiplayerPage(QWidget *parent)
     , m_homePage(nullptr)
     , m_statusDot(nullptr)
     , m_statusLabel(nullptr)
+    , m_progressHint(nullptr)
     , m_descLabel(nullptr)
     , m_joinBtn(nullptr)
     , m_createBtn(nullptr)
+    , m_joinCard(nullptr)
+    , m_joinCodeEdit(nullptr)
+    , m_joinHint(nullptr)
+    , m_joinConfirmBtn(nullptr)
+    , m_joinCancelBtn(nullptr)
     , m_roomPage(nullptr)
     , m_latencyDot(nullptr)
     , m_latencyLabel(nullptr)
@@ -81,44 +91,18 @@ BedrockMultiplayerPage::BedrockMultiplayerPage(QWidget *parent)
     connect(m_client, &GravityConeClient::playersChanged, this, &BedrockMultiplayerPage::refreshPlayerList);
     connect(m_client, &GravityConeClient::installStatusChanged, this, &BedrockMultiplayerPage::refreshInstallStatus);
     connect(m_client, &GravityConeClient::errorOccurred, this, [this](const QString &err) {
-        showInfoDialog(tr("联机错误"), err);
+        // 出错不弹窗：左下角通知说一句，顶部状态条也会跟着变成异常说明
+        NotificationManager::showError(window(), err);
     });
-    // 进度提示复用同一个对话框：核心在加入/创建过程中会推送多条进度，
-    // 每条都弹新窗会形成弹窗轰炸，这里只更新已有窗口的文字
-    connect(m_client, &GravityConeClient::progressUpdated, this, [this](const QString &, const QString &message) {
-        if (message.isEmpty())
-            return;
-        if (!m_progressDialog) {
-            m_progressDialog = new QDialog(this);
-            m_progressDialog->setWindowTitle(tr("正在加入"));
-            m_progressDialog->setMinimumWidth(280);
-            auto *layout = new QVBoxLayout(m_progressDialog);
-            layout->setContentsMargins(16, 16, 16, 16);
-            layout->setSpacing(12);
-            m_progressLabel = new QLabel(m_progressDialog);
-            m_progressLabel->setWordWrap(true);
-            m_progressLabel->setTextInteractionFlags(Qt::TextBrowserInteraction);
-            layout->addWidget(m_progressLabel);
-            auto *btnLayout = new QHBoxLayout();
-            btnLayout->addStretch();
-            auto *okBtn = new QPushButton(tr("确定"), m_progressDialog);
-            okBtn->setCursor(Qt::PointingHandCursor);
-            okBtn->setFixedHeight(30);
-            okBtn->setMinimumWidth(80);
-            btnLayout->addWidget(okBtn);
-            layout->addLayout(btnLayout);
-            connect(okBtn, &QPushButton::clicked, m_progressDialog, &QDialog::accept);
-            connect(m_progressDialog, &QDialog::finished, this, [this]() {
-                m_progressDialog->deleteLater();
-                m_progressDialog = nullptr;
-                m_progressLabel = nullptr;
+    // 核心在加入/创建过程中会推送多条进度：就地显示在状态条下面一行，
+    // 不再开窗口，也不会出现「每条进度一个弹窗」的轰炸
+    connect(m_client, &GravityConeClient::progressUpdated, this,
+            [this](const QString &, const QString &message) {
+                if (!m_progressHint)
+                    return;
+                m_progressHint->setText(message);
+                m_progressHint->setVisible(!message.trimmed().isEmpty());
             });
-            m_progressDialog->setModal(false);
-            m_progressDialog->show();
-        }
-        if (m_progressLabel)
-            m_progressLabel->setText(message);
-    });
 
     // 换主题色、或者亮色/暗色整体切换时都要重算样式
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
@@ -213,6 +197,7 @@ void BedrockMultiplayerPage::buildHomePage(QWidget *page)
     m_descLabel->setText(
         tr("基岩版实例助手可以使用 GravityCone 联机，房主创建房间后与朋友共享邀请码，"
            "即可跨越局域网限制一起游玩基岩版。<br><br>"
+           "点「创建房间」后请在游戏里进入世界并允许好友加入，房间开好后邀请码会显示在下一页。<br><br>"
            "GravityCone 是第三方开源软件（<a href=\"https://github.com/Tianpao/GravityCone\">GitHub 仓库</a>），"
            "与本软件无关，如遇到问题可前往该仓库反馈。<br><br>"
            "联机使用 P2P 双端直连技术，无中转，最终联机体验由联机参与者决定。<br><br>"
@@ -220,6 +205,11 @@ void BedrockMultiplayerPage::buildHomePage(QWidget *page)
            "感谢了解与配合，祝你联机愉快！")
     );
     parts.body->addWidget(noteCard);
+
+    // 核心推送的建房/进房进度：就地一行小字，不弹窗
+    m_progressHint = makeHintLabel(QString(), page);
+    m_progressHint->setVisible(false);
+    parts.body->addWidget(m_progressHint);
     parts.body->addStretch(1);
 
     // ---- 加入房间 / 创建房间按钮（固定在底部） ----
@@ -238,6 +228,20 @@ void BedrockMultiplayerPage::buildHomePage(QWidget *page)
 
     btnRow->addWidget(m_joinBtn, 1);
     btnRow->addWidget(m_createBtn, 1);
+
+    // ---- 邀请码输入卡：点「加入房间」就地展开，不再弹输入框 ----
+    MultiplayerUi::JoinCardParts joinCard = MultiplayerUi::makeJoinCard(page);
+    m_joinCard = joinCard.card;
+    m_joinCodeEdit = joinCard.codeEdit;
+    m_joinHint = joinCard.hint;
+    m_joinConfirmBtn = joinCard.confirmBtn;
+    m_joinCancelBtn = joinCard.cancelBtn;
+    joinCard.title->setText(tr("邀请码"));
+    m_joinConfirmBtn->setText(tr("加入"));
+    m_joinCancelBtn->setText(tr("取消"));
+    m_joinCodeEdit->setPlaceholderText(tr("粘贴好友发来的邀请码，如 P/XXXX-XXXX-XXXX-XXXX"));
+    parts.outer->addWidget(m_joinCard);
+
     parts.outer->addLayout(btnRow);
 
     // 信号连接
@@ -255,83 +259,127 @@ void BedrockMultiplayerPage::buildHomePage(QWidget *page)
     });
 
     connect(m_joinBtn, &QPushButton::clicked, this, [this]() {
-        if (!m_client->isProcessRunning() && m_client->installedVersion().isEmpty()) {
-            showInfoDialog(tr("未安装联机核心"),
-                tr("尚未安装 GravityCone 联机核心，请先点击「下载」按钮下载安装。"));
-            return;
-        }
-        // Exception 状态下点击 = 重试：调用 leaveRoom 回到 Waiting
-        if (m_client->state() == GravityConeClient::State::Exception) {
+        // 核心出问题 / 还没启动时按钮本身就是「重试」：先把核心拉起来
+        const auto state = m_client->state();
+        if (state == GravityConeClient::State::Exception) {
             m_client->leaveRoom();
             return;
         }
-        // 已安装但进程未启动：自动启动
-        if (m_client->state() == GravityConeClient::State::NotInstalled
-            && !m_client->isProcessRunning()) {
+        const bool coreStarting = state == GravityConeClient::State::Fatal
+            || (state == GravityConeClient::State::NotInstalled && !m_client->isProcessRunning());
+        if (coreStarting)
             m_client->start();
-            return;
-        }
-        if (m_client->state() == GravityConeClient::State::Launching) {
-            showInfoDialog(tr("正在启动"), tr("联机核心正在启动，请稍候..."));
-            return;
-        }
-        if (m_client->state() == GravityConeClient::State::Fatal) {
-            // 启动失败也允许重试：重新拉起核心，而不是只弹窗让用户重启软件
-            m_client->start();
-            return;
-        }
-        if (m_client->state() != GravityConeClient::State::Waiting) {
-            showInfoDialog(tr("状态异常"), tr("当前已在房间中，请先离开当前房间。"));
-            return;
-        }
-        bool ok = false;
-        const QString code = AppInputDialog::getText(
-            this, tr("加入房间"), tr("请输入邀请码："),
-            QLineEdit::Normal, QString(), &ok);
-        if (!ok || code.trimmed().isEmpty())
-            return;
+        // 邀请码就在页面里输，不等核心就绪
+        showJoinCard();
+        if (coreStarting || state == GravityConeClient::State::Launching)
+            setJoinHintText(tr("联机核心正在启动，稍等一下再点「加入」。"));
+    });
 
-        if (!GravityConeClient::verifyRoomCode(code)) {
-            showInfoDialog(tr("邀请码无效"),
-                tr("基岩版邀请码格式错误，应为 P/XXXX-XXXX-XXXX-XXXX。"));
-            return;
-        }
-
-        m_client->joinRoom(code, tr("BlockBox 玩家"));
+    connect(m_joinConfirmBtn, &QPushButton::clicked, this, [this]() { submitJoinCode(); });
+    connect(m_joinCodeEdit, &QLineEdit::returnPressed, this, [this]() { submitJoinCode(); });
+    connect(m_joinCancelBtn, &QPushButton::clicked, this, [this]() { hideJoinCard(); });
+    connect(m_joinCodeEdit, &QLineEdit::textChanged, this, [this](const QString &) {
+        if (m_joinHint && m_joinHint->property("error").toBool())
+            setJoinHintText(QString());
     });
 
     connect(m_createBtn, &QPushButton::clicked, this, [this]() {
-        if (!m_client->isProcessRunning() && m_client->installedVersion().isEmpty()) {
-            showInfoDialog(tr("未安装联机核心"),
-                tr("尚未安装 GravityCone 联机核心，请先点击「下载」按钮下载安装。"));
+        // 建房：进度就地显示在状态条下面，不再弹「正在创建房间」的窗口
+        const auto state = m_client->state();
+        if (m_client->installedVersion().isEmpty() && !m_client->isProcessRunning()) {
+            NotificationManager::showError(window(), tr("还没安装 GravityCone 联机核心，先点右上角「更新」下载。"));
             return;
         }
-        if (m_client->state() == GravityConeClient::State::Exception) {
+        if (state == GravityConeClient::State::Exception
+            || state == GravityConeClient::State::Fatal) {
             m_client->leaveRoom();
             return;
         }
-        if (m_client->state() == GravityConeClient::State::NotInstalled
-            && !m_client->isProcessRunning()) {
+        if (state == GravityConeClient::State::NotInstalled && !m_client->isProcessRunning()) {
             m_client->start();
             return;
         }
-        if (m_client->state() == GravityConeClient::State::Launching) {
-            showInfoDialog(tr("正在启动"), tr("联机核心正在启动，请稍候..."));
+        if (state == GravityConeClient::State::Launching) {
+            NotificationManager::showInfo(window(), tr("联机核心正在启动，马上就好…"));
             return;
         }
-        if (m_client->state() == GravityConeClient::State::Fatal) {
-            // 启动失败也允许重试：重新拉起核心，而不是只弹窗让用户重启软件
-            m_client->start();
+        if (state != GravityConeClient::State::Waiting) {
+            NotificationManager::showInfo(window(), tr("当前已在房间里，先离开当前房间再开新房间。"));
             return;
         }
-        if (m_client->state() != GravityConeClient::State::Waiting) {
-            showInfoDialog(tr("状态异常"), tr("当前已在房间中，请先离开当前房间。"));
-            return;
-        }
-        m_client->createRoom(tr("BlockBox 玩家"));
-        showInfoDialog(tr("正在创建房间"),
-            tr("正在创建基岩版联机房间，请稍候..."));
+        hideJoinCard();
+        m_client->createRoom(localPlayerName());
     });
+}
+
+// ============================
+// 加入房间：邀请码就地输入
+// ============================
+
+void BedrockMultiplayerPage::showJoinCard()
+{
+    if (!m_joinCard)
+        return;
+    setJoinHintText(QString());
+    m_joinCard->setVisible(true);
+    if (m_joinCodeEdit)
+        m_joinCodeEdit->setFocus();
+}
+
+void BedrockMultiplayerPage::hideJoinCard()
+{
+    if (!m_joinCard)
+        return;
+    m_joinCard->setVisible(false);
+    setJoinHintText(QString());
+    if (m_joinCodeEdit)
+        m_joinCodeEdit->clear();
+}
+
+void BedrockMultiplayerPage::submitJoinCode()
+{
+    const QString code = m_joinCodeEdit ? m_joinCodeEdit->text().trimmed() : QString();
+    if (code.isEmpty()) {
+        setJoinHintText(tr("先粘贴好友发来的邀请码。"), true);
+        if (m_joinCodeEdit)
+            m_joinCodeEdit->setFocus();
+        return;
+    }
+    if (!GravityConeClient::verifyRoomCode(code)) {
+        setJoinHintText(tr("邀请码格式不对，应为 P/XXXX-XXXX-XXXX-XXXX。"), true);
+        return;
+    }
+
+    const auto state = m_client->state();
+    if (m_client->installedVersion().isEmpty() && !m_client->isProcessRunning()) {
+        setJoinHintText(tr("还没安装 GravityCone 联机核心，先点右上角「更新」下载。"), true);
+        return;
+    }
+    if (state == GravityConeClient::State::Launching
+        || (state == GravityConeClient::State::NotInstalled && !m_client->isProcessRunning())) {
+        setJoinHintText(tr("联机核心正在启动，稍等一下再点「加入」。"), true);
+        return;
+    }
+    if (state == GravityConeClient::State::Exception || state == GravityConeClient::State::Fatal) {
+        setJoinHintText(tr("联机核心状态异常，先点一次「重试」恢复。"), true);
+        return;
+    }
+    if (state != GravityConeClient::State::Waiting) {
+        setJoinHintText(tr("已经在房间里了，先离开当前房间再加入。"), true);
+        return;
+    }
+    m_client->joinRoom(code, localPlayerName());
+    hideJoinCard();
+}
+
+void BedrockMultiplayerPage::setJoinHintText(const QString &text, bool error)
+{
+    if (!m_joinHint)
+        return;
+    m_joinHint->setText(text.trimmed().isEmpty()
+                            ? tr("邀请码由房主创建房间后生成，形如 P/XXXX-XXXX-XXXX-XXXX。")
+                            : text);
+    MultiplayerUi::setJoinHintError(m_joinHint, error);
 }
 
 void BedrockMultiplayerPage::buildRoomPage(QWidget *page)
@@ -463,16 +511,19 @@ void BedrockMultiplayerPage::refreshPage()
     const auto state = m_client->state();
     const bool inRoom = m_client->isInRoom();
 
-    // 加入/创建已有结果（进房、失败或回到空闲）时自动关掉进度弹窗
-    if (m_progressDialog
+    // 加入/创建已有结果（进房、失败或回到空闲）时清掉那行进度小字
+    if (m_progressHint
         && (inRoom || state == GravityConeClient::State::Waiting
             || state == GravityConeClient::State::Exception
             || state == GravityConeClient::State::Fatal
             || state == GravityConeClient::State::NotInstalled)) {
-        m_progressDialog->accept();
+        m_progressHint->clear();
+        m_progressHint->setVisible(false);
     }
 
     if (inRoom) {
+        // 已经进房：邀请码输入卡自动收起
+        hideJoinCard();
         if (m_stack->currentIndex() != 1) {
             m_stack->setCurrentIndex(1);
             m_roomEnterTime = QDateTime::currentDateTime();
@@ -602,7 +653,27 @@ void BedrockMultiplayerPage::refreshPlayerList()
         return;
     }
 
+    // 本机的方块盒子身份：登录后自己的头像 / 昵称覆盖进房间时报的游戏名
+    ForumAccountService *forum = ForumAccountService::instance();
+    const bool loggedIn = forum->isLoggedIn();
+    const QString reportedName = m_client->localPlayerName().trimmed();
+    QString selfName;
+    QString selfAvatar;
+    if (loggedIn) {
+        selfName = forum->playerName();
+        if (!selfName.isEmpty())
+            selfAvatar = forum->user().avatar;
+    }
+
     for (const auto &p : players) {
+        // 和进房间时报给核心的名字比对，认出哪张卡片是自己
+        const bool isSelf = !reportedName.isEmpty()
+                            && p.name.trimmed().compare(reportedName, Qt::CaseInsensitive) == 0;
+
+        // 自己在卡片上显示账户名（没登录时就是进房间报的名字）
+        const QString shownName =
+            (isSelf && !selfName.isEmpty()) ? selfName : p.name.trimmed();
+
         QWidget *card = new QWidget();
         card->setProperty("cardRole", "mpContainer");
         card->setFixedHeight(64);
@@ -611,42 +682,42 @@ void BedrockMultiplayerPage::refreshPlayerList()
         cardLayout->setContentsMargins(10, 8, 10, 8);
         cardLayout->setSpacing(10);
 
-        // 头像占位（首字母圆形）
+        // 头像底板：首字母圆；自己的账户有头像时再换成账户头像
         QLabel *avatarLabel = new QLabel();
         avatarLabel->setFixedSize(36, 36);
         avatarLabel->setAlignment(Qt::AlignCenter);
-        QColor avatarColor = p.isRoomHost
-            ? QColor(255, 152, 0)
-            : QColor(76, 175, 80);
-        QPixmap avatar(36, 36);
-        avatar.fill(Qt::transparent);
-        {
-            QPainter painter(&avatar);
-            painter.setRenderHint(QPainter::Antialiasing);
-            painter.setBrush(avatarColor);
-            painter.setPen(Qt::NoPen);
-            painter.drawEllipse(0, 0, 36, 36);
-            painter.setPen(Qt::white);
-            QFont font = painter.font();
-            font.setBold(true);
-            font.setPixelSize(18);
-            painter.setFont(font);
-            const QString letter = p.name.isEmpty() ? QStringLiteral("?")
-                : QString(p.name.at(0)).toUpper();
-            painter.drawText(avatar.rect(), Qt::AlignCenter, letter);
+        const QColor avatarColor = isSelf
+            ? QColor(76, 175, 80)
+            : (p.isRoomHost ? QColor(255, 152, 0) : QColor(33, 150, 243));
+        avatarLabel->setPixmap(letterAvatarPixmap(avatarColor, shownName, 36,
+                                                  avatarLabel->devicePixelRatioF()));
+        if (isSelf && !selfAvatar.trimmed().isEmpty()) {
+            const QString avatarUrl = forum->absoluteUrl(selfAvatar.trimmed());
+            if (!avatarUrl.isEmpty()) {
+                QPointer<QLabel> guard(avatarLabel);
+                ForumImageStore::instance()->requestImage(
+                    avatarUrl, [guard, avatarColor](const QImage &image) {
+                        if (guard.isNull() || image.isNull())
+                            return;
+                        guard->setPixmap(roundAvatarPixmap(image, avatarColor, 36,
+                                                           guard->devicePixelRatioF()));
+                    });
+            }
         }
-        avatarLabel->setPixmap(avatar);
         cardLayout->addWidget(avatarLabel);
 
         auto *infoLayout = new QVBoxLayout();
         infoLayout->setSpacing(4);
         infoLayout->setContentsMargins(0, 0, 0, 0);
 
-        QLabel *nameLabel = new QLabel(p.name);
+        QLabel *nameLabel = new QLabel(shownName);
         nameLabel->setProperty("cardRole", "mpName");
-        nameLabel->setToolTip(p.name);
+        if (shownName != p.name)
+            nameLabel->setToolTip(tr("%1\n游戏内名字：%2").arg(shownName, p.name));
+        else
+            nameLabel->setToolTip(shownName);
         QFontMetrics fm(nameLabel->font());
-        nameLabel->setText(fm.elidedText(p.name, Qt::ElideRight, 180));
+        nameLabel->setText(fm.elidedText(shownName, Qt::ElideRight, 180));
         infoLayout->addWidget(nameLabel);
 
         auto *chipsLayout = new QHBoxLayout();
@@ -655,7 +726,24 @@ void BedrockMultiplayerPage::refreshPlayerList()
 
         QLabel *roleChip = new QLabel(p.isRoomHost ? tr("房主") : tr("玩家"));
         roleChip->setProperty("cardRole", "mpChip");
+        if (isSelf)
+            roleChip->setProperty("accent", "self");
         chipsLayout->addWidget(roleChip);
+
+        if (isSelf) {
+            QLabel *selfChip = new QLabel(tr("本机"));
+            selfChip->setProperty("cardRole", "mpChip");
+            selfChip->setProperty("accent", "self");
+            chipsLayout->addWidget(selfChip);
+        }
+
+        if (isSelf && loggedIn) {
+            QLabel *accountChip = new QLabel(tr("方块盒子"));
+            accountChip->setProperty("cardRole", "mpChip");
+            accountChip->setProperty("accent", "account");
+            accountChip->setToolTip(tr("头像和昵称取自当前登录的方块盒子账户"));
+            chipsLayout->addWidget(accountChip);
+        }
 
         QLabel *onlineChip = new QLabel(tr("在线"));
         onlineChip->setProperty("cardRole", "mpChip");
@@ -677,7 +765,7 @@ void BedrockMultiplayerPage::refreshPlayerList()
             ThemeManager::instance()->currentThemeColor(), 15));
         copyNameBtn->setIconSize(QSize(15, 15));
 
-        const QString playerName = p.name;
+        const QString playerName = shownName;
         connect(copyNameBtn, &QPushButton::clicked, this, [playerName]() {
             QApplication::clipboard()->setText(playerName);
         });
@@ -686,6 +774,14 @@ void BedrockMultiplayerPage::refreshPlayerList()
 
         m_playersLayout->insertWidget(m_playersLayout->count() - 1, card);
     }
+}
+
+QString BedrockMultiplayerPage::localPlayerName() const
+{
+    const QString name = ForumAccountService::instance()->playerName();
+    if (!name.isEmpty())
+        return name;
+    return tr("BlockBox 玩家");
 }
 
 void BedrockMultiplayerPage::refreshStatusBar()
@@ -821,34 +917,4 @@ void BedrockMultiplayerPage::refreshInstallStatus()
         m_updateBtn->setToolTip(tr("下载失败，点击重试"));
         break;
     }
-}
-
-void BedrockMultiplayerPage::showInfoDialog(const QString &title, const QString &text)
-{
-    QDialog *dlg = new QDialog(this);
-    dlg->setWindowTitle(title);
-    dlg->setMinimumWidth(280);
-    auto *layout = new QVBoxLayout(dlg);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(12);
-
-    auto *label = new QLabel(text, dlg);
-    label->setWordWrap(true);
-    label->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    layout->addWidget(label);
-
-    auto *btnLayout = new QHBoxLayout();
-    btnLayout->addStretch();
-    auto *okBtn = new QPushButton(tr("确定"), dlg);
-    okBtn->setCursor(Qt::PointingHandCursor);
-    okBtn->setFixedHeight(30);
-    okBtn->setMinimumWidth(80);
-    btnLayout->addWidget(okBtn);
-    layout->addLayout(btnLayout);
-
-    connect(okBtn, &QPushButton::clicked, dlg, &QDialog::accept);
-    connect(dlg, &QDialog::finished, dlg, &QObject::deleteLater);
-
-    dlg->setModal(false);
-    dlg->show();
 }

@@ -119,13 +119,15 @@ void SettingsPage::initJavaManagerSettings()
     addBtn->setToolTip(tr("通过浏览选择 java.exe 手动添加"));
     connect(addBtn, &QPushButton::clicked, this, &SettingsPage::onAddJavaClicked);
 
-#if defined(Q_OS_HARMONY)
-    // 鸿蒙端：桌面版 Java 安装包无法在鸿蒙上运行，直接把入口换成「一键安装运行环境」，
-    // 走运行依赖通道下载适配的运行时
+#if defined(Q_OS_HARMONY) || defined(Q_OS_ANDROID)
+    // 移动端（鸿蒙/安卓）：桌面版 Java 安装包无法在手机上运行，直接把入口换成
+    // 「一键安装运行环境」，走运行依赖通道下载适配当前设备芯片的运行时。
+    // 安卓若沿用桌面「下载Java」（按 os=android 查各家 Java 厂商 API），查询结果
+    // 恒为空，厂商兜底还会下到 bionic 跑不了的桌面 Linux JDK，故与鸿蒙同策略
     QPushButton *downloadBtn = new QPushButton(tr("一键安装运行环境"), toolbar);
     downloadBtn->setObjectName("downloadJavaBtn");
     downloadBtn->setCursor(Qt::PointingHandCursor);
-    downloadBtn->setToolTip(tr("自动下载并安装适配鸿蒙的 Java 运行环境，安装后自动出现在下方列表"));
+    downloadBtn->setToolTip(tr("自动下载并安装适配本机的 Java 运行环境，安装后自动出现在下方列表"));
     connect(downloadBtn, &QPushButton::clicked, this, [this, downloadBtn]() {
         RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
         if (deps->isChecking() || deps->isInstalling())

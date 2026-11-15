@@ -61,6 +61,8 @@ struct ForumGroupInfo
 {
     int id = 0;
     QString name;
+    /** 群图标：内置表情（如 👥）或站内图片地址（/uploads/…）；空 = 按群名首字占位 */
+    QString avatar;
     int ownerId = 0;           ///< 群主用户 id（自己退出即解散时用来换提示文案）
     bool official = false;     ///< 官方全用户群（默认群聊，不能退出）
     int memberCount = 0;
@@ -233,10 +235,23 @@ public:
     /**
      * 建群：从自己的好友里挑人（memberIds 1–49 个，不是好友的会被服务端跳过），
      * 自己自动进群并成为群主。
+     * @param avatar 群图标：内置表情或已上传的站内图片地址，空 = 用群名首字
      */
-    void createGroup(const QString &name, const QVector<int> &memberIds,
+    void createGroup(const QString &name, const QString &avatar, const QVector<int> &memberIds,
                      std::function<void(const ForumGroupInfo &)> onOk,
                      FailHandler onFail = nullptr);
+
+    /**
+     * 上传一张本地图片当群图标：先缩到 512px 以内再传图床，
+     * 成功后回调站内地址（可直接作为 createGroup 的 avatar）。
+     */
+    void uploadGroupIcon(const QString &filePath, std::function<void(const QString &url)> onOk,
+                         FailHandler onFail = nullptr);
+
+    /** 邀请好友进已有的群：群里任何成员都能拉自己的好友（群总人数上限 50，服务端自动截断） */
+    void inviteGroupMembers(int groupId, const QVector<int> &memberIds,
+                            std::function<void(int added, int memberCount)> onOk,
+                            FailHandler onFail = nullptr);
 
     /** 打开群会话：群信息 + 全量成员 + 一页历史；服务端顺手把我的未读清零 */
     void fetchGroupMessages(int groupId, int beforeId,

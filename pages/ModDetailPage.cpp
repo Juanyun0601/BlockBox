@@ -6,6 +6,7 @@
 #include "utils/ThemeManager.h"
 #include "utils/mod/CurseForgeAPI.h"
 #include "utils/mod/ModrinthAPI.h"
+#include "utils/mod/ModScanner.h"
 #include "components/AutoHeightTextBrowser.h"
 #include "components/ScreenshotViewer.h"
 #include "components/SourceSwitchBar.h"
@@ -240,6 +241,7 @@ void ModDetailPage::clearContent()
     m_descriptionContainer = nullptr;
     m_descriptionBrowser = nullptr;
     m_downloadCards.clear();
+    m_canonicalProjectId.clear();
     m_downloadCurrentPage = 0;
     m_downloadPaginationBar = nullptr;
     m_downloadPrevBtn = nullptr;
@@ -283,6 +285,9 @@ void ModDetailPage::setModInfo(const ModInfo &info)
     buildLeftSidebar();
     buildRightMain();
     loadIcon();
+
+    // 实例里已装情况可能变了，重新识别下载列表三态
+    startInstallStateCheck();
 }
 
 void ModDetailPage::selectVersionFilter(const QString &gameVersion)
@@ -311,6 +316,191 @@ void ModDetailPage::selectVersionFilter(const QString &gameVersion)
     m_versionCombo->setCurrentIndex(idx);
 
     m_versionCombo->blockSignals(wasBlocked);
+}
+
+void ModDetailPage::setInstancePath(const QString &instancePath)
+{
+    if (m_instancePath == instancePath)
+        return;
+    m_instancePath = instancePath;
+    startInstallStateCheck();
+}
+
+QString ModDetailPage::currentProjectId() const
+{
+    return m_canonicalProjectId.isEmpty() ? m_modInfo.id : m_canonicalProjectId;
+}
+
+void ModDetailPage::startInstallStateCheck()
+{
+    // 未筛选实例时无从比对，保持普通下载按钮
+    if (m_instancePath.isEmpty() || m_modInfo.id.isEmpty())
+        return;
+
+    // 同一实例已有扫描结果或扫描已在途：扫描数据与来源无关，可直接复用；
+    // 但匹配数据分来源，换源后只需重发一次匹配
+    if (m_checkInstancePath == m_instancePath
+        && (m_scanRequested || !m_installedMods.mods.isEmpty())) {
+        if (!m_scanRequested && m_matchedSource != m_modInfo.source)
+            issueProjectMatch();
+        applyInstallStates();
+        return;
+    }
+
+    ++m_checkGeneration;
+    m_pendingScanGeneration = m_checkGeneration;
+    m_checkInstancePath = m_instancePath;
+    m_scanRequested = true;
+    m_matchedSource.clear();
+    m_installedMods = LocalModList();
+    m_hashMatches.clear();
+    m_cfFingerprintModIds.clear();
+
+    if (!m_installScanner) {
+        m_installScanner = new ModScanner(this);
+        connect(m_installScanner, &ModScanner::scanCompleted,
+                this, &ModDetailPage::onInstallScanCompleted);
+        connect(m_installScanner, &ModScanner::scanFailed, this, [this](const QString &) {
+            m_scanRequested = false;
+            // 扫描失败不打扰用户，按钮维持普通下载状态
+        });
+    }
+    m_installScanner->scanMods(m_instancePath);
+}
+
+void ModDetailPage::onInstallScanCompleted(const LocalModList &list)
+{
+    m_scanRequested = false;
+    if (m_checkGeneration != m_pendingScanGeneration)
+        return;   // 过期的扫描结果（实例或资源已切换）
+    m_installedMods = list;
+
+    if (list.mods.isEmpty()) {
+        applyInstallStates();
+        return;
+    }
+
+    issueProjectMatch();
+}
+
+void ModDetailPage::issueProjectMatch()
+{
+    if (m_installedMods.mods.isEmpty())
+        return;
+
+    m_matchedSource = m_modInfo.source;
+
+    // 按当前来源批量匹配在线项目（Modrinth 走 SHA-1，CurseForge 走 MurmurHash2 指纹）
+    if (m_modInfo.source == QLatin1String("curseforge")) {
+        m_hashMatches.clear();
+        QList<quint32> fps;
+        for (const ModInfo &mod : m_installedMods.mods)
+            if (mod.curseforgeHash != 0)
+                fps.append(mod.curseforgeHash);
+        if (!fps.isEmpty())
+            m_curseforgeAPI->fingerprintMods(fps);
+        else
+            applyInstallStates();
+    } else {
+        m_cfFingerprintModIds.clear();
+        QStringList sha1s;
+        for (const ModInfo &mod : m_installedMods.mods)
+            if (!mod.sha1Hash.isEmpty())
+                sha1s.append(mod.sha1Hash);
+        if (!sha1s.isEmpty())
+            m_modrinthAPI->matchHashes(sha1s);
+        else
+            applyInstallStates();
+    }
+}
+
+void ModDetailPage::setCardAction(DownloadCardEntry &entry, CardAction action,
+                                  const QStringList &oldFilePaths)
+{
+    entry.action = action;
+    entry.oldFilePaths = oldFilePaths;
+
+    QPushButton *btn = entry.actionBtn;
+    if (!btn)
+        return;
+
+    switch (action) {
+    case ActionInstalled:
+        btn->setEnabled(false);
+        btn->setObjectName("modDetailInstalledBtn");
+        btn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/check.svg", QColor("#ffffff"), 18));
+        btn->setToolTip(tr("已安装"));
+        btn->setCursor(Qt::ArrowCursor);
+        break;
+    case ActionConvert:
+        btn->setEnabled(true);
+        btn->setObjectName("modDetailDownloadBtn");
+        btn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/convert.svg", QColor("#ffffff"), 18));
+        btn->setToolTip(tr("已安装其他版本，点击转换到此版本"));
+        btn->setCursor(Qt::PointingHandCursor);
+        break;
+    case ActionDownload:
+    default:
+        btn->setEnabled(true);
+        btn->setObjectName("modDetailDownloadBtn");
+        btn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/download.svg", QColor("#ffffff"), 18));
+        btn->setToolTip(tr("下载"));
+        btn->setCursor(Qt::PointingHandCursor);
+        break;
+    }
+
+    // objectName 变了要让 QSS 重新生效
+    btn->style()->unpolish(btn);
+    btn->style()->polish(btn);
+    btn->update();
+}
+
+void ModDetailPage::applyInstallStates()
+{
+    if (m_installedMods.mods.isEmpty() || m_checkInstancePath != m_instancePath)
+        return;
+
+    const bool isCurseforge = (m_modInfo.source == QLatin1String("curseforge"));
+    const QString projectId = currentProjectId();
+
+    QSet<QString> localSha1s;
+    QSet<quint32> localFps;
+    QStringList installedFilesOfProject;   // 该项目在实例中已装的文件（转换时替换掉）
+    for (const ModInfo &mod : m_installedMods.mods) {
+        if (!mod.sha1Hash.isEmpty())
+            localSha1s.insert(mod.sha1Hash.toLower());
+        if (mod.curseforgeHash != 0)
+            localFps.insert(mod.curseforgeHash);
+        if (isCurseforge) {
+            if (mod.curseforgeHash != 0 && m_cfFingerprintModIds.value(mod.curseforgeHash) == projectId)
+                installedFilesOfProject << mod.filePath;
+        } else {
+            const ModVersionFile matched = m_hashMatches.value(mod.sha1Hash.toLower());
+            if (!matched.projectId.isEmpty() && matched.projectId == projectId)
+                installedFilesOfProject << mod.filePath;
+        }
+    }
+
+    for (int i = 0; i < m_downloadCards.size(); ++i) {
+        DownloadCardEntry &entry = m_downloadCards[i];
+        const ModVersionFile &vf = entry.vf;
+
+        // 精确匹配纯本地即可判断：哈希/指纹一致说明就是这个文件
+        bool exactInstalled = false;
+        if (isCurseforge) {
+            exactInstalled = (!vf.sha1.isEmpty() && localSha1s.contains(vf.sha1.toLower()))
+                             || (vf.murmur2 != 0 && localFps.contains(vf.murmur2));
+        } else {
+            exactInstalled = !vf.sha1.isEmpty() && localSha1s.contains(vf.sha1.toLower());
+        }
+
+        if (exactInstalled)
+            setCardAction(entry, ActionInstalled);
+        else if (!installedFilesOfProject.isEmpty())
+            setCardAction(entry, ActionConvert, installedFilesOfProject);
+        else
+            setCardAction(entry, ActionDownload);
+    }
 }
 
 void ModDetailPage::setInstanceFilter(const QString &gameVersion, const QString &loaderType)
@@ -558,6 +748,26 @@ void ModDetailPage::initAPI()
             this, [this](const QString &) { m_depResolvingIds.clear(); });
     connect(m_modrinthAPI, &ModrinthAPI::projectsResolveFailed,
             this, [this](const QString &) { m_depResolvingIds.clear(); });
+
+    // 安装状态批量匹配结果回来后刷新下载列表三态
+    connect(m_modrinthAPI, &ModrinthAPI::hashesMatched, this,
+            [this](const QMap<QString, ModVersionFile> &versions) {
+        m_hashMatches = versions;
+        applyInstallStates();
+    });
+    connect(m_modrinthAPI, &ModrinthAPI::hashesMatchFailed, this, [this](const QString &) {
+        m_hashMatches.clear();
+        applyInstallStates();   // 匹配失败仍有本地精确比对可用（对号）
+    });
+    connect(m_curseforgeAPI, &CurseForgeAPI::fingerprintsCompleted, this,
+            [this](const QMap<quint32, QString> &fingerprintToModId) {
+        m_cfFingerprintModIds = fingerprintToModId;
+        applyInstallStates();
+    });
+    connect(m_curseforgeAPI, &CurseForgeAPI::fingerprintsFailed, this, [this](const QString &) {
+        m_cfFingerprintModIds.clear();
+        applyInstallStates();
+    });
 }
 
 void ModDetailPage::applyMCIMSetting()
@@ -765,25 +975,10 @@ void ModDetailPage::buildDownloadListBlock(QVBoxLayout *parentLayout)
         vf.gameVersions = m_modInfo.gameVersions;
         vf.loaders = m_modInfo.loaders;
         vf.downloadUrl = m_modInfo.downloadUrl;
-        QWidget *fileCard = createDownloadCard(vf);
-        m_downloadListLayout->addWidget(fileCard);
-        DownloadCardEntry entry;
-        entry.gameVersions = vf.gameVersions;
-        entry.loaders = vf.loaders;
-        entry.releaseType = vf.releaseType;
-        entry.widget = fileCard;
-        m_downloadCards.append(entry);
+        m_downloadListLayout->addWidget(createDownloadCard(vf));
     } else {
-        for (const ModVersionFile &vf : m_modInfo.versionFiles) {
-            QWidget *fileCard = createDownloadCard(vf);
-            m_downloadListLayout->addWidget(fileCard);
-            DownloadCardEntry entry;
-            entry.gameVersions = vf.gameVersions;
-            entry.loaders = vf.loaders;
-            entry.releaseType = vf.releaseType;
-            entry.widget = fileCard;
-            m_downloadCards.append(entry);
-        }
+        for (const ModVersionFile &vf : m_modInfo.versionFiles)
+            m_downloadListLayout->addWidget(createDownloadCard(vf));
     }
 
     sectionLayout->addWidget(m_downloadContainer);
@@ -878,11 +1073,31 @@ QWidget *ModDetailPage::createDownloadCard(const ModVersionFile &vf)
     dlBtn->setToolTip(tr("下载"));
     dlBtn->setCursor(Qt::PointingHandCursor);
     if (!vf.downloadUrl.isEmpty()) {
-        connect(dlBtn, &QPushButton::clicked, this, [this, vf]() {
+        // 点击时按最新安装状态分发（下载 / 转换 / 已安装不响应）
+        const int entryIndex = m_downloadCards.size();
+        connect(dlBtn, &QPushButton::clicked, this, [this, entryIndex, vf]() {
+            if (entryIndex < 0 || entryIndex >= m_downloadCards.size())
+                return;
+            const DownloadCardEntry &entry = m_downloadCards.at(entryIndex);
+            if (entry.action == ActionInstalled)
+                return;
+            if (entry.action == ActionConvert) {
+                emit convertRequested(m_modInfo, entry.vf, entry.oldFilePaths);
+                return;
+            }
             emit downloadRequested(m_modInfo, vf);
         });
     }
     cardLayout->addWidget(dlBtn);
+
+    DownloadCardEntry entry;
+    entry.gameVersions = vf.gameVersions;
+    entry.loaders = vf.loaders;
+    entry.releaseType = vf.releaseType;
+    entry.widget = card;
+    entry.vf = vf;
+    entry.actionBtn = dlBtn;
+    m_downloadCards.append(entry);
 
     return card;
 }
@@ -1059,6 +1274,24 @@ void ModDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
     m_linksLayout = new QHBoxLayout(m_linksContainer);
     m_linksLayout->setContentsMargins(0, 0, 0, 0);
     m_linksLayout->setSpacing(8);
+
+    sectionLayout->addWidget(m_linksContainer);
+    parentLayout->addWidget(section);
+
+    rebuildLinkButtons();
+}
+
+void ModDetailPage::rebuildLinkButtons()
+{
+    if (!m_linksLayout)
+        return;
+
+    // 详情回包可能带来作者新设置的链接：清掉旧按钮（含两端 stretch）整行重建
+    while (QLayoutItem *item = m_linksLayout->takeAt(0)) {
+        if (item->widget())
+            item->widget()->deleteLater();
+        delete item;
+    }
     m_linksLayout->addStretch();
 
     struct LinkInfo {
@@ -1070,17 +1303,23 @@ void ModDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
     QList<LinkInfo> links = {
         {tr("MC百科"), m_modInfo.mcmodUrl, false},
         {tr("CurseForge"), QString(), false},
-        {tr("Modrinth"), QString(), false},
-        {tr("必应搜索"), QString("https://www.bing.com/search?q=%1").arg(m_modInfo.name), true},
-        {tr("百度搜索"), QString("https://www.baidu.com/s?wd=%1").arg(m_modInfo.name), true},
-        {tr("分享给好友"), QString("shareFriend"), ForumAccountService::instance()->isLoggedIn()},
-        {tr("问问AI"), QString(), true}
+        {tr("Modrinth"), QString(), false}
     };
 
     if (m_modInfo.source == "curseforge" || m_modInfo.pageUrl.contains("curseforge"))
         links[1].url = m_modInfo.pageUrl;
     if (m_modInfo.source == "modrinth" || m_modInfo.pageUrl.contains("modrinth"))
         links[2].url = m_modInfo.pageUrl;
+
+    // 作者在下载源自行设置的链接（官网 / Wiki / 问题反馈 / 源代码），
+    // 排在平台按钮之后、搜索按钮之前
+    for (const ModExternalLink &link : m_modInfo.externalLinks)
+        links.append({link.label, link.url, false});
+
+    links.append({tr("必应搜索"), QString("https://www.bing.com/search?q=%1").arg(m_modInfo.name), true});
+    links.append({tr("百度搜索"), QString("https://www.baidu.com/s?wd=%1").arg(m_modInfo.name), true});
+    links.append({tr("分享给好友"), QString("shareFriend"), ForumAccountService::instance()->isLoggedIn()});
+    links.append({tr("问问AI"), QString(), true});
 
     for (const LinkInfo &link : links) {
         if (!link.alwaysShow && link.url.isEmpty())
@@ -1125,8 +1364,6 @@ void ModDetailPage::buildLinksBlock(QVBoxLayout *parentLayout)
     }
 
     m_linksLayout->addStretch();
-    sectionLayout->addWidget(m_linksContainer);
-    parentLayout->addWidget(section);
 }
 
 void ModDetailPage::buildTagsBlock(QVBoxLayout *parentLayout)
@@ -1622,6 +1859,10 @@ void ModDetailPage::receiveDetail(const ModInfo &detail)
     if (!detail.source.isEmpty())
         m_modInfo.source = detail.source;
 
+    // 详情回包带来规范项目 id（从分享链接 slug 进入时安装状态比对要用它对上 project_id）
+    if (!detail.id.isEmpty())
+        m_canonicalProjectId = detail.id;
+
     // 1. 合并远程详情到 m_modInfo，更新头部和标签信息
     if (!detail.name.isEmpty())
         m_modInfo.name = detail.name;
@@ -1655,6 +1896,12 @@ void ModDetailPage::receiveDetail(const ModInfo &detail)
         m_modInfo.dependencies = detail.dependencies;
     if (!detail.pageUrl.isEmpty())
         m_modInfo.pageUrl = detail.pageUrl;
+
+    // 详情接口带来了作者设置的链接：刷新「相关链接」整行
+    if (!detail.externalLinks.isEmpty()) {
+        m_modInfo.externalLinks = detail.externalLinks;
+        rebuildLinkButtons();
+    }
 
     // 前置模组只在详情里才有：先建卡片（此时可能只有 id），再批量换成名称与图标
     if (!detail.dependencies.isEmpty()) {
@@ -1751,18 +1998,14 @@ void ModDetailPage::receiveDetail(const ModInfo &detail)
         m_downloadCards.clear();
         m_downloadCurrentPage = 0;
 
-        for (const ModVersionFile &vf : detail.versionFiles) {
-            QWidget *fileCard = createDownloadCard(vf);
-            m_downloadListLayout->addWidget(fileCard);
-            DownloadCardEntry entry;
-            entry.gameVersions = vf.gameVersions;
-            entry.loaders = vf.loaders;
-            entry.releaseType = vf.releaseType;
-            entry.widget = fileCard;
-            m_downloadCards.append(entry);
-        }
+        for (const ModVersionFile &vf : detail.versionFiles)
+            m_downloadListLayout->addWidget(createDownloadCard(vf));
 
         applyDownloadFilter();
+
+        // 详情回包后重新识别安装状态
+        applyInstallStates();
+        startInstallStateCheck();
     }
 
     // 7. 更新截图

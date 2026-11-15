@@ -31,6 +31,8 @@ class InstanceAssistantWindow;
 class GameFloatingIcon;
 class InstanceSelectPage;
 class ForumAccountPage;
+class CreationCenterPage;
+class AddAccountPage;
 class LaunchDetailsPage;
 class InstallInstancePage;
 class LoaderDetailPage;
@@ -51,6 +53,8 @@ class BedrockContentPage;
 class BedrockContentDetailPage;
 class BedrockDownloadPage;
 class BedrockVersionDetailPage;
+class BedrockInstanceSelectPage;
+class BedrockInstanceAssistantWindow;
 class InstanceManagePage;
 class AiChatPage;
 class JavaDownloadPage;
@@ -77,6 +81,7 @@ class OnboardingWizard;
 struct ModInfo;
 struct ModVersionFile;
 class GameLauncher;
+class QTimer;
 class QScrollBar;
 class SubNavPanel;
 class ClipboardMonitor;
@@ -172,11 +177,22 @@ public:
     void showOnboardingPage(bool firstRun = false);
 
     /**
-     * @brief 处理外部一键加入链接（blockbox://join?d=...）：解出房间信息后
-     *        走大厅同款加入流程（陶瓦自动连核心，进服前按版本/加载器挑实例）。
+     * @brief 处理外部一键加入链接（blockbox://join?r=房间号）：按房间号回论坛取房间信息，
+     *        再走大厅同款加入流程（陶瓦自动连核心，进服前按版本/加载器挑实例）。
+     *        房间已经查不到（房主结束联机）时提示「联机可能已经结束」。
+     *        老式的自包含长链接（blockbox://join?d=...）仍然照旧解开并加入。
      *        主程序在窗口显示后、或已运行实例收到转发时调用。
      */
     void handleExternalJoinUrl(const QString &url);
+
+    /**
+     * @brief 安卓系统返回键分级处理：应用级事件过滤器拦截 Key_Back 后调用。
+     *        按"关弹窗 → 收覆盖层 → 收子导航 → 收键盘 → 返回上页 → 确认退出"
+     *        的优先级消化一次返回操作。
+     * @return true 表示本次返回已被消化（事件不应再传给系统默认行为）；
+     *         false 表示当前没有可处理的内容（如窗口尚未显示），交还系统处理。
+     */
+    bool handleAndroidBack();
 
 signals:
     /** 新手引导页走完（首次启动流程用：主程序据此弹入站答题提醒 / 检查更新） */
@@ -194,6 +210,13 @@ private slots:
     void toggleMaximized();
     void onInstanceSelectClicked();
     void onInstanceSettingsClicked();
+    /**
+     * 把当前实例同步给实例管理页。
+     * 实例管理页持有一份实例路径，只有它和主窗口一致时各子页（存档/模组/服务器…）
+     * 才会加载正确的实例；从首页快捷入口或侧边栏直接进入时以前漏了这一步，
+     * 页面会显示上一个实例（或空）的内容。
+     */
+    void syncInstanceManagePageContext();
     void onInstanceSelected(const QString &instancePath);
     void onInstanceInstalled(const QString &instancePath);
     void onAccountManageClicked();
@@ -230,9 +253,14 @@ private slots:
     bool ensureLaunchPrerequisites();
     void onQuickLaunchSaveClicked(const QString &saveName);
     void onQuickLaunchServerClicked(const QString &address, quint16 port);
-    /** 联机大厅「一键加入」：按房间要求挑最合适的实例，启动游戏并连进房间 */
-    void onLobbyJoinRequested(const QString &address, quint16 port, const QString &gameVersion,
-                              const QString &loader, const QStringList &mods);
+    /** 联机大厅 / 好友房间「一键加入」：按房间要求挑最合适的实例，缺东西时先问用户再补装 */
+    void onLobbyJoinRequested(const ForumLobbyRoom &room, const QString &address, quint16 port);
+    /** 开始「正在游玩」上报：立刻报一次，之后每 40 秒续一次（游戏已在运行时调用） */
+    void startLobbyPlayReport(int roomId);
+    /** 结束上报：游戏退出 / 关软件 / 换房间时调用，服务端马上把这个人从房间里摘掉 */
+    void stopLobbyPlayReport();
+    /** 本机没有合适实例时，把用户带到「安装新实例」的版本详情页 */
+    void openLobbyInstallFlow(const QString &gameVersion, const QString &loader);
     /** 首页好友卡片「一起玩」：直接加入好友正在开放的联机房间 */
     void onFriendRoomJoinRequested(const ForumLobbyRoom &room);
     /** 首页好友房间的陶瓦联机状态变化：核心就绪后自动连进房间 */
@@ -289,8 +317,14 @@ private:
 
     InstanceSelectPage *m_instanceSelectPage;
     InstanceAssistantWindow *m_instanceAssistantWindow = nullptr;
+    /** 基岩版实例助手窗口（首页/AI/快捷指令/联机/资源管理/设置 六标签） */
+    BedrockInstanceAssistantWindow *m_bedrockInstanceAssistantWindow = nullptr;
     /** 账户管理页界面（与方块盒子论坛账号打通，桌面端唯一的账户页） */
     ForumAccountPage *m_forumAccountPage = nullptr;
+    /** 创作中心（账户管理页内层第二页：自己发布作品的管理与数据） */
+    CreationCenterPage *m_creationCenterPage = nullptr;
+    /** 添加角色页（账户管理页内层页：离线 / 微软正版 / 第三方添加游戏账户） */
+    AddAccountPage *m_addAccountPage = nullptr;
     /** 账户管理页容器（入场动画作用在内层页面，故保留一层 QStackedWidget） */
     QStackedWidget *m_accountUiStack = nullptr;    LaunchDetailsPage *m_launchDetailsPage;
     InstallInstancePage *m_installInstancePage;
@@ -315,6 +349,10 @@ private:
     /** 基岩版版本下载页（多源 mcappx/mcapks/bbk 版本列表）与版本详情下载页 */
     BedrockDownloadPage *m_bedrockDownloadPage = nullptr;
     BedrockVersionDetailPage *m_bedrockVersionDetailPage = nullptr;
+    /** 基岩版实例管理页（多实例选择/新建/导入/启动） */
+    BedrockInstanceSelectPage *m_bedrockInstanceSelectPage = nullptr;
+    /** 基岩版社区资源下载目标实例 ID（空 = 跟随当前激活实例） */
+    QString m_bedrockDownloadTargetInstanceId;
     AiChatPage *m_aiChatPage = nullptr;
     JavaDownloadPage *m_javaDownloadPage = nullptr;
     HomePage *m_homePage = nullptr;
@@ -388,9 +426,15 @@ private:
     bool m_friendRoomJoinPending = false;
     bool m_friendRoomJoinWaitingCore = false;
     QString m_friendRoomJoinCode;
-    QString m_friendRoomJoinVersion;
-    QString m_friendRoomJoinLoader;
-    QStringList m_friendRoomJoinMods;
+    ForumLobbyRoom m_friendRoomJoinRoom;   ///< 待加入的好友房间（版本 / 加载器 / 模组 / 资源包）
+    /**
+     * 联机大厅「正在游玩」上报：
+     * 一键加入时先记下房间号，等游戏真正跑起来（onGameStarted）再每 40 秒上报一次，
+     * 游戏退出 / 关软件时把记录删掉，大厅详情页里就能看到谁在这个房间里。
+     */
+    QTimer *m_lobbyPresenceTimer = nullptr;
+    int m_lobbyPlayRoomId = 0;      ///< 正在上报的房间号（0 = 没在玩）
+    int m_pendingLobbyRoomId = 0;   ///< 刚点了一键加入、等游戏起来再上报的房间号
     bool m_launchRetryAttempted = false; // 标记本次启动是否已执行过"补全文件后重试"，避免无限重试
     bool m_launchRetryPending = false;  // 标记重试已调度但尚未执行（防止重复 gameCrashed 信号清除任务）
 
@@ -442,16 +486,21 @@ private:
 
     /** 从拖拽 mime 中取出方块盒子更新安装包的本地路径列表 */
     QStringList extractUpdatePackages(const QMimeData *mime) const;
+    /** 从拖拽 mime 中取出基岩版资源包/地图（.mcpack/.mcaddon/.mcworld/.mctemplate）路径列表 */
+    QStringList extractBedrockPacks(const QMimeData *mime) const;
+    /** 把拖入的基岩版资源安装进当前激活实例的 com.mojang */
+    void installDroppedBedrockPacks(const QStringList &files);
     /** 更新包拖入覆盖层（悬停/松开时显示提示） */
     FileDropOverlay *m_dropOverlay = nullptr;
     QStringList m_pendingDropPackages;
+    QStringList m_pendingDropBedrockPacks;
 
     void initInstanceSelectPage();
     void initAccountManagePage();
     /** 论坛账户管理页：账户管理页的唯一界面（按需创建，创建后常驻） */
     void buildForumAccountManagePage();
-    /** 「添加角色」弹窗：离线 / 微软正版 / 第三方添加游戏账户 */
-    void openAddAccountDialog();
+    /** 「添加角色」页：离线 / 微软正版 / 第三方添加游戏账户（账户管理页内层页） */
+    void openAddAccountPage();
     void initLaunchDetailsPage();
     void initInstallInstancePage();
     void initLoaderDetailPage();
@@ -500,8 +549,12 @@ private:
     void showPublishBoardPage();
     /** 插件发布页（复用论坛发帖页，预选「插件与开发」板块） */
     void showPublishPluginCompose();
+    /** 投影发布页（复用论坛发帖页，预选「投影」资源分类） */
+    void showPublishSchematicCompose();
     /** 帖子发帖详情页（复用论坛发帖页，预选所选板块） */
     void showPublishPostCompose(const QString &boardSlug);
+    /** 教程发布页（复用论坛发帖页，切到「教程」模式，固定发到教程分享板块） */
+    void showPublishTutorialCompose();
     // ── 论坛深度集成：内层页的打开与返回 ──
     void showForumThread(int threadId);
     void showForumBoard(const QString &slug, const QString &boardName);
@@ -559,6 +612,8 @@ private:
 
     void showInstanceSelectPage();
     void showAccountManagePage();
+    /** 切到账户管理页内层的创作中心（自己发布作品的管理与数据） */
+    void showCreationCenterPage();
     /** 打开实例助手窗口（顶栏与首页经典模式面板共用），注入当前实例上下文 */
     void openInstanceAssistant();
     void showSkinEditorPage();
@@ -607,7 +662,13 @@ private:
     void loadTopBarForumAvatar(const QString &avatarPath);
     QString findFirstVersionInGameRoot(const QString &gameRootPath) const;
     void onModDownloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile);
+    /** 把实例里已装的旧版本模组替换成所选版本（下载新文件后删除 oldFilePaths 里的旧文件） */
+    void onModConvertRequested(const ModInfo &modInfo, const ModVersionFile &versionFile,
+                               const QStringList &oldFilePaths);
     void onContentDownloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile, ContentType contentType);
+    /** 内容详情页（资源包/光影包）的版本转换：下载新文件后删除 oldFilePaths 里的旧文件 */
+    void onContentConvertRequested(const ModInfo &modInfo, const ModVersionFile &versionFile,
+                                   ContentType contentType, const QStringList &oldFilePaths);
     /**
      * @brief 处理"一键安装/下载"请求（详情页按钮、列表卡片下载图标共用）
      * @param modInfo       资源信息（可能尚无 versionFiles，需拉取详情）
@@ -648,6 +709,8 @@ private:
     void showBedrockDownloadPage();
     /** 打开基岩版版本详情下载页 */
     void showBedrockVersionDetailPage(const struct BedrockVersionEntry &entry);
+    /** 基岩版实例管理页（设置→基岩版游戏→管理实例 进入；选择/新建/导入/启动实例） */
+    Q_INVOKABLE void showBedrockInstanceSelectPage();
 
     static constexpr int kMaxCardDownloadDepth = 3; ///< 一键下载递归前置的最大深度，防止循环依赖
     QSet<QString> m_cardDownloadVisited;            ///< 一次"一键下载"流程中已处理的资源 ID（source:id）

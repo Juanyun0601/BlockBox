@@ -1,6 +1,6 @@
 /**
  * @file   PublishResourcePage.cpp
- * @brief  发布资源页实现：七种资源类型卡片
+ * @brief  发布资源页实现：八种资源类型卡片
  * @author BlockBox Team
  * @date   2026-11-07
  */
@@ -45,7 +45,7 @@ void PublishResourcePage::buildUi()
     layout->addWidget(pageTitle);
 
     auto *subtitle = new QLabel(
-        tr("先选资源类型：模组、资源包等会带你前往对应平台发布；插件指方块盒子插件，可直接在这里上传分享"),
+        tr("先选资源类型：模组、资源包等会带你前往对应平台发布；插件与投影是站内发布，可直接在这里上传分享"),
         content);
     subtitle->setObjectName(QStringLiteral("resourcesPageSubtitle"));
     subtitle->setWordWrap(true);
@@ -66,6 +66,7 @@ void PublishResourcePage::buildUi()
         PublishKit::ResourceKind::DataPack,
         PublishKit::ResourceKind::World,
         PublishKit::ResourceKind::Plugin,
+        PublishKit::ResourceKind::Schematic,
     };
 
     for (PublishKit::ResourceKind kind : kinds)
@@ -82,7 +83,7 @@ void PublishResourcePage::buildUi()
     layout->addStretch(1);
 
     auto *hint = new QLabel(
-        tr("插件会发布到社区的「插件分享」板块，要上传 .BlockBox 插件包；只想交流讨论的话，发帖时选「插件与开发」板块即可。"),
+        tr("插件会发布到社区的「插件分享」板块，要上传 .BlockBox 插件包；投影会发布到「投影分享」板块，要上传投影文件；只想交流讨论的话，发帖时选对应板块即可。"),
         content);
     hint->setObjectName(QStringLiteral("forumMuted"));
     hint->setWordWrap(true);

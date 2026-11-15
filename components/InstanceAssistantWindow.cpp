@@ -20,6 +20,9 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMenu>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
 #include <QParallelAnimationGroup>
 #include <QScreen>
@@ -31,6 +34,8 @@
 #include <QtConcurrent>
 #include <QFutureWatcher>
 
+#include "platform.h"
+#include "utils/ResourceManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
@@ -185,8 +190,25 @@ BackgroundDetectionResult runBackgroundDetection(const QString &instancePath, co
 
 } // namespace
 
+namespace {
+
+// 悬浮窗内容区尺寸范围（不含四周阴影边距）
+constexpr int kMinContentWidth = 400;
+constexpr int kMaxContentWidth = 620;
+constexpr int kMinContentHeight = 480;
+constexpr int kDefaultContentWidth = 450;
+constexpr int kDefaultContentHeight = 760;
+
+// 设置键：记住悬浮窗位置、大小与置顶状态
+const QString kGeometryKey = QStringLiteral("instanceAssistant/windowGeometry");
+const QString kPinnedKey = QStringLiteral("instanceAssistant/pinned");
+
+} // namespace
+
 InstanceAssistantWindow::InstanceAssistantWindow(QWidget *parent)
     : QWidget(parent)
+    , m_outerLayout(nullptr)
+    , m_frame(nullptr)
     , m_mainLayout(nullptr)
     , m_navBar(nullptr)
     , m_scrollArea(nullptr)
@@ -198,6 +220,17 @@ InstanceAssistantWindow::InstanceAssistantWindow(QWidget *parent)
     , m_currentIndex(0)
     , m_highlightPos(0)
     , m_prevIndex(0)
+    , m_titleBar(nullptr)
+    , m_titleIcon(nullptr)
+    , m_titleLabel(nullptr)
+    , m_statsHost(nullptr)
+    , m_statFps(nullptr)
+    , m_statCpu(nullptr)
+    , m_statGpu(nullptr)
+    , m_statMem(nullptr)
+    , m_pinBtn(nullptr)
+    , m_collapseBtn(nullptr)
+    , m_closeBtn(nullptr)
     , m_inputDebounceTimer(nullptr)
     , m_contextLabel(nullptr)
     , m_serverToggleBtn(nullptr)
@@ -224,9 +257,29 @@ InstanceAssistantWindow::InstanceAssistantWindow(QWidget *parent)
     , m_javaDownloadPage(nullptr)
 {
     setWindowTitle(tr("实例助手"));
-    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint);
-    setFixedWidth(450);
-    setMinimumHeight(500);
+
+    // 桌面端：改成悬浮窗形态（无边框、圆角、可拖动、默认置顶、不占任务栏）；
+    // 移动端保持原有独立窗口 / 游戏内覆盖侧栏，不套桌面悬浮窗外观。
+    m_floating = !Platform::isMobile();
+
+    // 窗口骨架：外层布局留出阴影边距，卡片容器里放标题栏 + 导航 + 页面
+    m_outerLayout = new QVBoxLayout(this);
+    m_outerLayout->setContentsMargins(0, 0, 0, 0);
+    m_outerLayout->setSpacing(0);
+    m_frame = new QWidget(this);
+    m_frame->setObjectName(QStringLiteral("assistantFrame"));
+    m_outerLayout->addWidget(m_frame);
+    m_mainLayout = new QVBoxLayout(m_frame);
+    m_mainLayout->setContentsMargins(0, 0, 0, 0);
+    m_mainLayout->setSpacing(0);
+
+    if (m_floating) {
+        applyFloatingWindow();
+    } else {
+        setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint);
+        setFixedWidth(450);
+        setMinimumHeight(500);
+    }
 
     // 初始化快捷指令核心模块
     m_commandDb = new CommandDatabase();
@@ -246,14 +299,25 @@ InstanceAssistantWindow::InstanceAssistantWindow(QWidget *parent)
     initUI();
     applyThemeStyles();
 
+    connect(ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &InstanceAssistantWindow::applyThemeStyles);
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
             this, &InstanceAssistantWindow::applyThemeStyles);
     connect(ThemeManager::instance(), &ThemeManager::textColorChanged,
             this, &InstanceAssistantWindow::applyThemeStyles);
+    connect(ThemeManager::instance(), &ThemeManager::borderColorChanged,
+            this, &InstanceAssistantWindow::applyThemeStyles);
+
+    if (m_floating) {
+        restoreWindowGeometry();
+    }
 }
 
 InstanceAssistantWindow::~InstanceAssistantWindow()
 {
+    if (m_floating) {
+        saveWindowGeometry();
+    }
     delete m_translator;
     delete m_completer;
     delete m_blockRegistry;
@@ -262,9 +326,10 @@ InstanceAssistantWindow::~InstanceAssistantWindow()
 
 void InstanceAssistantWindow::initUI()
 {
-    m_mainLayout = new QVBoxLayout(this);
-    m_mainLayout->setContentsMargins(0, 0, 0, 0);
-    m_mainLayout->setSpacing(0);
+    if (m_floating) {
+        // 悬浮窗标题栏放在导航栏上方，既是拖动区域也提供置顶 / 收起 / 关闭
+        buildTitleBar();
+    }
 
     // Navigation bar (outer container)
     m_navBar = new QWidget();
@@ -375,14 +440,19 @@ void InstanceAssistantWindow::applyThemeStyles()
     QString textColor = ThemeManager::instance()->currentTextColor();
     QString borderColor = ThemeManager::instance()->currentBorderColor();
 
+    // 悬浮窗的圆角卡片由 paintEvent 统一绘制，卡片内部各层保持透明，
+    // 让四角真正露出圆角；移动端独立窗口 / 侧栏则仍用主题底色铺满。
+    const QString surface = m_floating ? QStringLiteral("transparent")
+                                       : QStringLiteral("@BG_BASE@");
+
     // 页面底色跟着主题走：深色主题下不要再露出系统浅色
     if (m_stackedWidget) {
         m_stackedWidget->setStyleSheet(StyleKit::resolve(QStringLiteral(
-            "#assistantStackedWidget { background: @BG_BASE@; }")));
+            "#assistantStackedWidget { background: %1; }").arg(surface)));
     }
     if (m_javaStack) {
         m_javaStack->setStyleSheet(StyleKit::resolve(QStringLiteral(
-            "#assistantJavaStack { background: @BG_BASE@; }")));
+            "#assistantJavaStack { background: %1; }").arg(surface)));
     }
 
     QColor tc(themeColor);
@@ -392,20 +462,49 @@ void InstanceAssistantWindow::applyThemeStyles()
     m_navBar->setStyleSheet(
         StyleKit::resolve(QStringLiteral(
             "#assistantNavBar {"
-            "  background: @BG_BASE@;"
-            "  border-bottom: 1px solid %1;"
+            "  background: %1;"
+            "  border-bottom: 1px solid %2;"
             "}"
-        )).arg(borderColor)
+        ).arg(surface, borderColor))
     );
 
-    m_selectionHighlight->setStyleSheet(
-        QString(
-            "#assistantHighlight {"
-            "  background: %1;"
-            "  border-radius: 2px;"
+    // 标题栏：透明底，交给卡片本身统一绘制底色
+    if (m_titleBar) {
+        m_titleBar->setStyleSheet(StyleKit::resolve(QStringLiteral(
+            "#assistantTitleBar { background: transparent; border: none; }")));
+        m_titleLabel->setStyleSheet(
+            QString("color: %1; font-size: 13px; font-weight: 600; background: transparent;")
+                .arg(textColor));
+        m_titleIcon->setStyleSheet(QStringLiteral("background: transparent;"));
+
+        const QString headerBtnStyle = QString(
+            "QPushButton {"
+            "  border: none;"
+            "  border-radius: 6px;"
+            "  background: transparent;"
+            "  padding: 0;"
             "}"
-        ).arg(themeColor)
-    );
+            "QPushButton:hover { background: %1; }"
+            "QPushButton:checked { background: rgba(%2, %3, %4, 0.18); }")
+            .arg(hoverBg).arg(tc.red()).arg(tc.green()).arg(tc.blue());
+
+        for (QPushButton *btn : {m_pinBtn, m_collapseBtn, m_closeBtn}) {
+            if (btn) {
+                btn->setStyleSheet(headerBtnStyle);
+            }
+        }
+
+        // 收起态实时数据：小号字、透明底，数值颜色跟随各自监控卡片
+        for (QLabel *label : {m_statFps, m_statCpu, m_statGpu, m_statMem}) {
+            if (label) {
+                label->setStyleSheet(QStringLiteral("background: transparent; font-size: 11px;"));
+            }
+        }
+        refreshQuickStatsTexts();
+        updateHeaderButtons();
+    }
+
+    updateHighlightStyle(m_selectionHighlight ? m_selectionHighlight->width() : 0);
 
     QString btnStyle = QString(
         "QPushButton {"
@@ -429,6 +528,8 @@ void InstanceAssistantWindow::applyThemeStyles()
     for (auto *btn : m_navButtons) {
         btn->setStyleSheet(btnStyle);
     }
+
+    update();
 }
 
 QPushButton* InstanceAssistantWindow::createNavButton(const QString &text, int index)
@@ -462,9 +563,13 @@ void InstanceAssistantWindow::switchToTab(int index)
     if (m_highlightAnim->state() == QPropertyAnimation::Running) {
         m_highlightAnim->stop();
     }
+    // 高亮条宽度跟随当前标签页宽度，位置从上一个标签平滑滑过去
+    QPushButton *targetBtn = m_navButtons[index];
+    int barWidth = qMax(20, targetBtn->width() / 2);
+    updateHighlightStyle(barWidth);
+    m_selectionHighlight->setFixedWidth(barWidth);
     m_highlightAnim->setStartValue(m_highlightPos);
-    m_highlightAnim->setEndValue(m_navButtons[index]->x() + m_navButtons[index]->width() / 2
-                                 - m_selectionHighlight->width() / 2);
+    m_highlightAnim->setEndValue(targetBtn->x() + targetBtn->width() / 2 - barWidth / 2);
     m_highlightAnim->start();
 
     animatePageFade(m_prevIndex, index);
@@ -479,10 +584,32 @@ void InstanceAssistantWindow::updateHighlightGeometry()
     int barWidth = btn->width() * 0.5;
     if (barWidth < 20) barWidth = 20;
 
+    updateHighlightStyle(barWidth);
     m_selectionHighlight->setFixedWidth(barWidth);
     int x = btn->x() + btn->width() / 2 - barWidth / 2;
     m_selectionHighlight->move(x, m_navContainer->height() - 3);
     m_highlightPos = x;
+}
+
+void InstanceAssistantWindow::updateHighlightStyle(int width)
+{
+    if (!m_selectionHighlight) {
+        return;
+    }
+
+    // 宽度也在控件自身样式里写死：全局样式表对 #assistantHighlight 的历史宽度规则
+    // 若还留在资源里，会盖掉 setFixedWidth，导致高亮条缩成一个小方块。
+    const int barWidth = qMax(3, width);
+    m_selectionHighlight->setStyleSheet(
+        QString(
+            "#assistantHighlight {"
+            "  background: %1;"
+            "  border-radius: 2px;"
+            "  min-width: %2px;"
+            "  max-width: %2px;"
+            "}"
+        ).arg(ThemeManager::instance()->currentThemeColor()).arg(barWidth)
+    );
 }
 
 void InstanceAssistantWindow::setHighlightPos(int pos)
@@ -567,12 +694,33 @@ void InstanceAssistantWindow::setOverlayMode(bool enabled)
         setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
         setWindowOpacity(0.80);
+
+        // 侧栏形态不套悬浮窗外观：不画圆角 / 阴影，也不显示标题栏
+        m_floating = false;
+        setAttribute(Qt::WA_TranslucentBackground, false);
+        if (m_titleBar) {
+            m_titleBar->hide();
+        }
+        if (m_outerLayout) {
+            m_outerLayout->setContentsMargins(0, 0, 0, 0);
+        }
+        applyThemeStyles();
         applyOverlayGeometry();
     } else {
-        setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint);
+        m_floating = !Platform::isMobile();
         setWindowOpacity(1.0);
-        setFixedWidth(450);
-        setMinimumHeight(500);
+        if (m_floating) {
+            applyFloatingWindow();
+            if (m_titleBar) {
+                m_titleBar->show();
+            }
+            restoreWindowGeometry();
+        } else {
+            setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint);
+            setFixedWidth(450);
+            setMinimumHeight(500);
+        }
+        applyThemeStyles();
     }
 }
 
@@ -599,11 +747,621 @@ void InstanceAssistantWindow::applyOverlayGeometry()
                 available.y(), width, available.height());
 }
 
+// ============================
+// 桌面悬浮窗（标题栏 / 圆角阴影 / 拖动缩放 / 位置记忆）
+// ============================
+
+void InstanceAssistantWindow::buildTitleBar()
+{
+    m_titleBar = new QWidget(m_frame);
+    m_titleBar->setObjectName(QStringLiteral("assistantTitleBar"));
+    m_titleBar->setFixedHeight(40);
+    // 标题栏同时是拖动区：空白处按下即可移动整个悬浮窗
+    m_titleBar->installEventFilter(this);
+
+    auto *layout = new QHBoxLayout(m_titleBar);
+    layout->setContentsMargins(12, 4, 6, 4);
+    layout->setSpacing(4);
+
+    m_titleIcon = new QLabel(m_titleBar);
+    m_titleIcon->setFixedSize(18, 18);
+    m_titleIcon->setAlignment(Qt::AlignCenter);
+    // 图标与文字都不接收鼠标事件，按下时交给标题栏处理拖动
+    m_titleIcon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+
+    m_titleLabel = new QLabel(tr("实例助手"), m_titleBar);
+    m_titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+
+    // 收起态实时数据：帧率 / CPU / GPU / 内存，默认隐藏，收起后显示在标题文字右侧
+    m_statsHost = new QWidget(m_titleBar);
+    m_statsHost->setObjectName(QStringLiteral("assistantStatsHost"));
+    auto *statsLayout = new QHBoxLayout(m_statsHost);
+    // 左侧留一点空，和标题文字分开，不贴着「实例助手」
+    statsLayout->setContentsMargins(6, 0, 0, 0);
+    statsLayout->setSpacing(10);
+
+    auto makeStatLabel = [this, statsLayout]() -> QLabel * {
+        auto *label = new QLabel(m_statsHost);
+        label->setTextFormat(Qt::RichText);
+        label->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        statsLayout->addWidget(label);
+        return label;
+    };
+    m_statFps = makeStatLabel();
+    m_statCpu = makeStatLabel();
+    m_statGpu = makeStatLabel();
+    m_statMem = makeStatLabel();
+    m_statsHost->hide();
+
+    m_pinBtn = new QPushButton(m_titleBar);
+    m_pinBtn->setObjectName(QStringLiteral("assistantPinBtn"));
+    m_pinBtn->setFixedSize(24, 24);
+    m_pinBtn->setIconSize(QSize(14, 14));
+    m_pinBtn->setCheckable(true);
+    m_pinBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_pinBtn, &QPushButton::clicked, this, &InstanceAssistantWindow::togglePinned);
+
+    m_collapseBtn = new QPushButton(m_titleBar);
+    m_collapseBtn->setObjectName(QStringLiteral("assistantCollapseBtn"));
+    m_collapseBtn->setFixedSize(24, 24);
+    m_collapseBtn->setIconSize(QSize(14, 14));
+    m_collapseBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_collapseBtn, &QPushButton::clicked, this, [this]() {
+        setCollapsed(!m_collapsed);
+    });
+
+    m_closeBtn = new QPushButton(m_titleBar);
+    m_closeBtn->setObjectName(QStringLiteral("assistantCloseBtn"));
+    m_closeBtn->setFixedSize(24, 24);
+    m_closeBtn->setIconSize(QSize(14, 14));
+    m_closeBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_closeBtn, &QPushButton::clicked, this, [this]() {
+        hide();
+    });
+
+    layout->addWidget(m_titleIcon);
+    layout->addSpacing(2);
+    layout->addWidget(m_titleLabel);
+    layout->addWidget(m_statsHost);
+    layout->addStretch(1);
+    layout->addWidget(m_pinBtn);
+    layout->addWidget(m_collapseBtn);
+    layout->addWidget(m_closeBtn);
+
+    m_mainLayout->addWidget(m_titleBar);
+    refreshQuickStatsTexts();
+    updateHeaderButtons();
+}
+
+void InstanceAssistantWindow::applyFloatingWindow()
+{
+    // 与启动器主窗口彻底分开：撤掉父子/所有者关系，实例助手就是任务栏里的
+    // 独立窗口。主窗口最小化、隐藏、关闭都不会把它一起带走，两个窗口也能
+    // 分别激活、切换层级。
+    if (QWidget *host = parentWidget()) {
+        m_launcherRect = QRect(host->mapToGlobal(QPoint(0, 0)), host->size());
+        setParent(nullptr);
+    }
+    // 主窗口关闭时照常退出程序，不要让独立窗口把进程留住
+    setAttribute(Qt::WA_QuitOnClose, false);
+
+    // 默认不再置顶：作为普通窗口先露在打开它的那一刻，需要悬在游戏上时再点图钉
+    m_pinned = SettingsManager::instance()->getProperty(kPinnedKey, false).toBool();
+
+    Qt::WindowFlags flags = Qt::Window | Qt::FramelessWindowHint;
+    if (m_pinned) {
+        flags |= Qt::WindowStaysOnTopHint;
+    }
+    setWindowFlags(flags);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    // 边缘悬浮光标提示：需要在没有按键时也能收到 mouseMoveEvent
+    setMouseTracking(true);
+
+    setMinimumSize(kMinContentWidth + 2 * m_shadowMargin,
+                   kMinContentHeight + 2 * m_shadowMargin);
+    setMaximumSize(kMaxContentWidth + 2 * m_shadowMargin, QWIDGETSIZE_MAX);
+
+    if (m_outerLayout) {
+        m_outerLayout->setContentsMargins(m_shadowMargin, m_shadowMargin,
+                                          m_shadowMargin, m_shadowMargin);
+    }
+    if (m_frame) {
+        // 卡片底色与圆角由窗口 paintEvent 绘制，容器和页面都保持透明
+        m_frame->setStyleSheet(QStringLiteral(
+            "#assistantFrame { background: transparent; border: none; }"));
+    }
+}
+
+void InstanceAssistantWindow::updateHeaderButtons()
+{
+    if (!m_pinBtn) {
+        return;
+    }
+
+    auto *rm = ResourceManager::instance();
+
+    if (m_titleIcon) {
+        m_titleIcon->setPixmap(rm->loadThemedIcon(
+            QStringLiteral(":/Images/Icons/instance_assistant.svg")).pixmap(16, 16));
+    }
+
+    m_pinBtn->setChecked(m_pinned);
+    m_pinBtn->setIcon(rm->loadThemedIcon(m_pinned
+        ? QStringLiteral(":/Images/Icons/pin_filled.svg")
+        : QStringLiteral(":/Images/Icons/pin.svg")));
+    m_pinBtn->setToolTip(m_pinned
+        ? tr("已置顶，点击取消置顶")
+        : tr("置顶显示，悬浮在其他窗口之上"));
+
+    if (m_collapseBtn) {
+        m_collapseBtn->setIcon(rm->loadThemedIcon(m_collapsed
+            ? QStringLiteral(":/Images/Icons/expand.svg")
+            : QStringLiteral(":/Images/Icons/chevron_down.svg")));
+        m_collapseBtn->setToolTip(m_collapsed ? tr("展开实例助手") : tr("收起成悬浮小条"));
+    }
+    if (m_closeBtn) {
+        m_closeBtn->setIcon(rm->loadThemedIcon(
+            QStringLiteral(":/Images/Icons/close.svg")));
+        m_closeBtn->setToolTip(tr("关闭悬浮窗（可从顶栏重新打开）"));
+    }
+}
+
+void InstanceAssistantWindow::togglePinned()
+{
+    if (!m_floating) {
+        return;
+    }
+
+    m_pinned = !m_pinned;
+    SettingsManager::instance()->setProperty(kPinnedKey, m_pinned);
+
+    // 切换置顶标志会重建原生窗口，显示状态下需要重新 show 一次
+    const bool wasVisible = isVisible();
+    setWindowFlag(Qt::WindowStaysOnTopHint, m_pinned);
+    if (wasVisible) {
+        show();
+        raise();
+    }
+    updateHeaderButtons();
+}
+
+void InstanceAssistantWindow::setCollapsed(bool collapsed)
+{
+    if (!m_floating || m_collapsed == collapsed) {
+        return;
+    }
+    m_collapsed = collapsed;
+
+    if (m_collapsed) {
+        m_expandedSize = size();
+        m_navBar->hide();
+        m_stackedWidget->hide();
+        // 收起后窗口只剩一条标题栏，临时把最小高度放宽
+        setMinimumHeight(2 * m_shadowMargin + m_titleBar->height());
+        resize(width(), minimumHeight());
+        // 标题栏右侧直接露出帧率 / CPU / GPU / 内存
+        refreshQuickStatsTexts();
+        if (m_statsHost) {
+            m_statsHost->show();
+        }
+        fitQuickStatsToWidth();
+    } else {
+        m_navBar->show();
+        m_stackedWidget->show();
+        if (m_statsHost) {
+            m_statsHost->hide();
+        }
+        setMinimumHeight(kMinContentHeight + 2 * m_shadowMargin);
+        const QSize expanded = m_expandedSize.isValid()
+            ? m_expandedSize
+            : QSize(kDefaultContentWidth + 2 * m_shadowMargin,
+                    kDefaultContentHeight + 2 * m_shadowMargin);
+        resize(expanded.expandedTo(minimumSize()).boundedTo(maximumSize()));
+    }
+
+    updateHeaderButtons();
+    update();
+}
+
+void InstanceAssistantWindow::updateLiveStats(int fps, int cpuPercent, int memoryPercent, int gpuPercent,
+                                              bool cpuAvailable, bool memoryAvailable, bool gpuAvailable)
+{
+    m_liveFps = qMax(0, fps);
+    m_liveCpuPercent = cpuPercent;
+    m_liveMemoryPercent = memoryPercent;
+    m_liveGpuPercent = gpuPercent;
+    m_liveCpuAvailable = cpuAvailable;
+    m_liveMemoryAvailable = memoryAvailable;
+    m_liveGpuAvailable = gpuAvailable;
+
+    refreshQuickStatsTexts();
+    if (m_collapsed) {
+        fitQuickStatsToWidth();
+    }
+}
+
+void InstanceAssistantWindow::refreshQuickStatsTexts()
+{
+    if (!m_statFps) {
+        return;
+    }
+
+    const QString tertiary = StyleKit::resolve(QStringLiteral("@TEXT_TERTIARY@"));
+    const QString themeColor = ThemeManager::instance()->currentThemeColor();
+    const QString memoryColor = ThemeManager::instance()->currentInfoAccentColor();
+
+    auto format = [](const QString &name, const QString &value,
+                     const QString &nameColor, const QString &valueColor) {
+        return QStringLiteral(
+            "<span style=\"color:%1\">%2</span> <span style=\"color:%3; font-weight:600\">%4</span>")
+            .arg(nameColor, name, valueColor, value);
+    };
+    auto percent = [](bool available, int value) {
+        return available ? QString::number(value) + QLatin1Char('%') : QStringLiteral("--");
+    };
+
+    m_statFps->setText(format(tr("帧率"),
+        m_liveFps > 0 ? QString::number(m_liveFps) : QStringLiteral("--"),
+        tertiary, themeColor));
+    m_statCpu->setText(format(QStringLiteral("CPU"),
+        percent(m_liveCpuAvailable, m_liveCpuPercent), tertiary, QStringLiteral("#4CAF50")));
+    m_statGpu->setText(format(QStringLiteral("GPU"),
+        percent(m_liveGpuAvailable, m_liveGpuPercent), tertiary, QStringLiteral("#9C27B0")));
+    m_statMem->setText(format(tr("内存"),
+        percent(m_liveMemoryAvailable, m_liveMemoryPercent), tertiary, memoryColor));
+}
+
+void InstanceAssistantWindow::fitQuickStatsToWidth()
+{
+    if (!m_floating || !m_collapsed || !m_statsHost || !m_titleBar) {
+        return;
+    }
+
+    QLabel *labels[] = {m_statFps, m_statCpu, m_statGpu, m_statMem};
+    if (!labels[0] || !labels[1] || !labels[2] || !labels[3]) {
+        return;
+    }
+
+    const int spacing = m_titleBar->layout() ? m_titleBar->layout()->spacing() : 4;
+    const int barWidth = width() - 2 * m_shadowMargin;
+
+    // 除数据之外占掉的宽度：左右内边距 + 图标 + 间距 + 标题 + 三个按钮 + 控件间隔
+    const int fixed = 12 + 6
+        + m_titleIcon->sizeHint().width() + 2
+        + m_titleLabel->sizeHint().width()
+        + 3 * 24
+        + 7 * spacing;
+    const int available = barWidth - fixed;
+
+    int total = 0;
+    for (QLabel *label : labels) {
+        total += label->sizeHint().width();
+    }
+    total += spacing * 3 + 6; // 3 个间隔 + 容器左内边距
+
+    // 窄窗口下从后面开始少显示：先丢内存，再丢 GPU……
+    int visible = 4;
+    while (visible > 0 && total > available) {
+        --visible;
+        total -= labels[visible]->sizeHint().width() + spacing;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        labels[i]->setVisible(i < visible);
+    }
+    m_statsHost->setVisible(visible > 0);
+}
+
+QRect InstanceAssistantWindow::cardRect() const
+{
+    return rect().adjusted(m_shadowMargin, m_shadowMargin,
+                           -m_shadowMargin, -m_shadowMargin);
+}
+
+void InstanceAssistantWindow::paintEvent(QPaintEvent *event)
+{
+    if (!m_floating) {
+        QWidget::paintEvent(event);
+        return;
+    }
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QRectF card(cardRect());
+    const qreal radius = m_cornerRadius;
+
+    // 柔和投影：由外到内叠加一圈圈半透明圆角描边。
+    // 相比 QGraphicsDropShadowEffect 不做整窗离屏渲染，聊天流式刷新时不掉帧。
+    for (int i = 1; i <= m_shadowMargin; ++i) {
+        const int alpha = qMax(2, 24 - i * 2 - (i > m_shadowMargin / 2 ? 2 : 0));
+        painter.setPen(QPen(QColor(0, 0, 0, alpha), 1.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(card.adjusted(-i, -i + 2, i, i + 2),
+                                radius + i, radius + i);
+    }
+
+    // 圆角卡片本体
+    QPainterPath path;
+    path.addRoundedRect(card, radius, radius);
+    painter.fillPath(path, QColor(StyleKit::resolve(QStringLiteral("@BG_BASE@"))));
+
+    // 1px 描边，让卡片和桌面背景有清晰边界
+    painter.setPen(QPen(QColor(ThemeManager::instance()->currentBorderColor()), 1.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+}
+
+Qt::Edges InstanceAssistantWindow::resizeEdgesAt(const QPoint &pos) const
+{
+    if (!m_floating || m_collapsed) {
+        return Qt::Edges();
+    }
+
+    Qt::Edges edges;
+    // 只认窗口四周的阴影边距（透明区），卡片内部的点击不会被当成缩放
+    const int band = m_shadowMargin;
+    if (pos.x() < band) {
+        edges |= Qt::LeftEdge;
+    }
+    if (pos.x() >= width() - band) {
+        edges |= Qt::RightEdge;
+    }
+    if (pos.y() < band) {
+        edges |= Qt::TopEdge;
+    }
+    if (pos.y() >= height() - band) {
+        edges |= Qt::BottomEdge;
+    }
+    return edges;
+}
+
+void InstanceAssistantWindow::mousePressEvent(QMouseEvent *event)
+{
+    if (m_floating && event->button() == Qt::LeftButton) {
+        const Qt::Edges edges = resizeEdgesAt(event->position().toPoint());
+        if (edges) {
+            m_resizing = true;
+            m_resizeEdges = edges;
+            m_resizeStartGlobal = event->globalPosition().toPoint();
+            m_resizeStartGeometry = geometry();
+            event->accept();
+            return;
+        }
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void InstanceAssistantWindow::mouseMoveEvent(QMouseEvent *event)
+{
+    if (m_resizing && (event->buttons() & Qt::LeftButton)) {
+        const QPoint delta = event->globalPosition().toPoint() - m_resizeStartGlobal;
+        QRect target = m_resizeStartGeometry;
+
+        if (m_resizeEdges & Qt::LeftEdge) {
+            target.setLeft(target.left() + delta.x());
+        } else if (m_resizeEdges & Qt::RightEdge) {
+            target.setRight(target.right() + delta.x());
+        }
+        if (m_resizeEdges & Qt::TopEdge) {
+            target.setTop(target.top() + delta.y());
+        } else if (m_resizeEdges & Qt::BottomEdge) {
+            target.setBottom(target.bottom() + delta.y());
+        }
+
+        // 四周都要留出阴影边距，且不小于内容区最小尺寸
+        const int minW = minimumWidth();
+        const int minH = minimumHeight();
+        if (target.width() < minW) {
+            if (m_resizeEdges & Qt::LeftEdge) {
+                target.setLeft(target.right() - minW + 1);
+            } else {
+                target.setRight(target.left() + minW - 1);
+            }
+        }
+        if (target.height() < minH) {
+            if (m_resizeEdges & Qt::TopEdge) {
+                target.setTop(target.bottom() - minH + 1);
+            } else {
+                target.setBottom(target.top() + minH - 1);
+            }
+        }
+
+        setGeometry(target);
+        event->accept();
+        return;
+    }
+
+    if (m_floating) {
+        // 悬停在窗口边缘时给出缩放光标（阴影边距内的事件才会落到窗口本身）
+        const Qt::Edges edges = resizeEdgesAt(event->position().toPoint());
+        if ((edges & Qt::LeftEdge) && (edges & Qt::TopEdge)) {
+            setCursor(Qt::SizeFDiagCursor);
+        } else if ((edges & Qt::RightEdge) && (edges & Qt::TopEdge)) {
+            setCursor(Qt::SizeBDiagCursor);
+        } else if ((edges & Qt::LeftEdge) && (edges & Qt::BottomEdge)) {
+            setCursor(Qt::SizeBDiagCursor);
+        } else if ((edges & Qt::RightEdge) && (edges & Qt::BottomEdge)) {
+            setCursor(Qt::SizeFDiagCursor);
+        } else if (edges & (Qt::LeftEdge | Qt::RightEdge)) {
+            setCursor(Qt::SizeHorCursor);
+        } else if (edges & (Qt::TopEdge | Qt::BottomEdge)) {
+            setCursor(Qt::SizeVerCursor);
+        } else {
+            unsetCursor();
+        }
+    }
+    QWidget::mouseMoveEvent(event);
+}
+
+void InstanceAssistantWindow::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (m_resizing) {
+        m_resizing = false;
+        m_resizeEdges = Qt::Edges();
+        unsetCursor();
+        saveWindowGeometry();
+        event->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(event);
+}
+
+void InstanceAssistantWindow::keyPressEvent(QKeyEvent *event)
+{
+    // Esc 收起悬浮窗，不退出程序；安卓侧栏仍由悬浮图标控制
+    if (m_floating && !m_overlayMode && event->key() == Qt::Key_Escape) {
+        hide();
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
+void InstanceAssistantWindow::moveEvent(QMoveEvent *event)
+{
+    QWidget::moveEvent(event);
+}
+
+void InstanceAssistantWindow::hideEvent(QHideEvent *event)
+{
+    if (m_floating) {
+        // 收起状态下隐藏：先还原成完整窗口再记录几何，下次打开仍是完整形态
+        if (m_collapsed) {
+            m_navBar->show();
+            m_stackedWidget->show();
+            if (m_statsHost) {
+                m_statsHost->hide();
+            }
+            setMinimumHeight(kMinContentHeight + 2 * m_shadowMargin);
+            const QSize expanded = m_expandedSize.isValid()
+                ? m_expandedSize
+                : QSize(kDefaultContentWidth + 2 * m_shadowMargin,
+                        kDefaultContentHeight + 2 * m_shadowMargin);
+            m_collapsed = false;
+            resize(expanded.expandedTo(minimumSize()).boundedTo(maximumSize()));
+            updateHeaderButtons();
+        }
+        saveWindowGeometry();
+    }
+    QWidget::hideEvent(event);
+}
+
+void InstanceAssistantWindow::restoreWindowGeometry()
+{
+    const QByteArray saved = SettingsManager::instance()->getProperty(kGeometryKey).toByteArray();
+    bool restored = false;
+    if (!saved.isEmpty()) {
+        restored = restoreGeometry(saved);
+    }
+    if (restored) {
+        keepOnScreen();
+        return;
+    }
+    placeDefaultGeometry();
+}
+
+void InstanceAssistantWindow::placeDefaultGeometry()
+{
+    QScreen *screen = QGuiApplication::primaryScreen();
+
+    QSize targetSize(kDefaultContentWidth + 2 * m_shadowMargin,
+                     kDefaultContentHeight + 2 * m_shadowMargin);
+
+    // 首次打开贴着启动器主窗口右侧摆放（窗口已与主窗口脱开，用构造时记下的位置）
+    QRect hostRect = m_launcherRect;
+    if (!hostRect.isValid() && parentWidget()) {
+        QWidget *host = parentWidget()->window();
+        hostRect = QRect(host->mapToGlobal(QPoint(0, 0)), host->size());
+    }
+    if (QScreen *hostScreen = QGuiApplication::screenAt(hostRect.center())) {
+        screen = hostScreen;
+    }
+    if (hostRect.isValid() && hostRect.width() > 0 && hostRect.height() > 0) {
+        if (hostRect.height() > 2 * m_shadowMargin) {
+            targetSize.setHeight(qMin(targetSize.height(),
+                                      hostRect.height() - 2 * m_shadowMargin));
+        }
+        QRect target(QPoint(0, 0), targetSize);
+        target.moveRight(hostRect.right() - 24);
+        target.moveTop(hostRect.top() + qMax(0, (hostRect.height() - targetSize.height()) / 2));
+        setGeometry(target);
+        keepOnScreen();
+        return;
+    }
+
+    const QRect available = screen ? screen->availableGeometry() : QRect(0, 0, 1280, 800);
+    targetSize = targetSize.boundedTo(available.size());
+    QRect target(available.topLeft(), targetSize);
+    target.moveCenter(available.center());
+    setGeometry(target);
+}
+
+void InstanceAssistantWindow::keepOnScreen()
+{
+    const QRect current = frameGeometry();
+    QScreen *screen = QGuiApplication::screenAt(current.center());
+    if (!screen) {
+        screen = QGuiApplication::primaryScreen();
+    }
+    if (!screen) {
+        return;
+    }
+
+    const QRect available = screen->availableGeometry();
+    QRect target = current;
+    target.setSize(target.size().expandedTo(minimumSize()).boundedTo(
+        QSize(qMin(available.width(), maximumWidth()),
+              qMin(available.height(), QWIDGETSIZE_MAX))));
+
+    if (target.right() > available.right()) {
+        target.moveRight(available.right());
+    }
+    if (target.bottom() > available.bottom()) {
+        target.moveBottom(available.bottom());
+    }
+    if (target.left() < available.left()) {
+        target.moveLeft(available.left());
+    }
+    if (target.top() < available.top()) {
+        target.moveTop(available.top());
+    }
+
+    if (target != current) {
+        setGeometry(target);
+    }
+}
+
+void InstanceAssistantWindow::saveWindowGeometry()
+{
+    if (!m_floating) {
+        return;
+    }
+    SettingsManager::instance()->setProperty(kGeometryKey, saveGeometry());
+}
+
 void InstanceAssistantWindow::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     if (m_overlayMode) {
         applyOverlayGeometry();
+    } else if (m_floating) {
+#ifdef Q_OS_WIN
+        // 独立窗口：显式声明为应用窗口，任务栏里才有自己的按钮
+        //（无边框窗口默认是弹出层样式，部分系统环境下不会出现在任务栏）
+        if (HWND hwnd = reinterpret_cast<HWND>(winId())) {
+            LONG_PTR exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+            if (!(exStyle & WS_EX_APPWINDOW)) {
+                SetWindowLongPtr(hwnd, GWL_EXSTYLE, exStyle | WS_EX_APPWINDOW);
+            }
+        }
+#endif
+        // 换分辨率 / 拔掉显示器后，恢复回来的位置可能已经落在屏幕外
+        keepOnScreen();
+        if (m_collapsed) {
+            m_navBar->hide();
+            m_stackedWidget->hide();
+        }
     }
     updateHighlightGeometry();
 }
@@ -612,6 +1370,9 @@ void InstanceAssistantWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     updateHighlightGeometry();
+    if (m_collapsed) {
+        fitQuickStatsToWidth();
+    }
 }
 
 // ============================
@@ -626,6 +1387,9 @@ void InstanceAssistantWindow::buildHomePage(QWidget *page)
 
     // 复用 InstanceHomePage 组件，提供当前时间/游玩时间/帧率显示与 CPU/内存/GPU 性能监控
     m_homePage = new InstanceHomePage(page);
+    // 收起成小条时，用首页每秒刷新的数据在标题栏右侧显示实时占用
+    connect(m_homePage, &InstanceHomePage::liveStatsChanged,
+            this, &InstanceAssistantWindow::updateLiveStats);
     layout->addWidget(m_homePage, 1);
 }
 
@@ -1755,6 +2519,45 @@ void InstanceAssistantWindow::reloadCommandDatabase()
 
 bool InstanceAssistantWindow::eventFilter(QObject *obj, QEvent *event)
 {
+    // 悬浮窗标题栏：空白处按住拖动整个窗口，双击收起 / 展开
+    if (m_floating && obj == m_titleBar) {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress: {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() == Qt::LeftButton) {
+                m_dragging = true;
+                m_dragOrigin = mouseEvent->globalPosition().toPoint()
+                    - frameGeometry().topLeft();
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseMove: {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (m_dragging && (mouseEvent->buttons() & Qt::LeftButton)) {
+                move(mouseEvent->globalPosition().toPoint() - m_dragOrigin);
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseButtonRelease: {
+            if (m_dragging) {
+                m_dragging = false;
+                keepOnScreen();
+                saveWindowGeometry();
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseButtonDblClick: {
+            setCollapsed(!m_collapsed);
+            return true;
+        }
+        default:
+            break;
+        }
+    }
+
     // Tab 键补全：在 m_commandInput 中按 Tab 时，用候选列表第一项补全当前词
     if (obj == m_commandInput && event->type() == QEvent::KeyPress) {
         auto *keyEvent = static_cast<QKeyEvent *>(event);

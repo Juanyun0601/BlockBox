@@ -27,7 +27,8 @@
 #include "utils/GameLauncher.h"
 #include "pages/AiChatPage.h"
 #include "pages/JavaDownloadPage.h"
-#include "pages/AddAccountDialog.h"
+#include "pages/AddAccountPage.h"
+#include "pages/CreationCenterPage.h"
 #include "pages/ForumAccountPage.h"
 #include "pages/ForgeVersionListPage.h"
 #include "pages/HomePage.h"
@@ -129,6 +130,8 @@ void MainWindow::initEssentialPages()
             updateCurrentInstance(instancePath);
         }
         ensurePageInitialized(PageIndex::InstanceManagePage);
+        // 先把实例同步给实例管理页，否则服务器页读的还是上一个/空实例的服务器列表
+        syncInstanceManagePageContext();
         m_subNavPanel->showForParent(4, false);
         m_sideBar->clearSelection();
         m_topBar->setTitle(tr("实例>服务器"));
@@ -142,6 +145,7 @@ void MainWindow::initEssentialPages()
         if (!versionPath.isEmpty()) {
             updateCurrentInstance(versionPath);
             ensurePageInitialized(PageIndex::InstanceManagePage);
+            syncInstanceManagePageContext();
             m_subNavPanel->showForParent(4, false);
             m_sideBar->clearSelection();
             m_topBar->setTitle(tr("实例>存档"));
@@ -156,6 +160,7 @@ void MainWindow::initEssentialPages()
         if (!versionPath.isEmpty()) {
             updateCurrentInstance(versionPath);
             ensurePageInitialized(PageIndex::InstanceManagePage);
+            syncInstanceManagePageContext();
             m_subNavPanel->showForParent(4, false);
             m_sideBar->clearSelection();
             m_topBar->setTitle(tr("实例>实例设置"));
@@ -172,9 +177,9 @@ void MainWindow::initEssentialPages()
     });
     // 首页账号卡片 → 账户管理页（论坛账户界面）
     connect(homePage, &HomePage::accountManageRequested, this, &MainWindow::showAccountManagePage);
-    // 首页轮播右侧「添加首个账户」→ 直接打开「添加角色」弹窗
+    // 首页轮播右侧「添加首个账户」→ 直接打开「添加角色」页
     connect(homePage, &HomePage::addFirstAccountRequested, this,
-            &MainWindow::openAddAccountDialog);
+            &MainWindow::openAddAccountPage);
     // 首页「官方新闻 · 查看全部」→ 软件内置新闻列表页
     connect(homePage, &HomePage::newsPageRequested, this, &MainWindow::showNewsPage);
     // 经典模式皮肤面板：启动游戏 / 实例选择 / 实例设置 / 实例助手
@@ -189,7 +194,7 @@ void MainWindow::initEssentialPages()
         }
     });
 
-    // 首页左侧好友列表：点卡片聊天 / 好友开房「一起玩」/ 登录 / 查看全部
+    // 首页好友栏：点卡片聊天 / 好友开房「一起玩」/ 登录 / 查看全部
     connect(homePage, &HomePage::friendChatRequested, this, [this](int userId) {
         m_forumReturnAction = [this]() { onBackToMain(); };
         showForumFriends(userId);
@@ -202,6 +207,31 @@ void MainWindow::initEssentialPages()
             this, &MainWindow::openForumAccountLogin);
     connect(homePage, &HomePage::friendRoomJoinRequested,
             this, &MainWindow::onFriendRoomJoinRequested);
+
+    // 首页论坛热门帖栏：点卡片进帖子详情 / 「查看全部」进社区论坛页
+    connect(homePage, &HomePage::forumHotThreadOpenRequested, this, [this](int threadId) {
+        m_forumReturnAction = [this]() { onBackToMain(); };
+        showForumThread(threadId);
+    });
+    connect(homePage, &HomePage::forumHotThreadsViewAllRequested, this, [this]() {
+        m_forumReturnAction = [this]() { onBackToMain(); };
+        returnToCommunityPage();
+    });
+
+    // 首页快捷入口卡片（基岩版模式下重建的基岩入口；Java 入口卡片暂未接线）
+    connect(homePage, &HomePage::installVersionClicked, this, &MainWindow::showBedrockDownloadPage);
+    connect(homePage, &HomePage::bedrockResourcepacksClicked, this, [this]() {
+        showBedrockContentPage(MainWindow::bedrockClassIdForChildIndex(1));
+    });
+    connect(homePage, &HomePage::texturesClicked, this, [this]() {
+        showBedrockContentPage(MainWindow::bedrockClassIdForChildIndex(2));
+    });
+    connect(homePage, &HomePage::bedrockWorldsClicked, this, [this]() {
+        showBedrockContentPage(MainWindow::bedrockClassIdForChildIndex(3));
+    });
+    connect(homePage, &HomePage::scriptsClicked, this, [this]() {
+        showBedrockContentPage(MainWindow::bedrockClassIdForChildIndex(4));
+    });
 
     PerformanceMonitor::instance()->endMeasurement("主页初始化");
 
@@ -642,19 +672,22 @@ void MainWindow::initAccountManagePage()
     PerformanceMonitor::instance()->endMeasurement("账户管理页初始化");
 }
 
-void MainWindow::openAddAccountDialog()
+void MainWindow::openAddAccountPage()
 {
-    // 「添加角色」：离线 / 微软正版 / 第三方三种方式都在一个弹窗里，加完直接刷新角色页
-    auto *dialog = new AddAccountDialog(this);
-    connect(dialog, &AddAccountDialog::accountAdded, this, [this](const QString &accountName) {
-        Q_UNUSED(accountName);
-        // 新账户加完就是默认账户：顶栏跟着换，角色页重新拉一遍卡片
-        restoreDefaultAccount();
-        if (m_forumAccountPage)
-            m_forumAccountPage->refreshAccount();
-    });
-    dialog->exec();
-    dialog->deleteLater();
+    // 「添加角色」：离线 / 微软正版 / 第三方三种方式都在账户管理页的内层页里，
+    // 加完自动回到角色页，返回键也回角色页
+    ensurePageInitialized(PageIndex::AccountManagePage);
+    if (!m_addAccountPage || !m_accountUiStack)
+        return;
+
+    setSideBarVisible(false);
+    m_topBar->setAddAccountTitle();
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onTopBarBackClicked);
+
+    m_addAccountPage->open();
+    m_accountUiStack->setCurrentWidget(m_addAccountPage);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::AccountManagePage));
 }
 
 void MainWindow::buildForumAccountManagePage()
@@ -678,6 +711,43 @@ void MainWindow::buildForumAccountManagePage()
     // 「我的收藏 → 资源收藏」点击：打开在线资源详情页（与收藏夹页行为一致）
     connect(m_forumAccountPage, &ForumAccountPage::contentFavoriteOpenRequested, this,
             [this](const ModInfo &info, ContentType type) { showContentDetailPage(info, type); });
+
+    // 「我的收藏 → 本地收藏」点击：模组打开本地详情页（返回键回账户管理），
+    // 其余类型直接打开资源所在文件夹
+    connect(m_forumAccountPage, &ForumAccountPage::localFavoriteOpenRequested, this,
+            [this](const LocalFavoriteEntry &entry) {
+                if (entry.resourceType == QStringLiteral("mods"))
+                {
+                    ensurePageInitialized(PageIndex::LocalModDetailPageIndex);
+                    setSideBarVisible(false);
+                    ModInfo info;
+                    info.filePath = entry.filePath;
+                    info.fileName = entry.fileName;
+                    info.name = entry.displayName.isEmpty() ? entry.fileName : entry.displayName;
+                    info.enabled = !entry.filePath.endsWith(QStringLiteral(".disabled"),
+                                                            Qt::CaseInsensitive);
+                    info.loaderType = entry.loaderType;
+                    info.latestVersion = entry.version;
+                    info.description = entry.description;
+                    m_topBar->setTitle(info.name);
+                    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+                    connect(m_topBar, &TopBar::backClicked, this, [this]() {
+                        showAccountManagePage();
+                        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+                        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+                    });
+                    if (m_localModDetailPage)
+                        m_localModDetailPage->setModInfo(info);
+                    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::LocalModDetailPageIndex));
+                }
+                else
+                {
+                    const QFileInfo fi(entry.filePath);
+                    const QString dirPath = fi.isDir() ? entry.filePath : fi.absolutePath();
+                    if (!dirPath.isEmpty())
+                        QDesktopServices::openUrl(QUrl::fromLocalFile(dirPath));
+                }
+            });
 
     // 「角色」页切换游戏账户：启动游戏跟着换账户；顶栏在登录方块盒子账户时仍显示社区身份
     connect(m_forumAccountPage, &ForumAccountPage::gameAccountSelected, this,
@@ -703,9 +773,55 @@ void MainWindow::buildForumAccountManagePage()
                 Qt::UniqueConnection);
     }
 
-    // 角色页「添加角色」/ 空态按钮：弹出添加账户弹窗
+    // 角色页「添加角色」/ 空态按钮：切到账户管理页内层的「添加角色」页
     connect(m_forumAccountPage, &ForumAccountPage::addGameAccountRequested,
-            this, &MainWindow::openAddAccountDialog);
+            this, &MainWindow::openAddAccountPage);
+
+    // ── 添加角色页：账户管理页内层的一页，加完回到角色页 ──
+    if (!m_addAccountPage)
+    {
+        m_addAccountPage = new AddAccountPage(this);
+        m_accountUiStack->addWidget(m_addAccountPage);
+
+        connect(m_addAccountPage, &AddAccountPage::accountAdded, this,
+                [this](const QString &accountName) {
+                    Q_UNUSED(accountName);
+                    // 新账户加完就是默认账户：顶栏跟着换
+                    restoreDefaultAccount();
+                    // 添加成功回到角色页，让用户立刻看到新账户卡片
+                    if (m_forumAccountPage)
+                    {
+                        m_accountUiStack->setCurrentWidget(m_forumAccountPage);
+                        m_topBar->setAccountManageTitle();
+                        // 角色页重新拉一遍卡片
+                        m_forumAccountPage->refreshAccount();
+                    }
+                });
+    }
+
+    // ── 创作中心：账户页内层的第二页，集中管理自己发布的作品 ──
+    if (!m_creationCenterPage)
+    {
+        m_creationCenterPage = new CreationCenterPage(this);
+        m_accountUiStack->addWidget(m_creationCenterPage);
+
+        // 资料卡「创作中心」：进入并回到第一页重新拉数据
+        connect(m_forumAccountPage, &ForumAccountPage::creationCenterRequested, this, [this]() {
+            m_creationCenterPage->open();
+            showCreationCenterPage();
+        });
+
+        // 点作品 / 「打开」：在启动器内打开详情，返回键回到创作中心
+        connect(m_creationCenterPage, &CreationCenterPage::threadOpenRequested, this,
+                [this](int threadId) {
+                    m_forumReturnAction = [this]() { showCreationCenterPage(); };
+                    showForumThread(threadId);
+                });
+
+        // 还没有作品时点「去发布」：跳到发布中心
+        connect(m_creationCenterPage, &CreationCenterPage::publishRequested, this,
+                [this]() { showPublishPage(); });
+    }
 }
 
 void MainWindow::initLaunchDetailsPage()
@@ -851,6 +967,8 @@ void MainWindow::initModDetailPage()
     });
     connect(m_modDetailPage, &ModDetailPage::downloadRequested,
             this, &MainWindow::onModDownloadRequested);
+    connect(m_modDetailPage, &ModDetailPage::convertRequested,
+            this, &MainWindow::onModConvertRequested);
     // 左侧「一键安装」：安装与当前实例兼容的最新正式版，并自动补齐必备前置模组
     connect(m_modDetailPage, &ModDetailPage::installLatestRequested,
             this, [this](const ModInfo &modInfo) {
@@ -936,6 +1054,8 @@ void MainWindow::showModDetailPage(const ModInfo &modInfo, const QString &filter
         // 列表页选中的实例版本/加载器带入详情页左侧筛选
         if (!filterGameVersion.isEmpty() || !filterLoader.isEmpty())
             m_modDetailPage->setInstanceFilter(filterGameVersion, filterLoader);
+        // 带入当前实例：详情页据此识别下载列表里各版本的安装状态
+        m_modDetailPage->setInstancePath(m_currentInstancePath);
         // Pass already-resolved MC百科 URL if available
         QString lookupKey = modInfo.source + ":" + modInfo.id;
         QString mcmodUrl = m_modDownloadPage->mcmodUrlForMod(lookupKey);
@@ -1028,6 +1148,22 @@ void MainWindow::showAccountManagePage()
     setSideBarVisible(false);
     m_topBar->setAccountManageTitle();
     m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::AccountManagePage));
+    // 从别处回到账户页时，内层回到账户总览而不是停在上次的创作中心 / 添加角色页
+    if (m_accountUiStack && m_forumAccountPage &&
+        m_accountUiStack->currentWidget() != m_forumAccountPage)
+    {
+        m_accountUiStack->setCurrentWidget(m_forumAccountPage);
+    }
+}
+
+void MainWindow::showCreationCenterPage()
+{
+    ensurePageInitialized(PageIndex::AccountManagePage);
+    if (!m_creationCenterPage)
+        return;
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("账户管理>创作中心"));
+    m_accountUiStack->setCurrentWidget(m_creationCenterPage);
 }
 
 void MainWindow::openForumAccountLogin()
@@ -1623,6 +1759,14 @@ void MainWindow::initFeedbackPage()
     connect(m_feedbackPage, &FeedbackPage::composeRequested, this,
             &MainWindow::showFeedbackComposePage);
 
+    // 评论区点了「登录 / 注册」：跳账户页弹登录表单，回来刷新反馈列表
+    connect(m_feedbackPage, &FeedbackPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { returnToFeedbackList(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+
     m_pageInitialized[PageIndex::FeedbackPage] = true;
 }
 
@@ -1741,9 +1885,12 @@ void MainWindow::initForumPluginListPage()
 void MainWindow::showForumPluginListPage()
 {
     ensurePageInitialized(PageIndex::ForumPluginListPage);
-    if (m_sideBar)
-        m_sideBar->setSelectedIndex(1);
+    // 恢复"资源>插件"的侧边栏与子导航：从插件原帖详情或登录页返回时，
+    // 侧边栏会整条隐藏且子导航此前不会自动回来
+    restoreSideBarWithSubNav(1, 8);
     m_topBar->setTitle(tr("资源>插件"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
     animatedSwitchToPage(PageIndex::ForumPluginListPage);
     if (m_forumPluginListPage)
         m_forumPluginListPage->openPage();
@@ -1766,6 +1913,8 @@ void MainWindow::initPublishPage()
             this, &MainWindow::showPublishResourcePage);
     connect(m_publishPage, &PublishPage::postsRequested,
             this, &MainWindow::showPublishBoardPage);
+    connect(m_publishPage, &PublishPage::tutorialsRequested,
+            this, &MainWindow::showPublishTutorialCompose);
 
     m_pageInitialized[PageIndex::PublishPage] = true;
 }
@@ -1787,6 +1936,8 @@ void MainWindow::initPublishResourcePage()
             [this](PublishKit::ResourceKind kind) {
                 if (kind == PublishKit::ResourceKind::Plugin)
                     showPublishPluginCompose();
+                else if (kind == PublishKit::ResourceKind::Schematic)
+                    showPublishSchematicCompose();
                 else
                     showPublishPlatformPage(kind);
             });
@@ -1962,11 +2113,33 @@ void MainWindow::showPublishPluginCompose()
         m_forumComposerPage->startNewResource(QStringLiteral("plugin"));
 }
 
+void MainWindow::showPublishSchematicCompose()
+{
+    // 资源→投影：发布详情页切到「资源」模式并预选投影分类，返回落点是发布资源页
+    m_forumReturnAction = [this]() { showPublishResourcePage(); };
+    m_forumComposerTopTitle = tr("发布>投影");
+    ensurePageInitialized(PageIndex::ForumComposerPage);
+    presentForumComposer();
+    if (m_forumComposerPage)
+        m_forumComposerPage->startNewResource(QStringLiteral("schematic"));
+}
+
 void MainWindow::showPublishPostCompose(const QString &boardSlug)
 {
     // 帖子发布详情页就是发布详情页的「帖子」模式，返回落点是发布帖子（板块选择）页
     m_forumReturnAction = [this]() { showPublishBoardPage(); };
     showForumComposer(boardSlug, tr("发布>帖子"));
+}
+
+void MainWindow::showPublishTutorialCompose()
+{
+    // 发布中心→教程：发布详情页切到「教程」模式，返回落点是发布中心
+    m_forumReturnAction = [this]() { showPublishPage(); };
+    m_forumComposerTopTitle = tr("发布>教程");
+    ensurePageInitialized(PageIndex::ForumComposerPage);
+    presentForumComposer();
+    if (m_forumComposerPage)
+        m_forumComposerPage->startNewTutorial();
 }
 
 

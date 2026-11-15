@@ -11,9 +11,12 @@
  */
 #pragma once
 
+#include <QColor>
+#include <QFont>
 #include <QFrame>
 #include <QImage>
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 #include <QVector>
 #include <QWidget>
@@ -23,6 +26,7 @@
 class QLayout;
 class QPaintEvent;
 class QPlainTextEdit;
+class QVariantAnimation;
 
 namespace ForumKit
 {
@@ -49,6 +53,20 @@ QLabel *makeSectionTitle(QWidget *parent, const QString &text);
  * @param size 直径（像素）
  */
 QLabel *makeAvatar(QWidget *parent, const QString &avatarPath, const QString &name, int size);
+
+/**
+ * @brief 群头像：icon 是内置表情（如 👥）或站内图片路径，空则按群名首字占位
+ * @param size 直径（像素）
+ */
+QLabel *makeGroupAvatar(QWidget *parent, const QString &icon, const QString &name, int size);
+
+/**
+ * @brief 官方头像标签：绿色圆角底 + 方块盒子立方体图标
+ *
+ * 官方客服与官方全用户群统一用它当头像，与普通用户 / 群的首字母占位区分开。
+ * @param size 直径（像素）
+ */
+QLabel *makeOfficialAvatar(QWidget *parent, int size);
 
 /**
  * @brief 个人主页封面横幅：有封面时按比例铺满并居中裁切，没有时画主题色渐变
@@ -112,6 +130,9 @@ struct MarkdownPreset
 /** 发帖正文预设（求助 / 教程 / 作品分享 / 插件介绍 / 意见建议） */
 QVector<MarkdownPreset> postPresets();
 
+/** 教程帖专用预设（图文教程 / 视频教程 / 攻略合集），发教程模式的预设菜单用 */
+QVector<MarkdownPreset> tutorialPresets();
+
 /** 联机大厅「详细介绍」预设（生存 / 建筑 / 小游戏 / 联机须知） */
 QVector<MarkdownPreset> lobbyIntroPresets();
 
@@ -122,6 +143,31 @@ QVector<MarkdownPreset> lobbyIntroPresets();
  * 插完自动选中标题下面那行提示文字，直接打字就能替换。
  */
 void applyMarkdownPreset(QPlainTextEdit *edit, const QString &text);
+
+/**
+ * @brief 在选区两侧包上 Markdown 包裹符（**、*、~~、`）
+ *
+ * 选区两侧已经是同一对包裹符时反向拆掉；选区为空就插入占位词。
+ * 完成后选中包住的内容，直接打字就能替换。
+ */
+void mdWrapSelection(QPlainTextEdit *edit, const QString &marker, const QString &placeholder);
+
+/**
+ * @brief 对选区覆盖的每一行做「加 / 去前缀」的开关式转换
+ * @param kind heading（## 标题）/ quote（> 引用）/ ul（- 列表）/ ol（1. 编号）
+ *
+ * 选中的行都带前缀时统一去掉，否则统一加上；编号按行序号生成。
+ */
+void mdToggleLines(QPlainTextEdit *edit, const QString &kind);
+
+/** 把选区（或光标所在行）整段包进 ``` 围栏代码块，原内容留在块里方便直接改 */
+void mdWrapCodeBlock(QPlainTextEdit *edit);
+
+/** 插入 [标题](链接)：选中的是链接就反过来包标题，选的是文字就选中链接位让用户填 */
+void mdInsertLink(QPlainTextEdit *edit);
+
+/** 在光标处插入一段 Markdown 文本（替换选区），插入后光标停在末尾 */
+void mdInsertText(QPlainTextEdit *edit, const QString &text);
 
 /**
  * @brief 整张卡片可点击（点击空白处也算），列表行用
@@ -187,6 +233,62 @@ private:
     QLabel *m_label = nullptr;
     int m_current = 1;
     int m_total = 1;
+};
+
+/**
+ * @brief 点赞按钮：心形 SVG 图标 + 计数
+ *
+ * 未点赞是灰色空心，点过之后变红（实心），点下去的一瞬间图标会「心跳」
+ * 放大回弹，心形后面还会散开一圈红光。整个控件自己绘制，不跟着
+ * 全局 QPushButton 样式走，高度固定 28，和旁边「回复 / 引用」等胶囊按钮齐平。
+ */
+class LikeButton : public QPushButton
+{
+    Q_OBJECT
+
+public:
+    explicit LikeButton(QWidget *parent = nullptr);
+
+    /** 点赞数（按钮右边的数字，重建时直接给最终值，不播动画） */
+    void setLikes(int likes);
+    int likes() const { return m_likes; }
+
+    /**
+     * @brief 切换点赞状态
+     * @param animate 状态真的变了且为 true 时播放一次点赞动画
+     */
+    void setLiked(bool liked, bool animate = false);
+    bool isLiked() const { return m_liked; }
+
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void enterEvent(QEnterEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
+
+private:
+    void applySize();
+    void playBurst(bool liked);
+
+    bool m_liked = false;
+    bool m_hovered = false;
+    bool m_pressed = false;
+    bool m_focusVisible = false;   ///< 只有用键盘切过来的焦点才描边
+    int m_likes = 0;
+    qreal m_t = 0.0;        ///< 动画进度 0~1（0 表示没在播）
+    bool m_burstLiked = true;   ///< 本次动画是点赞还是取消
+    QColor m_likeColor;     ///< 点赞红（取主题里的危险色，深色主题也够亮）
+    QColor m_iconTint;      ///< 空心心形当前染成的灰色，换主题时重画
+    QPixmap m_outline;      ///< 空心心形（未点赞）
+    QPixmap m_filled;       ///< 实心心形（已点赞）
+    QFont m_font;
+    QVariantAnimation *m_anim = nullptr;
 };
 
 } // namespace ForumKit

@@ -16,8 +16,10 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include "components/AppMessageBox.h"
 #include <QPushButton>
 #include <QScrollArea>
@@ -30,10 +32,13 @@
 #include "utils/Schematic/LitematicEditor.h"
 #include "utils/Schematic/InstanceBlockNames.h"
 #include "utils/Schematic/InstanceTextureLoader.h"
+#include "utils/Schematic/SchematicOrthoViewRenderer.h"
 #include "components/CollapsibleSectionCard.h"
+#include "components/OrthoViewsPreviewDialog.h"
 
 #include <QIcon>
 #include <QPixmap>
+#include <QtConcurrent>
 
 ProjectionEditPage::ProjectionEditPage(QWidget *parent)
     : QWidget(parent)
@@ -272,6 +277,14 @@ void ProjectionEditPage::initUI()
     connect(m_exportSpongeBtn, &QPushButton::clicked, this, &ProjectionEditPage::onExportSpongeClicked);
     bottomRow->addWidget(m_exportSpongeBtn);
 
+    m_generateViewsBtn = new QPushButton(tr("生成三视图"), contentWidget);
+    m_generateViewsBtn->setObjectName("bottomActionBtn");
+    m_generateViewsBtn->setCursor(Qt::PointingHandCursor);
+    m_generateViewsBtn->setToolTip(tr("生成正视图 / 侧视图 / 俯视图图片并预览保存"));
+    connect(m_generateViewsBtn, &QPushButton::clicked, this,
+            &ProjectionEditPage::onGenerateOrthoViewsClicked);
+    bottomRow->addWidget(m_generateViewsBtn);
+
     bottomRow->addStretch();
 
     m_saveBtn = new QPushButton(tr("保存修改"), contentWidget);
@@ -337,6 +350,7 @@ void ProjectionEditPage::reset()
     m_saveBtn->setEnabled(false);
     m_exportSchematicBtn->setEnabled(false);
     m_exportSpongeBtn->setEnabled(false);
+    m_generateViewsBtn->setEnabled(false);
     m_currentVersionLabel->setText(tr("当前版本：未知"));
     m_targetVersionCombo->setEnabled(false);
     m_targetVersionHint->clear();
@@ -442,6 +456,7 @@ void ProjectionEditPage::loadProjection()
     m_saveBtn->setEnabled(true);
     m_exportSchematicBtn->setEnabled(true);
     m_exportSpongeBtn->setEnabled(true);
+    m_generateViewsBtn->setEnabled(true);
 
     m_currentVersionLabel->setText(tr("当前版本：V%1（Minecraft %2）")
         .arg(m_info.version)
@@ -650,6 +665,45 @@ void ProjectionEditPage::onOpenFolderClicked()
         return;
     QFileInfo fileInfo(m_filePath);
     QDesktopServices::openUrl(QUrl::fromLocalFile(fileInfo.absolutePath()));
+}
+
+void ProjectionEditPage::onGenerateOrthoViewsClicked()
+{
+    if (m_filePath.isEmpty() || m_generatingViews)
+        return;
+
+    // 后台渲染，完成后再回 UI 线程弹预览；期间按钮锁定防重入
+    m_generatingViews = true;
+    m_generateViewsBtn->setEnabled(false);
+    m_generateViewsBtn->setText(tr("生成中…"));
+
+    const QString filePath = m_filePath;
+    const QString instancePath = m_instancePath;
+    QPointer<ProjectionEditPage> guard(this);
+
+    (void)QtConcurrent::run([guard, filePath, instancePath]() {
+        const SchematicOrthoResult result =
+            SchematicOrthoViewRenderer::render(filePath, instancePath);
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [guard, filePath, result]() {
+                if (!guard)
+                    return;   // 页面已销毁，结果作废
+                guard->m_generatingViews = false;
+                guard->m_generateViewsBtn->setEnabled(true);
+                guard->m_generateViewsBtn->setText(tr("生成三视图"));
+                if (!result.error.isEmpty())
+                {
+                    AppMessageBox::warning(guard, tr("生成失败"), result.error);
+                    return;
+                }
+                const QString baseName = QFileInfo(filePath).completeBaseName();
+                OrthoViewsPreviewDialog dialog(guard, result.front, result.left,
+                                               result.top, baseName);
+                dialog.exec();
+            },
+            Qt::QueuedConnection);
+    });
 }
 
 void ProjectionEditPage::onVersionComboChanged(int index)

@@ -7,6 +7,7 @@
 #include "WorldConvertDialog.h"
 
 #include <QCheckBox>
+#include <QColor>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDesktopServices>
@@ -141,13 +142,29 @@ void WorldConvertDialog::initUI()
 
     m_rbJ2B = new QRadioButton(tr("Java 版 → 基岩版"), card);
     m_rbB2J = new QRadioButton(tr("基岩版 → Java 版"), card);
+    // 卡片固定白底，这里单独给单选框一套浅色样式，保证深色主题下文字与圆点依然清晰
+    const QColor themeCol(themeColor);
+    const QString radioTint = QStringLiteral("rgba(%1,%2,%3,0.06)")
+                                  .arg(themeCol.red()).arg(themeCol.green()).arg(themeCol.blue());
     const QString radioStyle = QStringLiteral(
-        "QRadioButton { color: %1; font-size: 13px; spacing: 6px; }"
-        "QRadioButton::indicator { width: 16px; height: 16px; }"
-        "QRadioButton::indicator:checked { background: %2; border: 4px solid %2; }"
-        "QRadioButton::indicator:unchecked { border: 1px solid #c7c7cc; border-radius: 8px;"
-        " background: #ffffff; }")
-        .arg(textColor, themeColor);
+        "QRadioButton { color: %1; font-size: 13px; spacing: 10px; padding: 3px 6px;"
+        " border-radius: 7px; background: transparent; }"
+        "QRadioButton:hover { background: %3; }"
+        "QRadioButton:checked, QRadioButton:checked:hover { background: %3; }"
+        "QRadioButton:focus { color: %2; background: %3; }"
+        "QRadioButton:disabled { color: #b0b0b0; background: transparent; }"
+        "QRadioButton::indicator { width: 16px; height: 16px; border-radius: 10px;"
+        " border: 2px solid #c7c7cc; background: #ffffff; margin: 0; }"
+        "QRadioButton::indicator:hover { border-color: %2; }"
+        "QRadioButton::indicator:checked, QRadioButton::indicator:checked:hover {"
+        " border: 2px solid %2;"
+        " background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,"
+        " stop:0 %2, stop:0.42 %2, stop:0.48 #ffffff, stop:1 #ffffff); }"
+        "QRadioButton::indicator:disabled { border-color: #d5d7db; background: #f2f2f5; }"
+        "QRadioButton::indicator:checked:disabled { border-color: #d5d7db;"
+        " background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,"
+        " stop:0 #b0b0b0, stop:0.42 #b0b0b0, stop:0.48 #f2f2f5, stop:1 #f2f2f5); }")
+        .arg(textColor, themeColor, radioTint);
     m_rbJ2B->setStyleSheet(radioStyle);
     m_rbB2J->setStyleSheet(radioStyle);
     dirLayout->addWidget(m_rbJ2B);

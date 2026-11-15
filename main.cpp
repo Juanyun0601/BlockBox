@@ -17,9 +17,13 @@
 #include <QDir>
 #include <QFuture>
 #include <QFutureWatcher>
+#include <QInputMethod>
+#include <QKeyEvent>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QPointer>
 #include <QProcess>
+#include <QScrollArea>
 #include <QResource>
 #include <QSettings>
 #include <QSurfaceFormat>
@@ -393,6 +397,76 @@ int main(int argc, char *argv[])
         }
     };
     a.installEventFilter(new ImeAutoShowFilter(&a));
+
+    // 安卓返回键分级处理：应用级事件过滤器拦下 Qt::Key_Back，交给主窗口
+    // 按优先级消化（关弹窗 → 收覆盖层 → 收子导航 → 收键盘 → 返回上页 →
+    // 弹窗确认退出）。事件被消化后 Qt 不再把它交给系统默认行为——否则
+    // 系统会直接把整个应用退掉（弹窗开着、键盘开着也照退不误）。
+    // 过滤器在主窗口构造之后安装（见下方 MainWindow w 创建处）。
+    class BackKeyFilter : public QObject
+    {
+    public:
+        explicit BackKeyFilter(MainWindow *target, QObject *parent)
+            : QObject(parent), m_target(target) {}
+
+        bool eventFilter(QObject *watched, QEvent *event) override
+        {
+            if (event->type() == QEvent::KeyPress) {
+                const auto *keyEvent = static_cast<QKeyEvent *>(event);
+                if (keyEvent->key() == Qt::Key_Back && m_target
+                    && m_target->handleAndroidBack())
+                    return true; // 已消化：不再让系统把应用退掉
+            }
+            return QObject::eventFilter(watched, event);
+        }
+
+    private:
+        QPointer<MainWindow> m_target;
+    };
+
+    // 软键盘遮挡兜底：键盘弹出后若盖住焦点输入框，把它滚进可视范围。
+    // adjustResize 在部分机型（全屏窗口 + 旧版本安卓）不生效，系统只做平移；
+    // 输入框位于滚动区里时由这里主动滚动到位，滚动区外的场景靠窗口 resize。
+    class KeyboardOcclusionGuard : public QObject
+    {
+    public:
+        explicit KeyboardOcclusionGuard(QObject *parent) : QObject(parent)
+        {
+            const auto trigger = [this]() { revealFocusedInput(); };
+            // 部分输入法先到位键盘矩形、后置可见性，两个信号都接
+            connect(QGuiApplication::inputMethod(), &QInputMethod::keyboardRectangleChanged,
+                    this, trigger);
+            connect(QGuiApplication::inputMethod(), &QInputMethod::visibleChanged,
+                    this, trigger);
+        }
+
+    private:
+        void revealFocusedInput()
+        {
+            QInputMethod *im = QGuiApplication::inputMethod();
+            if (!im || !im->isVisible())
+                return;
+            QWidget *focus = QApplication::focusWidget();
+            if (!focus)
+                return;
+            if (!qobject_cast<QLineEdit *>(focus) && !qobject_cast<QTextEdit *>(focus)
+                && !qobject_cast<QPlainTextEdit *>(focus))
+                return;
+
+            // 键盘矩形是窗口坐标，输入框也换算到窗口坐标再判交叠
+            const QRect inputRect(focus->mapTo(focus->window(), QPoint(0, 0)), focus->size());
+            if (!inputRect.intersects(im->keyboardRectangle().toRect()))
+                return;
+
+            // 找最近的滚动区祖先（列表/树等 item view 本身也是 QScrollArea）滚动到可见
+            for (QWidget *parent = focus->parentWidget(); parent; parent = parent->parentWidget()) {
+                if (auto *scroll = qobject_cast<QScrollArea *>(parent)) {
+                    scroll->ensureWidgetVisible(focus, 0, 24);
+                    break;
+                }
+            }
+        }
+    };
 #endif
 
     // 初始化运行日志：尽早装上，把启动过程也记进去
@@ -453,6 +527,13 @@ int main(int argc, char *argv[])
     PerformanceMonitor::instance()->startMeasurement("主窗口初始化");
     MainWindow w;
     PerformanceMonitor::instance()->endMeasurement("主窗口初始化");
+
+#if defined(Q_OS_ANDROID)
+    // 返回键过滤器要在主窗口存在之后安装（要拿到窗口实例）；
+    // 挂在应用上，任何页面/弹窗里的返回键都会先经过这里
+    a.installEventFilter(new BackKeyFilter(&w, &a));
+    a.installEventFilter(new KeyboardOcclusionGuard(&a));
+#endif
 
 #ifndef Q_OS_ANDROID
     // 接收后续 blockbox:// 一键加入链接的转发：浏览器会为新链接再起一个进程，

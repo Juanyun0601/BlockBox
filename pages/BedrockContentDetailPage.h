@@ -44,6 +44,8 @@ public:
     void setBedrockClassId(int classId);
     /** 设置基岩版分类显示名（资源包/皮肤/地图/脚本/附加包） */
     void setBedrockCategory(const QString &category);
+    /** 设置下载安装的目标实例 ID（空 = 跟随当前激活实例；须在 setModInfo 前调用） */
+    void setTargetInstanceId(const QString &instanceId);
 
     static constexpr const char *MCIM_BASE = "https://mod.mcimirror.top";
     static constexpr const char *CF_BASE   = "https://api.curseforge.com";
@@ -69,6 +71,8 @@ private:
     void buildHeader();
     void buildDownloadBlock();
     void buildLinksBlock();
+    /** 重建「相关链接」整行按钮（详情回包带来作者设置的链接后也用它刷新） */
+    void rebuildLinkButtons();
     void buildTagsBlock();
     void buildDescriptionBlock();
     void buildScreenshotBlock();
@@ -77,10 +81,13 @@ private:
 
     QWidget *createDownloadCard(const ModVersionFile &vf);
     QLabel *createChip(const QString &text);
+    void confirmAndInstall(const ModVersionFile &vf);
     void startDownloadAndInstall(const ModVersionFile &vf);
     void doInstall(const QString &filePath);
     QString comMojangDir() const;
     static QString formatFileSize(qint64 bytes);
+    /** 扫描目标实例里是否已装同名包/世界，刷新「已安装 ✓」徽标与替换安装标记 */
+    void refreshInstalledState();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -99,6 +106,8 @@ protected:
     QVBoxLayout *m_leftLayout = nullptr;
     QWidget *m_downloadContainer = nullptr;
     QVBoxLayout *m_downloadListLayout = nullptr;
+    QLabel *m_installedBadge = nullptr;     ///< 「已安装 ✓」绿色徽标（资源已装进目标实例时显示）
+    QLabel *m_targetInstanceLabel = nullptr; ///< 「安装到：实例名」提示
 
     // 版本列表分页
     static constexpr int kDownloadPageSize = 30;
@@ -132,6 +141,11 @@ protected:
     QList<QPixmap> m_screenshotPixmaps;
     QString m_activeTaskId;
     BlurLoadingOverlay *m_loadingOverlay = nullptr;
+
+    QString m_targetInstanceId;              ///< 下载目标实例 ID（空 = 当前激活实例）
+    QString m_installedDir;                  ///< 已安装同名包/世界的目录（空 = 未安装）
+    QString m_installedName;                 ///< 已安装包/世界的显示名
+    bool m_replaceOnInstall = false;         ///< 本次安装是否先清理旧版本（转换）
 
     QString m_currentSource = QStringLiteral("curseforge");
     QString m_currentItemId;

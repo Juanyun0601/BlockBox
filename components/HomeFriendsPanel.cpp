@@ -1,6 +1,6 @@
 /**
  * @file   HomeFriendsPanel.cpp
- * @brief  首页左侧好友列表实现
+ * @brief  首页好友栏实现
  * @author BlockBox Team
  * @date   2026-11-07
  */
@@ -8,19 +8,16 @@
 #include "HomeFriendsPanel.h"
 
 #include "ForumKit.h"
+#include "OutlinedLabel.h"
+#include "layouts/FlowLayout.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ThemeManager.h"
 
-#include <QDateTime>
-#include <QFrame>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QPainter>
-#include <QPainterPath>
 #include <QPointer>
 #include <QPushButton>
-#include <QScrollArea>
-#include <QScrollBar>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -28,32 +25,14 @@
 
 namespace {
 
-// 面板圆角与右侧皮肤面板 / 轮播保持一致
-constexpr qreal kPanelRadius = 16.0;
 // 好友与联机大厅同步间隔：好友开房后最多半分钟内出现在首页
 constexpr int kPollIntervalMs = 30000;
-
-// 卡片底色（与 style.qss 里 @BG_CARD@ 一致）
-QColor panelCardColor()
-{
-    switch (ThemeManager::instance()->currentTheme())
-    {
-    case ThemeManager::LightTheme: return QColor("#ffffff");
-    case ThemeManager::DarkTheme:  return QColor("#2d2d2d");
-    default:                       return QColor("#333333");
-    }
-}
-
-// 面板描边（与 style.qss 里 @BORDER@ 一致）
-QColor panelBorderColor()
-{
-    switch (ThemeManager::instance()->currentTheme())
-    {
-    case ThemeManager::LightTheme: return QColor("#e8eaed");
-    case ThemeManager::DarkTheme:  return QColor("#3a3a3a");
-    default:                       return QColor("#404040");
-    }
-}
+// 首页这一栏最多摆多少张好友卡片，其余的去好友页看
+constexpr int kMaxCards = 12;
+// 卡片理想宽度：容器够宽时一排多摆几张，窄窗口自动减少列数
+constexpr int kIdealCardWidth = 240;
+// 卡片之间 / 行之间的间距
+constexpr int kCardSpacing = 12;
 
 QString friendDisplayName(const ForumFriendInfo &info)
 {
@@ -66,7 +45,6 @@ HomeFriendsPanel::HomeFriendsPanel(QWidget *parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("homeFriendsPanel"));
-    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     setAttribute(Qt::WA_StyledBackground, false);
 
     buildUi();
@@ -92,7 +70,6 @@ HomeFriendsPanel::HomeFriendsPanel(QWidget *parent)
             });
     // 主题切换：头像的首字母底色是内联样式，需要重建卡片
     connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
-        update();
         m_builtSignature.clear();
         render();
     });
@@ -119,15 +96,16 @@ void HomeFriendsPanel::setActive(bool active)
 void HomeFriendsPanel::buildUi()
 {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(12, 12, 12, 10);
-    root->setSpacing(8);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(10);
 
+    // ── 标题行：好友 · 在线数 · 查看全部 ──
     auto *header = new QHBoxLayout();
     header->setContentsMargins(0, 0, 0, 0);
-    header->setSpacing(6);
+    header->setSpacing(8);
 
-    m_titleLabel = new QLabel(tr("好友"), this);
-    m_titleLabel->setObjectName(QStringLiteral("homeFriendsTitle"));
+    m_titleLabel = new OutlinedLabel(tr("好友"), this);
+    m_titleLabel->setObjectName(QStringLiteral("homeSectionTitle"));
     header->addWidget(m_titleLabel);
 
     m_countLabel = new QLabel(this);
@@ -135,11 +113,9 @@ void HomeFriendsPanel::buildUi()
     header->addWidget(m_countLabel);
     header->addStretch(1);
 
-    m_openButton = new QPushButton(tr("全部"), this);
-    m_openButton->setObjectName(QStringLiteral("homeFriendsOpenBtn"));
+    m_openButton = new QPushButton(tr("查看全部"), this);
+    m_openButton->setObjectName(QStringLiteral("homeLinkBtn"));
     m_openButton->setCursor(Qt::PointingHandCursor);
-    m_openButton->setFixedHeight(24);
-    m_openButton->setFlat(true);
     m_openButton->setToolTip(tr("打开好友与私信页"));
     connect(m_openButton, &QPushButton::clicked, this,
             &HomeFriendsPanel::openFriendsPageRequested);
@@ -147,33 +123,58 @@ void HomeFriendsPanel::buildUi()
 
     root->addLayout(header);
 
-    m_scroll = new QScrollArea(this);
-    m_scroll->setObjectName(QStringLiteral("homeFriendsScroll"));
-    m_scroll->setFrameShape(QFrame::NoFrame);
-    m_scroll->setWidgetResizable(true);
-    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_scroll->setFocusPolicy(Qt::NoFocus);
-
-    m_listHost = new QWidget();
+    // ── 好友卡片流：按宽度自动换行分列 ──
+    m_listHost = new QWidget(this);
     m_listHost->setObjectName(QStringLiteral("homeFriendsListHost"));
-    m_listLayout = new QVBoxLayout(m_listHost);
-    m_listLayout->setContentsMargins(0, 0, 2, 0);
-    m_listLayout->setSpacing(6);
-    m_scroll->setWidget(m_listHost);
-    root->addWidget(m_scroll, 1);
+    m_listLayout = new FlowLayout(m_listHost, 0, kCardSpacing, kCardSpacing);
+    m_listLayout->setContentsMargins(0, 0, 0, 0);
+    m_listHost->installEventFilter(this);
+    root->addWidget(m_listHost);
+
+    // ── 空态行：未登录 / 加载中 / 加载失败 / 还没有好友时占住卡片流的位置 ──
+    m_stateBar = new QWidget(this);
+    m_stateBar->setObjectName(QStringLiteral("homeFriendsState"));
+    auto *stateRow = new QHBoxLayout(m_stateBar);
+    stateRow->setContentsMargins(0, 8, 0, 8);
+    stateRow->setSpacing(12);
+    stateRow->addStretch(1);
+
+    m_stateLabel = new QLabel(m_stateBar);
+    m_stateLabel->setObjectName(QStringLiteral("homeFriendsStateText"));
+    stateRow->addWidget(m_stateLabel);
+
+    m_stateBtn = new QPushButton(m_stateBar);
+    m_stateBtn->setObjectName(QStringLiteral("homeFriendsStateBtn"));
+    m_stateBtn->setCursor(Qt::PointingHandCursor);
+    m_stateBtn->setFixedHeight(30);
+    connect(m_stateBtn, &QPushButton::clicked, this, [this]() {
+        if (m_stateAction)
+            m_stateAction();
+    });
+    stateRow->addWidget(m_stateBtn);
+    stateRow->addStretch(1);
+
+    m_stateBar->hide();
+    root->addWidget(m_stateBar);
+
+    // 首次显示先占一行提示，等好友数据回来再由 render() 换成卡片
+    if (ForumAccountService::instance()->isLoggedIn())
+    {
+        showState(tr("正在加载好友…"));
+    }
+    else
+    {
+        showState(tr("登录方块盒子账号，看看好友都在玩什么"),
+                  tr("去登录"), [this]() { emit loginRequested(); });
+    }
 }
 
-void HomeFriendsPanel::paintEvent(QPaintEvent *)
+bool HomeFriendsPanel::eventFilter(QObject *watched, QEvent *event)
 {
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-    QPainterPath path;
-    path.addRoundedRect(rect(), kPanelRadius, kPanelRadius);
-    painter.fillPath(path, panelCardColor());
-    painter.setPen(QPen(panelBorderColor(), 1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), kPanelRadius, kPanelRadius);
+    // 容器宽度变化后重新分列：延迟一拍执行，避免在布局激活过程中增删子项
+    if (watched == m_listHost && event->type() == QEvent::Resize && m_listHost->isVisible())
+        scheduleRebuild();
+    return QWidget::eventFilter(watched, event);
 }
 
 void HomeFriendsPanel::refresh()
@@ -353,51 +354,86 @@ void HomeFriendsPanel::rebuildHeader()
     m_countLabel->setToolTip(tr("共 %1 位好友").arg(m_friends.size()));
 }
 
-void HomeFriendsPanel::renderState(const QString &text, const QString &actionText,
-                                   const std::function<void()> &onAction)
+int HomeFriendsPanel::calculateCardWidth() const
 {
-    auto *state = new QWidget(m_listHost);
-    state->setObjectName(QStringLiteral("homeFriendsState"));
-    auto *layout = new QVBoxLayout(state);
-    layout->setContentsMargins(6, 16, 6, 16);
-    layout->setSpacing(10);
+    const int availW = m_listHost ? m_listHost->width() : 0;
+    if (availW <= 0)
+        return kIdealCardWidth;
 
-    auto *label = new QLabel(text, state);
-    label->setObjectName(QStringLiteral("homeFriendsStateText"));
-    label->setWordWrap(true);
-    label->setAlignment(Qt::AlignCenter);
-    layout->addWidget(label);
+    // 一排能摆几张：宽窗口最多 6 张，窄窗口自动减到 1 张
+    int cols = (availW + kCardSpacing) / (kIdealCardWidth + kCardSpacing);
+    cols = qBound(1, cols, 6);
+    const int cardW = (availW - (cols - 1) * kCardSpacing) / cols;
+    return qMax(cardW, 160);
+}
 
-    if (!actionText.isEmpty() && onAction)
+void HomeFriendsPanel::clearCards()
+{
+    if (!m_listLayout)
+        return;
+    while (QLayoutItem *item = m_listLayout->takeAt(0))
     {
-        auto *button = new QPushButton(actionText, state);
-        button->setObjectName(QStringLiteral("homeFriendsStateBtn"));
-        button->setCursor(Qt::PointingHandCursor);
-        button->setFixedHeight(30);
-        connect(button, &QPushButton::clicked, this, onAction);
-        layout->addWidget(button, 0, Qt::AlignHCenter);
+        if (QWidget *widget = item->widget())
+        {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
     }
+}
 
-    m_listLayout->addStretch(1);
-    m_listLayout->addWidget(state);
-    m_listLayout->addStretch(1);
+void HomeFriendsPanel::showState(const QString &text, const QString &actionText,
+                                 const std::function<void()> &onAction)
+{
+    if (!m_stateBar)
+        return;
+    m_stateLabel->setText(text);
+    m_stateAction = onAction;
+    m_stateBtn->setText(actionText);
+    m_stateBtn->setVisible(!actionText.isEmpty() && static_cast<bool>(onAction));
+    m_listHost->hide();
+    m_stateBar->show();
+}
+
+void HomeFriendsPanel::hideState()
+{
+    if (!m_stateBar)
+        return;
+    m_stateAction = nullptr;
+    m_stateBar->hide();
+    m_listHost->show();
+}
+
+void HomeFriendsPanel::scheduleRebuild()
+{
+    if (m_rebuildPending)
+        return;
+    m_rebuildPending = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_rebuildPending = false;
+        render();
+    });
 }
 
 QWidget *HomeFriendsPanel::createFriendCard(const ForumFriendInfo &info,
-                                            const ForumLobbyRoom *room)
+                                            const ForumLobbyRoom *room, int cardWidth)
 {
     auto *card = new ForumKit::ClickableCard(m_listHost);
     card->setObjectName(QStringLiteral("homeFriendCard"));
     card->setProperty("roomActive", room != nullptr);
     card->setCursor(Qt::PointingHandCursor);
-    card->setFixedHeight(room ? 58 : 54);
+    card->setFixedWidth(cardWidth);
+    // 同一排卡片统一高度：有「一起玩」按钮的卡片也按同一高度排，避免行内参差
+    card->setFixedHeight(58);
 
     auto *row = new QHBoxLayout(card);
     row->setContentsMargins(9, 7, 9, 7);
     row->setSpacing(8);
 
     const QString name = friendDisplayName(info);
-    auto *avatar = ForumKit::makeAvatar(card, info.avatar, name, 34);
+    // 官方客服用方块盒子图标当头像，普通好友照旧
+    auto *avatar = info.official ? ForumKit::makeOfficialAvatar(card, 34)
+                                 : ForumKit::makeAvatar(card, info.avatar, name, 34);
     row->addWidget(avatar, 0, Qt::AlignVCenter);
 
     auto *textColumn = new QVBoxLayout();
@@ -481,94 +517,81 @@ QWidget *HomeFriendsPanel::createFriendCard(const ForumFriendInfo &info,
 
 void HomeFriendsPanel::render()
 {
-    if (!m_listLayout)
+    if (!m_listLayout || !m_listHost || !m_stateBar)
         return;
 
     rebuildHeader();
 
+    const int cardWidth = calculateCardWidth();
     const QString signature = dataSignature();
-    if (signature == m_builtSignature)
+    if (signature == m_builtSignature && cardWidth == m_builtCardWidth)
         return;
     m_builtSignature = signature;
+    m_builtCardWidth = cardWidth;
 
-    const int scrollValue = m_scroll ? m_scroll->verticalScrollBar()->value() : 0;
-
-    while (QLayoutItem *item = m_listLayout->takeAt(0))
-    {
-        if (QWidget *widget = item->widget())
-        {
-            widget->hide();
-            widget->deleteLater();
-        }
-        delete item;
-    }
+    clearCards();
 
     const bool loggedIn = ForumAccountService::instance()->isLoggedIn();
 
     if (!loggedIn)
     {
-        renderState(tr("登录方块盒子账号，看看好友都在玩什么"),
-                    tr("去登录"), [this]() { emit loginRequested(); });
+        showState(tr("登录方块盒子账号，看看好友都在玩什么"),
+                  tr("去登录"), [this]() { emit loginRequested(); });
+        return;
     }
-    else if (m_friends.isEmpty())
+    if (m_friends.isEmpty())
     {
         if (m_friendsFailed)
         {
-            renderState(tr("好友列表没加载出来，稍后再试试"),
-                        tr("重试"), [this]() { refresh(); });
+            showState(tr("好友列表没加载出来，稍后再试试"),
+                      tr("重试"), [this]() { refresh(); });
         }
         else if (!m_loadedOnce || m_friendsLoading)
         {
-            renderState(tr("正在加载好友…"));
+            showState(tr("正在加载好友…"));
         }
         else
         {
-            renderState(tr("还没有好友，先去认识几位吧"),
-                        tr("去添加好友"), [this]() { emit openFriendsPageRequested(); });
+            showState(tr("还没有好友，先去认识几位吧"),
+                      tr("去添加好友"), [this]() { emit openFriendsPageRequested(); });
         }
+        return;
     }
-    else
-    {
-        const QHash<int, ForumLobbyRoom> rooms = activeRoomsByHost();
-        QVector<ForumFriendInfo> ordered = m_friends;
-        std::stable_sort(ordered.begin(), ordered.end(),
-                         [&rooms](const ForumFriendInfo &a, const ForumFriendInfo &b)
+
+    hideState();
+
+    const QHash<int, ForumLobbyRoom> rooms = activeRoomsByHost();
+    QVector<ForumFriendInfo> ordered = m_friends;
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [&rooms](const ForumFriendInfo &a, const ForumFriendInfo &b)
+                     {
+                         // 官方客服固定在第一位，其余好友里联机中的优先
+                         if (a.official != b.official)
+                             return a.official;
+                         const auto roomA = rooms.constFind(a.id);
+                         const auto roomB = rooms.constFind(b.id);
+                         const bool aPlaying = roomA != rooms.constEnd();
+                         const bool bPlaying = roomB != rooms.constEnd();
+                         if (aPlaying != bPlaying)
+                             return aPlaying;
+                         if (aPlaying && bPlaying)
                          {
-                             // 官方客服固定在第一位，其余好友里联机中的优先
-                             if (a.official != b.official)
-                                 return a.official;
-                             const auto roomA = rooms.constFind(a.id);
-                             const auto roomB = rooms.constFind(b.id);
-                             const bool aPlaying = roomA != rooms.constEnd();
-                             const bool bPlaying = roomB != rooms.constEnd();
-                             if (aPlaying != bPlaying)
-                                 return aPlaying;
-                             if (aPlaying && bPlaying)
-                             {
-                                 const qint64 stampA = qMax(roomA->updatedAt, roomA->createdAt);
-                                 const qint64 stampB = qMax(roomB->updatedAt, roomB->createdAt);
-                                 return stampA > stampB;
-                             }
-                             return false;
-                         });
+                             const qint64 stampA = qMax(roomA->updatedAt, roomA->createdAt);
+                             const qint64 stampB = qMax(roomB->updatedAt, roomB->createdAt);
+                             return stampA > stampB;
+                         }
+                         return false;
+                     });
 
-        for (const ForumFriendInfo &info : ordered)
-        {
-            const auto roomIt = rooms.constFind(info.id);
-            const ForumLobbyRoom *room = roomIt == rooms.constEnd() ? nullptr : &roomIt.value();
-            m_listLayout->addWidget(createFriendCard(info, room));
-        }
-        m_listLayout->addStretch(1);
-    }
-
-    if (scrollValue > 0)
+    const int count = qMin(ordered.size(), kMaxCards);
+    for (int i = 0; i < count; ++i)
     {
-        QTimer::singleShot(0, this, [this, scrollValue]() {
-            if (m_scroll)
-                m_scroll->verticalScrollBar()->setValue(scrollValue);
-        });
+        const ForumFriendInfo &info = ordered[i];
+        const auto roomIt = rooms.constFind(info.id);
+        const ForumLobbyRoom *room = roomIt == rooms.constEnd() ? nullptr : &roomIt.value();
+        m_listLayout->addWidget(createFriendCard(info, room, cardWidth));
     }
 
-    // 未登录 / 没有好友 / 好友列表加载失败时首页不保留左侧空栏
-    emit panelVisibilityChanged(loggedIn && !m_friends.isEmpty());
+    // 让父布局重新查询本栏的 sizeHint（分列变化导致高度变化时才能正确传导）
+    m_listHost->updateGeometry();
 }

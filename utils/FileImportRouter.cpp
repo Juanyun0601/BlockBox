@@ -147,7 +147,8 @@ ImportFileType FileImportRouter::detectFileType(const QString &filePath)
     // 基岩版资源
     if (lower.endsWith(QStringLiteral(".mcpack")) ||
         lower.endsWith(QStringLiteral(".mcaddon")) ||
-        lower.endsWith(QStringLiteral(".mcworld")))
+        lower.endsWith(QStringLiteral(".mcworld")) ||
+        lower.endsWith(QStringLiteral(".mctemplate")))
         return ImportFileType::BedrockResource;
 
     // .mrpack 直接判定为整合包

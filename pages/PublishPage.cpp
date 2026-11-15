@@ -1,6 +1,6 @@
 /**
  * @file   PublishPage.cpp
- * @brief  发布页实现：资源 / 帖子两个入口
+ * @brief  发布页实现：资源 / 帖子 / 教程三个入口
  * @author BlockBox Team
  * @date   2026-11-07
  */
@@ -64,17 +64,24 @@ void PublishPage::buildUi()
     flow->addWidget(resourcesCard);
 
     auto *postsCard = PublishKit::makeChoiceCard(
-        cardsRow, tr("帖子"), tr("选择一个社区板块，发布你的讨论、教程或作品"),
+        cardsRow, tr("帖子"), tr("选择一个社区板块，发布你的讨论、求助或作品"),
         QColor(QStringLiteral("#6366F1")), QColor(QStringLiteral("#4338CA")),
         QStringLiteral(":/Images/Icons/nav_forum.svg"), 340, 126);
     postsCard->onClick = [this]() { emit postsRequested(); };
     flow->addWidget(postsCard);
 
+    auto *tutorialsCard = PublishKit::makeChoiceCard(
+        cardsRow, tr("教程"), tr("图文 / 视频教程与攻略：正文自动生成目录，可挂资料附件"),
+        QColor(QStringLiteral("#0EA5E9")), QColor(QStringLiteral("#0369A1")),
+        QStringLiteral(":/Images/Icons/nav_forum.svg"), 340, 126);
+    tutorialsCard->onClick = [this]() { emit tutorialsRequested(); };
+    flow->addWidget(tutorialsCard);
+
     layout->addWidget(cardsRow);
     layout->addStretch(1);
 
     auto *hint = new QLabel(
-        tr("模组、资源包等会跳转到 CurseForge / Modrinth 发布；插件（方块盒子插件）和帖子可以直接在方块盒子社区发布——插件发到「插件分享」板块，帖子只做交流讨论。"),
+        tr("模组、资源包等会跳转到 CurseForge / Modrinth 发布；插件（方块盒子插件）、帖子和教程可以直接在方块盒子社区发布——插件发到「插件分享」板块，帖子只做交流讨论，教程发到「教程分享」板块。"),
         content);
     hint->setObjectName(QStringLiteral("forumMuted"));
     hint->setWordWrap(true);

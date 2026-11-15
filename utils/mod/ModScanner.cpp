@@ -25,6 +25,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMutexLocker>
+#include <QSet>
 #include <QtConcurrent>
 
 // 需要从 JAR 中提取的元数据条目列表（按优先级排列）
@@ -34,6 +35,53 @@ static const QStringList METADATA_ENTRIES = {
   "mcmod.info",
   "META-INF/MANIFEST.MF"
 };
+
+// 判断依赖的 modId 是否为加载器/运行环境本身（不是 mods 目录里的实体模组，
+// 在「所属关系」里显示成前置会造成误导，直接跳过）
+static bool isEnvironmentDep(const QString &modId)
+{
+  static const QSet<QString> kEnvDeps = {
+    "minecraft", "java", "fabricloader", "quilt_loader",
+    "forge", "neoforge", "javafml", "mclanguage", "fml", "mcp", "mixin"
+  };
+  return kEnvDeps.contains(modId.toLower());
+}
+
+// 版本范围数组转字符串（fabric.mod.json 的 depends 值可能是数组）
+static QString joinVersionArray(const QJsonArray &arr)
+{
+  QStringList parts;
+  for (const auto &v : arr)
+  {
+    parts.append(v.toString());
+  }
+  return parts.join(" 或 ");
+}
+
+// fabric.mod.json 的 depends/suggests：modId → 版本串或版本串数组
+static void parseFabricDepObject(const QJsonObject &obj, bool required, ModInfo &info)
+{
+  for (auto it = obj.begin(); it != obj.end(); ++it)
+  {
+    const QString depId = it.key().trimmed();
+    if (depId.isEmpty() || isEnvironmentDep(depId))
+    {
+      continue;
+    }
+    ModDependency dep;
+    dep.name = depId;
+    dep.isRequired = required;
+    if (it.value().isString())
+    {
+      dep.version = it.value().toString();
+    }
+    else if (it.value().isArray())
+    {
+      dep.version = joinVersionArray(it.value().toArray());
+    }
+    info.dependencies.append(dep);
+  }
+}
 
 ModScanner::ModScanner(QObject *parent)
   : QObject(parent)
@@ -52,6 +100,50 @@ void ModScanner::scanMods(const QString &instancePath)
   {
     LocalModList result;
     scanModsSync(instancePath, result);
+    emit scanCompleted(result);
+  });
+}
+
+void ModScanner::scanFolderFingerprints(const QString &folderPath, const QStringList &nameFilters)
+{
+  QtConcurrent::run([this, folderPath, nameFilters]()
+  {
+    LocalModList result;
+    QDir dir(folderPath);
+    if (dir.exists())
+    {
+      QStringList files;
+      QDirIterator it(folderPath, nameFilters, QDir::Files, QDirIterator::NoIteratorFlags);
+      while (it.hasNext())
+        files.append(it.next());
+
+      // 顺序处理：资源包/光影包单文件可达上百 MB，逐个读取避免并发内存峰值
+      for (const QString &path : files)
+      {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly))
+          continue;
+        const QByteArray data = f.readAll();
+        f.close();
+        if (data.isEmpty())
+          continue;
+
+        ModInfo info;
+        QFileInfo fi(path);
+        info.filePath = fi.absoluteFilePath();
+        info.fileName = fi.fileName();
+        info.fileSize = fi.size();
+        info.enabled = !info.fileName.endsWith(".disabled");
+        info.sha1Hash = QString::fromLatin1(QCryptographicHash::hash(data, QCryptographicHash::Sha1).toHex());
+        info.curseforgeHash = MurmurHash2::curseforgeFingerprint(data);
+        result.mods.append(info);
+        ++result.totalCount;
+        if (info.enabled)
+          ++result.enabledCount;
+        else
+          ++result.disabledCount;
+      }
+    }
     emit scanCompleted(result);
   });
 }
@@ -378,6 +470,16 @@ bool ModScanner::parseFabricModJson(const QString &content, ModInfo &info)
     }
   }
 
+  // depends（必需前置）/ suggests（建议可选）→ dependencies（所属关系展示用）
+  if (root.contains("depends") && root.value("depends").isObject())
+  {
+    parseFabricDepObject(root.value("depends").toObject(), true, info);
+  }
+  if (root.contains("suggests") && root.value("suggests").isObject())
+  {
+    parseFabricDepObject(root.value("suggests").toObject(), false, info);
+  }
+
   info.loaderType = "fabric";
 
   // 如果 name 为空，使用 id
@@ -473,6 +575,81 @@ bool ModScanner::parseModsToml(const QString &content, ModInfo &info)
     else if (key == "issueTrackerURL")
     {
       info.issuesUrl = value;
+    }
+  }
+
+  // [[dependencies.<modId>]] 表格 → dependencies（Forge mandatory / NeoForge type=required）
+  ModDependency *curDep = nullptr;
+  for (int i = 0; i < lines.size(); ++i)
+  {
+    QString trimmed = lines[i].trimmed();
+
+    if (trimmed.startsWith("[[") && trimmed.endsWith("]]"))
+    {
+      curDep = nullptr;
+      if (trimmed.startsWith("[[dependencies."))
+      {
+        // 去掉 [[dependencies. 前缀和 ]] 后缀，取声明的依赖 modId（本模组自己的 id 在节名里，忽略）
+        QString depId = trimmed.mid(QString("[[dependencies.").length());
+        depId.chop(2);
+        depId = depId.trimmed();
+        if (!depId.isEmpty() && !isEnvironmentDep(depId))
+        {
+          info.dependencies.append(ModDependency());
+          curDep = &info.dependencies.last();
+          curDep->name = depId;
+          curDep->isRequired = true;
+        }
+      }
+      continue;
+    }
+
+    if (!curDep || trimmed.isEmpty() || trimmed.startsWith('#') || trimmed.startsWith('['))
+    {
+      continue;
+    }
+
+    int eqIdx = trimmed.indexOf('=');
+    if (eqIdx < 0)
+    {
+      continue;
+    }
+
+    QString key = trimmed.left(eqIdx).trimmed();
+    QString value = trimmed.mid(eqIdx + 1).trimmed();
+    if (value.startsWith('"') && value.endsWith('"'))
+    {
+      value = value.mid(1, value.length() - 2);
+    }
+
+    if (key == "modId")
+    {
+      curDep->name = value;
+      if (isEnvironmentDep(value))
+      {
+        info.dependencies.removeLast();
+        curDep = nullptr;
+      }
+    }
+    else if (key == "mandatory")
+    {
+      curDep->isRequired = (value.compare("true", Qt::CaseInsensitive) == 0);
+    }
+    else if (key == "type")
+    {
+      // NeoForge 1.20.5+ 写法：required / optional / incompatible
+      if (value == "required")
+      {
+        curDep->isRequired = true;
+      }
+      else if (value == "optional" || value == "incompatible" || value == "discouraged")
+      {
+        curDep->isRequired = false;
+      }
+    }
+    else if (key == "versionRange")
+    {
+      curDep->version = value;
     }
   }
 

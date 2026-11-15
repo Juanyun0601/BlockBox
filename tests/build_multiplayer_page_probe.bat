@@ -31,6 +31,11 @@ echo === compiling page ===
 g++.exe -c -pipe -fno-keep-inline-dllexport -O2 -fexceptions -mthreads %DEF% %INC% -o .tmp_mp_probe\MultiplayerPage_probe.o pages\MultiplayerPage.cpp
 if errorlevel 1 goto :fail
 
+rem Also rebuild the account service so no stale objects are linked
+echo === compiling forum account service ===
+g++.exe -c -pipe -fno-keep-inline-dllexport -O2 -fexceptions -mthreads %DEF% %INC% -o .tmp_mp_probe\ForumAccountService_probe.o utils\ForumAccountService.cpp
+if errorlevel 1 goto :fail
+
 echo === compiling moc ===
 g++.exe -c -pipe -fno-keep-inline-dllexport -O2 -fexceptions -mthreads %DEF% %INC% -o .tmp_mp_probe\moc_MultiplayerPage_probe.o .tmp_mp_probe\moc_MultiplayerPage.cpp
 if errorlevel 1 goto :fail
@@ -50,10 +55,11 @@ for /f "usebackq delims=" %%f in ("%SCRIPT%") do (
     set "entry=%%f"
     if "!entry!" NEQ "" (
         set "entry=!entry:release/=!"
-        if /I not "!entry!"=="main.o" if /I not "!entry!"=="MultiplayerPage.o" if /I not "!entry!"=="moc_MultiplayerPage.o" echo !OBJDIR!/!entry!>> "%RSP%"
+        if /I not "!entry!"=="main.o" if /I not "!entry!"=="MultiplayerPage.o" if /I not "!entry!"=="moc_MultiplayerPage.o" if /I not "!entry!"=="ForumAccountService.o" echo !OBJDIR!/!entry!>> "%RSP%"
     )
 )
 echo .tmp_mp_probe/MultiplayerPage_probe.o>> "%RSP%"
+echo .tmp_mp_probe/ForumAccountService_probe.o>> "%RSP%"
 echo .tmp_mp_probe/moc_MultiplayerPage_probe.o>> "%RSP%"
 echo .tmp_mp_probe/multiplayer_page_probe.o>> "%RSP%"
 

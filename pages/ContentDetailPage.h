@@ -16,6 +16,7 @@
 #include <QNetworkDiskCache>
 #include <QEvent>
 #include <QHash>
+#include <QMap>
 #include <QVector>
 #include "../components/BlurLoadingOverlay.h"
 #include "../components/TranslateSwitchCard.h"
@@ -26,6 +27,7 @@ class QParallelAnimationGroup;
 class SourceSwitchBar;
 class CurseForgeAPI;
 class ModrinthAPI;
+class ModScanner;
 
 class ContentDetailPage : public QWidget
 {
@@ -37,6 +39,8 @@ public:
 
     void setModInfo(const ModInfo &info);
     void setInstanceFilter(const QString &gameVersion, const QString &loaderType);
+    /** 设置当前筛选的实例路径；模组/资源包/光影包会据此识别安装状态（已安装 / 可转换） */
+    void setInstancePath(const QString &instancePath);
     /** 当前左侧筛选对应的实例版本/加载器（从列表页带入，跳转其他资源详情时沿用） */
     QString instanceGameVersion() const { return m_instanceGameVersion; }
     QString instanceLoaderType() const { return m_instanceLoaderType; }
@@ -51,6 +55,9 @@ public slots:
 signals:
     void backToListRequested();
     void downloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile);
+    /** 点击版本卡「转换」：把实例里已装的旧文件替换成该版本，oldFilePaths 为待删除的旧文件 */
+    void convertRequested(const ModInfo &modInfo, const ModVersionFile &versionFile,
+                          const QStringList &oldFilePaths);
     /** 点击左侧「一键安装」：安装最新正式版并自动补齐其必备前置 */
     void installLatestRequested(const ModInfo &modInfo);
     void contentClicked(const ModInfo &info);
@@ -78,6 +85,8 @@ private:
     void buildDependenciesBlock(QVBoxLayout *parentLayout);
     void buildDownloadListBlock(QVBoxLayout *parentLayout);
     void buildLinksBlock(QVBoxLayout *parentLayout);
+    /** 重建「相关链接」整行按钮（详情回包带来作者设置的链接后也用它刷新） */
+    void rebuildLinkButtons();
     void buildTagsBlock(QVBoxLayout *parentLayout);
     void buildDescriptionBlock(QVBoxLayout *parentLayout);
     QWidget *createDownloadCard(const ModVersionFile &vf);
@@ -97,6 +106,38 @@ private:
     QWidget *createChip(const QString &text, const QColor &bgColor = QColor("#e8e8e8"));
     void showFavoriteMenu();
     void updateFavoriteButtonIcon();
+
+    struct DownloadCardEntry {
+        QStringList gameVersions;
+        QStringList loaders;
+        QString releaseType;
+        QWidget *widget;
+        ModVersionFile vf;                 // 卡片对应的版本文件
+        QPushButton *actionBtn = nullptr;  // 右侧动作按钮（下载/转换/已安装）
+        int action = ActionDownload;
+        QStringList oldFilePaths;          // Convert 态：实例中待替换的旧文件
+    };
+
+    // ── 安装状态识别：下载列表每个版本按钮的三态（下载 / 转换 / 已安装）──
+    enum CardAction {
+        ActionDownload = 0,   // 未安装：普通下载按钮
+        ActionConvert = 1,    // 已装该项目但非此版本：转换为该版本
+        ActionInstalled = 2   // 该版本文件已安装：对号，不可点击
+    };
+    /** 该内容类型是否支持按文件识别安装状态（模组/资源包/光影包；整合包等安装形态特殊不做） */
+    bool supportsInstallStateCheck() const;
+    /** 实例下用于比对的目录（mods/resourcepacks/shaderpacks） */
+    QString installCheckFolder() const;
+    QStringList installCheckNameFilters() const;
+    void startInstallStateCheck();
+    void onInstallScanCompleted(const LocalModList &list);
+    /** 用已扫描到的本地文件按当前来源批量匹配在线项目（Modrinth 哈希 / CurseForge 指纹） */
+    void issueProjectMatch();
+    void applyInstallStates();
+    void setCardAction(DownloadCardEntry &entry, CardAction action,
+                       const QStringList &oldFilePaths = QStringList());
+    /** 当前资源的规范项目 ID（详情回包带来的 id，兼容从分享链接 slug 进入） */
+    QString currentProjectId() const;
 
     // ── 详情拉取与左侧「前置资源」 ──
     void initAPI();
@@ -128,13 +169,6 @@ private:
         TranslateSummaryAndDetail = 2  // 简介与详细信息同源，一次翻译两处共用
     };
 
-    struct DownloadCardEntry {
-        QStringList gameVersions;
-        QStringList loaders;
-        QString releaseType;
-        QWidget *widget;
-    };
-
     // 分页相关
     static const int kDownloadPageSize = 30;
     int m_downloadCurrentPage;
@@ -156,6 +190,19 @@ private:
     QString m_returnFolderId;    // 如果是从收藏夹跳转进入，记录返回的分组 ID
     QString m_instanceGameVersion;
     QString m_instanceLoaderType;
+
+    // ── 安装状态识别（按实例目录扫描 + 哈希/指纹批量匹配）──
+    QString m_instancePath;                  // 当前筛选的实例（空 = 未筛选，不识别）
+    QString m_canonicalProjectId;            // 详情回包的规范项目 id
+    ModScanner *m_installScanner = nullptr;
+    LocalModList m_installedMods;            // 实例目录扫描结果
+    QString m_checkInstancePath;             // 已装数据对应的实例
+    QString m_matchedSource;                 // 匹配数据对应的来源（换源后需重发匹配）
+    bool m_scanRequested = false;            // 是否已有扫描在途
+    int m_checkGeneration = 0;               // 世代计数，防止旧扫描/匹配结果串台
+    int m_pendingScanGeneration = 0;
+    QMap<QString, ModVersionFile> m_hashMatches;   // sha1 → 匹配到的在线版本（Modrinth）
+    QMap<quint32, QString> m_cfFingerprintModIds;  // 文件指纹 → 项目 ID（CurseForge）
 
     QScrollArea *m_scrollArea;
     QWidget *m_contentWidget;

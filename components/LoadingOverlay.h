@@ -90,6 +90,7 @@ private:
     void initUI();
     void initStyle();
     void updateAnimationState();
+    void refreshTrivia();
 
     // UI 组件
     QWidget *m_centerWidget;
@@ -97,9 +98,11 @@ private:
     SpinnerWidget *m_spinner;
     QProgressBar *m_progressBar;
     QLabel *m_statusLabel;
+    QLabel *m_triviaLabel;
     QPushButton *m_cancelButton;
 
     // 状态
+    QTimer *m_triviaTimer;     // 「你知道吗」轮换定时器
     bool m_showCancelButton;
     bool m_showProgressBar;
     bool m_animationsEnabled;

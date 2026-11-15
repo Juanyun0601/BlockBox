@@ -28,6 +28,7 @@
 class QComboBox;
 class QFrame;
 class QHBoxLayout;
+class QParallelAnimationGroup;
 
 class AiService;
 class AiComposeDialog;
@@ -58,6 +59,8 @@ public:
     /** 悬浮气泡参数 */
     static constexpr int kBubbleWidth = 240;   // 气泡固定宽度（与 SubNavPanel 一致）
     static constexpr int kBubbleMargin = 10;   // 气泡与宿主边缘间距
+    // 紧凑模式（实例助手 450px 窄窗）下的气泡宽度：避免展开后过度挤压消息区
+    static constexpr int kCompactBubbleWidth = 200;
 
     /**
      * @brief 当前对话状态枚举
@@ -199,6 +202,20 @@ private:
 
     // 对话列表悬浮气泡：重新计算几何（宿主尺寸变化时调用）
     void updateConvBubbleGeometry();
+
+    /**
+     * @brief 展开/收起左侧对话列表气泡
+     * @param expanded 目标状态
+     * @param animate 是否带滑动过渡动画（构造恢复状态时传 false 静默应用）
+     *
+     * 展开时气泡宽度 0→m_bubbleWidth 滑入，宿主左边距同步过渡让消息区平滑让位；
+     * 收起反向滑出后隐藏。切换结果持久化到 ai/convListExpanded。
+     */
+    void setConvListExpanded(bool expanded, bool animate);
+    /** 对话按钮标题按气泡宽度省略显示（超长时带省略号，悬浮提示完整标题） */
+    void updateConvButtonTitles();
+    /** 对话列表为空时显示「暂无历史对话」提示 */
+    void updateConvEmptyHint();
 
     // 实例下载触发（download_instance / modify_instance 共用）
     void triggerInstanceDownload(const QString &versionId, const QString &instancePath,
@@ -435,6 +452,8 @@ private:
     QHBoxLayout *m_bubbleHostLayout; ///< 宿主布局（用于展开时左侧留出空隙）
     QPushButton *m_toggleConvBtn;   ///< 对话选择切换按钮（收起/展开）
     bool m_convListExpanded;        ///< 对话列表是否处于展开状态
+    int m_bubbleWidth;              ///< 气泡当前宽度（紧凑模式收窄为 kCompactBubbleWidth）
+    QParallelAnimationGroup *m_convToggleAnim; ///< 展开/收起动画组（进行中时再次切换先停掉）
     QPushButton *m_modeChatBtn;     ///< 聊天模式按钮
     QPushButton *m_modeWorkBtn;     ///< 工作模式按钮
     QWidget *m_modeIndicator;      ///< 模式切换滑动指示器
@@ -443,6 +462,7 @@ private:
     QVBoxLayout *m_convLayout;
     QList<QPushButton *> m_convButtons;
     QPushButton *m_newConvBtn;
+    QLabel *m_convEmptyHint;        ///< 对话列表空提示（暂无历史对话）
     QWidget *m_selectionHighlight;   ///< 选中态滑动背景
     int m_contextMenuIdx;
 

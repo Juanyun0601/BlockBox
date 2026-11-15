@@ -1,5 +1,6 @@
 #include "LaunchDetailsPage.h"
 #include <QFileDialog>
+#include "components/AppMessageBox.h"
 #include "components/OutlinedLabel.h"
 #include "components/OutlinedTextEdit.h"
 #include "utils/GameLauncher.h"
@@ -167,7 +168,7 @@ void LaunchDetailsPage::exportLog()
 {
     QString plainText = m_detailsTextEdit->toPlainText();
     if (plainText.isEmpty()) {
-        QMessageBox::information(this, tr("导出日志"), tr("日志为空，无法导出"));
+        AppMessageBox::information(this, tr("导出日志"), tr("日志为空，无法导出"));
         return;
     }
 
@@ -187,7 +188,7 @@ void LaunchDetailsPage::exportLog()
 
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, tr("导出日志"), 
+        AppMessageBox::warning(this, tr("导出日志"), 
             tr("无法写入文件: %1").arg(file.errorString()));
         return;
     }
@@ -196,6 +197,6 @@ void LaunchDetailsPage::exportLog()
     stream << plainText;
     file.close();
 
-    QMessageBox::information(this, tr("导出日志"), 
+    AppMessageBox::information(this, tr("导出日志"), 
         tr("日志已成功导出到:\n%1").arg(filePath));
 }

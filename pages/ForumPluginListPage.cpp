@@ -10,6 +10,9 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
@@ -38,6 +41,30 @@ QString pluginTempDir()
     const QString dir = QDir::tempPath() + QStringLiteral("/BlockBox/forum-plugin");
     QDir().mkpath(dir);
     return dir;
+}
+
+/** 圆角方形插件图标：远程图源按 modCardIcon 的圆角半径裁切，避免直角压住卡片 */
+QPixmap roundedIconPixmap(const QImage &image, int size, qreal radius)
+{
+    if (image.isNull())
+        return QPixmap();
+
+    // 等比放大铺满后居中裁出正方形，再按圆角路径裁剪
+    const QPixmap scaled = QPixmap::fromImage(
+        image.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+    const int cropX = qMax(0, (scaled.width() - size) / 2);
+    const int cropY = qMax(0, (scaled.height() - size) / 2);
+
+    QPixmap canvas(size, size);
+    canvas.fill(Qt::transparent);
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPainterPath clip;
+    clip.addRoundedRect(QRectF(0, 0, size, size), radius, radius);
+    painter.setClipPath(clip);
+    painter.drawPixmap(0, 0, scaled, cropX, cropY, size, size);
+    painter.end();
+    return canvas;
 }
 
 } // namespace
@@ -114,7 +141,7 @@ void ForumPluginListPage::buildUi()
     m_listHost = content;
     m_listLayout = new QVBoxLayout();
     m_listLayout->setContentsMargins(0, 0, 0, 0);
-    m_listLayout->setSpacing(10);
+    m_listLayout->setSpacing(8);
     layout->addLayout(m_listLayout);
 
     layout->addStretch(1);
@@ -272,90 +299,111 @@ void ForumPluginListPage::renderLoaded()
     }
     m_statusLabel->hide();
 
+    const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+
     for (const ForumPluginInfo &plugin : visible)
     {
         const int threadId = m_threadIdByPlugin.value(plugin.id, 0);
-        auto *row = ForumKit::makeCard(m_listHost, QStringLiteral("forumThreadRow"));
-        auto *rowLayout = new QHBoxLayout(row);
-        rowLayout->setContentsMargins(14, 12, 14, 12);
-        rowLayout->setSpacing(12);
 
-        auto *icon = new QLabel(row);
-        icon->setFixedSize(44, 44);
+        // 卡片外观与「下载模组」「插件管理」等页的列表卡片同款（modCardListItem）
+        auto *card = new QWidget(m_listHost);
+        card->setObjectName(QStringLiteral("modCardListItem"));
+        card->setProperty("cardRole", "container");
+        card->setFixedHeight(76);
+        card->setCursor(Qt::PointingHandCursor);
+
+        auto *rowLayout = new QHBoxLayout(card);
+        rowLayout->setContentsMargins(14, 12, 14, 12);
+        rowLayout->setSpacing(14);
+
+        // 图标：有封面用封面（圆角裁切），没有就用名称首字母占位
+        auto *icon = new QLabel(card);
+        icon->setObjectName(QStringLiteral("modCardIcon"));
+        icon->setProperty("cardRole", "icon");
+        icon->setFixedSize(48, 48);
         icon->setAlignment(Qt::AlignCenter);
-        icon->setStyleSheet(QStringLiteral(
-            "background:@BG_MUTED@;border:1px solid @BORDER@;border-radius:9px;"));
+        const QString trimmedName = plugin.name.trimmed();
+        icon->setText(trimmedName.isEmpty() ? QStringLiteral("?")
+                                            : trimmedName.left(1).toUpper());
         if (!plugin.icon.isEmpty())
         {
             ForumImageStore::instance()->requestImage(
                 ForumAccountService::instance()->absoluteUrl(plugin.icon),
                 [icon](const QImage &image) {
-                    if (!image.isNull())
-                        icon->setPixmap(QPixmap::fromImage(
-                            image.scaled(44, 44, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+                    const QPixmap rounded = roundedIconPixmap(image, 44, 12);
+                    if (!rounded.isNull())
+                        icon->setPixmap(rounded);
                 });
         }
-        else
-        {
-            icon->setText(QStringLiteral("🧩"));
-        }
-        rowLayout->addWidget(icon, 0, Qt::AlignTop);
+        rowLayout->addWidget(icon);
 
-        auto *textLayout = new QVBoxLayout();
-        textLayout->setSpacing(3);
-        auto *name = new QLabel(row);
-        name->setObjectName(QStringLiteral("forumRowTitle"));
-        name->setText(plugin.name
-                          + (plugin.version.isEmpty()
-                                 ? QString()
-                                 : QStringLiteral("  v%1").arg(plugin.version)));
-        textLayout->addWidget(name);
-        auto *meta = new QLabel(row);
-        meta->setObjectName(QStringLiteral("forumMuted"));
-        meta->setWordWrap(true);
-        const QStringList metaParts{
-            plugin.author.isEmpty() ? tr("作者未知") : tr("作者 %1").arg(plugin.author),
-            ForumKit::humanFileSize(plugin.fileSize),
-            tr("%1 次下载").arg(plugin.downloads),
-        };
-        meta->setText(metaParts.join(QStringLiteral(" · ")));
-        textLayout->addWidget(meta);
+        // 名称 + 芯片行（版本 / 作者 / 大小 / 下载次数）
+        auto *infoLayout = new QVBoxLayout();
+        infoLayout->setSpacing(6);
+        infoLayout->setContentsMargins(0, 0, 0, 0);
+
+        auto *name = new QLabel(plugin.name, card);
+        name->setObjectName(QStringLiteral("modCardName"));
+        name->setProperty("cardRole", "name");
         if (!plugin.description.isEmpty())
-        {
-            auto *description = new QLabel(row);
-            description->setObjectName(QStringLiteral("forumMuted"));
-            description->setWordWrap(true);
-            description->setText(plugin.description);
-            textLayout->addWidget(description);
-        }
-        rowLayout->addLayout(textLayout, 1);
+            name->setToolTip(plugin.description);
+        infoLayout->addWidget(name);
 
-        auto *actionsLayout = new QVBoxLayout();
-        actionsLayout->setSpacing(6);
+        auto *chipsWidget = new QWidget(card);
+        auto *chipsLayout = new QHBoxLayout(chipsWidget);
+        chipsLayout->setContentsMargins(0, 0, 0, 0);
+        chipsLayout->setSpacing(6);
+        auto addChip = [&](const QString &text) {
+            if (text.isEmpty())
+                return;
+            auto *chip = new QLabel(text, chipsWidget);
+            chip->setObjectName(QStringLiteral("modChip"));
+            chip->setProperty("cardRole", "chip");
+            chipsLayout->addWidget(chip);
+        };
+        if (!plugin.version.isEmpty())
+            addChip(tr("v%1").arg(plugin.version));
+        addChip(plugin.author.isEmpty() ? tr("作者未知") : plugin.author);
+        addChip(ForumKit::humanFileSize(plugin.fileSize));
+        addChip(tr("%1 次下载").arg(plugin.downloads));
+        chipsLayout->addStretch();
+        infoLayout->addWidget(chipsWidget);
+        rowLayout->addLayout(infoLayout, 1);
 
-        auto *installButton = new QPushButton(tr("安装"), row);
-        installButton->setObjectName(QStringLiteral("forumPrimaryButton"));
-        installButton->setCursor(Qt::PointingHandCursor);
-        installButton->setFixedHeight(30);
-        installButton->setMinimumWidth(96);
+        // 右侧操作区：图标按钮，与其它列表页一致
+        auto *btnLayout = new QHBoxLayout();
+        btnLayout->setSpacing(4);
+        btnLayout->setContentsMargins(0, 0, 0, 0);
+
+        auto createBtn = [&](const QString &iconPath, const QString &tip) -> QPushButton * {
+            auto *btn = new QPushButton(card);
+            btn->setObjectName(QStringLiteral("modCardActionBtn"));
+            btn->setProperty("cardRole", "actionBtn");
+            btn->setFixedSize(32, 32);
+            btn->setToolTip(tip);
+            btn->setCursor(Qt::PointingHandCursor);
+            btn->setIcon(IconHelper::loadColoredIcon(iconPath, themeColor, 18));
+            btn->setIconSize(QSize(18, 18));
+            return btn;
+        };
+
+        QPushButton *installButton = createBtn(QStringLiteral(":/Images/Icons/install.svg"),
+                                               tr("安装"));
         connect(installButton, &QPushButton::clicked, this,
                 [this, plugin]() { installPlugin(plugin); });
-        actionsLayout->addWidget(installButton, 0, Qt::AlignTop);
+        btnLayout->addWidget(installButton);
 
         if (threadId > 0)
         {
-            auto *openThreadButton = new QPushButton(tr("看原帖"), row);
-            openThreadButton->setObjectName(QStringLiteral("forumGhostButton"));
-            openThreadButton->setCursor(Qt::PointingHandCursor);
-            openThreadButton->setFixedHeight(30);
-            openThreadButton->setMinimumWidth(96);
+            QPushButton *openThreadButton = createBtn(
+                QStringLiteral(":/Images/Icons/external_link.svg"), tr("看原帖"));
             connect(openThreadButton, &QPushButton::clicked, this,
                     [this, threadId]() { emit threadOpenRequested(threadId); });
-            actionsLayout->addWidget(openThreadButton, 0, Qt::AlignTop);
+            btnLayout->addWidget(openThreadButton);
         }
-        rowLayout->addLayout(actionsLayout, 0);
+        rowLayout->addLayout(btnLayout);
 
-        m_listLayout->addWidget(row);
+        m_listLayout->addWidget(card);
     }
 
     m_pageLabel->setText(tr("第 %1/%2 页").arg(m_page).arg(m_totalPages));

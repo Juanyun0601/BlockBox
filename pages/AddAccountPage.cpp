@@ -1,10 +1,10 @@
 /**
- * @file   AddAccountDialog.cpp
- * @brief  「添加角色」弹窗实现
+ * @file   AddAccountPage.cpp
+ * @brief  「添加角色」页实现
  * @author BlockBox Team
- * @date   2026-11-01
+ * @date   2026-11-15
  */
-#include "AddAccountDialog.h"
+#include "AddAccountPage.h"
 #include "MicrosoftLoginDialog.h"
 
 #include <QComboBox>
@@ -14,6 +14,9 @@
 #include <QLineEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QResizeEvent>
+#include <QScrollArea>
+#include <QShowEvent>
 #include <QStyle>
 #include <QTabBar>
 #include <QTabWidget>
@@ -82,35 +85,57 @@ QLabel *buildLoginHint(const QString &text, QWidget *parent)
 
 } // namespace
 
-AddAccountDialog::AddAccountDialog(QWidget *parent) : QDialog(parent)
+AddAccountPage::AddAccountPage(QWidget *parent) : QWidget(parent)
 {
-    setObjectName(QStringLiteral("addAccountDialog"));
-    setWindowTitle(tr("添加角色"));
-    setModal(true);
-
+    setObjectName(QStringLiteral("addAccountPage"));
     buildUi();
+}
+
+void AddAccountPage::open()
+{
+    resetForm();
+    updateColumnWidth();
     updateColumnHeight();
 }
 
-AddAccountDialog::~AddAccountDialog() = default;
+void AddAccountPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    updateColumnWidth();
+    updateColumnHeight();
+}
 
-void AddAccountDialog::buildUi()
+void AddAccountPage::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    updateColumnWidth();
+    updateColumnHeight();
+}
+
+void AddAccountPage::buildUi()
 {
     auto *outer = new QVBoxLayout(this);
-    outer->setContentsMargins(20, 20, 20, 20);
+    outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
 
-    m_page = new QWidget(this);
+    // 页面可以滚：手机竖屏 / 窄窗口下卡片内容比可视区高时也能看全
+    m_scroll = new QScrollArea(this);
+    m_scroll->setWidgetResizable(true);
+    m_scroll->setFrameShape(QFrame::NoFrame);
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scroll->setStyleSheet(QStringLiteral("QScrollArea{background:transparent;}"));
+    outer->addWidget(m_scroll);
+
+    m_page = new QWidget(m_scroll);
     m_page->setObjectName(QStringLiteral("accountLoginPage"));
+    m_page->setAttribute(Qt::WA_StyledBackground, false);
     auto *loginLayout = new QVBoxLayout(m_page);
-    loginLayout->setContentsMargins(0, 0, 0, 0);
+    loginLayout->setContentsMargins(24, 24, 24, 24);
     loginLayout->setSpacing(0);
-    outer->addWidget(m_page);
 
     // 单列卡片：标题 + 分段登录方式 + 表单（对照 HTML 原型 .account-add）
     m_column = new QWidget(m_page);
     m_column->setObjectName(QStringLiteral("loginColumn"));
-    m_column->setFixedWidth(560);
     auto *columnLayout = new QVBoxLayout(m_column);
     columnLayout->setContentsMargins(24, 22, 24, 24);
     columnLayout->setSpacing(0);
@@ -155,9 +180,18 @@ void AddAccountDialog::buildUi()
     m_tabs->tabBar()->hide();   // 用上面的分段控件切换登录方式
     columnLayout->addWidget(m_tabs);
 
-    loginLayout->addStretch();
-    loginLayout->addWidget(m_column, 0, Qt::AlignHCenter);
-    loginLayout->addStretch();
+    // 卡片在页面里水平居中、竖直居中（窗口矮时收成贴顶可滚动）
+    auto *centerRow = new QHBoxLayout();
+    centerRow->setContentsMargins(0, 0, 0, 0);
+    centerRow->setSpacing(0);
+    centerRow->addStretch(1);
+    centerRow->addWidget(m_column, 0, Qt::AlignTop);
+    centerRow->addStretch(1);
+
+    loginLayout->addStretch(1);
+    loginLayout->addLayout(centerRow);
+    loginLayout->addStretch(1);
+    m_scroll->setWidget(m_page);
 
     // ── 微软正版 ──
     auto *microsoftTab = new QWidget(m_tabs);
@@ -204,43 +238,51 @@ void AddAccountDialog::buildUi()
     microsoftLayout->addLayout(chipRow);
     microsoftLayout->addSpacing(4);
 
-    auto *microsoftProgressBar = new QProgressBar(microsoftTab);
-    microsoftProgressBar->setObjectName(QStringLiteral("microsoftProgressBar"));
-    microsoftProgressBar->setMinimum(0);
-    microsoftProgressBar->setMaximum(100);
-    microsoftProgressBar->setValue(0);
-    microsoftProgressBar->setVisible(false);
-    microsoftLayout->addWidget(microsoftProgressBar);
+    m_microsoftProgress = new QProgressBar(microsoftTab);
+    m_microsoftProgress->setObjectName(QStringLiteral("microsoftProgressBar"));
+    m_microsoftProgress->setMinimum(0);
+    m_microsoftProgress->setMaximum(100);
+    m_microsoftProgress->setValue(0);
+    m_microsoftProgress->setVisible(false);
+    microsoftLayout->addWidget(m_microsoftProgress);
 
-    auto *microsoftStatusLabel = new QLabel(tr(""), microsoftTab);
-    microsoftStatusLabel->setObjectName(QStringLiteral("microsoftStatusLabel"));
-    microsoftStatusLabel->setAlignment(Qt::AlignCenter);
-    microsoftStatusLabel->setWordWrap(true);
-    microsoftLayout->addWidget(microsoftStatusLabel);
+    m_microsoftStatus = new QLabel(tr(""), microsoftTab);
+    m_microsoftStatus->setObjectName(QStringLiteral("microsoftStatusLabel"));
+    m_microsoftStatus->setAlignment(Qt::AlignCenter);
+    m_microsoftStatus->setWordWrap(true);
+    microsoftLayout->addWidget(m_microsoftStatus);
 
     microsoftLayout->addStretch();
     const QString microsoftBtnLabel = tr("使用 Microsoft 账户登录");
-    auto *microsoftLoginBtn = new QPushButton(microsoftBtnLabel, microsoftTab);
-    microsoftLoginBtn->setObjectName(QStringLiteral("loginPrimaryBtn"));
-    microsoftLoginBtn->setMinimumHeight(44);
-    microsoftLoginBtn->setCursor(Qt::PointingHandCursor);
-    microsoftLayout->addWidget(microsoftLoginBtn);
+    m_microsoftLoginBtn = new QPushButton(microsoftBtnLabel, microsoftTab);
+    m_microsoftLoginBtn->setObjectName(QStringLiteral("loginPrimaryBtn"));
+    m_microsoftLoginBtn->setMinimumHeight(44);
+    m_microsoftLoginBtn->setCursor(Qt::PointingHandCursor);
+    microsoftLayout->addWidget(m_microsoftLoginBtn);
 
-    connect(microsoftLoginBtn, &QPushButton::clicked, this, [=]() {
-        microsoftLoginBtn->setEnabled(false);
-        microsoftLoginBtn->setText(tr("登录中..."));
-        microsoftProgressBar->setVisible(true);
-        microsoftProgressBar->setValue(0);
-        microsoftStatusLabel->setText(tr("正在启动登录流程..."));
+    connect(m_microsoftLoginBtn, &QPushButton::clicked, this, [=]() {
+        // 登录 API 还没批下来：先统一提示，不进浏览器授权流程
+        if (MicrosoftLoginDialog::isLoginUnavailable())
+        {
+            m_microsoftStatus->setText(MicrosoftLoginDialog::loginUnavailableMessage());
+            MicrosoftLoginDialog::showUnavailableNotice(this);
+            return;
+        }
+
+        m_microsoftLoginBtn->setEnabled(false);
+        m_microsoftLoginBtn->setText(tr("登录中..."));
+        m_microsoftProgress->setVisible(true);
+        m_microsoftProgress->setValue(0);
+        m_microsoftStatus->setText(tr("正在启动登录流程..."));
 
         auto *loginDialog = new MicrosoftLoginDialog(this);
         connect(loginDialog, &MicrosoftLoginDialog::loginSucceeded,
                 this, [=](const QString &username, const QString &accessToken,
                           const QString &refreshToken) {
-                    microsoftLoginBtn->setEnabled(true);
-                    microsoftLoginBtn->setText(microsoftBtnLabel);
-                    microsoftProgressBar->setVisible(false);
-                    microsoftStatusLabel->setText(tr("登录成功！"));
+                    m_microsoftLoginBtn->setEnabled(true);
+                    m_microsoftLoginBtn->setText(microsoftBtnLabel);
+                    m_microsoftProgress->setVisible(false);
+                    m_microsoftStatus->setText(tr("登录成功！"));
 
                     bool saved = false;
                     if (SettingsManager::instance())
@@ -254,31 +296,31 @@ void AddAccountDialog::buildUi()
                     {
                         // 授权成功了但账户没存进磁盘（例如启动器装在只读目录），必须如实告知
                         AppMessageBox::information(
-                            this, tr("保存失败"),
+                            window(), tr("保存失败"),
                             tr("Microsoft 账户已登录成功，但账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限。"));
                         loginDialog->deleteLater();
                         return;
                     }
 
-                    NotificationManager::showSuccess(this, tr("Microsoft账户登录成功：%1").arg(username));
+                    NotificationManager::showSuccess(window(),
+                                                     tr("Microsoft账户登录成功：%1").arg(username));
                     loginDialog->deleteLater();
                     emit accountAdded(username);
-                    accept();
                 });
 
         connect(loginDialog, &MicrosoftLoginDialog::loginFailed, this, [=]() {
-            microsoftLoginBtn->setEnabled(true);
-            microsoftLoginBtn->setText(microsoftBtnLabel);
-            microsoftProgressBar->setVisible(false);
-            microsoftStatusLabel->setText(tr("登录失败"));
+            m_microsoftLoginBtn->setEnabled(true);
+            m_microsoftLoginBtn->setText(microsoftBtnLabel);
+            m_microsoftProgress->setVisible(false);
+            m_microsoftStatus->setText(tr("登录失败"));
             loginDialog->deleteLater();
         });
 
         connect(loginDialog, &MicrosoftLoginDialog::loginCanceled, this, [=]() {
-            microsoftLoginBtn->setEnabled(true);
-            microsoftLoginBtn->setText(microsoftBtnLabel);
-            microsoftProgressBar->setVisible(false);
-            microsoftStatusLabel->setText(tr("登录已取消"));
+            m_microsoftLoginBtn->setEnabled(true);
+            m_microsoftLoginBtn->setText(microsoftBtnLabel);
+            m_microsoftProgress->setVisible(false);
+            m_microsoftStatus->setText(tr("登录已取消"));
             loginDialog->deleteLater();
         });
 
@@ -292,12 +334,12 @@ void AddAccountDialog::buildUi()
     offlineLayout->setContentsMargins(0, 0, 0, 0);
     offlineLayout->setSpacing(14);
 
-    auto *usernameInput = new QLineEdit(offlineTab);
-    usernameInput->setObjectName(QStringLiteral("loginInput"));
-    usernameInput->setPlaceholderText(tr("输入游戏内显示的名称，例如 Steve"));
-    usernameInput->setClearButtonEnabled(true);
-    usernameInput->setMaxLength(16);
-    offlineLayout->addWidget(buildLoginField(tr("玩家名"), usernameInput, offlineTab));
+    m_offlineNameEdit = new QLineEdit(offlineTab);
+    m_offlineNameEdit->setObjectName(QStringLiteral("loginInput"));
+    m_offlineNameEdit->setPlaceholderText(tr("输入游戏内显示的名称，例如 Steve"));
+    m_offlineNameEdit->setClearButtonEnabled(true);
+    m_offlineNameEdit->setMaxLength(16);
+    offlineLayout->addWidget(buildLoginField(tr("玩家名"), m_offlineNameEdit, offlineTab));
 
     offlineLayout->addWidget(buildLoginHint(
         tr("离线账户无需联网验证，适合单机与局域网游戏；无法使用正版服务器、皮肤同步与成就。"),
@@ -310,17 +352,17 @@ void AddAccountDialog::buildUi()
     offlineLoginBtn->setCursor(Qt::PointingHandCursor);
     offlineLayout->addWidget(offlineLoginBtn);
 
-    connect(offlineLoginBtn, &QPushButton::clicked, this, [this, usernameInput]() {
-        const QString username = usernameInput->text().trimmed();
+    connect(offlineLoginBtn, &QPushButton::clicked, this, [this]() {
+        const QString username = m_offlineNameEdit->text().trimmed();
         if (username.isEmpty())
         {
-            NotificationManager::showError(this, tr("用户名不能为空"));
+            NotificationManager::showError(window(), tr("用户名不能为空"));
             return;
         }
 
         if (SettingsManager::instance() && SettingsManager::instance()->accountExists(username))
         {
-            NotificationManager::showError(this, tr("该用户名已存在"));
+            NotificationManager::showError(window(), tr("该用户名已存在"));
             return;
         }
 
@@ -332,13 +374,13 @@ void AddAccountDialog::buildUi()
         {
             // 写入失败（例如启动器装在 Program Files 但没有写入权限）时如实提示
             NotificationManager::showError(
-                this, tr("离线账户创建失败：账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限"));
+                window(),
+                tr("离线账户创建失败：账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限"));
             return;
         }
 
-        NotificationManager::showSuccess(this, tr("离线账户创建成功"));
+        NotificationManager::showSuccess(window(), tr("离线账户创建成功"));
         emit accountAdded(username);
-        accept();
     });
 
     // ── 第三方（authlib-injector） ──
@@ -347,71 +389,71 @@ void AddAccountDialog::buildUi()
     thirdPartyLayout->setContentsMargins(0, 0, 0, 0);
     thirdPartyLayout->setSpacing(14);
 
-    auto *serverComboBox = new QComboBox(thirdPartyTab);
-    serverComboBox->setObjectName(QStringLiteral("loginCombo"));
-    serverComboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    m_serverCombo = new QComboBox(thirdPartyTab);
+    m_serverCombo->setObjectName(QStringLiteral("loginCombo"));
+    m_serverCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
 
     QList<AuthServerInfo> servers;
     if (SettingsManager::instance())
         servers = SettingsManager::instance()->getAuthServers();
     for (const AuthServerInfo &server : servers)
-        serverComboBox->addItem(server.name, server.url);
-    serverComboBox->addItem(tr("添加自定义服务器"), QStringLiteral("custom"));
+        m_serverCombo->addItem(server.name, server.url);
+    m_serverCombo->addItem(tr("添加自定义服务器"), QStringLiteral("custom"));
 
-    auto *serverStatusLabel = new QLabel(thirdPartyTab);
-    serverStatusLabel->setObjectName(QStringLiteral("loginStatusPill"));
-    serverStatusLabel->setAlignment(Qt::AlignCenter);
-    setAuthServerPill(serverStatusLabel, "unknown", tr("未检测"));
+    m_serverPill = new QLabel(thirdPartyTab);
+    m_serverPill->setObjectName(QStringLiteral("loginStatusPill"));
+    m_serverPill->setAlignment(Qt::AlignCenter);
+    setAuthServerPill(m_serverPill, "unknown", tr("未检测"));
 
     auto *serverFieldEditor = new QWidget(thirdPartyTab);
     auto *serverFieldRow = new QHBoxLayout(serverFieldEditor);
     serverFieldRow->setContentsMargins(0, 0, 0, 0);
     serverFieldRow->setSpacing(8);
-    serverFieldRow->addWidget(serverComboBox, 1);
-    serverFieldRow->addWidget(serverStatusLabel, 0, Qt::AlignVCenter);
+    serverFieldRow->addWidget(m_serverCombo, 1);
+    serverFieldRow->addWidget(m_serverPill, 0, Qt::AlignVCenter);
     thirdPartyLayout->addWidget(buildLoginField(tr("认证服务器"), serverFieldEditor, thirdPartyTab));
 
-    auto *thirdPartyUsernameInput = new QLineEdit(thirdPartyTab);
-    thirdPartyUsernameInput->setObjectName(QStringLiteral("loginInput"));
-    thirdPartyUsernameInput->setPlaceholderText(tr("认证服务器上的账户名或邮箱"));
-    thirdPartyUsernameInput->setClearButtonEnabled(true);
+    m_thirdPartyUserEdit = new QLineEdit(thirdPartyTab);
+    m_thirdPartyUserEdit->setObjectName(QStringLiteral("loginInput"));
+    m_thirdPartyUserEdit->setPlaceholderText(tr("认证服务器上的账户名或邮箱"));
+    m_thirdPartyUserEdit->setClearButtonEnabled(true);
     thirdPartyLayout->addWidget(
-        buildLoginField(tr("用户名"), thirdPartyUsernameInput, thirdPartyTab));
+        buildLoginField(tr("用户名"), m_thirdPartyUserEdit, thirdPartyTab));
 
-    auto *thirdPartyPasswordInput = new QLineEdit(thirdPartyTab);
-    thirdPartyPasswordInput->setObjectName(QStringLiteral("loginInput"));
-    thirdPartyPasswordInput->setEchoMode(QLineEdit::Password);
-    thirdPartyPasswordInput->setPlaceholderText(tr("输入密码"));
+    m_thirdPartyPasswordEdit = new QLineEdit(thirdPartyTab);
+    m_thirdPartyPasswordEdit->setObjectName(QStringLiteral("loginInput"));
+    m_thirdPartyPasswordEdit->setEchoMode(QLineEdit::Password);
+    m_thirdPartyPasswordEdit->setPlaceholderText(tr("输入密码"));
     thirdPartyLayout->addWidget(
-        buildLoginField(tr("密码"), thirdPartyPasswordInput, thirdPartyTab));
+        buildLoginField(tr("密码"), m_thirdPartyPasswordEdit, thirdPartyTab));
 
     thirdPartyLayout->addWidget(buildLoginHint(
         tr("支持 LittleSkin 等 Yggdrasil 兼容认证服务器；账号密码仅发送至所选服务器。"),
         thirdPartyTab));
 
     thirdPartyLayout->addStretch();
-    auto *thirdPartyLoginBtn = new QPushButton(tr("登录"), thirdPartyTab);
-    thirdPartyLoginBtn->setObjectName(QStringLiteral("loginPrimaryBtn"));
-    thirdPartyLoginBtn->setMinimumHeight(44);
-    thirdPartyLoginBtn->setCursor(Qt::PointingHandCursor);
-    thirdPartyLayout->addWidget(thirdPartyLoginBtn);
+    m_thirdPartyLoginBtn = new QPushButton(tr("登录"), thirdPartyTab);
+    m_thirdPartyLoginBtn->setObjectName(QStringLiteral("loginPrimaryBtn"));
+    m_thirdPartyLoginBtn->setMinimumHeight(44);
+    m_thirdPartyLoginBtn->setCursor(Qt::PointingHandCursor);
+    thirdPartyLayout->addWidget(m_thirdPartyLoginBtn);
 
     // 服务器连通性检测：连不上就如实显示「无法连接」，不再写死「在线」
-    const auto checkCurrentServer = [serverComboBox, serverStatusLabel]() {
-        const QString serverUrl = serverComboBox->currentData().toString();
+    const auto checkCurrentServer = [this]() {
+        const QString serverUrl = m_serverCombo->currentData().toString();
         if (serverUrl.isEmpty() || serverUrl == QLatin1String("custom"))
         {
-            setAuthServerPill(serverStatusLabel, "unknown", tr("未检测"));
+            setAuthServerPill(m_serverPill, "unknown", tr("未检测"));
             return;
         }
-        setAuthServerPill(serverStatusLabel, "busy", tr("检测中..."));
+        setAuthServerPill(m_serverPill, "busy", tr("检测中..."));
         if (AuthManager::instance())
             AuthManager::instance()->checkAuthServer(serverUrl);
     };
 
     // 添加自定义认证服务器：地址先规范化（补协议 / 补 /api/yggdrasil/ / 去掉误粘贴的端点地址）
-    const auto addCustomServer = [this, serverComboBox, checkCurrentServer]() {
-        QDialog customServerDialog(this);
+    const auto addCustomServer = [this, checkCurrentServer]() {
+        QDialog customServerDialog(window());
         customServerDialog.setWindowTitle(tr("添加自定义服务器"));
         customServerDialog.resize(420, 240);
 
@@ -453,7 +495,7 @@ void AddAccountDialog::buildUi()
         if (normalizedUrl.isEmpty())
         {
             NotificationManager::showError(
-                this, tr("服务器地址无效，请填写形如 https://littleskin.cn/api/yggdrasil/ 的地址"));
+                window(), tr("服务器地址无效，请填写形如 https://littleskin.cn/api/yggdrasil/ 的地址"));
             return;
         }
 
@@ -466,10 +508,10 @@ void AddAccountDialog::buildUi()
 
         // addAuthServer 对重复地址会直接忽略，这里按地址查一遍，避免下拉框里加出两条一样的
         int targetIndex = -1;
-        for (int i = 0; i < serverComboBox->count(); ++i)
+        for (int i = 0; i < m_serverCombo->count(); ++i)
         {
             const QString itemUrl =
-                AuthManager::normalizeAuthServerUrl(serverComboBox->itemData(i).toString());
+                AuthManager::normalizeAuthServerUrl(m_serverCombo->itemData(i).toString());
             if (!itemUrl.isEmpty() && itemUrl == normalizedUrl)
             {
                 targetIndex = i;
@@ -478,21 +520,21 @@ void AddAccountDialog::buildUi()
         }
         if (targetIndex < 0)
         {
-            targetIndex = serverComboBox->count() - 1;   // 插在"添加自定义服务器"之前
-            serverComboBox->insertItem(targetIndex, serverName, normalizedUrl);
+            targetIndex = m_serverCombo->count() - 1;   // 插在"添加自定义服务器"之前
+            m_serverCombo->insertItem(targetIndex, serverName, normalizedUrl);
         }
-        if (serverComboBox->currentIndex() == targetIndex)
+        if (m_serverCombo->currentIndex() == targetIndex)
             checkCurrentServer();
         else
-            serverComboBox->setCurrentIndex(targetIndex);
+            m_serverCombo->setCurrentIndex(targetIndex);
     };
 
-    connect(serverComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [serverComboBox, addCustomServer, checkCurrentServer](int index) {
-                if (serverComboBox->currentData().toString() != QLatin1String("custom"))
+    connect(m_serverCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this, addCustomServer, checkCurrentServer](int index) {
+                if (m_serverCombo->currentData().toString() != QLatin1String("custom"))
                 {
                     // 记住最近一次选中的真实服务器，弹窗取消后好退回这里
-                    serverComboBox->setProperty("lastRealIndex", index);
+                    m_serverCombo->setProperty("lastRealIndex", index);
                     checkCurrentServer();
                     return;
                 }
@@ -500,13 +542,13 @@ void AddAccountDialog::buildUi()
                 addCustomServer();
 
                 // 弹窗被取消：当前项还停在"添加自定义服务器"上，退回上一个真实服务器
-                if (serverComboBox->currentData().toString() == QLatin1String("custom"))
+                if (m_serverCombo->currentData().toString() == QLatin1String("custom"))
                 {
-                    const int previous = serverComboBox->property("lastRealIndex").toInt();
-                    if (previous >= 0 && previous < serverComboBox->count()
-                        && serverComboBox->itemData(previous).toString() != QLatin1String("custom"))
+                    const int previous = m_serverCombo->property("lastRealIndex").toInt();
+                    if (previous >= 0 && previous < m_serverCombo->count()
+                        && m_serverCombo->itemData(previous).toString() != QLatin1String("custom"))
                     {
-                        serverComboBox->setCurrentIndex(previous);
+                        m_serverCombo->setCurrentIndex(previous);
                     }
                 }
             });
@@ -521,41 +563,34 @@ void AddAccountDialog::buildUi()
     if (AuthManager::instance())
     {
         connect(AuthManager::instance(), &AuthManager::authServerStatusChecked, this,
-                [serverComboBox, serverStatusLabel](const QString &serverUrl, bool online,
-                                                    const QString &detail) {
-                    if (serverComboBox->currentData().toString() != serverUrl)
+                [this](const QString &serverUrl, bool online, const QString &detail) {
+                    if (m_serverCombo->currentData().toString() != serverUrl)
                         return;
                     if (online)
-                        setAuthServerPill(serverStatusLabel, "ok", tr("在线"), detail);
+                        setAuthServerPill(m_serverPill, "ok", tr("在线"), detail);
                     else
-                        setAuthServerPill(serverStatusLabel, "error", tr("无法连接"), detail);
+                        setAuthServerPill(m_serverPill, "error", tr("无法连接"), detail);
                 });
     }
-
-    QLineEdit *usernameInputPtr = thirdPartyUsernameInput;
-    QLineEdit *passwordInputPtr = thirdPartyPasswordInput;
-    QPushButton *loginBtnPtr = thirdPartyLoginBtn;
-    QComboBox *serverComboBoxPtr = serverComboBox;
-    QLabel *statusLabelPtr = serverStatusLabel;
 
     // 连接认证成功信号（username 为服务器返回的正式角色名）
     if (AuthManager::instance())
     {
         connect(AuthManager::instance(), &AuthManager::authenticationSucceeded, this,
-                [=](const QString &username, const QString &serverUrl, const QString &uuid,
-                    const QString &accessToken, const QString &clientToken, const QString &skinUrl) {
-                    loginBtnPtr->setText(tr("登录"));
-                    loginBtnPtr->setEnabled(true);
+                [this](const QString &username, const QString &serverUrl, const QString &uuid,
+                       const QString &accessToken, const QString &clientToken, const QString &skinUrl) {
+                    m_thirdPartyLoginBtn->setText(tr("登录"));
+                    m_thirdPartyLoginBtn->setEnabled(true);
 
                     // 账户类型记成服务器名：列表里一眼就能看出是哪个皮肤站的号
                     QString serverName = QUrl(serverUrl).host();
-                    for (int i = 0; i < serverComboBoxPtr->count(); ++i)
+                    for (int i = 0; i < m_serverCombo->count(); ++i)
                     {
                         const QString itemUrl =
-                            AuthManager::normalizeAuthServerUrl(serverComboBoxPtr->itemData(i).toString());
+                            AuthManager::normalizeAuthServerUrl(m_serverCombo->itemData(i).toString());
                         if (!itemUrl.isEmpty() && itemUrl == serverUrl)
                         {
-                            serverName = serverComboBoxPtr->itemText(i);
+                            serverName = m_serverCombo->itemText(i);
                             break;
                         }
                     }
@@ -569,7 +604,8 @@ void AddAccountDialog::buildUi()
                             if (account.username.compare(username, Qt::CaseInsensitive) == 0)
                             {
                                 NotificationManager::showError(
-                                    this, tr("账户列表里已经有叫 %1 的账户了，请先删掉再添加").arg(username));
+                                    window(),
+                                    tr("账户列表里已经有叫 %1 的账户了，请先删掉再添加").arg(username));
                                 return;
                             }
                         }
@@ -586,49 +622,48 @@ void AddAccountDialog::buildUi()
                     if (!created)
                     {
                         NotificationManager::showError(
-                            this,
+                            window(),
                             tr("第三方账户登录成功，但账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限"));
                         return;
                     }
 
-                    usernameInputPtr->clear();
-                    passwordInputPtr->clear();
+                    m_thirdPartyUserEdit->clear();
+                    m_thirdPartyPasswordEdit->clear();
 
-                    NotificationManager::showSuccess(this, tr("第三方账户登录成功：%1").arg(username));
+                    NotificationManager::showSuccess(window(), tr("第三方账户登录成功：%1").arg(username));
                     emit accountAdded(username);
-                    accept();
                 });
     }
 
     if (AuthManager::instance())
     {
         connect(AuthManager::instance(), &AuthManager::authenticationFailed, this,
-                [=](const QString &errorMessage) {
-                    loginBtnPtr->setText(tr("登录"));
-                    loginBtnPtr->setEnabled(true);
-                    NotificationManager::showError(this, errorMessage);
+                [this](const QString &errorMessage) {
+                    m_thirdPartyLoginBtn->setText(tr("登录"));
+                    m_thirdPartyLoginBtn->setEnabled(true);
+                    NotificationManager::showError(window(), errorMessage);
                 });
     }
 
-    connect(thirdPartyLoginBtn, &QPushButton::clicked, this, [=]() {
-        const QString username = thirdPartyUsernameInput->text().trimmed();
-        const QString password = thirdPartyPasswordInput->text();
-        const QString serverUrl = serverComboBox->currentData().toString();
+    connect(m_thirdPartyLoginBtn, &QPushButton::clicked, this, [this]() {
+        const QString username = m_thirdPartyUserEdit->text().trimmed();
+        const QString password = m_thirdPartyPasswordEdit->text();
+        const QString serverUrl = m_serverCombo->currentData().toString();
 
         if (username.isEmpty() || password.isEmpty())
         {
-            NotificationManager::showError(this, tr("用户名和密码不能为空"));
+            NotificationManager::showError(window(), tr("用户名和密码不能为空"));
             return;
         }
         if (serverUrl.isEmpty() || serverUrl == QLatin1String("custom"))
         {
-            NotificationManager::showError(this, tr("请先选择或添加一个认证服务器"));
+            NotificationManager::showError(window(), tr("请先选择或添加一个认证服务器"));
             return;
         }
 
-        thirdPartyLoginBtn->setText(tr("登录中..."));
-        thirdPartyLoginBtn->setEnabled(false);
-        statusLabelPtr->setToolTip(tr("正在向 %1 验证账号").arg(QUrl(serverUrl).host()));
+        m_thirdPartyLoginBtn->setText(tr("登录中..."));
+        m_thirdPartyLoginBtn->setEnabled(false);
+        m_serverPill->setToolTip(tr("正在向 %1 验证账号").arg(QUrl(serverUrl).host()));
 
         if (AuthManager::instance())
             AuthManager::instance()->authenticate(username, password, serverUrl);
@@ -649,11 +684,70 @@ void AddAccountDialog::buildUi()
         for (int i = 0; i < segButtons.size(); ++i)
             segButtons.at(i)->setChecked(i == index);
     });
-    // 换登录方式后按新表单重算卡片高度，弹窗跟着缩放到合适大小
+    // 换登录方式后按新表单重算卡片高度
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int) { updateColumnHeight(); });
+
+    updateColumnWidth();
+    updateColumnHeight();
 }
 
-void AddAccountDialog::updateColumnHeight()
+void AddAccountPage::resetForm()
+{
+    if (m_tabs)
+        m_tabs->setCurrentIndex(0);
+
+    if (m_offlineNameEdit)
+        m_offlineNameEdit->clear();
+    if (m_thirdPartyUserEdit)
+        m_thirdPartyUserEdit->clear();
+    if (m_thirdPartyPasswordEdit)
+        m_thirdPartyPasswordEdit->clear();
+
+    if (m_microsoftProgress)
+    {
+        m_microsoftProgress->setVisible(false);
+        m_microsoftProgress->setValue(0);
+    }
+    if (m_microsoftStatus)
+        m_microsoftStatus->clear();
+    if (m_microsoftLoginBtn)
+    {
+        m_microsoftLoginBtn->setEnabled(true);
+        m_microsoftLoginBtn->setText(tr("使用 Microsoft 账户登录"));
+    }
+    if (m_thirdPartyLoginBtn)
+    {
+        m_thirdPartyLoginBtn->setEnabled(true);
+        m_thirdPartyLoginBtn->setText(tr("登录"));
+    }
+
+    // 服务器连通性重新检测：上次停在哪台服务器就测哪台
+    if (m_serverPill)
+        setAuthServerPill(m_serverPill, "unknown", tr("未检测"));
+    if (m_serverCombo && m_serverCombo->count() > 0
+        && m_serverCombo->currentData().toString() == QLatin1String("custom"))
+    {
+        m_serverCombo->setCurrentIndex(0);
+    }
+}
+
+void AddAccountPage::updateColumnWidth()
+{
+    if (!m_column || !m_page || !m_page->layout())
+        return;
+
+    const QMargins cm = m_page->layout()->contentsMargins();
+    int available = width() - cm.left() - cm.right();
+    if (available <= 0 && m_scroll)
+        available = m_scroll->viewport()->width() - cm.left() - cm.right();
+
+    // 宽屏固定 560；窄屏（手机）让卡片跟着收缩，避免横向被裁掉
+    const int target = qBound(260, available, 560);
+    if (m_column->width() != target)
+        m_column->setFixedWidth(target);
+}
+
+void AddAccountPage::updateColumnHeight()
 {
     if (!m_column || !m_tabs)
         return;
@@ -662,13 +756,11 @@ void AddAccountDialog::updateColumnHeight()
     if (!columnLayout)
         return;
 
-    // 卡片宽度固定 560，表单区宽度 = 卡片宽 - 左右内边距
+    // 表单区宽度 = 卡片宽 - 左右内边距
     const QMargins cm = columnLayout->contentsMargins();
     int paneWidth = m_column->width() - cm.left() - cm.right();
     if (paneWidth <= 0)
-        paneWidth = m_column->minimumWidth() - cm.left() - cm.right();
-    if (paneWidth <= 0)
-        paneWidth = 560 - cm.left() - cm.right();
+        paneWidth = qMax(200, 560 - cm.left() - cm.right());
 
     QWidget *page = m_tabs->currentWidget();
     int pageHeight = (page && page->layout()) ? page->layout()->heightForWidth(paneWidth) : 0;
@@ -690,6 +782,6 @@ void AddAccountDialog::updateColumnHeight()
     }
     totalHeight += (columnLayout->count() - 1) * qMax(0, columnLayout->spacing());
 
-    m_column->setFixedHeight(totalHeight);
-    adjustSize();
+    if (m_column->height() != totalHeight)
+        m_column->setFixedHeight(totalHeight);
 }

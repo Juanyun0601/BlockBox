@@ -553,20 +553,35 @@ void VersionDownloader::downloadClientJar()
     QString versionPath = m_currentInstancePath;
 
     QDir versionDir(versionPath);
-    if (!versionDir.exists())
+    if (!versionDir.exists() && !versionDir.mkpath("."))
     {
-        versionDir.mkpath(".");
+        // 安卓换存储位置、磁盘写满、目录被占用等情况：直接说清是「写不进去」，
+        // 而不是让用户等一轮下载后才看到网络/文件错误
+        failDownload(tr("无法创建实例文件夹：%1\n请检查存储空间，或在安装位置旁点 + 换一个可写文件夹后重试。")
+                         .arg(QDir::toNativeSeparators(versionPath)));
+        return;
     }
 
     QString jsonFileName = QFileInfo(versionPath).fileName() + ".json";
     QString versionJsonPath = versionPath + "/" + jsonFileName;
     QFile versionJsonFile(versionJsonPath);
-    if (versionJsonFile.open(QIODevice::WriteOnly))
+    if (!versionJsonFile.open(QIODevice::WriteOnly))
+    {
+        failDownload(tr("实例文件夹无法写入：%1\n请检查存储空间，或在安装位置旁点 + 换一个可写文件夹后重试。")
+                         .arg(QDir::toNativeSeparators(versionPath)));
+        return;
+    }
     {
         QJsonDocument doc(m_currentVersionManifest);
-        versionJsonFile.write(doc.toJson());
-        versionJsonFile.close();
+        if (versionJsonFile.write(doc.toJson()) < 0)
+        {
+            versionJsonFile.close();
+            failDownload(tr("实例文件夹无法写入：%1\n请检查存储空间后重试。")
+                             .arg(QDir::toNativeSeparators(versionPath)));
+            return;
+        }
     }
+    versionJsonFile.close();
 
     m_totalBytes = 0;
     m_downloadedBytes = 0;

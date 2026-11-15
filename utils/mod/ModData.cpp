@@ -50,6 +50,15 @@ QJsonObject modInfoToJson(const ModInfo &info)
     obj["followers"] = static_cast<qint64>(info.followers);
     obj["rank"] = info.rank;
 
+    QJsonArray externalLinks;
+    for (const ModExternalLink &link : info.externalLinks) {
+        QJsonObject l;
+        l["label"] = link.label;
+        l["url"] = link.url;
+        externalLinks.append(l);
+    }
+    obj["externalLinks"] = externalLinks;
+
     obj["altSource"] = info.altSource;
     obj["altId"] = info.altId;
     obj["altName"] = info.altName;
@@ -103,6 +112,16 @@ ModInfo modInfoFromJson(const QJsonObject &obj)
     info.downloadCount = static_cast<qint64>(obj["downloadCount"].toDouble());
     info.followers = static_cast<qint64>(obj["followers"].toDouble());
     info.rank = obj["rank"].toInt();
+
+    const QJsonArray externalLinks = obj["externalLinks"].toArray();
+    for (const QJsonValue &v : externalLinks) {
+        const QJsonObject l = v.toObject();
+        ModExternalLink link;
+        link.label = l["label"].toString();
+        link.url = l["url"].toString();
+        if (!link.url.isEmpty())
+            info.externalLinks.append(link);
+    }
 
     info.altSource = obj["altSource"].toString();
     info.altId = obj["altId"].toString();

@@ -1152,3 +1152,13 @@ void SettingsManager::setForumBaseUrl(const QString &url)
 
     emit forumBaseUrlChanged(normalized);
 }
+
+bool SettingsManager::isCommunityAgreementAccepted() const
+{
+    return m_settings->value("community/agreementAccepted", false).toBool();
+}
+
+void SettingsManager::setCommunityAgreementAccepted(bool accepted)
+{
+    m_settings->setValue("community/agreementAccepted", accepted);
+}

@@ -781,7 +781,8 @@ void AppMessageBox::resizeEvent(QResizeEvent *event)
 
 void AppMessageBox::keyPressEvent(QKeyEvent *event)
 {
-    if (event->key() == Qt::Key_Escape) {
+    // 安卓系统返回键与 Esc 同语义：有取消键走取消，否则按无按钮关闭
+    if (event->key() == Qt::Key_Escape || event->key() == Qt::Key_Back) {
         if (QPushButton *cancelBtn = button(Cancel)) {
             cancelBtn->click();
             return;

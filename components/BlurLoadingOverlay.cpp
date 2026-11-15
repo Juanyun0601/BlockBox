@@ -10,6 +10,7 @@
 #include <QPointer>
 
 #include "utils/ThemeManager.h"
+#include "utils/TriviaBank.h"
 
 BlurLoadingOverlay::BlurLoadingOverlay(QWidget *parent)
     : QWidget(parent)
@@ -19,9 +20,11 @@ BlurLoadingOverlay::BlurLoadingOverlay(QWidget *parent)
     , m_progressBar(nullptr)
     , m_percentLabel(nullptr)
     , m_errorLabel(nullptr)
+    , m_triviaLabel(nullptr)
     , m_diagnoseBtn(nullptr)
     , m_progressArea(nullptr)
     , m_diagnosisNAM(new QNetworkAccessManager(this))
+    , m_triviaTimer(new QTimer(this))
     , m_currentPercent(0)
     , m_hasError(false)
     , m_isCapturing(false)
@@ -29,6 +32,11 @@ BlurLoadingOverlay::BlurLoadingOverlay(QWidget *parent)
     setObjectName(QStringLiteral("blurLoadingOverlay"));
     initUI();
     initStyle();
+
+    // 「你知道吗」冷知识轮换：加载期间每 8 秒换一条
+    m_triviaTimer->setInterval(8000);
+    connect(m_triviaTimer, &QTimer::timeout, this, &BlurLoadingOverlay::refreshTrivia);
+
     connect(this, &BlurLoadingOverlay::diagnoseRequested, this, &BlurLoadingOverlay::performDiagnosis);
 }
 
@@ -107,9 +115,20 @@ void BlurLoadingOverlay::initUI()
     connect(m_diagnoseBtn, &QPushButton::clicked, this, &BlurLoadingOverlay::diagnoseRequested);
     progressLayout->addWidget(m_diagnoseBtn, 0, Qt::AlignCenter);
 
+    m_triviaLabel = new QLabel(m_centerWidget);
+    m_triviaLabel->setObjectName(QStringLiteral("blurLoadingTriviaLabel"));
+    m_triviaLabel->setAlignment(Qt::AlignCenter);
+    m_triviaLabel->setWordWrap(true);
+    QFont triviaFont = m_triviaLabel->font();
+    triviaFont.setPointSize(9);
+    triviaFont.setItalic(true);
+    m_triviaLabel->setFont(triviaFont);
+
     m_centerLayout->addStretch();
     m_centerLayout->addWidget(m_processLabel);
     m_centerLayout->addWidget(m_progressArea);
+    m_centerLayout->addSpacing(6);
+    m_centerLayout->addWidget(m_triviaLabel);
     m_centerLayout->addStretch();
 
     mainLayout->addWidget(m_centerWidget, 0, Qt::AlignCenter);
@@ -129,6 +148,7 @@ void BlurLoadingOverlay::initStyle()
     const QString cardBorder  = isLight ? "rgba(200, 200, 200, 200)" : "rgba(80, 80, 80, 200)";
     const QString barBg       = isLight ? "#e8e8e8" : "#3d3d3d";
     const QString processColor = isLight ? "#333333" : "#eeeeee";
+    const QString triviaColor  = isLight ? "#777777" : "#999999";
     const QString percentColor = themeColor;
 
     QString style = QString(
@@ -165,6 +185,11 @@ void BlurLoadingOverlay::initStyle()
         "    padding: 10px 14px;"
         "}"
         ""
+        "QLabel#blurLoadingTriviaLabel {"
+        "    color: %7;"
+        "    background-color: transparent;"
+        "}"
+        ""
         "QPushButton#blurLoadingDiagnoseBtn {"
         "    background-color: transparent;"
         "    border: 1px solid %1;"
@@ -196,7 +221,7 @@ void BlurLoadingOverlay::initStyle()
         "        stop:0 %1, stop:1 %2);"
         "    border-radius: 4px;"
         "}"
-    ).arg(themeColor, themeHover, cardBg, cardBorder, barBg, processColor);
+    ).arg(themeColor, themeHover, cardBg, cardBorder, barBg, processColor, triviaColor);
 
     setStyleSheet(style);
 }
@@ -280,6 +305,12 @@ void BlurLoadingOverlay::showEvent(QShowEvent *event)
     });
 }
 
+void BlurLoadingOverlay::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    m_triviaTimer->stop();
+}
+
 void BlurLoadingOverlay::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
@@ -312,10 +343,15 @@ void BlurLoadingOverlay::showOverlay(const QString &processName)
     adjustGeometryToFullArea();
     show();
     raise();
+
+    // 随机换一条冷知识，并启动轮换定时器
+    refreshTrivia();
+    m_triviaTimer->start();
 }
 
 void BlurLoadingOverlay::hideOverlay()
 {
+    m_triviaTimer->stop();
     hide();
     m_blurredBackground = QPixmap();
 }
@@ -435,8 +471,23 @@ void BlurLoadingOverlay::updateLayoutState()
         return;
 
     if (m_hasError) {
-        m_centerWidget->setFixedSize(420, 210);
+        m_centerWidget->setFixedSize(420, 246);
     } else {
-        m_centerWidget->setFixedSize(400, 170);
+        m_centerWidget->setFixedSize(400, 206);
     }
+}
+
+void BlurLoadingOverlay::refreshTrivia()
+{
+    if (!m_triviaLabel) {
+        return;
+    }
+    const QString trivia = TriviaBank::randomTrivia();
+    if (trivia.isEmpty()) {
+        m_triviaLabel->hide();
+        return;
+    }
+    m_triviaLabel->setText(QStringLiteral("<b>%1</b>&nbsp;&nbsp;%2")
+                               .arg(tr("你知道吗"), trivia));
+    m_triviaLabel->show();
 }

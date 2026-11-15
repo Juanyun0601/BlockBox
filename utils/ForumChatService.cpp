@@ -79,6 +79,7 @@ ForumGroupInfo ForumChatService::parseGroup(const QJsonObject &object)
     ForumGroupInfo group;
     group.id = object.value(QStringLiteral("id")).toInt();
     group.name = object.value(QStringLiteral("name")).toString();
+    group.avatar = object.value(QStringLiteral("avatar")).toString();
     group.ownerId = object.value(QStringLiteral("owner_id")).toInt();
     group.official = object.value(QStringLiteral("official")).toBool();
     group.memberCount = object.value(QStringLiteral("member_count")).toInt();
@@ -257,12 +258,15 @@ void ForumChatService::searchUsers(const QString &keyword,
 
 // ────────────────────────────────────────────────────────────── 群聊
 
-void ForumChatService::createGroup(const QString &name, const QVector<int> &memberIds,
+void ForumChatService::createGroup(const QString &name, const QString &avatar,
+                                   const QVector<int> &memberIds,
                                    std::function<void(const ForumGroupInfo &)> onOk,
                                    FailHandler onFail)
 {
     QJsonObject body;
     body.insert(QStringLiteral("name"), name);
+    if (!avatar.trimmed().isEmpty())
+        body.insert(QStringLiteral("avatar"), avatar.trimmed());
     QJsonArray ids;
     for (const int id : memberIds)
         ids.append(id);
@@ -273,6 +277,65 @@ void ForumChatService::createGroup(const QString &name, const QVector<int> &memb
             const ForumGroupInfo group = parseGroup(root.value(QStringLiteral("group")).toObject());
             if (onOk)
                 onOk(group);
+        },
+        std::move(onFail));
+}
+
+void ForumChatService::uploadGroupIcon(const QString &filePath,
+                                       std::function<void(const QString &url)> onOk,
+                                       FailHandler onFail)
+{
+    QImageReader reader(filePath);
+    reader.setAutoTransform(true);
+    QImage image = reader.read();
+    if (image.isNull())
+    {
+        if (onFail)
+            onFail(QObject::tr("打不开这张图片，换个文件试试"), 0);
+        return;
+    }
+    // 群图标最大显示也就 40 多像素，缩到 512 传上去足够清晰
+    if (image.width() > 512 || image.height() > 512)
+        image = image.scaled(512, 512, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+    QByteArray data;
+    QBuffer buffer(&data);
+    buffer.open(QIODevice::WriteOnly);
+    QString mime;
+    if (image.hasAlphaChannel())
+    {
+        image.save(&buffer, "PNG");
+        mime = QStringLiteral("image/png");
+    }
+    else
+    {
+        image.save(&buffer, "JPEG", 90);
+        mime = QStringLiteral("image/jpeg");
+    }
+    if (data.isEmpty())
+    {
+        if (onFail)
+            onFail(QObject::tr("这张图片处理失败，换一张试试"), 0);
+        return;
+    }
+    uploadImage(data, mime, std::move(onOk), std::move(onFail));
+}
+
+void ForumChatService::inviteGroupMembers(int groupId, const QVector<int> &memberIds,
+                                          std::function<void(int added, int memberCount)> onOk,
+                                          FailHandler onFail)
+{
+    QJsonObject body;
+    QJsonArray ids;
+    for (const int id : memberIds)
+        ids.append(id);
+    body.insert(QStringLiteral("member_ids"), ids);
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/groups/%1/members").arg(groupId), body,
+        [onOk](const QJsonObject &root) {
+            if (onOk)
+                onOk(root.value(QStringLiteral("added")).toInt(),
+                     root.value(QStringLiteral("member_count")).toInt());
         },
         std::move(onFail));
 }

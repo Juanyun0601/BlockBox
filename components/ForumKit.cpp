@@ -8,6 +8,8 @@
 #include "ForumKit.h"
 
 #include <QDateTime>
+#include <QEnterEvent>
+#include <QFocusEvent>
 #include <QFontMetrics>
 #include <QImage>
 #include <QLayoutItem>
@@ -17,13 +19,18 @@
 #include <QPainterPath>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QRadialGradient>
 #include <QResizeEvent>
 #include <QTextCursor>
 #include <QVBoxLayout>
+#include <QVariantAnimation>
+
+#include <algorithm>
 
 #include "utils/ForumAccountService.h"
 #include "utils/ForumImageStore.h"
+#include "utils/IconHelper.h"
 #include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
 
@@ -135,6 +142,48 @@ QLabel *makeAvatar(QWidget *parent, const QString &avatarPath, const QString &na
                                            Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
             guard->setFixedSize(size, size);
         });
+    }
+    return label;
+}
+
+QLabel *makeGroupAvatar(QWidget *parent, const QString &icon, const QString &name, int size)
+{
+    const QString value = icon.trimmed();
+    // 站内图片地址交给 makeAvatar 异步加载；空值也走它显示群名首字
+    if (value.isEmpty() || value.startsWith(QLatin1Char('/')) || value.startsWith(QStringLiteral("http")))
+        return makeAvatar(parent, value, name, size);
+
+    // 内置表情图标：圆角底 + 大一号的字号，别用头像那边偏小的首字字号
+    auto *label = new QLabel(parent);
+    label->setObjectName(QStringLiteral("forumAvatar"));
+    label->setFixedSize(size, size);
+    label->setAlignment(Qt::AlignCenter);
+    label->setTextFormat(Qt::PlainText);
+    label->setText(value);
+    label->setStyleSheet(StyleKit::resolve(
+        QStringLiteral("QLabel#forumAvatar{border-radius:%1px;font-size:%2px;}")
+            .arg(size / 2)
+            .arg(qMax(14, size * 3 / 5))));
+    return label;
+}
+
+QLabel *makeOfficialAvatar(QWidget *parent, int size)
+{
+    auto *label = new QLabel(parent);
+    label->setObjectName(QStringLiteral("forumAvatar"));
+    label->setFixedSize(size, size);
+    label->setAlignment(Qt::AlignCenter);
+    label->setStyleSheet(styledAvatar(size));
+    // 官方身份统一用方块盒子立方体图标：完整缩进圆角底上（四周留边），不按铺满裁切
+    QPixmap cube(QStringLiteral(":/Images/blockbox_cube.png"));
+    if (!cube.isNull())
+    {
+        const qreal dpr = label->devicePixelRatioF();
+        const int target = qMax(1, int(size * 0.78));
+        QPixmap pixmap = cube.scaled(int(target * dpr), int(target * dpr),
+                                     Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        pixmap.setDevicePixelRatio(dpr);
+        label->setPixmap(pixmap);
     }
     return label;
 }
@@ -469,9 +518,58 @@ QVector<MarkdownPreset> postPresets()
     };
 }
 
-QVector<MarkdownPreset> lobbyIntroPresets()
+/** 教程帖专用模板：发教程模式（ForumComposerPage::Mode::Tutorial）的预设菜单用 */
+QVector<MarkdownPreset> tutorialPresets()
 {
     return {
+        {QObject::tr("图文教程"),
+         QObject::tr("## 简介\n"
+                     "这篇教程教你做什么、做完能达到什么效果\n"
+                     "\n"
+                     "## 准备\n"
+                     "- \n"
+                     "\n"
+                     "## 步骤\n"
+                     "### 第一步：\n"
+                     "\n"
+                     "### 第二步：\n"
+                     "\n"
+                     "## 常见问题\n"
+                     "- \n"
+                     "\n"
+                     "> 提示：正文里的标题会自动生成目录，点击可跳转；\n"
+                     "> 用 ::: fold 标题 … ::: 可以收起长段落；B 站视频链接直接贴进正文就行。\n")},
+        {QObject::tr("视频教程"),
+         QObject::tr("## 简介\n"
+                     "一句话说明这个视频讲了什么\n"
+                     "\n"
+                     "## 视频\n"
+                     "https://www.bilibili.com/video/BVxxxxxxxx\n"
+                     "\n"
+                     "## 图文补充\n"
+                     "### 关键步骤\n"
+                     "\n"
+                     "## 常见问题\n"
+                     "- \n")},
+        {QObject::tr("攻略合集"),
+         QObject::tr("## 简介\n"
+                     "这份攻略覆盖哪些内容\n"
+                     "\n"
+                     "## 目录速览\n"
+                     "```mindmap\n"
+                     "- 攻略主题\n"
+                     "  - 章节 1\n"
+                     "  - 章节 2\n"
+                     "```\n"
+                     "\n"
+                     "## 章节 1\n"
+                     "\n"
+                     "## 章节 2\n")},
+    };
+}
+
+QVector<MarkdownPreset> lobbyIntroPresets()
+{    return {
         {QObject::tr("生存服"),
          QObject::tr("## 玩法\n"
                      "- 模式：生存\n"
@@ -570,6 +668,505 @@ void applyMarkdownPreset(QPlainTextEdit *edit, const QString &text)
     edit->setTextCursor(tail);
     edit->ensureCursorVisible();
     edit->setFocus();
+}
+
+// ────────────────────────────────────────────────────────────── Markdown 编辑助手
+
+namespace {
+
+/** 选区覆盖的完整行范围：首尾不满一行的也扩成整行（行为与网页版编辑器一致） */
+void mdLineRange(const QString &plain, int start, int end, int *lineStart, int *lineEnd)
+{
+    *lineStart = 0;
+    if (start > 0)
+        *lineStart = plain.lastIndexOf(QLatin1Char('\n'), start - 1) + 1;
+    *lineEnd = plain.indexOf(QLatin1Char('\n'), end);
+    if (*lineEnd < 0)
+        *lineEnd = plain.size();
+}
+
+} // namespace
+
+void mdWrapSelection(QPlainTextEdit *edit, const QString &marker, const QString &placeholder)
+{
+    if (!edit || marker.isEmpty())
+        return;
+
+    QTextCursor cursor = edit->textCursor();
+    const QString plain = edit->toPlainText();
+    const int start = cursor.selectionStart();
+    const int end = cursor.selectionEnd();
+    QString inner = plain.mid(start, end - start);
+
+    // 选区两侧正好是同一对包裹符：反向拆掉
+    const QString before = start >= marker.size() ? plain.mid(start - marker.size(), marker.size())
+                                                  : QString();
+    const QString after = plain.mid(end, marker.size());
+    if (end > start && before == marker && after == marker)
+    {
+        cursor.beginEditBlock();
+        cursor.removeSelectedText(); // 光标停在 start
+        cursor.setPosition(start - marker.size());
+        cursor.setPosition(start + marker.size(), QTextCursor::KeepAnchor);
+        cursor.removeSelectedText();
+        cursor.insertText(inner);
+        cursor.endEditBlock();
+
+        // 选中还原出来的内容，接着打字就能替换
+        QTextCursor select = edit->textCursor();
+        select.setPosition(start - marker.size());
+        select.setPosition(start - marker.size() + inner.size(), QTextCursor::KeepAnchor);
+        edit->setTextCursor(select);
+        edit->ensureCursorVisible();
+        return;
+    }
+
+    if (inner.isEmpty())
+        inner = placeholder;
+
+    cursor.beginEditBlock();
+    cursor.removeSelectedText(); // 光标停在 start
+    cursor.insertText(marker + inner + marker);
+    cursor.endEditBlock();
+
+    // 选中包住的内容：没选字时直接打字就能替换占位词
+    QTextCursor select = edit->textCursor();
+    select.setPosition(start + marker.size());
+    select.setPosition(start + marker.size() + inner.size(), QTextCursor::KeepAnchor);
+    edit->setTextCursor(select);
+    edit->ensureCursorVisible();
+}
+
+void mdToggleLines(QPlainTextEdit *edit, const QString &kind)
+{
+    if (!edit)
+        return;
+
+    // 前缀识别与网页版编辑器同款；加前缀时先把旧的前缀剥掉
+    static const QRegularExpression headingRe(QStringLiteral("^#{1,6}\\s+"));
+    static const QRegularExpression quoteRe(QStringLiteral("^>\\s?"));
+    static const QRegularExpression ulRe(QStringLiteral("^\\s*[-*+]\\s+"));
+    static const QRegularExpression olRe(QStringLiteral("^\\s*\\d+[.)]\\s+"));
+
+    const QRegularExpression *strip = nullptr;
+    std::function<QString(const QString &, int)> make;
+    if (kind == QStringLiteral("heading"))
+    {
+        strip = &headingRe;
+        make = [](const QString &line, int) { return QStringLiteral("## ") + line; };
+    }
+    else if (kind == QStringLiteral("quote"))
+    {
+        strip = &quoteRe;
+        make = [](const QString &line, int) { return QStringLiteral("> ") + line; };
+    }
+    else if (kind == QStringLiteral("ul"))
+    {
+        strip = &ulRe;
+        make = [](const QString &line, int) { return QStringLiteral("- ") + line; };
+    }
+    else if (kind == QStringLiteral("ol"))
+    {
+        strip = &olRe;
+        make = [](const QString &line, int index) {
+            return QStringLiteral("%1. %2").arg(index + 1).arg(line);
+        };
+    }
+    if (!strip)
+        return;
+
+    const QTextCursor cursor = edit->textCursor();
+    const QString plain = edit->toPlainText();
+    int lineStart = 0;
+    int lineEnd = 0;
+    mdLineRange(plain, cursor.selectionStart(), cursor.selectionEnd(), &lineStart, &lineEnd);
+
+    const QStringList lines = plain.mid(lineStart, lineEnd - lineStart).split(QLatin1Char('\n'));
+    // 选中的行都带前缀时整段去掉，否则给所有非空行加上
+    const bool hasContent = std::any_of(lines.cbegin(), lines.cend(), [](const QString &line) {
+        return !line.trimmed().isEmpty();
+    });
+    const bool allMarked = hasContent && std::all_of(lines.cbegin(), lines.cend(),
+                                                     [strip](const QString &line) {
+                                                         return line.trimmed().isEmpty()
+                                                                || line.contains(*strip);
+                                                     });
+
+    QStringList changed;
+    changed.reserve(lines.size());
+    for (int index = 0; index < lines.size(); ++index)
+    {
+        QString stripped = lines.at(index);
+        stripped.remove(*strip);
+        if (allMarked)
+            changed << stripped;
+        else if (lines.at(index).trimmed().isEmpty())
+            changed << lines.at(index);
+        else
+            changed << make(stripped, index);
+    }
+
+    const QString text = changed.join(QLatin1Char('\n'));
+    QTextCursor apply = edit->textCursor();
+    apply.beginEditBlock();
+    apply.setPosition(lineStart);
+    apply.setPosition(lineEnd, QTextCursor::KeepAnchor);
+    apply.insertText(text);
+    apply.endEditBlock();
+
+    // 选中改过的行，连点一下就能来回切换
+    QTextCursor select = edit->textCursor();
+    select.setPosition(lineStart);
+    select.setPosition(lineStart + text.size(), QTextCursor::KeepAnchor);
+    edit->setTextCursor(select);
+    edit->ensureCursorVisible();
+}
+
+void mdWrapCodeBlock(QPlainTextEdit *edit)
+{
+    if (!edit)
+        return;
+
+    const QTextCursor cursor = edit->textCursor();
+    const QString plain = edit->toPlainText();
+    int lineStart = 0;
+    int lineEnd = 0;
+    mdLineRange(plain, cursor.selectionStart(), cursor.selectionEnd(), &lineStart, &lineEnd);
+    const QString block = plain.mid(lineStart, lineEnd - lineStart);
+
+    const QString text = QStringLiteral("```\n") + block
+                         + (block.isEmpty() ? QString() : QStringLiteral("\n"))
+                         + QStringLiteral("```");
+    QTextCursor apply = edit->textCursor();
+    apply.beginEditBlock();
+    apply.setPosition(lineStart);
+    apply.setPosition(lineEnd, QTextCursor::KeepAnchor);
+    apply.insertText(text);
+    apply.endEditBlock();
+
+    // 选中搬进围栏里的原内容（没有内容时光标停在两行 ``` 之间）
+    const int blockStart = lineStart + 4; // "```\n"
+    QTextCursor select = edit->textCursor();
+    select.setPosition(blockStart);
+    select.setPosition(blockStart + block.size(), QTextCursor::KeepAnchor);
+    edit->setTextCursor(select);
+    edit->ensureCursorVisible();
+}
+
+void mdInsertLink(QPlainTextEdit *edit)
+{
+    if (!edit)
+        return;
+
+    QTextCursor cursor = edit->textCursor();
+    const int start = cursor.selectionStart();
+    const QString inner = cursor.selectedText().trimmed();
+
+    static const QRegularExpression urlRe(QStringLiteral("^(https?://|/)[^\\s)]+$"),
+                                          QRegularExpression::CaseInsensitiveOption);
+    if (!inner.isEmpty() && urlRe.match(inner).hasMatch())
+    {
+        // 选中的是链接：包成 [标题](链接)，光标落在标题位让用户填
+        cursor.beginEditBlock();
+        cursor.insertText(QStringLiteral("[](") + inner + QLatin1Char(')'));
+        cursor.endEditBlock();
+        QTextCursor move = edit->textCursor();
+        move.setPosition(start + 1);
+        edit->setTextCursor(move);
+    }
+    else if (!inner.isEmpty())
+    {
+        // 选中的是文字：包成 [文字](https://)，选中链接位让用户填
+        const QString text = QStringLiteral("[%1](https://)").arg(inner);
+        cursor.beginEditBlock();
+        cursor.insertText(text);
+        cursor.endEditBlock();
+        const int urlStart = start + inner.size() + 3;
+        QTextCursor select = edit->textCursor();
+        select.setPosition(urlStart);
+        select.setPosition(urlStart + 8, QTextCursor::KeepAnchor); // 选中 "https://"
+        edit->setTextCursor(select);
+    }
+    else
+    {
+        // 什么都没选：整段占位，选中「标题」两个字让用户直接打字
+        cursor.beginEditBlock();
+        cursor.insertText(QStringLiteral("[标题](https://)"));
+        cursor.endEditBlock();
+        QTextCursor select = edit->textCursor();
+        select.setPosition(start + 1);
+        select.setPosition(start + 3, QTextCursor::KeepAnchor);
+        edit->setTextCursor(select);
+    }
+    edit->ensureCursorVisible();
+}
+
+void mdInsertText(QPlainTextEdit *edit, const QString &text)
+{
+    if (!edit || text.isEmpty())
+        return;
+
+    QTextCursor cursor = edit->textCursor();
+    cursor.beginEditBlock();
+    cursor.insertText(text);
+    cursor.endEditBlock();
+    edit->setTextCursor(cursor);
+    edit->ensureCursorVisible();
+    edit->setFocus();
+}
+
+// ────────────────────────────────────────────────────────────── 点赞按钮
+
+namespace {
+
+constexpr int kLikeHeight = 28;
+constexpr int kLikePadX = 6;
+constexpr int kLikeHeart = 16;
+constexpr int kLikeGap = 5;
+
+/** 从主题令牌（如 @DANGER@）取颜色，取不到就用兜底色 */
+QColor likeTokenColor(const QString &token, const QColor &fallback)
+{
+    QString resolved = StyleKit::resolve(QStringLiteral("color:%1;").arg(token));
+    const int colon = resolved.indexOf(QLatin1Char(':'));
+    if (colon >= 0)
+    {
+        resolved = resolved.mid(colon + 1);
+        resolved.remove(QLatin1Char(';'));
+        resolved.remove(QLatin1Char(' '));
+        const QColor color(resolved);
+        if (color.isValid())
+            return color;
+    }
+    return fallback;
+}
+
+} // namespace
+
+LikeButton::LikeButton(QWidget *parent)
+    : QPushButton(parent)
+{
+    setCursor(Qt::PointingHandCursor);
+    setFlat(true);
+    // 只接受 Tab 聚焦：点一下不画焦点框，键盘切到它时才有
+    setFocusPolicy(Qt::TabFocus);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    setAccessibleName(tr("点赞"));
+
+    // 字号字体自己存一份，避免全局 QPushButton 样式把文字撑大、按钮跟着变形
+    m_font = font();
+    m_font.setPixelSize(12);
+    m_font.setWeight(QFont::DemiBold);
+
+    m_likeColor = likeTokenColor(QStringLiteral("@DANGER@"), QColor(0xF4, 0x43, 0x36));
+
+    m_anim = new QVariantAnimation(this);
+    m_anim->setStartValue(0.0);
+    m_anim->setEndValue(1.0);
+    m_anim->setDuration(400);
+    m_anim->setEasingCurve(QEasingCurve::Linear);
+    connect(m_anim, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        m_t = value.toReal();
+        update();
+    });
+    connect(m_anim, &QVariantAnimation::finished, this, [this]() {
+        m_t = 0.0;
+        update();
+    });
+
+    applySize();
+}
+
+void LikeButton::setLikes(int likes)
+{
+    m_likes = qMax(0, likes);
+    applySize();
+    update();
+}
+
+void LikeButton::setLiked(bool liked, bool animate)
+{
+    const bool changed = (liked != m_liked);
+    m_liked = liked;
+    update();
+    if (animate && changed)
+        playBurst(liked);
+}
+
+QSize LikeButton::sizeHint() const
+{
+    const QFontMetrics metrics(m_font);
+    const int numberWidth = metrics.horizontalAdvance(QString::number(m_likes));
+    const int width = kLikePadX * 2 + kLikeHeart + kLikeGap + numberWidth;
+    return QSize(qMax(44, width), kLikeHeight);
+}
+
+QSize LikeButton::minimumSizeHint() const
+{
+    return sizeHint();
+}
+
+void LikeButton::applySize()
+{
+    setFixedSize(sizeHint());
+}
+
+void LikeButton::playBurst(bool liked)
+{
+    if (!m_anim)
+        return;
+    m_burstLiked = liked;
+    m_t = 0.0;
+    m_anim->stop();
+    m_anim->start();
+    update();
+}
+
+void LikeButton::enterEvent(QEnterEvent *event)
+{
+    m_hovered = true;
+    update();
+    QPushButton::enterEvent(event);
+}
+
+void LikeButton::leaveEvent(QEvent *event)
+{
+    m_hovered = false;
+    m_pressed = false;
+    update();
+    QPushButton::leaveEvent(event);
+}
+
+void LikeButton::mousePressEvent(QMouseEvent *event)
+{
+    m_pressed = true;
+    update();
+    QPushButton::mousePressEvent(event);
+}
+
+void LikeButton::mouseReleaseEvent(QMouseEvent *event)
+{
+    m_pressed = false;
+    update();
+    QPushButton::mouseReleaseEvent(event);
+}
+
+void LikeButton::focusInEvent(QFocusEvent *event)
+{
+    const Qt::FocusReason reason = event->reason();
+    m_focusVisible = reason == Qt::TabFocusReason || reason == Qt::BacktabFocusReason
+                     || reason == Qt::ShortcutFocusReason;
+    update();
+    QPushButton::focusInEvent(event);
+}
+
+void LikeButton::focusOutEvent(QFocusEvent *event)
+{
+    m_focusVisible = false;
+    update();
+    QPushButton::focusOutEvent(event);
+}
+
+void LikeButton::paintEvent(QPaintEvent *)
+{
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    if (!isEnabled())
+        painter.setOpacity(0.45);
+
+    // 文字灰/红都不跟着全局 QSS 走：灰取当前主题的主文字色降透明度，
+    // 红取主题危险色，深浅色主题下都看得清
+    const QColor textBase(ThemeManager::instance()->currentTextColor());
+    QColor fg = m_liked ? m_likeColor : textBase;
+    if (!m_liked)
+        fg.setAlphaF(0.70);
+
+    if (m_hovered && isEnabled())
+    {
+        QColor bg = m_liked ? m_likeColor : textBase;
+        bg.setAlphaF(m_liked ? 0.10 : 0.06);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(bg);
+        painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6.0, 6.0);
+    }
+
+    // 心形图标：高分辨率渲染一次，动画放大时也不会糊
+    if (m_outline.isNull() || m_iconTint != fg)
+    {
+        m_iconTint = fg;
+        const int src = kLikeHeart * 3;
+        m_outline = IconHelper::loadColoredIcon(QStringLiteral(":/Images/Icons/like.svg"), fg, src)
+                        .pixmap(src, src);
+        m_filled = IconHelper::loadColoredIcon(QStringLiteral(":/Images/Icons/like_filled.svg"),
+                                               m_likeColor, src)
+                       .pixmap(src, src);
+    }
+
+    const QRectF heartRect(kLikePadX, (height() - kLikeHeart) / 2.0, kLikeHeart, kLikeHeart);
+
+    // 点赞：0 → 峰值 → 0 的三角曲线再 smoothstep，弹一下回位；取消：轻轻缩一下
+    qreal scale = 1.0;
+    if (m_t > 0.0)
+    {
+        const qreal raw = m_t < 0.35 ? (m_t / 0.35) : (1.0 - (m_t - 0.35) / 0.65);
+        const qreal eased = raw * raw * (3.0 - 2.0 * raw);
+        scale = m_burstLiked ? (1.0 + 0.40 * eased) : (1.0 - 0.20 * eased);
+    }
+    if (m_pressed && isEnabled())
+        scale *= 0.90;
+
+    // 动画的「余波」画在心形后面：一团往外散的红光 + 一圈扩散的细红环，
+    // 心心放大时正好把它们盖住，回弹后才会露出来，看起来是从心里「炸」开
+    if (m_t > 0.0 && m_burstLiked)
+    {
+        const QPointF center = heartRect.center();
+
+        const qreal glowRadius = 8.0 + 6.0 * m_t;
+        QRadialGradient glow(center, glowRadius);
+        QColor glowInner = m_likeColor;
+        glowInner.setAlphaF(0.38 * (1.0 - m_t));
+        QColor glowOuter = m_likeColor;
+        glowOuter.setAlphaF(0.0);
+        glow.setColorAt(0.0, glowInner);
+        glow.setColorAt(1.0, glowOuter);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(glow);
+        painter.drawEllipse(center, glowRadius, glowRadius);
+
+        QColor ring = m_likeColor;
+        ring.setAlphaF(0.65 * (1.0 - m_t));
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(ring, 1.8));
+        const qreal ringRadius = 7.5 + 6.0 * m_t;
+        painter.drawEllipse(center, ringRadius, ringRadius);
+    }
+
+    const QPixmap &heart = m_liked ? m_filled : m_outline;
+    if (!heart.isNull())
+    {
+        painter.save();
+        painter.translate(heartRect.center());
+        painter.scale(scale, scale);
+        painter.drawPixmap(QRectF(-kLikeHeart / 2.0, -kLikeHeart / 2.0, kLikeHeart, kLikeHeart),
+                           heart, QRectF(heart.rect()));
+        painter.restore();
+    }
+
+    painter.setFont(m_font);
+    painter.setPen(fg);
+    const QRectF numberRect(heartRect.right() + kLikeGap, 0.0,
+                            width() - heartRect.right() - kLikeGap - kLikePadX, height());
+    painter.drawText(numberRect, Qt::AlignLeft | Qt::AlignVCenter, QString::number(m_likes));
+
+    if (m_focusVisible)
+    {
+        QColor ring = m_likeColor;
+        ring.setAlphaF(0.40);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(ring, 1.2));
+        painter.drawRoundedRect(QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5), 6.0, 6.0);
+    }
 }
 
 } // namespace ForumKit

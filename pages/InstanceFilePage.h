@@ -30,9 +30,8 @@ class BlurLoadingOverlay;
 class LocalCategoryManager;
 class ModrinthAPI;
 class MasonryLayout;
-class QGraphicsOpacityEffect;
+class CardSelectionOverlay;
 class QMenu;
-class QPropertyAnimation;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDragLeaveEvent;
@@ -167,8 +166,6 @@ private:
     QWidget *createSelectionOverlay(QWidget *card);
     /** 播放卡片选中高亮过渡动画 */
     void animateCardHighlight(int idx, bool selected);
-    /** 选中高亮遮罩样式（随主题色） */
-    QString selectionOverlayStyle() const;
     QString formatFileSize(qint64 bytes) const;
     QString computeFileSha1(const QString &filePath);
     void resetUpdateState();
@@ -185,6 +182,11 @@ private:
     void refreshCardCategoryChips();
     /** 为指定卡片弹出含"设置分类"的右键子菜单（复用右键菜单构建逻辑） */
     void appendCategoryMenu(QMenu *menu, const QString &fileName, const QString &filePath);
+    // 本地资源收藏：切换收藏 / 星标按钮视觉 / 批量刷新星标
+    void toggleFileFavorite(const QString &filePath, const QString &fileName, qint64 fileSize,
+                            const QString &displayName = QString());
+    void setFavButtonVisual(QPushButton *btn, bool fav);
+    void refreshCardFavButtons();
 
     FileType m_fileType;
 
@@ -244,9 +246,7 @@ private:
     QSet<int> m_selectedIndices;
 
     // 选中高亮遮罩（与 m_cardWidgets 对齐）
-    QList<QWidget *> m_selectionOverlays;
-    QList<QGraphicsOpacityEffect *> m_selectionEffects;
-    QList<QPropertyAnimation *> m_selectionAnims;
+    QList<CardSelectionOverlay *> m_selectionOverlays;
 
     // 滑动快速多选状态
     bool m_dragSelectActive = false;  // 是否处于滑动多选状态

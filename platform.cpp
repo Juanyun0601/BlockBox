@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QTextStream>
 
 #if defined(HARMONY_OS) || defined(Q_OS_HARMONY)
@@ -93,7 +94,20 @@ namespace Platform {
                 return candidate;
             if (QDir(candidate).exists() && directoryWritable(candidate))
                 return candidate;
-            return fallbackDataRoot();
+
+            const QString fallback = fallbackDataRoot();
+            if (directoryWritable(fallback))
+                return fallback;
+
+            // 用户数据目录也写不进去（鸿蒙只读沙盒、某些受限环境）时，
+            // 最后退回应用数据目录，避免把只读路径继续传给安装流程
+            const QString appData =
+                QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+            if (!appData.isEmpty()
+                && directoryWritable(QDir::cleanPath(appData) + QStringLiteral("/BlockBox")))
+                return QDir::cleanPath(appData) + QStringLiteral("/BlockBox");
+
+            return fallback;
         }
 
         /// 解析 .minecraft 目录（与数据目录同源，保证可写）
@@ -110,33 +124,63 @@ namespace Platform {
 
 #ifdef PLATFORM_ANDROID
         /**
-         * @brief 安卓端启动器数据根目录：优先沿用外部应用目录，不可写时退回内部目录
+         * @brief 安卓端启动器数据根目录：按「先旧后新、先外后内」挑一个真正能写的位置
          *
-         * 外部存储（/storage/emulated/0/Android/data/<包名>/files）不是每台设备、
-         * 每个时刻都可用（未挂载、被系统清理、权限异常）。旧实现只拼外部路径，
-         * 一旦不可写，新实例从建目录起就全部失败；内部目录
-         * （/data/user/0/<包名>/files）始终可写，作为兜底。
-         * 已经存在且可写的外部目录优先沿用，避免老用户数据“失踪”。
+         * 安卓公共外部存储（/storage/emulated/0）在 Android 10 及以下会被
+         * QStandardPaths::GenericDataLocation 直接返回，但写它需要存储权限；
+         * 清单里 WRITE_EXTERNAL_STORAGE 只声明到 API 28，Android 10 起根本写不进去。
+         * 应用专属外部目录（/storage/emulated/0/Android/data/<包名>/files）任何
+         * 安卓版本都无需额外权限，用户也能用文件管理器找到；内部目录
+         * （/data/user/0/<包名>/files）始终可写，作为最后兜底。
+         *
+         * 顺序上先保留「已经存在且可写」的旧目录，避免老用户数据“失踪”；
+         * 都不存在时优先应用专属外部目录，写不进去再退内部目录。
          */
         QString androidWritableDataRoot()
         {
             static const QString cached = []() {
                 QStringList candidates;
-                const QString external =
-                    QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-                if (!external.isEmpty())
-                    candidates << external + QStringLiteral("/BlockBox");
+
+                // 1) 应用专属外部目录：Qt 把 getExternalFilesDir() 放在
+                //    standardLocations(AppDataLocation) 里（内部目录之外的那个）。
+                //    不用写死 /storage 前缀判断，部分机型返回 /mnt/sdcard/...
                 const QString internal =
                     QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-                if (!internal.isEmpty())
-                    candidates << internal + QStringLiteral("/BlockBox");
+                const QString internalClean = QDir::cleanPath(internal);
+                const QStringList appDataDirs =
+                    QStandardPaths::standardLocations(QStandardPaths::AppDataLocation);
+                for (const QString &dir : appDataDirs) {
+                    const QString clean = QDir::cleanPath(dir);
+                    if (!clean.isEmpty() && clean != internalClean)
+                        candidates << clean + QStringLiteral("/BlockBox");
+                }
 
+                // 2) GenericDataLocation：Android 11+ 就是应用专属外部目录；
+                //    旧系统是公共存储根目录，只有真的可写才会被选中
+                const QString generic =
+                    QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+                if (!generic.isEmpty())
+                    candidates << QDir::cleanPath(generic) + QStringLiteral("/BlockBox");
+
+                // 3) 内部应用目录：始终可写
+                if (!internal.isEmpty())
+                    candidates << internalClean + QStringLiteral("/BlockBox");
+
+                candidates.removeDuplicates();
+
+                // 旧数据优先：已经存在且可写的位置继续沿用
+                for (const QString &candidate : candidates) {
+                    if (QDir(candidate).exists() && directoryWritable(candidate))
+                        return candidate;
+                }
+                // 否则取第一个真正可写的位置（探测时会顺带建好目录）
                 for (const QString &candidate : candidates) {
                     if (directoryWritable(candidate))
                         return candidate;
                 }
+                // 全都不可写时也返回内部目录，让上层的报错/提示有具体位置
                 if (!candidates.isEmpty())
-                    return candidates.first();
+                    return candidates.last();
                 return QDir::homePath() + QStringLiteral("/BlockBox");
             }();
             return cached;
@@ -304,18 +348,29 @@ namespace Platform {
     }
     QString getDataDirectory() {
 #ifdef PLATFORM_ANDROID
-        // Android: 优先外部应用目录，外部存储不可用时退回内部应用目录（保证可写）
+        // Android: 应用专属外部目录优先，外部存储不可用时退回内部应用目录（保证可写）
         QString dataDir = androidWritableDataRoot();
         QDir dataPath(dataDir);
-        if (!dataPath.exists()) {
-            dataPath.mkpath(dataDir);
+        if (!dataPath.exists() && !dataPath.mkpath(dataDir)) {
+            // 数据根目录在启动瞬间失效（外部存储被卸载、系统清理了应用专属目录等）：
+            // 内部目录始终可写，立刻换过去，避免把不可写路径传给后面所有写入点
+            const QString internalBase =
+                QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+            if (!internalBase.isEmpty()) {
+                qWarning() << "[Platform] 安卓数据目录不可写，改用内部目录："
+                           << internalBase;
+                dataDir = QDir::cleanPath(internalBase) + QStringLiteral("/BlockBox");
+                dataPath.setPath(dataDir);
+                if (!dataPath.exists())
+                    dataPath.mkpath(dataDir);
+            }
         }
 
         // 创建.minecraft文件夹用于存放我的世界游戏内容
         QString minecraftDir = dataDir + "/.minecraft";
         QDir minecraftPath(minecraftDir);
-        if (!minecraftPath.exists()) {
-            minecraftPath.mkpath(minecraftDir);
+        if (!minecraftPath.exists() && !minecraftPath.mkpath(minecraftDir)) {
+            qWarning() << "[Platform] 无法创建 .minecraft 目录：" << minecraftDir;
         }
 
         return dataDir;

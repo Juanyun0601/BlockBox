@@ -21,7 +21,10 @@
 #include <QClipboard>
 #include <QDialog>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QFontMetrics>
 #include <QGridLayout>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -30,6 +33,8 @@
 #include <QScrollBar>
 #include <QSizePolicy>
 #include <QStandardPaths>
+#include <QStyle>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTextEdit>
 #include <QToolButton>
@@ -37,9 +42,14 @@
 
 #include <algorithm>
 
+#include "components/AppMessageBox.h"
+#include "components/ChatBookmarkDialog.h"
+#include "components/ChatForwardDialog.h"
 #include "components/ForumKit.h"
 #include "components/NotificationManager.h"
 #include "components/CreateGroupDialog.h"
+#include "utils/ChatBookmarkStore.h"
+#include "utils/ChatUiStore.h"
 #include "utils/DownloadUtils.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ForumChatService.h"
@@ -75,6 +85,18 @@ QString onlineText(const ForumFriendInfo &peer)
     return QObject::tr("很久没来啦");
 }
 
+/** 消息正文的单行自然宽度：中文长消息不让布局把它压成窄窄一条 */
+int naturalTextWidth(const QFont &font, const QString &text, int maximum)
+{
+    if (text.isEmpty())
+        return 0;
+    const QFontMetrics metrics(font);
+    int widest = 0;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    for (const QString &line : lines)
+        widest = qMax(widest, metrics.horizontalAdvance(line));
+    return qMin(maximum, widest);
+}
 
 } // namespace
 
@@ -93,6 +115,19 @@ ForumFriendsPage::ForumFriendsPage(QWidget *parent)
             runSearch(m_searchEdit->text());
     });
 
+    // 会话搜索：输入停顿后再重建左栏，避免每敲一个字都重排
+    m_convFilterTimer.setSingleShot(true);
+    m_convFilterTimer.setInterval(180);
+    connect(&m_convFilterTimer, &QTimer::timeout, this, [this]() {
+        if (m_tab == FriendsTab)
+            renderFriendRows();
+    });
+
+    // 草稿：停下打字 0.6 秒才写盘
+    m_draftTimer.setSingleShot(true);
+    m_draftTimer.setInterval(600);
+    connect(&m_draftTimer, &QTimer::timeout, this, &ForumFriendsPage::saveActiveDraft);
+
     // 令牌失效（在别处退出登录 / 被踢）：回到未登录的空状态
     connect(ForumAccountService::instance(), &ForumAccountService::sessionExpired, this, [this]() {
         m_snapshot = {};
@@ -102,6 +137,8 @@ ForumFriendsPage::ForumFriendsPage(QWidget *parent)
         m_messages.clear();
         m_lastMessageId = 0;
         m_groupLastMessageId = 0;
+        m_activeKey.clear();
+        m_unreadAnchorId = 0;
         m_pollTimer.stop();
         renderSide();
         closeConversation();
@@ -145,6 +182,17 @@ void ForumFriendsPage::buildUi()
     sideTitle->setObjectName(QStringLiteral("forumSideTitle"));
     sideHeaderLayout->addWidget(sideTitle);
     sideHeaderLayout->addStretch(1);
+    // 聊天收藏：集中查看收藏过的消息
+    m_bookmarkButton = new QPushButton(sideHeader);
+    m_bookmarkButton->setObjectName(QStringLiteral("subNavCollapseBtn"));
+    m_bookmarkButton->setIcon(ResourceManager::instance()->loadThemedIcon(
+        QStringLiteral(":/Images/Icons/star.svg")));
+    m_bookmarkButton->setIconSize(QSize(16, 16));
+    m_bookmarkButton->setFixedSize(24, 24);
+    m_bookmarkButton->setCursor(Qt::PointingHandCursor);
+    m_bookmarkButton->setToolTip(tr("聊天收藏"));
+    connect(m_bookmarkButton, &QPushButton::clicked, this, &ForumFriendsPage::openBookmarks);
+    sideHeaderLayout->addWidget(m_bookmarkButton);
     m_createGroupButton = new QPushButton(sideHeader);
     m_createGroupButton->setObjectName(QStringLiteral("subNavCollapseBtn"));
     m_createGroupButton->setText(QStringLiteral("＋"));
@@ -196,6 +244,21 @@ void ForumFriendsPage::buildUi()
     tabRowLayout->addWidget(tabBar);
     sideLayout->addWidget(tabRow);
 
+    // 会话搜索：只在「好友」页签显示，按昵称 / 最后一条消息 / 草稿过滤
+    m_convSearchRow = new QWidget(sidePanel);
+    auto *convSearchRowLayout = new QVBoxLayout(m_convSearchRow);
+    convSearchRowLayout->setContentsMargins(12, 8, 12, 2);
+    convSearchRowLayout->setSpacing(0);
+    m_convSearchEdit = new QLineEdit(m_convSearchRow);
+    m_convSearchEdit->setObjectName(QStringLiteral("forumConvSearch"));
+    m_convSearchEdit->setPlaceholderText(tr("搜索会话或消息"));
+    m_convSearchEdit->setClearButtonEnabled(true);
+    m_convSearchEdit->setFixedHeight(30);
+    connect(m_convSearchEdit, &QLineEdit::textChanged, this,
+            [this]() { updateConversationFilter(); });
+    convSearchRowLayout->addWidget(m_convSearchEdit);
+    sideLayout->addWidget(m_convSearchRow);
+
     // 分组标题：随页签切换为「好友 · N」「申请 · N」「添加好友」
     m_sideGroupTitle = new QLabel(tr("好友"), sidePanel);
     m_sideGroupTitle->setObjectName(QStringLiteral("forumSideGroupTitle"));
@@ -230,18 +293,27 @@ void ForumFriendsPage::buildUi()
     chatLayout->setContentsMargins(0, 0, 0, 0);
     chatLayout->setSpacing(0);
 
-    // 空状态：大图标 + 两行说明
+    // 空状态：居中的图标胶囊 + 标题 + 说明，避免整栏只剩一句灰字
     m_chatEmpty = new QWidget(m_chatCard);
     auto *emptyLayout = new QVBoxLayout(m_chatEmpty);
     emptyLayout->setContentsMargins(0, 0, 0, 0);
-    emptyLayout->setSpacing(6);
-    auto *emptyIcon = new QLabel(QStringLiteral("💬"), m_chatEmpty);
+    emptyLayout->setSpacing(8);
+    auto *emptyIcon = new QLabel(m_chatEmpty);
+    emptyIcon->setObjectName(QStringLiteral("forumChatEmptyIcon"));
+    emptyIcon->setFixedSize(76, 76);
     emptyIcon->setAlignment(Qt::AlignCenter);
-    emptyIcon->setStyleSheet(StyleKit::resolve(QStringLiteral("font-size: 30px; background: transparent;")));
-    auto *emptyText = ForumKit::makeMuted(m_chatEmpty, tr("在左侧选择一个好友，开始聊天"));
+    emptyIcon->setPixmap(ResourceManager::instance()
+                             ->loadThemedIcon(QStringLiteral(":/Images/Icons/topbar_chat.svg"))
+                             .pixmap(32, 32));
+    auto *emptyTitle = new QLabel(tr("开始一段对话"), m_chatEmpty);
+    emptyTitle->setObjectName(QStringLiteral("forumChatEmptyTitle"));
+    emptyTitle->setAlignment(Qt::AlignCenter);
+    auto *emptyText = ForumKit::makeMuted(m_chatEmpty, tr("在左侧选择一个好友或群聊，开始聊天"));
     emptyText->setAlignment(Qt::AlignCenter);
     emptyLayout->addStretch(1);
-    emptyLayout->addWidget(emptyIcon);
+    emptyLayout->addWidget(emptyIcon, 0, Qt::AlignHCenter);
+    emptyLayout->addSpacing(2);
+    emptyLayout->addWidget(emptyTitle);
     emptyLayout->addWidget(emptyText);
     emptyLayout->addStretch(1);
     chatLayout->addWidget(m_chatEmpty, 1);
@@ -252,14 +324,15 @@ void ForumFriendsPage::buildUi()
     chatMainLayout->setContentsMargins(0, 0, 0, 0);
     chatMainLayout->setSpacing(0);
 
-    // 会话头：头像 / 名字 / 状态 / 主页 / 删除好友
+    // 会话头：悬浮玻璃条（头像 / 名字 / 状态 / 主页 / 删除好友）
     auto *head = new QWidget(m_chatMain);
     head->setObjectName(QStringLiteral("forumChatHead"));
+    head->setAttribute(Qt::WA_StyledBackground, true);
     auto *headLayout = new QHBoxLayout(head);
-    headLayout->setContentsMargins(16, 12, 16, 12);
+    headLayout->setContentsMargins(18, 12, 18, 12);
     headLayout->setSpacing(10);
     m_chatAvatarSlot = new QWidget(head);
-    m_chatAvatarSlot->setFixedSize(36, 36);
+    m_chatAvatarSlot->setFixedSize(40, 40);
     auto *avatarSlotLayout = new QHBoxLayout(m_chatAvatarSlot);
     avatarSlotLayout->setContentsMargins(0, 0, 0, 0);
     headLayout->addWidget(m_chatAvatarSlot);
@@ -278,18 +351,30 @@ void ForumFriendsPage::buildUi()
     m_chatProfileButton->setCursor(Qt::PointingHandCursor);
     m_chatProfileButton->setFixedHeight(26);
     headLayout->addWidget(m_chatProfileButton);
+    // 私聊一键拉群：打开建群弹窗并预选对方
+    m_chatGroupButton = new QPushButton(tr("拉群"), head);
+    m_chatGroupButton->setObjectName(QStringLiteral("forumGhostButton"));
+    m_chatGroupButton->setCursor(Qt::PointingHandCursor);
+    m_chatGroupButton->setFixedHeight(26);
+    headLayout->addWidget(m_chatGroupButton);
     m_chatRemoveButton = new QPushButton(tr("删除好友"), head);
     m_chatRemoveButton->setObjectName(QStringLiteral("forumGhostButton"));
     m_chatRemoveButton->setCursor(Qt::PointingHandCursor);
     m_chatRemoveButton->setFixedHeight(26);
     headLayout->addWidget(m_chatRemoveButton);
-    // 群聊专用：看成员 / 退出（私聊会话时隐藏）
+    // 群聊专用：看成员 / 邀请好友 / 退出（私聊会话时隐藏）
     m_chatMembersButton = new QPushButton(tr("成员"), head);
     m_chatMembersButton->setObjectName(QStringLiteral("forumGhostButton"));
     m_chatMembersButton->setCursor(Qt::PointingHandCursor);
     m_chatMembersButton->setFixedHeight(26);
     m_chatMembersButton->hide();
     headLayout->addWidget(m_chatMembersButton);
+    m_chatInviteButton = new QPushButton(tr("邀请"), head);
+    m_chatInviteButton->setObjectName(QStringLiteral("forumGhostButton"));
+    m_chatInviteButton->setCursor(Qt::PointingHandCursor);
+    m_chatInviteButton->setFixedHeight(26);
+    m_chatInviteButton->hide();
+    headLayout->addWidget(m_chatInviteButton);
     m_chatLeaveButton = new QPushButton(tr("退出群聊"), head);
     m_chatLeaveButton->setObjectName(QStringLiteral("forumGhostButton"));
     m_chatLeaveButton->setCursor(Qt::PointingHandCursor);
@@ -312,84 +397,32 @@ void ForumFriendsPage::buildUi()
     moreRow->addStretch(1);
     chatMainLayout->addLayout(moreRow);
 
-    // 消息列表
+    // 消息列表：留出更宽松的呼吸空间，滚动条收细
     m_msgsScroll = new QScrollArea(m_chatMain);
+    m_msgsScroll->setObjectName(QStringLiteral("forumChatMsgs"));
     m_msgsScroll->setWidgetResizable(true);
     m_msgsScroll->setFrameShape(QFrame::NoFrame);
     m_msgsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_msgsScroll->setStyleSheet(QStringLiteral("QScrollArea{background:transparent;}"));
     m_msgsContainer = new QWidget(m_msgsScroll);
     m_msgsContainer->setAttribute(Qt::WA_StyledBackground, false);
     m_msgsLayout = new QVBoxLayout(m_msgsContainer);
-    m_msgsLayout->setContentsMargins(16, 12, 16, 12);
-    m_msgsLayout->setSpacing(10);
+    m_msgsLayout->setContentsMargins(20, 14, 20, 16);
+    m_msgsLayout->setSpacing(12);
     m_msgsLayout->addStretch(1);
     m_msgsScroll->setWidget(m_msgsContainer);
     chatMainLayout->addWidget(m_msgsScroll, 1);
 
-    // 输入区：表情 / 图片 / 「字数统计 + 输入框」一列 / 发送按钮
-    auto *composer = new QWidget(m_chatMain);
-    composer->setObjectName(QStringLiteral("forumChatComposer"));
-    auto *composerLayout = new QHBoxLayout(composer);
-    composerLayout->setContentsMargins(16, 10, 16, 10);
-    composerLayout->setSpacing(8);
+    // 输入区：引用条 + 悬浮输入坞（表情 / 图片 / 文件 + 输入框 + 发送）
+    auto *composerWrap = new QWidget(m_chatMain);
+    auto *composerWrapLayout = new QVBoxLayout(composerWrap);
+    composerWrapLayout->setContentsMargins(0, 6, 0, 0);
+    composerWrapLayout->setSpacing(6);
 
-    m_emojiButton = new QPushButton(QStringLiteral("😊"), composer);
-    m_emojiButton->setObjectName(QStringLiteral("forumChatToolButton"));
-    m_emojiButton->setFixedSize(30, 30);
-    m_emojiButton->setCursor(Qt::PointingHandCursor);
-    m_emojiButton->setToolTip(tr("表情"));
-    connect(m_emojiButton, &QPushButton::clicked, this, &ForumFriendsPage::toggleEmojiPopup);
-    composerLayout->addWidget(m_emojiButton);
-
-    m_imageButton = new QPushButton(QStringLiteral("📷"), composer);
-    m_imageButton->setObjectName(QStringLiteral("forumChatToolButton"));
-    m_imageButton->setFixedSize(30, 30);
-    m_imageButton->setCursor(Qt::PointingHandCursor);
-    m_imageButton->setToolTip(tr("发送图片（也可以直接把截图粘进输入框）"));
-    connect(m_imageButton, &QPushButton::clicked, this, &ForumFriendsPage::pickAndSendImage);
-    composerLayout->addWidget(m_imageButton);
-
-    m_fileButton = new QPushButton(QStringLiteral("📎"), composer);
-    m_fileButton->setObjectName(QStringLiteral("forumChatToolButton"));
-    m_fileButton->setFixedSize(30, 30);
-    m_fileButton->setCursor(Qt::PointingHandCursor);
-    m_fileButton->setToolTip(tr("发送文件（单个不超过 5MB）"));
-    connect(m_fileButton, &QPushButton::clicked, this, &ForumFriendsPage::pickAndSendFile);
-    composerLayout->addWidget(m_fileButton);
-
-    auto *inputColumn = new QVBoxLayout();
-    inputColumn->setSpacing(3);
-    m_charCounter = new QLabel(composer);
-    m_charCounter->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    m_charCounter->setStyleSheet(StyleKit::resolve(QStringLiteral("color: @TEXT_TERTIARY@; font-size: 10.5px;")));
-    m_charCounter->hide();
-    inputColumn->addWidget(m_charCounter);
-    m_chatInput = new QTextEdit(composer);
-    m_chatInput->setObjectName(QStringLiteral("forumChatInput"));
-    m_chatInput->setPlaceholderText(tr("输入消息，Enter 发送，Shift+Enter 换行"));
-    m_chatInput->setFixedHeight(44);
-    m_chatInput->setAcceptRichText(false);
-    m_chatInput->installEventFilter(this);
-    inputColumn->addWidget(m_chatInput);
-    composerLayout->addLayout(inputColumn, 1);
-
-    m_sendButton = new QPushButton(tr("发送"), composer);
-    m_sendButton->setObjectName(QStringLiteral("forumPrimaryButton"));
-    m_sendButton->setCursor(Qt::PointingHandCursor);
-    m_sendButton->setFixedHeight(38);
-    m_sendButton->setFixedWidth(78);
-    m_sendButton->setToolTip(tr("Enter 发送，Shift+Enter 换行"));
-    connect(m_sendButton, &QPushButton::clicked, this, &ForumFriendsPage::sendCurrentMessage);
-    composerLayout->addWidget(m_sendButton);
-    composerLayout->setAlignment(m_sendButton, Qt::AlignBottom);
-    chatMainLayout->addWidget(composer);
-
-    // 引用条：回复某条消息时出现在输入区上方
-    m_replyBar = new QWidget(m_chatMain);
+    // 引用条：回复某条消息时出现在输入坞上方
+    m_replyBar = new QFrame(composerWrap);
     m_replyBar->setObjectName(QStringLiteral("forumChatReplyBar"));
     auto *replyLayout = new QHBoxLayout(m_replyBar);
-    replyLayout->setContentsMargins(16, 6, 16, 6);
+    replyLayout->setContentsMargins(12, 6, 8, 6);
     replyLayout->setSpacing(8);
     m_replyLabel = new QLabel(m_replyBar);
     m_replyLabel->setObjectName(QStringLiteral("forumMuted"));
@@ -402,7 +435,79 @@ void ForumFriendsPage::buildUi()
     connect(m_replyCancelButton, &QPushButton::clicked, this, &ForumFriendsPage::clearReplyTarget);
     replyLayout->addWidget(m_replyCancelButton);
     m_replyBar->hide();
-    chatMainLayout->addWidget(m_replyBar);
+    composerWrapLayout->addWidget(m_replyBar);
+
+    m_chatInputBox = new QFrame(composerWrap);
+    m_chatInputBox->setObjectName(QStringLiteral("forumChatInputBox"));
+    auto *composer = m_chatInputBox;
+    auto *composerLayout = new QHBoxLayout(composer);
+    composerLayout->setContentsMargins(10, 6, 8, 6);
+    composerLayout->setSpacing(6);
+
+    m_emojiButton = new QPushButton(composer);
+    m_emojiButton->setIcon(ResourceManager::instance()->loadThemedIcon(
+        QStringLiteral(":/Images/Icons/smile.svg")));
+    m_emojiButton->setIconSize(QSize(16, 16));
+    m_emojiButton->setObjectName(QStringLiteral("forumChatToolButton"));
+    m_emojiButton->setFixedSize(32, 32);
+    m_emojiButton->setCursor(Qt::PointingHandCursor);
+    m_emojiButton->setToolTip(tr("表情"));
+    connect(m_emojiButton, &QPushButton::clicked, this, &ForumFriendsPage::toggleEmojiPopup);
+    composerLayout->addWidget(m_emojiButton);
+    composerLayout->setAlignment(m_emojiButton, Qt::AlignBottom);
+
+    m_imageButton = new QPushButton(composer);
+    m_imageButton->setIcon(ResourceManager::instance()->loadThemedIcon(
+        QStringLiteral(":/Images/Icons/screenshot.svg")));
+    m_imageButton->setIconSize(QSize(16, 16));
+    m_imageButton->setObjectName(QStringLiteral("forumChatToolButton"));
+    m_imageButton->setFixedSize(32, 32);
+    m_imageButton->setCursor(Qt::PointingHandCursor);
+    m_imageButton->setToolTip(tr("发送图片（也可以直接把截图粘进输入框）"));
+    connect(m_imageButton, &QPushButton::clicked, this, &ForumFriendsPage::pickAndSendImage);
+    composerLayout->addWidget(m_imageButton);
+    composerLayout->setAlignment(m_imageButton, Qt::AlignBottom);
+
+    m_fileButton = new QPushButton(composer);
+    m_fileButton->setIcon(ResourceManager::instance()->loadThemedIcon(
+        QStringLiteral(":/Images/Icons/paperclip.svg")));
+    m_fileButton->setIconSize(QSize(16, 16));
+    m_fileButton->setObjectName(QStringLiteral("forumChatToolButton"));
+    m_fileButton->setFixedSize(32, 32);
+    m_fileButton->setCursor(Qt::PointingHandCursor);
+    m_fileButton->setToolTip(tr("发送文件（单个不超过 5MB）"));
+    connect(m_fileButton, &QPushButton::clicked, this, &ForumFriendsPage::pickAndSendFile);
+    composerLayout->addWidget(m_fileButton);
+    composerLayout->setAlignment(m_fileButton, Qt::AlignBottom);
+
+    auto *inputColumn = new QVBoxLayout();
+    inputColumn->setSpacing(2);
+    m_charCounter = new QLabel(composer);
+    m_charCounter->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_charCounter->setStyleSheet(StyleKit::resolve(QStringLiteral("color: @TEXT_TERTIARY@; font-size: 10.5px;")));
+    m_charCounter->hide();
+    inputColumn->addWidget(m_charCounter);
+    m_chatInput = new QTextEdit(composer);
+    m_chatInput->setObjectName(QStringLiteral("forumChatInput"));
+    m_chatInput->setPlaceholderText(tr("输入消息，Enter 发送，Shift+Enter 换行"));
+    m_chatInput->setFixedHeight(44);
+    m_chatInput->setAcceptRichText(false);
+    m_chatInput->setFrameShape(QFrame::NoFrame);
+    m_chatInput->installEventFilter(this);
+    inputColumn->addWidget(m_chatInput);
+    composerLayout->addLayout(inputColumn, 1);
+
+    m_sendButton = new QPushButton(tr("发送"), composer);
+    m_sendButton->setObjectName(QStringLiteral("forumPrimaryButton"));
+    m_sendButton->setCursor(Qt::PointingHandCursor);
+    m_sendButton->setFixedHeight(38);
+    m_sendButton->setFixedWidth(76);
+    m_sendButton->setToolTip(tr("Enter 发送，Shift+Enter 换行"));
+    connect(m_sendButton, &QPushButton::clicked, this, &ForumFriendsPage::sendCurrentMessage);
+    composerLayout->addWidget(m_sendButton);
+    composerLayout->setAlignment(m_sendButton, Qt::AlignBottom);
+    composerWrapLayout->addWidget(m_chatInputBox);
+    chatMainLayout->addWidget(composerWrap);
 
     // 输入框随内容长高（1～4 行），接近字数上限时显示计数
     connect(m_chatInput, &QTextEdit::textChanged, this, [this]() {
@@ -411,6 +516,9 @@ void ForumFriendsPage::buildUi()
         m_charCounter->setVisible(n >= 800);
         if (n >= 800)
             m_charCounter->setText(tr("%1 / 1000").arg(n));
+        // 停下来 0.6 秒就把没发出去的文字存成草稿（切换会话再回来还在）
+        if (!m_draftSuppressed)
+            scheduleDraftSave();
     });
 
     chatLayout->addWidget(m_chatMain, 1);
@@ -419,6 +527,8 @@ void ForumFriendsPage::buildUi()
     connect(m_chatProfileButton, &QPushButton::clicked, this,
             [this]() { emit userOpenRequested(m_peer.id); });
     connect(m_chatMembersButton, &QPushButton::clicked, this, &ForumFriendsPage::showGroupMembers);
+    connect(m_chatInviteButton, &QPushButton::clicked, this, &ForumFriendsPage::inviteToCurrentGroup);
+    connect(m_chatGroupButton, &QPushButton::clicked, this, &ForumFriendsPage::startGroupFromPeer);
     connect(m_chatLeaveButton, &QPushButton::clicked, this, &ForumFriendsPage::leaveCurrentGroup);
     connect(m_chatRemoveButton, &QPushButton::clicked, this, [this]() {
         if (m_peer.id <= 0)
@@ -430,9 +540,9 @@ void ForumFriendsPage::buildUi()
         }
         const int peerId = m_peer.id;
         const QString peerName = m_peer.displayName;
-        if (QMessageBox::question(this, tr("删除好友"),
+        if (AppMessageBox::question(this, tr("删除好友"),
                                   tr("确定删除好友「%1」吗？聊天记录将不再可见。").arg(peerName)) !=
-            QMessageBox::Yes)
+            AppMessageBox::Yes)
             return;
         ForumChatService::instance()->removeFriend(
             peerId,
@@ -454,6 +564,8 @@ void ForumFriendsPage::open()
 {
     if (!ForumAccountService::instance()->isLoggedIn())
     {
+        ChatUiStore::instance()->setAccount(0);
+        ChatBookmarkStore::instance()->setAccount(0);
         m_snapshot = {};
         closeConversation();
         ForumKit::clearLayout(m_sideListLayout);
@@ -476,6 +588,9 @@ void ForumFriendsPage::open()
         setStatus(QString());
         return;
     }
+    // 置顶 / 免打扰 / 草稿是按账号分开存的：换了账号就换一份
+    ChatUiStore::instance()->setAccount(ForumAccountService::instance()->user().id);
+    ChatBookmarkStore::instance()->setAccount(ForumAccountService::instance()->user().id);
     reload();
 }
 
@@ -516,6 +631,35 @@ void ForumFriendsPage::openCreateGroupDialog()
     CreateGroupDialog::create(this, [this](const ForumGroupInfo &group) {
         // 建好了直接开聊；列表里补上这个新群（顺手刷新好友数据）
         openGroupConversation(group);
+        reload();
+    });
+}
+
+void ForumFriendsPage::startGroupFromPeer()
+{
+    if (!m_peer.isValid())
+        return;
+    // 私聊一键拉群：建群弹窗里预先勾中对方
+    CreateGroupDialog::create(
+        this,
+        [this](const ForumGroupInfo &group) {
+            openGroupConversation(group);
+            reload();
+        },
+        m_peer.id);
+}
+
+void ForumFriendsPage::inviteToCurrentGroup()
+{
+    if (!m_group.isValid() || m_group.official)
+        return;
+    QVector<int> existingIds;
+    for (const ForumGroupMember &member : m_groupMembers)
+        existingIds.append(member.user.id);
+    CreateGroupDialog::invite(this, m_group, existingIds, [this]() {
+        // 邀请成功：重开会话刷新成员与人数，顺手刷新会话列表
+        if (m_group.isValid())
+            openGroupConversation(m_group);
         reload();
     });
 }
@@ -592,6 +736,20 @@ void ForumFriendsPage::showGroupMembers()
         layout->addWidget(note);
     }
 
+    // 非官方群：成员弹窗里顺手给一个「邀请好友」入口
+    if (!m_group.official)
+    {
+        auto *inviteBtn = new QPushButton(tr("邀请好友进群"), &dialog);
+        inviteBtn->setObjectName(QStringLiteral("forumGhostButton"));
+        inviteBtn->setCursor(Qt::PointingHandCursor);
+        inviteBtn->setFixedHeight(28);
+        connect(inviteBtn, &QPushButton::clicked, &dialog, [this, &dialog]() {
+            dialog.accept();
+            inviteToCurrentGroup();
+        });
+        layout->addWidget(inviteBtn);
+    }
+
     dialog.exec();
 }
 
@@ -608,7 +766,7 @@ void ForumFriendsPage::leaveCurrentGroup()
     const QString confirmText =
         isOwner ? tr("你是群主，退出将解散群聊「%1」，所有群消息都会删除。确定退出吗？").arg(groupName)
                 : tr("确定退出群聊「%1」吗？退出后要再聊就得让群主重新邀请。").arg(groupName);
-    if (QMessageBox::question(this, tr("退出群聊"), confirmText) != QMessageBox::Yes)
+    if (AppMessageBox::question(this, tr("退出群聊"), confirmText) != AppMessageBox::Yes)
         return;
     ForumChatService::instance()->leaveGroup(
         groupId,
@@ -636,11 +794,34 @@ void ForumFriendsPage::showEvent(QShowEvent *event)
 void ForumFriendsPage::hideEvent(QHideEvent *event)
 {
     QWidget::hideEvent(event);
+    // 切走页面：把还在输入框里的文字存成草稿
+    saveActiveDraft();
     m_pollTimer.stop();
 }
 
 bool ForumFriendsPage::eventFilter(QObject *watched, QEvent *event)
 {
+    // 引用条：点一下滚到被引用的原消息
+    if (watched && event->type() == QEvent::MouseButtonRelease)
+    {
+        const int replyTargetId = watched->property("replyTargetId").toInt();
+        if (replyTargetId > 0)
+        {
+            scrollToMessage(replyTargetId);
+            return true;
+        }
+    }
+    // 输入坞聚焦时亮起主色描边（与 AI 聊天页的输入框一致）
+    if (watched == m_chatInput &&
+        (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut))
+    {
+        if (m_chatInputBox)
+        {
+            m_chatInputBox->setProperty("focused", event->type() == QEvent::FocusIn);
+            m_chatInputBox->style()->unpolish(m_chatInputBox);
+            m_chatInputBox->style()->polish(m_chatInputBox);
+        }
+    }
     if (watched == m_chatInput && event->type() == QEvent::KeyPress)
     {
         auto *keyEvent = static_cast<QKeyEvent *>(event);
@@ -735,10 +916,87 @@ void ForumFriendsPage::setTab(Tab tab)
     if (m_tab == tab)
         return;
     m_tab = tab;
+    // 会话搜索只对「好友」页签有意义
+    if (m_convSearchRow)
+        m_convSearchRow->setVisible(tab == FriendsTab);
     if (tab != FriendsTab)
         reload();
     else
         renderSide();
+}
+
+void ForumFriendsPage::updateConversationFilter()
+{
+    m_convFilterTimer.start();
+}
+
+QString ForumFriendsPage::activeConversationKey() const
+{
+    if (m_group.isValid())
+        return ChatUiStore::conversationKey(true, m_group.id);
+    if (m_peer.id > 0)
+        return ChatUiStore::conversationKey(false, m_peer.id);
+    return QString();
+}
+
+void ForumFriendsPage::saveActiveDraft()
+{
+    m_draftTimer.stop();
+    const QString key = activeConversationKey();
+    if (key.isEmpty() || !m_chatInput)
+        return;
+    ChatUiStore::instance()->setDraft(key, m_chatInput->toPlainText());
+}
+
+void ForumFriendsPage::scheduleDraftSave()
+{
+    if (m_activeKey.isEmpty())
+        return;
+    m_draftTimer.start();
+}
+
+void ForumFriendsPage::restoreDraft(const QString &key)
+{
+    if (key.isEmpty() || !m_chatInput)
+        return;
+    const QString draft = ChatUiStore::instance()->draft(key);
+    if (draft.isEmpty())
+        return;
+    m_chatInput->setPlainText(draft);
+    m_chatInput->moveCursor(QTextCursor::End);
+    refreshInputSize();
+}
+
+void ForumFriendsPage::showConversationMenu(bool group, int id, const QPoint &globalPos)
+{
+    if (id <= 0)
+        return;
+    const QString key = ChatUiStore::conversationKey(group, id);
+    ChatUiStore *store = ChatUiStore::instance();
+    QMenu menu(this);
+    QAction *pinAction = menu.addAction(store->isPinned(key) ? tr("取消置顶") : tr("置顶会话"));
+    QAction *muteAction = menu.addAction(store->isMuted(key) ? tr("取消免打扰") : tr("消息免打扰"));
+    QAction *clearDraftAction = nullptr;
+    if (!store->draft(key).isEmpty())
+    {
+        menu.addSeparator();
+        clearDraftAction = menu.addAction(tr("删除草稿"));
+    }
+    QAction *chosen = menu.exec(globalPos);
+    if (!chosen)
+        return;
+    if (chosen == pinAction)
+        store->setPinned(key, !store->isPinned(key));
+    else if (chosen == muteAction)
+        store->setMuted(key, !store->isMuted(key));
+    else if (chosen == clearDraftAction)
+    {
+        store->setDraft(key, QString());
+        // 正好开着这个会话：输入框里没发出去的文字也一起清掉
+        if (key == activeConversationKey() && m_chatInput)
+            m_chatInput->clear();
+    }
+    renderFriendRows();
 }
 
 void ForumFriendsPage::renderSide()
@@ -756,6 +1014,11 @@ void ForumFriendsPage::renderFriendRows()
     const int scrollValue = m_sideScroll->verticalScrollBar()->value();
     ForumKit::clearLayout(m_sideListLayout);
 
+    ChatUiStore *store = ChatUiStore::instance();
+    const QString filter = m_convSearchEdit ? m_convSearchEdit->text().trimmed() : QString();
+    const bool filtering = !filter.isEmpty();
+    int rendered = 0;   ///< 过滤后真正显示出来的会话数（搜索无结果时给提示）
+
     // 会话行 = 好友 + 群聊混排；官方客服仍是默认好友，固定排最前面
     const int conversationCount = m_snapshot.friends.size() + m_snapshot.groups.size();
     if (m_sideGroupTitle)
@@ -771,15 +1034,49 @@ void ForumFriendsPage::renderFriendRows()
         m_sideListLayout->addSpacing(20);
     }
 
-    // 一行会话：isGroup 区分好友 / 群聊，lastAt 是最后一条消息时间（0 = 没聊过）
+    // 一行会话：isGroup 区分好友 / 群聊，lastAt 是最后一条消息时间（0 = 没聊过），
+    // pinned 是本机置顶（有置顶时排在同组最前面）
     struct SideEntry
     {
         bool isGroup = false;
         int id = 0;
         qint64 lastAt = 0;
+        bool pinned = false;
     };
 
-    auto renderFriendRow = [this](const ForumFriendInfo &friendInfo) {
+    auto renderFriendRow = [this, store, filter, filtering, &rendered](const ForumFriendInfo &friendInfo) {
+        const QString key = ChatUiStore::conversationKey(false, friendInfo.id);
+        const bool pinned = store->isPinned(key);
+        const bool muted = store->isMuted(key);
+        const QString draft = store->draft(key);
+
+        // 预览：有未发送草稿就先显示草稿，否则按最后一条消息的类型显示
+        QString preview = tr("还没有聊过天");
+        if (!draft.isEmpty())
+            preview = draft.simplified();
+        else if (friendInfo.lastMessageKind == QStringLiteral("image"))
+            preview = tr("[图片]");
+        else if (friendInfo.lastMessageKind == QStringLiteral("file"))
+            preview = tr("[文件]");
+        else if (friendInfo.lastMessageKind == QStringLiteral("withdrawn"))
+            preview = tr("撤回了一条消息");
+        else if (!friendInfo.lastMessageBody.isEmpty())
+            preview = friendInfo.lastMessageBody;
+        if (draft.isEmpty() && !friendInfo.lastMessageBody.isEmpty() && friendInfo.lastMessageMine &&
+            friendInfo.lastMessageKind != QStringLiteral("withdrawn"))
+            preview = tr("我：%1").arg(preview);
+        const QString previewText = draft.isEmpty() ? preview : tr("[草稿] %1").arg(preview);
+
+        // 会话搜索：昵称 / 账号名 / 预览内容任一命中才显示
+        if (filtering)
+        {
+            const bool hit = friendInfo.displayName.contains(filter, Qt::CaseInsensitive) ||
+                             friendInfo.username.contains(filter, Qt::CaseInsensitive) ||
+                             previewText.contains(filter, Qt::CaseInsensitive);
+            if (!hit)
+                return;
+        }
+
         auto *row = new ForumKit::ClickableCard(this);
         row->setObjectName(QStringLiteral("forumSideRow"));
         // 当前正在聊的这一条按「选中」样式高亮，和子导航选中项一致
@@ -795,13 +1092,22 @@ void ForumFriendsPage::renderFriendRows()
                 }
             }
         };
+        // 右键：置顶 / 消息免打扰
+        row->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(row, &QWidget::customContextMenuRequested, this,
+                [this, peerId, row](const QPoint &pos) {
+                    showConversationMenu(false, peerId, row->mapToGlobal(pos));
+                });
 
         auto *rowLayout = new QHBoxLayout(row);
         rowLayout->setContentsMargins(12, 10, 12, 10);
         rowLayout->setSpacing(10);
 
-        rowLayout->addWidget(ForumKit::makeAvatar(row, friendInfo.avatar,
-                                                  friendInfo.displayName, 36));
+        // 官方客服用方块盒子图标当头像，普通好友照旧
+        rowLayout->addWidget(friendInfo.official
+                                 ? ForumKit::makeOfficialAvatar(row, 36)
+                                 : ForumKit::makeAvatar(row, friendInfo.avatar,
+                                                        friendInfo.displayName, 36));
 
         auto *textColumn = new QVBoxLayout();
         textColumn->setSpacing(3);
@@ -819,6 +1125,26 @@ void ForumFriendsPage::renderFriendRows()
             official->setToolTip(tr("方块盒子官方客服，遇到问题可以随时提问"));
             nameRow->addWidget(official);
         }
+        if (pinned)
+        {
+            auto *pin = new QLabel(row);
+            pin->setObjectName(QStringLiteral("forumSideStateIcon"));
+            pin->setPixmap(ResourceManager::instance()
+                               ->loadThemedIcon(QStringLiteral(":/Images/Icons/pin_filled.svg"))
+                               .pixmap(12, 12));
+            pin->setToolTip(tr("已置顶"));
+            nameRow->addWidget(pin);
+        }
+        if (muted)
+        {
+            auto *mute = new QLabel(row);
+            mute->setObjectName(QStringLiteral("forumSideStateIcon"));
+            mute->setPixmap(ResourceManager::instance()
+                                ->loadThemedIcon(QStringLiteral(":/Images/Icons/bell_off.svg"))
+                                .pixmap(12, 12));
+            mute->setToolTip(tr("消息免打扰"));
+            nameRow->addWidget(mute);
+        }
         auto *online = new QLabel(row);
         online->setText(friendInfo.online ? QStringLiteral("●") : QStringLiteral("○"));
         online->setToolTip(onlineText(friendInfo));
@@ -830,28 +1156,30 @@ void ForumFriendsPage::renderFriendRows()
         nameRow->addWidget(online);
         if (friendInfo.unread > 0)
         {
-            auto *badge = new QLabel(row);
-            badge->setObjectName(QStringLiteral("forumUnreadBadge"));
-            badge->setText(friendInfo.unread > 99 ? QStringLiteral("99+") : QString::number(friendInfo.unread));
-            nameRow->addWidget(badge);
+            if (muted)
+            {
+                // 免打扰只留一个小圆点：知道有新消息，但不抢注意力
+                auto *dot = new QLabel(row);
+                dot->setObjectName(QStringLiteral("forumUnreadDot"));
+                dot->setFixedSize(8, 8);
+                dot->setToolTip(tr("%1 条未读消息").arg(friendInfo.unread));
+                nameRow->addWidget(dot);
+            }
+            else
+            {
+                auto *badge = new QLabel(row);
+                badge->setObjectName(QStringLiteral("forumUnreadBadge"));
+                badge->setText(friendInfo.unread > 99 ? QStringLiteral("99+")
+                                                      : QString::number(friendInfo.unread));
+                nameRow->addWidget(badge);
+            }
         }
         textColumn->addLayout(nameRow);
 
-        QString preview = tr("还没有聊过天");
-        if (friendInfo.lastMessageKind == QStringLiteral("image"))
-            preview = tr("[图片]");
-        else if (friendInfo.lastMessageKind == QStringLiteral("file"))
-            preview = tr("[文件]");
-        else if (friendInfo.lastMessageKind == QStringLiteral("withdrawn"))
-            preview = tr("撤回了一条消息");
-        else if (!friendInfo.lastMessageBody.isEmpty())
-            preview = friendInfo.lastMessageBody;
-        if (!friendInfo.lastMessageBody.isEmpty() && friendInfo.lastMessageMine &&
-            friendInfo.lastMessageKind != QStringLiteral("withdrawn"))
-            preview = tr("我：%1").arg(preview);
         auto *previewLabel = new ForumKit::ElidedLabel(row);
-        previewLabel->setObjectName(QStringLiteral("forumMuted"));
-        previewLabel->setFullText(preview);
+        previewLabel->setObjectName(draft.isEmpty() ? QStringLiteral("forumMuted")
+                                                    : QStringLiteral("forumDraftPreview"));
+        previewLabel->setFullText(previewText);
         textColumn->addWidget(previewLabel);
 
         rowLayout->addLayout(textColumn, 1);
@@ -862,9 +1190,46 @@ void ForumFriendsPage::renderFriendRows()
         rowLayout->addWidget(time, 0, Qt::AlignTop);
 
         m_sideListLayout->addWidget(row);
+        ++rendered;
     };
 
-    auto renderGroupRow = [this](const ForumGroupInfo &group) {
+    auto renderGroupRow = [this, store, filter, filtering, &rendered](const ForumGroupInfo &group) {
+        const QString key = ChatUiStore::conversationKey(true, group.id);
+        const bool pinned = store->isPinned(key);
+        const bool muted = store->isMuted(key);
+        const QString draft = store->draft(key);
+
+        // 群预览带上发言人：谁说了什么一眼能分清（系统消息本身就是完整句子，不加前缀）；
+        // 有草稿时优先显示草稿
+        QString preview = tr("还没有聊过天");
+        if (!draft.isEmpty())
+            preview = draft.simplified();
+        else if (group.lastMessageKind == QStringLiteral("system"))
+            preview = group.lastMessageBody;
+        else if (group.lastMessageKind == QStringLiteral("image"))
+            preview = tr("[图片]");
+        else if (group.lastMessageKind == QStringLiteral("file"))
+            preview = tr("[文件]");
+        else if (group.lastMessageKind == QStringLiteral("withdrawn"))
+            preview = tr("撤回了一条消息");
+        else if (!group.lastMessageBody.isEmpty())
+            preview = group.lastMessageBody;
+        if (draft.isEmpty() && !group.lastMessageBody.isEmpty() &&
+            group.lastMessageKind != QStringLiteral("withdrawn") &&
+            group.lastMessageKind != QStringLiteral("system"))
+        {
+            if (group.lastMessageMine)
+                preview = tr("我：%1").arg(preview);
+            else if (!group.lastMessageSender.isEmpty())
+                preview = tr("%1：%2").arg(group.lastMessageSender, preview);
+        }
+        const QString previewText = draft.isEmpty() ? preview : tr("[草稿] %1").arg(preview);
+
+        // 会话搜索：群名 / 预览内容任一命中才显示
+        if (filtering && !group.name.contains(filter, Qt::CaseInsensitive) &&
+            !previewText.contains(filter, Qt::CaseInsensitive))
+            return;
+
         auto *row = new ForumKit::ClickableCard(this);
         row->setObjectName(QStringLiteral("forumSideRow"));
         row->setProperty("selected", m_group.isValid() && m_group.id == group.id);
@@ -879,13 +1244,21 @@ void ForumFriendsPage::renderFriendRows()
                 }
             }
         };
+        // 右键：置顶 / 消息免打扰
+        row->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(row, &QWidget::customContextMenuRequested, this,
+                [this, groupId, row](const QPoint &pos) {
+                    showConversationMenu(true, groupId, row->mapToGlobal(pos));
+                });
 
         auto *rowLayout = new QHBoxLayout(row);
         rowLayout->setContentsMargins(12, 10, 12, 10);
         rowLayout->setSpacing(10);
 
-        // 群没有头像，makeAvatar 会按群名首字生成占位头像
-        rowLayout->addWidget(ForumKit::makeAvatar(row, QString(), group.name, 36));
+        // 官方全用户群用方块盒子图标当头像；普通群有图标就显示图标，没有就按群名首字
+        rowLayout->addWidget(group.official
+                                 ? ForumKit::makeOfficialAvatar(row, 36)
+                                 : ForumKit::makeGroupAvatar(row, group.avatar, group.name, 36));
 
         auto *textColumn = new QVBoxLayout();
         textColumn->setSpacing(3);
@@ -903,35 +1276,51 @@ void ForumFriendsPage::renderFriendRows()
             official->setToolTip(tr("方块盒子全用户讨论群，所有玩家默认都在这个群里"));
             nameRow->addWidget(official);
         }
+        if (pinned)
+        {
+            auto *pin = new QLabel(row);
+            pin->setObjectName(QStringLiteral("forumSideStateIcon"));
+            pin->setPixmap(ResourceManager::instance()
+                               ->loadThemedIcon(QStringLiteral(":/Images/Icons/pin_filled.svg"))
+                               .pixmap(12, 12));
+            pin->setToolTip(tr("已置顶"));
+            nameRow->addWidget(pin);
+        }
+        if (muted)
+        {
+            auto *mute = new QLabel(row);
+            mute->setObjectName(QStringLiteral("forumSideStateIcon"));
+            mute->setPixmap(ResourceManager::instance()
+                                ->loadThemedIcon(QStringLiteral(":/Images/Icons/bell_off.svg"))
+                                .pixmap(12, 12));
+            mute->setToolTip(tr("消息免打扰"));
+            nameRow->addWidget(mute);
+        }
         if (group.unread > 0)
         {
-            auto *badge = new QLabel(row);
-            badge->setObjectName(QStringLiteral("forumUnreadBadge"));
-            badge->setText(group.unread > 99 ? QStringLiteral("99+") : QString::number(group.unread));
-            nameRow->addWidget(badge);
+            if (muted)
+            {
+                auto *dot = new QLabel(row);
+                dot->setObjectName(QStringLiteral("forumUnreadDot"));
+                dot->setFixedSize(8, 8);
+                dot->setToolTip(tr("%1 条未读消息").arg(group.unread));
+                nameRow->addWidget(dot);
+            }
+            else
+            {
+                auto *badge = new QLabel(row);
+                badge->setObjectName(QStringLiteral("forumUnreadBadge"));
+                badge->setText(group.unread > 99 ? QStringLiteral("99+")
+                                                 : QString::number(group.unread));
+                nameRow->addWidget(badge);
+            }
         }
         textColumn->addLayout(nameRow);
 
-        // 群预览带上发言人：谁说了什么一眼能分清
-        QString preview = tr("还没有聊过天");
-        if (group.lastMessageKind == QStringLiteral("image"))
-            preview = tr("[图片]");
-        else if (group.lastMessageKind == QStringLiteral("file"))
-            preview = tr("[文件]");
-        else if (group.lastMessageKind == QStringLiteral("withdrawn"))
-            preview = tr("撤回了一条消息");
-        else if (!group.lastMessageBody.isEmpty())
-            preview = group.lastMessageBody;
-        if (!group.lastMessageBody.isEmpty() && group.lastMessageKind != QStringLiteral("withdrawn"))
-        {
-            if (group.lastMessageMine)
-                preview = tr("我：%1").arg(preview);
-            else if (!group.lastMessageSender.isEmpty())
-                preview = tr("%1：%2").arg(group.lastMessageSender, preview);
-        }
         auto *previewLabel = new ForumKit::ElidedLabel(row);
-        previewLabel->setObjectName(QStringLiteral("forumMuted"));
-        previewLabel->setFullText(preview);
+        previewLabel->setObjectName(draft.isEmpty() ? QStringLiteral("forumMuted")
+                                                    : QStringLiteral("forumDraftPreview"));
+        previewLabel->setFullText(previewText);
         textColumn->addWidget(previewLabel);
 
         rowLayout->addLayout(textColumn, 1);
@@ -942,6 +1331,7 @@ void ForumFriendsPage::renderFriendRows()
         rowLayout->addWidget(time, 0, Qt::AlignTop);
 
         m_sideListLayout->addWidget(row);
+        ++rendered;
     };
 
     // 官方客服置顶，其余好友与群按最后一条消息时间混排
@@ -955,11 +1345,18 @@ void ForumFriendsPage::renderFriendRows()
     {
         if (friendInfo.official)
             continue;
-        entries.append({false, friendInfo.id, friendInfo.lastMessageAt});
+        const QString key = ChatUiStore::conversationKey(false, friendInfo.id);
+        entries.append({false, friendInfo.id, friendInfo.lastMessageAt, store->isPinned(key)});
     }
     for (const ForumGroupInfo &group : m_snapshot.groups)
-        entries.append({true, group.id, group.lastMessageAt});
+    {
+        const QString key = ChatUiStore::conversationKey(true, group.id);
+        entries.append({true, group.id, group.lastMessageAt, store->isPinned(key)});
+    }
+    // 置顶的排最前，其余按最后一条消息时间倒序
     std::sort(entries.begin(), entries.end(), [](const SideEntry &a, const SideEntry &b) {
+        if (a.pinned != b.pinned)
+            return a.pinned;
         if (a.lastAt != b.lastAt)
             return a.lastAt > b.lastAt;
         return a.id < b.id;
@@ -988,6 +1385,16 @@ void ForumFriendsPage::renderFriendRows()
                 }
             }
         }
+    }
+    // 搜索词一个没命中：给一句明确提示，而不是空着一片
+    if (rendered == 0 && filtering)
+    {
+        auto *empty = ForumKit::makeMuted(this, tr("没有找到包含「%1」的会话").arg(filter));
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setWordWrap(true);
+        m_sideListLayout->addSpacing(20);
+        m_sideListLayout->addWidget(empty);
+        m_sideListLayout->addSpacing(20);
     }
     m_sideListLayout->addStretch(1);
     m_sideScroll->verticalScrollBar()->setValue(scrollValue);
@@ -1331,27 +1738,48 @@ void ForumFriendsPage::runSearch(const QString &keyword)
 
 void ForumFriendsPage::openConversation(const ForumFriendInfo &peer)
 {
+    // 离开上一个会话前，先把输入框里没发出去的文字存成草稿
+    saveActiveDraft();
+    // 打开会话时顺手记下这位好友的未读数，用来在消息里标出「这才是新消息」
+    int unread = 0;
+    for (const ForumFriendInfo &item : m_snapshot.friends)
+    {
+        if (item.id == peer.id)
+        {
+            unread = item.unread;
+            break;
+        }
+    }
+
     m_peer = peer;
     m_group = {};
     m_groupMembers.clear();
     m_messages.clear();
     m_lastMessageId = 0;
     m_groupLastMessageId = 0;
+    m_unreadAnchorId = 0;
     m_hasMore = false;
     m_groupHasMore = false;
     m_fileDownloads.clear();
     m_chatEmpty->hide();
     m_chatMain->show();
     m_moreButton->hide();
+    // 换上这个会话的草稿（清空/恢复都别记成草稿）
+    m_draftSuppressed = true;
     m_chatInput->clear();
+    m_activeKey = ChatUiStore::conversationKey(false, peer.id);
+    restoreDraft(m_activeKey);
+    m_draftSuppressed = false;
     m_chatName->setText(peer.isValid() ? peer.displayName : tr("…"));
     m_chatStatus->setText(peer.isValid() ? onlineText(peer) : QString());
     m_chatStatus->setStyleSheet(
         StyleKit::resolve(QStringLiteral("font-size: 11px; color: @TEXT_TERTIARY@;")));
-    // 私聊头部的按钮组合：主页 + 删除好友（官方客服没有删除）
+    // 私聊头部的按钮组合：主页 + 拉群 + 删除好友（官方客服没有删除）
     m_chatProfileButton->setVisible(true);
+    m_chatGroupButton->setVisible(true);
     m_chatRemoveButton->setVisible(!peer.official);
     m_chatMembersButton->setVisible(false);
+    m_chatInviteButton->setVisible(false);
     m_chatLeaveButton->setVisible(false);
     renderChatAvatar();
     ForumKit::clearLayout(m_msgsLayout);
@@ -1362,7 +1790,7 @@ void ForumFriendsPage::openConversation(const ForumFriendInfo &peer)
 
     ForumChatService::instance()->fetchMessages(
         peer.id, 0,
-        [this](const ForumChatHistory &history) {
+        [this, unread](const ForumChatHistory &history) {
             // 请求期间切换了会话：丢弃过期结果
             if (history.peer.id != m_peer.id)
                 return;
@@ -1377,6 +1805,13 @@ void ForumFriendsPage::openConversation(const ForumFriendInfo &peer)
             {
                 m_messages.append(message);
                 m_lastMessageId = qMax(m_lastMessageId, message.id);
+            }
+            // 未读数是从列表上抄下来的：从末尾往前数这么多条，第一条就是「新消息」起点
+            m_unreadAnchorId = 0;
+            if (unread > 0 && !m_messages.isEmpty())
+            {
+                const int start = qBound(0, m_messages.size() - unread, m_messages.size() - 1);
+                m_unreadAnchorId = m_messages.at(start).id;
             }
             m_hasMore = history.hasMore;
             renderMessages();
@@ -1393,27 +1828,40 @@ void ForumFriendsPage::openConversation(const ForumFriendInfo &peer)
 
 void ForumFriendsPage::openGroupConversation(const ForumGroupInfo &group)
 {
+    // 离开上一个会话前，先把输入框里没发出去的文字存成草稿
+    saveActiveDraft();
+    const int unread = group.unread;
+
     m_peer = {};
     m_group = group;
     m_groupMembers.clear();
     m_messages.clear();
     m_lastMessageId = 0;
     m_groupLastMessageId = 0;
+    m_unreadAnchorId = 0;
     m_hasMore = false;
     m_groupHasMore = false;
     m_fileDownloads.clear();
     m_chatEmpty->hide();
     m_chatMain->show();
     m_moreButton->hide();
+    // 换上这个群的草稿（清空/恢复都别记成草稿）
+    m_draftSuppressed = true;
     m_chatInput->clear();
+    m_activeKey = ChatUiStore::conversationKey(true, group.id);
+    restoreDraft(m_activeKey);
+    m_draftSuppressed = false;
     m_chatName->setText(group.name);
     m_chatStatus->setText(tr("%1 名成员").arg(group.memberCount));
     m_chatStatus->setStyleSheet(
         StyleKit::resolve(QStringLiteral("font-size: 11px; color: @TEXT_TERTIARY@;")));
-    // 群聊头部的按钮组合：成员 + 退出群聊（官方群是默认群聊不能退，不显示退出按钮）
+    // 群聊头部的按钮组合：成员 + 邀请 + 退出群聊
+    // （官方全用户群是默认群聊：人已经在群里了，不显示退出和邀请）
     m_chatProfileButton->setVisible(false);
+    m_chatGroupButton->setVisible(false);
     m_chatRemoveButton->setVisible(false);
     m_chatMembersButton->setVisible(true);
+    m_chatInviteButton->setVisible(!group.official);
     m_chatLeaveButton->setVisible(!group.official);
     renderChatAvatar();
     ForumKit::clearLayout(m_msgsLayout);
@@ -1424,7 +1872,7 @@ void ForumFriendsPage::openGroupConversation(const ForumGroupInfo &group)
 
     ForumChatService::instance()->fetchGroupMessages(
         group.id, 0,
-        [this](const ForumGroupDetail &detail) {
+        [this, unread](const ForumGroupDetail &detail) {
             // 请求期间切换了会话：丢弃过期结果
             if (!m_group.isValid() || detail.group.id != m_group.id)
                 return;
@@ -1437,6 +1885,12 @@ void ForumFriendsPage::openGroupConversation(const ForumGroupInfo &group)
             {
                 m_messages.append(message);
                 m_groupLastMessageId = qMax(m_groupLastMessageId, message.id);
+            }
+            m_unreadAnchorId = 0;
+            if (unread > 0 && !m_messages.isEmpty())
+            {
+                const int start = qBound(0, m_messages.size() - unread, m_messages.size() - 1);
+                m_unreadAnchorId = m_messages.at(start).id;
             }
             m_groupHasMore = detail.hasMore;
             renderMessages();
@@ -1458,22 +1912,27 @@ void ForumFriendsPage::renderChatAvatar()
     ForumKit::clearLayout(m_chatAvatarSlot->layout());
 
     QWidget *wrap = new QWidget(m_chatAvatarSlot);
-    wrap->setFixedSize(36, 36);
+    wrap->setFixedSize(40, 40);
     if (m_group.isValid())
     {
-        QLabel *avatar = ForumKit::makeAvatar(wrap, QString(), m_group.name, 36);
-        avatar->setGeometry(0, 0, 36, 36);
+        QLabel *avatar = m_group.official ? ForumKit::makeOfficialAvatar(wrap, 40)
+                                          : ForumKit::makeGroupAvatar(wrap, m_group.avatar,
+                                                                      m_group.name, 40);
+        avatar->setGeometry(0, 0, 40, 40);
         m_chatAvatarSlot->layout()->addWidget(wrap);
         return;
     }
-    QLabel *avatar = ForumKit::makeAvatar(wrap, m_peer.avatar, m_peer.displayName, 36);
-    avatar->setGeometry(0, 0, 36, 36);
-    if (m_peer.online)
+    QLabel *avatar = m_peer.official ? ForumKit::makeOfficialAvatar(wrap, 40)
+                                     : ForumKit::makeAvatar(wrap, m_peer.avatar,
+                                                            m_peer.displayName, 40);
+    avatar->setGeometry(0, 0, 40, 40);
+    // 官方客服与左侧会话行一致：不显示在线圆点
+    if (m_peer.online && !m_peer.official)
     {
         QLabel *dot = new QLabel(wrap);
         dot->setObjectName(QStringLiteral("forumOnlineDot"));
         dot->setFixedSize(11, 11);
-        dot->setGeometry(26, 26, 11, 11);
+        dot->setGeometry(29, 29, 11, 11);
         dot->setToolTip(tr("在线"));
         dot->raise();
         dot->show();
@@ -1516,6 +1975,8 @@ void ForumFriendsPage::renderMessages()
     const int scrollValue = m_msgsScroll->verticalScrollBar()->maximum() -
                             m_msgsScroll->verticalScrollBar()->value();
     ForumKit::clearLayout(m_msgsLayout);
+    // 消息 id → 行控件：引用条点一下要滚到原消息
+    m_messageRows.clear();
 
     if (m_messages.isEmpty())
     {
@@ -1539,12 +2000,24 @@ void ForumFriendsPage::renderMessages()
         const ForumChatMessage &message = m_messages.at(i);
         const QDateTime moment = QDateTime::fromSecsSinceEpoch(message.createdAt);
 
-        // 跨天插入日期分隔条
+        // 跨天插入日期分隔条（居中胶囊，不拉满整行）
         if (!prevDay.isValid() || moment.date() != prevDay)
         {
-            m_msgsLayout->addWidget(makeDateChip(message.createdAt));
-            m_msgsLayout->addSpacing(6);
+            m_msgsLayout->addSpacing(2);
+            m_msgsLayout->addWidget(makeDateChip(message.createdAt), 0, Qt::AlignHCenter);
+            m_msgsLayout->addSpacing(2);
             prevDay = moment.date();
+        }
+
+        // 打开会话时还有未读：在第一条未读前面标一道「以下是新消息」
+        if (m_unreadAnchorId > 0 && message.id == m_unreadAnchorId)
+        {
+            auto *divider = new QLabel(tr("以下是新消息"), this);
+            divider->setObjectName(QStringLiteral("forumChatUnreadDivider"));
+            divider->setAlignment(Qt::AlignCenter);
+            m_msgsLayout->addSpacing(2);
+            m_msgsLayout->addWidget(divider, 0, Qt::AlignHCenter);
+            m_msgsLayout->addSpacing(2);
         }
 
         // 撤回占位：一行居中的灰色小字（群里能看到是谁撤回的）
@@ -1560,7 +2033,19 @@ void ForumFriendsPage::renderMessages()
             auto *tombstone = new QLabel(tombstoneText, this);
             tombstone->setObjectName(QStringLiteral("forumChatWithdraw"));
             tombstone->setAlignment(Qt::AlignCenter);
-            m_msgsLayout->addWidget(tombstone);
+            m_msgsLayout->addWidget(tombstone, 0, Qt::AlignHCenter);
+            continue;
+        }
+
+        // 系统消息（如「×× 邀请 ×× 加入了群聊」）：一行居中的灰色小字，不可点不可引用
+        if (message.kind == QStringLiteral("system"))
+        {
+            auto *notice = new QLabel(message.body, this);
+            notice->setObjectName(QStringLiteral("forumChatWithdraw"));
+            notice->setAlignment(Qt::AlignCenter);
+            notice->setWordWrap(true);
+            notice->setMaximumWidth(420);
+            m_msgsLayout->addWidget(notice, 0, Qt::AlignHCenter);
             continue;
         }
 
@@ -1568,9 +2053,13 @@ void ForumFriendsPage::renderMessages()
         const bool groupStart = i == 0 ||
                                 m_messages.at(i - 1).mine != message.mine ||
                                 m_messages.at(i - 1).isWithdrawn() ||
+                                m_messages.at(i - 1).kind == QStringLiteral("system") ||
                                 message.createdAt - m_messages.at(i - 1).createdAt > 5 * 60;
 
         auto *row = new QWidget(this);
+        row->setObjectName(QStringLiteral("forumChatRow"));
+        row->setAttribute(Qt::WA_StyledBackground, true);
+        m_messageRows.insert(message.id, row); // 引用条跳转要用
         auto *rowLayout = new QHBoxLayout(row);
         rowLayout->setContentsMargins(0, groupStart ? 4 : 1, 0, 0);
         rowLayout->setSpacing(8);
@@ -1604,10 +2093,17 @@ void ForumFriendsPage::renderMessages()
             quote->setObjectName(QStringLiteral("forumChatQuote"));
             quote->setWordWrap(true);
             quote->setMaximumWidth(400);
-            // 内联样式：引用条在气泡外独立显示，不用和气泡内文字规则打架
-            quote->setStyleSheet(StyleKit::resolve(
-                QStringLiteral("color: @TEXT_SECONDARY@; font-size: 12px; background: transparent;"
-                               "border-left: 2px solid @BORDER@; padding: 1px 0 1px 8px;")));
+            // 点引用条：滚到被引用的原消息（eventFilter 里处理）
+            quote->setCursor(Qt::PointingHandCursor);
+            quote->setToolTip(tr("点击查看原消息"));
+            quote->setProperty("replyTargetId", message.replyTo);
+            quote->installEventFilter(this);
+            // 引用文字至少按自身自然宽度显示，不要被消息气泡压成两行
+            const int quoteMaxWidth = qBound(160, m_msgsScroll->viewport()->width() - 110, 372);
+            QFont quoteFont = quote->font();
+            quoteFont.setPixelSize(12);
+            quote->setMinimumWidth(qMin(quoteMaxWidth,
+                                        naturalTextWidth(quoteFont, quoteText, quoteMaxWidth) + 16));
             bubbleColumn->addWidget(quote);
         }
 
@@ -1616,11 +2112,12 @@ void ForumFriendsPage::renderMessages()
         {
             // 图片消息：圆角卡片 + 异步加载的缩略图，点击看大图
             auto *imageFrame = new ForumKit::ClickableCard(row);
-            imageFrame->setObjectName(QStringLiteral("forumChatImageFrame"));
+            imageFrame->setObjectName(message.mine ? QStringLiteral("forumChatImageFrameMine")
+                                                   : QStringLiteral("forumChatImageFrame"));
             imageFrame->setProperty("chatImage", message.image);
             imageFrame->setMaximumWidth(400);
             auto *imageLayout = new QVBoxLayout(imageFrame);
-            imageLayout->setContentsMargins(4, 4, 4, 4);
+            imageLayout->setContentsMargins(6, 6, 6, 8);
             imageLayout->setSpacing(4);
             auto *imageLabel = new QLabel(imageFrame);
             imageLabel->setFixedSize(220, 160);
@@ -1682,10 +2179,16 @@ void ForumFriendsPage::renderMessages()
 
             auto *fileColumn = new QVBoxLayout();
             fileColumn->setSpacing(2);
+            const QString fileNameText = message.fileName.isEmpty() ? tr("文件") : message.fileName;
             auto *nameLabel = new ForumKit::ElidedLabel(fileCard);
-            nameLabel->setFullText(message.fileName.isEmpty() ? tr("文件") : message.fileName);
+            nameLabel->setFullText(fileNameText);
             nameLabel->setStyleSheet(
                 StyleKit::resolve(QStringLiteral("color: @TEXT_PRIMARY@; font-size: 13px;")));
+            // 文件名先按自身宽度占位，只有真的放不下时才省略
+            QFont nameFont = nameLabel->font();
+            nameFont.setPixelSize(13);
+            nameLabel->setMinimumWidth(qMin(210,
+                                            QFontMetrics(nameFont).horizontalAdvance(fileNameText) + 10));
             fileColumn->addWidget(nameLabel);
             const QString sizeText =
                 message.fileSize > 0 ? DownloadUtils::formatSize(message.fileSize) : tr("未知大小");
@@ -1724,13 +2227,22 @@ void ForumFriendsPage::renderMessages()
             auto *bubble = new QFrame(row);
             bubble->setObjectName(message.mine ? QStringLiteral("forumChatBubbleMine")
                                                : QStringLiteral("forumChatBubbleTheirs"));
-            bubble->setMaximumWidth(400);
+            bubble->setMaximumWidth(420);
             auto *bubbleLayout = new QVBoxLayout(bubble);
-            bubbleLayout->setContentsMargins(0, 0, 0, 0);
+            bubbleLayout->setContentsMargins(12, 8, 12, 8);
             bubbleLayout->setSpacing(4);
             auto *body = new QLabel(message.body, bubble);
             body->setWordWrap(true);
             body->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            // 中文长句在布局里会被压成窄窄一条：按正文自然宽度给个下限，
+            // 同时跟随窗口宽度收窄，避免窄屏下气泡顶出可视区
+            const int viewportWidth = m_msgsScroll->viewport()->width();
+            const int maxTextWidth = qBound(160, viewportWidth - 110, 372);
+            QFont bodyFont = body->font();
+            bodyFont.setPixelSize(13);
+            const int naturalWidth = naturalTextWidth(bodyFont, message.body, maxTextWidth);
+            // +12 给 QLabel 文本排版留一点余量，避免最后一个字被挤到下一行
+            body->setMinimumWidth(qMin(maxTextWidth, naturalWidth + 12));
             body->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(body, &QWidget::customContextMenuRequested, this,
                     [this, messageId, body](const QPoint &pos) {
@@ -1763,11 +2275,19 @@ void ForumFriendsPage::renderMessages()
             // 组首带头像，组内其余留同宽空位对齐（群里头像跟着发送者走）
             if (groupStart)
             {
+                QLabel *avatar = nullptr;
                 if (m_group.isValid())
-                    rowLayout->addWidget(ForumKit::makeAvatar(row, message.senderAvatar,
-                                                              message.senderName, 26));
+                    avatar = ForumKit::makeAvatar(row, message.senderAvatar,
+                                                  message.senderName, 26);
+                // 私聊对象是官方客服时，气泡头像也用方块盒子图标
+                else if (m_peer.official)
+                    avatar = ForumKit::makeOfficialAvatar(row, 26);
                 else
-                    rowLayout->addWidget(ForumKit::makeAvatar(row, m_peer.avatar, m_peer.displayName, 26));
+                    avatar = ForumKit::makeAvatar(row, m_peer.avatar,
+                                                  m_peer.displayName, 26);
+                rowLayout->addWidget(avatar);
+                // 头像与气泡顶部对齐，不被下方的发送时间整体推低
+                rowLayout->setAlignment(avatar, Qt::AlignTop);
             }
             else
                 rowLayout->addSpacing(26 + 8);
@@ -1822,12 +2342,19 @@ void ForumFriendsPage::scrollToBottom()
 
 void ForumFriendsPage::closeConversation()
 {
+    // 关掉会话说先把没发出去的文字留成草稿
+    saveActiveDraft();
+    m_draftSuppressed = true;
+    m_chatInput->clear();
+    m_draftSuppressed = false;
+    m_activeKey.clear();
     m_peer = {};
     m_group = {};
     m_groupMembers.clear();
     m_messages.clear();
     m_lastMessageId = 0;
     m_groupLastMessageId = 0;
+    m_unreadAnchorId = 0;
     m_hasMore = false;
     m_groupHasMore = false;
     m_fileDownloads.clear();
@@ -1853,12 +2380,18 @@ void ForumFriendsPage::sendCurrentMessage()
     auto onSent = [this](const ForumChatMessage &message) {
         m_sending = false;
         m_sendButton->setEnabled(true);
+        m_draftSuppressed = true;
         m_chatInput->clear();
+        m_draftSuppressed = false;
+        // 已经发出去的内容不再是草稿
+        if (!m_activeKey.isEmpty())
+            ChatUiStore::instance()->setDraft(m_activeKey, QString());
         m_chatInput->setFocus();
         if (message.isValid())
             appendMessages(QVector<ForumChatMessage>{message});
         scrollToBottom();
         clearReplyTarget();
+        renderFriendRows(); // 左栏预览从「草稿」变回最后一条消息
     };
     auto onSendFailed = [this](const QString &message, int httpStatus) {
         m_sending = false;
@@ -1986,6 +2519,8 @@ QString ForumFriendsPage::messagePreview(const ForumChatMessage &message) const
 {
     if (message.isWithdrawn())
         return tr("撤回了一条消息");
+    if (message.kind == QStringLiteral("system"))
+        return message.body;
     if (message.isImage())
         return tr("[图片]");
     if (message.isFile())
@@ -2049,12 +2584,28 @@ void ForumFriendsPage::showMessageMenu(int messageId, const QPoint &globalPos)
     QMenu menu(this);
     QAction *replyAction = nullptr;
     QAction *copyAction = nullptr;
+    QAction *forwardAction = nullptr;
+    QAction *bookmarkAction = nullptr;
+    QAction *copyImageAction = nullptr;
+    QAction *saveImageAction = nullptr;
     QAction *withdrawAction = nullptr;
     if (!message.isWithdrawn())
     {
         replyAction = menu.addAction(tr("回复"));
         if (!message.body.isEmpty())
             copyAction = menu.addAction(tr("复制文字"));
+        // 文字和图片可以转发；文件要先占用下载流量，先不做转发
+        if (message.isImage() || !message.body.isEmpty())
+            forwardAction = menu.addAction(tr("转发…"));
+        const bool bookmarked =
+            ChatBookmarkStore::instance()->contains(activeConversationKey(), message.id);
+        bookmarkAction = menu.addAction(bookmarked ? tr("取消收藏") : tr("收藏消息"));
+        if (message.isImage())
+        {
+            menu.addSeparator();
+            copyImageAction = menu.addAction(tr("复制图片"));
+            saveImageAction = menu.addAction(tr("保存图片…"));
+        }
         // 只能撤回自己 10 分钟内发的消息
         if (message.mine &&
             QDateTime::currentSecsSinceEpoch() - message.createdAt <= 10 * 60)
@@ -2075,6 +2626,22 @@ void ForumFriendsPage::showMessageMenu(int messageId, const QPoint &globalPos)
     {
         QApplication::clipboard()->setText(message.body);
     }
+    else if (chosen == forwardAction)
+    {
+        forwardMessage(message);
+    }
+    else if (chosen == bookmarkAction)
+    {
+        toggleMessageBookmark(message);
+    }
+    else if (chosen == copyImageAction)
+    {
+        copyMessageImage(message);
+    }
+    else if (chosen == saveImageAction)
+    {
+        saveMessageImage(message);
+    }
     else if (chosen == withdrawAction)
     {
         if (groupOpen)
@@ -2092,6 +2659,234 @@ void ForumFriendsPage::showMessageMenu(int messageId, const QPoint &globalPos)
                 [this](const QString &msg, int) { NotificationManager::showError(this, msg); });
         }
     }
+}
+
+void ForumFriendsPage::openBookmarks()
+{
+    if (!ForumAccountService::instance()->isLoggedIn())
+    {
+        NotificationManager::showInfo(this, tr("查看聊天收藏需要先登录论坛账号"));
+        return;
+    }
+    ChatBookmarkStore::instance()->setAccount(ForumAccountService::instance()->user().id);
+    ChatBookmarkDialog::show(this, [this](const QString &key) { openConversationByKey(key); });
+}
+
+void ForumFriendsPage::openConversationByKey(const QString &key)
+{
+    if (key.isEmpty())
+        return;
+    const int id = key.mid(1).toInt();
+    if (id <= 0)
+        return;
+    if (ChatUiStore::isGroupKey(key))
+    {
+        for (const ForumGroupInfo &groupInfo : m_snapshot.groups)
+        {
+            if (groupInfo.id == id)
+            {
+                openGroupConversation(groupInfo);
+                return;
+            }
+        }
+        reload();
+        NotificationManager::showInfo(this, tr("这个群聊已经不在列表里了，可能已经解散"));
+        return;
+    }
+    for (const ForumFriendInfo &friendInfo : m_snapshot.friends)
+    {
+        if (friendInfo.id == id)
+        {
+            openConversation(friendInfo);
+            return;
+        }
+    }
+    reload();
+    NotificationManager::showInfo(this, tr("这段会话已经不在好友列表里了"));
+}
+
+void ForumFriendsPage::forwardMessage(const ForumChatMessage &message)
+{
+    if (!ForumAccountService::instance()->isLoggedIn())
+    {
+        NotificationManager::showInfo(this, tr("转发消息需要先登录论坛账号"));
+        return;
+    }
+    if (message.isWithdrawn() || (message.body.isEmpty() && !message.isImage()))
+        return;
+
+    ChatForwardTarget target;
+    if (!ChatForwardDialog::pick(this, m_snapshot.friends, m_snapshot.groups,
+                                 messagePreview(message), target))
+        return;
+
+    if (message.isImage())
+    {
+        forwardImageMessage(message, target.group, target.id, target.name);
+        return;
+    }
+
+    setStatus(tr("正在转发…"));
+    auto onSent = [this, target](const ForumChatMessage &sent) {
+        setStatus(QString());
+        if (sent.isValid())
+            NotificationManager::showInfo(this, tr("已转发给 %1").arg(target.name));
+    };
+    auto onFail = [this](const QString &error, int) {
+        setStatus(QString());
+        NotificationManager::showError(this, error);
+    };
+    if (target.group)
+        ForumChatService::instance()->sendGroupMessage(target.id, message.body, 0, onSent, onFail);
+    else
+        ForumChatService::instance()->sendMessage(target.id, message.body, 0, onSent, onFail);
+}
+
+void ForumFriendsPage::forwardImageMessage(const ForumChatMessage &message, bool toGroup,
+                                           int targetId, const QString &targetName)
+{
+    setStatus(tr("正在转发图片…"));
+    // 先取回原图（走图片缓存，已经看过的图不用重新下载），再重新上传到图床
+    ForumImageStore::instance()->requestImage(
+        message.mediaUrl(), [this, message, toGroup, targetId, targetName](const QImage &image) {
+            if (image.isNull())
+            {
+                setStatus(QString());
+                NotificationManager::showError(this, tr("图片加载失败，转发没有完成"));
+                return;
+            }
+            const QString tempPath = QDir::tempPath() + QStringLiteral("/bbf_forward_%1.png")
+                                                               .arg(QDateTime::currentMSecsSinceEpoch());
+            if (!image.save(tempPath, "PNG"))
+            {
+                setStatus(QString());
+                NotificationManager::showError(this, tr("图片保存失败，转发没有完成"));
+                return;
+            }
+            const QString caption = message.body.left(200);
+            auto onSent = [this, tempPath, targetName](const ForumChatMessage &sent) {
+                QFile::remove(tempPath);
+                setStatus(QString());
+                if (sent.isValid())
+                    NotificationManager::showInfo(this, tr("已转发给 %1").arg(targetName));
+            };
+            auto onFail = [this, tempPath](const QString &error, int) {
+                QFile::remove(tempPath);
+                setStatus(QString());
+                NotificationManager::showError(this, error);
+            };
+            if (toGroup)
+                ForumChatService::instance()->sendGroupImageMessage(targetId, tempPath, caption, 0,
+                                                                    onSent, onFail);
+            else
+                ForumChatService::instance()->sendImageMessage(targetId, tempPath, caption, 0,
+                                                               onSent, onFail);
+        });
+}
+
+void ForumFriendsPage::copyMessageImage(const ForumChatMessage &message)
+{
+    ForumImageStore::instance()->requestImage(
+        message.mediaUrl(), [this](const QImage &image) {
+            if (image.isNull())
+            {
+                NotificationManager::showError(this, tr("图片加载失败"));
+                return;
+            }
+            QApplication::clipboard()->setImage(image);
+            NotificationManager::showInfo(this, tr("图片已复制到剪贴板"));
+        });
+}
+
+void ForumFriendsPage::saveMessageImage(const ForumChatMessage &message)
+{
+    ForumImageStore::instance()->requestImage(
+        message.mediaUrl(), [this](const QImage &image) {
+            if (image.isNull())
+            {
+                NotificationManager::showError(this, tr("图片加载失败"));
+                return;
+            }
+            QString directory = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+            if (directory.isEmpty())
+                directory = QDir::homePath();
+            const QString suggested = directory + QStringLiteral("/BlockBox-chat-%1.png")
+                                                      .arg(QDateTime::currentDateTime().toString(
+                                                          QStringLiteral("yyyyMMdd-HHmmss")));
+            QString path = QFileDialog::getSaveFileName(this, tr("保存图片"), suggested,
+                                                        tr("图片 (*.png *.jpg *.jpeg)"));
+            if (path.isEmpty())
+                return;
+            if (QFileInfo(path).suffix().isEmpty())
+                path += QStringLiteral(".png");
+            if (!image.save(path))
+            {
+                NotificationManager::showError(this, tr("图片保存失败，请换个位置再试"));
+                return;
+            }
+            NotificationManager::showInfo(this, tr("图片已保存到 %1").arg(path));
+        });
+}
+
+void ForumFriendsPage::toggleMessageBookmark(const ForumChatMessage &message)
+{
+    const QString key = activeConversationKey();
+    if (key.isEmpty())
+        return;
+    ChatBookmarkStore::instance()->setAccount(ForumAccountService::instance()->user().id);
+    ChatBookmarkStore *store = ChatBookmarkStore::instance();
+    if (store->contains(key, message.id))
+    {
+        store->removeByMessage(key, message.id);
+        NotificationManager::showInfo(this, tr("已取消收藏"));
+        return;
+    }
+
+    ChatBookmark bookmark;
+    bookmark.conversationKey = key;
+    bookmark.conversationName = m_group.isValid() ? m_group.name : m_peer.displayName;
+    bookmark.messageId = message.id;
+    bookmark.kind = message.kind;
+    bookmark.body = message.body;
+    bookmark.image = message.image;
+    bookmark.fileName = message.fileName;
+    bookmark.fileSize = message.fileSize;
+    bookmark.createdAt = message.createdAt;
+    if (message.mine)
+        bookmark.senderName = tr("我");
+    else if (m_group.isValid() && !message.senderName.isEmpty())
+        bookmark.senderName = message.senderName;
+    else
+        bookmark.senderName = m_peer.displayName;
+    if (store->add(bookmark).isEmpty())
+    {
+        NotificationManager::showError(this, tr("收藏失败，请稍后再试"));
+        return;
+    }
+    NotificationManager::showInfo(this, tr("已收藏，点聊天页左上角的星标可以查看"));
+}
+
+void ForumFriendsPage::scrollToMessage(int messageId)
+{
+    QWidget *row = m_messageRows.value(messageId, nullptr);
+    if (!row)
+    {
+        NotificationManager::showInfo(this, tr("原消息不在当前已加载的记录里，先点上方「查看更早的消息」"));
+        return;
+    }
+    m_msgsScroll->ensureWidgetVisible(row, 0, 90);
+    // 闪一下底色，让人一眼看到跳到了哪条消息
+    row->setProperty("flash", true);
+    row->style()->unpolish(row);
+    row->style()->polish(row);
+    QPointer<QWidget> guard(row);
+    QTimer::singleShot(1300, this, [guard]() {
+        if (!guard)
+            return;
+        guard->setProperty("flash", false);
+        guard->style()->unpolish(guard);
+        guard->style()->polish(guard);
+    });
 }
 
 void ForumFriendsPage::showImagePreview(const QString &imagePath)

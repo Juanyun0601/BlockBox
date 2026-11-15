@@ -32,6 +32,7 @@ QString kindName(ResourceKind kind)
     case ResourceKind::DataPack:     return QCoreApplication::translate("PublishKit", "数据包");
     case ResourceKind::World:        return QCoreApplication::translate("PublishKit", "世界");
     case ResourceKind::Plugin:       return QCoreApplication::translate("PublishKit", "插件");
+    case ResourceKind::Schematic:    return QCoreApplication::translate("PublishKit", "投影");
     }
     return QString();
 }
@@ -55,6 +56,8 @@ QString kindDescription(ResourceKind kind)
     case ResourceKind::Plugin:
         // 「插件」指的是方块盒子自己的插件（.BlockBox 启动器扩展），不是给服务器用的插件
         return QCoreApplication::translate("PublishKit", "方块盒子的插件，上传 .BlockBox 包发到插件分享板块");
+    case ResourceKind::Schematic:
+        return QCoreApplication::translate("PublishKit", "分享你搭建的建筑投影，.litematic / .schem 都能发");
     }
     return QString();
 }
@@ -70,6 +73,7 @@ QString kindIconPath(ResourceKind kind)
     case ResourceKind::DataPack:     return QStringLiteral(":/Images/Icons/nav_datapacks.svg");
     case ResourceKind::World:        return QStringLiteral(":/Images/Icons/nav_worlds.svg");
     case ResourceKind::Plugin:       return QStringLiteral(":/Images/Icons/nav_plugin.svg");
+    case ResourceKind::Schematic:    return QStringLiteral(":/Images/Icons/list.svg");
     }
     return QString();
 }
@@ -85,6 +89,7 @@ QColor kindGradientStart(ResourceKind kind)
     case ResourceKind::DataPack:     return QColor(QStringLiteral("#84CC16"));
     case ResourceKind::World:        return QColor(QStringLiteral("#EC4899"));
     case ResourceKind::Plugin:       return QColor(QStringLiteral("#6366F1"));
+    case ResourceKind::Schematic:    return QColor(QStringLiteral("#3B82F6"));
     }
     return QColor(QStringLiteral("#10B981"));
 }
@@ -100,6 +105,7 @@ QColor kindGradientEnd(ResourceKind kind)
     case ResourceKind::DataPack:     return QColor(QStringLiteral("#4D7C0F"));
     case ResourceKind::World:        return QColor(QStringLiteral("#BE185D"));
     case ResourceKind::Plugin:       return QColor(QStringLiteral("#4338CA"));
+    case ResourceKind::Schematic:    return QColor(QStringLiteral("#1D4ED8"));
     }
     return QColor(QStringLiteral("#047857"));
 }
@@ -116,6 +122,8 @@ QString curseForgeUrl(ResourceKind kind)
     case ResourceKind::World:        return QStringLiteral("https://www.curseforge.com/minecraft/worlds");
     // 插件是方块盒子插件，在社区插件发布页发布，不跳 CurseForge
     case ResourceKind::Plugin:       return QString();
+    // 投影在社区投影分享板块站内发布，不跳 CurseForge
+    case ResourceKind::Schematic:    return QString();
     }
     return QString();
 }
@@ -132,6 +140,8 @@ QString modrinthUrl(ResourceKind kind)
     case ResourceKind::World:        return QString();  // Modrinth 没有「世界」分类
     // 插件是方块盒子插件，在社区插件发布页发布，不跳 Modrinth
     case ResourceKind::Plugin:       return QString();
+    // 投影在社区投影分享板块站内发布，不跳 Modrinth
+    case ResourceKind::Schematic:    return QString();
     }
     return QString();
 }

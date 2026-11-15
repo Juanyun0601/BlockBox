@@ -36,6 +36,7 @@ class QProgressBar;
 class QPropertyAnimation;
 class QPushButton;
 class QResizeEvent;
+class QScrollArea;
 class QShowEvent;
 class QVBoxLayout;
 class MultiplayerLobbyPage;
@@ -53,6 +54,9 @@ public:
 
     /** 联机大厅子页面打开时关闭它并返回 true（顶栏返回键用） */
     bool closeLobbyIfVisible();
+
+    /** 大厅里还开着房间详情时先关详情并返回 true（顶栏返回键逐级退回用） */
+    bool closeLobbyDetailIfVisible();
 
 signals:
     /** 点击一个主题行：在启动器内打开帖子详情 */
@@ -79,9 +83,8 @@ signals:
     /** 点击联机大厅的房间或「进入联机大厅」：在社区页内打开大厅子页面 */
     void lobbyOpenRequested();
 
-    /** 联机大厅「一键加入」：交给主窗口按房间要求启动本地实例 */
-    void joinGameRequested(const QString &address, quint16 port, const QString &gameVersion,
-                           const QString &loader, const QStringList &mods);
+    /** 联机大厅「一键加入」：交给主窗口按房间要求挑实例、按需补装后启动 */
+    void joinGameRequested(const ForumLobbyRoom &room, const QString &address, quint16 port);
 
     /** 联机大厅「我要开房」：打开实例助手 */
     void openInstanceAssistantRequested();
@@ -146,6 +149,8 @@ private:
     // 页面顶部加载进度条（数据加载期间显示）
     QProgressBar *m_loadingBar = nullptr;
     QPropertyAnimation *m_loadingAnimation = nullptr;
+    QWidget *m_loadingStrip = nullptr;      ///< 进度条所在的 3px 细条
+    QScrollArea *m_contentScroll = nullptr; ///< 论坛正文，打开联机大厅时暂时收起
     int m_loadTotalSteps = 0;   ///< 本轮加载的总请求数
     int m_loadDoneSteps = 0;    ///< 本轮已完成的请求数
 

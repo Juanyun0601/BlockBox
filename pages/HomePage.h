@@ -34,6 +34,7 @@ class CarouselView;
 class HomeSkinPanel;
 class HomeAnnouncementBar;
 class HomeFriendsPanel;
+class HomeHotThreadsPanel;
 struct InstanceFolderInfo;
 
 struct RecentPlayEntry
@@ -142,15 +143,21 @@ signals:
   /** 请求打开实例助手窗口 */
   void instanceAssistantRequested();
 
-  // 首页左侧好友列表
+  // 首页好友栏（最近游玩下方）
   /** 点击好友卡片：打开与该好友的私信页 */
   void friendChatRequested(int userId);
   /** 点击好友卡片上的「一起玩」：加入该好友正在开放的联机房间 */
   void friendRoomJoinRequested(const ForumLobbyRoom &room);
-  /** 好友面板未登录空态：打开论坛账号登录 */
+  /** 好友栏未登录空态：打开论坛账号登录 */
   void friendPanelLoginRequested();
-  /** 好友面板「全部」/「去添加好友」：打开好友与私信页 */
+  /** 好友栏「查看全部」/「去添加好友」：打开好友与私信页 */
   void friendPanelOpenRequested();
+
+  // 首页论坛热门帖栏（好友栏下方）
+  /** 点击帖子卡片：打开该帖子的论坛详情页 */
+  void forumHotThreadOpenRequested(int threadId);
+  /** 热门帖栏「查看全部」/「去社区」：打开社区论坛页 */
+  void forumHotThreadsViewAllRequested();
 
 private:
   void initUI();
@@ -166,7 +173,7 @@ private:
   void rebuildContent();
   QWidget* sectionWidget(const QString &type);
 
-  // Section 1: Carousel（好友列表 + 轮播 + 右侧当前皮肤预览面板）
+  // Section 1: Carousel（轮播 + 右侧当前皮肤预览面板）
   QWidget* createCarouselSection();
   QWidget* createSkinPanel();
   /** 依据账户列表切换皮肤模型 / 「添加首个账户」空态，并同步加载当前皮肤 */
@@ -188,10 +195,6 @@ private:
   QVBoxLayout *m_carouselHostLayout = nullptr;
   // 公告栏（封面图 + 皮肤模型下方，内容来自官网 announcement.json）
   HomeAnnouncementBar *m_announcementBar = nullptr;
-  // 轮播左侧好友列表（与右侧皮肤面板对称）
-  HomeFriendsPanel *m_friendsPanel = nullptr;
-  /** 未登录 / 无好友时隐藏左栏，让封面图自动占满；有好友时再展开 */
-  void setFriendsPanelVisible(bool visible);
   // 轮播右侧皮肤面板
   HomeSkinPanel *m_skinPanel = nullptr;
   Skin3DWidget *m_skin3D = nullptr;
@@ -250,6 +253,14 @@ private:
   void toggleRecentPlayPin(const QString &key);              // 固定/取消固定
   void sortRecentPlays();                                    // 固定置顶后按时间降序
   QStringList m_pinnedRecentKeys;                            // 已固定的记录标识（持久化）
+
+  // Section 3.1: Friends（最近游玩下方的好友栏）
+  QWidget* createFriendsSection();
+  HomeFriendsPanel *m_friendsPanel = nullptr;
+
+  // Section 3.2: Hot Threads（好友栏下方的论坛热门帖栏）
+  QWidget* createHotThreadsSection();
+  HomeHotThreadsPanel *m_hotThreadsPanel = nullptr;
 
   // Section 4: Websites
   QWidget* createWebsitesSection();

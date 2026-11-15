@@ -495,6 +495,9 @@ int main(int argc, char **argv)
     // 用户主页（别人看到的我的主页）上的简介同样是 Markdown
     const bool userBioMode = (mode == QStringLiteral("userbio")
                               || mode == QStringLiteral("userbio_dark"));
+    // 资料编辑页探针：缓存登录态 + 假论坛，直接截「账号设置」页签
+    const bool settingsMode = (mode == QStringLiteral("settings")
+                               || mode == QStringLiteral("settings_dark"));
     // 老简介回归：纯文本、靠回车分行，不该被并成一段
     const bool plainBioMode = (mode == QStringLiteral("bio_plain"));
     const QString plainBio = QStringLiteral("我是个纯文本简介，没有任何标记。\n"
@@ -510,7 +513,7 @@ int main(int argc, char **argv)
     if (plainBioMode)
         markdownBio = plainBio;
 
-    if (notificationsMode || bioMode || userBioMode || plainBioMode)
+    if (notificationsMode || bioMode || userBioMode || plainBioMode || settingsMode)
     {
         fakeServer = new FakeForumServer(emptyMode, errorMode, &app, markdownBio);
         if (!fakeServer->start())
@@ -526,7 +529,7 @@ int main(int argc, char **argv)
     forumSettings.remove(QStringLiteral("forum/sessionToken"));
     forumSettings.remove(QStringLiteral("forum/sessionBaseUrl"));
     forumSettings.remove(QStringLiteral("forum/cachedUser"));
-    if (notificationsMode || bioMode || userBioMode || plainBioMode)
+    if (notificationsMode || bioMode || userBioMode || plainBioMode || settingsMode)
     {
         const QJsonObject cachedUser{{QStringLiteral("id"), 7},
                                      {QStringLiteral("username"), QStringLiteral("probe")},
@@ -550,7 +553,8 @@ int main(int argc, char **argv)
     const bool dark = (mode == QStringLiteral("dark"))
                       || (mode == QStringLiteral("notifications_dark"))
                       || (mode == QStringLiteral("bio_dark"))
-                      || (mode == QStringLiteral("userbio_dark"));
+                      || (mode == QStringLiteral("userbio_dark"))
+                      || (mode == QStringLiteral("settings_dark"));
     if (ThemeManager::instance())
     {
         ThemeManager::instance()->loadTheme(dark ? ThemeManager::DarkTheme
@@ -672,6 +676,38 @@ int main(int argc, char **argv)
                 foundEdit = true;
         }
         expect("账号设置表单已回填", foundEdit);
+    }
+    else if (settingsMode)
+    {
+        waitMs(1500);
+        QPushButton *settingsTab = findVisibleButton(window.page(), QStringLiteral("账号设置"));
+        expect("找到「账号设置」页签", settingsTab != nullptr);
+        if (settingsTab)
+        {
+            settingsTab->click();
+            waitMs(1200);
+        }
+        grab(window, dark ? QStringLiteral("member_settings_dark")
+                          : QStringLiteral("member_settings"));
+
+        // 内容区整体离屏渲染一张，不受窗口高度裁剪
+        QWidget *contentHost =
+            window.page()->findChild<QWidget *>(QStringLiteral("fbContentHost"));
+        if (contentHost)
+        {
+            const QString fullPath = QStringLiteral("%1/forum_%2.png")
+                                         .arg(kShotDir, dark ? QStringLiteral("member_settings_full_dark")
+                                                             : QStringLiteral("member_settings_full"));
+            contentHost->grab().save(fullPath);
+            fprintf(stderr, "[probe] shot %s\n", qPrintable(fullPath));
+        }
+
+        // 资料编辑页头像标签应有内容（占位字头像或网络头像）
+        QLabel *settingsAvatar =
+            window.page()->findChild<QLabel *>(QStringLiteral("fbSettingsAvatar"));
+        expect("资料编辑页头像已渲染", settingsAvatar && !settingsAvatar->pixmap().isNull());
+        expect("小节标题竖条已就位",
+               window.page()->findChild<QFrame *>(QStringLiteral("fbSectionMark")) != nullptr);
     }
     else if (mode == QStringLiteral("authflow"))
     {

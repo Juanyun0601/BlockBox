@@ -6,7 +6,7 @@
  *   1. 点顶栏账户入口 → 账户管理页就是论坛账户界面，不再有旧经典账户页；
  *   2. 页脚栏（论坛地址 + 打开论坛 / 论坛设置 / 经典账户管理）已整栏去掉；
  *   3. 角色页右上角有「添加角色」「制作皮肤」两个入口；
- *   4. 点「添加角色」→ 弹出添加账户弹窗；点「制作皮肤」→ 打开皮肤制作页；
+ *   4. 点「添加角色」→ 切到添加角色页，顶栏返回退回角色页；点「制作皮肤」→ 打开皮肤制作页；
  *   5. 进 设置 → 高级设置 → 实验性内容，确认账户 / 社区已不再是实验性开关；
  *   6. 侧边栏「社区」直接点就能进入。
  *
@@ -16,12 +16,12 @@
 #include "mainwindow.h"
 
 #include <QApplication>
-#include <QDialog>
 #include <QDir>
 #include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QThread>
 #include <QTimer>
 
@@ -149,7 +149,8 @@ int main(int argc, char *argv[])
         QWidget *forumPage = window.findChild<QWidget *>(QStringLiteral("fbRoot"));
         expect("账户管理页显示论坛账户界面", forumPage != nullptr);
         expect("当前显示的就是论坛账户界面", uiStack && uiStack->currentWidget() == forumPage);
-        expect("容器里只有一页（旧经典账户页已移除）", uiStack && uiStack->count() == 1);
+        expect("容器里只有论坛账户页 + 添加角色页（旧经典账户页已移除）",
+               uiStack && uiStack->count() == 2);
         expect("页脚栏已删除（没有「打开论坛」按钮）",
                findButton(forumPage, QString(), QStringLiteral("打开论坛")) == nullptr);
         expect("页脚栏已删除（没有「论坛设置」按钮）",
@@ -165,28 +166,28 @@ int main(int argc, char *argv[])
         savePng(&window, shotDir + QStringLiteral("/forum_in_mainwindow_default.png"));
     });
 
-    // 3.4s：点角色页「添加角色」→ 弹出添加账户弹窗（弹窗是模态的，用定时器把它关掉）
+    // 3.4s：点角色页「添加角色」→ 切到账户管理页内层的「添加角色」页（整页，不再是弹窗）
     QTimer::singleShot(3400, &app, [&window, shotDir]() {
-        fprintf(stderr, "[probe] ==== phase: add-dialog ====\n");
+        fprintf(stderr, "[probe] ==== phase: add-page ====\n");
         QWidget *forumPage = window.findChild<QWidget *>(QStringLiteral("fbRoot"));
         auto *addBtn = findButton(forumPage, QString(), QStringLiteral("添加角色"));
-        bool dialogSeen = false;
+        clickButton(addBtn);
 
-        QTimer::singleShot(600, &window, [&dialogSeen, shotDir]() {
-            for (QWidget *top : QApplication::topLevelWidgets())
-            {
-                auto *dialog = qobject_cast<QDialog *>(top);
-                if (!dialog || !dialog->isVisible())
-                    continue;
-                dialogSeen = true;
-                savePng(dialog, shotDir + QStringLiteral("/forum_in_mainwindow_add_dialog.png"));
-                dialog->reject();
-                return;
-            }
-        });
+        auto *uiStack = window.findChild<QStackedWidget *>(QStringLiteral("accountUiStack"));
+        auto *addPage = window.findChild<QWidget *>(QStringLiteral("addAccountPage"));
+        expect("点「添加角色」切到添加角色页", addPage != nullptr && addPage->isVisible());
+        expect("账户管理页容器停在添加角色页",
+               addPage && uiStack && uiStack->currentWidget() == addPage);
+        auto *tabs = addPage
+                         ? addPage->findChild<QTabWidget *>(QStringLiteral("loginMethodTabs"))
+                         : nullptr;
+        expect("添加角色页有三种登录方式", tabs != nullptr && tabs->count() == 3);
+        savePng(&window, shotDir + QStringLiteral("/forum_in_mainwindow_add_page.png"));
 
-        clickButton(addBtn);   // 模态弹窗在嵌套事件循环里等上面的定时器关掉
-        expect("点「添加角色」弹出添加账户弹窗", dialogSeen);
+        // 顶栏返回：退回角色页，不离开账户管理页
+        QMetaObject::invokeMethod(&window, "onTopBarBackClicked", Qt::DirectConnection);
+        QApplication::processEvents();
+        expect("返回键退回角色页", uiStack && forumPage && uiStack->currentWidget() == forumPage);
     });
 
     // 4.4s：点角色页「制作皮肤」→ 打开皮肤制作页

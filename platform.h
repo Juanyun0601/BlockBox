@@ -11,21 +11,25 @@
 #include <QString>
 
 // 平台检测宏
+// 注意判断顺序：Qt 在安卓 / 鸿蒙上会同时定义 Q_OS_LINUX（见 qsystemdetection.h），
+// 若把 Q_OS_LINUX 放在前面，安卓和鸿蒙都会被识别成 Linux，PLATFORM_ANDROID /
+// PLATFORM_HARMONY 永远不会生效（安卓端「安装新实例无法写入文件夹」的根因之一：
+// 安卓专用目录逻辑全是死代码，默认实例目录落到公共存储）。必须先去重再按特例判断。
 #ifdef Q_OS_WIN
     #define PLATFORM_WINDOWS 1
     #define PLATFORM_NAME "Windows"
 #elif defined(Q_OS_MACOS)
     #define PLATFORM_MAC 1
     #define PLATFORM_NAME "macOS"
+#elif defined(Q_OS_ANDROID) || defined(ANDROID_OS)
+    #define PLATFORM_ANDROID 1
+    #define PLATFORM_NAME "Android"
+#elif defined(HARMONY_OS) || defined(Q_OS_HARMONY)
+    #define PLATFORM_HARMONY 1
+    #define PLATFORM_NAME "HarmonyOS"
 #elif defined(Q_OS_LINUX)
     #define PLATFORM_LINUX 1
     #define PLATFORM_NAME "Linux"
-#elif defined(Q_OS_ANDROID)
-    #define PLATFORM_ANDROID 1
-    #define PLATFORM_NAME "Android"
-#elif defined(HARMONY_OS)
-    #define PLATFORM_HARMONY 1
-    #define PLATFORM_NAME "HarmonyOS"
 #else
     #define PLATFORM_UNKNOWN 1
     #define PLATFORM_NAME "Unknown"

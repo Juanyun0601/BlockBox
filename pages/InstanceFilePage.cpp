@@ -10,9 +10,11 @@
 #include "components/FavoriteFolderDialog.h"
 #include "components/LocalCategoryDialog.h"
 #include "components/MasonryContentCard.h"
+#include "components/CardSelectionOverlay.h"
 #include "layouts/MasonryLayout.h"
 #include "utils/IconHelper.h"
 #include "utils/LocalCategoryManager.h"
+#include "utils/LocalFavoritesManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/ThumbnailProvider.h"
 #include "utils/McimHelper.h"
@@ -35,13 +37,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGraphicsDropShadowEffect>
-#include <QGraphicsOpacityEffect>
 #include <QMenu>
 #include <QMimeData>
 #include "components/AppMessageBox.h"
 #include <QMouseEvent>
 #include <QPixmapCache>
-#include <QPropertyAnimation>
 #include <QScrollBar>
 #include <QSpacerItem>
 #include <QTimer>
@@ -448,6 +448,9 @@ void InstanceFilePage::setupConnections()
             this, &InstanceFilePage::onCategoriesChanged);
     connect(m_categoryManager, &LocalCategoryManager::assignmentsChanged,
             this, &InstanceFilePage::onAssignmentsChanged);
+    // 本地收藏增删（含账户页移除）：同步刷新卡片星标
+    connect(LocalFavoritesManager::instance(), &LocalFavoritesManager::favoritesChanged,
+            this, &InstanceFilePage::refreshCardFavButtons);
     connect(m_selectAllBtn, &QPushButton::clicked,
             this, &InstanceFilePage::onSelectAllClicked);
     connect(m_checkUpdateBtn, &QPushButton::clicked,
@@ -807,6 +810,19 @@ QWidget *InstanceFilePage::createFileCard(const QString &filePath, const QString
 
     QString capturedPath = filePath;
     QString capturedName = fileName;
+
+    // 收藏星标按钮：金色 = 已收藏（状态由 localFavTag 属性标记，增删后统一刷新）
+    {
+        QPushButton *favBtn = createBtn(":/Images/Icons/star.svg", tr("收藏"));
+        favBtn->setProperty("localFavTag",
+                            LocalCategoryManager::normalizeFileName(capturedName));
+        setFavButtonVisual(favBtn, LocalFavoritesManager::instance()->isFavorite(
+                                       m_instancePath, subDirName(), capturedName));
+        connect(favBtn, &QPushButton::clicked, this, [this, capturedPath, capturedName, fileSize]() {
+            toggleFileFavorite(capturedPath, capturedName, fileSize);
+        });
+        btnLayout->addWidget(favBtn);
+    }
 
     // 快捷启动按钮（仅存档类型显示）：启动游戏并直接进入该存档
     if (m_fileType == Save)
@@ -1181,6 +1197,18 @@ QWidget *InstanceFilePage::createMasonryCard(const FileEntry &entry)
     const QString capturedPath = entry.filePath;
     const QString capturedName = entry.fileName;
 
+    // 收藏星标按钮：金色 = 已收藏（状态由 localFavTag 属性标记，增删后统一刷新）
+    {
+        QPushButton *favBtn = createBtn(":/Images/Icons/star.svg", tr("收藏"));
+        favBtn->setProperty("localFavTag",
+                            LocalCategoryManager::normalizeFileName(capturedName));
+        setFavButtonVisual(favBtn, LocalFavoritesManager::instance()->isFavorite(
+                                       m_instancePath, subDirName(), capturedName));
+        connect(favBtn, &QPushButton::clicked, this, [this, capturedPath, capturedName, entry]() {
+            toggleFileFavorite(capturedPath, capturedName, entry.fileSize);
+        });
+    }
+
     // 快捷启动 + 存档设置（仅存档类型显示）
     if (m_fileType == Save)
     {
@@ -1290,30 +1318,12 @@ QWidget *InstanceFilePage::createMasonryCard(const FileEntry &entry)
 
 QWidget *InstanceFilePage::createSelectionOverlay(QWidget *card)
 {
-    QWidget *overlay = new QWidget(card);
-    overlay->setObjectName("cardSelectionOverlay");
-    overlay->setGeometry(card->rect());
-    overlay->setStyleSheet(selectionOverlayStyle());
-    overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+    // 自绘遮罩：不再用 QGraphicsOpacityEffect（效果控件在滚动区内
+    // 滚一次就不再重绘，选中高亮会整个消失），详见 CardSelectionOverlay
+    CardSelectionOverlay *overlay = new CardSelectionOverlay(card);
     overlay->raise();
-    overlay->hide();
-
-    QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(overlay);
-    effect->setOpacity(0.0);
-    overlay->setGraphicsEffect(effect);
-
-    QPropertyAnimation *anim = new QPropertyAnimation(effect, "opacity", this);
-    anim->setDuration(180);
-    anim->setEasingCurve(QEasingCurve::OutCubic);
-    // 淡出结束后隐藏遮罩（overlay 销毁时自动断开，避免悬空指针）
-    connect(anim, &QPropertyAnimation::finished, overlay, [overlay, effect]() {
-        if (effect->opacity() <= 0.01)
-            overlay->hide();
-    });
 
     m_selectionOverlays.append(overlay);
-    m_selectionEffects.append(effect);
-    m_selectionAnims.append(anim);
     return overlay;
 }
 
@@ -1322,24 +1332,7 @@ void InstanceFilePage::animateCardHighlight(int idx, bool selected)
     if (idx < 0 || idx >= m_selectionOverlays.size())
         return;
 
-    QWidget *overlay = m_selectionOverlays[idx];
-    QGraphicsOpacityEffect *effect = m_selectionEffects[idx];
-    QPropertyAnimation *anim = m_selectionAnims[idx];
-
-    anim->stop();
-    anim->setStartValue(effect->opacity());
-    anim->setEndValue(selected ? 1.0 : 0.0);
-    if (selected)
-        overlay->show();
-    anim->start();
-}
-
-QString InstanceFilePage::selectionOverlayStyle() const
-{
-    QColor c = ThemeManager::instance()->currentThemeColor();
-    return QString("#cardSelectionOverlay { background-color: rgba(%1, %2, %3, 40); "
-                   "border: 2px solid %4; border-radius: 6px; }")
-        .arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.name());
+    m_selectionOverlays[idx]->setSelected(selected);
 }
 
 void InstanceFilePage::onSearchTextChanged(const QString &text)
@@ -1766,9 +1759,16 @@ bool InstanceFilePage::eventFilter(QObject *watched, QEvent *event)
         QMenu menu(this);
 
         QAction *openAction = menu.addAction(tr("打开"));
+
+        // 收藏 / 取消收藏（本地收藏，账户页「我的收藏 → 本地收藏」可见）
+        const QString menuFileName = card->property("fileName").toString();
+        const bool fav = LocalFavoritesManager::instance()->isFavorite(
+            m_instancePath, subDirName(), menuFileName);
+        QAction *favAction = menu.addAction(fav ? tr("取消收藏") : tr("收藏"));
+
         QAction *openFolderAction = menu.addAction(tr("打开文件位置"));
         QAction *copyPathAction = menu.addAction(tr("复制文件路径"));
-        appendCategoryMenu(&menu, card->property("fileName").toString(), filePath);
+        appendCategoryMenu(&menu, menuFileName, filePath);
         menu.addSeparator();
         QAction *detailAction = menu.addAction(tr("文件详情"));
         menu.addSeparator();
@@ -1779,6 +1779,11 @@ bool InstanceFilePage::eventFilter(QObject *watched, QEvent *event)
         if (chosen == openAction)
         {
             QDesktopServices::openUrl(QUrl::fromLocalFile(filePath));
+        }
+        else if (chosen == favAction)
+        {
+            toggleFileFavorite(filePath, menuFileName,
+                               idx >= 0 && idx < m_fileList.size() ? m_fileList.at(idx).fileSize : 0);
         }
         else if (chosen == openFolderAction)
         {
@@ -1840,12 +1845,8 @@ void InstanceFilePage::clearCards()
     m_dragMoved = false;
     m_dragAnchorIdx = -1;
     m_dragLastHoverIdx = -1;
-    // 遮罩随卡片销毁，动画由本页持有，需显式释放
+    // 遮罩是卡片子控件，随卡片销毁
     m_selectionOverlays.clear();
-    m_selectionEffects.clear();
-    for (QPropertyAnimation *anim : m_selectionAnims)
-        anim->deleteLater();
-    m_selectionAnims.clear();
     updateBottomBarState();
 }
 
@@ -2848,6 +2849,67 @@ void InstanceFilePage::onAssignmentsChanged()
 {
     refreshCardCategoryChips();
     applyFilterAndSearch();
+}
+
+// ── 本地资源收藏 ──────────────────────────────────────────────
+
+void InstanceFilePage::toggleFileFavorite(const QString &filePath, const QString &fileName,
+                                          qint64 fileSize, const QString &displayName)
+{
+    LocalFavoriteEntry entry;
+    entry.instancePath = m_instancePath;
+    entry.resourceType = subDirName();
+    entry.fileName = fileName;
+    if (!displayName.isEmpty())
+    {
+        entry.displayName = displayName;
+    }
+    else
+    {
+        QString derived = fileName;
+        if (derived.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+            derived.chop(9);
+        entry.displayName = derived;
+    }
+    entry.filePath = filePath;
+    entry.fileSize = fileSize;
+
+    auto *mgr = LocalFavoritesManager::instance();
+    const bool fav = mgr->isFavorite(m_instancePath, subDirName(), fileName);
+    mgr->setFavorite(entry, !fav);
+}
+
+void InstanceFilePage::setFavButtonVisual(QPushButton *btn, bool fav)
+{
+    if (!btn)
+        return;
+    if (fav)
+    {
+        btn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/star.svg", QColor("#FFB300"), 18));
+        btn->setToolTip(tr("取消收藏"));
+    }
+    else
+    {
+        btn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/star.svg", ThemeManager::instance()->currentThemeColor(), 18));
+        btn->setToolTip(tr("收藏"));
+    }
+}
+
+void InstanceFilePage::refreshCardFavButtons()
+{
+    auto *mgr = LocalFavoritesManager::instance();
+    for (QWidget *card : m_cardWidgets)
+    {
+        const QList<QPushButton *> btns = card->findChildren<QPushButton *>();
+        for (QPushButton *btn : btns)
+        {
+            const QVariant tag = btn->property("localFavTag");
+            if (!tag.isValid() || tag.toString().isEmpty())
+                continue;
+            setFavButtonVisual(btn, mgr->isFavorite(m_instancePath, subDirName(), tag.toString()));
+        }
+    }
 }
 
 void InstanceFilePage::refreshCardCategoryChips()

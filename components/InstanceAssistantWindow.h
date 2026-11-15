@@ -9,7 +9,9 @@
 #include <QListWidget>
 #include <QPropertyAnimation>
 #include <QPushButton>
+#include <QRect>
 #include <QScrollArea>
+#include <QSize>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -22,6 +24,12 @@
 #include "utils/CommandAssistant/LevelDatReader.h"
 
 struct ModInfo;
+
+class QHideEvent;
+class QKeyEvent;
+class QMoveEvent;
+class QMouseEvent;
+class QPaintEvent;
 
 class AiChatPage;
 class InstanceHomePage;
@@ -59,6 +67,9 @@ public:
     void setOverlayMode(bool enabled);
     bool overlayMode() const { return m_overlayMode; }
 
+    /// 当前是否为桌面悬浮窗形态（无边框、圆角、可拖动、可置顶）
+    bool floatingStyle() const { return m_floating; }
+
 signals:
     /** 请求快捷启动游戏并进入指定存档（由资源管理页存档卡片触发） */
     void quickLaunchSaveRequested(const QString &saveName);
@@ -69,17 +80,62 @@ signals:
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
 
 private:
     void initUI();
     QPushButton* createNavButton(const QString &text, int index);
     void switchToTab(int index);
     void updateHighlightGeometry();
+    /** @brief 应用导航高亮条的样式（背景色随主题，宽度随当前标签页） */
+    void updateHighlightStyle(int width);
     void animatePageFade(int from, int to);
     void ensureTabVisible(int index);
     void applyThemeStyles();
     /** @brief 计算并应用侧栏模式的贴右几何（右侧四分之一屏宽、全屏高） */
     void applyOverlayGeometry();
+
+    // ---- 桌面悬浮窗外观 ----
+    /** @brief 在导航栏上方构建悬浮窗标题栏（拖动区 + 置顶 / 收起 / 关闭） */
+    void buildTitleBar();
+    /** @brief 应用悬浮窗形态：无边框工具窗、透明圆角、阴影边距、可缩放尺寸 */
+    void applyFloatingWindow();
+    /** @brief 恢复上次保存的窗口位置与大小，没有记录时靠主窗口右侧摆放 */
+    void restoreWindowGeometry();
+    /** @brief 把当前位置与大小写回设置（关闭 / 收起 / 拖动结束时调用） */
+    void saveWindowGeometry();
+    /** @brief 没有历史位置时的默认摆放：主窗口右侧垂直居中 */
+    void placeDefaultGeometry();
+    /** @brief 把窗口拉回可见屏幕范围，避免换分辨率 / 拔显示器后看不见 */
+    void keepOnScreen();
+    /** @brief 圆角卡片区域（去掉阴影绘制边距） */
+    QRect cardRect() const;
+    /** @brief 判断鼠标位置落在哪几条边（用于拖动缩放），不在边缘返回空 */
+    Qt::Edges resizeEdgesAt(const QPoint &pos) const;
+    /** @brief 收起 / 展开：收起后只保留标题栏，像一条悬浮小条贴在游戏上 */
+    void setCollapsed(bool collapsed);
+    /** @brief 切换置顶状态（置顶时可悬浮在游戏和其他窗口之上） */
+    void togglePinned();
+    /** @brief 刷新标题栏按钮的图标、提示与选中态 */
+    void updateHeaderButtons();
+    /**
+     * @brief 收起态下标题栏右侧显示的一行实时数据
+     *
+     * 数据来自首页 InstanceHomePage 的 liveStatsChanged 信号（每秒 / 每次硬件采样），
+     * 收起时直接在标题栏里看帧率、CPU、GPU、内存，不用再展开窗口。
+     */
+    void updateLiveStats(int fps, int cpuPercent, int memoryPercent, int gpuPercent,
+                         bool cpuAvailable, bool memoryAvailable, bool gpuAvailable);
+    /** @brief 用缓存的数值和当前主题色重新渲染四项数据 */
+    void refreshQuickStatsTexts();
+    /** @brief 按标题栏可用宽度决定显示其中几项，窄窗口下自动少显示后面几项 */
+    void fitQuickStatsToWidth();
 
     // ---- 快捷指令页面相关 ----
     /**
@@ -163,6 +219,8 @@ private:
     void showEvent(QShowEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
+    QVBoxLayout *m_outerLayout;   ///< 窗口外层布局（悬浮窗下用于留出阴影边距）
+    QWidget *m_frame;             ///< 卡片容器（标题栏 + 导航 + 页面都放在这里）
     QVBoxLayout *m_mainLayout;
     QWidget *m_navBar;
     QScrollArea *m_scrollArea;
@@ -178,6 +236,43 @@ private:
     int m_prevIndex;
 
     bool m_overlayMode = false; ///< 侧栏模式：无边框、贴右四分之一屏宽、半透明（安卓游戏内）
+
+    // ---- 桌面悬浮窗 ----
+    QWidget *m_titleBar;         ///< 悬浮窗标题栏（可拖动）
+    QLabel *m_titleIcon;         ///< 标题栏左侧的实例助手图标
+    QLabel *m_titleLabel;        ///< 标题栏文字
+    QWidget *m_statsHost;        ///< 收起态实时数据容器（帧率 / CPU / GPU / 内存）
+    QLabel *m_statFps;           ///< 帧率
+    QLabel *m_statCpu;           ///< CPU 占用
+    QLabel *m_statGpu;           ///< GPU 占用
+    QLabel *m_statMem;           ///< 内存占用
+    QPushButton *m_pinBtn;       ///< 置顶开关
+    QPushButton *m_collapseBtn;  ///< 收起 / 展开
+    QPushButton *m_closeBtn;     ///< 关闭（隐藏）悬浮窗
+    bool m_floating = false;     ///< 桌面悬浮窗形态（移动端保持原有独立窗口 / 侧栏）
+    bool m_pinned = true;        ///< 是否置顶悬浮于其他窗口之上
+    bool m_collapsed = false;    ///< 是否已收起成只保留标题栏的小条
+    int m_cornerRadius = 12;     ///< 圆角半径
+    int m_shadowMargin = 12;     ///< 窗口四周留出的阴影边距
+    QSize m_expandedSize;        ///< 收起前的窗口尺寸，展开时还原
+    QRect m_launcherRect;        ///< 与主窗口脱开前记下的启动器位置（首次摆放用）
+
+    // ---- 收起态实时数据缓存（首页每秒刷新） ----
+    int m_liveFps = 0;
+    int m_liveCpuPercent = 0;
+    int m_liveMemoryPercent = 0;
+    int m_liveGpuPercent = 0;
+    bool m_liveCpuAvailable = false;
+    bool m_liveMemoryAvailable = false;
+    bool m_liveGpuAvailable = false;
+
+    // ---- 标题栏拖动 / 边缘缩放 ----
+    QPoint m_dragOrigin;         ///< 拖动开始时的鼠标相对窗口偏移
+    bool m_dragging = false;
+    QRect m_resizeStartGeometry; ///< 缩放开始时的窗口几何
+    QPoint m_resizeStartGlobal;  ///< 缩放开始时的鼠标全局坐标
+    Qt::Edges m_resizeEdges;     ///< 当前正在拖动的边
+    bool m_resizing = false;
 
     // ---- 输入防抖 ----
     QTimer *m_inputDebounceTimer;  ///< 输入防抖定时器（singleShot，合并高频击键）

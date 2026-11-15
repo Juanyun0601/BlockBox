@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -18,16 +19,92 @@
 
 namespace
 {
-constexpr char kDeepLinkScheme[] = "blockbox";
-constexpr char kDeepLinkJoinHost[] = "join";
 constexpr char kPayloadParam[] = "d";
+constexpr char kShareParam[] = "r";
 constexpr char kWebJoinPage[] = "/join.html";
 
-QJsonObject roomToJson(const ForumLobbyRoom &room)
+/** 论坛地址（去掉末尾斜杠，没配置时用默认地址） */
+QString forumBase()
+{
+    QString base = SettingsManager::instance()->forumBaseUrl().trimmed();
+    while (base.endsWith(QLatin1Char('/')))
+        base.chop(1);
+    if (base.isEmpty())
+        base = SettingsManager::defaultForumBaseUrl();
+    return base;
+}
+
+/** 从完整链接或纯参数串里取某个参数的值 */
+QString queryValue(const QString &source, const QString &key)
+{
+    const int question = source.indexOf(QLatin1Char('?'));
+    const QString queryPart = question >= 0 ? source.mid(question + 1) : source;
+    const QUrlQuery query(queryPart);
+    return query.queryItemValue(key, QUrl::FullyDecoded).trimmed();
+}
+
+bool looksLikeUrl(const QString &text)
+{
+    return text.startsWith(QStringLiteral("blockbox://"), Qt::CaseInsensitive)
+           || text.contains(QStringLiteral("://"))
+           || text.contains(QStringLiteral("/join.html"), Qt::CaseInsensitive);
+}
+
+/** 房间号只允许字母数字：乱填的、带斜杠的一律当无效，避免拼进 URL 出岔子 */
+QString normalizeToken(const QString &raw)
+{
+    static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9]{4,24}$"));
+    const QString token = raw.trimmed().toLower();
+    return pattern.match(token).hasMatch() ? token : QString();
+}
+
+QJsonArray toJsonArray(const QStringList &names, int limit)
+{
+    QJsonArray array;
+    for (const QString &name : names)
+    {
+        if (name.trimmed().isEmpty())
+            continue;
+        array.append(name);
+        if (array.size() >= limit)
+            break;
+    }
+    return array;
+}
+
+QStringList fromJsonArray(const QJsonValue &value, int limit)
+{
+    QStringList names;
+    const QJsonArray array = value.toArray();
+    for (const QJsonValue &item : array)
+    {
+        const QString name = item.toString().trimmed();
+        if (name.isEmpty() || names.contains(name, Qt::CaseInsensitive))
+            continue;
+        names.append(name);
+        if (names.size() >= limit)
+            break;
+    }
+    return names;
+}
+
+bool payloadError(QString *error)
+{
+    if (error)
+        *error = QObject::tr("链接已损坏，请让对方重新创建分享链接。");
+    return false;
+}
+} // namespace
+
+namespace LobbyShareLink
+{
+QJsonObject roomToPayload(const ForumLobbyRoom &room)
 {
     QJsonObject json;
     if (!room.title.isEmpty())
         json.insert(QStringLiteral("t"), room.title);
+    if (!room.description.isEmpty())
+        json.insert(QStringLiteral("ds"), room.description.left(kMaxDescriptionInPayload));
     json.insert(QStringLiteral("c"), room.core);
     if (!room.inviteCode.isEmpty())
         json.insert(QStringLiteral("ic"), room.inviteCode);
@@ -38,53 +115,99 @@ QJsonObject roomToJson(const ForumLobbyRoom &room)
     if (!room.loader.isEmpty())
         json.insert(QStringLiteral("ld"), room.loader);
     if (!room.mods.isEmpty())
-        json.insert(QStringLiteral("md"), QJsonArray::fromStringList(room.mods));
+        json.insert(QStringLiteral("md"), toJsonArray(room.mods, kMaxModsInPayload));
+    if (!room.auxMods.isEmpty())
+        json.insert(QStringLiteral("ma"), toJsonArray(room.auxMods, kMaxModsInPayload));
+    if (!room.resourcePacks.isEmpty())
+        json.insert(QStringLiteral("rp"), toJsonArray(room.resourcePacks, kMaxPacksInPayload));
+    if (!room.shaderPacks.isEmpty())
+        json.insert(QStringLiteral("sp"), toJsonArray(room.shaderPacks, kMaxPacksInPayload));
     return json;
 }
 
-QString payloadToParam(const QJsonObject &json)
+ForumLobbyRoom payloadToRoom(const QJsonObject &payload)
 {
-    const QJsonDocument doc(json);
-    const QByteArray compressed = qCompress(doc.toJson(QJsonDocument::Compact));
-    // base64url 无填充：链接和深链里都不需要转义
-    return QString::fromLatin1(compressed.toBase64(QByteArray::Base64UrlEncoding
-                                                   | QByteArray::OmitTrailingEquals));
+    ForumLobbyRoom room;
+    room.title = payload.value(QStringLiteral("t")).toString().trimmed();
+    if (room.title.isEmpty())
+        room.title = QObject::tr("联机房间");
+    room.description =
+        payload.value(QStringLiteral("ds")).toString().trimmed().left(kMaxDescriptionInPayload);
+    room.core = payload.value(QStringLiteral("c")).toString();
+    room.coreLabel = ForumLobbyService::coreDisplayName(room.core);
+    room.inviteCode = payload.value(QStringLiteral("ic")).toString().trimmed();
+    room.address = payload.value(QStringLiteral("ad")).toString().trimmed();
+    room.gameVersion = payload.value(QStringLiteral("v")).toString().trimmed();
+    room.loader = payload.value(QStringLiteral("ld")).toString().trimmed();
+    room.mods = fromJsonArray(payload.value(QStringLiteral("md")), kMaxModsInPayload);
+    room.auxMods = fromJsonArray(payload.value(QStringLiteral("ma")), kMaxModsInPayload);
+    room.resourcePacks = fromJsonArray(payload.value(QStringLiteral("rp")), kMaxPacksInPayload);
+    room.shaderPacks = fromJsonArray(payload.value(QStringLiteral("sp")), kMaxPacksInPayload);
+    // 老链接没有辅助模组这几项：辅助模组补进完整模组列表，两边对得上
+    for (const QString &name : room.auxMods)
+    {
+        if (!room.mods.contains(name, Qt::CaseInsensitive))
+            room.mods.append(name);
+    }
+    room.status = QStringLiteral("waiting");
+    // 分享链接没有过期概念（能取到就说明房主的联机还开着），置正值让 isOnline() 通过
+    room.expiresIn = 3600;
+    return room;
 }
-} // namespace
 
-namespace LobbyShareLink
+QString webShareUrl(const QString &token)
 {
-QString encodePayload(const ForumLobbyRoom &room)
-{
-    ForumLobbyRoom trimmed = room;
-    if (trimmed.mods.size() > kMaxModsInPayload)
-        trimmed.mods = trimmed.mods.mid(0, kMaxModsInPayload);
-    return payloadToParam(roomToJson(trimmed));
-}
-
-QString webShareUrl(const ForumLobbyRoom &room)
-{
-    QString base = SettingsManager::instance()->forumBaseUrl().trimmed();
-    while (base.endsWith(QLatin1Char('/')))
-        base.chop(1);
-    if (base.isEmpty())
-        base = SettingsManager::defaultForumBaseUrl();
-    QUrl url(base + QString::fromLatin1(kWebJoinPage));
+    QUrl url(forumBase() + QString::fromLatin1(kWebJoinPage));
     QUrlQuery query;
-    query.addQueryItem(QString::fromLatin1(kPayloadParam), encodePayload(room));
+    query.addQueryItem(QString::fromLatin1(kShareParam), token);
     url.setQuery(query);
     return url.toString(QUrl::FullyEncoded);
 }
 
-QString deepLinkUrl(const ForumLobbyRoom &room)
+bool parseLink(const QString &url, LinkTarget *target, QString *error)
 {
-    QUrl url;
-    url.setScheme(QString::fromLatin1(kDeepLinkScheme));
-    url.setHost(QString::fromLatin1(kDeepLinkJoinHost));
-    QUrlQuery query;
-    query.addQueryItem(QString::fromLatin1(kPayloadParam), encodePayload(room));
-    url.setQuery(query);
-    return url.toString(QUrl::FullyEncoded);
+    if (target)
+        *target = LinkTarget();
+    if (error)
+        error->clear();
+
+    const QString trimmed = url.trimmed();
+    if (trimmed.isEmpty())
+    {
+        if (error)
+            *error = QObject::tr("链接里没有房间信息。");
+        return false;
+    }
+
+    // 新式短链接：链接里只有一个房间号，房间信息去论坛服务器取
+    const QString token = normalizeToken(queryValue(trimmed, QString::fromLatin1(kShareParam)));
+    if (!token.isEmpty())
+    {
+        if (target)
+            target->token = token;
+        return true;
+    }
+
+    // 老式自包含链接：房间信息压缩在 ?d= 里
+    QString payload = queryValue(trimmed, QString::fromLatin1(kPayloadParam));
+    if (payload.isEmpty() && !looksLikeUrl(trimmed))
+        payload = trimmed;
+
+    ForumLobbyRoom room;
+    QString payloadError;
+    if (!parsePayload(payload, &room, &payloadError))
+    {
+        if (error)
+            *error = payloadError;
+        return false;
+    }
+
+    if (target)
+    {
+        target->legacy = true;
+        target->room = room;
+    }
+    return true;
 }
 
 bool parsePayload(const QString &encoded, ForumLobbyRoom *room, QString *error)
@@ -104,13 +227,8 @@ bool parsePayload(const QString &encoded, ForumLobbyRoom *room, QString *error)
 
     // 深链 / 网页链接都兼容：直接给载荷就当 ?d= 的值用
     QString param = trimmed;
-    if (trimmed.startsWith(QStringLiteral("blockbox://"), Qt::CaseInsensitive)
-        || trimmed.contains(QStringLiteral("/join.html?"), Qt::CaseInsensitive))
-    {
-        const QUrl url(trimmed);
-        const QUrlQuery query(url.query());
-        param = query.queryItemValue(QString::fromLatin1(kPayloadParam));
-    }
+    if (looksLikeUrl(trimmed))
+        param = queryValue(trimmed, QString::fromLatin1(kPayloadParam));
 
     QByteArray compressed = QByteArray::fromBase64(
         param.toLatin1(),
@@ -121,47 +239,19 @@ bool parsePayload(const QString &encoded, ForumLobbyRoom *room, QString *error)
         compressed = QByteArray::fromBase64(param.toLatin1());
     }
     if (compressed.isEmpty())
-    {
-        if (error)
-            *error = QObject::tr("链接已损坏，请让对方重新创建分享链接。");
-        return false;
-    }
+        return payloadError(error);
 
     const QByteArray raw = qUncompress(compressed);
     if (raw.isEmpty())
-    {
-        if (error)
-            *error = QObject::tr("链接已损坏，请让对方重新创建分享链接。");
-        return false;
-    }
+        return payloadError(error);
 
     QJsonParseError parseError{};
     const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject())
-    {
-        if (error)
-            *error = QObject::tr("链接已损坏，请让对方重新创建分享链接。");
-        return false;
-    }
+        return payloadError(error);
 
-    const QJsonObject json = doc.object();
-    ForumLobbyRoom parsed;
-    parsed.title = json.value(QStringLiteral("t")).toString();
-    parsed.core = json.value(QStringLiteral("c")).toString();
-    parsed.inviteCode = json.value(QStringLiteral("ic")).toString();
-    parsed.address = json.value(QStringLiteral("ad")).toString();
-    parsed.gameVersion = json.value(QStringLiteral("v")).toString();
-    parsed.loader = json.value(QStringLiteral("ld")).toString();
-    const QJsonArray mods = json.value(QStringLiteral("md")).toArray();
-    for (const QJsonValue &value : mods)
-        parsed.mods.append(value.toString());
-    parsed.coreLabel = ForumLobbyService::coreDisplayName(parsed.core);
-    parsed.status = QStringLiteral("waiting");
-    // 分享链接没有过期概念，置一个正值让 isOnline() 通过加入前的检查
-    parsed.expiresIn = 3600;
-
-    if (parsed.core.isEmpty()
-        || (parsed.inviteCode.isEmpty() && parsed.address.isEmpty()))
+    ForumLobbyRoom parsed = payloadToRoom(doc.object());
+    if (parsed.core.isEmpty() || (parsed.inviteCode.isEmpty() && parsed.address.isEmpty()))
     {
         if (error)
             *error = QObject::tr("链接里没有可用的邀请码或连接地址。");

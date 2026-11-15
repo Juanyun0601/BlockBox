@@ -91,6 +91,8 @@ public:
     int onlineCount() const { return m_onlineCount; }
     /// 房间内玩家列表
     QList<Player> players() const { return m_players; }
+    /// 本机进房间时报的玩家名（未在房间时为空），用于在玩家列表里认出自己
+    QString localPlayerName() const { return m_localPlayerName; }
     /// 错误码（仅 Exception 状态有效）
     QString errorCode() const { return m_errorCode; }
     /// 错误信息
@@ -234,6 +236,7 @@ private:
     quint16 m_gamePort = 0;
     int m_onlineCount = 0;
     QList<Player> m_players;
+    QString m_localPlayerName;         ///< 本机进房间时报的玩家名
     QString m_errorCode;
     QString m_errorMessage;
     QString m_progressMessage;

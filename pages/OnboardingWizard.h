@@ -21,6 +21,7 @@
 
 class QLabel;
 class QPushButton;
+class QButtonGroup;
 class QStackedWidget;
 class QWidget;
 class QLineEdit;
@@ -87,6 +88,8 @@ private slots:
     void onPickSolidColor(const QString &hex);
     void onBrowseImage();
     void onPickAccent(const QString &colorName);
+    /// 按当前主题色点亮强调色色板并更新名称（自定义色不点亮任何色块）
+    void syncAccentSelection();
 
     // Step3 Java 下载（引导页内直接下载并安装官方 Java）
     void onJavaVersionListFetched(const QVector<JavaBinaryInfo> &binaries);
@@ -210,6 +213,7 @@ protected:
     QLabel *m_javaDlStatusLabel = nullptr;   ///< 下载/安装进度提示
     QList<QPushButton *> m_javaDlButtons;    ///< 四张版本卡的「下载」按钮（下载中禁用）
     bool m_javaDownloaderWired = false;      ///< 是否已把下载器信号接到本向导
+    bool m_runtimeDepsWired = false;         ///< 安卓：运行依赖通道信号是否已接到本向导
     int m_javaDlMajor = 0;                   ///< 正在下载的 Java 主版本号（0=空闲）
     bool m_javaDlRetried = false;            ///< 镜像源失败后是否已回落官方源重试
 
@@ -225,6 +229,7 @@ protected:
     QLabel *m_imagePreview = nullptr;                 ///< 图片模式预览
     QLabel *m_imagePathLabel = nullptr;               ///< 图片模式路径
     QLabel *m_accentNameLabel = nullptr;
+    QButtonGroup *m_accentGroup = nullptr;            ///< 强调色色板（与设置里的主题色同一份预设）
 
     // 完成页
     QWidget *m_doneSummaryWidget = nullptr;

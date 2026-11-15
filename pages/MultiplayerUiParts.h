@@ -20,9 +20,17 @@
 #define MULTIPLAYERUIPARTS_H
 
 #include <QColor>
+#include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
+#include <QLineEdit>
+#include <QLinearGradient>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QStyle>
@@ -142,6 +150,80 @@ inline void applyDescriptionLinkColor(QLabel *label, const QColor &color)
         label->setText(html);
 }
 
+/**
+ * @brief 玩家头像底板：渐变圆 + 首字母
+ *
+ * 账户头像和首字母头像是同一套尺寸 / 描边，切换时卡片不会跳一下。
+ * 先在设备像素里画完再设 devicePixelRatio，高分屏下不会糊。
+ */
+inline QPixmap letterAvatarPixmap(const QColor &roleColor, const QString &displayName, int size, qreal dpr)
+{
+    const int pixels = qMax(1, qRound(size * qMax<qreal>(1.0, dpr)));
+    QPixmap pixmap(pixels, pixels);
+    pixmap.fill(Qt::transparent);
+
+    {
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::TextAntialiasing);
+
+        QLinearGradient gradient(0, 0, pixels, pixels);
+        gradient.setColorAt(0.0, roleColor.lighter(120));
+        gradient.setColorAt(1.0, roleColor.darker(108));
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(gradient);
+        painter.drawEllipse(QRectF(0, 0, pixels, pixels));
+
+        const QString trimmed = displayName.trimmed();
+        const QString letter = trimmed.isEmpty() ? QStringLiteral("?")
+                                                 : trimmed.left(1).toUpper();
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPixelSize(qMax(8, qRound(size * 0.42 * qMax<qreal>(1.0, dpr))));
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.drawText(QRectF(0, 0, pixels, pixels), Qt::AlignCenter, letter);
+    }
+
+    pixmap.setDevicePixelRatio(qMax<qreal>(1.0, dpr));
+    return pixmap;
+}
+
+/// 方块盒子账户头像：裁成圆形，再套一圈角色色描边
+inline QPixmap roundAvatarPixmap(const QImage &image, const QColor &roleColor, int size, qreal dpr)
+{
+    const int pixels = qMax(1, qRound(size * qMax<qreal>(1.0, dpr)));
+    QPixmap pixmap(pixels, pixels);
+    pixmap.fill(Qt::transparent);
+
+    {
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+
+        const qreal ring = qMax(1.5, 2.0 * qMax<qreal>(1.0, dpr));
+        QPainterPath clip;
+        clip.addEllipse(QRectF(0, 0, pixels, pixels).adjusted(ring, ring, -ring, -ring));
+        painter.setClipPath(clip);
+
+        const QImage scaled = image.scaled(pixels, pixels, Qt::KeepAspectRatioByExpanding,
+                                           Qt::SmoothTransformation);
+        painter.drawImage(QPointF((pixels - scaled.width()) / 2.0,
+                                  (pixels - scaled.height()) / 2.0),
+                          scaled);
+        painter.setClipping(false);
+
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(roleColor, ring));
+        painter.drawEllipse(QRectF(0, 0, pixels, pixels).adjusted(ring / 2.0, ring / 2.0,
+                                                                  -ring / 2.0, -ring / 2.0));
+    }
+
+    pixmap.setDevicePixelRatio(qMax<qreal>(1.0, dpr));
+    return pixmap;
+}
+
 /// 状态小圆点：颜色由 tone 属性（idle / ok / warn / err）决定
 inline QLabel *makeDot(const QString &objectName, QWidget *parent)
 {
@@ -237,6 +319,79 @@ inline QHBoxLayout *makeLatencyRow(QWidget *page, QLabel *&dotOut, QLabel *&labe
     row->addWidget(group);
     row->addStretch(1);
     return row;
+}
+
+/**
+ * @brief 「加入房间」邀请码输入卡：就地在页面上展开，不再弹输入框
+ *
+ * 点页面底部的「加入房间」把这张卡展开、焦点落到输入框，回车或点「加入」提交；
+ * 文字由调用方按自己的页面上下文设置（tr 的上下文才正确）。
+ */
+struct JoinCardParts
+{
+    QFrame *card = nullptr;
+    QLabel *title = nullptr;
+    QLineEdit *codeEdit = nullptr;
+    QLabel *hint = nullptr;
+    QPushButton *confirmBtn = nullptr;
+    QPushButton *cancelBtn = nullptr;
+};
+
+inline JoinCardParts makeJoinCard(QWidget *parent)
+{
+    JoinCardParts parts;
+
+    auto *card = makeCard(QStringLiteral("mpJoinCard"), parent);
+    parts.card = card;
+
+    auto *column = new QVBoxLayout(card);
+    column->setContentsMargins(14, 12, 14, 12);
+    column->setSpacing(8);
+
+    parts.title = makeFieldLabel(QString(), card);
+    column->addWidget(parts.title);
+
+    parts.codeEdit = new QLineEdit(card);
+    parts.codeEdit->setObjectName(QStringLiteral("mpJoinCodeEdit"));
+    parts.codeEdit->setFixedHeight(36);
+    parts.codeEdit->setClearButtonEnabled(true);
+    column->addWidget(parts.codeEdit);
+
+    parts.hint = makeHintLabel(QString(), card);
+    parts.hint->setObjectName(QStringLiteral("mpJoinHint"));
+    parts.hint->setProperty("error", false);
+    column->addWidget(parts.hint);
+
+    auto *row = new QHBoxLayout();
+    row->setSpacing(8);
+
+    parts.cancelBtn = new QPushButton(card);
+    parts.cancelBtn->setObjectName(QStringLiteral("mpJoinCancelBtn"));
+    parts.cancelBtn->setCursor(Qt::PointingHandCursor);
+    parts.cancelBtn->setFixedHeight(38);
+    parts.cancelBtn->setMinimumWidth(84);
+
+    parts.confirmBtn = new QPushButton(card);
+    parts.confirmBtn->setObjectName(QStringLiteral("mpJoinConfirmBtn"));
+    parts.confirmBtn->setCursor(Qt::PointingHandCursor);
+    parts.confirmBtn->setFixedHeight(38);
+
+    row->addWidget(parts.cancelBtn);
+    row->addWidget(parts.confirmBtn, 1);
+    column->addLayout(row);
+
+    card->setVisible(false);
+    return parts;
+}
+
+/// 邀请码输入卡里的错误提示：切 error 属性让样式表换色
+inline void setJoinHintError(QLabel *hint, bool error)
+{
+    if (!hint || hint->property("error").toBool() == error)
+        return;
+    hint->setProperty("error", error);
+    hint->style()->unpolish(hint);
+    hint->style()->polish(hint);
 }
 
 /// 整页样式：Java 版与基岩版联机页共用这一份（对象名一致，颜色走 @TOKEN@ 令牌）
@@ -433,6 +588,39 @@ inline QString pageStyleSheet()
         "  background: @PRIMARY_RGBA_10@; border-color: @PRIMARY_RGBA_38@;"
         "}"
         "QPushButton#multiplayerCopyCodeBtn:pressed { background: @PRIMARY_RGBA_20@; }"
+
+        /* ───────────── 加入房间：邀请码就地输入卡 ───────────── */
+        "QFrame#mpJoinCard {"
+        "  background: @BG_CARD@; border: 1px solid @BORDER@; border-radius: 12px;"
+        "}"
+        "QLineEdit#mpJoinCodeEdit {"
+        "  background: @BG_MUTED@; border: 1px solid @BORDER@; border-radius: 9px;"
+        "  color: @TEXT_PRIMARY@; font-size: 13px; padding: 0 12px;"
+        "  selection-background-color: @PRIMARY_RGBA_38@; selection-color: @TEXT_PRIMARY@;"
+        "}"
+        "QLineEdit#mpJoinCodeEdit:hover { border-color: @BORDER_HOVER@; }"
+        "QLineEdit#mpJoinCodeEdit:focus { background: @BG_CARD@; border-color: @PRIMARY@; }"
+        "QLabel#mpJoinHint {"
+        "  color: @TEXT_SECONDARY@; font-size: 11px;"
+        "  background: transparent; border: none;"
+        "}"
+        "QLabel#mpJoinHint[error=\"true\"] { color: @DANGER_TEXT@; }"
+        "QPushButton#mpJoinConfirmBtn {"
+        "  background: @PRIMARY@; border: none; border-radius: 10px;"
+        "  color: @TEXT_ON_PRIMARY@; font-size: 13px; font-weight: 700;"
+        "}"
+        "QPushButton#mpJoinConfirmBtn:hover { background: @PRIMARY_HOVER@; }"
+        "QPushButton#mpJoinConfirmBtn:pressed { background: @PRIMARY_PRESSED@; }"
+        "QPushButton#mpJoinConfirmBtn:disabled {"
+        "  background: @BG_DISABLED@; color: @TEXT_DISABLED@;"
+        "}"
+        "QPushButton#mpJoinCancelBtn {"
+        "  background: transparent; border: 1px solid @BORDER@; border-radius: 10px;"
+        "  color: @TEXT_SECONDARY@; font-size: 13px; font-weight: 600; padding: 0 16px;"
+        "}"
+        "QPushButton#mpJoinCancelBtn:hover {"
+        "  background: @BG_HOVER@; border-color: @BORDER_STRONG@; color: @TEXT_PRIMARY@;"
+        "}"
         "QPushButton#hongshiNodeRefreshBtn {"
         "  background: @BG_MUTED@; border: 1px solid @BORDER@; border-radius: 8px;"
         "  color: @TEXT_SECONDARY@; font-size: 12px; font-weight: 600; padding: 0 10px;"
@@ -497,6 +685,16 @@ inline QString pageStyleSheet()
         "  color: @TEXT_SECONDARY@; background: @BG_MUTED@; border: 1px solid @BORDER@;"
         "  border-radius: 8px; padding: 1px 7px; font-size: 11px; font-weight: 600;"
         "}"
+        // 玩家卡片上的身份标记：房主橙 / 自己（含方块盒子账户）主题色
+        "QLabel[cardRole=\"mpChip\"][accent=\"host\"] {"
+        "  color: @WARNING_TEXT@; background: @WARNING_BG@; border-color: @WARNING_BORDER@;"
+        "}"
+        "QLabel[cardRole=\"mpChip\"][accent=\"self\"],"
+        "QLabel[cardRole=\"mpChip\"][accent=\"account\"] {"
+        "  color: @TEXT_ACCENT@; background: @PRIMARY_RGBA_10@;"
+        "  border-color: @PRIMARY_RGBA_38@;"
+        "}"
+        "QWidget[cardRole=\"mpContainer\"]:hover { background: @BG_HOVER@; }"
         "QPushButton[cardRole=\"mpActionBtn\"] {"
         "  background: transparent; border: none; border-radius: 8px;"
         "}"

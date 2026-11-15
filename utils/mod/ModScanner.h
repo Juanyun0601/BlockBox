@@ -40,6 +40,16 @@ public:
   bool scanModsSync(const QString &instancePath, LocalModList &result);
 
   /**
+   * @brief 异步扫描目录内文件的指纹（资源包/光影包等非 jar 目录的安装比对用）
+   *
+   * 每个文件产出一条 ModInfo（仅 filePath/fileName/fileSize/enabled/sha1Hash/curseforgeHash，
+   * 不解析 jar 元数据），结果经 scanCompleted 返回。
+   * @param folderPath 目标目录
+   * @param nameFilters 文件名过滤器（如 {"*.zip"}；空 = 全部文件）
+   */
+  void scanFolderFingerprints(const QString &folderPath, const QStringList &nameFilters = QStringList());
+
+  /**
    * @brief 清除缓存
    */
   void clearCache();

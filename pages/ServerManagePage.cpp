@@ -3,8 +3,10 @@
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
 #include "utils/ServersDatIO.h"
+#include "utils/SettingsManager.h"
 #include "components/LocalCategoryDialog.h"
 #include "components/FavoriteFolderDialog.h"
+#include "components/CardSelectionOverlay.h"
 
 #include <QApplication>
 #include <QAction>
@@ -17,9 +19,9 @@
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QFormLayout>
-#include <QGraphicsOpacityEffect>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -31,7 +33,6 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPropertyAnimation>
 #include <QScrollBar>
 #include <QSpacerItem>
 #include <QTimer>
@@ -86,12 +87,14 @@ void ServerManagePage::setInstancePath(const QString &path)
     if (m_instancePath != path)
     {
         m_instancePath = path;
+        m_lastDiskStamp = -1;   // 换了实例：下次显示时按新实例重新扫描
         m_categoryManager->setInstancePath(path);
         reloadCategoryCombo();
         if (!path.isEmpty())
         {
             loadServers();
             placeCards();
+            markDiskSynced();
         }
     }
 }
@@ -254,11 +257,55 @@ QString ServerManagePage::serversFilePath() const
     return m_instancePath + "/servers.json";
 }
 
+QStringList ServerManagePage::serversDatCandidates() const
+{
+    // 版本目录 + 共享 .minecraft 目录都要扫（开关版本隔离会改变游戏写在哪）
+    return ServersDatIO::candidatePaths(m_instancePath);
+}
+
 QString ServerManagePage::serversDatPath() const
 {
-    if (m_instancePath.isEmpty())
+    const QStringList candidates = serversDatCandidates();
+    if (candidates.isEmpty())
         return QString();
-    return m_instancePath + "/servers.dat";
+
+    // 写回游戏实际使用的那个文件：多个位置都有时取最近改动的
+    const QString existing = ServersDatIO::existingPath(candidates);
+    if (!existing.isEmpty())
+        return existing;
+
+    // 都还不存在：按版本隔离开关推断游戏将来会写在哪里
+    return SettingsManager::instance()->isVersionIsolationEnabled()
+               ? candidates.first()
+               : candidates.last();
+}
+
+qint64 ServerManagePage::diskStamp() const
+{
+    // 合并「是否存在 + 大小 + 修改时间」为一个指纹；任一处变化都会让显示重新扫描
+    qint64 stamp = 0;
+    QStringList files;
+    const QString jsonPath = serversFilePath();
+    if (!jsonPath.isEmpty())
+        files << jsonPath;
+    files += serversDatCandidates();
+
+    for (const QString &path : files)
+    {
+        if (path.isEmpty())
+            continue;
+        const QFileInfo info(path);
+        if (!info.exists())
+            continue;
+        stamp ^= (info.size() + 1) * 1000003LL
+                 + info.lastModified().toMSecsSinceEpoch();
+    }
+    return stamp;
+}
+
+void ServerManagePage::markDiskSynced()
+{
+    m_lastDiskStamp = diskStamp();
 }
 
 void ServerManagePage::loadServers()
@@ -295,26 +342,50 @@ void ServerManagePage::loadServers()
     }
 
     // 2) 游戏内多人列表 servers.dat（合并进来，避免「游戏里加的服务器页上看不见」）
-    const QString datPath = serversDatPath();
-    const QList<ServersDatIO::Entry> gameServers = ServersDatIO::read(datPath);
-    for (const ServersDatIO::Entry &game : gameServers)
+    //    游戏目录随版本隔离开关变化（版本目录 / 共享 .minecraft），两处都扫
+    for (const QString &datPath : serversDatCandidates())
     {
-        const QString key = ServersDatIO::addressKey(game.host, game.port);
-        if (indexByKey.contains(key))
+        const QList<ServersDatIO::Entry> gameServers = ServersDatIO::read(datPath);
+        for (const ServersDatIO::Entry &game : gameServers)
         {
-            // 已有同地址条目：以游戏内名称为准（游戏是显示名的权威来源）
-            ServerEntry &entry = m_servers[indexByKey.value(key)];
-            if (!game.name.trimmed().isEmpty())
-                entry.name = game.name;
-            continue;
+            const QString key = ServersDatIO::addressKey(game.host, game.port);
+            if (indexByKey.contains(key))
+            {
+                // 已有同地址条目：以游戏内名称为准（游戏是显示名的权威来源）
+                ServerEntry &entry = m_servers[indexByKey.value(key)];
+                if (!game.name.trimmed().isEmpty())
+                    entry.name = game.name;
+                continue;
+            }
+            ServerEntry entry;
+            entry.name = game.name;
+            entry.address = game.host;
+            entry.port = game.port;
+            indexByKey.insert(key, m_servers.size());
+            m_servers.append(entry);
         }
-        ServerEntry entry;
-        entry.name = game.name;
-        entry.address = game.host;
-        entry.port = game.port;
-        indexByKey.insert(key, m_servers.size());
-        m_servers.append(entry);
     }
+}
+
+void ServerManagePage::reloadServers()
+{
+    if (m_instancePath.isEmpty())
+        return;
+    loadServers();
+    placeCards();
+    markDiskSynced();
+}
+
+void ServerManagePage::refresh()
+{
+    if (m_instancePath.isEmpty())
+        return;
+    loadServers();
+    // 手动刷新：丢掉探测缓存，卡片就位后会重新探测
+    m_pingResults.clear();
+    m_pingAtMs.clear();
+    placeCards();
+    markDiskSynced();
 }
 
 void ServerManagePage::saveServers()
@@ -341,6 +412,7 @@ void ServerManagePage::saveServers()
         file.write(QJsonDocument(arr).toJson());
         file.close();
     }
+    markDiskSynced();
 }
 
 void ServerManagePage::upsertGameServer(const ServerEntry &entry)
@@ -353,6 +425,7 @@ void ServerManagePage::upsertGameServer(const ServerEntry &entry)
     game.host = entry.address;
     game.port = entry.port;
     ServersDatIO::upsert(datPath, game);
+    markDiskSynced();
 }
 
 void ServerManagePage::removeGameServer(const ServerEntry &entry)
@@ -361,6 +434,7 @@ void ServerManagePage::removeGameServer(const ServerEntry &entry)
     if (datPath.isEmpty() || entry.address.trimmed().isEmpty())
         return;
     ServersDatIO::remove(datPath, entry.address, entry.port);
+    markDiskSynced();
 }
 
 void ServerManagePage::clearCards()
@@ -383,12 +457,8 @@ void ServerManagePage::clearCards()
     m_dragMoved = false;
     m_dragAnchorIdx = -1;
     m_dragLastHoverIdx = -1;
-    // 遮罩随卡片销毁，动画由本页持有，需显式释放
+    // 遮罩是卡片子控件，随卡片销毁
     m_selectionOverlays.clear();
-    m_selectionEffects.clear();
-    for (QPropertyAnimation *anim : m_selectionAnims)
-        anim->deleteLater();
-    m_selectionAnims.clear();
 }
 
 void ServerManagePage::placeCards()
@@ -1119,30 +1189,12 @@ void ServerManagePage::deselectCardDuringDrag(int cardIdx)
 
 QWidget *ServerManagePage::createSelectionOverlay(QWidget *card)
 {
-    QWidget *overlay = new QWidget(card);
-    overlay->setObjectName("cardSelectionOverlay");
-    overlay->setGeometry(card->rect());
-    overlay->setStyleSheet(selectionOverlayStyle());
-    overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+    // 自绘遮罩：不再用 QGraphicsOpacityEffect（效果控件在滚动区内
+    // 滚一次就不再重绘，选中高亮会整个消失），详见 CardSelectionOverlay
+    CardSelectionOverlay *overlay = new CardSelectionOverlay(card);
     overlay->raise();
-    overlay->hide();
-
-    QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(overlay);
-    effect->setOpacity(0.0);
-    overlay->setGraphicsEffect(effect);
-
-    QPropertyAnimation *anim = new QPropertyAnimation(effect, "opacity", this);
-    anim->setDuration(180);
-    anim->setEasingCurve(QEasingCurve::OutCubic);
-    // 淡出结束后隐藏遮罩（overlay 销毁时自动断开，避免悬空指针）
-    connect(anim, &QPropertyAnimation::finished, overlay, [overlay, effect]() {
-        if (effect->opacity() <= 0.01)
-            overlay->hide();
-    });
 
     m_selectionOverlays.append(overlay);
-    m_selectionEffects.append(effect);
-    m_selectionAnims.append(anim);
     return overlay;
 }
 
@@ -1151,24 +1203,7 @@ void ServerManagePage::animateCardHighlight(int idx, bool selected)
     if (idx < 0 || idx >= m_selectionOverlays.size())
         return;
 
-    QWidget *overlay = m_selectionOverlays[idx];
-    QGraphicsOpacityEffect *effect = m_selectionEffects[idx];
-    QPropertyAnimation *anim = m_selectionAnims[idx];
-
-    anim->stop();
-    anim->setStartValue(effect->opacity());
-    anim->setEndValue(selected ? 1.0 : 0.0);
-    if (selected)
-        overlay->show();
-    anim->start();
-}
-
-QString ServerManagePage::selectionOverlayStyle() const
-{
-    QColor c = ThemeManager::instance()->currentThemeColor();
-    return QString("#cardSelectionOverlay { background-color: rgba(%1, %2, %3, 40); "
-                   "border: 2px solid %4; border-radius: 6px; }")
-        .arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.name());
+    m_selectionOverlays[idx]->setSelected(selected);
 }
 
 void ServerManagePage::updateSelectionBar()
@@ -1306,8 +1341,12 @@ bool ServerManagePage::eventFilter(QObject *watched, QEvent *event)
 void ServerManagePage::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    // 回到本页时重新扫描磁盘：玩家在游戏里新加的服务器要能马上看到，
+    // 不必重启启动器（离开页面期间游戏可能已经改写了 servers.dat）
+    if (!m_instancePath.isEmpty() && diskStamp() != m_lastDiskStamp)
+        reloadServers();
     // 页面重新可见时（切回来 / 从别的页返回）刷新一次，避免长时间显示旧状态
-    if (m_pinger && QDateTime::currentMSecsSinceEpoch() - m_lastPingSweepMs > 30000)
+    else if (m_pinger && QDateTime::currentMSecsSinceEpoch() - m_lastPingSweepMs > 30000)
         pingServers(false);
 }
 

@@ -302,7 +302,7 @@ void ForumThreadListPage::renderThreads(const QVector<ForumThreadInfo> &threads)
         auto *textColumn = new QVBoxLayout();
         textColumn->setSpacing(4);
 
-        // 标题行（含置顶 / 锁定 / 插件徽章）
+        // 标题行（含置顶 / 锁定 / 插件 / 教程徽章）
         auto *titleRow = new QHBoxLayout();
         titleRow->setSpacing(6);
         if (thread.pinned)
@@ -311,6 +311,8 @@ void ForumThreadListPage::renderThreads(const QVector<ForumThreadInfo> &threads)
             titleRow->addWidget(ForumKit::makeBadge(row, tr("锁定"), true));
         if (thread.plugin.isValid())
             titleRow->addWidget(ForumKit::makeBadge(row, tr("插件")));
+        else if (thread.tutorial)
+            titleRow->addWidget(ForumKit::makeBadge(row, tr("教程")));
 
         auto *title = new ForumKit::ElidedLabel(row);
         title->setObjectName(QStringLiteral("forumRowTitle"));
@@ -343,10 +345,15 @@ void ForumThreadListPage::renderThreads(const QVector<ForumThreadInfo> &threads)
 
         rowLayout->addLayout(textColumn, 1);
 
-        // 右侧统计
+        // 右侧统计：插件 / 投影分享板块里的帖子讨论的是评论，不是楼层回复
+        const bool resourceThread = thread.boardSlug == QLatin1String("plugin-share")
+                                    || thread.boardSlug == QLatin1String("schematic-share")
+                                    || thread.plugin.isValid() || thread.schematic.isValid();
         auto *countsColumn = new QVBoxLayout();
         countsColumn->setSpacing(2);
-        auto *replies = new QLabel(tr("%1 回复").arg(thread.replies), row);
+        auto *replies = new QLabel(resourceThread ? tr("%1 评论").arg(thread.comments)
+                                                  : tr("%1 回复").arg(thread.replies),
+                                   row);
         replies->setObjectName(QStringLiteral("forumRowCount"));
         replies->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         auto *views = new QLabel(tr("%1 浏览").arg(thread.views), row);

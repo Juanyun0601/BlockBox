@@ -32,6 +32,7 @@
 #include <QVBoxLayout>
 
 #include "components/AutoHeightTextBrowser.h"
+#include "components/AppMessageBox.h"
 #include "components/BlurLoadingOverlay.h"
 #include "components/NotificationManager.h"
 #include "components/ScreenshotViewer.h"
@@ -155,10 +156,18 @@ QString BedrockContentDetailPage::comMojangDir() const
 {
     BedrockInstanceManager *mgr = BedrockInstanceManager::instance();
     mgr->ensureInitialized();
-    const BedrockInstance inst = mgr->activeInstance();
+    // 指定了下载目标实例时用目标实例，否则跟随当前激活实例
+    const BedrockInstance inst = m_targetInstanceId.isEmpty()
+                                     ? mgr->activeInstance()
+                                     : mgr->instanceById(m_targetInstanceId);
     if (inst.id.isEmpty() || inst.dataDir.isEmpty())
         return QString();
     return inst.dataDir + QStringLiteral("/com.mojang");
+}
+
+void BedrockContentDetailPage::setTargetInstanceId(const QString &instanceId)
+{
+    m_targetInstanceId = instanceId;
 }
 
 void BedrockContentDetailPage::setModInfo(const ModInfo &info)
@@ -174,6 +183,7 @@ void BedrockContentDetailPage::setModInfo(const ModInfo &info)
     buildTagsBlock();
     buildDescriptionBlock();
     buildScreenshotBlock();
+    refreshInstalledState();
 
     if (m_loadingOverlay)
         m_loadingOverlay->showOverlay(tr("正在获取资源详情..."));
@@ -215,6 +225,11 @@ void BedrockContentDetailPage::clearContent()
     m_leftLayout = nullptr;
     m_downloadContainer = nullptr;
     m_downloadListLayout = nullptr;
+    m_installedBadge = nullptr;
+    m_targetInstanceLabel = nullptr;
+    m_installedDir.clear();
+    m_installedName.clear();
+    m_replaceOnInstall = false;
     m_rightPanel = nullptr;
     m_rightLayout = nullptr;
     m_linksContainer = nullptr;
@@ -400,9 +415,31 @@ void BedrockContentDetailPage::buildDownloadBlock()
     sectionLayout->setContentsMargins(12, 12, 12, 12);
     sectionLayout->setSpacing(8);
 
+    QWidget *titleRow = new QWidget();
+    QHBoxLayout *titleRowLayout = new QHBoxLayout(titleRow);
+    titleRowLayout->setContentsMargins(0, 0, 0, 0);
+    titleRowLayout->setSpacing(8);
+
     QLabel *title = new QLabel(tr("版本下载"));
     title->setObjectName("modDetailSectionTitle");
-    sectionLayout->addWidget(title);
+    titleRowLayout->addWidget(title);
+
+    // 「已安装 ✓」徽标：目标实例里已有同名资源时显示
+    m_installedBadge = new QLabel(titleRow);
+    m_installedBadge->setObjectName("modDetailInstalledBadge");
+    m_installedBadge->setStyleSheet(
+        QStringLiteral("QLabel { color: #10B981; font-weight: bold; }"));
+    m_installedBadge->hide();
+    titleRowLayout->addWidget(m_installedBadge);
+
+    titleRowLayout->addStretch();
+
+    // 下载目标实例提示
+    m_targetInstanceLabel = new QLabel(titleRow);
+    m_targetInstanceLabel->setObjectName("modDetailTargetInstance");
+    titleRowLayout->addWidget(m_targetInstanceLabel);
+
+    sectionLayout->addWidget(titleRow);
 
     m_downloadContainer = new QWidget();
     m_downloadListLayout = new QVBoxLayout(m_downloadContainer);
@@ -593,14 +630,13 @@ QWidget *BedrockContentDetailPage::createDownloadCard(const ModVersionFile &vf)
     installBtn->setCursor(Qt::PointingHandCursor);
     if (!vf.downloadUrl.isEmpty()) {
         connect(installBtn, &QPushButton::clicked, this, [this, vf]() {
-            startDownloadAndInstall(vf);
+            confirmAndInstall(vf);
         });
     } else {
         installBtn->setEnabled(false);
     }
     cardLayout->addWidget(installBtn);
 
-    m_downloadCards.append(card);
     return card;
 }
 
@@ -630,6 +666,24 @@ void BedrockContentDetailPage::buildLinksBlock()
     m_linksLayout = new QHBoxLayout(m_linksContainer);
     m_linksLayout->setContentsMargins(0, 0, 0, 0);
     m_linksLayout->setSpacing(8);
+
+    sectionLayout->addWidget(m_linksContainer);
+    m_rightLayout->insertWidget(0, section);
+
+    rebuildLinkButtons();
+}
+
+void BedrockContentDetailPage::rebuildLinkButtons()
+{
+    if (!m_linksLayout)
+        return;
+
+    // 详情回包可能带来作者新设置的链接：清掉旧按钮（含两端 stretch）整行重建
+    while (QLayoutItem *item = m_linksLayout->takeAt(0)) {
+        if (item->widget())
+            item->widget()->deleteLater();
+        delete item;
+    }
     m_linksLayout->addStretch();
 
     struct LinkInfo { QString label; QString url; };
@@ -639,6 +693,9 @@ void BedrockContentDetailPage::buildLinksBlock()
         links.append({ tr("分享给好友"), QStringLiteral("shareFriend") });
     }
     links.append({ tr("CurseForge"), m_modInfo.pageUrl });
+    // 作者在 CurseForge 项目页自行设置的链接，排在平台按钮之后、搜索按钮之前
+    for (const ModExternalLink &link : m_modInfo.externalLinks)
+        links.append({ link.label, link.url });
     links.append({ tr("必应搜索"), QStringLiteral("https://www.bing.com/search?q=%1").arg(m_modInfo.name) });
     links.append({ tr("百度搜索"), QStringLiteral("https://www.baidu.com/s?wd=%1").arg(m_modInfo.name) });
 
@@ -663,8 +720,6 @@ void BedrockContentDetailPage::buildLinksBlock()
         m_linksLayout->addWidget(btn);
     }
     m_linksLayout->addStretch();
-    sectionLayout->addWidget(m_linksContainer);
-    m_rightLayout->insertWidget(0, section);
 }
 
 void BedrockContentDetailPage::buildTagsBlock()
@@ -897,6 +952,10 @@ void BedrockContentDetailPage::onDetailReceived(const ModInfo &detail)
     if (m_descriptionBrowser && !detail.detailedDescription.isEmpty())
         m_descriptionBrowser->setHtml(detail.detailedDescription);
 
+    // 详情接口带来了作者设置的链接：刷新「相关链接」整行
+    if (!detail.externalLinks.isEmpty() && m_linksLayout)
+        rebuildLinkButtons();
+
     // 重建截图
     if (m_screenshotSection && !detail.screenshots.isEmpty()) {
         m_screenshotSection->deleteLater();
@@ -916,6 +975,36 @@ void BedrockContentDetailPage::onDetailFailed(const QString &error)
 }
 
 // ── 下载并安装 ────────────────────────────────────────────────────────────
+
+void BedrockContentDetailPage::confirmAndInstall(const ModVersionFile &vf)
+{
+    if (vf.downloadUrl.isEmpty()) {
+        NotificationManager::showInfo(this, tr("该版本暂无可用的下载链接。"));
+        return;
+    }
+
+    if (m_comMojangDir.isEmpty()) {
+        NotificationManager::showInfo(this,
+            tr("尚未选择基岩版实例，请先在「资源>安装新实例」中安装基岩版并创建实例。"));
+        return;
+    }
+
+    // 目标实例里已装同名资源：提示将替换（转换），确认后才继续
+    m_replaceOnInstall = !m_installedDir.isEmpty();
+    if (m_replaceOnInstall) {
+        const QString installedName = m_installedName.isEmpty() ? m_modInfo.name : m_installedName;
+        const AppMessageBox::StandardButton choice =
+            AppMessageBox::question(this, tr("替换已安装版本"),
+                tr("「%1」已安装到所选实例。\n继续下载将自动清理旧版本并安装新版本，要继续吗？")
+                    .arg(installedName));
+        if (choice != AppMessageBox::Yes) {
+            m_replaceOnInstall = false;
+            return;
+        }
+    }
+
+    startDownloadAndInstall(vf);
+}
 
 void BedrockContentDetailPage::startDownloadAndInstall(const ModVersionFile &vf)
 {
@@ -1014,16 +1103,78 @@ void BedrockContentDetailPage::doInstall(const QString &filePath)
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
     QString err;
-    const bool ok = BedrockContentInstaller::installPack(filePath, m_comMojangDir, &err);
+    bool ok = true;
+    // 转换安装：先把旧版本目录改名挪开（可回滚），装成功后再删；
+    // 改名失败（被占用等）退回直接删除，development_*.json 的旧登记会在装新包时重新登记
+    QString backupDir;
+    const QString replacedDir = m_installedDir;
+    if (m_replaceOnInstall && !m_installedDir.isEmpty()) {
+        backupDir = m_installedDir + QStringLiteral(".blockbox_old");
+        if (QDir().rename(m_installedDir, backupDir)) {
+            m_progressLabel->setText(tr("正在替换已安装版本..."));
+        } else {
+            backupDir.clear();
+            ok = BedrockContentInstaller::removeInstalledPack(m_installedDir, m_comMojangDir, &err);
+            if (!ok)
+                m_progressLabel->setText(tr("清理旧版本失败: %1").arg(err));
+        }
+        m_installedDir.clear();
+    }
+    m_replaceOnInstall = false;
+
+    if (ok)
+        ok = BedrockContentInstaller::installPack(filePath, m_comMojangDir, &err);
 
     QApplication::restoreOverrideCursor();
     QFile::remove(filePath);
 
     if (ok) {
+        if (!backupDir.isEmpty())
+            QDir(backupDir).removeRecursively();
         m_progressLabel->setText(tr("安装完成，启动基岩版后即可在游戏中使用。"));
         NotificationManager::showSuccess(this, tr("基岩版资源安装成功！"), 7000);
+        refreshInstalledState();
     } else {
+        // 安装失败：把挪开的旧版本目录改回原名，避免用户丢档
+        if (!backupDir.isEmpty() && !replacedDir.isEmpty())
+            QDir().rename(backupDir, replacedDir);
         m_progressLabel->setText(tr("安装失败: %1").arg(err));
         NotificationManager::showError(this, tr("基岩版资源安装失败: %1").arg(err));
+    }
+}
+
+void BedrockContentDetailPage::refreshInstalledState()
+{
+    m_installedDir.clear();
+    m_installedName.clear();
+    if (m_installedBadge)
+        m_installedBadge->hide();
+
+    // 「安装到：实例名」提示
+    if (m_targetInstanceLabel) {
+        BedrockInstanceManager *mgr = BedrockInstanceManager::instance();
+        mgr->ensureInitialized();
+        const BedrockInstance inst = m_targetInstanceId.isEmpty()
+                                         ? mgr->activeInstance()
+                                         : mgr->instanceById(m_targetInstanceId);
+        m_targetInstanceLabel->setText(inst.name.isEmpty()
+                                           ? tr("安装到：当前实例")
+                                           : tr("安装到：%1").arg(inst.name));
+    }
+
+    if (m_comMojangDir.isEmpty() || m_modInfo.name.isEmpty())
+        return;
+
+    const BedrockContentInstaller::InstalledPackInfo found =
+        BedrockContentInstaller::findInstalledPack(m_comMojangDir, m_modInfo.name);
+    if (found.dir.isEmpty())
+        return;
+
+    m_installedDir = found.dir;
+    m_installedName = found.name;
+    if (m_installedBadge) {
+        m_installedBadge->setText(tr("已安装 ✓"));
+        m_installedBadge->setToolTip(tr("该资源已安装到实例：%1").arg(found.name));
+        m_installedBadge->show();
     }
 }

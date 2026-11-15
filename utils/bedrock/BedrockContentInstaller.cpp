@@ -332,7 +332,9 @@ namespace BedrockContentInstaller {
 PackKind classifyFile(const QString &fileName)
 {
     const QString lower = fileName.toLower();
-    if (lower.endsWith(QStringLiteral(".mcworld")))
+    // .mctemplate 与 .mcworld 同为含 level.dat 的世界压缩包，走同一安装路径
+    if (lower.endsWith(QStringLiteral(".mcworld")) ||
+        lower.endsWith(QStringLiteral(".mctemplate")))
         return PackKind::World;
     return PackKind::Unknown;
 }
@@ -446,6 +448,180 @@ bool installPack(const QString &packFile, const QString &comMojangDir, QString *
         if (errorMessage && errorMessage->isEmpty())
             *errorMessage = QStringLiteral("附加包安装失败");
         return false;
+    }
+    return true;
+}
+
+// ── 已装识别 / 卸载 ─────────────────────────────────────────────────────────
+
+namespace {
+
+/** 规范化名称：小写 + 只保留字母/数字/中日韩字符，用于安装名模糊比对 */
+QString normalizeDisplayName(const QString &raw)
+{
+    QString out;
+    out.reserve(raw.size());
+    for (const QChar ch : raw) {
+        const ushort u = ch.unicode();
+        if (ch.isLetterOrNumber() || (u >= 0x2E80 && u <= 0x9FFF) || (u >= 0x3000 && u <= 0x303F))
+            out.append(ch.toLower());
+    }
+    return out;
+}
+
+/** 读取 levelname.txt（新版本为 UTF-8，旧版本可能是 UTF-16LE） */
+QString readLevelName(const QString &levelNameFile)
+{
+    QFile f(levelNameFile);
+    if (!f.open(QIODevice::ReadOnly))
+        return QString();
+    const QByteArray raw = f.readAll();
+    f.close();
+    if (raw.contains('\0'))
+        return QString::fromUtf16(reinterpret_cast<const char16_t *>(raw.constData()),
+                                  raw.size() / 2);
+    return QString::fromUtf8(raw).trimmed();
+}
+
+/** 从 development_*.json 里移除指定 uuid 的登记 */
+bool unregisterPack(const QString &comMojangDir, const QString &packId, bool behavior, QString *err)
+{
+    const QString filePath = comMojangDir
+        + (behavior ? QStringLiteral("/development_behavior_packs.json")
+                    : QStringLiteral("/development_resource_packs.json"));
+    QFile file(filePath);
+    if (!file.exists())
+        return true;
+    if (!file.open(QIODevice::ReadOnly))
+        return true; // 登记读不出来不阻塞删除，只是留着无害的旧条目
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    file.close();
+    if (parseError.error != QJsonParseError::NoError || !doc.isArray())
+        return true;
+
+    QJsonArray entries = doc.array();
+    QJsonArray kept;
+    for (const QJsonValue &v : entries) {
+        if (v.toObject().value(QStringLiteral("pack_id")).toString() != packId)
+            kept.append(v);
+    }
+    if (kept.size() == entries.size())
+        return true; // 没有要清的条目，不必回写
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (err) *err = QStringLiteral("无法更新登记文件 %1").arg(filePath);
+        return false;
+    }
+    file.write(QJsonDocument(kept).toJson(QJsonDocument::Indented));
+    file.close();
+    return true;
+}
+
+} // namespace
+
+InstalledPackInfo findInstalledPack(const QString &comMojangDir, const QString &displayName)
+{
+    InstalledPackInfo info;
+    const QString want = normalizeDisplayName(displayName);
+    if (comMojangDir.isEmpty() || want.isEmpty())
+        return info;
+
+    // 资源包 / 行为包 / 皮肤包：读各子目录 manifest.json 的 header.name
+    const QStringList packDirs = {
+        QStringLiteral("resource_packs"),
+        QStringLiteral("behavior_packs"),
+        QStringLiteral("skin_packs"),
+    };
+    for (const QString &sub : packDirs) {
+        const QDir base(comMojangDir + QLatin1Char('/') + sub);
+        if (!base.exists())
+            continue;
+        const QStringList entries = base.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QString &entry : entries) {
+            const QString manifestPath = base.filePath(entry) + QStringLiteral("/manifest.json");
+            QFile mf(manifestPath);
+            if (!mf.open(QIODevice::ReadOnly))
+                continue;
+            QJsonParseError parseError;
+            QJsonDocument doc = QJsonDocument::fromJson(mf.readAll(), &parseError);
+            mf.close();
+            if (parseError.error != QJsonParseError::NoError || !doc.isObject())
+                continue;
+            const QString name = doc.object().value(QStringLiteral("header")).toObject()
+                                     .value(QStringLiteral("name")).toString();
+            if (name.isEmpty() || normalizeDisplayName(name) != want)
+                continue;
+            info.dir = base.filePath(entry);
+            info.name = name;
+            info.uuid = doc.object().value(QStringLiteral("header")).toObject()
+                            .value(QStringLiteral("uuid")).toString();
+            return info;
+        }
+    }
+
+    // 世界：读各子目录 levelname.txt
+    const QDir worlds(comMojangDir + QStringLiteral("/minecraftWorlds"));
+    if (worlds.exists()) {
+        const QStringList entries = worlds.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QString &entry : entries) {
+            const QString name = readLevelName(worlds.filePath(entry) + QStringLiteral("/levelname.txt"));
+            if (name.isEmpty() || normalizeDisplayName(name) != want)
+                continue;
+            info.dir = worlds.filePath(entry);
+            info.name = name;
+            return info;
+        }
+    }
+    return info;
+}
+
+bool removeInstalledPack(const QString &installedDir, const QString &comMojangDir, QString *errorMessage)
+{
+    const QDir rootDir(comMojangDir);
+    const QFileInfo fi(installedDir);
+    const QString parentName = fi.dir().dirName();
+    const QStringList allowedParents = {
+        QStringLiteral("resource_packs"),
+        QStringLiteral("behavior_packs"),
+        QStringLiteral("skin_packs"),
+        QStringLiteral("minecraftWorlds"),
+    };
+    // 只允许删除 com.mojang 四个资源目录的直接子目录，防止把任意路径当安装目录删掉
+    if (!Safety::isPathInside(comMojangDir, fi.absoluteFilePath())
+        || !allowedParents.contains(parentName)
+        || QDir::cleanPath(fi.dir().absolutePath()) != QDir::cleanPath(rootDir.absolutePath() + QLatin1Char('/') + parentName)) {
+        if (errorMessage) *errorMessage = QStringLiteral("安装目录校验失败，拒绝删除: %1").arg(installedDir);
+        return false;
+    }
+
+    // 包目录先读出 uuid 清理登记，再整目录删除
+    QString uuid;
+    bool behavior = (parentName == QStringLiteral("behavior_packs"));
+    bool resource = (parentName == QStringLiteral("resource_packs"));
+    if (behavior || resource) {
+        QFile mf(fi.absoluteFilePath() + QStringLiteral("/manifest.json"));
+        if (mf.open(QIODevice::ReadOnly)) {
+            QJsonParseError parseError;
+            QJsonDocument doc = QJsonDocument::fromJson(mf.readAll(), &parseError);
+            mf.close();
+            if (parseError.error == QJsonParseError::NoError && doc.isObject())
+                uuid = doc.object().value(QStringLiteral("header")).toObject()
+                           .value(QStringLiteral("uuid")).toString();
+        }
+    }
+
+    if (!QDir(installedDir).removeRecursively()) {
+        if (errorMessage) *errorMessage = QStringLiteral("删除旧版本目录失败: %1").arg(installedDir);
+        return false;
+    }
+
+    if (!uuid.isEmpty()) {
+        QString regErr;
+        unregisterPack(comMojangDir, uuid, behavior, &regErr);
+        if (!regErr.isEmpty() && errorMessage)
+            *errorMessage = regErr;
     }
     return true;
 }

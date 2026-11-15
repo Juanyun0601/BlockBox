@@ -1,5 +1,6 @@
 #include "InstanceLogPage.h"
 #include <QFileDialog>
+#include "components/AppMessageBox.h"
 #include "utils/ThemeManager.h"
 
 #include <QVBoxLayout>
@@ -263,7 +264,7 @@ void InstanceLogPage::exportLog()
     QString plainText = view->toPlainText();
     if (plainText.isEmpty())
     {
-        QMessageBox::information(this, tr("导出日志"), tr("日志为空，无法导出"));
+        AppMessageBox::information(this, tr("导出日志"), tr("日志为空，无法导出"));
         return;
     }
 
@@ -284,7 +285,7 @@ void InstanceLogPage::exportLog()
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
     {
-        QMessageBox::warning(this, tr("导出日志"),
+        AppMessageBox::warning(this, tr("导出日志"),
             tr("无法写入文件: %1").arg(file.errorString()));
         return;
     }
@@ -293,6 +294,6 @@ void InstanceLogPage::exportLog()
     stream << plainText;
     file.close();
 
-    QMessageBox::information(this, tr("导出日志"),
+    AppMessageBox::information(this, tr("导出日志"),
         tr("日志已成功导出到:\n%1").arg(filePath));
 }

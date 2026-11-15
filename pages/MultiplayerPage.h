@@ -42,6 +42,7 @@
 
 class HongshiClient;
 class TerracottaClient;
+class QFrame;
 
 class MultiplayerPage : public QWidget
 {
@@ -113,6 +114,13 @@ private:
     void openFrpPanel();             ///< 打开当前服务商官网面板
     void pickFrpcManually();         ///< 手动选择 frpc 程序导入
 
+    // ---- 加入房间（邀请码就地输入，不弹窗） ----
+    void showJoinCard();    ///< 展开邀请码输入卡，焦点落到输入框
+    void hideJoinCard();    ///< 收起邀请码输入卡
+    void submitJoinCode();  ///< 校验邀请码并加入房间，出错就地提示
+    /// 输入卡里的说明 / 错误文案（空文本回到默认说明）
+    void setJoinHintText(const QString &text, bool error = false);
+
     bool hongshiActive() const;  ///< 当前是否选择红石联机核心
     bool frpActive() const;      ///< 当前是否选择 frp 服务商核心（樱花/OpenFrp）
     FrpManager::Provider frpProvider() const; ///< 当前 frp 服务商
@@ -128,12 +136,32 @@ private:
     void refreshPublishButtons();
     void ensurePublishStillValid();
     QStringList instanceMods() const;
+    /** 本机实例里带「辅助」标签的模组（本地分类名含「辅助 / 工具」） */
+    QStringList instanceAuxMods() const;
     QString instanceDisplayName() const;
+    /**
+     * @brief 联机分享 / 发布大厅时用的显示名：该实例最近游玩的那个存档名
+     *
+     * 存档名优先取 level.dat 里的 LevelName，读不到用目录名；一个存档都没有时
+     * 才退回实例名（见 instanceDisplayName）。
+     */
+    QString latestSaveDisplayName() const;
 
     // ---- 创建分享链接 ----
     void onCreateShareLinkClicked();
+    /// 生成链接前先让房主写一句简要介绍（朋友打开邀请页时能看到），取消则返回 false
+    bool promptShareIntro(QString *description);
     /// 展示生成的链接：可复制，也能直接发给论坛好友
-    void showShareLinkDialog(const QString &title, const QString &link);
+    void showShareLinkDialog(const QString &title, const QString &link,
+                             const QString &description = QString());
+    /// 分享短链续期：房主联机期间每 40 秒一次，服务端 2 分钟没收到就会删掉
+    void startShareHeartbeat();
+    /**
+     * @brief 结束当前分享链接
+     * @param deleteRemote true = 顺便让服务端删掉那份房间信息（链接立刻提示联机已结束）
+     * @param refreshUi    false 时不动界面（页面正在销毁）
+     */
+    void stopShareLink(bool deleteRemote, bool refreshUi = true);
 
     /// 弹出对话框提示（非左下卡片）
     void showInfoDialog(const QString &title, const QString &text);
@@ -156,6 +184,15 @@ private:
     int m_publishedRoomId = 0;
     QString m_publishedCore;
     QString m_publishedJoin;
+
+    // ---- 分享短链（房间信息存在论坛上，链接里只有房间号） ----
+    QTimer *m_shareHeartbeatTimer = nullptr; ///< 分享短链续期定时器（40 秒一次）
+    QString m_shareToken;                    ///< 当前分享链接的房间号
+    QString m_shareSecret;                   ///< 续期 / 删除凭据（服务端只认它）
+    QString m_shareCore;                     ///< 生成链接时的联机核心
+    QString m_shareJoin;                     ///< 生成链接时的邀请码 / 连接地址
+    QString m_shareDescription;              ///< 生成链接时房主写的简要介绍
+    bool m_shareBusy = false;                ///< 正在把房间信息传到论坛
 
     // ---- 当前实例上下文（发布时带上） ----
     QString m_instancePath;
@@ -198,13 +235,21 @@ private:
     QLabel *m_statusDot;          ///< 状态条小圆点（安装 / 运行中 / 异常）
     QLabel *m_statusLabel;        ///< 顶部状态文字
     QLabel *m_descLabel;          ///< 说明信息文字
-    QPushButton *m_joinBtn;       ///< 加入房间
+    QPushButton *m_joinBtn;       ///< 加入房间（展开邀请码输入卡）
     QPushButton *m_createBtn;     ///< 创建房间
+
+    // ---- 陶瓦联机：加入房间输入卡（就地输入邀请码，不弹窗） ----
+    QFrame *m_joinCard;           ///< 输入卡整块
+    QLineEdit *m_joinCodeEdit;    ///< 邀请码输入框
+    QLabel *m_joinHint;           ///< 卡片里的说明 / 错误提示
+    QPushButton *m_joinConfirmBtn;///< 卡片里的「加入」
+    QPushButton *m_joinCancelBtn; ///< 卡片里的「取消」
 
     // ---- 陶瓦联机：房间页控件 ----
     QWidget *m_roomPage;
     QLabel *m_latencyDot;         ///< 联机状态小圆点
     QLabel *m_latencyLabel;       ///< 顶部延迟和联机时间
+    QFrame *m_codeCard = nullptr; ///< 邀请码卡片整块（只给房主看，客人进房后收起）
     QLabel *m_roomCodeLabel;      ///< 大大的房间邀请码
     QPushButton *m_copyCodeBtn;   ///< 复制邀请码
     QPushButton *m_leaveBtn;      ///< 离开房间按钮

@@ -1,12 +1,16 @@
 <?xml version="1.0"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.blockbox.launcher"
-    android:versionCode="9"
-    android:versionName="beta7.1"
+    android:versionCode="11"
+    android:versionName="beta9"
     android:installLocation="auto">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 联机保活：陶瓦联机核心与虚拟网卡随前台服务常驻，切到游戏后不被系统回收 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -36,6 +40,7 @@
             android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/AppTheme"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -58,11 +63,18 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- 陶瓦联机（Terracotta）：EasyTier 在安卓上需要 VpnService 提供 TUN 网卡 -->
+        <!-- 陶瓦联机（Terracotta）：EasyTier 在安卓上需要 VpnService 提供 TUN 网卡。
+             建立隧道后转为前台服务常驻：用户切到游戏里时启动器进程退到后台，
+             若没有前台服务保活，进程可能被系统回收，联机随之中断。
+             targetSdk 34 要求前台服务声明类型；specialUse 需附带用途说明属性 -->
         <service
             android:name="com.blockbox.launcher.TerracottaVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse"
             android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Minecraft multiplayer tunnel: keeps the VPN-based LAN connection alive while the user plays the game" />
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>

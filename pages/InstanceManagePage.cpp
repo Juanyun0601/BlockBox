@@ -386,6 +386,9 @@ void InstanceManagePage::initUI()
     m_contentStack->addWidget(m_recordingsPage); // index 16
     connect(m_recordingsPage, &InstanceRecordingsPage::quickInstallModRequested,
             this, &InstanceManagePage::quickInstallModRequested);
+    // 录像卡片「一键加入」：与服务器管理页共用同一条快捷进服链路
+    connect(m_recordingsPage, &InstanceRecordingsPage::quickJoinServerRequested,
+            this, &InstanceManagePage::quickLaunchServerRequested);
 
     m_contentStack->setCurrentIndex(0);
     mainLayout->addWidget(m_contentStack);
@@ -435,6 +438,9 @@ void InstanceManagePage::refresh()
     // 目前仅日志页需要手动刷新（页面内不再放刷新按钮，统一走顶栏）
     if (m_contentStack && m_contentStack->currentIndex() == 13 && m_logPage)
         m_logPage->loadGameLog();
+    // 服务器页：顶栏刷新 = 重新扫描游戏内添加的服务器
+    if (m_contentStack && m_contentStack->currentIndex() == 8 && m_serverPage)
+        m_serverPage->refresh();
     // 存档地图页：顶栏刷新 = 重新渲染当前维度
     if (m_contentStack && m_contentStack->currentIndex() == 15 && m_worldMapPage)
         m_worldMapPage->refresh();

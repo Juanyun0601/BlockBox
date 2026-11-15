@@ -813,6 +813,7 @@ void UpdateChecker::checkForUpdates(QWidget *parent, bool silent)
 void UpdateChecker::fetchLatest()
 {
     m_attempt = 0;
+    m_fallbackCandidate = ReleaseCandidate{};
     issueRequest();
 }
 
@@ -919,13 +920,50 @@ void UpdateChecker::handleReply(QNetworkReply *reply)
     if (errorText.isEmpty() && !chosen.isValid() && m_attempt == 0)
         errorText = tr("官网源暂无版本数据");
 
-    // 请求失败时按 直连 -> 加速节点 -> 默认镜像 依次重试
-    const bool failed = !errorText.isEmpty();
-    if (failed && m_attempt < kMaxAttempts - 1) {
+    // 后续源拿来了同一个版本的安装包：版本号、更新说明、标题一律保留官网那份，
+    // 只借用它的下载地址与指纹（官网版本发布里的说明才是维护过的那一份）
+    if (m_fallbackCandidate.isValid() && chosen.isValid() && !chosen.assetUrl.isEmpty()) {
+        const int order = compareVersions(parseVersion(m_fallbackCandidate.version),
+                                          parseVersion(chosen.version));
+        if (order == 0) {
+            const ReleaseCandidate assetSource = chosen;
+            chosen = m_fallbackCandidate;
+            chosen.assetUrl = assetSource.assetUrl;
+            chosen.assetName = assetSource.assetName;
+            chosen.assetDigest = assetSource.assetDigest;
+        } else if (order > 0) {
+            // 后面的源只发布了更旧的包：宁可不提供应用内更新，也不能装回旧版本
+            chosen = m_fallbackCandidate;
+        }
+    }
+
+    // 版本信息有了、但这份清单里没有当前平台能装的包（例如官网后台只传了安装版
+    // setup.exe，没传绿色版 portable.zip）：接着问后面的源要下载地址，
+    // 否则绿色版用户只能看到「前往浏览器下载」，没有一键更新的入口
+    if (errorText.isEmpty() && chosen.isValid() && chosen.assetUrl.isEmpty()
+        && !platformAssetSuffix().isEmpty() && m_attempt < kMaxAttempts - 1
+        && !m_fallbackCandidate.isValid()) {
+        m_fallbackCandidate = chosen;
         ++m_attempt;
         issueRequest();
         return;
     }
+
+    // 请求失败时按 直连 -> 加速节点 -> 默认镜像 依次重试
+    if (!errorText.isEmpty() && m_attempt < kMaxAttempts - 1) {
+        ++m_attempt;
+        issueRequest();
+        return;
+    }
+
+    // 重试链走完仍拿不到下载地址（GitHub 被墙等）：退回官网那份版本信息，
+    // 至少能正常提示「有新版本」并给出浏览器下载入口，而不是报检查更新失败
+    if (!errorText.isEmpty() && m_fallbackCandidate.isValid() && !chosen.isValid()) {
+        chosen = m_fallbackCandidate;
+        errorText.clear();
+    }
+
+    const bool failed = !errorText.isEmpty();
 
     const bool hasUpdate = !failed && chosen.isValid()
         && compareVersions(parseVersion(AppVersion::current()),
@@ -973,8 +1011,12 @@ void UpdateChecker::showUpdateDialog(const ReleaseCandidate &release)
     const QString versionLabel = release.isBeta
         ? tr("%1（测试版）").arg(release.version)
         : release.version;
-    QString text = tr("发现新版本 %1，当前版本为 %2，是否前往下载？")
-                       .arg(versionLabel, AppVersion::current());
+    const bool canUpdateInApp = !release.assetUrl.isEmpty();
+    QString text = canUpdateInApp
+        ? tr("发现新版本 %1，当前版本为 %2，是否现在下载更新？")
+              .arg(versionLabel, AppVersion::current())
+        : tr("发现新版本 %1，当前版本为 %2，是否前往下载？")
+              .arg(versionLabel, AppVersion::current());
     if (!release.releaseName.isEmpty() && release.releaseName != release.version)
         text += QStringLiteral("\n\n[%1]").arg(release.releaseName);
 
@@ -992,13 +1034,15 @@ void UpdateChecker::showUpdateDialog(const ReleaseCandidate &release)
                                        .arg(tr("更新说明"), notes));
     }
 
-    // 应用内更新可用时提供"更新"按钮：后台下载，进度显示在侧边栏圆形按钮上
+    // 应用内更新可用时提供「一键下载」按钮：后台下载，进度显示在侧边栏圆形按钮上
     QPushButton *updateBtn = nullptr;
-    if (!release.assetUrl.isEmpty()) {
+    if (canUpdateInApp) {
         const bool alreadyDownloaded = m_downloadState == DownloadCompleted
             && QFile::exists(m_downloadPath);
-        updateBtn = box.addButton(alreadyDownloaded ? tr("重启安装") : tr("更新"),
+        updateBtn = box.addButton(alreadyDownloaded ? tr("重启安装") : tr("一键下载更新"),
                                   AppMessageBox::AcceptRole);
+        if (!alreadyDownloaded)
+            updateBtn->setToolTip(tr("自动下载并校验更新包，完成后点侧边栏的下载按钮重启安装"));
     }
     QPushButton *downloadPageBtn = box.addButton(tr("前往浏览器下载"), AppMessageBox::ActionRole);
     box.addButton(tr("以后再说"), AppMessageBox::RejectRole);
@@ -1205,6 +1249,9 @@ void UpdateChecker::beginDownloadAttempt()
         return;
     }
     m_received = 0;
+    // 每次（含重试）真正开始下载前先报一次"未知进度"：
+    // 侧边栏圆环会退回旋转状态，不会卡在上一轮的弧长上不动
+    emit downloadProgress(0, 0);
     issueDownloadRequest();
 }
 
@@ -1216,8 +1263,12 @@ void UpdateChecker::issueDownloadRequest()
     QNetworkReply *reply = m_nam->get(req);
 
     connect(reply, &QNetworkReply::downloadProgress, this,
-            [this](qint64 received, qint64 total) {
+            [this, reply](qint64 received, qint64 total) {
         m_received = received;
+        // 少数加速节点/镜像走分块传输，进度信号里的总大小是 -1；
+        // 这时退回响应头的 Content-Length，尽量让侧边栏圆环显示真实百分比
+        if (total <= 0)
+            total = reply->header(QNetworkRequest::ContentLengthHeader).toLongLong();
         // 进度信号限流：每 100ms 才向 UI 广播一次，避免高刷下载刷爆重绘
         if (m_progressThrottle.isValid() && m_progressThrottle.elapsed() < 100
             && (total <= 0 || received < total))
@@ -1226,8 +1277,14 @@ void UpdateChecker::issueDownloadRequest()
         emit downloadProgress(received, total);
     });
     connect(reply, &QNetworkReply::readyRead, this, [this, reply]() {
-        if (m_downloadFile)
-            m_downloadFile->write(reply->readAll());
+        if (!m_downloadFile)
+            return;
+        // 磁盘满等写入失败必须当场中断：静默截断的安装包装一半必炸
+        const qint64 written = m_downloadFile->write(reply->readAll());
+        if (written < 0) {
+            qWarning() << "[Update] 更新包写入失败，中断本次下载：" << m_downloadFile->errorString();
+            reply->abort();
+        }
     });
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         handleDownloadReply(reply);

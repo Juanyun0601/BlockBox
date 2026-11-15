@@ -40,6 +40,20 @@ public:
     /** 设置当前实例路径，用于后续日志/资源定位 */
     void setInstancePath(const QString &path);
 
+signals:
+    /**
+     * @brief 实时性能数据：每秒（帧率）与每次硬件采样（CPU/内存/GPU）后发出
+     *
+     * 实例助手悬浮窗收起时用它在标题栏右侧显示一行小数据，避免为了看一眼
+     * 占用率再把窗口展开。
+     * @param fps        游戏帧率（0 表示没开游戏或暂不可用）
+     * @param cpuPercent CPU 占用率
+     * @param memoryPercent 内存占用率
+     * @param gpuPercent GPU 占用率
+     */
+    void liveStatsChanged(int fps, int cpuPercent, int memoryPercent, int gpuPercent,
+                          bool cpuAvailable, bool memoryAvailable, bool gpuAvailable);
+
 private slots:
     /** 每秒触发：刷新当前时间、游玩时间、帧率与游戏状态 */
     void onSecondTick();
@@ -65,6 +79,8 @@ private:
 #endif
     /** 估算游戏窗口帧率（DWM 合成帧数增量） */
     int queryGameFps();
+    /** 汇总当前缓存的实时数据并发出 liveStatsChanged */
+    void emitLiveStats();
 
     // ---- 游玩信息控件 ----
     QLabel *m_currentTimeValue;    ///< 当前时间数值
@@ -83,6 +99,15 @@ private:
     qint64 m_gameStartTimeMs;      ///< 游戏进程启动时间（毫秒，UTC epoch）
     bool m_gameRunning = false;    ///< 上一次 tick 检测到的游戏运行状态（用于状态跳变检测）
     qint64 m_cachedGamePid = 0;    ///< 缓存的游戏进程 PID（深度检测结果，避免每秒查 PowerShell）
+
+    // ---- 实时数据缓存（供 liveStatsChanged 汇总） ----
+    int m_liveFps = 0;
+    int m_liveCpuPercent = 0;
+    int m_liveMemoryPercent = 0;
+    int m_liveGpuPercent = 0;
+    bool m_liveCpuAvailable = false;
+    bool m_liveMemoryAvailable = false;
+    bool m_liveGpuAvailable = false;
 
 #ifdef Q_OS_WIN
     HWND m_gameWnd;                ///< 上次缓存的游戏窗口句柄

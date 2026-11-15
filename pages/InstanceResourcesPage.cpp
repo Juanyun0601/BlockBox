@@ -12,6 +12,7 @@
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
+#include "utils/LocalFavoritesManager.h"
 #include "utils/mod/ModNameFetcher.h"
 #include "utils/mod/ModScanner.h"
 
@@ -383,6 +384,9 @@ void InstanceResourcesPage::setupConnections()
             this, &InstanceResourcesPage::onCategoriesChanged);
     connect(m_categoryManager, &LocalCategoryManager::assignmentsChanged,
             this, &InstanceResourcesPage::onAssignmentsChanged);
+    // 本地收藏增删（含账户页移除）：同步刷新卡片星标
+    connect(LocalFavoritesManager::instance(), &LocalFavoritesManager::favoritesChanged,
+            this, &InstanceResourcesPage::refreshCardFavButtons);
     connect(m_selectAllBtn, &QPushButton::clicked, this, &InstanceResourcesPage::onSelectAllClicked);
     connect(m_openFolderBtn, &QPushButton::clicked, this, &InstanceResourcesPage::onOpenFolderClicked);
     connect(m_pasteBtn, &QPushButton::clicked, this, &InstanceResourcesPage::onPasteFileClicked);
@@ -872,6 +876,21 @@ QWidget *InstanceResourcesPage::createModCard(const ModInfo &info)
         return btn;
     };
 
+    // 收藏星标按钮：金色 = 已收藏（状态由 localFavTag 属性标记，增删后统一刷新）
+    {
+        QPushButton *favBtn = createBtn(":/Images/Icons/star.svg", tr("收藏"), themeColor);
+        favBtn->setProperty("localFavTag", LocalCategoryManager::normalizeFileName(info.fileName));
+        setFavButtonVisual(favBtn, LocalFavoritesManager::instance()->isFavorite(
+                                       m_instancePath, subDirName(), info.fileName));
+        connect(favBtn, &QPushButton::clicked, this, [this, info]() {
+            QString displayName = info.chineseName.isEmpty()
+                ? (info.englishName.isEmpty() ? info.name : info.englishName)
+                : info.chineseName;
+            toggleFileFavorite(info.filePath, info.fileName, info.fileSize, displayName);
+        });
+        cardLayout->addWidget(favBtn);
+    }
+
     // 问问AI 按钮：跳转 AI 助手并引用该本地资源
     {
         QPushButton *askAiBtn = createBtn(":/Images/Icons/nav_ai.svg", tr("问问AI"), themeColor);
@@ -1133,6 +1152,18 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
         btn->setIconSize(QSize(16, 16));
         return btn;
     };
+
+    // 收藏星标按钮：金色 = 已收藏（状态由 localFavTag 属性标记，增删后统一刷新）
+    {
+        QPushButton *favBtn = createBtn(":/Images/Icons/star.svg", tr("收藏"), themeColor);
+        favBtn->setProperty("localFavTag", LocalCategoryManager::normalizeFileName(entry.fileName));
+        setFavButtonVisual(favBtn, LocalFavoritesManager::instance()->isFavorite(
+                                       m_instancePath, subDirName(), entry.fileName));
+        connect(favBtn, &QPushButton::clicked, this, [this, entry]() {
+            toggleFileFavorite(entry.filePath, entry.fileName, entry.fileSize);
+        });
+        cardLayout->addWidget(favBtn);
+    }
 
     // 快捷启动按钮（仅存档）：启动游戏并直接进入该存档
     if (m_currentType == TypeSave)
@@ -1909,6 +1940,12 @@ void InstanceResourcesPage::onModContextMenu(const QPoint &pos, int idx)
 
     QMenu menu(this);
     QAction *toggleAction = menu.addAction(info.enabled ? tr("禁用模组") : tr("启用模组"));
+
+    // 收藏 / 取消收藏（本地收藏，账户页「我的收藏 → 本地收藏」可见）
+    const bool fav = LocalFavoritesManager::instance()->isFavorite(
+        m_instancePath, subDirName(), info.fileName);
+    QAction *favAction = menu.addAction(fav ? tr("取消收藏") : tr("收藏"));
+
     menu.addSeparator();
 
     // ── 设置分类子菜单 ──
@@ -1985,6 +2022,13 @@ void InstanceResourcesPage::onModContextMenu(const QPoint &pos, int idx)
             refreshList();
         }
     }
+    else if (chosen == favAction)
+    {
+        QString displayName = info.chineseName.isEmpty()
+            ? (info.englishName.isEmpty() ? info.name : info.englishName)
+            : info.chineseName;
+        toggleFileFavorite(info.filePath, info.fileName, info.fileSize, displayName);
+    }
     else if (chosen == detailAction)
     {
         emit modDetailRequested(info);
@@ -2039,6 +2083,11 @@ void InstanceResourcesPage::showFileContextMenu(const QPoint &pos, int idx)
 
     QMenu menu(this);
 
+    // 收藏 / 取消收藏（本地收藏，账户页「我的收藏 → 本地收藏」可见）
+    const bool fav = LocalFavoritesManager::instance()->isFavorite(
+        m_instancePath, subDirName(), entry.fileName);
+    QAction *favAction = menu.addAction(fav ? tr("取消收藏") : tr("收藏"));
+
     // ── 设置分类子菜单 ──
     QMenu *categoryMenu = menu.addMenu(tr("设置分类"));
     {
@@ -2088,7 +2137,11 @@ void InstanceResourcesPage::showFileContextMenu(const QPoint &pos, int idx)
     QAction *deleteAction = menu.addAction(tr("删除%1").arg(typeDisplayName()));
 
     QAction *chosen = menu.exec(card->mapToGlobal(pos));
-    if (chosen == openFolderAction)
+    if (chosen == favAction)
+    {
+        toggleFileFavorite(entry.filePath, entry.fileName, entry.fileSize);
+    }
+    else if (chosen == openFolderAction)
     {
         QFileInfo fi(entry.filePath);
         QString dirPath = fi.isDir() ? entry.filePath : fi.absolutePath();
@@ -2240,6 +2293,67 @@ void InstanceResourcesPage::onAssignmentsChanged()
     refreshCardCategoryChips();
     applyFilterAndSearch();
     updateStatsLabel();
+}
+
+// ── 本地资源收藏 ──────────────────────────────────────────────
+
+void InstanceResourcesPage::toggleFileFavorite(const QString &filePath, const QString &fileName,
+                                               qint64 fileSize, const QString &displayName)
+{
+    LocalFavoriteEntry entry;
+    entry.instancePath = m_instancePath;
+    entry.resourceType = subDirName();
+    entry.fileName = fileName;
+    if (!displayName.isEmpty())
+    {
+        entry.displayName = displayName;
+    }
+    else
+    {
+        QString derived = fileName;
+        if (derived.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+            derived.chop(9);
+        entry.displayName = derived;
+    }
+    entry.filePath = filePath;
+    entry.fileSize = fileSize;
+
+    auto *mgr = LocalFavoritesManager::instance();
+    const bool fav = mgr->isFavorite(m_instancePath, subDirName(), fileName);
+    mgr->setFavorite(entry, !fav);
+}
+
+void InstanceResourcesPage::setFavButtonVisual(QPushButton *btn, bool fav)
+{
+    if (!btn)
+        return;
+    if (fav)
+    {
+        btn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/star.svg", QColor("#FFB300"), 16));
+        btn->setToolTip(tr("取消收藏"));
+    }
+    else
+    {
+        btn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/star.svg", ThemeManager::instance()->currentThemeColor(), 16));
+        btn->setToolTip(tr("收藏"));
+    }
+}
+
+void InstanceResourcesPage::refreshCardFavButtons()
+{
+    auto *mgr = LocalFavoritesManager::instance();
+    for (QWidget *card : m_cardWidgets)
+    {
+        const QList<QPushButton *> btns = card->findChildren<QPushButton *>();
+        for (QPushButton *btn : btns)
+        {
+            const QVariant tag = btn->property("localFavTag");
+            if (!tag.isValid() || tag.toString().isEmpty())
+                continue;
+            setFavButtonVisual(btn, mgr->isFavorite(m_instancePath, subDirName(), tag.toString()));
+        }
+    }
 }
 
 void InstanceResourcesPage::refreshCardCategoryChips()

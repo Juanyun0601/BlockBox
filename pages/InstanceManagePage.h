@@ -37,6 +37,8 @@ public:
     void setCurrentTab(int index);
 
     void setCurrentInstancePath(const QString &instancePath);
+    /** 当前已应用到各子页的实例路径（主窗口据此判断是否需要重新同步） */
+    QString currentInstancePath() const { return m_currentInstancePath; }
     void setInstanceName(const QString &name);
     void setInstanceIcon(const QString &iconPath);
     void setGameVersion(const QString &version);

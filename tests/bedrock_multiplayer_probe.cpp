@@ -104,7 +104,15 @@ int main(int argc, char *argv[])
     guest.clientId = QStringLiteral("b");
     players << guest;
     GravityConeClient::instance()->m_players = players;
+    // 本机进房间时报的名字：列表里要把这张卡片认成自己并标出来
+    GravityConeClient::instance()->m_localPlayerName = QStringLiteral("小明");
     page.refreshPlayerList();
+    pump();
+    int selfChips = 0;
+    for (QLabel *label : page.m_playersContainer->findChildren<QLabel *>())
+        if (label->text() == QStringLiteral("本机"))
+            ++selfChips;
+    expect("自己的卡片带「本机」标记", selfChips == 1);
 
     page.m_statusLabel->setText(QStringLiteral("联机核心已就绪（v1.2.3）"));
     page.m_latencyLabel->setText(QStringLiteral("房主就绪 | 联机时间 08:42"));

@@ -78,7 +78,10 @@ components/CustomCheckBox.cpp \
      components/InstanceFolderTree.cpp \
     components/LanTransferDialog.cpp \
     components/ShareToFriendDialog.cpp \
+    components/ThreadTipDialog.cpp \
     components/CreateGroupDialog.cpp \
+    components/ChatForwardDialog.cpp \
+    components/ChatBookmarkDialog.cpp \
      components/DownloadTaskCard.cpp \
      components/TaskProgressWidgets.cpp \
 components/ProgressWidget.cpp \
@@ -90,6 +93,7 @@ components/ProgressDialog.cpp \
      components/AppMessageBox.cpp \
      components/AppDialogBase.cpp \
      components/LobbyPublishDialog.cpp \
+     components/LobbyJoinPrepDialog.cpp \
      components/WorldConvertDialog.cpp \
      components/HighRiskConfirmDialog.cpp \
      components/QuizDialog.cpp \
@@ -121,9 +125,12 @@ components/ProgressDialog.cpp \
      components/ResourceReferenceDialog.cpp \
      components/StructureDetailDialog.cpp \
      components/FavoriteFolderDialog.cpp \
+     components/ContentCategoryFilterDialog.cpp \
      components/ContentViewSwitch.cpp \
+     components/ModRelationDialog.cpp \
      components/SourceSwitchBar.cpp \
      components/MasonryContentCard.cpp \
+     components/CardSelectionOverlay.cpp \
      components/TranslateSwitchCard.cpp \
      components/AutoHeightTextBrowser.cpp \
      components/CardListTranslator.cpp \
@@ -136,8 +143,10 @@ components/ProgressDialog.cpp \
      components/VoxelViewWidget.cpp \
     components/WorldMap3DView.cpp \
 components/ProjectionBlockEditorDialog.cpp \
+components/OrthoViewsPreviewDialog.cpp \
      components/HomeDataVisuals.cpp \
      components/HomeFriendsPanel.cpp \
+     components/HomeHotThreadsPanel.cpp \
      components/FileDropOverlay.cpp \
      components/InstanceSelectDialog.cpp \
      pages/ShaderPackSettingsPage.cpp \
@@ -163,7 +172,7 @@ pages/settings/SettingsAdvancedPage.cpp \
      pages/settings/SettingsAboutPage.cpp \
      pages/InstanceSelectPage.cpp \
     pages/LanTransferPage.cpp \
-    pages/AddAccountDialog.cpp \
+    pages/AddAccountPage.cpp \
     pages/ForumAccountPage.cpp \
     pages/AiChatPage.cpp \
      pages/InstanceManagePage.cpp \
@@ -196,6 +205,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/ForumAccountService.cpp \
     utils/HomeCarouselStore.cpp \
     utils/QuizBank.cpp \
+    utils/TriviaBank.cpp \
     utils/SkinDownloader.cpp \
     utils/SpeedCalculator.cpp \
     utils/SystemInfo.cpp \
@@ -291,6 +301,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/FavoritesManager.cpp \
     utils/ContentFavoriteSync.cpp \
     utils/LocalCategoryManager.cpp \
+    utils/LocalFavoritesManager.cpp \
     utils/mod/MCModAPI.cpp \
     utils/mod/SearchQueryResolver.cpp \
     utils/mod/ModScanner.cpp \
@@ -318,6 +329,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/Saves/LevelDatEditor.cpp \
     utils/ServersDatIO.cpp \
     utils/McServerPinger.cpp \
+    utils/WorldBackupManager.cpp \
     utils/WorldMap/WorldMapRenderer.cpp \
     utils/WorldMap/SeedTerrainRenderer.cpp \
     utils/WorldMap/TreePredictor.cpp \
@@ -345,6 +357,7 @@ utils/WorldMap/MineshaftModel.cpp \
     utils/Schematic/InstanceTextureLoader.cpp \
     utils/Schematic/BlockShapeLoader.cpp \
     utils/Schematic/InstanceBlockNames.cpp \
+    utils/Schematic/SchematicOrthoViewRenderer.cpp \
     utils/CommandAssistant/CommandDatabase.cpp \
     utils/CommandAssistant/CommandTranslator.cpp \
     utils/CommandAssistant/CommandCompleter.cpp \
@@ -354,6 +367,7 @@ utils/WorldMap/MineshaftModel.cpp \
     utils/CommandAssistant/CommandPack.cpp \
     utils/Terracotta/TerracottaClient.cpp \
     utils/Hongshi/HongshiClient.cpp \
+    utils/Hongshi/HongshiLobbyClient.cpp \
     utils/frp/FrpManager.cpp \
     utils/GravityCone/GravityConeClient.cpp \
     pages/MultiplayerPage.cpp \
@@ -382,22 +396,30 @@ utils/WorldMap/MineshaftModel.cpp \
     pages/ForumThreadListPage.cpp \
     pages/ForumComposerPage.cpp \
     pages/ForumUserProfilePage.cpp \
+    pages/CreationCenterPage.cpp \
+    pages/CreationWorkDetailPage.cpp \
     pages/ForumFriendsPage.cpp \
     pages/ForumPluginListPage.cpp \
     pages/MultiplayerLobbyPage.cpp \
+    pages/MultiplayerLobbyDetailPage.cpp \
     pages/FeedbackPage.cpp \
     pages/FeedbackComposePage.cpp \
     pages/ForumReportPage.cpp \
     utils/ForumContentService.cpp \
     utils/ForumLobbyService.cpp \
     utils/Lobby/LobbyInstanceMatcher.cpp \
+    utils/Lobby/LobbyContentFetcher.cpp \
     utils/Lobby/LobbyShareLink.cpp \
     utils/ForumChatService.cpp \
+    utils/ChatUiStore.cpp \
+    utils/ChatBookmarkStore.cpp \
     utils/FeedbackService.cpp \
     utils/ForumImageStore.cpp \
     components/ForumKit.cpp \
+    components/ForumLinkRowsEditor.cpp \
     components/ForumPostBrowser.cpp \
     components/PublishKit.cpp \
+    components/CommunityAgreementDialog.cpp \
     pages/PublishPage.cpp \
     pages/PublishResourcePage.cpp \
     pages/PublishPlatformPage.cpp \
@@ -419,7 +441,10 @@ components/CustomCheckBox.h \
      components/InstanceFolderTree.h \
     components/LanTransferDialog.h \
     components/ShareToFriendDialog.h \
+    components/ThreadTipDialog.h \
     components/CreateGroupDialog.h \
+    components/ChatForwardDialog.h \
+    components/ChatBookmarkDialog.h \
      components/DownloadTaskCard.h \
      components/TaskProgressWidgets.h \
 components/ProgressWidget.h \
@@ -431,6 +456,7 @@ components/ProgressDialog.h \
        components/AppMessageBox.h \
        components/AppDialogBase.h \
        components/LobbyPublishDialog.h \
+       components/LobbyJoinPrepDialog.h \
        components/WorldConvertDialog.h \
        components/HighRiskConfirmDialog.h \
        components/QuizDialog.h \
@@ -453,6 +479,7 @@ components/ProgressDialog.h \
        components/NewsCard.h \
      components/HomeAnnouncementBar.h \
      components/HomeFriendsPanel.h \
+     components/HomeHotThreadsPanel.h \
      components/NewsDetailDialog.h \
       components/PerfMonitorCard.h \
       components/PerformanceDetailDialog.h \
@@ -463,9 +490,12 @@ components/ProgressDialog.h \
        components/StructureDetailDialog.h \
        components/ResourceReferenceDialog.h \
         components/FavoriteFolderDialog.h \
+         components/ContentCategoryFilterDialog.h \
          components/ContentViewSwitch.h \
+         components/ModRelationDialog.h \
          components/SourceSwitchBar.h \
          components/MasonryContentCard.h \
+         components/CardSelectionOverlay.h \
          components/TranslateSwitchCard.h \
          components/AutoHeightTextBrowser.h \
          components/CardListTranslator.h \
@@ -478,6 +508,7 @@ components/ProgressDialog.h \
         components/VoxelViewWidget.h \
     components/WorldMap3DView.h \
 components/ProjectionBlockEditorDialog.h \
+components/OrthoViewsPreviewDialog.h \
          components/HomeDataVisuals.h \
          components/FileDropOverlay.h \
          components/InstanceSelectDialog.h \
@@ -491,7 +522,7 @@ components/ProjectionBlockEditorDialog.h \
     pages/SettingsPage.h \
     pages/InstanceSelectPage.h \
     pages/LanTransferPage.h \
-    pages/AddAccountDialog.h \
+    pages/AddAccountPage.h \
     pages/ForumAccountPage.h \
     pages/AiChatPage.h \
     pages/MicrosoftLoginDialog.h \
@@ -508,6 +539,7 @@ components/ProjectionBlockEditorDialog.h \
     utils/HomeCarouselStore.h \
     utils/PageFilter.h \
     utils/QuizBank.h \
+    utils/TriviaBank.h \
     utils/McimHelper.h \
     utils/SkinDownloader.h \
     utils/SpeedCalculator.h \
@@ -566,6 +598,7 @@ components/ProjectionBlockEditorDialog.h \
     utils/FavoritesManager.h \
     utils/ContentFavoriteSync.h \
     utils/LocalCategoryManager.h \
+    utils/LocalFavoritesManager.h \
     utils/fabric/FabricInstaller.h \
     utils/forge/ForgeDownloader.h \
     utils/forge/ForgeInstaller.h \
@@ -665,9 +698,11 @@ pages/ProjectionManagePage.h \
     utils/Schematic/InstanceTextureLoader.h \
     utils/Schematic/BlockShapeLoader.h \
     utils/Schematic/InstanceBlockNames.h \
+    utils/Schematic/SchematicOrthoViewRenderer.h \
     utils/Saves/LevelDatEditor.h \
     utils/ServersDatIO.h \
     utils/McServerPinger.h \
+    utils/WorldBackupManager.h \
     utils/WorldMap/WorldMapRenderer.h \
     utils/WorldMap/SeedTerrainRenderer.h \
     utils/WorldMap/TreePredictor.h \
@@ -696,6 +731,7 @@ utils/WorldMap/MineshaftModel.h \
     utils/CommandAssistant/CommandPack.h \
     utils/Terracotta/TerracottaClient.h \
     utils/Hongshi/HongshiClient.h \
+    utils/Hongshi/HongshiLobbyClient.h \
     utils/frp/FrpManager.h \
     utils/GravityCone/GravityConeClient.h \
     pages/MultiplayerPage.h \
@@ -726,22 +762,30 @@ utils/WorldMap/MineshaftModel.h \
     pages/ForumThreadListPage.h \
     pages/ForumComposerPage.h \
     pages/ForumUserProfilePage.h \
+    pages/CreationCenterPage.h \
+    pages/CreationWorkDetailPage.h \
     pages/ForumFriendsPage.h \
     pages/ForumPluginListPage.h \
     pages/MultiplayerLobbyPage.h \
+    pages/MultiplayerLobbyDetailPage.h \
     pages/FeedbackPage.h \
     pages/FeedbackComposePage.h \
     pages/ForumReportPage.h \
     utils/ForumContentService.h \
     utils/ForumLobbyService.h \
     utils/Lobby/LobbyInstanceMatcher.h \
+    utils/Lobby/LobbyContentFetcher.h \
     utils/Lobby/LobbyShareLink.h \
     utils/ForumChatService.h \
+    utils/ChatUiStore.h \
+    utils/ChatBookmarkStore.h \
     utils/FeedbackService.h \
     utils/ForumImageStore.h \
     components/ForumKit.h \
+    components/ForumLinkRowsEditor.h \
     components/ForumPostBrowser.h \
     components/PublishKit.h \
+    components/CommunityAgreementDialog.h \
     pages/PublishPage.h \
     pages/PublishResourcePage.h \
     pages/PublishPlatformPage.h \

@@ -29,6 +29,7 @@
 
 #include "utils/ForumContentService.h"
 #include "utils/FeedbackService.h"
+#include "utils/LocalFavoritesManager.h"
 
 #include "components/Skin3DWidget.h"
 
@@ -91,6 +92,9 @@ signals:
     void backToMainRequested();
     void accountManagePageOpened();
 
+    /** 资料卡点「创作中心」：打开自己发布作品的管理页 */
+    void creationCenterRequested();
+
     /** 角色页「添加角色」/ 空态按钮：弹出添加账户弹窗 */
     void addGameAccountRequested();
 
@@ -99,6 +103,9 @@ signals:
 
     /** 点击「我的收藏 → 资源收藏」里的一条资源：打开资源详情页 */
     void contentFavoriteOpenRequested(const ModInfo &info, ContentType type);
+
+    /** 点击「我的收藏 → 本地收藏」里的一条资源：模组打开本地详情，其余打开所在文件夹 */
+    void localFavoriteOpenRequested(const LocalFavoriteEntry &entry);
 
     /**
      * @brief 在「角色」页切换了游戏账户
@@ -123,8 +130,8 @@ private:
                         BookmarksContent = 3, NotificationsContent = 4, FeedbackContent = 5,
                         PointsContent = 6, SettingsContent = 7, LoggedOutContent = 8 };
     enum AuthMode { LoginMode = 0, RegisterMode = 1 };
-    /** 「我的收藏」页签内的子页：资源收藏（在线资源同步） / 帖子收藏（论坛主题） */
-    enum BookmarkSubTab { BookmarkResourceTab = 0, BookmarkThreadTab = 1 };
+    /** 「我的收藏」页签内的子页：资源收藏（在线资源同步） / 帖子收藏（论坛主题） / 本地收藏（实例资源） */
+    enum BookmarkSubTab { BookmarkResourceTab = 0, BookmarkThreadTab = 1, BookmarkLocalTab = 2 };
 
     struct Palette
     {
@@ -229,6 +236,8 @@ private:
     void setBookmarkSubTab(int subTab);
     void renderContentFavorites();
     void loadContentFavorites();
+    /** 「本地收藏」子页：实例内收藏的模组/存档/资源包等（LocalFavoritesManager，仅本地） */
+    void renderLocalFavorites();
     /** 移除一条资源收藏：云端删除 + 本地所有收藏夹同步移除 */
     void removeAccountContentFavorite(const FavoriteItem &item);
     /** 异步下载资源图标，成功后缓存并回填到 label */

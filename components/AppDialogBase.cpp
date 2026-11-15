@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QEvent>
+#include <QHideEvent>
 #include <QImage>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -20,6 +21,27 @@
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
+
+namespace {
+/// 所有存活的 AppDialogBase：安卓返回键需要找"当前最上层弹窗"来关闭，
+/// 覆盖层模式不是顶层窗口，topLevelWidgets() 找不到它们，只能自行登记。
+QList<AppDialogBase *> g_activeDialogs;
+} // namespace
+
+const QList<AppDialogBase *> &AppDialogBase::activeDialogs()
+{
+    return g_activeDialogs;
+}
+
+AppDialogBase *AppDialogBase::topMostVisibleDialog()
+{
+    // 叠放时后 show 的在上层：从登记表尾部往前找第一个可见的
+    for (int i = g_activeDialogs.size() - 1; i >= 0; --i) {
+        if (g_activeDialogs[i] && g_activeDialogs[i]->isVisible())
+            return g_activeDialogs[i];
+    }
+    return nullptr;
+}
 
 AppDialogBase::AppDialogBase(QWidget *parent)
     : QDialog(parent)
@@ -47,6 +69,13 @@ AppDialogBase::AppDialogBase(QWidget *parent)
     fitCardToScreen();
     positionOverWindow();
     setAttribute(Qt::WA_Moved, true);
+
+    g_activeDialogs.append(this);
+}
+
+AppDialogBase::~AppDialogBase()
+{
+    g_activeDialogs.removeOne(this);
 }
 
 int AppDialogBase::exec()
@@ -319,6 +348,17 @@ void AppDialogBase::showEvent(QShowEvent *event)
     });
 }
 
+void AppDialogBase::hideEvent(QHideEvent *event)
+{
+#ifdef Q_OS_ANDROID
+    // 覆盖层模式的弹窗关闭后把焦点还给宿主窗口：返回键、键盘唤起都
+    // 走焦点链，焦点若残留在已隐藏的弹窗上，后续按键会全部落空
+    if (QWidget *host = hostWindow())
+        host->activateWindow();
+#endif
+    QDialog::hideEvent(event);
+}
+
 bool AppDialogBase::eventFilter(QObject *watched, QEvent *event)
 {
     // 覆盖层模式：宿主窗口大小变化（旋转、软键盘收放）时跟着重新铺满，
@@ -355,7 +395,9 @@ void AppDialogBase::mousePressEvent(QMouseEvent *event)
 
 void AppDialogBase::keyPressEvent(QKeyEvent *event)
 {
-    if (event->key() == Qt::Key_Escape) {
+    // 安卓系统返回键与 Esc 同语义：关掉当前弹窗。
+    // 不处理时返回键会一路穿透到系统层，直接把整个应用退掉
+    if (event->key() == Qt::Key_Escape || event->key() == Qt::Key_Back) {
         reject();
         return;
     }

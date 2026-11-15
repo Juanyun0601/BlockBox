@@ -11,6 +11,7 @@
  */
 #pragma once
 
+#include <QHash>
 #include <QSet>
 #include <QTimer>
 #include <QVector>
@@ -18,6 +19,7 @@
 
 #include "utils/ForumChatService.h"
 
+class QFrame;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -85,6 +87,8 @@ private:
     // ── 群聊 ──
     void openCreateGroupDialog();
     void showGroupMembers();
+    void inviteToCurrentGroup();
+    void startGroupFromPeer();
     void leaveCurrentGroup();
 
     // ── 图片 / 文件 / 引用 / 撤回 / 表情 ──
@@ -106,6 +110,39 @@ private:
     QString peerStatusText(const ForumFriendInfo &peer) const;
     void runSearch(const QString &keyword);
 
+    // ── 会话整理：置顶 / 免打扰 / 草稿 / 搜索 ──
+    /** 会话行右键菜单：置顶 / 免打扰（好友与群聊共用） */
+    void showConversationMenu(bool group, int id, const QPoint &globalPos);
+    /** 当前打开的会话在 ChatUiStore 里的 key（没有会话时为空） */
+    QString activeConversationKey() const;
+    /** 把输入框里的文字存成当前会话的草稿（空内容会删掉草稿） */
+    void saveActiveDraft();
+    /** 打开会话时把草稿放回输入框 */
+    void restoreDraft(const QString &key);
+    /** 打字时延迟保存草稿，避免每个字都写一次文件 */
+    void scheduleDraftSave();
+    /** 会话搜索词变化后延迟刷新左栏 */
+    void updateConversationFilter();
+
+    // ── 转发 / 收藏 / 图片 / 引用定位 ──
+    /** 打开聊天收藏列表（左栏顶部星标按钮） */
+    void openBookmarks();
+    /** 按会话 key（f12 / g3）打开对应的私聊或群聊（从收藏跳回来用） */
+    void openConversationByKey(const QString &key);
+    /** 转发一条消息：选会话后文字直接发、图片取回原图再发 */
+    void forwardMessage(const ForumChatMessage &message);
+    /** 转发图片消息（内部：先取回原图，存到临时文件再重新上传） */
+    void forwardImageMessage(const ForumChatMessage &message, bool toGroup, int targetId,
+                             const QString &targetName);
+    /** 图片消息：复制到剪贴板 */
+    void copyMessageImage(const ForumChatMessage &message);
+    /** 图片消息：另存为本地图片 */
+    void saveMessageImage(const ForumChatMessage &message);
+    /** 收藏 / 取消收藏一条消息（当前会话内） */
+    void toggleMessageBookmark(const ForumChatMessage &message);
+    /** 点引用条：滚到被引用的原消息并闪一下 */
+    void scrollToMessage(int messageId);
+
     /** 在当前会话消息里找一条消息的发送者昵称（群聊引用条用；找不到返回空） */
     QString findMessageSenderName(int messageId) const;
 
@@ -114,6 +151,7 @@ private:
     QLabel *m_sideGroupTitle = nullptr;   ///< 分组标题（会话 · N / 申请 · N / 添加好友）
     QPushButton *m_refreshButton = nullptr;
     QPushButton *m_createGroupButton = nullptr;  ///< 「＋发起群聊」
+    QPushButton *m_bookmarkButton = nullptr;     ///< 「聊天收藏」
     QPushButton *m_friendsTabButton = nullptr;
     QPushButton *m_requestsTabButton = nullptr;
     QPushButton *m_addTabButton = nullptr;
@@ -121,6 +159,8 @@ private:
     QWidget *m_sideContainer = nullptr;
     QVBoxLayout *m_sideListLayout = nullptr;
     QLineEdit *m_searchEdit = nullptr;
+    QWidget *m_convSearchRow = nullptr;    ///< 会话搜索框所在行（只在「好友」页签显示）
+    QLineEdit *m_convSearchEdit = nullptr; ///< 按昵称 / 最后一条消息过滤会话列表
 
     // ── 右栏（聊天面板）──
     QWidget *m_chatCard = nullptr;
@@ -130,13 +170,16 @@ private:
     QLabel *m_chatName = nullptr;
     QLabel *m_chatStatus = nullptr;
     QPushButton *m_chatProfileButton = nullptr;  ///< 私聊：看对方主页
+    QPushButton *m_chatGroupButton = nullptr;    ///< 私聊：一键拉群（带上对方建新群）
     QPushButton *m_chatRemoveButton = nullptr;   ///< 私聊：删除好友
     QPushButton *m_chatMembersButton = nullptr;  ///< 群聊：查看成员
+    QPushButton *m_chatInviteButton = nullptr;   ///< 群聊：邀请好友进群（官方群没有）
     QPushButton *m_chatLeaveButton = nullptr;    ///< 群聊：退出群聊（群主退出即解散）
     QPushButton *m_moreButton = nullptr;
     QScrollArea *m_msgsScroll = nullptr;
     QWidget *m_msgsContainer = nullptr;
     QVBoxLayout *m_msgsLayout = nullptr;
+    QFrame *m_chatInputBox = nullptr;      ///< 输入坞（工具 + 输入框 + 发送）
     QTextEdit *m_chatInput = nullptr;
     QLabel *m_charCounter = nullptr;       ///< 字数统计（接近上限时出现）
     QPushButton *m_sendButton = nullptr;
@@ -156,6 +199,11 @@ private:
     bool m_pollBusy = false;
     QTimer m_pollTimer;
     QTimer m_searchTimer;
+    QTimer m_convFilterTimer;               ///< 会话搜索防抖
+    QTimer m_draftTimer;                    ///< 草稿保存防抖
+    QString m_activeKey;                    ///< 当前会话的 ChatUiStore key（f12 / g3）
+    int m_unreadAnchorId = 0;               ///< 打开会话时的第一条未读消息 id（0 = 没有未读）
+    bool m_draftSuppressed = false;          ///< 正在程序化清空/恢复输入框，不记草稿
 
     // ── 图片 / 文件 / 引用 / 表情 ──
     QPushButton *m_emojiButton = nullptr;
@@ -169,4 +217,5 @@ private:
     QString m_replyPreview;
     bool m_replyMine = false;
     QWidget *m_emojiPopup = nullptr;     ///< 表情弹窗（懒创建，Qt::Popup）
+    QHash<int, QWidget *> m_messageRows; ///< 消息 id → 这一条对应的行控件（引用跳转用）
 };

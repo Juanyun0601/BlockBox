@@ -208,6 +208,11 @@ void SideBar::buildNavStructure()
             script.iconPath = ":/Images/Icons/nav_scripts.svg";
             communitySection.children.append(script);
 
+            NavItem addon;
+            addon.text = tr("附加包");
+            addon.iconPath = ":/Images/Icons/nav_mods.svg";
+            communitySection.children.append(addon);
+
             resources.children.append(communitySection);
         }
         else

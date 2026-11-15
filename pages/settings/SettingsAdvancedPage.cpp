@@ -17,6 +17,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QFileDialog>
+#include "components/AppMessageBox.h"
 #include "components/CustomCheckBox.h"
 #include "components/FileOpStepsDialog.h"
 #include "components/OutlinedLabel.h"
@@ -155,12 +156,12 @@ void SettingsPage::initAdvancedSettings()
 
         QString error;
         if (!LauncherLogger::exportLog(path, &error)) {
-            QMessageBox::warning(this, tr("导出运行日志"),
+            AppMessageBox::warning(this, tr("导出运行日志"),
                 tr("导出失败：%1").arg(error));
             return;
         }
 
-        QMessageBox::information(this, tr("导出运行日志"),
+        AppMessageBox::information(this, tr("导出运行日志"),
             tr("运行日志已导出到：\n%1").arg(QDir::toNativeSeparators(path)));
     });
     logFileRow->addWidget(exportLogBtn);

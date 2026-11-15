@@ -3,6 +3,7 @@
 #include "../layouts/MasonryLayout.h"
 #include "../utils/McimHelper.h"
 #include "components/BlurLoadingOverlay.h"
+#include "components/ContentCategoryFilterDialog.h"
 #include "components/ContentViewSwitch.h"
 #include "components/MasonryContentCard.h"
 #include "../layouts/MasonryLayout.h"
@@ -213,6 +214,17 @@ void ContentDownloadPage::initUI()
     filterLayout->addWidget(sortLabel);
     filterLayout->addWidget(m_sortCombo);
 
+    // 分类筛选按钮（居中弹窗，Modrinth / CurseForge 两栏）
+    m_filterBtn = new QPushButton(tr("筛选"));
+    m_filterBtn->setObjectName("contentFilterBtn");
+    m_filterBtn->setFixedHeight(32);
+    m_filterBtn->setCursor(Qt::PointingHandCursor);
+    m_filterBtn->setToolTip(tr("按分类筛选在线资源（Modrinth / CurseForge）"));
+    updateCategoryFilterButton();
+    filterLayout->addWidget(m_filterBtn);
+    connect(m_filterBtn, &QPushButton::clicked,
+            this, &ContentDownloadPage::onCategoryFilterClicked);
+
     // 视图切换（列表式 / 瀑布流）
     m_viewSwitch = new ContentViewSwitch(this);
     m_viewSwitch->setViewMode(ContentViewSwitch::loadPersisted("content_download", ContentViewSwitch::Masonry));
@@ -352,16 +364,12 @@ void ContentDownloadPage::setupConnections()
     connect(m_curseforgeAPI, &CurseForgeAPI::searchCompleted, this, &ContentDownloadPage::onSearchCompleted);
     connect(m_curseforgeAPI, &CurseForgeAPI::searchFailed, this, &ContentDownloadPage::onSearchFailed);
     connect(m_curseforgeAPI, &CurseForgeAPI::categoriesLoaded, this, &ContentDownloadPage::onCategoriesLoaded);
-    connect(m_curseforgeAPI, &CurseForgeAPI::categoriesFailed, this, [this](const QString &error) {
-        onSearchFailed(error);
-    });
+    connect(m_curseforgeAPI, &CurseForgeAPI::categoriesFailed, this, &ContentDownloadPage::onCategoriesFailed);
 
     connect(m_modrinthAPI, &ModrinthAPI::searchCompleted, this, &ContentDownloadPage::onSearchCompleted);
     connect(m_modrinthAPI, &ModrinthAPI::searchFailed, this, &ContentDownloadPage::onSearchFailed);
     connect(m_modrinthAPI, &ModrinthAPI::categoriesLoaded, this, &ContentDownloadPage::onCategoriesLoaded);
-    connect(m_modrinthAPI, &ModrinthAPI::categoriesFailed, this, [this](const QString &error) {
-        onSearchFailed(error);
-    });
+    connect(m_modrinthAPI, &ModrinthAPI::categoriesFailed, this, &ContentDownloadPage::onCategoriesFailed);
 
     connect(m_mcmodAPI, &MCModAPI::nameResolved, this, &ContentDownloadPage::onChineseNameResolved);
     connect(m_queryResolver, &SearchQueryResolver::resolved,
@@ -569,11 +577,18 @@ void ContentDownloadPage::refreshCurrentSource()
     m_currentSource = m_sourceCombo->currentData().toInt();
 
     if (m_categoriesCache.contains(m_currentSource)) {
-        onCategoriesLoaded(m_categoriesCache[m_currentSource]);
+        // 缓存命中：仅保留「列表为空时自动补一次加载」的原有副作用，
+        // 不再借道 onCategoriesLoaded（该方法现按发送方归类缓存）
+        if (m_currentQuery.isEmpty() && m_allMods.isEmpty()) {
+            m_currentPage = 0;
+            performSearch(false);
+        }
         return;
     }
 
     if (m_currentSource == CurseForge) {
+        // 分类按 classId 返回，先对齐当前内容类型再请求
+        m_curseforgeAPI->setClassId(m_config.cfClassId);
         m_curseforgeAPI->getCategories();
     } else {
         m_modrinthAPI->getCategories();
@@ -760,7 +775,7 @@ void ContentDownloadPage::loadInitialMods()
     const QString cacheKey = ContentListCache::makeKey(
         m_contentType, m_currentSource,
         selectedGameVersion(), selectedLoader(),
-        m_sortCombo->currentData().toString(), QString(), 0);
+        m_sortCombo->currentData().toString(), categoryFilterCacheKey(), 0);
     ModSearchResult cached;
     if (ContentListCache::instance()->load(cacheKey, cached) && !cached.mods.isEmpty()) {
         m_hasMore = cached.hasMore;
@@ -887,12 +902,12 @@ void ContentDownloadPage::issueSearchRequests(const QString &keyword)
 
     if (useCurseForge) {
         m_curseforgeAPI->setClassId(m_config.cfClassId);
-        m_curseforgeAPI->searchMods(keyword, gameVersion, QString(),
+        m_curseforgeAPI->searchMods(keyword, gameVersion, m_filterCfCategoryId,
                                      m_currentPage, 20, cfSort);
     }
     if (useModrinth) {
         m_modrinthAPI->setProjectType(m_config.mrProjectType);
-        m_modrinthAPI->searchMods(keyword, gameVersion, QString(),
+        m_modrinthAPI->searchMods(keyword, gameVersion, m_filterMrCategoryId,
                                    m_currentPage, 20, mrSort);
     }
 }
@@ -939,7 +954,7 @@ void ContentDownloadPage::onSearchCompleted(const ModSearchResult &result)
             ContentListCache::makeKey(
                 m_contentType, m_currentSource,
                 selectedGameVersion(), selectedLoader(),
-                m_sortCombo->currentData().toString(), QString(), 0),
+                m_sortCombo->currentData().toString(), categoryFilterCacheKey(), 0),
             firstPage);
     }
 }
@@ -971,7 +986,7 @@ void ContentDownloadPage::flushAllSourceResults()
             ContentListCache::makeKey(
                 m_contentType, m_currentSource,
                 selectedGameVersion(), selectedLoader(),
-                m_sortCombo->currentData().toString(), QString(), 0),
+                m_sortCombo->currentData().toString(), categoryFilterCacheKey(), 0),
             firstPage);
     }
 }
@@ -1010,12 +1025,123 @@ void ContentDownloadPage::onSearchFailed(const QString &error)
 void ContentDownloadPage::onCategoriesLoaded(const QList<ModCategory> &categories)
 {
     m_categories = categories;
-    m_categoriesCache[m_currentSource] = categories;
+    // 筛选弹窗会同时请求两源分类，按发送方归类缓存（与当前来源下拉无关）
+    const int sourceKey = (sender() == m_modrinthAPI) ? (int)Modrinth : (int)CurseForge;
+    m_categoriesCache[sourceKey] = categories;
+
+    // 弹窗开着就实时填充对应栏
+    if (m_filterDialog && m_filterDialog->isVisible())
+        fillFilterDialogCategories(sourceKey);
 
     if (m_currentSource != AllSources && m_currentQuery.isEmpty() && m_allMods.isEmpty()) {
         m_currentPage = 0;
         performSearch(false);
     }
+}
+
+void ContentDownloadPage::onCategoriesFailed(const QString &error)
+{
+    // 弹窗触发的分类请求失败：在弹窗对应栏提示，避免弹窗后面再叠一层页面报错
+    const int sourceKey = (sender() == m_modrinthAPI) ? (int)Modrinth : (int)CurseForge;
+    if (m_filterDialog && m_filterDialog->isVisible()) {
+        if (sourceKey == (int)Modrinth)
+            m_filterDialog->setModrinthFailed();
+        else
+            m_filterDialog->setCurseforgeFailed();
+        return;
+    }
+    onSearchFailed(error);
+}
+
+void ContentDownloadPage::onCategoryFilterClicked()
+{
+    // Modrinth 没有的内容类型（如世界存档）弹窗里不放该栏
+    const bool modrinthSupported = !m_config.mrProjectType.isEmpty();
+    if (!m_filterDialog) {
+        m_filterDialog = new ContentCategoryFilterDialog(modrinthSupported, this);
+        connect(m_filterDialog, &ContentCategoryFilterDialog::filterApplied,
+                this, &ContentDownloadPage::onCategoryFilterApplied);
+    }
+
+    m_filterDialog->setSelection(m_filterMrCategoryId, m_filterCfCategoryId);
+
+    // 已缓存的栏直接填充；没缓存的先显示加载占位并去请求
+    if (modrinthSupported) {
+        fillFilterDialogCategories(Modrinth);
+        if (!m_categoriesCache.contains(Modrinth)) {
+            m_filterDialog->setModrinthLoading();
+            fetchCategoriesForFilterDialog(Modrinth);
+        }
+    }
+    fillFilterDialogCategories(CurseForge);
+    if (!m_categoriesCache.contains(CurseForge)) {
+        m_filterDialog->setCurseforgeLoading();
+        fetchCategoriesForFilterDialog(CurseForge);
+    }
+
+    m_filterDialog->exec();
+    m_filterDialog->deleteLater();
+    m_filterDialog = nullptr;
+}
+
+void ContentDownloadPage::onCategoryFilterApplied(const QString &modrinthId, const QString &curseforgeId)
+{
+    if (modrinthId == m_filterMrCategoryId && curseforgeId == m_filterCfCategoryId)
+        return;
+
+    m_filterMrCategoryId = modrinthId;
+    m_filterCfCategoryId = curseforgeId;
+    updateCategoryFilterButton();
+
+    m_currentPage = 0;
+    m_allMods.clear();
+    performSearch(false);
+}
+
+void ContentDownloadPage::fetchCategoriesForFilterDialog(int source)
+{
+    if (source == CurseForge) {
+        // 分类按 classId 返回，先对齐当前内容类型再请求
+        m_curseforgeAPI->setClassId(m_config.cfClassId);
+        m_curseforgeAPI->getCategories();
+    } else {
+        m_modrinthAPI->getCategories();
+    }
+}
+
+void ContentDownloadPage::fillFilterDialogCategories(int source)
+{
+    if (!m_filterDialog || !m_categoriesCache.contains(source))
+        return;
+
+    if (source == Modrinth) {
+        // Modrinth 分类是全项目类型混着返回的，只留当前内容类型可用的
+        QList<ModCategory> typedCategories;
+        for (const ModCategory &cat : m_categoriesCache[source]) {
+            if (cat.projectType == m_config.mrProjectType)
+                typedCategories.append(cat);
+        }
+        m_filterDialog->setModrinthCategories(typedCategories);
+    } else {
+        m_filterDialog->setCurseforgeCategories(m_categoriesCache[source]);
+    }
+}
+
+void ContentDownloadPage::updateCategoryFilterButton()
+{
+    const int active = (m_filterMrCategoryId.isEmpty() ? 0 : 1)
+                     + (m_filterCfCategoryId.isEmpty() ? 0 : 1);
+    m_filterBtn->setText(active > 0 ? tr("筛选 · %1").arg(active) : tr("筛选"));
+    m_filterBtn->setProperty("active", active > 0);
+    m_filterBtn->style()->unpolish(m_filterBtn);
+    m_filterBtn->style()->polish(m_filterBtn);
+}
+
+QString ContentDownloadPage::categoryFilterCacheKey() const
+{
+    if (m_filterMrCategoryId.isEmpty() && m_filterCfCategoryId.isEmpty())
+        return QString();
+    return QStringLiteral("cat:mr=%1|cf=%2").arg(m_filterMrCategoryId, m_filterCfCategoryId);
 }
 
 void ContentDownloadPage::onChineseNameResolved(const QString &modId, const QString &chineseName, const QString &mcmodUrl)

@@ -269,6 +269,16 @@ bool ForumAccountService::isLoggedIn() const
     return hasSession() && m_user.isValid();
 }
 
+QString ForumAccountService::playerName() const
+{
+    if (!isLoggedIn())
+        return QString();
+    const QString display = m_user.displayName.trimmed();
+    if (!display.isEmpty())
+        return display;
+    return m_user.username.trimmed();
+}
+
 QString ForumAccountService::baseUrl() const
 {
     return SettingsManager::instance()->forumBaseUrl();

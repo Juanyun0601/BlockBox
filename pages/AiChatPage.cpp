@@ -61,9 +61,11 @@
 #include <QFileDialog>
 #include <QCheckBox>
 #include <QGraphicsOpacityEffect>
+#include <QParallelAnimationGroup>
 #include <QPropertyAnimation>
 #include <QResizeEvent>
 #include <QSequentialAnimationGroup>
+#include <QVariantAnimation>
 
 #include "components/ModelSelectDialog.h"
 #include "components/NotificationManager.h"
@@ -449,6 +451,8 @@ AiChatPage::AiChatPage(QWidget *parent)
     , m_bubbleHostLayout(nullptr)
     , m_toggleConvBtn(nullptr)
     , m_convListExpanded(false)
+    , m_bubbleWidth(kBubbleWidth)
+    , m_convToggleAnim(nullptr)
     , m_modeChatBtn(nullptr)
     , m_modeWorkBtn(nullptr)
     , m_modeIndicator(nullptr)
@@ -456,6 +460,7 @@ AiChatPage::AiChatPage(QWidget *parent)
     , m_convContainer(nullptr)
     , m_convLayout(nullptr)
     , m_newConvBtn(nullptr)
+    , m_convEmptyHint(nullptr)
     , m_selectionHighlight(nullptr)
     , m_contextMenuIdx(-1)
     , m_topBar(nullptr)
@@ -602,6 +607,15 @@ AiChatPage::AiChatPage(QWidget *parent)
     }
     // 欢迎界面默认可见
 
+    // 恢复上次退出时的对话栏展开状态（静默应用，不走展开动画）
+    {
+        QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+        if (settings.value(QStringLiteral("ai/convListExpanded"), false).toBool())
+        {
+            setConvListExpanded(true, false);
+        }
+    }
+
     // 入场动画（匹配 SubNavPanel 交错的入场效果）
     QTimer::singleShot(100, this, [this]() {
         animateConvButtons();
@@ -682,10 +696,12 @@ void AiChatPage::initUI()
     m_bubbleHostLayout = bodyLayout;
 
     // 左侧面板 - 对话列表（悬浮气泡，不占布局；默认收起隐藏）
+    // 注意：宽度不设 setFixedWidth，由 updateConvBubbleGeometry/展开动画统一通过
+    // geometry 管理（SubNavPanel 同款做法），固定宽度会把动画中间态钳制住
     m_leftPanel = new QFrame(bodyWidget);
     m_leftPanel->setObjectName("aiChatLeftPanel");
     m_leftPanel->setAttribute(Qt::WA_StyledBackground);
-    m_leftPanel->setFixedWidth(kBubbleWidth);
+    m_bubbleWidth = m_compactMode ? kCompactBubbleWidth : kBubbleWidth;
     m_leftPanel->setVisible(false);
     // 悬浮气泡外阴影
     auto *convShadow = new QGraphicsDropShadowEffect(m_leftPanel);
@@ -772,20 +788,28 @@ void AiChatPage::initUI()
     groupTitle->setObjectName("subNavGroupTitle");
     m_convLayout->addWidget(groupTitle);
 
+    // 新建对话按钮（置顶：对话再多也不用滚到底部找）
+    m_newConvBtn = new QPushButton(tr("+ 新建对话"), m_convContainer);
+    m_newConvBtn->setObjectName("aiChatNewConvBtn");
+    m_newConvBtn->setFixedHeight(40);
+    m_newConvBtn->setCursor(Qt::PointingHandCursor);
+    m_convLayout->addWidget(m_newConvBtn);
+
+    // 空列表提示（当前模式没有历史对话时显示）
+    m_convEmptyHint = new QLabel(tr("暂无历史对话"), m_convContainer);
+    m_convEmptyHint->setObjectName("aiChatConvEmptyHint");
+    m_convEmptyHint->setAlignment(Qt::AlignCenter);
+    m_convEmptyHint->setWordWrap(true);
+    m_convEmptyHint->setVisible(false);
+    m_convLayout->addWidget(m_convEmptyHint);
+
     // 选中态滑动背景（置于按钮之下，与 SubNavPanel 高亮滑块一致）
     m_selectionHighlight = new QWidget(m_convContainer);
     m_selectionHighlight->setObjectName("subNavHighlight");
     m_selectionHighlight->setVisible(false);
     m_selectionHighlight->lower();
 
-    // 对话按钮通过 addConversation 动态插入此处
-
-    // 新建对话按钮（位于列表末尾）
-    m_newConvBtn = new QPushButton(tr("+ 新建对话"), m_convContainer);
-    m_newConvBtn->setObjectName("aiChatNewConvBtn");
-    m_newConvBtn->setFixedHeight(40);
-    m_newConvBtn->setCursor(Qt::PointingHandCursor);
-    m_convLayout->addWidget(m_newConvBtn);
+    // 对话按钮通过 addConversation 动态插入空提示之后、底部 stretch 之前
 
     // 底部弹性空间
     m_convLayout->addStretch();
@@ -1652,11 +1676,46 @@ void AiChatPage::updateConvBubbleGeometry()
     {
         return;
     }
+    // 展开/收起动画进行中不干预几何，避免与动画抢写（动画结束后落位正确）
+    if (m_convToggleAnim && m_convToggleAnim->state() == QAbstractAnimation::Running)
+    {
+        return;
+    }
     const int x = kBubbleMargin;
     const int y = kBubbleMargin;
     const int h = qMax(120, m_bubbleHost->height() - 2 * kBubbleMargin);
-    m_leftPanel->setGeometry(x, y, kBubbleWidth, h);
+    m_leftPanel->setGeometry(x, y, m_bubbleWidth, h);
     m_leftPanel->raise();
+}
+
+void AiChatPage::updateConvButtonTitles()
+{
+    if (!m_convLayout)
+    {
+        return;
+    }
+    // 可用文字宽度 = 气泡宽度 - 按钮左右内边距(12*2) - 图标区(18+4) - 竖向滚动条(6)
+    const int availWidth = m_bubbleWidth - 52;
+    for (QPushButton *btn : m_convButtons)
+    {
+        int idx = btn->property("convIndex").toInt();
+        if (idx < 0 || idx >= m_conversations.size())
+        {
+            continue;
+        }
+        const QString title = m_conversations[idx].title;
+        // 超长标题省略号显示，悬浮提示完整标题（AI 生成的标题可能很长）
+        btn->setText(fontMetrics().elidedText(title, Qt::ElideRight, availWidth));
+        btn->setToolTip(title);
+    }
+}
+
+void AiChatPage::updateConvEmptyHint()
+{
+    if (m_convEmptyHint)
+    {
+        m_convEmptyHint->setVisible(m_convButtons.isEmpty());
+    }
 }
 
 // ============================================================================
@@ -1741,14 +1800,16 @@ void AiChatPage::addConversation(const Conversation &conv)
             onConvListContextMenu(idx, btn->mapToGlobal(localPos));
         });
 
-        // 在 "+ 新建对话" 按钮之前插入
-        int insertPos = m_convLayout->count() - 2;
+        // 插入到空提示之后、底部 stretch 之前（新建对话按钮已置顶）
+        int insertPos = m_convLayout->count() - 1;
         m_convLayout->insertWidget(insertPos, btn);
         m_convButtons.append(btn);
 
         // 立即激活布局，使新按钮的 geometry 马上生效
         // 避免 slideHighlightTo 因 geometry 为空而延后，导致旧位置高亮残留
         m_convContainer->layout()->activate();
+        updateConvButtonTitles();
+        updateConvEmptyHint();
     }
 }
 
@@ -1801,13 +1862,15 @@ void AiChatPage::rebuildConvButtonsForMode()
             onConvListContextMenu(idx, btn->mapToGlobal(localPos));
         });
 
-        // 在 "+ 新建对话" 按钮之前插入
-        int insertPos = m_convLayout->count() - 2;
+        // 插入到空提示之后、底部 stretch 之前（新建对话按钮已置顶）
+        int insertPos = m_convLayout->count() - 1;
         m_convLayout->insertWidget(insertPos, btn);
         m_convButtons.append(btn);
     }
 
     m_convContainer->layout()->activate();
+    updateConvButtonTitles();
+    updateConvEmptyHint();
 }
 
 void AiChatPage::switchToMode(int mode)
@@ -2017,6 +2080,8 @@ void AiChatPage::updateConversationTitle(int index, const QString &title)
             break;
         }
     }
+    // 按省略规则刷新按钮标题与悬浮提示（长标题带省略号）
+    updateConvButtonTitles();
 
     // 同步更新顶部栏的当前对话名称
     if (index == m_currentConvIndex && m_convTitleLabel)
@@ -2188,6 +2253,8 @@ void AiChatPage::onRenameConversation()
                 break;
             }
         }
+        // 按省略规则刷新按钮标题与悬浮提示（长标题带省略号）
+        updateConvButtonTitles();
         saveConversations();
     }
 }
@@ -2435,6 +2502,27 @@ void AiChatPage::setCompactMode(bool compact)
             m_inputBox->layout()->setContentsMargins(12, 8, 8, 8);
     }
 
+    // 对话栏气泡宽度：紧凑模式（实例助手 450px 窄窗）收窄，避免展开后
+    // 消息区被挤压到只剩一窄条；已展开时同步落位并刷新标题省略宽度
+    if (m_leftPanel)
+    {
+        const int newWidth = compact ? kCompactBubbleWidth : kBubbleWidth;
+        if (newWidth != m_bubbleWidth)
+        {
+            m_bubbleWidth = newWidth;
+            updateConvButtonTitles();
+            if (m_convListExpanded)
+            {
+                updateConvBubbleGeometry();
+                if (m_bubbleHostLayout)
+                {
+                    m_bubbleHostLayout->setContentsMargins(
+                        m_bubbleWidth + kBubbleMargin, 0, 0, 0);
+                }
+            }
+        }
+    }
+
     // 重新应用样式，使动态属性选择器立即生效
     this->style()->unpolish(this);
     this->style()->polish(this);
@@ -2599,60 +2687,133 @@ void AiChatPage::refreshToolIcons()
 
 void AiChatPage::onToggleConvList()
 {
-    m_convListExpanded = m_toggleConvBtn->isChecked();
+    setConvListExpanded(m_toggleConvBtn->isChecked(), true);
+}
+
+void AiChatPage::setConvListExpanded(bool expanded, bool animate)
+{
+    // 上一次切换动画还在跑：先停掉（finished 回调会清理指针并落位），
+    // 新动画从当前几何/边距继续，快速连点不会错位
+    if (m_convToggleAnim)
+    {
+        m_convToggleAnim->stop();
+        m_convToggleAnim = nullptr;
+    }
+
+    m_convListExpanded = expanded;
 
     // 切换对话列表滚动区域的可见性
     m_convScrollArea->setVisible(m_convListExpanded);
-
-    // 悬浮气泡：展开时显示并重新贴靠几何，收起时隐藏
-    m_leftPanel->setVisible(m_convListExpanded);
-    if (m_convListExpanded)
-    {
-        updateConvBubbleGeometry();
-    }
-    // 宿主左侧留出空隙，避免气泡遮挡消息区
-    if (m_bubbleHostLayout)
-    {
-        const int gap = m_convListExpanded ? kBubbleWidth + kBubbleMargin : 0;
-        m_bubbleHostLayout->setContentsMargins(0, 0, 0, 0);
-        m_bubbleHostLayout->setContentsMargins(gap, 0, 0, 0);
-    }
 
     // 同步按钮选中态视觉与图标颜色
     m_toggleConvBtn->setChecked(m_convListExpanded);
     updateToggleConvIcon();
 
-    // 展开时重新定位选中滑块和模式指示器（面板收起时 geometry 不正确）
-    if (m_convListExpanded)
-    {
-        QTimer::singleShot(0, this, [this]() {
-            // 重新定位对话选中滑块（通过 convIndex 属性查找按钮位置）
-            if (m_selectionHighlight && m_currentConvIndex >= 0)
+    // 持久化展开状态，下次进入页面保持原样
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+    settings.setValue(QStringLiteral("ai/convListExpanded"), m_convListExpanded);
+
+    // 展开落位后重定位选中滑块和模式指示器（面板收起时它们的 geometry 不正确）
+    auto repositionOverlays = [this]() {
+        // 重新定位对话选中滑块（通过 convIndex 属性查找按钮位置）
+        if (m_selectionHighlight && m_currentConvIndex >= 0)
+        {
+            int btnPos = -1;
+            for (int i = 0; i < m_convButtons.size(); ++i)
             {
-                int btnPos = -1;
-                for (int i = 0; i < m_convButtons.size(); ++i)
+                if (m_convButtons[i]->property("convIndex").toInt() == m_currentConvIndex)
                 {
-                    if (m_convButtons[i]->property("convIndex").toInt() == m_currentConvIndex)
-                    {
-                        btnPos = i;
-                        break;
-                    }
-                }
-                if (btnPos >= 0)
-                {
-                    m_selectionHighlight->setVisible(false);
-                    m_selectionHighlight->setGeometry(QRect());
-                    slideHighlightTo(btnPos);
+                    btnPos = i;
+                    break;
                 }
             }
-            // 重新定位模式指示器
-            if (m_modeIndicator)
+            if (btnPos >= 0)
             {
-                m_modeIndicator->setGeometry(QRect());
-                slideModeIndicator(m_modeChatBtn->isChecked() ? 0 : 1);
+                m_selectionHighlight->setVisible(false);
+                m_selectionHighlight->setGeometry(QRect());
+                slideHighlightTo(btnPos);
+            }
+        }
+        // 重新定位模式指示器
+        if (m_modeIndicator)
+        {
+            m_modeIndicator->setGeometry(QRect());
+            slideModeIndicator(m_modeChatBtn->isChecked() ? 0 : 1);
+        }
+    };
+
+    if (!animate)
+    {
+        // 静默应用（构造恢复状态）：直接落位，不做过渡
+        m_leftPanel->setVisible(m_convListExpanded);
+        if (m_convListExpanded)
+        {
+            updateConvBubbleGeometry();
+        }
+        if (m_bubbleHostLayout)
+        {
+            const int gap = m_convListExpanded ? m_bubbleWidth + kBubbleMargin : 0;
+            m_bubbleHostLayout->setContentsMargins(gap, 0, 0, 0);
+        }
+        repositionOverlays();
+        return;
+    }
+
+    const int hostH = qMax(120, m_bubbleHost ? m_bubbleHost->height() - 2 * kBubbleMargin : 120);
+    const QRect targetGeo(kBubbleMargin, kBubbleMargin,
+                          expanded ? m_bubbleWidth : 0, hostH);
+    const int targetGap = expanded ? m_bubbleWidth + kBubbleMargin : 0;
+
+    // 面板宽度从当前值过渡（首次展开从 0 滑入）
+    QRect startGeo = m_leftPanel->isVisible()
+                         ? m_leftPanel->geometry()
+                         : QRect(kBubbleMargin, kBubbleMargin, 0, hostH);
+
+    auto *group = new QParallelAnimationGroup(this);
+    auto *panelAnim = new QPropertyAnimation(m_leftPanel, "geometry", group);
+    panelAnim->setDuration(expanded ? 160 : 140);
+    panelAnim->setStartValue(startGeo);
+    panelAnim->setEndValue(targetGeo);
+    panelAnim->setEasingCurve(expanded ? QEasingCurve::OutCubic : QEasingCurve::InCubic);
+    group->addAnimation(panelAnim);
+
+    // 宿主左边距同步过渡：消息区平滑让位，避免瞬间跳动
+    if (m_bubbleHostLayout)
+    {
+        auto *marginAnim = new QVariantAnimation(group);
+        marginAnim->setDuration(expanded ? 160 : 140);
+        marginAnim->setEasingCurve(expanded ? QEasingCurve::OutCubic : QEasingCurve::InCubic);
+        marginAnim->setStartValue(m_bubbleHostLayout->contentsMargins().left());
+        marginAnim->setEndValue(targetGap);
+        connect(marginAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+            if (m_bubbleHostLayout)
+            {
+                m_bubbleHostLayout->setContentsMargins(v.toInt(), 0, 0, 0);
             }
         });
+        group->addAnimation(marginAnim);
     }
+
+    connect(group, &QParallelAnimationGroup::finished, this, [this, expanded, repositionOverlays]() {
+        m_convToggleAnim = nullptr;
+        if (expanded)
+        {
+            m_leftPanel->raise();
+            repositionOverlays();
+        }
+        else
+        {
+            m_leftPanel->setVisible(false);
+        }
+    });
+
+    if (expanded)
+    {
+        m_leftPanel->setVisible(true);
+        m_leftPanel->raise();
+    }
+    m_convToggleAnim = group;
+    group->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void AiChatPage::animateConvButtons()
@@ -4517,7 +4678,9 @@ void AiChatPage::refreshLocalModels()
     static QNetworkAccessManager* sNAM = nullptr;
     if (!sNAM)
     {
-        sNAM = new QNetworkAccessManager(this);
+        // 交给应用对象托管：页面（主窗口侧栏 / 实例助手各有一个）可能先后
+        // 创建、销毁，挂在某个页面上会留下野指针，下次刷新就直接崩。
+        sNAM = new QNetworkAccessManager(qApp);
     }
 
     QNetworkRequest req(QUrl(QStringLiteral("http://127.0.0.1:11434/api/tags")));

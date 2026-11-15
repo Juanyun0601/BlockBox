@@ -325,6 +325,20 @@ void ModrinthAPI::parseProjectObject(const QJsonObject &obj, ModInfo &info)
     info.coverUrl = info.screenshots.isEmpty()
                         ? obj["icon_url"].toString()
                         : info.screenshots.first().url;
+
+    // 作者在 Modrinth 项目页自行设置的外部链接，详情页「相关链接」直接展示
+    info.externalLinks.clear();
+    const auto addExternalLink = [&info](const QString &label, const QString &url) {
+        if (!url.isEmpty())
+            info.externalLinks.append({label, url});
+    };
+    addExternalLink(QObject::tr("问题反馈"), obj["issues_url"].toString());
+    addExternalLink(QObject::tr("源代码"), obj["source_url"].toString());
+    addExternalLink(QObject::tr("Wiki"), obj["wiki_url"].toString());
+    addExternalLink(QObject::tr("Discord"), obj["discord_url"].toString());
+    const QJsonArray donateUrls = obj["donate_urls"].toArray();
+    if (!donateUrls.isEmpty())
+        addExternalLink(QObject::tr("赞助"), donateUrls.first().toObject()["url"].toString());
 }
 
 void ModrinthAPI::fetchProjectsByIds(const QStringList &ids)
@@ -627,6 +641,7 @@ ModVersionFile ModrinthAPI::parseVersionObject(const QJsonObject &obj)
     vf.version = obj["name"].toString();
     vf.fileName = obj["version_number"].toString();
     vf.releaseType = obj["version_type"].toString();
+    vf.projectId = obj["project_id"].toString();
 
     QJsonArray gameVersions = obj["game_versions"].toArray();
     for (const QJsonValue &v : gameVersions)
@@ -773,11 +788,14 @@ void ModrinthAPI::onCategoriesReplyFinished()
     for (const QJsonValue &val : arr) {
         QJsonObject obj = val.toObject();
         QString header = obj["header"].toString();
-        if (header != "Categories" && header != "Mod Loaders")
+        // 只保留真正的内容分类（加载器/性能标签等不算分类，不做筛选入口）
+        if (header != "Categories")
             continue;
         ModCategory cat;
         cat.id = obj["name"].toString();
         cat.name = obj["name"].toString();
+        // 分类所属的项目类型（mod/modpack/...），供页面按内容类型过滤
+        cat.projectType = obj["project_type"].toString();
         categories.append(cat);
     }
 

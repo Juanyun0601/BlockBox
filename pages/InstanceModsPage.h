@@ -30,10 +30,10 @@ class BlurLoadingOverlay;
 class ModNameFetcher;
 class ModrinthAPI;
 class LocalCategoryManager;
-class QGraphicsOpacityEffect;
+class CardSelectionOverlay;
 class QNetworkAccessManager;
 class FlowLayout;
-class QPropertyAnimation;
+struct LocalFavoriteEntry;
 
 class InstanceModsPage : public QWidget
 {
@@ -71,6 +71,7 @@ private slots:
     void onToggleMod(const ModInfo &info);
     void onDeleteMod(const ModInfo &info);
     void onModContextMenu(const QPoint &pos);
+    void onRelationClicked();
     void onModNameResolved(const ModInfo &info);
     void onModNameFetchFailed(const QString &modId, const QString &englishName);
     void onCheckUpdatesClicked();
@@ -123,6 +124,11 @@ private:
     void reloadCategoryCombo();
     /** 刷新卡片上的分类标签（分配变化/重命名后调用） */
     void refreshCardCategoryChips();
+    // 本地资源收藏：构造条目 / 切换收藏 / 星标按钮视觉 / 批量刷新星标
+    LocalFavoriteEntry localFavEntryFor(const ModInfo &info) const;
+    void toggleLocalFavorite(const ModInfo &info);
+    void setFavButtonVisual(QPushButton *btn, bool fav);
+    void refreshCardFavButtons();
     /** 滑动快速多选：查找全局坐标命中的卡片索引 */
     int cardIndexAtGlobal(const QPoint &globalPos) const;
     /** 滑动快速多选：将卡片加入选中集合（只增不减） */
@@ -133,8 +139,6 @@ private:
     QWidget *createSelectionOverlay(QWidget *card);
     /** 播放卡片选中高亮过渡动画 */
     void animateCardHighlight(int idx, bool selected);
-    /** 选中高亮遮罩样式（随主题色） */
-    QString selectionOverlayStyle() const;
     void processNextModUpdate();
     /** 发起单个模组更新文件的下载（镜像优先；allowFallback 时失败自动回退原始地址） */
     void downloadModUpdateFile(const ModInfo &mod, const ModVersionFile &target,
@@ -171,6 +175,7 @@ private:
     QPushButton *m_toggleSelectedBtn;
     QPushButton *m_openFolderBtn;
     QPushButton *m_detailBtn;
+    QPushButton *m_relationBtn;        // 底部「所属关系」入口：查看模组前置/被依赖
     QPushButton *m_pasteModBtn;
     QPushButton *m_updateModBtn;
     QPushButton *m_installNewBtn;      // 底部「安装新模组」入口
@@ -211,9 +216,7 @@ private:
     QString m_currentCategoryId;      // 空 = 全部；特殊哨兵值 = 未分类
 
     // 选中高亮遮罩（与 m_cardWidgets 对齐）
-    QList<QWidget *> m_selectionOverlays;
-    QList<QGraphicsOpacityEffect *> m_selectionEffects;
-    QList<QPropertyAnimation *> m_selectionAnims;
+    QList<CardSelectionOverlay *> m_selectionOverlays;
 
     // 滑动快速多选状态
     bool m_dragSelectActive = false;  // 是否处于滑动多选状态

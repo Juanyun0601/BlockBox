@@ -24,6 +24,7 @@
 
 #include "components/NotificationManager.h"
 #include "utils/GameLauncher.h"
+#include "utils/RuntimeDependencyManager.h"
 #include "utils/SettingsManager.h"
 
 InstanceJavaDownloadPage::InstanceJavaDownloadPage(QWidget *parent)
@@ -67,6 +68,35 @@ InstanceJavaDownloadPage::InstanceJavaDownloadPage(QWidget *parent)
             this, &InstanceJavaDownloadPage::onExtractCompleted);
     connect(downloader, &JavaDownloader::extractFailed,
             this, &InstanceJavaDownloadPage::onExtractFailed);
+
+#ifdef Q_OS_ANDROID
+    // 安卓：下载动作改走运行依赖通道（见 onDownloadClicked），进度与完成
+    // 映射到页面自身控件；装好的 Java 走与桌面下载相同的缓存登记流程
+    connect(RuntimeDependencyManager::instance(), &RuntimeDependencyManager::installProgress,
+            this, [this](const QString &, int percent, const QString &stage) {
+        m_progressBar->setValue(percent);
+        m_progressDetailLabel->setText(stage);
+    });
+    connect(RuntimeDependencyManager::instance(), &RuntimeDependencyManager::installFinished,
+            this, [this](const QString &, bool success, const QString &message) {
+        if (!success)
+            NotificationManager::showError(this, tr("运行环境安装失败：%1").arg(message));
+    });
+    connect(RuntimeDependencyManager::instance(), &RuntimeDependencyManager::allInstallsFinished,
+            this, [this](bool allSucceeded) {
+        if (!allSucceeded)
+            return;
+        QString javaExe;
+        for (const RuntimeDependency &dep
+             : RuntimeDependencyManager::instance()->dependencies()) {
+            javaExe = findJavaExecutable(RuntimeDependencyManager::installDirFor(dep));
+            if (!javaExe.isEmpty())
+                break;
+        }
+        if (!javaExe.isEmpty())
+            onExtractCompleted(javaExe);
+    });
+#endif
 
     // 默认安装路径
     m_extractPath = defaultInstallPath();
@@ -353,6 +383,40 @@ void InstanceJavaDownloadPage::onBinarySelectionChanged(int row)
 
 void InstanceJavaDownloadPage::onDownloadClicked()
 {
+#ifdef Q_OS_ANDROID
+    // 安卓：厂商 API 按 os=android 查询恒为空，改走运行依赖通道按设备芯片
+    // 架构下载适配的 Java 运行环境，进度复用页面进度条展示
+    if (RuntimeDependencyManager::instance()->isInstalling()
+        || RuntimeDependencyManager::instance()->isChecking())
+        return;
+    m_progressBar->setValue(0);
+    m_progressDetailLabel->setText(tr("正在获取适配安卓的 Java 运行环境…"));
+    updateUIState();
+
+    RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
+    auto *checkConnection = new QMetaObject::Connection;
+    *checkConnection = connect(deps, &RuntimeDependencyManager::checkFinished, deps,
+                               [this, deps, checkConnection](bool ok, const QString &message) {
+        disconnect(*checkConnection);
+        delete checkConnection;
+        if (!ok) {
+            m_progressDetailLabel->clear();
+            updateUIState();
+            NotificationManager::showError(this, tr("获取运行环境清单失败：\n%1").arg(message));
+            return;
+        }
+        if (deps->pendingCount() <= 0) {
+            m_progressDetailLabel->clear();
+            updateUIState();
+            NotificationManager::showInfo(this, tr("运行环境已是最新，无需再次安装。"));
+            return;
+        }
+        m_progressDetailLabel->setText(tr("开始下载安装 Java 运行环境…"));
+        deps->installAll();
+    });
+    deps->checkForUpdates(this, true);
+    return;
+#endif
     if (m_currentBinaries.isEmpty())
     {
         NotificationManager::showError(this, tr("请先选择一个可用的 Java 版本"));
@@ -457,6 +521,15 @@ void InstanceJavaDownloadPage::onVersionListFetched(const QVector<JavaBinaryInfo
 
 void InstanceJavaDownloadPage::onFetchError(const QString &error)
 {
+#ifdef Q_OS_ANDROID
+    // 安卓上版本列表必然拉不到（厂商无 android 条目），给出正确路径
+    Q_UNUSED(error);
+    m_binaryDetailLabel->setText(
+        tr("安卓版请使用设置页的「一键安装运行环境」获取适配手机的 Java。"));
+    m_binaryListWidget->setVisible(false);
+    updateUIState();
+    return;
+#endif
     m_binaryDetailLabel->setText(tr("获取失败: %1").arg(error));
     m_binaryListWidget->setVisible(false);
     updateUIState();

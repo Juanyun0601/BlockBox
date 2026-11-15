@@ -43,4 +43,29 @@ bool installPack(const QString &packFile, const QString &comMojangDir, QString *
 /** 根据文件名后缀粗判类型（.mcworld → World；.mcaddon/.mcpack/.zip → 需解析内部 manifest） */
 PackKind classifyFile(const QString &fileName);
 
+/** 已安装包/世界的信息（findInstalledPack 的返回） */
+struct InstalledPackInfo
+{
+    QString dir;    // 包/世界所在目录（绝对路径，未找到时为空）
+    QString name;   // 安装时的显示名（manifest header.name 或 levelname.txt）
+    QString uuid;   // manifest header.uuid（世界没有，为空）
+};
+
+/**
+ * @brief 按显示名查找实例里已安装的包/世界（下载前拿不到 uuid，只能按名称匹配）
+ *
+ * 扫描 resource_packs / behavior_packs / skin_packs 下各 manifest.json 的 header.name
+ * 与 minecraftWorlds 下各 levelname.txt，规范化（小写、去标点）后与 displayName 精确比对。
+ */
+InstalledPackInfo findInstalledPack(const QString &comMojangDir, const QString &displayName);
+
+/**
+ * @brief 删除已安装的包/世界目录，并清理 development_*.json 里对应 uuid 的登记
+ *
+ * installedDir 必须是 comMojangDir 下 resource_packs/behavior_packs/skin_packs/minecraftWorlds
+ * 的直接子目录，否则拒绝删除（防误删）。
+ */
+bool removeInstalledPack(const QString &installedDir, const QString &comMojangDir,
+                         QString *errorMessage = nullptr);
+
 } // namespace BedrockContentInstaller

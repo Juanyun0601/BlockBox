@@ -20,6 +20,7 @@
 #include "../utils/PageFilter.h"
 
 class BlurLoadingOverlay;
+class ContentCategoryFilterDialog;
 class MCModAPI;
 class SearchQueryResolver;
 class FlowLayout;
@@ -77,6 +78,12 @@ private slots:
     void onSearchCompleted(const ModSearchResult &result);
     void onSearchFailed(const QString &error);
     void onCategoriesLoaded(const QList<ModCategory> &categories);
+    /** 分类请求失败：弹窗开着时在弹窗栏里提示，否则走页面加载失败提示 */
+    void onCategoriesFailed(const QString &error);
+    /** 顶栏「筛选」按钮：弹出居中分类筛选弹窗（Modrinth / CurseForge 两栏） */
+    void onCategoryFilterClicked();
+    /** 弹窗点确定：记录两源分类筛选并刷新列表 */
+    void onCategoryFilterApplied(const QString &modrinthId, const QString &curseforgeId);
     void onChineseNameResolved(const QString &modId, const QString &chineseName, const QString &mcmodUrl);
     void onCardContextMenu(const QPoint &pos);
     /** 中文关键词解析完成，按解析出的关键词发起搜索 */
@@ -109,6 +116,14 @@ private:
     void populateSortCombo(int source);
     void populateVersionLoaderFilter();
     void setFilterCombosVisible(bool visible);
+    /** 弹窗打开时补拉未缓存的分类（CurseForge 按内容类型、Modrinth 按项目类型） */
+    void fetchCategoriesForFilterDialog(int source);
+    /** 把缓存的分类交给弹窗对应栏（Modrinth 按当前内容类型过滤） */
+    void fillFilterDialogCategories(int source);
+    /** 筛选按钮状态：命中筛选时高亮并在文字上带数量 */
+    void updateCategoryFilterButton();
+    /** 第一页磁盘缓存的附加键：把当前分类筛选计入（未筛选时为空） */
+    QString categoryFilterCacheKey() const;
 
     static constexpr const char *MCIM_BASE = "https://mod.mcimirror.top";
     static constexpr const char *CF_BASE = "https://api.curseforge.com";
@@ -130,6 +145,7 @@ private:
     QWidget *m_cardContainer;
     QGridLayout *m_cardGridLayout;
     FlowLayout *m_cardFlowLayout;
+    QPushButton *m_filterBtn;    // 顶栏「筛选」按钮（视图切换左侧）
     ContentViewSwitch *m_viewSwitch;
     int m_viewMode;              // 0=列表式, 1=瀑布流
     QList<ModInfo> m_cardInfos;  // 当前页卡片数据缓存（视图切换重建用）
@@ -167,6 +183,11 @@ private:
     QMap<QString, QString> m_mcmodUrls;
     QMap<QString, InstanceFilterData> m_instanceDataMap;
     QString m_currentInstancePath;
+
+    // ── 分类筛选（弹窗两栏，各来源独立） ──
+    ContentCategoryFilterDialog *m_filterDialog = nullptr;
+    QString m_filterMrCategoryId;   // Modrinth 分类筛选（空 = 不限）
+    QString m_filterCfCategoryId;   // CurseForge 分类筛选（空 = 不限）
 
     // ── 右下角悬浮翻译卡片（EN 原文 / 中 AI 翻译） ──
     void onListTranslateModeChanged(bool chinese);

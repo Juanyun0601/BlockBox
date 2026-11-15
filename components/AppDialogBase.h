@@ -25,8 +25,16 @@ class AppDialogBase : public QDialog
 public:
     explicit AppDialogBase(QWidget *parent = nullptr);
 
+    ~AppDialogBase() override;
+
     /// 返回要覆盖的宿主窗口（对话框挂载的顶层窗口或活动窗口）
     QWidget *hostWindow() const;
+
+    /// 当前所有存活的 AppDialogBase 弹窗（不含已销毁的）
+    static const QList<AppDialogBase *> &activeDialogs();
+    /// 最上层一个可见弹窗；没有可见弹窗时返回 nullptr。
+    /// 安卓返回键用它找"该被关掉的那个弹窗"。
+    static AppDialogBase *topMostVisibleDialog();
 
     /// 阻塞式弹出。安卓覆盖层模式下不复用 QDialog::exec 的窗口级模态逻辑
     /// （父窗口禁用、焦点接管等都基于"弹窗是顶层窗口"的假设），改用嵌套事件循环。
@@ -40,6 +48,7 @@ protected:
 
     void paintEvent(QPaintEvent *event) override;
     void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;

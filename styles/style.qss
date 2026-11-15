@@ -1569,69 +1569,91 @@ QCheckBox::indicator:indeterminate {
     border-radius: 6px;
 }
 
-/* QRadioButton 单选按钮 - 现代化样式 */
+/* QRadioButton 单选按钮 - 现代化样式
+   注意：Qt 对 ::indicator 的 border-radius 只认像素值，写 999px 会被忽略导致圆点变方框，
+   这里按「内容尺寸 16px + 2px 边框 = 20px 外径」把半径固定为 10px，保证是真圆。 */
 QRadioButton {
     background-color: transparent;
     color: @TEXT_PRIMARY@;
     font-size: 13px;
-    spacing: 8px;
-    padding: 4px 2px;
-    outline: none;
+    spacing: 10px;
+    padding: 3px 6px;
+    border-radius: 7px;
 }
 
 QRadioButton:hover {
-    color: @PRIMARY@;
+    background-color: @PRIMARY_RGBA_10@;
+}
+
+/* 选中项整行带一层极淡主色，扫一眼就能看出当前选项 */
+QRadioButton:checked {
+    background-color: @PRIMARY_RGBA_12@;
+}
+
+QRadioButton:checked:hover {
+    background-color: @PRIMARY_RGBA_18@;
 }
 
 QRadioButton:disabled {
     color: @TEXT_DISABLED@;
+    background-color: transparent;
 }
 
-/* QRadioButton 指示器 - 默认未选中状态 */
+/* QRadioButton 指示器 - 默认未选中状态（20px 外径圆环） */
 QRadioButton::indicator {
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    border: 2px solid @BORDER_HOVER@;
+    width: 16px;
+    height: 16px;
+    border-radius: 10px;
+    border: 2px solid @TEXT_TERTIARY@;
     background-color: @BG_CARD@;
     margin: 0;
 }
 
-/* 悬停状态 - 边框变为主色 */
+/* 悬停状态 - 边框变为主色（只换颜色，不改粗细，避免尺寸跳动） */
 QRadioButton::indicator:hover {
     border-color: @PRIMARY@;
-    background-color: @PRIMARY_BG@;
 }
 
-/* 禁用状态 */
+/* 选中状态 - 主色圆环 + 居中实心圆点
+   qradialgradient 必须显式写 fx/fy，否则焦点默认落在左上角、圆点会偏到角上。 */
+QRadioButton::indicator:checked {
+    border: 2px solid @PRIMARY@;
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 @PRIMARY@,
+        stop:0.42 @PRIMARY@,
+        stop:0.48 @BG_CARD@,
+        stop:1 @BG_CARD@);
+}
+
+/* 选中悬停状态 - 圆环与圆点一起加深 */
+QRadioButton::indicator:checked:hover {
+    border-color: @PRIMARY_HOVER@;
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 @PRIMARY_HOVER@,
+        stop:0.42 @PRIMARY_HOVER@,
+        stop:0.48 @BG_CARD@,
+        stop:1 @BG_CARD@);
+}
+
+/* 禁用状态 - 灰环灰点 */
 QRadioButton::indicator:disabled {
     border-color: @BORDER_DISABLED@;
     background-color: @BG_DISABLED@;
 }
 
-/* 选中状态 - 主色边框 + 内圆点 */
-QRadioButton::indicator:checked {
-    border: 2px solid @PRIMARY@;
-    background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
-        stop:0 @PRIMARY@,
-        stop:0.35 @PRIMARY@,
-        stop:0.4 @BG_CARD@,
-        stop:1 @BG_CARD@);
+QRadioButton::indicator:checked:disabled {
+    border-color: @BORDER_DISABLED@;
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+        stop:0 @TEXT_DISABLED@,
+        stop:0.42 @TEXT_DISABLED@,
+        stop:0.48 @BG_DISABLED@,
+        stop:1 @BG_DISABLED@);
 }
 
-/* 选中悬停状态 - 边框加深 */
-QRadioButton::indicator:checked:hover {
-    border-color: @PRIMARY_HOVER@;
-    background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
-        stop:0 @PRIMARY_HOVER@,
-        stop:0.35 @PRIMARY_HOVER@,
-        stop:0.4 @BG_CARD@,
-        stop:1 @BG_CARD@);
-}
-
-/* 焦点状态：Qt 6 QSS 不支持 box-shadow，仅保留文字与描边变主色 */
+/* 焦点状态：键盘 Tab 过来时文字与描边一起变主色 */
 QRadioButton:focus {
     color: @PRIMARY@;
+    background-color: @PRIMARY_RGBA_12@;
 }
 
 QRadioButton:focus::indicator {
@@ -1654,11 +1676,6 @@ QSlider:disabled::groove {
 QSlider:disabled::handle:horizontal,
 QSlider:disabled::handle:vertical {
     background-color: transparent;
-}
-
-QCheckBox::indicator:hover,
-QRadioButton::indicator:hover {
-    border: 1px solid @PRIMARY@;
 }
 
 QCheckBox::indicator:indeterminate {
@@ -2829,15 +2846,7 @@ QPushButton#homeSkinAddBtn:hover {
     background-color: @BG_HOVER@;
 }
 
-/* 首页轮播左侧好友面板：标题 / 好友卡片 / 开房置顶的「一起玩」按钮 */
-QLabel#homeFriendsTitle {
-    background: transparent;
-    color: @TEXT_PRIMARY@;
-    font-size: 14px;
-    font-weight: 700;
-    border: none;
-}
-
+/* 首页好友栏（最近游玩下面一栏）：在线数 / 好友卡片 / 开房置顶的「一起玩」按钮 */
 QLabel#homeFriendsCount {
     background: transparent;
     color: @TEXT_TERTIARY@;
@@ -2845,20 +2854,6 @@ QLabel#homeFriendsCount {
     border: none;
 }
 
-QPushButton#homeFriendsOpenBtn {
-    background: transparent;
-    color: @TEXT_TERTIARY@;
-    border: none;
-    padding: 0 4px;
-    font-size: 11px;
-}
-
-QPushButton#homeFriendsOpenBtn:hover {
-    color: @PRIMARY@;
-}
-
-QScrollArea#homeFriendsScroll,
-QScrollArea#homeFriendsScroll > QWidget > QWidget,
 QWidget#homeFriendsListHost,
 QWidget#homeFriendsState {
     background: transparent;
@@ -2945,6 +2940,46 @@ QPushButton#homeFriendsStateBtn {
 
 QPushButton#homeFriendsStateBtn:hover {
     background-color: @PRIMARY_RGBA_20@;
+}
+
+/* 首页论坛热门帖栏（好友栏下面一栏）：帖子卡片（标题 + 板块 / 回复 / 时间） */
+QWidget#homeHotThreadsListHost,
+QWidget#homeHotThreadsState {
+    background: transparent;
+    border: none;
+}
+
+QFrame#homeHotThreadCard {
+    background-color: @BG_PRESSED@;
+    border: 1px solid transparent;
+    border-radius: 10px;
+}
+
+QFrame#homeHotThreadCard:hover {
+    background-color: @BG_HOVER@;
+}
+
+QLabel#homeHotThreadTitle {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+}
+
+QLabel#homeHotThreadBoard {
+    background: @PRIMARY_RGBA_12@;
+    color: @PRIMARY@;
+    border-radius: 6px;
+    padding: 1px 7px;
+    font-size: 10px;
+}
+
+QLabel#homeHotThreadMeta {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 10px;
+    border: none;
 }
 
 QLabel#carouselTag {
@@ -3202,6 +3237,15 @@ QPushButton#aiChatNewConvBtn:hover {
 
 QPushButton#aiChatNewConvBtn:pressed {
     background: @PRIMARY_RGBA_38@;
+}
+
+/* 对话列表空提示 */
+QLabel#aiChatConvEmptyHint {
+    background: transparent;
+    border: none;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    padding: 16px 12px;
 }
 
 QPushButton#aiChatToggleConvBtn {
@@ -4048,6 +4092,62 @@ QPushButton#contentViewSwitchBtn[active="true"]:pressed {
     background-color: @PRIMARY_PRESSED@;
 }
 
+/* ── 在线资源顶栏「筛选」按钮（视图切换左侧，弹分类筛选弹窗） ── */
+QPushButton#contentFilterBtn {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 0 14px;
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+}
+
+QPushButton#contentFilterBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_STRONG@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#contentFilterBtn:pressed {
+    background-color: @BG_PRESSED@;
+}
+
+/* 命中筛选：主色描边 + 计数文字，一眼看出列表正被筛过 */
+QPushButton#contentFilterBtn[active="true"] {
+    background-color: @PRIMARY_RGBA_12@;
+    border: 1px solid @PRIMARY@;
+    color: @PRIMARY@;
+    font-weight: 600;
+}
+
+QPushButton#contentFilterBtn[active="true"]:hover {
+    background-color: @PRIMARY_RGBA_20@;
+}
+
+/* 分类筛选弹窗（在线资源下载页） */
+QLabel#categoryFilterColumnTitle {
+    background-color: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+}
+
+QListWidget#categoryFilterList {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+    padding: 4px;
+    outline: none;
+    font-size: 13px;
+}
+
+QListWidget#categoryFilterList::item {
+    padding: 6px 10px;
+    border-radius: 8px;
+    margin: 1px 0;
+}
+
 /* Mod 卡片操作按钮 */
 QPushButton#modCardActionBtn {
     background-color: transparent;
@@ -4467,6 +4567,28 @@ QLabel#appDialogPromptLabel {
     color: @TEXT_TERTIARY@;
     font-size: 13px;
     border: none;
+}
+
+/* 所属关系弹窗底部统计行 */
+QLabel#relationSummaryLabel {
+    background-color: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 13px;
+    border: none;
+}
+
+/* 所属关系弹窗分隔线 */
+QFrame#relationDivider {
+    background-color: @BORDER@;
+    border: none;
+}
+
+/* 所属关系弹窗树/列表：行高加大，长模组名与多级前置更易读 */
+QTreeWidget#relationTree::item {
+    min-height: 26px;
+}
+QListWidget#relationModList::item {
+    min-height: 28px;
 }
 
 /* 对话框输入框 */
@@ -5035,7 +5157,25 @@ QPushButton#modDetailDownloadBtn:disabled {
     color: @TEXT_DISABLED@;
 }
 
-/* 详情页链接按�?*/
+/* 版本卡「已安装」对号按钮：固定成功色，禁用态也保持绿色以示“已装好” */
+QPushButton#modDetailInstalledBtn {
+    background-color: @SUCCESS@;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 16px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#modDetailInstalledBtn:hover,
+QPushButton#modDetailInstalledBtn:pressed,
+QPushButton#modDetailInstalledBtn:disabled {
+    background-color: @SUCCESS@;
+    color: @TEXT_ON_PRIMARY@;
+}
+
+/* 详情页链接按钮 */
 QPushButton#modDetailLinkBtn {
     background-color: transparent;
     border: 1px solid @BORDER_STRONG@;
@@ -9909,9 +10049,7 @@ QWidget#assistantNavContainer {
 QWidget#assistantHighlight {
     background-color: @PRIMARY@;
     border: none;
-    border-radius: 0 3px 3px 0;
-    min-width: 3px;
-    max-width: 3px;
+    border-radius: 3px;
 }
 
 /* 助手堆栈 */
@@ -11621,10 +11759,13 @@ QLabel#localModStatus[status="disabled"] {
     color: @TEXT_DISABLED@;
 }
 
-/* Task 9: 伪态与无障碍补�?*/
+/* Task 9: 伪态与无障碍补�?（Qt QSS 不支持 outline，用文字与描边主色做键盘焦点提示） */
 QCheckBox:focus, QRadioButton:focus {
-    outline: 2px solid @PRIMARY@;
-    outline-offset: 1px;
+    color: @PRIMARY@;
+}
+
+QCheckBox:focus::indicator {
+    border-color: @PRIMARY@;
 }
 
 QProgressBar:disabled {
@@ -15763,6 +15904,20 @@ QPushButton#communityTag:hover {
     color: @PRIMARY@;
 }
 
+QPushButton#communityLobbyLink {
+    background: transparent;
+    border: none;
+    padding: 3px 4px;
+    color: @SUCCESS@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QPushButton#communityLobbyLink:hover {
+    color: @SUCCESS@;
+    text-decoration: underline;
+}
+
 /* ─── 论坛深度集成：帖子详情 / 主题列表 / 发帖 / 用户主页 ─── */
 QFrame#forumCard {
     background: @BG_CARD@;
@@ -15809,6 +15964,15 @@ QTextBrowser#forumProfileBio {
 
 QTextBrowser#forumProfileBio:hover,
 QTextBrowser#forumProfileBio:focus {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+}
+
+/* 帖子正文：同上，正文左边缘要和楼层头的文字对齐 */
+QTextBrowser#forumPostBrowser,
+QTextBrowser#forumPostBrowser:hover,
+QTextBrowser#forumPostBrowser:focus {
     background-color: transparent;
     border: none;
     padding: 0;
@@ -15904,6 +16068,47 @@ QPushButton#forumGhostButton:hover {
 QPushButton#forumGhostButton:disabled {
     color: @TEXT_DISABLED@;
     border-color: @BORDER_DISABLED@;
+}
+
+/* 创作中心的类型筛选胶囊（全部 / 插件 / 投影 / 普通帖），选中态点亮主题色 */
+QPushButton#forumFilterChip {
+    background: transparent;
+    border: 1px solid @BORDER@;
+    border-radius: 12px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 12px;
+}
+
+QPushButton#forumFilterChip:hover {
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+QPushButton#forumFilterChip:checked {
+    background: @PRIMARY_BG_SOFT@;
+    border-color: @PRIMARY@;
+    color: @PRIMARY@;
+}
+
+/* 发布页正文 Markdown 工具栏小按钮（B / I / S / H / 列表 / 链接 / 图片） */
+QPushButton#forumMdButton {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: @TEXT_SECONDARY@;
+    padding: 2px 8px;
+}
+
+QPushButton#forumMdButton:hover {
+    background: @BG_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#forumMdButton:pressed {
+    background: @BG_MUTED@;
+    color: @TEXT_PRIMARY@;
 }
 
 QPushButton#forumPrimaryButton {
@@ -16125,10 +16330,16 @@ QLabel#forumCrumbCurrent {
     font-size: 12px;
 }
 
+QLabel#forumHeroTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 21px;
+    font-weight: 800;
+}
+
 QPushButton#forumBoardChip {
     background: @PRIMARY_RGBA_26@;
-    border: none;
-    border-radius: 11px;
+    border: 1px solid @PRIMARY_RGBA_38@;
+    border-radius: 12px;
     color: @TEXT_ACCENT@;
     font-size: 11px;
     font-weight: 700;
@@ -16140,37 +16351,41 @@ QPushButton#forumBoardChip:hover {
     color: @PRIMARY_DARK@;
 }
 
-QPushButton#forumMetaAuthor {
+/* 作者胶囊：头像 + 昵称，整块可点进主页 */
+QFrame#forumAuthorChip {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 14px;
+}
+
+QFrame#forumAuthorChip:hover {
+    border-color: @PRIMARY_RGBA_38@;
+}
+
+QLabel#forumAuthorChipName {
     background: transparent;
-    border: none;
     color: @TEXT_SECONDARY@;
     font-size: 12px;
     font-weight: 700;
-    padding: 0;
-    text-align: left;
 }
 
-QPushButton#forumMetaAuthor:hover {
-    color: @PRIMARY@;
-}
-
-QLabel#forumMetaDot {
-    color: @TEXT_TERTIARY@;
-    font-size: 12px;
-}
-
-QPushButton#forumBookmarkButton {
-    background: transparent;
-    border: 1px solid @BORDER@;
-    border-radius: 9px;
+QPushButton#forumShareButton,
+QPushButton#forumBookmarkButton,
+QPushButton#forumTipButton {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 15px;
     color: @TEXT_SECONDARY@;
     font-size: 12px;
     font-weight: 600;
-    padding: 2px 12px;
+    padding: 0 13px;
 }
 
-QPushButton#forumBookmarkButton:hover {
-    border-color: @PRIMARY@;
+QPushButton#forumShareButton:hover,
+QPushButton#forumBookmarkButton:hover,
+QPushButton#forumTipButton:hover {
+    background: @PRIMARY_RGBA_26@;
+    border-color: @PRIMARY_RGBA_38@;
     color: @PRIMARY@;
 }
 
@@ -16180,36 +16395,36 @@ QPushButton#forumBookmarkButton[active="true"] {
     color: @TEXT_ACCENT@;
 }
 
-QPushButton#forumShareButton {
-    background: transparent;
-    border: 1px solid @BORDER@;
-    border-radius: 9px;
-    color: @TEXT_SECONDARY@;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 2px 12px;
-}
-
-QPushButton#forumShareButton:hover {
-    border-color: @PRIMARY@;
-    color: @PRIMARY@;
-}
-
 QFrame#forumPost {
     background: @BG_CARD@;
     border: 1px solid @BORDER@;
     border-radius: 16px;
 }
 
+QFrame#forumPost:hover {
+    border-color: @BORDER_HOVER@;
+}
+
 QFrame#forumPost[op="true"] {
     border-color: @PRIMARY_LIGHT@;
+}
+
+QFrame#forumPost[op="true"]:hover {
+    border-color: @PRIMARY_MEDIUM@;
+}
+
+/* 作者头像外面的一圈柔光描边 */
+QFrame#forumAvatarRing {
+    background: @PRIMARY_RGBA_26@;
+    border: none;
+    border-radius: 30px;
 }
 
 /* 已删除楼层：虚线框 + 灰字，和网页版一致 */
 QFrame#forumPost[deleted="true"] {
     border-style: dashed;
     border-color: @BORDER_DASHED@;
-    background: @BG_MUTED@;
+    background: @BG_MSG@;
 }
 
 QLabel#forumDeletedMark {
@@ -16250,16 +16465,27 @@ QLabel#forumEditMark {
     padding: 0 5px;
 }
 
-QPushButton#forumAct {
+/* 操作行上方的虚线分隔（网页版 .post-actions 的 border-top） */
+QFrame#forumActDivider {
     background: transparent;
     border: none;
+    border-top: 1px dashed @BORDER@;
+}
+
+/* 胶囊操作按钮：回复 / 引用 / 复制链接 / 编辑 / 举报… */
+QPushButton#forumAct {
+    background: @BLACK_RGBA_0.06@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 14px;
     color: @TEXT_SECONDARY@;
     font-size: 12px;
     font-weight: 600;
-    padding: 0 6px;
+    padding: 0 12px;
 }
 
 QPushButton#forumAct:hover {
+    background: @PRIMARY_RGBA_26@;
+    border-color: @PRIMARY_RGBA_38@;
     color: @PRIMARY@;
 }
 
@@ -16269,13 +16495,28 @@ QPushButton#forumAct[danger="true"] {
 
 QPushButton#forumAct[danger="true"]:hover {
     background: @DANGER_BG@;
-    border-radius: 6px;
+    border-color: @DANGER_BORDER@;
+    border-radius: 14px;
     color: @DANGER@;
 }
 
-QPushButton#forumAct[liked="true"] {
+/* 楼中楼：浅底内嵌面板，和楼层正文分层 */
+QFrame#forumChildren {
+    background: @BG_MSG@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 12px;
+}
+
+/* 面板里的操作按钮换成卡片底色：在浅底面板上像一个个小胶囊浮起来 */
+QWidget#forumChild QPushButton#forumAct {
+    background: @BG_CARD@;
+    border-color: @BORDER@;
+}
+
+QWidget#forumChild QPushButton#forumAct:hover {
+    background: @PRIMARY_RGBA_26@;
+    border-color: @PRIMARY_RGBA_38@;
     color: @PRIMARY@;
-    font-weight: 700;
 }
 
 QWidget#forumChild {
@@ -16292,22 +16533,76 @@ QWidget#forumChildrenMore {
     border-top: 1px dashed @BORDER_LIGHT@;
 }
 
+/* 楼中楼的作者名比主楼层小一档 */
+QPushButton#forumChildName {
+    background: transparent;
+    border: none;
+    color: @TEXT_PRIMARY@;
+    font-size: 12.5px;
+    font-weight: 800;
+    padding: 0;
+}
+
+QPushButton#forumChildName:hover {
+    color: @PRIMARY@;
+}
+
 QLabel#forumChildTime {
     color: @TEXT_TERTIARY@;
     font-size: 11px;
 }
 
 QPushButton#forumChildrenToggle {
-    background: transparent;
-    border: none;
-    color: @PRIMARY@;
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+    color: @TEXT_SECONDARY@;
     font-size: 12px;
     font-weight: 700;
-    padding: 8px 0 2px;
+    padding: 0 14px;
 }
 
 QPushButton#forumChildrenToggle:hover {
-    color: @PRIMARY_HOVER@;
+    background: @PRIMARY_RGBA_26@;
+    border-color: @PRIMARY_RGBA_38@;
+    color: @PRIMARY@;
+}
+
+/* 资源帖评论：一条一条平铺的卡片（插件帖 / 投影帖没有楼层号与楼中楼） */
+QFrame#forumComment {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+QFrame#forumComment:hover {
+    border-color: @BORDER_HOVER@;
+}
+
+/* 资源帖的「详细信息」卡：静态展示作者写的介绍正文，不跟楼层那样带 hover 反馈 */
+QFrame#forumBodyCard {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+QPushButton#forumCommentName {
+    background: transparent;
+    border: none;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    font-weight: 800;
+    padding: 0;
+}
+
+QPushButton#forumCommentName:hover {
+    color: @PRIMARY@;
+}
+
+QLabel#forumCommentTime {
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    font-weight: 600;
 }
 
 QFrame#forumComposer {
@@ -16365,6 +16660,24 @@ QLabel#forumRailTitle {
     font-weight: 800;
 }
 
+/* 侧栏卡片标题前的主色小竖条 */
+QFrame#forumRailBar {
+    background: @PRIMARY@;
+    border: none;
+    border-radius: 2px;
+}
+
+/* 小计数胶囊（插件帖「共 N 条回复」） */
+QLabel#forumCountPill {
+    background: @BG_MUTED@;
+    border: 1px solid @BORDER_LIGHT@;
+    border-radius: 9px;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 8px;
+}
+
 QLabel#forumRailKey {
     color: @TEXT_TERTIARY@;
     font-size: 11px;
@@ -16398,7 +16711,7 @@ QLabel#forumRailNote {
 }
 
 QPushButton#forumRailButton {
-    background: @BG_MUTED@;
+    background: transparent;
     border: 1px solid @BORDER@;
     border-radius: 9px;
     color: @TEXT_SECONDARY@;
@@ -16407,7 +16720,8 @@ QPushButton#forumRailButton {
 }
 
 QPushButton#forumRailButton:hover {
-    border-color: @PRIMARY@;
+    background: @PRIMARY_RGBA_26@;
+    border-color: @PRIMARY_RGBA_38@;
     color: @PRIMARY@;
 }
 
@@ -16418,7 +16732,7 @@ QFrame#forumStatBox {
 }
 
 QFrame#forumStatBox QLabel#forumStatValue {
-    font-size: 16px;
+    font-size: 18px;
 }
 
 QLabel#forumRailEmpty {
@@ -16429,7 +16743,12 @@ QLabel#forumRailEmpty {
 QFrame#forumRailThread {
     background: transparent;
     border: none;
+    border-top: 1px dashed @BORDER_LIGHT@;
     padding: 0;
+}
+
+QFrame#forumRailThread[first="true"] {
+    border-top: none;
 }
 
 QFrame#forumRailThread:hover {
@@ -16451,8 +16770,118 @@ QLabel#forumRailThreadMeta {
 }
 
 QLabel#forumRailTip {
+    color: @TEXT_SECONDARY@;
+    font-size: 11.5px;
+}
+
+/* ─── 插件帖详情：换成资源详情页的版面（通栏头部 + 左下载 / 右介绍讨论） ─── */
+QFrame#forumPluginHero {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+}
+
+/* 插件大图标：与模组详情页的头部图标同款 */
+QLabel#forumPluginHeroIcon {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_DARK@);
+    border: none;
+    border-radius: 18px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 28px;
+    font-weight: 800;
+}
+
+QLabel#forumPluginHeroTitle {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 24px;
+    font-weight: 800;
+}
+
+QLabel#forumPluginHeroSub {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    font-family: "Consolas", "Cascadia Code", monospace;
+}
+
+QLabel#forumPluginHeroMeta {
+    background: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QLabel#forumPluginHeroDesc {
+    background: transparent;
+    color: @TEXT_SECONDARY@;
+    font-size: 13px;
+}
+
+/* 左栏的「下载」「插件信息」卡：与模组详情页的信息块同一套观感 */
+QFrame#forumPluginSection {
+    background: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 14px;
+}
+
+QLabel#forumPluginSectionTitle {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
+QLabel#forumPluginKey {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 12px;
+}
+
+QLabel#forumPluginValue {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#forumPluginHint {
+    background: transparent;
     color: @TEXT_TERTIARY@;
     font-size: 11px;
+}
+
+QLabel#forumPluginStatus {
+    background: transparent;
+    color: @PRIMARY@;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* 下载主按钮：整块拉满，和「一键安装」一个分量 */
+QPushButton#forumPluginInstallBtn {
+    background: @PRIMARY@;
+    border: none;
+    border-radius: 11px;
+    color: @TEXT_ON_PRIMARY@;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 16px;
+}
+
+QPushButton#forumPluginInstallBtn:hover {
+    background: @PRIMARY_HOVER@;
+}
+
+QPushButton#forumPluginInstallBtn:pressed {
+    background: @PRIMARY_PRESSED@;
+}
+
+QPushButton#forumPluginInstallBtn:disabled {
+    background: @BG_DISABLED@;
+    color: @TEXT_DISABLED@;
 }
 
 QLabel#fbUnreadBadge {
@@ -16564,6 +16993,57 @@ QFrame#forumSideRow[selected="true"] QLabel#forumRowTitle {
     color: @PRIMARY@;
 }
 
+/* 会话搜索框：左栏页签下面的一行，圆角浅底 */
+QLineEdit#forumConvSearch {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+    padding: 0 10px;
+    selection-background-color: @PRIMARY_RGBA_38@;
+    selection-color: @TEXT_PRIMARY@;
+}
+
+QLineEdit#forumConvSearch:hover {
+    border-color: @BORDER_STRONG@;
+}
+
+QLineEdit#forumConvSearch:focus {
+    background-color: @BG_CARD@;
+    border-color: @PRIMARY@;
+}
+
+/* 会话行里的置顶 / 免打扰小图标：只当标记，不占点击 */
+QLabel#forumSideStateIcon {
+    background: transparent;
+    border: none;
+}
+
+/* 免打扰会话的未读：只剩一颗小圆点 */
+QLabel#forumUnreadDot {
+    background: @DANGER@;
+    border-radius: 4px;
+}
+
+/* 草稿预览：主色，一眼和最后一条消息区分开 */
+QLabel#forumDraftPreview {
+    background: transparent;
+    color: @PRIMARY@;
+    font-size: 12px;
+}
+
+/* 「以下是新消息」分隔：两句话中间的一道细提示 */
+QLabel#forumChatUnreadDivider {
+    background-color: @PRIMARY_RGBA_8@;
+    border: 1px solid @PRIMARY_RGBA_20@;
+    border-radius: 9px;
+    color: @PRIMARY@;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 12px;
+}
+
 QLabel#forumSideStatus {
     background: transparent;
     color: @TEXT_TERTIARY@;
@@ -16608,47 +17088,96 @@ QScrollArea#forumSideScroll QScrollBar::sub-page:vertical {
     background: transparent;
 }
 
-/* ── 右栏：聊天区不再套大卡片，直接铺在页面上，只用细分隔线分区 ── */
+/* ── 右栏：聊天主栏（浮起的会话头 / 居中消息流 / 玻璃输入坞，与 AI 聊天页同一套语言） ── */
 QWidget#forumChatStage {
     background: transparent;
     border: none;
 }
 
+/* 会话头：悬浮玻璃条，圆角与左栏面板呼应 */
 QWidget#forumChatHead {
-    background: transparent;
-    border-bottom: 1px solid @BORDER_LIGHT@;
-}
-
-QWidget#forumChatComposer {
-    background: transparent;
-    border-top: 1px solid @BORDER_LIGHT@;
-}
-
-QTextEdit#forumChatInput {
-    background: @BG_CARD@;
+    background-color: @BG_GLASS@;
     border: 1px solid @BORDER@;
-    border-radius: 8px;
-    color: @TEXT_PRIMARY@;
-    font-size: 13px;
-    padding: 6px 8px;
+    border-radius: 14px;
 }
 
-QTextEdit#forumChatInput:focus {
-    border: 1px solid @PRIMARY@;
+QWidget#forumChatHead QLabel#forumRowTitle {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.1px;
 }
 
+/* 会话头操作按钮：轻量胶囊，悬停才染主色 */
+QWidget#forumChatHead QPushButton#forumGhostButton {
+    background-color: @BG_CARD_GLASS@;
+    border: 1px solid @BORDER@;
+    border-radius: 9px;
+    padding: 1px 12px;
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QWidget#forumChatHead QPushButton#forumGhostButton:hover {
+    background-color: @PRIMARY_RGBA_20@;
+    border-color: @PRIMARY_RGBA_64@;
+    color: @PRIMARY@;
+}
+
+QWidget#forumChatHead QPushButton#forumGhostButton:pressed {
+    background-color: @PRIMARY_RGBA_26@;
+}
+
+/* 消息滚动区：跟随页面，滚动条收细 */
+QScrollArea#forumChatMsgs {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#forumChatMsgs > QWidget,
+QScrollArea#forumChatMsgs > QWidget > QWidget {
+    background: transparent;
+}
+
+QScrollArea#forumChatMsgs QScrollBar:vertical {
+    background: transparent;
+    width: 6px;
+    margin: 6px 2px;
+}
+
+QScrollArea#forumChatMsgs QScrollBar::handle:vertical {
+    background: @BLACK_RGBA_0.13@;
+    border-radius: 3px;
+    min-height: 30px;
+}
+
+QScrollArea#forumChatMsgs QScrollBar::handle:vertical:hover {
+    background: @BLACK_RGBA_0.25@;
+}
+
+QScrollArea#forumChatMsgs QScrollBar::add-line:vertical,
+QScrollArea#forumChatMsgs QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+QScrollArea#forumChatMsgs QScrollBar::add-page:vertical,
+QScrollArea#forumChatMsgs QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+/* 消息气泡：内边距交给气泡内布局，外层只负责底色和圆角 */
 QFrame#forumChatBubbleMine {
-    background: @PRIMARY_BG_SOFT@;
-    border: 1px solid @PRIMARY_MEDIUM@;
-    border-radius: 13px;
-    border-bottom-right-radius: 4px;
+    background-color: @PRIMARY_RGBA_38@;
+    border: 1px solid @PRIMARY_RGBA_64@;
+    border-radius: 16px;
+    border-bottom-right-radius: 5px;
 }
 
 QFrame#forumChatBubbleTheirs {
-    background: @BG_HOVER@;
+    background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
-    border-radius: 13px;
-    border-bottom-left-radius: 4px;
+    border-radius: 16px;
+    border-bottom-left-radius: 5px;
 }
 
 QFrame#forumChatBubbleMine QLabel,
@@ -16659,58 +17188,149 @@ QFrame#forumChatBubbleTheirs QLabel {
     font-size: 13px;
 }
 
+/* 引用条：左侧一道浅主色竖线，像被引用内容的书签 */
 QLabel#forumChatQuote {
     color: @TEXT_SECONDARY@;
     font-size: 12px;
-    padding: 2px 0 2px 8px;
+    padding: 1px 0 1px 8px;
+    border-left: 2px solid @PRIMARY_RGBA_64@;
 }
 
+QLabel#forumChatQuote:hover {
+    color: @PRIMARY@;
+    border-left-color: @PRIMARY@;
+}
+
+/* 点引用条跳到原消息后，原消息整行闪一下主色底 */
+QWidget#forumChatRow[flash="true"] {
+    background-color: @PRIMARY_RGBA_8@;
+    border-radius: 12px;
+}
+
+/* 图片消息：跟随发送方一侧的尾巴圆角 */
 QFrame#forumChatImageFrame {
-    background: @BG_HOVER@;
+    background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
-    border-radius: 13px;
-    border-bottom-left-radius: 4px;
+    border-radius: 16px;
+    border-bottom-left-radius: 5px;
 }
 
+QFrame#forumChatImageFrameMine {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 16px;
+    border-bottom-right-radius: 5px;
+}
+
+/* 日期 / 撤回提示：居中的小胶囊，由布局对齐，不再拉满整行 */
+QLabel#forumChatDateChip,
 QLabel#forumChatWithdraw {
-    background: @BG_SECONDARY@;
+    background-color: @BG_CARD_GLASS@;
     border: 1px solid @BORDER@;
     border-radius: 10px;
     color: @TEXT_TERTIARY@;
     font-size: 11px;
-    padding: 2px 12px;
-    margin: 2px auto 0;
+    padding: 3px 12px;
 }
 
-QWidget#forumChatReplyBar {
+/* 输入坞：与 AI 聊天页输入框同款玻璃卡片，聚焦时亮主色边 */
+QFrame#forumChatInputBox {
+    background-color: @BG_GLASS@;
+    border: 1.5px solid @BORDER@;
+    border-radius: 16px;
+}
+
+QFrame#forumChatInputBox:hover {
+    border-color: @BORDER_STRONG@;
+}
+
+QFrame#forumChatInputBox[focused="true"] {
+    border-color: @PRIMARY@;
+}
+
+QTextEdit#forumChatInput {
     background: transparent;
-    border-top: 1px solid @BORDER_LIGHT@;
+    border: none;
+    color: @TEXT_PRIMARY@;
+    font-size: 13px;
+    padding: 2px 2px;
+    selection-background-color: @PRIMARY_RGBA_38@;
+    selection-color: @TEXT_PRIMARY@;
 }
 
+QTextEdit#forumChatInput:focus {
+    background: transparent;
+    border: none;
+}
+
+/* 工具栏按钮 */
 QPushButton#forumChatToolButton {
     background: transparent;
     border: none;
-    border-radius: 8px;
-    font-size: 16px;
+    border-radius: 9px;
+    font-size: 17px;
     padding: 0;
 }
 
 QPushButton#forumChatToolButton:hover {
-    background: @BG_HOVER@;
+    background: @BLACK_RGBA_0.06@;
+}
+
+QPushButton#forumChatToolButton:pressed {
+    background: @BLACK_RGBA_0.12@;
 }
 
 QPushButton#forumChatToolButton:disabled {
     color: @TEXT_DISABLED@;
 }
 
-QLabel#forumChatDateChip {
-    background: @BG_SECONDARY@;
+/* 发送按钮：输入坞内的主按钮 */
+QFrame#forumChatInputBox QPushButton#forumPrimaryButton {
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0 16px;
+}
+
+/* 回复 / 引用提示条：输入坞上方的浅色胶囊 */
+QFrame#forumChatReplyBar {
+    background-color: @BG_CARD_GLASS@;
     border: 1px solid @BORDER@;
     border-radius: 10px;
+}
+
+QFrame#forumChatReplyBar QLabel#forumMuted {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+    background: transparent;
+    border: none;
+}
+
+QFrame#forumChatReplyBar QPushButton#forumGhostButton {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
     color: @TEXT_TERTIARY@;
-    font-size: 11px;
-    padding: 2px 12px;
-    margin: 4px auto 0;
+    font-size: 13px;
+}
+
+QFrame#forumChatReplyBar QPushButton#forumGhostButton:hover {
+    background: @BG_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+/* 空态占位：图标胶囊 + 标题 */
+QLabel#forumChatEmptyIcon {
+    background-color: @BG_GLASS@;
+    border: 1px solid @BORDER@;
+    border-radius: 24px;
+}
+
+QLabel#forumChatEmptyTitle {
+    color: @TEXT_PRIMARY@;
+    font-size: 15px;
+    font-weight: 700;
 }
 
 QLabel#forumOnlineDot {

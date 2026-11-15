@@ -8,6 +8,7 @@
 #include <QNetworkDiskCache>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrlQuery>
@@ -79,6 +80,20 @@ QString contentKindForClassId(const QJsonValue &value)
     case 17:   return QStringLiteral("world");
     default:   return QString();
     }
+}
+
+// 作者在 CurseForge 项目页自行设置的链接（wikiUrl / issuesUrl / sourceUrl）。
+// websiteUrl 多数项目默认就是 CurseForge 项目页（已作为 pageUrl 展示），不再重复列出
+void appendAuthorLinks(const QJsonObject &links, ModInfo &info)
+{
+    const auto addLink = [&info](const QString &label, const QString &url) {
+        if (!url.isEmpty() && !url.contains(QStringLiteral("curseforge.com")))
+            info.externalLinks.append({label, url});
+    };
+    addLink(QObject::tr("官网"), links["websiteUrl"].toString());
+    addLink(QObject::tr("问题反馈"), links["issuesUrl"].toString());
+    addLink(QObject::tr("源代码"), links["sourceUrl"].toString());
+    addLink(QObject::tr("Wiki"), links["wikiUrl"].toString());
 }
 
 } // namespace
@@ -453,6 +468,112 @@ void CurseForgeAPI::fingerprintMod(quint32 fingerprint)
             this, &CurseForgeAPI::onFingerprintReplyFinished);
 }
 
+void CurseForgeAPI::fingerprintMods(const QList<quint32> &fingerprints)
+{
+    // 收集有效指纹并去重（0 值表示该文件没有算出指纹）
+    QList<quint32> fps;
+    QSet<quint32> seen;
+    for (quint32 fp : fingerprints) {
+        if (fp == 0 || seen.contains(fp))
+            continue;
+        seen.insert(fp);
+        fps.append(fp);
+    }
+
+    if (fps.isEmpty()) {
+        QTimer::singleShot(0, this, [this]() {
+            emit fingerprintsFailed(tr("指纹值为空"));
+        });
+        return;
+    }
+
+    if (effectiveApiKey().isEmpty() && !usingMirror()) {
+        QTimer::singleShot(0, this, [this]() {
+            emit fingerprintsFailed(tr("未配置 CurseForge API Key，请在设置中填入或启用 MCIM 镜像加速"));
+        });
+        return;
+    }
+
+    m_batchFingerprintQueue = fps;
+    m_batchFingerprintResults.clear();
+    sendNextFingerprintBatch();
+}
+
+void CurseForgeAPI::sendNextFingerprintBatch()
+{
+    // 官方接口对单次指纹数量有限制，固定每 100 个一组分批请求
+    static const int kBatchSize = 100;
+    QList<quint32> batch;
+    while (!m_batchFingerprintQueue.isEmpty() && batch.size() < kBatchSize)
+        batch.append(m_batchFingerprintQueue.takeFirst());
+
+    if (batch.isEmpty()) {
+        emit fingerprintsCompleted(m_batchFingerprintResults);
+        return;
+    }
+
+    QUrl url(m_baseUrl + "/v1/fingerprints/432");
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("Content-Type", "application/json");
+    const QString apiKey = effectiveApiKey();
+    if (!apiKey.isEmpty())
+        request.setRawHeader("X-API-KEY", apiKey.toUtf8());
+
+    QJsonObject payload;
+    QJsonArray fpArr;
+    for (quint32 fp : batch)
+        fpArr.append(static_cast<qint64>(fp));
+    payload["fingerprints"] = fpArr;
+
+    abortReply(m_currentFingerprintsReply);
+    m_currentFingerprintsReply = m_networkManager->post(request, QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    connect(m_currentFingerprintsReply, &QNetworkReply::finished,
+            this, &CurseForgeAPI::onFingerprintsReplyFinished);
+}
+
+void CurseForgeAPI::onFingerprintsReplyFinished()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+    reply->deleteLater();
+    if (reply != m_currentFingerprintsReply) return;
+    m_currentFingerprintsReply = nullptr;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        emit fingerprintsFailed(reply->errorString());
+        return;
+    }
+
+    QByteArray data = reply->readAll();
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    if (doc.isNull()) {
+        emit fingerprintsFailed(tr("Invalid JSON response from server"));
+        return;
+    }
+
+    QJsonObject dataObj = doc.object()["data"].toObject();
+    QJsonArray exactMatches = dataObj["exactMatches"].toArray();
+    // 个别实现不回 fileFingerprint 时，用 parallel 的 exactFingerprints 按位置兜底
+    QJsonArray exactFps = dataObj["exactFingerprints"].toArray();
+    int matchIndex = 0;
+    for (const QJsonValue &v : exactMatches) {
+        QJsonObject match = v.toObject();
+        QJsonObject file = match["file"].toObject();
+        quint32 fp = file["fileFingerprint"].toVariant().toUInt();
+        if (fp == 0 && matchIndex < exactFps.size())
+            fp = exactFps.at(matchIndex).toVariant().toUInt();
+        ++matchIndex;
+
+        int modId = file["modId"].toInt();
+        if (fp == 0 || modId <= 0)
+            continue;
+        m_batchFingerprintResults.insert(fp, QString::number(modId));
+    }
+
+    sendNextFingerprintBatch();
+}
+
 void CurseForgeAPI::onDetailReplyFinished()
 {
     QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
@@ -494,6 +615,7 @@ void CurseForgeAPI::onDetailReplyFinished()
             info.author = authors.first().toObject()["name"].toString();
     }
     info.pageUrl = obj["links"].toObject()["websiteUrl"].toString();
+    appendAuthorLinks(obj["links"].toObject(), info);
     info.source = "curseforge";
     info.downloadCount = obj["downloadCount"].toInt();
     info.followers = obj["follows"].toInt();
@@ -522,6 +644,18 @@ void CurseForgeAPI::onDetailReplyFinished()
         vf.downloadUrl = file["downloadUrl"].toString();
         vf.fileName = file["fileName"].toString();
         vf.fileSize = file["fileLength"].toInt();
+
+        // 文件哈希（安装状态比对用）：algo 1 = SHA-1，algo 2 = MurmurHash2
+        const QJsonArray fileHashes = file["hashes"].toArray();
+        for (const QJsonValue &hv : fileHashes) {
+            const QJsonObject h = hv.toObject();
+            if (h["algo"].toInt() == 1)
+                vf.sha1 = h["value"].toString();
+            else if (h["algo"].toInt() == 2)
+                vf.murmur2 = h["value"].toString().toUInt();
+        }
+        if (vf.murmur2 == 0)
+            vf.murmur2 = file["fileFingerprint"].toVariant().toUInt();
 
         QJsonArray modLoaders = file["modLoaders"].toArray();
         for (const QJsonValue &v : modLoaders)
@@ -654,6 +788,7 @@ void CurseForgeAPI::parseAddon(const QJsonObject &obj, ModInfo &info)
             info.author = authors.first().toObject()["name"].toString();
     }
     info.pageUrl = obj["links"].toObject()["websiteUrl"].toString();
+    appendAuthorLinks(obj["links"].toObject(), info);
     info.source = "curseforge";
     info.downloadCount = obj["downloadCount"].toInt();
     info.followers = obj["follows"].toInt();

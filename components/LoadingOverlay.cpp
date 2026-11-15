@@ -12,6 +12,7 @@
 
 #include "utils/LowConfigMode.h"
 #include "utils/ThemeManager.h"
+#include "utils/TriviaBank.h"
 
 // ========== SpinnerWidget ==========
 
@@ -132,12 +133,18 @@ LoadingOverlay::LoadingOverlay(QWidget *parent)
     , m_spinner(nullptr)
     , m_progressBar(nullptr)
     , m_statusLabel(nullptr)
+    , m_triviaLabel(nullptr)
     , m_cancelButton(nullptr)
+    , m_triviaTimer(new QTimer(this))
     , m_showCancelButton(true)
     , m_showProgressBar(true)
     , m_animationsEnabled(true)
 {
     setObjectName(QStringLiteral("loadingOverlay"));
+
+    // 「你知道吗」冷知识轮换：加载期间每 8 秒换一条
+    m_triviaTimer->setInterval(8000);
+    connect(m_triviaTimer, &QTimer::timeout, this, &LoadingOverlay::refreshTrivia);
 
     initUI();
     initStyle();
@@ -165,7 +172,7 @@ void LoadingOverlay::initUI()
     // 居中容器
     m_centerWidget = new QWidget(this);
     m_centerWidget->setObjectName(QStringLiteral("loadingCenterWidget"));
-    m_centerWidget->setFixedSize(320, 230);
+    m_centerWidget->setFixedSize(320, 274);
 
     m_centerLayout = new QVBoxLayout(m_centerWidget);
     m_centerLayout->setSpacing(12);
@@ -200,6 +207,15 @@ void LoadingOverlay::initUI()
 
     connect(m_cancelButton, &QPushButton::clicked, this, &LoadingOverlay::onCancelClicked);
 
+    // 「你知道吗」冷知识
+    m_triviaLabel = new QLabel(m_centerWidget);
+    m_triviaLabel->setObjectName(QStringLiteral("loadingTriviaLabel"));
+    m_triviaLabel->setAlignment(Qt::AlignCenter);
+    m_triviaLabel->setWordWrap(true);
+    QFont triviaFont = m_triviaLabel->font();
+    triviaFont.setPointSize(9);
+    m_triviaLabel->setFont(triviaFont);
+
     // 组装布局
     m_centerLayout->addStretch();
     m_centerLayout->addWidget(m_spinner, 0, Qt::AlignCenter);
@@ -209,6 +225,8 @@ void LoadingOverlay::initUI()
     m_centerLayout->addWidget(m_statusLabel);
     m_centerLayout->addSpacing(8);
     m_centerLayout->addWidget(m_cancelButton, 0, Qt::AlignCenter);
+    m_centerLayout->addSpacing(14);
+    m_centerLayout->addWidget(m_triviaLabel);
     m_centerLayout->addStretch();
 
     // 将居中容器添加到主布局
@@ -254,6 +272,12 @@ void LoadingOverlay::initStyle()
         "QLabel#loadingStatusLabel {"
         "    color: %6;"
         "    background-color: transparent;"
+        "}"
+        ""
+        "QLabel#loadingTriviaLabel {"
+        "    color: %6;"
+        "    background-color: transparent;"
+        "    font-style: italic;"
         "}"
     ).arg(themeColor).arg(themeHover).arg(cardBg).arg(cardBorder).arg(barBg).arg(textColor);
 
@@ -302,6 +326,10 @@ void LoadingOverlay::showOverlay(const QString &status)
     show();
     raise();
 
+    // 随机换一条冷知识，并启动轮换定时器
+    refreshTrivia();
+    m_triviaTimer->start();
+
     // 启动旋转动画
     if (m_spinner) {
         m_spinner->start();
@@ -310,10 +338,11 @@ void LoadingOverlay::showOverlay(const QString &status)
 
 void LoadingOverlay::hideOverlay()
 {
-    // 停止旋转动画
+    // 停止旋转动画与冷知识轮换
     if (m_spinner) {
         m_spinner->stop();
     }
+    m_triviaTimer->stop();
 
     // 直接隐藏（不使用 QGraphicsOpacityEffect 淡出动画，避免性能开销）
     hide();
@@ -337,6 +366,21 @@ void LoadingOverlay::updateStatus(const QString &status)
 void LoadingOverlay::onCancelClicked()
 {
     emit cancelRequested();
+}
+
+void LoadingOverlay::refreshTrivia()
+{
+    if (!m_triviaLabel) {
+        return;
+    }
+    const QString trivia = TriviaBank::randomTrivia();
+    if (trivia.isEmpty()) {
+        m_triviaLabel->hide();
+        return;
+    }
+    m_triviaLabel->setText(QStringLiteral("<b>%1</b>&nbsp;&nbsp;%2")
+                               .arg(tr("你知道吗"), trivia));
+    m_triviaLabel->show();
 }
 
 void LoadingOverlay::updateAnimationState()
@@ -368,4 +412,5 @@ void LoadingOverlay::hideEvent(QHideEvent *event)
     if (m_spinner) {
         m_spinner->stop();
     }
+    m_triviaTimer->stop();
 }

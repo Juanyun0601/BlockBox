@@ -14,10 +14,12 @@
 #undef private
 
 #include <QApplication>
+#include <QColor>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QLabel>
+#include <QPalette>
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
@@ -77,6 +79,7 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("BlockBox"));
 
     const bool dark = app.arguments().contains(QStringLiteral("--dark"));
+    const bool narrow = app.arguments().contains(QStringLiteral("--narrow"));
 
     // 套用当前主题：程序里 QSS 来自嵌入资源，探针这里直接读工作区里的 style.qss，
     // 保证改过的样式（左栏面板、右栏去卡片）能在截图中生效
@@ -97,13 +100,24 @@ int main(int argc, char *argv[])
     QApplication::processEvents();
 
     QDir().mkpath(QStringLiteral("probe_out"));
-    const QString prefix = dark ? QStringLiteral("probe_out/forum_friends_dark_")
-                                : QStringLiteral("probe_out/forum_friends_");
+    QString prefix = dark ? QStringLiteral("probe_out/forum_friends_dark_")
+                          : QStringLiteral("probe_out/forum_friends_");
+    if (narrow)
+        prefix += QStringLiteral("narrow_");
 
     ForumFriendsPage page;
-    page.resize(1180, 740);
+    page.resize(narrow ? 760 : 1180, 740);
     page.show();
     QApplication::processEvents();
+
+    // 页面内容区本身是透明的：深色截图时补一个深色底，才能看清气泡 / 时间 / 胶囊的真实观感
+    if (dark)
+    {
+        QPalette palette = page.palette();
+        palette.setColor(QPalette::Window, QColor(QStringLiteral("#1a1a1a")));
+        page.setAutoFillBackground(true);
+        page.setPalette(palette);
+    }
 
     // 注入假数据（showEvent 里的未登录分支会清空列表，所以放在 show 之后）
     page.m_snapshot.friends = {
@@ -124,11 +138,39 @@ int main(int argc, char *argv[])
         makeMessage(2, QStringLiteral("在的，直接把 zip 丢进 shaderpacks 就行"), true, 24),
         makeMessage(3, QStringLiteral("装好了！帧数还挺稳"), false, 3),
     };
+    // 引用条 + 撤回占位 + 文件卡片：一起核对右栏的各类消息观感
+    ForumChatMessage reply;
+    reply.id = 4;
+    reply.kind = QStringLiteral("text");
+    reply.body = QStringLiteral("收到，我照这个顺序再试一次");
+    reply.replyTo = 1;
+    reply.replyBody = QStringLiteral("在吗？想问问那个光影包怎么装");
+    reply.createdAt = QDateTime::currentSecsSinceEpoch() - 120;
+    page.m_messages.append(reply);
+    ForumChatMessage withdrawn;
+    withdrawn.id = 5;
+    withdrawn.kind = QStringLiteral("withdrawn");
+    withdrawn.createdAt = QDateTime::currentSecsSinceEpoch() - 90;
+    page.m_messages.append(withdrawn);
+    ForumChatMessage file;
+    file.id = 6;
+    file.kind = QStringLiteral("file");
+    file.body = QStringLiteral("安装步骤都写在里面了");
+    file.fileName = QStringLiteral("光影包安装说明.txt");
+    file.fileUrl = QStringLiteral("/uploads/chat/demo.txt");
+    file.fileSize = 4096;
+    file.mine = true;
+    file.read = true;
+    file.createdAt = QDateTime::currentSecsSinceEpoch() - 60;
+    page.m_messages.append(file);
     page.m_hasMore = true;
     page.renderMessages();
 
     QApplication::processEvents();
     page.m_msgsScroll->verticalScrollBar()->setValue(page.m_msgsScroll->verticalScrollBar()->maximum());
+    // 顺带看一眼「引用条 + 输入坞聚焦描边」的样子
+    page.setReplyTarget(1, QStringLiteral("在吗？想问问那个光影包怎么装"), false,
+                        QStringLiteral("阿伟"));
     QApplication::processEvents();
 
     savePng(&page, prefix + QStringLiteral("left_panel.png"));

@@ -31,6 +31,15 @@ echo === compiling page ===
 g++.exe -c -pipe -fno-keep-inline-dllexport -O2 -fexceptions -mthreads %DEF% %INC% -o .tmp_mp_probe\BedrockMultiplayerPage_probe.o pages\BedrockMultiplayerPage.cpp
 if errorlevel 1 goto :fail
 
+rem Also rebuild the account service and GravityCone client so no stale objects are linked
+echo === compiling forum account service ===
+g++.exe -c -pipe -fno-keep-inline-dllexport -O2 -fexceptions -mthreads %DEF% %INC% -o .tmp_mp_probe\ForumAccountService_probe.o utils\ForumAccountService.cpp
+if errorlevel 1 goto :fail
+
+echo === compiling gravitycone client ===
+g++.exe -c -pipe -fno-keep-inline-dllexport -O2 -fexceptions -mthreads %DEF% %INC% -o .tmp_mp_probe\GravityConeClient_probe.o utils\GravityCone\GravityConeClient.cpp
+if errorlevel 1 goto :fail
+
 echo === compiling moc ===
 g++.exe -c -pipe -fno-keep-inline-dllexport -O2 -fexceptions -mthreads %DEF% %INC% -o .tmp_mp_probe\moc_BedrockMultiplayerPage_probe.o .tmp_mp_probe\moc_BedrockMultiplayerPage.cpp
 if errorlevel 1 goto :fail
@@ -50,10 +59,12 @@ for /f "usebackq delims=" %%f in ("%SCRIPT%") do (
     set "entry=%%f"
     if "!entry!" NEQ "" (
         set "entry=!entry:release/=!"
-        if /I not "!entry!"=="main.o" if /I not "!entry!"=="BedrockMultiplayerPage.o" if /I not "!entry!"=="moc_BedrockMultiplayerPage.o" echo !OBJDIR!/!entry!>> "%RSP%"
+        if /I not "!entry!"=="main.o" if /I not "!entry!"=="BedrockMultiplayerPage.o" if /I not "!entry!"=="moc_BedrockMultiplayerPage.o" if /I not "!entry!"=="ForumAccountService.o" if /I not "!entry!"=="GravityConeClient.o" echo !OBJDIR!/!entry!>> "%RSP%"
     )
 )
 echo .tmp_mp_probe/BedrockMultiplayerPage_probe.o>> "%RSP%"
+echo .tmp_mp_probe/ForumAccountService_probe.o>> "%RSP%"
+echo .tmp_mp_probe/GravityConeClient_probe.o>> "%RSP%"
 echo .tmp_mp_probe/moc_BedrockMultiplayerPage_probe.o>> "%RSP%"
 echo .tmp_mp_probe/bedrock_multiplayer_probe.o>> "%RSP%"
 

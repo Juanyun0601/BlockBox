@@ -7,6 +7,7 @@
  * 从反馈页顶部的「提交新反馈」按钮进入。提交需要登录论坛账号，
  * 问题反馈的字段与 GitHub Issue 模板（.github/ISSUE_TEMPLATE/bug_report.yml）一致：
  * 启动器版本、运行平台、问题描述、复现步骤为必填，系统版本 / 期望 / 实际 / 日志 / 截图选填；
+ * 日志栏支持一键上传：导出的运行日志整份传到论坛，链接自动填进栏里。
  * 结构化字段由论坛服务端校验并组装成正文。提交成功后回到反馈列表页。
  */
 #pragma once
@@ -44,6 +45,7 @@ private:
     void buildUi();
     void updateState();
     void applyType();
+    void uploadLog();
     void submit();
     void setStatus(const QString &text, bool error = false);
 
@@ -72,6 +74,7 @@ private:
     QPlainTextEdit *m_screenshotsEdit = nullptr;
     QPlainTextEdit *m_sceneEdit = nullptr;
 
+    QPushButton *m_uploadLogButton = nullptr;
     QPushButton *m_submitButton = nullptr;
     QLabel *m_statusLabel = nullptr;
 };

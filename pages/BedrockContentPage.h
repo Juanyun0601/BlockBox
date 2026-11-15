@@ -45,6 +45,9 @@ public:
     void setCategory(int classId);
     void setSearchText(const QString &text);
 
+    /** 当前选择的下载目标实例 ID（空 = 跟随当前激活实例） */
+    QString selectedTargetInstanceId() const;
+
     /**
      * 子导航搜索框分发：按卡片可见文本（名称/标签等）过滤卡片；
      * 清空查询时恢复全部卡片可见。
@@ -56,11 +59,14 @@ public:
 
 signals:
     void contentDetailRequested(const ModInfo &info, int classId);
+    /** 下载目标实例下拉变化（id 为空 = 当前激活实例） */
+    void targetInstanceChanged(const QString &instanceId);
 
 private slots:
     void onSearchTriggered();
     void onCategoryChanged(int index);
     void onSortChanged(int index);
+    void onInstanceChanged(int index);
     void onViewModeChanged(ContentViewSwitch::ViewMode mode);
     void onFirstPage();
     void onPrevPage();
@@ -74,6 +80,7 @@ private slots:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     void initUI();
@@ -97,6 +104,8 @@ private:
     void updatePaginationControls();
     void showLoading(bool show);
     void populateCategoryCombo();
+    /** 刷新「下载到实例」下拉（实例可能新建/删除，进入页面时重读） */
+    void repopulateInstanceCombo();
 
     QString selectedClassId() const;
     QString selectedSortField() const;
@@ -104,6 +113,7 @@ private:
     QLineEdit *m_searchEdit = nullptr;
     QComboBox *m_categoryCombo = nullptr;
     QComboBox *m_sortCombo = nullptr;
+    QComboBox *m_instanceCombo = nullptr;
     QScrollArea *m_scrollArea = nullptr;
     QWidget *m_cardContainer = nullptr;
     QGridLayout *m_cardGridLayout = nullptr;

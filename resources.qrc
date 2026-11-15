@@ -26,6 +26,8 @@
         <file>Images/Icons/export.svg</file>
         <file>Images/Icons/server.svg</file>
         <file>Images/Icons/screenshot.svg</file>
+        <file>Images/Icons/smile.svg</file>
+        <file>Images/Icons/paperclip.svg</file>
         <file>Images/Icons/nav_recording.svg</file>
         <file>Images/Icons/nav_home.svg</file>
         <file>Images/Icons/side_back.svg</file>
@@ -69,12 +71,16 @@
         <file>Images/Icons/list.svg</file>
         <file>Images/Icons/pin.svg</file>
         <file>Images/Icons/pin_filled.svg</file>
+        <file>Images/Icons/bell_off.svg</file>
         <file>Images/Icons/copy.svg</file>
         <file>Images/Icons/copy_md.svg</file>
         <file>Images/Icons/thumbs_up.svg</file>
         <file>Images/Icons/thumbs_down.svg</file>
+        <file>Images/Icons/like.svg</file>
+        <file>Images/Icons/like_filled.svg</file>
         <file>Images/Icons/search.svg</file>
         <file>Images/Icons/star.svg</file>
+        <file>Images/Icons/tip.svg</file>
         <file>Images/Icons/grid.svg</file>
         <file>Images/Icons/map.svg</file>
         <file>Images/Icons/convert.svg</file>
@@ -151,6 +157,7 @@
         <file>Images/icon.ico</file>
         <file>Images/logo.png</file>
         <file>Images/blockbox_icon_dark.png</file>
+        <file>Images/blockbox_cube.png</file>
         <!-- 版本类型图标（安装新实例卡片） -->
         <file>Images/Block/Grass_Block.png</file>
         <file>Images/Block/Command_Block.png</file>

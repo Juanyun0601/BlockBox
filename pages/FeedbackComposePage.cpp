@@ -8,17 +8,23 @@
 #include "FeedbackComposePage.h"
 
 #include <QComboBox>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QStandardPaths>
 #include <QVBoxLayout>
 
 #include "components/NotificationManager.h"
 #include "utils/AppVersion.h"
 #include "utils/ForumAccountService.h"
+#include "utils/LauncherLogger.h"
 #include "utils/StyleKit.h"
 
 namespace {
@@ -32,6 +38,14 @@ constexpr int kAppVersionMaxLength = 40;
 constexpr int kLogsMaxLength = 2000;
 constexpr int kScreenshotsMaxLength = 500;
 constexpr int kSceneMaxLength = 800;
+
+/** 日志上传成功后填进日志栏的大小标注（"1.2 MB" / "850 KB"） */
+QString logSizeLabel(qint64 bytes)
+{
+    if (bytes >= 1024 * 1024)
+        return QStringLiteral("%1 MB").arg(QString::number(bytes / 1048576.0, 'f', 1));
+    return QStringLiteral("%1 KB").arg(QString::number(bytes / 1024.0, 'f', 0));
+}
 
 /** 「小标题 + 说明行 + 输入框」的字段块，切换类型时整块显隐 */
 QWidget *makeFieldBlock(QWidget *parent, QLabel **titleLabel, const QString &title,
@@ -217,10 +231,32 @@ void FeedbackComposePage::buildUi()
                                    tr("如果有报错弹窗，把提示文字原样贴进来。"), 60);
     formLayout->addWidget(m_actualField);
 
-    // 日志（选填）
-    m_logsField = makeFieldBlock(formCard, nullptr, tr("日志（可选）"), &m_logsEdit,
-                                 tr("在「设置 → 高级设置 → 运行日志」里点「导出日志」；很长时贴最后几十行就可以。"), 80);
-    formLayout->addWidget(m_logsField);
+    // 日志（选填）：标题行右侧带「一键上传日志」，导出 + 上传一次完成
+    {
+        auto *logsBlock = new QWidget(formCard);
+        logsBlock->setAttribute(Qt::WA_StyledBackground, false);
+        auto *logsLayout = new QVBoxLayout(logsBlock);
+        logsLayout->setContentsMargins(0, 0, 0, 0);
+        logsLayout->setSpacing(4);
+        auto *titleRow = new QHBoxLayout();
+        titleRow->setSpacing(10);
+        titleRow->addWidget(ForumKit::makeMuted(logsBlock, tr("日志（可选）")));
+        titleRow->addStretch(1);
+        m_uploadLogButton = new QPushButton(tr("一键上传日志"), logsBlock);
+        m_uploadLogButton->setObjectName(QStringLiteral("forumGhostButton"));
+        m_uploadLogButton->setCursor(Qt::PointingHandCursor);
+        connect(m_uploadLogButton, &QPushButton::clicked, this, &FeedbackComposePage::uploadLog);
+        titleRow->addWidget(m_uploadLogButton);
+        logsLayout->addLayout(titleRow);
+        m_logsEdit = new QPlainTextEdit(logsBlock);
+        m_logsEdit->setObjectName(QStringLiteral("forumReplyEdit"));
+        m_logsEdit->setPlaceholderText(
+            tr("点「一键上传日志」自动附上完整运行日志；也可以手动粘贴报错内容，很长时贴最后几十行。"));
+        m_logsEdit->setMinimumHeight(80);
+        logsLayout->addWidget(m_logsEdit);
+        m_logsField = logsBlock;
+        formLayout->addWidget(logsBlock);
+    }
 
     // 截图 / 录屏（选填）
     m_screenshotsField = makeFieldBlock(formCard, nullptr, tr("截图 / 录屏（可选）"), &m_screenshotsEdit,
@@ -290,6 +326,57 @@ void FeedbackComposePage::applyType()
     m_logsField->setVisible(isBug);
     m_screenshotsField->setVisible(isBug);
     m_sceneField->setVisible(!isBug);
+}
+
+/** 一键上传运行日志：导出到临时文件 → 传到论坛 → 把链接填进日志栏 */
+void FeedbackComposePage::uploadLog()
+{
+    if (!m_uploadLogButton->isEnabled())
+        return;
+
+    // 没记过日志（设置里关了运行日志 / 日志文件还不存在）就先说明白，别传个空壳上去
+    if (!QFileInfo::exists(LauncherLogger::logFilePath()) || LauncherLogger::logSize() <= 0)
+    {
+        NotificationManager::showInfo(
+            this, tr("还没有可上传的运行日志：可能已在「设置 → 高级设置」里关闭了日志记录"));
+        return;
+    }
+
+    // 先导出（带上版本、系统信息的导出头），再整份上传
+    const QString tempDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+                            + QStringLiteral("/BlockBoxFeedback");
+    QDir().mkpath(tempDir);
+    const QString exportPath = tempDir + QStringLiteral("/launcher-log-%1.log")
+                                   .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")));
+    QString exportError;
+    if (!LauncherLogger::exportLog(exportPath, &exportError))
+    {
+        NotificationManager::showInfo(this, tr("日志导出失败：%1").arg(exportError));
+        return;
+    }
+
+    m_uploadLogButton->setEnabled(false);
+    setStatus(tr("正在上传日志…"));
+
+    FeedbackService::instance()->uploadLogFile(
+        exportPath,
+        [this, exportPath](const QString &url, const QString &, qint64 size) {
+            QFile::remove(exportPath);
+            m_uploadLogButton->setEnabled(true);
+            setStatus(QString());
+            const QString line = tr("运行日志已上传（%1）：%2")
+                                     .arg(logSizeLabel(size),
+                                          ForumAccountService::instance()->absoluteUrl(url));
+            const QString existing = m_logsEdit->toPlainText();
+            m_logsEdit->setPlainText(existing.isEmpty() ? line : existing + QLatin1Char('\n') + line);
+            NotificationManager::showInfo(this, tr("日志已上传，链接已填进日志栏"));
+        },
+        [this, exportPath](const QString &message, int) {
+            QFile::remove(exportPath);
+            m_uploadLogButton->setEnabled(true);
+            setStatus(QString());
+            NotificationManager::showInfo(this, tr("日志上传失败：%1").arg(message));
+        });
 }
 
 void FeedbackComposePage::submit()

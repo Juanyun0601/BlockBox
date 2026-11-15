@@ -17,7 +17,6 @@
 #include <QFontMetrics>
 #include <QFormLayout>
 #include <QHBoxLayout>
-#include "components/AppInputDialog.h"
 #include <QLabel>
 #include <QLineEdit>
 #include "components/AppMessageBox.h"
@@ -32,7 +31,10 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QFileDialog>
+#include <QFile>
+#include <QFileInfo>
 #include "components/LobbyPublishDialog.h"
+#include "components/CommunityAgreementDialog.h"
 #include "components/NotificationManager.h"
 #include "components/ShareToFriendDialog.h"
 #include "pages/MultiplayerUiParts.h"
@@ -40,10 +42,12 @@
 #include "utils/ForumChatService.h"
 #include "utils/ForumImageStore.h"
 #include "utils/ForumLobbyService.h"
+#include "utils/CommandAssistant/LevelDatReader.h"
 #include "utils/frp/FrpManager.h"
 #include "utils/Hongshi/HongshiClient.h"
 #include "utils/IconHelper.h"
 #include "utils/Lobby/LobbyInstanceMatcher.h"
+#include "utils/LocalCategoryManager.h"
 #include "utils/Lobby/LobbyShareLink.h"
 #include "utils/StyleKit.h"
 #include "utils/Terracotta/TerracottaClient.h"
@@ -69,6 +73,8 @@ using MultiplayerUi::setDotTone;
 using MultiplayerUi::makeStatusCard;
 using MultiplayerUi::makeNoteCard;
 using MultiplayerUi::makeLatencyRow;
+using MultiplayerUi::letterAvatarPixmap;
+using MultiplayerUi::roundAvatarPixmap;
 
 namespace {
 
@@ -80,80 +86,6 @@ QColor playerRoleColor(const QString &kind)
     if (kind == QStringLiteral("LOCAL"))
         return QColor(76, 175, 80);
     return QColor(33, 150, 243);
-}
-
-/**
- * @brief 玩家头像底板：渐变圆 + 首字母
- *
- * 账户头像和首字母头像是同一套尺寸 / 描边，切换时卡片不会跳一下。
- * 先在设备像素里画完再设 devicePixelRatio，高分屏下不会糊。
- */
-QPixmap letterAvatarPixmap(const QColor &roleColor, const QString &displayName, int size, qreal dpr)
-{
-    const int pixels = qMax(1, qRound(size * qMax<qreal>(1.0, dpr)));
-    QPixmap pixmap(pixels, pixels);
-    pixmap.fill(Qt::transparent);
-
-    {
-        QPainter painter(&pixmap);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setRenderHint(QPainter::TextAntialiasing);
-
-        QLinearGradient gradient(0, 0, pixels, pixels);
-        gradient.setColorAt(0.0, roleColor.lighter(120));
-        gradient.setColorAt(1.0, roleColor.darker(108));
-
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(gradient);
-        painter.drawEllipse(QRectF(0, 0, pixels, pixels));
-
-        const QString trimmed = displayName.trimmed();
-        const QString letter = trimmed.isEmpty() ? QStringLiteral("?")
-                                                 : trimmed.left(1).toUpper();
-        QFont font = painter.font();
-        font.setBold(true);
-        font.setPixelSize(qMax(8, qRound(size * 0.42 * qMax<qreal>(1.0, dpr))));
-        painter.setFont(font);
-        painter.setPen(Qt::white);
-        painter.drawText(QRectF(0, 0, pixels, pixels), Qt::AlignCenter, letter);
-    }
-
-    pixmap.setDevicePixelRatio(qMax<qreal>(1.0, dpr));
-    return pixmap;
-}
-
-/// 方块盒子账户头像：裁成圆形，再套一圈角色色描边
-QPixmap roundAvatarPixmap(const QImage &image, const QColor &roleColor, int size, qreal dpr)
-{
-    const int pixels = qMax(1, qRound(size * qMax<qreal>(1.0, dpr)));
-    QPixmap pixmap(pixels, pixels);
-    pixmap.fill(Qt::transparent);
-
-    {
-        QPainter painter(&pixmap);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setRenderHint(QPainter::SmoothPixmapTransform);
-
-        const qreal ring = qMax(1.5, 2.0 * qMax<qreal>(1.0, dpr));
-        QPainterPath clip;
-        clip.addEllipse(QRectF(0, 0, pixels, pixels).adjusted(ring, ring, -ring, -ring));
-        painter.setClipPath(clip);
-
-        const QImage scaled = image.scaled(pixels, pixels, Qt::KeepAspectRatioByExpanding,
-                                           Qt::SmoothTransformation);
-        painter.drawImage(QPointF((pixels - scaled.width()) / 2.0,
-                                  (pixels - scaled.height()) / 2.0),
-                          scaled);
-        painter.setClipping(false);
-
-        painter.setBrush(Qt::NoBrush);
-        painter.setPen(QPen(roleColor, ring));
-        painter.drawEllipse(QRectF(0, 0, pixels, pixels).adjusted(ring / 2.0, ring / 2.0,
-                                                                  -ring / 2.0, -ring / 2.0));
-    }
-
-    pixmap.setDevicePixelRatio(qMax<qreal>(1.0, dpr));
-    return pixmap;
 }
 
 } // namespace
@@ -183,6 +115,11 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
     , m_descLabel(nullptr)
     , m_joinBtn(nullptr)
     , m_createBtn(nullptr)
+    , m_joinCard(nullptr)
+    , m_joinCodeEdit(nullptr)
+    , m_joinHint(nullptr)
+    , m_joinConfirmBtn(nullptr)
+    , m_joinCancelBtn(nullptr)
     , m_roomPage(nullptr)
     , m_latencyDot(nullptr)
     , m_latencyLabel(nullptr)
@@ -255,18 +192,43 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
         });
     }
 
+    // 分享短链：房间信息存在论坛上，联机期间每 40 秒续一次期；
+    // 房主结束联机时本地会主动删掉，断线时服务端 2 分钟没收到心跳也会自动清掉
+    if (m_shareHeartbeatTimer) {
+        connect(m_shareHeartbeatTimer, &QTimer::timeout, this, [this]() {
+            if (m_shareToken.isEmpty())
+                return;
+            ForumLobbyService::instance()->sendShareHeartbeat(
+                m_shareToken, m_shareSecret, nullptr,
+                [this](const QString &message, int status) {
+                    Q_UNUSED(message);
+                    if (status != 404)
+                        return;
+                    // 服务端已经没有这条分享（联机结束 / 过期）：本地同步作废
+                    m_shareToken.clear();
+                    m_shareSecret.clear();
+                    m_shareCore.clear();
+                    m_shareJoin.clear();
+                    if (m_shareHeartbeatTimer)
+                        m_shareHeartbeatTimer->stop();
+                    refreshPublishButtons();
+                });
+        });
+    }
+
     connect(m_client, &TerracottaClient::stateChanged, this, &MultiplayerPage::refreshPage);
     connect(m_client, &TerracottaClient::profilesChanged, this, &MultiplayerPage::refreshPlayerList);
     connect(m_client, &TerracottaClient::installStatusChanged, this, &MultiplayerPage::refreshInstallStatus);
     connect(m_client, &TerracottaClient::errorOccurred, this, [this](const QString &err) {
-        showInfoDialog(tr("联机错误"), err);
+        // 联机出错不弹窗：左下角通知里说一句，页面状态条本身也会跟着变
+        NotificationManager::showError(window(), err);
     });
 
     connect(m_hongshi, &HongshiClient::stateChanged, this, &MultiplayerPage::refreshPage);
     connect(m_hongshi, &HongshiClient::installStatusChanged, this, &MultiplayerPage::refreshInstallStatus);
     connect(m_hongshi, &HongshiClient::serverNodesChanged, this, &MultiplayerPage::populateNodeCombo);
     connect(m_hongshi, &HongshiClient::errorOccurred, this, [this](const QString &err) {
-        showInfoDialog(tr("联机错误"), err);
+        NotificationManager::showError(window(), err);
     });
 
     auto *frp = FrpManager::instance();
@@ -294,7 +256,7 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
             });
     connect(frp, &FrpManager::errorOccurred, this, [this](const QString &err) {
         if (frpActive())
-            showInfoDialog(tr("联机错误"), err);
+            NotificationManager::showError(window(), err);
     });
 
     // 换主题色、或者亮色/暗色整体切换时都要重算样式
@@ -326,7 +288,11 @@ MultiplayerPage::MultiplayerPage(QWidget *parent)
     }
 }
 
-MultiplayerPage::~MultiplayerPage() = default;
+MultiplayerPage::~MultiplayerPage()
+{
+    // 页面没了（关软件 / 关实例助手）：把分享的那份房间信息一并删掉，链接马上失效
+    stopShareLink(true, false);
+}
 
 void MultiplayerPage::initUI()
 {
@@ -340,6 +306,10 @@ void MultiplayerPage::initUI()
     // 发布心跳：40 秒一次，服务端 2 分钟没收到就下架
     m_publishHeartbeatTimer = new QTimer(this);
     m_publishHeartbeatTimer->setInterval(40000);
+
+    // 分享短链续期：房间信息存在论坛上，联机期间同样每 40 秒续一次
+    m_shareHeartbeatTimer = new QTimer(this);
+    m_shareHeartbeatTimer->setInterval(40000);
 }
 
 void MultiplayerPage::buildCorePage(QWidget *page)
@@ -485,6 +455,8 @@ void MultiplayerPage::buildHomePage(QWidget *page)
     m_descLabel->setText(
         tr("本软件可以使用陶瓦联机，可以与支持陶瓦联机的软件"
            "（如 HMCL、PCL社区版、VersePC、FCL、ZL2）进行联机。<br><br>"
+           "点「创建房间」后请进入游戏，在游戏菜单里选「对局域网开放」，"
+           "房间才算开好；邀请码会显示在下一页，发给朋友即可加入。<br><br>"
            "陶瓦联机是第三方开源软件，与我们无关，如遇到一些问题可前往"
            "<a href=\"https://github.com/burningtnt/Terracotta\">陶瓦联机GitHub仓库</a>"
            "反馈，无法访问可试着使用本软件合法合规的 GitHub 加速工具加速网络。<br><br>"
@@ -511,6 +483,20 @@ void MultiplayerPage::buildHomePage(QWidget *page)
 
     btnRow->addWidget(m_joinBtn, 1);
     btnRow->addWidget(m_createBtn, 1);
+
+    // ---- 邀请码输入卡：点「加入房间」就地展开，不再弹输入框 ----
+    MultiplayerUi::JoinCardParts joinCard = MultiplayerUi::makeJoinCard(page);
+    m_joinCard = joinCard.card;
+    m_joinCodeEdit = joinCard.codeEdit;
+    m_joinHint = joinCard.hint;
+    m_joinConfirmBtn = joinCard.confirmBtn;
+    m_joinCancelBtn = joinCard.cancelBtn;
+    joinCard.title->setText(tr("邀请码"));
+    m_joinConfirmBtn->setText(tr("加入"));
+    m_joinCancelBtn->setText(tr("取消"));
+    m_joinCodeEdit->setPlaceholderText(tr("粘贴好友发来的邀请码，如 U/XXXX-XXXX-XXXX-XXXX"));
+    parts.outer->addWidget(m_joinCard);
+
     parts.outer->addLayout(btnRow);
 
 // 信号连接
@@ -559,98 +545,133 @@ void MultiplayerPage::buildHomePage(QWidget *page)
     });
 
     connect(m_joinBtn, &QPushButton::clicked, this, [this]() {
-        if (m_client->installedVersion().isEmpty()) {
-            showInfoDialog(tr("未安装联机核心"),
-                tr("尚未安装陶瓦联机核心，请先点击「下载」按钮下载安装。"));
-            return;
-        }
-        // Exception 状态下点击 = 重试：调用 leaveRoom 回到 Waiting
-        if (m_client->state() == TerracottaClient::State::Exception) {
+        // 核心出问题 / 还没启动时按钮本身就是「重试」：先把核心拉起来
+        const auto state = m_client->state();
+        if (state == TerracottaClient::State::Exception) {
             m_client->leaveRoom();
             return;
         }
-        // 若进程未运行（NotInstalled 状态但已安装），自动启动（无需弹窗）
-        if (m_client->state() == TerracottaClient::State::NotInstalled
-            && m_client->isProcessRunning() == false) {
+        const bool coreStarting = state == TerracottaClient::State::Fatal
+            || (state == TerracottaClient::State::NotInstalled && !m_client->isProcessRunning());
+        if (coreStarting)
             m_client->start();
-            return;
-        }
-        if (m_client->state() == TerracottaClient::State::Launching) {
-            showInfoDialog(tr("正在启动"),
-                tr("联机核心正在启动，请稍候..."));
-            return;
-        }
-        if (m_client->state() == TerracottaClient::State::Fatal) {
-            // 启动失败也允许重试：重新拉起核心，而不是只弹窗让用户重启软件
-            m_client->start();
-            return;
-        }
-        if (m_client->state() != TerracottaClient::State::Waiting) {
-            showInfoDialog(tr("状态异常"),
-                tr("当前已在房间中，请先离开当前房间。"));
-            return;
-        }
-        // 弹出输入对话框
-        bool ok = false;
-        QString code = AppInputDialog::getText(
-            this, tr("加入房间"), tr("请输入邀请码："),
-            QLineEdit::Normal, QString(), &ok);
-        if (!ok || code.trimmed().isEmpty()) return;
+        // 邀请码就在页面里输，不等核心就绪——点了按钮却什么都不发生才是最奇怪的
+        showJoinCard();
+        if (coreStarting || state == TerracottaClient::State::Launching)
+            setJoinHintText(tr("联机核心正在启动，稍等一下再点「加入」。"));
+    });
 
-        if (!TerracottaClient::verifyRoomCode(code)) {
-            showInfoDialog(tr("邀请码无效"),
-                tr("邀请码格式错误，应为 U/XXXX-XXXX-XXXX-XXXX。"));
-            return;
-        }
-
-        // 获取当前账户玩家名（简化：使用默认名）
-        const QString playerName = localPlayerName();
-        if (!m_client->joinRoom(code, playerName)) {
-            showInfoDialog(tr("加入失败"),
-                tr("无法加入房间，请检查邀请码或当前状态。"));
-        } else {
-            showInfoDialog(tr("正在加入"),
-                tr("正在连接房主，请稍候..."));
-        }
+    connect(m_joinConfirmBtn, &QPushButton::clicked, this, [this]() { submitJoinCode(); });
+    connect(m_joinCodeEdit, &QLineEdit::returnPressed, this, [this]() { submitJoinCode(); });
+    connect(m_joinCancelBtn, &QPushButton::clicked, this, [this]() { hideJoinCard(); });
+    connect(m_joinCodeEdit, &QLineEdit::textChanged, this, [this](const QString &) {
+        if (m_joinHint && m_joinHint->property("error").toBool())
+            setJoinHintText(QString());
     });
 
     connect(m_createBtn, &QPushButton::clicked, this, [this]() {
-        if (m_client->installedVersion().isEmpty()) {
-            showInfoDialog(tr("未安装联机核心"),
-                tr("尚未安装陶瓦联机核心，请先点击「下载」按钮下载安装。"));
+        // 建房：状态全在页面状态条里，不再弹「正在创建房间」的窗口
+        const auto state = m_client->state();
+        if (m_client->installedVersion().isEmpty() && !m_client->isProcessRunning()) {
+            NotificationManager::showError(window(), tr("还没安装陶瓦联机核心，先点右上角「更新」下载。"));
             return;
         }
-        // Exception 状态下点击 = 重试：调用 leaveRoom 回到 Waiting
-        if (m_client->state() == TerracottaClient::State::Exception) {
+        if (state == TerracottaClient::State::Exception) {
             m_client->leaveRoom();
             return;
         }
-        // 若进程未运行（NotInstalled 状态但已安装），自动启动（无需弹窗）
-        if (m_client->state() == TerracottaClient::State::NotInstalled
-            && m_client->isProcessRunning() == false) {
+        if (state == TerracottaClient::State::NotInstalled && !m_client->isProcessRunning()) {
             m_client->start();
             return;
         }
-        if (m_client->state() == TerracottaClient::State::Launching) {
-            showInfoDialog(tr("正在启动"),
-                tr("联机核心正在启动，请稍候..."));
-            return;
-        }
-        if (m_client->state() == TerracottaClient::State::Fatal) {
-            // 启动失败也允许重试：重新拉起核心，而不是只弹窗让用户重启软件
+        if (state == TerracottaClient::State::Fatal) {
             m_client->start();
             return;
         }
-        if (m_client->state() != TerracottaClient::State::Waiting) {
-            showInfoDialog(tr("状态异常"),
-                tr("当前已在房间中，请先离开当前房间。"));
+        if (state == TerracottaClient::State::Launching) {
+            NotificationManager::showInfo(window(), tr("联机核心正在启动，马上就好…"));
             return;
         }
-        const QString playerName = localPlayerName();
-        m_client->createRoom(playerName);
-        showInfoDialog(tr("正在扫描"),
-            tr("正在扫描，请进入游戏，在游戏菜单选择对局域网开放。"));
+        if (state != TerracottaClient::State::Waiting) {
+            NotificationManager::showInfo(window(), tr("当前已在房间里，先离开当前房间再开新房间。"));
+            return;
+        }
+        hideJoinCard();
+        m_client->createRoom(localPlayerName());
     });
+}
+
+// ============================
+// 加入房间：邀请码就地输入
+// ============================
+
+void MultiplayerPage::showJoinCard()
+{
+    if (!m_joinCard)
+        return;
+    setJoinHintText(QString());
+    m_joinCard->setVisible(true);
+    if (m_joinCodeEdit)
+        m_joinCodeEdit->setFocus();
+}
+
+void MultiplayerPage::hideJoinCard()
+{
+    if (!m_joinCard)
+        return;
+    m_joinCard->setVisible(false);
+    setJoinHintText(QString());
+    if (m_joinCodeEdit)
+        m_joinCodeEdit->clear();
+}
+
+void MultiplayerPage::submitJoinCode()
+{
+    const QString code = m_joinCodeEdit ? m_joinCodeEdit->text().trimmed() : QString();
+    if (code.isEmpty()) {
+        setJoinHintText(tr("先粘贴好友发来的邀请码。"), true);
+        if (m_joinCodeEdit)
+            m_joinCodeEdit->setFocus();
+        return;
+    }
+    if (!TerracottaClient::verifyRoomCode(code)) {
+        setJoinHintText(tr("邀请码格式不对，应为 U/XXXX-XXXX-XXXX-XXXX。"), true);
+        return;
+    }
+
+    const auto state = m_client->state();
+    if (m_client->installedVersion().isEmpty() && !m_client->isProcessRunning()) {
+        setJoinHintText(tr("还没安装陶瓦联机核心，先点右上角「更新」下载。"), true);
+        return;
+    }
+    if (state == TerracottaClient::State::Launching
+        || (state == TerracottaClient::State::NotInstalled && !m_client->isProcessRunning())) {
+        setJoinHintText(tr("联机核心正在启动，稍等一下再点「加入」。"), true);
+        return;
+    }
+    if (state == TerracottaClient::State::Exception || state == TerracottaClient::State::Fatal) {
+        setJoinHintText(tr("联机核心状态异常，先点一次「重试」恢复。"), true);
+        return;
+    }
+    if (state != TerracottaClient::State::Waiting) {
+        setJoinHintText(tr("已经在房间里了，先离开当前房间再加入。"), true);
+        return;
+    }
+    if (!m_client->joinRoom(code, localPlayerName())) {
+        setJoinHintText(tr("无法加入房间，请检查邀请码或稍后再试。"), true);
+        return;
+    }
+    hideJoinCard();
+}
+
+void MultiplayerPage::setJoinHintText(const QString &text, bool error)
+{
+    if (!m_joinHint)
+        return;
+    m_joinHint->setText(text.trimmed().isEmpty()
+                            ? tr("邀请码由房主创建房间后生成，形如 U/XXXX-XXXX-XXXX-XXXX。")
+                            : text);
+    MultiplayerUi::setJoinHintError(m_joinHint, error);
 }
 
 // ============================
@@ -669,6 +690,7 @@ void MultiplayerPage::buildRoomPage(QWidget *page)
 
     // ---- 邀请码卡片：大字邀请码 + 一键复制 ----
     QFrame *codeCard = makeCard(QStringLiteral("mpCodeCard"), page);
+    m_codeCard = codeCard;
     auto *codeRow = new QHBoxLayout(codeCard);
     codeRow->setContentsMargins(16, 12, 12, 12);
     codeRow->setSpacing(10);
@@ -734,12 +756,12 @@ void MultiplayerPage::buildRoomPage(QWidget *page)
     connect(m_pubTerracottaBtn, &QPushButton::clicked,
             this, &MultiplayerPage::onPublishToLobbyClicked);
 
-    // 创建分享链接：生成网页链接，朋友点开看邀请码，装了方块盒子可一键加入
+    // 创建分享链接：房间信息传到论坛后只留房间号，朋友点开看邀请码，装了方块盒子可一键加入
     m_shareTerracottaBtn = new QPushButton(tr("创建分享链接"), page);
     m_shareTerracottaBtn->setObjectName(QStringLiteral("multiplayerShareBtn"));
     m_shareTerracottaBtn->setCursor(Qt::PointingHandCursor);
     m_shareTerracottaBtn->setFixedHeight(40);
-    m_shareTerracottaBtn->setToolTip(tr("生成一条分享链接，朋友打开就能看到邀请码并一键加入"));
+    m_shareTerracottaBtn->setToolTip(tr("生成一条很短的分享链接，创建时可以写一句简要介绍，朋友打开就能看到邀请码并一键加入"));
     connect(m_shareTerracottaBtn, &QPushButton::clicked,
             this, &MultiplayerPage::onCreateShareLinkClicked);
 
@@ -810,7 +832,7 @@ void MultiplayerPage::buildHongshiHomePage(QWidget *page)
     form->addWidget(m_hongshiNodeCombo);
 
     m_hongshiNodeHint = makeHintLabel(
-        tr("正在从主站获取节点列表，失败自动回退国内镜像..."), formCard);
+        tr("正在从主站获取节点列表..."), formCard);
     form->addWidget(m_hongshiNodeHint);
 
     form->addWidget(makeDivider(formCard));
@@ -849,7 +871,7 @@ void MultiplayerPage::buildHongshiHomePage(QWidget *page)
         tr("红石联机是第三方开源联机服务，与本软件无关。选择中转节点并填入本地端口后，"
            "点击启动即可获得一个联机地址，将地址分享给好友，参与者在 Minecraft 中连接该地址"
            "即可共同游玩。<br><br>"
-           "参考项目：<a href=\"https://github.com/hongshionline/hongshi-shell\">红石联机开源外壳</a><br><br>"
+           "参考项目：<a href=\"https://github.com/hongshionline/hongshi2\">红石联机 2 开源项目</a><br><br>"
            "在联机过程中，请严格遵守当地法律法规。")
     );
     parts.body->addWidget(descCard);
@@ -867,19 +889,17 @@ void MultiplayerPage::buildHongshiHomePage(QWidget *page)
             return;
         }
         if (!m_hongshi->isKernelPresent()) {
-            showInfoDialog(tr("未安装联机核心"),
-                tr("尚未安装红石联机核心，请先点击「更新」按钮下载安装。"));
+            NotificationManager::showError(
+                window(), tr("还没安装红石联机核心，先点右上角「更新」下载。"));
             return;
         }
         if (m_hongshi->isProcessRunning()) {
-            showInfoDialog(tr("正在启动"),
-                tr("红石联机内核正在启动，请稍候..."));
+            NotificationManager::showInfo(window(), tr("红石联机内核正在启动，稍等一下…"));
             return;
         }
         QString server = m_hongshiNodeCombo->currentData().toString();
         if (server.isEmpty()) {
-            showInfoDialog(tr("未选择节点"),
-                tr("请先选择一个中转服务器节点。"));
+            NotificationManager::showError(window(), tr("先选一个中转服务器节点。"));
             return;
         }
         m_hongshi->startKernel(server, quint16(m_hongshiPortSpin->value()));
@@ -950,7 +970,7 @@ void MultiplayerPage::buildHongshiTunnelPage(QWidget *page)
     m_shareHongshiBtn->setObjectName(QStringLiteral("multiplayerShareBtn"));
     m_shareHongshiBtn->setCursor(Qt::PointingHandCursor);
     m_shareHongshiBtn->setFixedHeight(40);
-    m_shareHongshiBtn->setToolTip(tr("生成一条分享链接，朋友打开就能看到连接地址并一键加入"));
+    m_shareHongshiBtn->setToolTip(tr("生成一条很短的分享链接，创建时可以写一句简要介绍，朋友打开就能看到连接地址并一键加入"));
     connect(m_shareHongshiBtn, &QPushButton::clicked,
             this, &MultiplayerPage::onCreateShareLinkClicked);
 
@@ -1151,7 +1171,7 @@ void MultiplayerPage::buildFrpRoomPage(QWidget *page)
     m_shareFrpBtn->setObjectName(QStringLiteral("multiplayerShareBtn"));
     m_shareFrpBtn->setCursor(Qt::PointingHandCursor);
     m_shareFrpBtn->setFixedHeight(40);
-    m_shareFrpBtn->setToolTip(tr("生成一条分享链接，朋友打开就能看到连接地址并一键加入"));
+    m_shareFrpBtn->setToolTip(tr("生成一条很短的分享链接，创建时可以写一句简要介绍，朋友打开就能看到连接地址并一键加入"));
     connect(m_shareFrpBtn, &QPushButton::clicked,
             this, &MultiplayerPage::onCreateShareLinkClicked);
 
@@ -1189,19 +1209,8 @@ void MultiplayerPage::buildFrpRoomPage(QWidget *page)
 
 void MultiplayerPage::applyThemeStyles()
 {
-    // 两套联机页（Java / 基岩）共用同一份令牌样式，见 MultiplayerUiParts.h；
-    // 玩家卡片上的账号标记（房主 / 自己 / 方块盒子账户）是本页专属，接在后面补几条
-    const QString playerCardAccent = QStringLiteral(
-        "QLabel[cardRole=\"mpChip\"][accent=\"host\"] {"
-        "  color: @WARNING_TEXT@; background: @WARNING_BG@; border-color: @WARNING_BORDER@;"
-        "}"
-        "QLabel[cardRole=\"mpChip\"][accent=\"self\"],"
-        "QLabel[cardRole=\"mpChip\"][accent=\"account\"] {"
-        "  color: @TEXT_ACCENT@; background: @PRIMARY_RGBA_10@;"
-        "  border-color: @PRIMARY_RGBA_38@;"
-        "}"
-        "QWidget[cardRole=\"mpContainer\"]:hover { background: @BG_HOVER@; }");
-    setStyleSheet(StyleKit::resolve(MultiplayerUi::pageStyleSheet() + playerCardAccent));
+    // 两套联机页（Java / 基岩）共用同一份令牌样式，见 MultiplayerUiParts.h
+    setStyleSheet(StyleKit::resolve(MultiplayerUi::pageStyleSheet()));
     const bool darkTheme = ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme;
     const QColor linkColor(StyleKit::resolve(darkTheme ? QStringLiteral("@LINK_HOVER@")
                                                        : QStringLiteral("@LINK@")));
@@ -1228,6 +1237,8 @@ void MultiplayerPage::refreshPage()
 
     // 切换页面
     if (inRoom) {
+        // 已经进房：邀请码输入卡自动收起，回到首页时不会停在上次输到一半的状态
+        hideJoinCard();
         if (m_stack->currentIndex() != 1) {
             m_stack->setCurrentIndex(1);
             m_roomEnterTime = QDateTime::currentDateTime();
@@ -1366,6 +1377,14 @@ void MultiplayerPage::refreshPage()
         }
     }
 
+    // 邀请码只对房主有用：客人进房后不必再看到别人的邀请码，整块卡片直接收起
+    if (m_codeCard) {
+        const bool hosting = state == TerracottaClient::State::HostScanning
+                          || state == TerracottaClient::State::HostStarting
+                          || state == TerracottaClient::State::HostOk;
+        m_codeCard->setVisible(hosting);
+    }
+
     refreshStatusBar();
     refreshPlayerList();
     refreshPublishButtons();
@@ -1409,16 +1428,23 @@ void MultiplayerPage::refreshHongshiPage()
             text = tr("正在检查红石联机更新...");
             break;
         case HongshiClient::InstallStatus::UpdateAvailable:
-            text = tr("红石联机有新版 v%1 可更新").arg(hs->latestVersion());
+            text = hs->latestVersion().isEmpty()
+                ? tr("红石联机有新版本可更新")
+                : tr("红石联机有新版 v%1 可更新").arg(hs->latestVersion());
             break;
         case HongshiClient::InstallStatus::UpToDate:
-            text = tr("红石联机内核已是最新（v%1）").arg(hs->installedVersion());
+            text = hs->installedVersion().isEmpty()
+                ? tr("红石联机内核已是最新")
+                : tr("红石联机内核已是最新（v%1）").arg(hs->installedVersion());
             break;
         case HongshiClient::InstallStatus::Downloading:
             text = tr("正在下载红石联机内核...");
             break;
         case HongshiClient::InstallStatus::DownloadFailed:
             text = tr("红石联机内核下载失败，请重试");
+            break;
+        case HongshiClient::InstallStatus::Unsupported:
+            text = tr("红石联机暂不支持当前系统");
             break;
         }
         m_hongshiStatusLabel->setText(text);
@@ -1441,7 +1467,10 @@ void MultiplayerPage::refreshHongshiPage()
     }
 
     if (m_hongshiStartBtn) {
-        if (active) {
+        if (hs->installStatus() == HongshiClient::InstallStatus::Unsupported) {
+            m_hongshiStartBtn->setText(tr("暂不支持"));
+            m_hongshiStartBtn->setEnabled(false);
+        } else if (active) {
             m_hongshiStartBtn->setText(open ? tr("停止联机") : tr("连接中..."));
             m_hongshiStartBtn->setEnabled(!open);
         } else {
@@ -1674,14 +1703,21 @@ void MultiplayerPage::refreshHongshiInstallStatus()
         m_updateBtn->setToolTip(tr("正在检查远程版本..."));
         break;
     case HongshiClient::InstallStatus::UpdateAvailable:
-        m_updateBtn->setText(tr("更新到 v%1").arg(latestVer));
+        if (latestVer.isEmpty()) {
+            m_updateBtn->setText(tr("更新"));
+            m_updateBtn->setToolTip(tr("发现新版本，点击下载更新"));
+        } else {
+            m_updateBtn->setText(tr("更新到 v%1").arg(latestVer));
+            m_updateBtn->setToolTip(tr("当前 v%1，最新 v%2，点击更新").arg(installedVer, latestVer));
+        }
         m_updateBtn->setEnabled(true);
-        m_updateBtn->setToolTip(tr("当前 v%1，最新 v%2，点击更新").arg(installedVer, latestVer));
         break;
     case HongshiClient::InstallStatus::UpToDate:
         m_updateBtn->setText(tr("已是最新"));
         m_updateBtn->setEnabled(true);
-        m_updateBtn->setToolTip(tr("当前 v%1 已是最新版本，点击重新检查").arg(installedVer));
+        m_updateBtn->setToolTip(installedVer.isEmpty()
+                                    ? tr("已是最新版本，点击重新检查")
+                                    : tr("当前 v%1 已是最新版本，点击重新检查").arg(installedVer));
         break;
     case HongshiClient::InstallStatus::Downloading:
         m_updateBtn->setText(tr("下载中"));
@@ -1692,6 +1728,11 @@ void MultiplayerPage::refreshHongshiInstallStatus()
         m_updateBtn->setText(tr("重试"));
         m_updateBtn->setEnabled(true);
         m_updateBtn->setToolTip(tr("下载失败，点击重试"));
+        break;
+    case HongshiClient::InstallStatus::Unsupported:
+        m_updateBtn->setText(tr("暂不支持"));
+        m_updateBtn->setEnabled(false);
+        m_updateBtn->setToolTip(tr("红石联机官方暂未提供适用于当前系统的内核"));
         break;
     }
 }
@@ -1896,23 +1937,23 @@ void MultiplayerPage::startFrpTunnel()
         return; // 隧道运行中，房间页有「停止联机」
 
     if (!frp->isFrpcPresent(provider)) {
-        showInfoDialog(tr("未安装 frpc 客户端"),
-            tr("尚未安装 frpc 客户端，请先点击顶部「下载」按钮下载安装。"));
+        NotificationManager::showError(
+            window(), tr("还没装 frpc 客户端，先点右上角「更新」下载。"));
         return;
     }
 
     const QString key = m_frpKeyEdit ? m_frpKeyEdit->text().trimmed() : QString();
     const QString idStr = m_frpIdEdit ? m_frpIdEdit->text().trimmed() : QString();
     if (key.isEmpty()) {
-        showInfoDialog(tr("缺少访问密钥"),
-            tr("请先填写访问密钥：在官网面板「访问密钥」页面获取。"));
+        NotificationManager::showError(
+            window(), tr("先填访问密钥：在官网面板「访问密钥」页面获取。"));
         return;
     }
     bool ok = false;
     const int tunnelId = idStr.toInt(&ok);
     if (!ok || tunnelId <= 0) {
-        showInfoDialog(tr("隧道 ID 无效"),
-            tr("请填写官网面板隧道列表中的数字 ID。"));
+        NotificationManager::showError(
+            window(), tr("隧道 ID 要填官网面板隧道列表里的数字 ID。"));
         return;
     }
 
@@ -1940,23 +1981,16 @@ void MultiplayerPage::pickFrpcManually()
         refreshFrpInstallStatus();
         refreshFrpPage();
     } else {
-        showInfoDialog(tr("导入失败"),
-            tr("无法导入所选程序，请确认选择的是 frpc 程序文件。"));
+        NotificationManager::showError(
+            window(), tr("导入失败：请确认选的是 frpc 程序文件。"));
     }
 }
 
 QString MultiplayerPage::localPlayerName() const
 {
-    ForumAccountService *forum = ForumAccountService::instance();
-    if (forum->isLoggedIn())
-    {
-        const ForumUser user = forum->user();
-        QString name = user.displayName.trimmed();
-        if (name.isEmpty())
-            name = user.username.trimmed();
-        if (!name.isEmpty())
-            return name;
-    }
+    const QString name = ForumAccountService::instance()->playerName();
+    if (!name.isEmpty())
+        return name;
     return tr("BlockBox 玩家");
 }
 
@@ -2420,6 +2454,19 @@ void MultiplayerPage::onCreateShareLinkClicked()
         return;
     }
 
+    // 同一个房间已经生成过：直接把那条链接再弹出来，不用重复上传
+    if (!m_shareToken.isEmpty() && core == m_shareCore && joinInfo == m_shareJoin)
+    {
+        showShareLinkDialog(tr("%1 的联机房间").arg(latestSaveDisplayName()),
+                            LobbyShareLink::webShareUrl(m_shareToken), m_shareDescription);
+        return;
+    }
+
+    // 生成前先问一句介绍：朋友打开邀请页时能看到，留空也能创建
+    QString description;
+    if (!promptShareIntro(&description))
+        return;
+
     ForumLobbyRoom room;
     room.core = core;
     room.coreLabel = ForumLobbyService::coreDisplayName(core);
@@ -2427,17 +2474,137 @@ void MultiplayerPage::onCreateShareLinkClicked()
         room.inviteCode = joinInfo;
     else
         room.address = address;
-    room.title = tr("%1 的联机房间").arg(instanceDisplayName());
-    // 分享的房间房主就是自己，加入方的提示会显示这个名字
-    room.host.displayName = instanceDisplayName();
+    // 房间名用存档名：朋友看到的是「新世界 的联机房间」，而不是一串实例名
+    room.title = tr("%1 的联机房间").arg(latestSaveDisplayName());
+    room.description = description;
+    // 分享的房间房主就是自己，加入方的提示会显示这个名字（没登录才退回存档名）
+    room.host.displayName = ForumAccountService::instance()->playerName().trimmed().isEmpty()
+                                ? latestSaveDisplayName()
+                                : ForumAccountService::instance()->playerName().trimmed();
     room.gameVersion = m_instanceVersion;
     room.loader = m_instanceLoader;
     room.mods = instanceMods();
+    // 辅助模组 / 资源包 / 光影包也一起传上去：对方加入时能按需勾选安装
+    room.auxMods = instanceAuxMods();
+    room.resourcePacks = LobbyInstanceMatcher::scanResourcePacks(m_instancePath);
+    room.shaderPacks = LobbyInstanceMatcher::scanShaderPacks(m_instancePath);
 
-    showShareLinkDialog(room.title, LobbyShareLink::webShareUrl(room));
+    // 先把房间信息传到论坛，链接里只放回一小段房间号，链接就不会再长得像一串乱码；
+    // 结束联机时服务端那份会被删掉，别人再打开链接就会看到「联机可能已经结束」
+    if (!m_shareToken.isEmpty())
+        stopShareLink(true); // 换了房间 / 核心：上一条分享先删掉，免得在服务器上留着
+    m_shareBusy = true;
+    refreshPublishButtons();
+
+    const QString title = room.title;
+    ForumLobbyService::instance()->createShare(
+        room,
+        [this, title, core, joinInfo, description](const QString &token, const QString &secret) {
+            m_shareBusy = false;
+            m_shareToken = token;
+            m_shareSecret = secret;
+            m_shareCore = core;
+            m_shareJoin = joinInfo;
+            m_shareDescription = description;
+            startShareHeartbeat();
+            refreshPublishButtons();
+            showShareLinkDialog(title, LobbyShareLink::webShareUrl(token), description);
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            m_shareBusy = false;
+            refreshPublishButtons();
+            showInfoDialog(tr("分享链接没生成出来"), message);
+        });
 }
 
-void MultiplayerPage::showShareLinkDialog(const QString &title, const QString &link)
+void MultiplayerPage::startShareHeartbeat()
+{
+    if (m_shareHeartbeatTimer)
+        m_shareHeartbeatTimer->start();
+}
+
+void MultiplayerPage::stopShareLink(bool deleteRemote, bool refreshUi)
+{
+    const QString token = m_shareToken;
+    const QString secret = m_shareSecret;
+    m_shareToken.clear();
+    m_shareSecret.clear();
+    m_shareCore.clear();
+    m_shareJoin.clear();
+    m_shareDescription.clear();
+    m_shareBusy = false;
+    if (m_shareHeartbeatTimer)
+        m_shareHeartbeatTimer->stop();
+
+    if (refreshUi)
+        refreshPublishButtons();
+
+    if (!deleteRemote || token.isEmpty())
+        return;
+
+    // 联机结束就把服务端那份删掉：之后谁再打开这条链接都会看到「联机可能已经结束」
+    ForumLobbyService::instance()->deleteShare(token, secret, nullptr, nullptr);
+}
+
+bool MultiplayerPage::promptShareIntro(QString *description)
+{
+    if (description)
+        description->clear();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("创建分享链接"));
+    dlg.setMinimumWidth(440);
+    auto *layout = new QVBoxLayout(&dlg);
+    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setSpacing(10);
+
+    auto *hint = new QLabel(
+        tr("写一句简要介绍，朋友打开邀请链接时会看到；不写也可以直接生成。"), &dlg);
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+
+    auto *caption = new QLabel(tr("简要介绍（选填）"), &dlg);
+    layout->addWidget(caption);
+
+    auto *edit = new QLineEdit(&dlg);
+    edit->setMaxLength(LobbyShareLink::kMaxDescriptionInPayload);
+    edit->setPlaceholderText(tr("例如：纯生存，装了光影和优化模组，晚上八点开荒"));
+    layout->addWidget(edit);
+
+    auto *counter = new QLabel(tr("0/%1").arg(LobbyShareLink::kMaxDescriptionInPayload), &dlg);
+    counter->setAlignment(Qt::AlignRight);
+    layout->addWidget(counter);
+    connect(edit, &QLineEdit::textChanged, &dlg, [counter](const QString &text) {
+        counter->setText(tr("%1/%2").arg(text.size()).arg(LobbyShareLink::kMaxDescriptionInPayload));
+    });
+
+    auto *btnRow = new QHBoxLayout();
+    btnRow->addStretch();
+    auto *cancelBtn = new QPushButton(tr("取消"), &dlg);
+    cancelBtn->setCursor(Qt::PointingHandCursor);
+    cancelBtn->setFixedHeight(32);
+    btnRow->addWidget(cancelBtn);
+    auto *createBtn = new QPushButton(tr("生成链接"), &dlg);
+    createBtn->setCursor(Qt::PointingHandCursor);
+    createBtn->setFixedHeight(32);
+    createBtn->setDefault(true);
+    btnRow->addWidget(createBtn);
+    layout->addLayout(btnRow);
+
+    connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
+    connect(createBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+    connect(edit, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
+
+    if (dlg.exec() != QDialog::Accepted)
+        return false;
+    if (description)
+        *description = edit->text().trimmed();
+    return true;
+}
+
+void MultiplayerPage::showShareLinkDialog(const QString &title, const QString &link,
+                                          const QString &description)
 {
     QDialog *dlg = new QDialog(this);
     dlg->setWindowTitle(tr("分享链接已生成"));
@@ -2447,10 +2614,23 @@ void MultiplayerPage::showShareLinkDialog(const QString &title, const QString &l
     layout->setSpacing(10);
 
     auto *hint = new QLabel(
-        tr("把这条链接发给朋友：打开就能看到邀请码，点「通过方块盒子一键加入」直接进房；没装方块盒子会引导去下载页。"),
+        description.trimmed().isEmpty()
+            ? tr("把这条链接发给朋友：打开就能看到邀请码，点「通过方块盒子一键加入」直接进房；没装方块盒子会引导去下载页。\n"
+                 "房间信息存在方块盒子论坛上，这条链接在你结束联机后就会失效。")
+            : tr("把这条链接发给朋友：打开就能看到房间名、你写的介绍和邀请码，点「通过方块盒子一键加入」直接进房；没装方块盒子会引导去下载页。\n"
+                 "房间信息存在方块盒子论坛上，这条链接在你结束联机后就会失效。"),
         dlg);
     hint->setWordWrap(true);
     layout->addWidget(hint);
+
+    if (!description.trimmed().isEmpty())
+    {
+        auto *descLabel = new QLabel(tr("简要介绍：%1").arg(description.trimmed()), dlg);
+        descLabel->setWordWrap(true);
+        descLabel->setTextFormat(Qt::PlainText);
+        descLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(descLabel);
+    }
 
     auto *linkEdit = new QLineEdit(link, dlg);
     linkEdit->setReadOnly(true);
@@ -2487,6 +2667,10 @@ void MultiplayerPage::showShareLinkDialog(const QString &title, const QString &l
 
 void MultiplayerPage::publishRoomWithDialog()
 {
+    // 首次把房间发布到联机大厅前，同样要先同意社区规范，同意一次长期生效
+    if (!CommunityAgreementDialog::ensureAccepted(this))
+        return;
+
     QString core;
     QString joinInfo;
     QString address;
@@ -2498,6 +2682,9 @@ void MultiplayerPage::publishRoomWithDialog()
     }
 
     const QStringList mods = instanceMods();
+    const QStringList auxMods = instanceAuxMods();
+    const QStringList resourcePacks = LobbyInstanceMatcher::scanResourcePacks(m_instancePath);
+    const QStringList shaderPacks = LobbyInstanceMatcher::scanShaderPacks(m_instancePath);
 
     // 新版发布对话框：房间名 / 简介 / 人数 + 封面图 + Markdown 介绍
     // + 前置整合包（在线挑选或名称+网盘链接），可勾「存为模板」下次一键填回
@@ -2506,7 +2693,7 @@ void MultiplayerPage::publishRoomWithDialog()
         dlg.setWindowTitle(tr("发布到联机大厅（已套用上次的模板）"));
     else
         dlg.setWindowTitle(tr("发布到联机大厅"));
-    dlg.setDefaultTitle(tr("%1 的联机房间").arg(instanceDisplayName()));
+    dlg.setDefaultTitle(tr("%1 的联机房间").arg(latestSaveDisplayName()));
 
     if (dlg.exec() != QDialog::Accepted)
         return;
@@ -2523,6 +2710,9 @@ void MultiplayerPage::publishRoomWithDialog()
     room.gameVersion = m_instanceVersion;
     room.loader = m_instanceLoader;
     room.mods = mods;
+    room.auxMods = auxMods;
+    room.resourcePacks = resourcePacks;
+    room.shaderPacks = shaderPacks;
     room.status = QStringLiteral("waiting");
 
     refreshPublishButtons();
@@ -2640,36 +2830,74 @@ void MultiplayerPage::refreshPublishButtons()
 
     // 分享按钮跟发布一样，需要房间就绪才能点；提示也沿用同一套
     QPushButton *shareButtons[] = {m_shareTerracottaBtn, m_shareHongshiBtn, m_shareFrpBtn};
+    const bool shareReady = canPublish && !m_shareToken.isEmpty() && core == m_shareCore
+        && joinInfo == m_shareJoin;
+    const QString shareText = m_shareBusy ? tr("生成中…") : tr("创建分享链接");
+    const QString shareTip = !canPublish ? error
+        : (shareReady ? tr("分享链接已经生成，再点一次可以复制；联机结束后这条链接会自动失效")
+                      : tr("生成一条很短的分享链接，创建时可以写一句简要介绍，朋友打开就能看到并一键加入"));
     for (QPushButton *button : shareButtons)
     {
         if (!button)
             continue;
-        button->setEnabled(canPublish);
-        button->setToolTip(canPublish
-                               ? tr("生成一条分享链接，朋友打开就能看到邀请码并一键加入")
-                               : error);
+        button->setText(shareText);
+        button->setEnabled(canPublish && !m_shareBusy);
+        button->setToolTip(shareTip);
     }
 }
 
 void MultiplayerPage::ensurePublishStillValid()
 {
-    if (m_publishedRoomId <= 0)
-        return;
-
     QString core;
     QString joinInfo;
     QString address;
     QString error;
-    if (!currentPublishTarget(&core, &joinInfo, &address, &error)
-        || core != m_publishedCore || joinInfo != m_publishedJoin)
+    const bool targetOk = currentPublishTarget(&core, &joinInfo, &address, &error);
+
+    if (m_publishedRoomId > 0
+        && (!targetOk || core != m_publishedCore || joinInfo != m_publishedJoin))
     {
         stopPublishHeartbeat(true, false);
+    }
+
+    // 分享短链同理：房间没了、换了核心或换了邀请码，就让这条链接立刻失效
+    if (!m_shareToken.isEmpty()
+        && (!targetOk || core != m_shareCore || joinInfo != m_shareJoin))
+    {
+        stopShareLink(true);
     }
 }
 
 QStringList MultiplayerPage::instanceMods() const
 {
     return LobbyInstanceMatcher::scanMods(m_instancePath);
+}
+
+QStringList MultiplayerPage::instanceAuxMods() const
+{
+    const QStringList mods = instanceMods();
+    if (mods.isEmpty() || m_instancePath.isEmpty())
+        return QStringList();
+
+    // 用户在本机把模组归进了「辅助类」这类分类：带这个标签的模组算可选，
+    // 加入的人不装也能进房，发布时一起告诉大厅，加入前会单独列成可选清单。
+    LocalCategoryManager categories;
+    categories.setInstancePath(m_instancePath);
+    categories.setResourceType(QStringLiteral("mods"));
+
+    QStringList aux;
+    for (const QString &mod : mods)
+    {
+        const QString category = categories.categoryNameOf(mod).trimmed();
+        if (category.isEmpty())
+            continue;
+        if (category.contains(QStringLiteral("辅助")) || category.contains(QStringLiteral("工具"))
+            || category.compare(QStringLiteral("Utility"), Qt::CaseInsensitive) == 0)
+        {
+            aux.append(mod);
+        }
+    }
+    return aux;
 }
 
 QString MultiplayerPage::instanceDisplayName() const
@@ -2681,6 +2909,58 @@ QString MultiplayerPage::instanceDisplayName() const
             return name;
     }
     return tr("本机");
+}
+
+QString MultiplayerPage::latestSaveDisplayName() const
+{
+    // 联机分享 / 发布到大厅时的房间名按「存档名」显示，不再用实例名：
+    // 房主开的通常是自己最近玩过的那个世界，取存档目录里最后游玩的那一个，
+    // 名字优先读 level.dat 里的 LevelName（游戏里显示的名字），读不到就用目录名。
+    if (!m_instancePath.isEmpty())
+    {
+        const QDir savesDir(QDir(m_instancePath).filePath(QStringLiteral("saves")));
+        if (savesDir.exists())
+        {
+            QString bestName;
+            qint64 bestPlayed = -1;
+            const QStringList dirs =
+                savesDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Time);
+            for (const QString &dirName : dirs)
+            {
+                // 被禁用的存档不会被打开到局域网，跳过
+                if (dirName.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+                    continue;
+
+                const QString levelDat =
+                    savesDir.filePath(dirName + QStringLiteral("/level.dat"));
+                if (!QFile::exists(levelDat))
+                    continue;
+
+                // 进入世界 / 对局域网开放都会重写 level.dat，先用它的修改时间兜底
+                qint64 played = QFileInfo(levelDat).lastModified().toMSecsSinceEpoch();
+                QString name = dirName;
+                const auto info = LevelDatReader::readLevelDat(levelDat);
+                if (info)
+                {
+                    if (info->lastPlayed > 0)
+                        played = info->lastPlayed;
+                    const QString levelName = info->levelName.trimmed();
+                    if (!levelName.isEmpty())
+                        name = levelName;
+                }
+
+                if (bestName.isEmpty() || played > bestPlayed)
+                {
+                    bestName = name;
+                    bestPlayed = played;
+                }
+            }
+            if (!bestName.isEmpty())
+                return bestName;
+        }
+    }
+    // 一个存档都没有（还没进过世界）：只能退回实例名
+    return instanceDisplayName();
 }
 
 void MultiplayerPage::showInfoDialog(const QString &title, const QString &text)

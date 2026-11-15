@@ -179,6 +179,9 @@ private:
     QUrl m_activeApiUrl;
 
     ReleaseCandidate m_lastCandidate;
+    // 只拿到版本信息、没拿到当前平台安装包的那份候选（通常是官网源）：
+    // 先用它占位，再向后面的源要下载地址；全都拿不到时退回它，至少提示有新版本
+    ReleaseCandidate m_fallbackCandidate;
 
     // 安卓端合并更新窗口的上下文
     bool m_combinedFlowActive = false;

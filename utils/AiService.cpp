@@ -38,6 +38,14 @@
 #include "utils/ManifestCache.h"
 #include "utils/mod/ModScanner.h"
 #include "utils/mod/ModData.h"
+#include "utils/mod/ModrinthAPI.h"
+#include "utils/mod/CurseForgeAPI.h"
+#include "utils/WorldBackupManager.h"
+#include "utils/Saves/LevelDatEditor.h"
+#include "utils/ServersDatIO.h"
+#include "utils/McServerPinger.h"
+#include "utils/DownloadTaskManager.h"
+#include "utils/WorldMap/StructureFinder.h"
 #include "utils/AiEndpointUrl.h"
 #include "utils/CommandAssistant/LitematicReader.h"
 #include "utils/skill/SkillManager.h"
@@ -2021,6 +2029,26 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
     QElapsedTimer timer;
     timer.start();
 
+    // 工作区限制：路径类工具统一在进线程前校验，越界直接回填错误并中止本次调用
+    auto rejectDisallowedPath = [&](const QString &path) -> bool {
+        if (path.isEmpty() || isPathAllowed(path))
+        {
+            return false;
+        }
+        QString errMsg = QStringLiteral("工作区限制：路径 %1 不在允许的工作区范围内").arg(path);
+        emit agentToolCallFinished(name, errMsg, 0, false);
+        AgentToolCall rec;
+        rec.name = name;
+        rec.arguments = argumentsStr;
+        rec.result = errMsg;
+        rec.resultSummary = errMsg;
+        rec.success = false;
+        rec.errorMessage = errMsg;
+        m_pendingToolCalls.append(rec);
+        continueWithToolResult(toolCallId, name, errMsg);
+        return true;
+    };
+
     // 通过 QtConcurrent::run 执行耗时本地工具
     QFuture<QString> future;
     if (name == QStringLiteral("list_instances"))
@@ -2046,20 +2074,8 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
     else if (name == QStringLiteral("list_mods"))
     {
         // 工作区检查：验证 instance_path 是否在允许范围内
-        QString instancePath = args["instance_path"].toString().trimmed();
-        if (!instancePath.isEmpty() && !isPathAllowed(instancePath))
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
         {
-            QString errMsg = QStringLiteral("工作区限制：路径 %1 不在允许的工作区范围内").arg(instancePath);
-            emit agentToolCallFinished(name, errMsg, 0, false);
-            AgentToolCall rec;
-            rec.name = name;
-            rec.arguments = argumentsStr;
-            rec.result = errMsg;
-            rec.resultSummary = errMsg;
-            rec.success = false;
-            rec.errorMessage = errMsg;
-            m_pendingToolCalls.append(rec);
-            continueWithToolResult(toolCallId, name, errMsg);
             return;
         }
         future = QtConcurrent::run([this, args]() {
@@ -2077,20 +2093,8 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
     else if (name == QStringLiteral("read_litematic"))
     {
         // 工作区检查：验证 file_path 是否在允许范围内
-        QString filePath = args["file_path"].toString().trimmed();
-        if (!filePath.isEmpty() && !isPathAllowed(filePath))
+        if (rejectDisallowedPath(args["file_path"].toString().trimmed()))
         {
-            QString errMsg = QStringLiteral("工作区限制：路径 %1 不在允许的工作区范围内").arg(filePath);
-            emit agentToolCallFinished(name, errMsg, 0, false);
-            AgentToolCall rec;
-            rec.name = name;
-            rec.arguments = argumentsStr;
-            rec.result = errMsg;
-            rec.resultSummary = errMsg;
-            rec.success = false;
-            rec.errorMessage = errMsg;
-            m_pendingToolCalls.append(rec);
-            continueWithToolResult(toolCallId, name, errMsg);
             return;
         }
         future = QtConcurrent::run([this, args]() {
@@ -2118,20 +2122,8 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
     else if (name == QStringLiteral("download_resource"))
     {
         // 工作区检查：验证 instance_path 是否在允许范围内
-        QString instancePath = args["instance_path"].toString().trimmed();
-        if (!instancePath.isEmpty() && !isPathAllowed(instancePath))
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
         {
-            QString errMsg = QStringLiteral("工作区限制：路径 %1 不在允许的工作区范围内").arg(instancePath);
-            emit agentToolCallFinished(name, errMsg, 0, false);
-            AgentToolCall rec;
-            rec.name = name;
-            rec.arguments = argumentsStr;
-            rec.result = errMsg;
-            rec.resultSummary = errMsg;
-            rec.success = false;
-            rec.errorMessage = errMsg;
-            m_pendingToolCalls.append(rec);
-            continueWithToolResult(toolCallId, name, errMsg);
             return;
         }
         future = QtConcurrent::run([this, args]() {
@@ -2141,20 +2133,8 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
     else if (name == QStringLiteral("launch_game"))
     {
         // 工作区检查：验证 instance_path 是否在允许范围内
-        QString instancePath = args["instance_path"].toString().trimmed();
-        if (!instancePath.isEmpty() && !isPathAllowed(instancePath))
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
         {
-            QString errMsg = QStringLiteral("工作区限制：路径 %1 不在允许的工作区范围内").arg(instancePath);
-            emit agentToolCallFinished(name, errMsg, 0, false);
-            AgentToolCall rec;
-            rec.name = name;
-            rec.arguments = argumentsStr;
-            rec.result = errMsg;
-            rec.resultSummary = errMsg;
-            rec.success = false;
-            rec.errorMessage = errMsg;
-            m_pendingToolCalls.append(rec);
-            continueWithToolResult(toolCallId, name, errMsg);
             return;
         }
         future = QtConcurrent::run([this, args]() {
@@ -2164,20 +2144,8 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
     else if (name == QStringLiteral("download_instance"))
     {
         // 工作区检查：验证 instance_path 是否在允许范围内
-        QString instancePath = args["instance_path"].toString().trimmed();
-        if (!instancePath.isEmpty() && !isPathAllowed(instancePath))
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
         {
-            QString errMsg = QStringLiteral("工作区限制：路径 %1 不在允许的工作区范围内").arg(instancePath);
-            emit agentToolCallFinished(name, errMsg, 0, false);
-            AgentToolCall rec;
-            rec.name = name;
-            rec.arguments = argumentsStr;
-            rec.result = errMsg;
-            rec.resultSummary = errMsg;
-            rec.success = false;
-            rec.errorMessage = errMsg;
-            m_pendingToolCalls.append(rec);
-            continueWithToolResult(toolCallId, name, errMsg);
             return;
         }
         future = QtConcurrent::run([this, args]() {
@@ -2187,20 +2155,8 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
     else if (name == QStringLiteral("modify_instance"))
     {
         // 工作区检查：验证 instance_path 是否在允许范围内
-        QString instancePath = args["instance_path"].toString().trimmed();
-        if (!instancePath.isEmpty() && !isPathAllowed(instancePath))
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
         {
-            QString errMsg = QStringLiteral("工作区限制：路径 %1 不在允许的工作区范围内").arg(instancePath);
-            emit agentToolCallFinished(name, errMsg, 0, false);
-            AgentToolCall rec;
-            rec.name = name;
-            rec.arguments = argumentsStr;
-            rec.result = errMsg;
-            rec.resultSummary = errMsg;
-            rec.success = false;
-            rec.errorMessage = errMsg;
-            m_pendingToolCalls.append(rec);
-            continueWithToolResult(toolCallId, name, errMsg);
             return;
         }
         future = QtConcurrent::run([this, args]() {
@@ -2211,6 +2167,104 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
     {
         future = QtConcurrent::run([this, args]() {
             return this->executeAskUser(args);
+        });
+    }
+    else if (name == QStringLiteral("read_game_log"))
+    {
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
+        {
+            return;
+        }
+        future = QtConcurrent::run([this, args]() {
+            return this->executeReadGameLog(args);
+        });
+    }
+    else if (name == QStringLiteral("read_crash_report"))
+    {
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
+        {
+            return;
+        }
+        future = QtConcurrent::run([this, args]() {
+            return this->executeReadCrashReport(args);
+        });
+    }
+    else if (name == QStringLiteral("manage_mods"))
+    {
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
+        {
+            return;
+        }
+        future = QtConcurrent::run([this, args]() {
+            return this->executeManageMods(args);
+        });
+    }
+    else if (name == QStringLiteral("check_mod_updates"))
+    {
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
+        {
+            return;
+        }
+        future = QtConcurrent::run([this, args]() {
+            return this->executeCheckModUpdates(args);
+        });
+    }
+    else if (name == QStringLiteral("list_saves"))
+    {
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
+        {
+            return;
+        }
+        future = QtConcurrent::run([this, args]() {
+            return this->executeListSaves(args);
+        });
+    }
+    else if (name == QStringLiteral("read_save_info"))
+    {
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
+        {
+            return;
+        }
+        future = QtConcurrent::run([this, args]() {
+            return this->executeReadSaveInfo(args);
+        });
+    }
+    else if (name == QStringLiteral("manage_world_backup"))
+    {
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
+        {
+            return;
+        }
+        future = QtConcurrent::run([this, args]() {
+            return this->executeManageWorldBackup(args);
+        });
+    }
+    else if (name == QStringLiteral("list_servers"))
+    {
+        if (rejectDisallowedPath(args["instance_path"].toString().trimmed()))
+        {
+            return;
+        }
+        future = QtConcurrent::run([this, args]() {
+            return this->executeListServers(args);
+        });
+    }
+    else if (name == QStringLiteral("ping_server"))
+    {
+        future = QtConcurrent::run([this, args]() {
+            return this->executePingServer(args);
+        });
+    }
+    else if (name == QStringLiteral("list_download_tasks"))
+    {
+        future = QtConcurrent::run([this]() {
+            return this->executeListDownloadTasks();
+        });
+    }
+    else if (name == QStringLiteral("find_structure"))
+    {
+        future = QtConcurrent::run([this, args]() {
+            return this->executeFindStructure(args);
         });
     }
     else if (m_skillToolMap.contains(name))
@@ -4037,5 +4091,1095 @@ QString AiService::executeReadLitematic(const QJsonObject &args)
                          .arg(info->materialList.size()));
     }
 
+    return lines.join('\n');
+}
+
+// ============================================================================
+// Agent 扩展工具实现（日志/崩溃报告/模组管理/存档/服务器/下载任务/种子结构）
+// ============================================================================
+
+namespace {
+
+/// 游戏刻 → 时长文本（20 tick = 1 秒）
+QString ticksToDuration(qint64 ticks)
+{
+    qint64 seconds = ticks / 20;
+    qint64 hours = seconds / 3600;
+    qint64 minutes = (seconds % 3600) / 60;
+    if (hours > 0)
+    {
+        return QStringLiteral("%1 小时 %2 分钟").arg(hours).arg(minutes);
+    }
+    if (minutes > 0)
+    {
+        return QStringLiteral("%1 分钟").arg(minutes);
+    }
+    return QStringLiteral("%1 秒").arg(seconds);
+}
+
+/// 游戏模式编号 → 名称
+QString gameTypeName(int gameType)
+{
+    switch (gameType)
+    {
+    case 0: return QStringLiteral("生存");
+    case 1: return QStringLiteral("创造");
+    case 2: return QStringLiteral("冒险");
+    case 3: return QStringLiteral("旁观");
+    default: return QStringLiteral("未知(%1)").arg(gameType);
+    }
+}
+
+/// 难度编号 → 名称
+QString difficultyName(int difficulty)
+{
+    switch (difficulty)
+    {
+    case 0: return QStringLiteral("和平");
+    case 1: return QStringLiteral("简单");
+    case 2: return QStringLiteral("普通");
+    case 3: return QStringLiteral("困难");
+    default: return QStringLiteral("未知(%1)").arg(difficulty);
+    }
+}
+
+/// 维度编号 → 名称（LevelDatEditor 约定：-1=下界，0=主世界，1=末地）
+QString dimensionName(int dimension)
+{
+    switch (dimension)
+    {
+    case -1: return QStringLiteral("下界");
+    case 0: return QStringLiteral("主世界");
+    case 1: return QStringLiteral("末地");
+    default: return QStringLiteral("未知(%1)").arg(dimension);
+    }
+}
+
+/// 存档文件夹名校验：拒绝路径分隔符，防止越出 saves 目录
+bool isValidWorldFolderName(const QString &worldName)
+{
+    return !worldName.isEmpty() && !worldName.contains('/') && !worldName.contains('\\')
+           && worldName != QStringLiteral(".") && worldName != QStringLiteral("..");
+}
+
+/// 下载任务状态 → 文本
+QString downloadTaskStatusText(DownloadTaskStatus status)
+{
+    switch (status)
+    {
+    case DownloadTaskStatus::Queued: return QStringLiteral("排队中");
+    case DownloadTaskStatus::Downloading: return QStringLiteral("下载中");
+    case DownloadTaskStatus::Paused: return QStringLiteral("已暂停");
+    case DownloadTaskStatus::Completed: return QStringLiteral("已完成");
+    case DownloadTaskStatus::Failed: return QStringLiteral("失败");
+    case DownloadTaskStatus::Cancelled: return QStringLiteral("已取消");
+    default: return QStringLiteral("未知");
+    }
+}
+
+} // namespace
+
+QString AiService::executeReadGameLog(const QJsonObject &args)
+{
+    QString instancePath = args["instance_path"].toString().trimmed();
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+
+    QString logFile = args["log_file"].toString().trimmed();
+    if (logFile.isEmpty())
+    {
+        logFile = QStringLiteral("latest.log");
+    }
+    // 防路径穿越：只允许纯文件名
+    if (logFile.contains('/') || logFile.contains('\\') || logFile.contains(".."))
+    {
+        return QStringLiteral("错误：log_file 只能是 logs/ 目录下的文件名");
+    }
+
+    int tailLines = args["tail_lines"].toInt(200);
+    tailLines = qBound(1, tailLines, 1000);
+
+    QString logPath = instancePath + QStringLiteral("/logs/") + logFile;
+    QFile file(logPath);
+    if (!file.exists())
+    {
+        // 日志文件不存在时列出 logs 目录下可用文件
+        QDir logsDir(instancePath + QStringLiteral("/logs"));
+        QStringList available = logsDir.exists()
+                                    ? logsDir.entryList(QDir::Files, QDir::Time)
+                                    : QStringList();
+        if (available.isEmpty())
+        {
+            return QStringLiteral("未找到日志：%1（该实例下也不存在 logs 目录）").arg(logPath);
+        }
+        return QStringLiteral("未找到日志文件 %1。logs 目录下可用文件：\n%2")
+            .arg(logFile, available.join(QStringLiteral("\n")));
+    }
+
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    {
+        return QStringLiteral("无法读取日志文件：%1").arg(logPath);
+    }
+
+    QStringList allLines = QString::fromUtf8(file.readAll()).split('\n');
+    file.close();
+    while (!allLines.isEmpty() && allLines.last().isEmpty())
+    {
+        allLines.removeLast();
+    }
+
+    int total = allLines.size();
+    int start = qMax(0, total - tailLines);
+    QStringList tail = allLines.mid(start);
+
+    QStringList lines;
+    lines.append(QStringLiteral("日志文件: %1").arg(logPath));
+    lines.append(QStringLiteral("共 %1 行，以下为末尾 %2 行：").arg(total).arg(tail.size()));
+    lines.append(tail.join('\n'));
+    return lines.join('\n');
+}
+
+QString AiService::executeReadCrashReport(const QJsonObject &args)
+{
+    QString instancePath = args["instance_path"].toString().trimmed();
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+
+    QDir crashDir(instancePath + QStringLiteral("/crash-reports"));
+    if (!crashDir.exists())
+    {
+        return QStringLiteral("该实例下不存在 crash-reports 目录（没有记录过崩溃报告）。");
+    }
+
+    // 按名称排序（崩溃报告文件名含时间戳，倒序即最新在前）
+    QStringList reports = crashDir.entryList(QStringList() << QStringLiteral("*.txt"),
+                                             QDir::Files, QDir::Name);
+    if (reports.isEmpty())
+    {
+        return QStringLiteral("crash-reports 目录为空（没有崩溃报告文件）。");
+    }
+    std::reverse(reports.begin(), reports.end());
+
+    int reportIndex = args["report_index"].toInt(0);
+    // 清单序号从 1 开始；不传则默认读最新一份
+    if (reportIndex <= 0)
+    {
+        reportIndex = 1;
+    }
+    if (reportIndex > reports.size())
+    {
+        return QStringLiteral("序号 %1 超出范围：共有 %2 份崩溃报告。")
+            .arg(reportIndex)
+            .arg(reports.size());
+    }
+
+    QStringList listLines;
+    for (int i = 0; i < reports.size(); ++i)
+    {
+        QFileInfo fi(crashDir.filePath(reports[i]));
+        listLines.append(QStringLiteral("%1. %2（%3，%4）")
+                             .arg(i + 1)
+                             .arg(reports[i])
+                             .arg(fi.lastModified().toString(QStringLiteral("yyyy-MM-dd hh:mm")))
+                             .arg(formatFileSize(fi.size())));
+    }
+
+    QString chosenPath = crashDir.filePath(reports[reportIndex - 1]);
+    QFile file(chosenPath);
+    QString content;
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text))
+    {
+        content = QString::fromUtf8(file.readAll());
+        file.close();
+    }
+    else
+    {
+        content = QStringLiteral("（读取失败）");
+    }
+    if (content.size() > 4000)
+    {
+        content = content.left(4000) + QStringLiteral("\n...（内容过长已截断）");
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("共 %1 份崩溃报告：").arg(reports.size()));
+    lines.append(listLines.join('\n'));
+    lines.append(QStringLiteral("\n## 报告内容（第 %1 份：%2）").arg(reportIndex).arg(reports[reportIndex - 1]));
+    lines.append(content);
+    return lines.join('\n');
+}
+
+QString AiService::executeManageMods(const QJsonObject &args)
+{
+    QString instancePath = args["instance_path"].toString().trimmed();
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+    QString action = args["action"].toString().trimmed().toLower();
+    if (action != QStringLiteral("enable") && action != QStringLiteral("disable")
+        && action != QStringLiteral("delete"))
+    {
+        return QStringLiteral("错误：action 只能是 enable / disable / delete");
+    }
+
+    // 目标文件名列表（省略 = 全部模组）
+    QStringList targets;
+    QJsonArray nameArr = args["file_names"].toArray();
+    for (const QJsonValue &v : nameArr)
+    {
+        QString n = v.toString().trimmed();
+        if (!n.isEmpty())
+        {
+            targets.append(n);
+        }
+    }
+
+    ModScanner scanner;
+    LocalModList modList;
+    if (!scanner.scanModsSync(instancePath, modList))
+    {
+        return QStringLiteral("扫描失败：无法读取 %1 的 mods 目录").arg(instancePath);
+    }
+    if (modList.mods.isEmpty())
+    {
+        return QStringLiteral("实例 %1 的 mods 目录为空，没有可管理的模组。").arg(instancePath);
+    }
+
+    // 文件名归一化：去 .disabled 后缀、转小写，便于匹配
+    auto normalizeName = [](const QString &fileName) {
+        QString n = fileName;
+        if (n.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+        {
+            n.chop(QStringLiteral(".disabled").size());
+        }
+        return n.toLower();
+    };
+    QSet<QString> targetSet;
+    for (const QString &t : targets)
+    {
+        targetSet.insert(normalizeName(t));
+    }
+
+    QStringList resultLines;
+    int succeeded = 0;
+    int failed = 0;
+    for (const ModInfo &mod : modList.mods)
+    {
+        QString displayName = mod.name.isEmpty() ? mod.fileName : mod.name;
+        if (!targetSet.isEmpty() && !targetSet.contains(normalizeName(mod.fileName)))
+        {
+            continue;
+        }
+
+        QString oldPath = mod.filePath;
+        bool ok = false;
+        QString detail;
+        if (action == QStringLiteral("enable"))
+        {
+            if (mod.enabled)
+            {
+                ok = true;
+                detail = QStringLiteral("已是启用状态，跳过");
+            }
+            else if (oldPath.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+            {
+                QString newPath = oldPath.left(oldPath.size()
+                                               - QStringLiteral(".disabled").size());
+                ok = QFile::rename(oldPath, newPath);
+                detail = ok ? QStringLiteral("已启用") : QStringLiteral("重命名失败");
+            }
+            else
+            {
+                ok = false;
+                detail = QStringLiteral("文件缺少 .disabled 后缀，无法启用");
+            }
+        }
+        else if (action == QStringLiteral("disable"))
+        {
+            if (!mod.enabled)
+            {
+                ok = true;
+                detail = QStringLiteral("已是禁用状态，跳过");
+            }
+            else
+            {
+                ok = QFile::rename(oldPath, oldPath + QStringLiteral(".disabled"));
+                detail = ok ? QStringLiteral("已禁用") : QStringLiteral("重命名失败");
+            }
+        }
+        else // delete
+        {
+            ok = QFile::remove(oldPath);
+            QString disabledPath = oldPath + QStringLiteral(".disabled");
+            if (QFile::exists(disabledPath))
+            {
+                ok = QFile::remove(disabledPath) && ok;
+            }
+            detail = ok ? QStringLiteral("已删除") : QStringLiteral("删除失败");
+        }
+
+        if (ok)
+        {
+            succeeded++;
+        }
+        else
+        {
+            failed++;
+        }
+        resultLines.append(QStringLiteral("%1: %2").arg(displayName, detail));
+    }
+
+    if (resultLines.isEmpty())
+    {
+        return QStringLiteral("没有匹配到目标模组。请用 list_mods 确认模组文件名后重试。");
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("操作: %1，成功 %2 项，失败 %3 项")
+                     .arg(action)
+                     .arg(succeeded)
+                     .arg(failed));
+    lines.append(resultLines.join('\n'));
+    return lines.join('\n');
+}
+
+QString AiService::executeCheckModUpdates(const QJsonObject &args)
+{
+    QString instancePath = args["instance_path"].toString().trimmed();
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+
+    ModScanner scanner;
+    LocalModList modList;
+    if (!scanner.scanModsSync(instancePath, modList))
+    {
+        return QStringLiteral("扫描失败：无法读取 %1 的 mods 目录").arg(instancePath);
+    }
+    if (modList.mods.isEmpty())
+    {
+        return QStringLiteral("实例 %1 的 mods 目录为空，没有可检查的模组。").arg(instancePath);
+    }
+
+    QStringList gameVersions;
+    QString gv = args["game_version"].toString().trimmed();
+    if (!gv.isEmpty())
+    {
+        gameVersions.append(gv);
+    }
+    QStringList loaders;
+    QString loader = args["loader"].toString().trimmed().toLower();
+    if (!loader.isEmpty())
+    {
+        loaders.append(loader);
+    }
+
+    // 收集本地文件指纹：Modrinth 用 SHA-1，CurseForge 用 MurmurHash2
+    QMap<QString, ModInfo> modsBySha1;
+    QList<QString> sha1List;
+    QMap<quint32, ModInfo> modsByMurmur;
+    QList<quint32> murmurList;
+    for (const ModInfo &mod : modList.mods)
+    {
+        if (!mod.sha1Hash.isEmpty() && !modsBySha1.contains(mod.sha1Hash))
+        {
+            modsBySha1.insert(mod.sha1Hash, mod);
+            sha1List.append(mod.sha1Hash);
+        }
+        if (mod.curseforgeHash != 0 && !modsByMurmur.contains(mod.curseforgeHash))
+        {
+            modsByMurmur.insert(mod.curseforgeHash, mod);
+            murmurList.append(mod.curseforgeHash);
+        }
+    }
+
+    // ── 第一步：Modrinth 批量更新检查 ──
+    QMap<QString, ModVersionFile> modrinthUpdates;
+    {
+        ModrinthAPI api;
+        QVariant mcimVal = SettingsManager::instance()->property("use_mcim");
+        bool useMcim = mcimVal.isValid() ? mcimVal.toBool() : true;
+        if (useMcim)
+        {
+            api.setBaseUrl(QStringLiteral("https://mod.mcimirror.top/modrinth"));
+        }
+
+        QEventLoop loop;
+        QTimer::singleShot(30000, &loop, [&]() { loop.quit(); });
+        QObject::connect(&api, &ModrinthAPI::updatesChecked, &loop,
+            [&](const QMap<QString, ModVersionFile>& versions) {
+                modrinthUpdates = versions;
+                loop.quit();
+            });
+        QObject::connect(&api, &ModrinthAPI::updatesCheckFailed, &loop, [&]() { loop.quit(); });
+
+        api.checkModUpdates(sha1List, gameVersions, loaders);
+        loop.exec();
+    }
+
+    // Modrinth 未命中的模组再走 CurseForge 指纹识别（至少识别出模组与主页）
+    auto matchedOnModrinth = [&modrinthUpdates](const ModInfo &mod) {
+        return !mod.sha1Hash.isEmpty() && modrinthUpdates.contains(mod.sha1Hash);
+    };
+
+    QMap<quint32, QString> cfFingerprintToModId;
+    QMap<QString, ModInfo> cfModsById;
+    QList<quint32> unmatchedMurmurs;
+    for (const ModInfo &mod : modList.mods)
+    {
+        if (mod.curseforgeHash != 0 && !matchedOnModrinth(mod))
+        {
+            unmatchedMurmurs.append(mod.curseforgeHash);
+        }
+    }
+    if (!unmatchedMurmurs.isEmpty())
+    {
+        CurseForgeAPI api;
+        QString apiKey = SettingsManager::instance()->property("curseforge_api_key").toString();
+        api.setApiKey(apiKey);
+        QVariant mcimVal = SettingsManager::instance()->property("use_mcim");
+        bool useMcim = mcimVal.isValid() ? mcimVal.toBool() : true;
+        if (useMcim)
+        {
+            api.setBaseUrl(QStringLiteral("https://mod.mcimirror.top/curseforge"));
+        }
+
+        QEventLoop loop;
+        QTimer::singleShot(30000, &loop, [&]() { loop.quit(); });
+        QObject::connect(&api, &CurseForgeAPI::fingerprintsCompleted, &loop,
+            [&](const QMap<quint32, QString>& map) {
+                cfFingerprintToModId = map;
+                loop.quit();
+            });
+        QObject::connect(&api, &CurseForgeAPI::fingerprintsFailed, &loop, [&]() { loop.quit(); });
+
+        api.fingerprintMods(unmatchedMurmurs);
+        loop.exec();
+
+        // 指纹命中的模组 ID 拉取基础信息（名称与主页）
+        QStringList cfModIds = cfFingerprintToModId.values();
+        cfModIds.removeAll(QString());
+        if (!cfModIds.isEmpty())
+        {
+            QEventLoop loop2;
+            QTimer::singleShot(30000, &loop2, [&]() { loop2.quit(); });
+            QObject::connect(&api, &CurseForgeAPI::modsResolved, &loop2,
+                [&](const QList<ModInfo>& mods) {
+                    for (const ModInfo &m : mods)
+                    {
+                        cfModsById.insert(m.id, m);
+                    }
+                    loop2.quit();
+                });
+            api.fetchModsByIds(cfModIds);
+            loop2.exec();
+        }
+    }
+
+    // ── 汇总输出 ──
+    QStringList updatableLines;   // Modrinth 有更新
+    QStringList upToDateLines;    // Modrinth 已是最新
+    QStringList cfOnlyLines;      // 仅识别到 CurseForge 模组
+    QStringList unknownLines;     // 两源均未匹配
+    for (const ModInfo &mod : modList.mods)
+    {
+        QString displayName = mod.name.isEmpty() ? mod.fileName : mod.name;
+        if (matchedOnModrinth(mod))
+        {
+            const ModVersionFile &latest = modrinthUpdates.value(mod.sha1Hash);
+            bool hasUpdate = !latest.sha1.isEmpty() && latest.sha1 != mod.sha1Hash;
+            if (hasUpdate)
+            {
+                updatableLines.append(
+                    QStringLiteral("%1（文件 %2）：%3 → %4，文件 %5，发布于 %6\n  下载: %7")
+                        .arg(displayName, mod.fileName,
+                             mod.latestVersion.isEmpty() ? QStringLiteral("未知") : mod.latestVersion,
+                             latest.version, latest.fileName,
+                             latest.datePublished.toString(QStringLiteral("yyyy-MM-dd")),
+                             latest.downloadUrl));
+            }
+            else
+            {
+                upToDateLines.append(displayName);
+            }
+            continue;
+        }
+
+        if (mod.curseforgeHash != 0 && cfFingerprintToModId.contains(mod.curseforgeHash))
+        {
+            QString modId = cfFingerprintToModId.value(mod.curseforgeHash);
+            const ModInfo &cf = cfModsById.value(modId);
+            QString page = !cf.pageUrl.isEmpty()
+                               ? cf.pageUrl
+                               : QStringLiteral("https://www.curseforge.com/minecraft/search?search=%1")
+                                     .arg(QString::fromUtf8(QUrl::toPercentEncoding(displayName)));
+            cfOnlyLines.append(QStringLiteral("%1（文件 %2）：已识别为 CurseForge 模组 %3，未匹配到 Modrinth 版本数据，可到主页核对更新\n  主页: %4")
+                                   .arg(displayName, mod.fileName,
+                                        cf.name.isEmpty() ? modId : cf.name, page));
+            continue;
+        }
+
+        unknownLines.append(displayName);
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("模组更新检查结果（共 %1 个模组，联网检查 %2 个；Modrinth 可更新 %3，已是最新 %4，仅识别到 CurseForge %5，未匹配 %6）")
+                     .arg(modList.mods.size())
+                     .arg(sha1List.size() + murmurList.size())
+                     .arg(updatableLines.size())
+                     .arg(upToDateLines.size())
+                     .arg(cfOnlyLines.size())
+                     .arg(unknownLines.size()));
+
+    if (!updatableLines.isEmpty())
+    {
+        lines.append(QStringLiteral("\n## 可更新的模组（%1 个）").arg(updatableLines.size()));
+        lines.append(updatableLines.join(QStringLiteral("\n")));
+    }
+    if (!cfOnlyLines.isEmpty())
+    {
+        lines.append(QStringLiteral("\n## 仅在 CurseForge 识别到（%1 个）").arg(cfOnlyLines.size()));
+        lines.append(cfOnlyLines.join(QStringLiteral("\n")));
+    }
+    if (!upToDateLines.isEmpty())
+    {
+        lines.append(QStringLiteral("\n## 已是最新（%1 个）").arg(upToDateLines.size()));
+        lines.append(upToDateLines.join(QStringLiteral("、")));
+    }
+    if (!unknownLines.isEmpty())
+    {
+        int show = qMin(unknownLines.size(), 15);
+        lines.append(QStringLiteral("\n## 未匹配到在线数据（%1 个，%2）")
+                         .arg(unknownLines.size())
+                         .arg(unknownLines.size() > show ? QStringLiteral("仅列前 %1 个") : QStringLiteral("全部")));
+        lines.append(unknownLines.mid(0, show).join(QStringLiteral("、")));
+        if (unknownLines.size() > show)
+        {
+            lines.append(QStringLiteral("..."));
+        }
+    }
+
+    return lines.join('\n');
+}
+
+QString AiService::executeListSaves(const QJsonObject &args)
+{
+    QString instancePath = args["instance_path"].toString().trimmed();
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+
+    QString savesDir = WorldBackupManager::savesDirForInstance(instancePath);
+    QStringList worlds = WorldBackupManager::listWorldNames(instancePath);
+    if (worlds.isEmpty())
+    {
+        return QStringLiteral("实例 %1 的存档目录（%2）为空或不存在。").arg(instancePath, savesDir);
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("存档目录: %1").arg(savesDir));
+    lines.append(QStringLiteral("共 %1 个存档：").arg(worlds.size()));
+    for (const QString &world : worlds)
+    {
+        QString folder = savesDir + QStringLiteral("/") + world;
+        auto info = LevelDatEditor::readSave(folder);
+        if (info.has_value())
+        {
+            QString lastPlayed = info->lastPlayed > 0
+                                     ? QDateTime::fromMSecsSinceEpoch(info->lastPlayed)
+                                           .toString(QStringLiteral("yyyy-MM-dd hh:mm"))
+                                     : QStringLiteral("未知");
+            lines.append(QStringLiteral("  - 文件夹: %1 | 存档名: %2 | 版本: %3 | 最后游玩: %4")
+                             .arg(world,
+                                  info->levelName.isEmpty() ? world : info->levelName,
+                                  info->versionName.isEmpty() ? QStringLiteral("未知") : info->versionName,
+                                  lastPlayed));
+        }
+        else
+        {
+            lines.append(QStringLiteral("  - 文件夹: %1（无法解析 level.dat）").arg(world));
+        }
+    }
+    return lines.join('\n');
+}
+
+QString AiService::executeReadSaveInfo(const QJsonObject &args)
+{
+    QString instancePath = args["instance_path"].toString().trimmed();
+    QString worldName = args["world_name"].toString().trimmed();
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+    if (!isValidWorldFolderName(worldName))
+    {
+        return QStringLiteral("错误：world_name 应为存档文件夹名（可用 list_saves 查询）");
+    }
+
+    QString savesDir = WorldBackupManager::savesDirForInstance(instancePath);
+    QString folder = savesDir + QStringLiteral("/") + worldName;
+    if (!QDir(folder).exists())
+    {
+        return QStringLiteral("存档文件夹不存在：%1").arg(folder);
+    }
+
+    auto info = LevelDatEditor::readSave(folder);
+    if (!info.has_value())
+    {
+        return QStringLiteral("无法解析 %1/level.dat（存档可能损坏）。").arg(folder);
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("存档: %1（文件夹 %2）")
+                     .arg(info->levelName.isEmpty() ? worldName : info->levelName, worldName));
+    lines.append(QStringLiteral("游戏版本: %1")
+                     .arg(info->versionName.isEmpty() ? QStringLiteral("未知") : info->versionName));
+    if (info->lastPlayed > 0)
+    {
+        lines.append(QStringLiteral("最后游玩: %1")
+                         .arg(QDateTime::fromMSecsSinceEpoch(info->lastPlayed)
+                                  .toString(QStringLiteral("yyyy-MM-dd hh:mm"))));
+    }
+    if (info->playTimeTicks > 0)
+    {
+        lines.append(QStringLiteral("累计游玩: %1").arg(ticksToDuration(info->playTimeTicks)));
+    }
+    if (info->hasSeed)
+    {
+        // 与游戏 /seed 一致的显示方式（按有符号 64 位展示）
+        lines.append(QStringLiteral("世界种子: %1").arg(static_cast<qint64>(info->seed)));
+    }
+    else
+    {
+        lines.append(QStringLiteral("世界种子: 未读取到"));
+    }
+    if (info->hasSpawn)
+    {
+        lines.append(QStringLiteral("出生点: X=%1, Y=%2, Z=%3")
+                         .arg(info->spawnX)
+                         .arg(info->spawnY)
+                         .arg(info->spawnZ));
+    }
+    if (info->hasGameType)
+    {
+        lines.append(QStringLiteral("游戏模式: %1%2")
+                         .arg(gameTypeName(info->gameType),
+                              info->hardcore ? QStringLiteral("（极限模式）") : QString()));
+    }
+    lines.append(QStringLiteral("允许作弊: %1").arg(info->allowCommands ? QStringLiteral("是") : QStringLiteral("否")));
+    if (info->hasDifficulty)
+    {
+        lines.append(QStringLiteral("难度: %1%2")
+                         .arg(difficultyName(info->difficulty),
+                              info->difficultyLocked ? QStringLiteral("（已锁定）") : QString()));
+    }
+    if (info->hasDayTime)
+    {
+        lines.append(QStringLiteral("游戏内时间: 第 %1 天")
+                         .arg(info->dayTime / 24000 + 1));
+    }
+
+    auto player = LevelDatEditor::readPlayerState(folder);
+    if (player.has_value() && player->hasPos)
+    {
+        lines.append(QStringLiteral("玩家位置: X=%1, Y=%2, Z=%3（%4）")
+                         .arg(QString::number(player->x, 'f', 1))
+                         .arg(QString::number(player->y, 'f', 1))
+                         .arg(QString::number(player->z, 'f', 1))
+                         .arg(dimensionName(player->dimension)));
+    }
+
+    return lines.join('\n');
+}
+
+QString AiService::executeManageWorldBackup(const QJsonObject &args)
+{
+    QString instancePath = args["instance_path"].toString().trimmed();
+    QString worldName = args["world_name"].toString().trimmed();
+    QString action = args["action"].toString().trimmed().toLower();
+    QString backupName = args["backup_name"].toString().trimmed();
+
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+    if (!isValidWorldFolderName(worldName))
+    {
+        return QStringLiteral("错误：world_name 应为存档文件夹名（可用 list_saves 查询）");
+    }
+    if (action != QStringLiteral("list") && action != QStringLiteral("create")
+        && action != QStringLiteral("restore"))
+    {
+        return QStringLiteral("错误：action 只能是 list / create / restore");
+    }
+
+    WorldBackupManager *wbm = WorldBackupManager::instance();
+
+    if (action == QStringLiteral("list"))
+    {
+        QList<WorldBackupInfo> backups = wbm->listBackups(instancePath, worldName);
+        if (backups.isEmpty())
+        {
+            return QStringLiteral("存档 %1 暂无备份。").arg(worldName);
+        }
+        QStringList lines;
+        lines.append(QStringLiteral("存档 %1 共 %2 个备份：").arg(worldName).arg(backups.size()));
+        for (const WorldBackupInfo &b : backups)
+        {
+            lines.append(QStringLiteral("  - %1（创建于 %2，包大小 %3，原始 %4%5）")
+                             .arg(b.id,
+                                  b.createdAt.toString(QStringLiteral("yyyy-MM-dd hh:mm")),
+                                  formatFileSize(b.archiveSize),
+                                  formatFileSize(b.sourceSize),
+                                  b.automatic ? QStringLiteral("，自动备份") : QString()));
+        }
+        return lines.join('\n');
+    }
+
+    if (action == QStringLiteral("create"))
+    {
+        WorldBackupInfo outInfo;
+        QString error;
+        bool ok = wbm->createBackupSync(instancePath, worldName, QString(), false, &outInfo, &error);
+        if (!ok)
+        {
+            return QStringLiteral("备份失败：%1").arg(error.isEmpty() ? QStringLiteral("未知错误") : error);
+        }
+        return QStringLiteral("备份成功：存档 %1 已备份为 %2（创建于 %3，包大小 %4）。")
+            .arg(worldName,
+                 outInfo.id,
+                 outInfo.createdAt.toString(QStringLiteral("yyyy-MM-dd hh:mm")),
+                 formatFileSize(outInfo.archiveSize));
+    }
+
+    // restore
+    if (backupName.isEmpty())
+    {
+        return QStringLiteral("错误：restore 需要提供 backup_name（可用 action=list 查询备份名）");
+    }
+    QString error;
+    bool ok = wbm->restoreBackupSync(instancePath, worldName, backupName, &error);
+    if (!ok)
+    {
+        return QStringLiteral("恢复失败：%1").arg(error.isEmpty() ? QStringLiteral("未知错误") : error);
+    }
+    return QStringLiteral("恢复成功：存档 %1 已恢复到备份 %2。")
+        .arg(worldName, backupName);
+}
+
+QString AiService::executeListServers(const QJsonObject &args)
+{
+    QString instancePath = args["instance_path"].toString().trimmed();
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+
+    QStringList candidates = ServersDatIO::candidatePaths(instancePath);
+    QString path = ServersDatIO::existingPath(candidates);
+    if (path.isEmpty())
+    {
+        return QStringLiteral("该实例下未找到 servers.dat（从未添加过服务器或尚未启动过游戏）。");
+    }
+
+    QList<ServersDatIO::Entry> entries = ServersDatIO::read(path);
+    if (entries.isEmpty())
+    {
+        return QStringLiteral("服务器列表（%1）为空。").arg(path);
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("服务器列表（来源 %1，共 %2 个）：").arg(path).arg(entries.size()));
+    for (int i = 0; i < entries.size(); ++i)
+    {
+        const ServersDatIO::Entry &e = entries[i];
+        QString name = e.name.isEmpty() ? QStringLiteral("（未命名）") : e.name;
+        lines.append(QStringLiteral("  %1. %2 — %3").arg(i + 1).arg(name, ServersDatIO::formatAddress(e.host, e.port)));
+    }
+    return lines.join('\n');
+}
+
+QString AiService::executePingServer(const QJsonObject &args)
+{
+    QString address = args["address"].toString().trimmed();
+    if (address.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 address 参数");
+    }
+
+    QString host;
+    quint16 port = 25565;
+    if (!ServersDatIO::parseAddress(address, host, port) || host.isEmpty())
+    {
+        host = address;
+        port = 25565;
+    }
+
+    // 临时探测实例（线程亲和性为当前子线程），QEventLoop 等待探测结果
+    McServerPinger pinger;
+    McServerPinger::Result result;
+    QEventLoop loop;
+    QTimer::singleShot(15000, &loop, [&]() { loop.quit(); });
+    QObject::connect(&pinger, &McServerPinger::pingFinished, &loop,
+        [&](const QString&, const McServerPinger::Result &r) {
+            result = r;
+            loop.quit();
+        });
+
+    pinger.ping(QStringLiteral("ai_ping"), host, port);
+    loop.exec();
+
+    QStringList lines;
+    lines.append(QStringLiteral("服务器: %1").arg(ServersDatIO::formatAddress(host, port)));
+    if (result.state == McServerPinger::Result::Online)
+    {
+        lines.append(QStringLiteral("状态: 在线"));
+        if (result.latencyMs >= 0)
+        {
+            lines.append(QStringLiteral("延迟: %1 ms").arg(result.latencyMs));
+        }
+        if (!result.versionName.isEmpty())
+        {
+            lines.append(QStringLiteral("服务端版本: %1").arg(result.versionName));
+        }
+        lines.append(QStringLiteral("在线人数: %1 / %2")
+                         .arg(result.playersOnline)
+                         .arg(result.playersMax));
+        if (!result.motd.isEmpty())
+        {
+            lines.append(QStringLiteral("MOTD: %1").arg(result.motd));
+        }
+    }
+    else
+    {
+        lines.append(QStringLiteral("状态: 离线或无法连接"));
+        if (!result.error.isEmpty())
+        {
+            lines.append(QStringLiteral("原因: %1").arg(result.error));
+        }
+    }
+    return lines.join('\n');
+}
+
+QString AiService::executeListDownloadTasks()
+{
+    QList<DownloadTask> tasks = DownloadTaskManager::instance()->getAllTasks();
+    if (tasks.isEmpty())
+    {
+        return QStringLiteral("当前没有下载任务。");
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("当前共 %1 个下载任务：").arg(tasks.size()));
+    for (const DownloadTask &t : tasks)
+    {
+        QString name = t.instanceName.isEmpty() ? t.taskId : t.instanceName;
+        if (!t.mcVersion.isEmpty())
+        {
+            name += QStringLiteral("（%1）").arg(t.mcVersion);
+        }
+        QString speed;
+        if (t.status == DownloadTaskStatus::Downloading && t.downloadSpeed > 0)
+        {
+            speed = QStringLiteral("，速度 %1/s").arg(formatFileSize(t.downloadSpeed));
+        }
+        QString progress = QStringLiteral("%1%").arg(t.progress);
+        if (t.bytesTotal > 0)
+        {
+            progress += QStringLiteral("（%1/%2）")
+                            .arg(formatFileSize(t.bytesReceived), formatFileSize(t.bytesTotal));
+        }
+        lines.append(QStringLiteral("  - [%1] %2：%3，%4%5%6")
+                         .arg(taskTypeDisplayName(t.type),
+                              name,
+                              downloadTaskStatusText(t.status),
+                              progress,
+                              speed,
+                              t.statusMessage.isEmpty() ? QString()
+                                                        : QStringLiteral("，%1").arg(t.statusMessage)));
+    }
+    return lines.join('\n');
+}
+
+QString AiService::executeFindStructure(const QJsonObject &args)
+{
+    QJsonValue seedValue = args["seed"];
+    if (seedValue.isUndefined() || seedValue.isNull())
+    {
+        return QStringLiteral("错误：缺少 seed 参数（可先用 read_save_info 读取存档种子）");
+    }
+    bool seedOk = false;
+    qint64 seed = static_cast<qint64>(seedValue.toVariant().toLongLong(&seedOk));
+    if (!seedOk)
+    {
+        return QStringLiteral("错误：seed 参数无效，应为整数（可先用 read_save_info 读取存档种子）");
+    }
+
+    QString mcVersion = args["mc_version"].toString().trimmed();
+    int mc = mcVersion.isEmpty() ? 0 : StructureFinder::versionToInt(mcVersion);
+    if (mc == 0)
+    {
+        return QStringLiteral("错误：无法识别游戏版本 %1（示例：1.20.1、1.21.4）").arg(mcVersion);
+    }
+
+    QString dimStr = args["dimension"].toString().trimmed().toLower();
+    int dim;
+    if (dimStr == QStringLiteral("nether"))
+    {
+        dim = -1;
+    }
+    else if (dimStr == QStringLiteral("end"))
+    {
+        dim = 1;
+    }
+    else
+    {
+        dim = 0;
+    }
+
+    // 范围：默认 ±10000，单边上限 ±60000（区域网格数随范围平方增长，防失控）
+    qint64 minX = args["min_x"].toInt(-10000);
+    qint64 minZ = args["min_z"].toInt(-10000);
+    qint64 maxX = args["max_x"].toInt(10000);
+    qint64 maxZ = args["max_z"].toInt(10000);
+    minX = qBound<qint64>(qint64(-60000), minX, qint64(60000));
+    minZ = qBound<qint64>(qint64(-60000), minZ, qint64(60000));
+    maxX = qBound<qint64>(qint64(-60000), maxX, qint64(60000));
+    maxZ = qBound<qint64>(qint64(-60000), maxZ, qint64(60000));
+    if (minX >= maxX || minZ >= maxZ)
+    {
+        return QStringLiteral("错误：范围参数无效（min_x/min_z 必须小于 max_x/max_z）");
+    }
+
+    // 结构开关：默认仅稀有结构；传 structures 时按 key/中文名匹配
+    const QVector<StructureFinder::StructureDef> &defs = StructureFinder::allStructures();
+    QSet<QString> wanted;
+    QJsonArray structArr = args["structures"].toArray();
+    for (const QJsonValue &v : structArr)
+    {
+        QString s = v.toString().trimmed().toLower();
+        if (!s.isEmpty())
+        {
+            wanted.insert(s);
+        }
+    }
+
+    QVector<bool> enabled(defs.size(), false);
+    bool anyEnabled = false;
+    QStringList unknownKeys;
+    for (int i = 0; i < defs.size(); ++i)
+    {
+        const StructureFinder::StructureDef &def = defs[i];
+        if (def.type == StructureFinder::kUnsupportedType)
+        {
+            continue;
+        }
+        if (wanted.isEmpty())
+        {
+            enabled[i] = def.rare;
+        }
+        else
+        {
+            QString key = QString::fromUtf8(def.key).toLower();
+            QString display = QString::fromUtf8(def.displayName);
+            enabled[i] = wanted.contains(key) || wanted.contains(display.toLower());
+        }
+        anyEnabled = anyEnabled || enabled[i];
+    }
+    for (const QString &w : wanted)
+    {
+        bool found = false;
+        for (const StructureFinder::StructureDef &def : defs)
+        {
+            if (QString::fromUtf8(def.key).toLower() == w
+                || QString::fromUtf8(def.displayName).toLower() == w)
+            {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            unknownKeys.append(w);
+        }
+    }
+
+    if (!anyEnabled)
+    {
+        QStringList known;
+        for (const StructureFinder::StructureDef &def : defs)
+        {
+            if (def.type != StructureFinder::kUnsupportedType)
+            {
+                known.append(QString::fromUtf8(def.key));
+            }
+        }
+        return QStringLiteral("错误：没有可查找的结构类型。可用类型：%1")
+            .arg(known.join(QStringLiteral("、")));
+    }
+
+    QVector<StructureFinder::Hit> hits =
+        StructureFinder::find(static_cast<quint64>(seed), mc, dim,
+                              minX, minZ, maxX, maxZ, enabled);
+
+    QStringList lines;
+    lines.append(QStringLiteral("种子 %1（版本 %2，维度 %3，范围 X[%4,%5] Z[%6,%7]）命中 %8 个结构：")
+                     .arg(seed)
+                     .arg(mcVersion, dimensionName(dim))
+                     .arg(minX)
+                     .arg(maxX)
+                     .arg(minZ)
+                     .arg(maxZ)
+                     .arg(hits.size()));
+    if (!unknownKeys.isEmpty())
+    {
+        lines.append(QStringLiteral("忽略的未知结构类型：%1").arg(unknownKeys.join(QStringLiteral("、"))));
+    }
+
+    // 按结构类型分组输出，避免长列表混杂
+    int shown = 0;
+    const int maxShow = 200;
+    for (int i = 0; i < defs.size() && shown < maxShow; ++i)
+    {
+        if (!enabled[i])
+        {
+            continue;
+        }
+        QStringList coords;
+        for (const StructureFinder::Hit &hit : hits)
+        {
+            if (hit.structIdx == i)
+            {
+                coords.append(QStringLiteral("X=%1, Z=%2").arg(hit.x).arg(hit.z));
+                shown++;
+                if (shown >= maxShow)
+                {
+                    break;
+                }
+            }
+        }
+        if (!coords.isEmpty())
+        {
+            lines.append(QStringLiteral("  %1: %2")
+                             .arg(QString::fromUtf8(defs[i].displayName),
+                                  coords.join(QStringLiteral("；"))));
+        }
+    }
+    if (hits.size() > shown)
+    {
+        lines.append(QStringLiteral("...（其余 %1 个省略）").arg(hits.size() - shown));
+    }
+    if (hits.isEmpty())
+    {
+        lines.append(QStringLiteral("（范围内未命中，可扩大范围或检查维度/版本是否正确）"));
+    }
+    lines.append(QStringLiteral("注：坐标为生成区域网格坐标，实际是否生成还受地形与生物群系影响。"));
     return lines.join('\n');
 }

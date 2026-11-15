@@ -41,9 +41,11 @@
 #include <QRegularExpression>
 #include <QMessageBox>
 #include <QDesktopServices>
+#include <QInputMethod>
 #include <QUrl>
 
 #include "components/BackgroundWidget.h"
+#include "components/AppDialogBase.h"
 #include "components/NotificationManager.h"
 #include "components/SideBar.h"
 #include "components/SubNavPanel.h"
@@ -54,12 +56,15 @@
 #include "components/UpdateProgressButton.h"
 #include "components/FileDropOverlay.h"
 #include "components/HumanCheckDialog.h"
+#include "components/LobbyJoinPrepDialog.h"
 #include "utils/Lobby/LobbyInstanceMatcher.h"
 #include "utils/Lobby/LobbyShareLink.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
 #include "utils/ThemeManager.h"
+#include "pages/CreationCenterPage.h"
 #include "pages/ForumAccountPage.h"
+#include "pages/AddAccountPage.h"
 #include "pages/ForgeVersionListPage.h"
 #include "pages/HomePage.h"
 #include "pages/InstallInstancePage.h"
@@ -80,6 +85,12 @@
 #include "pages/BedrockContentDetailPage.h"
 #include "pages/BedrockDownloadPage.h"
 #include "pages/BedrockVersionDetailPage.h"
+#include "pages/BedrockInstanceSelectPage.h"
+#include "components/BedrockInstanceAssistantWindow.h"
+#include "utils/BedrockLauncher.h"
+#include "utils/bedrock/BedrockInstanceManager.h"
+#include "utils/bedrock/BedrockContentInstaller.h"
+#include "utils/FileImportRouter.h"
 #include "pages/InstanceManagePage.h"
 #include "pages/InstanceLogPage.h"
 #include "pages/SearchPage.h"
@@ -372,6 +383,14 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    // 关软件时把「正在游玩」的记录撤掉（尽力而为，断网时服务端 2 分钟后自动清）
+    stopLobbyPlayReport();
+
+    // 实例助手是独立顶层窗口，不挂在主窗口下，退出时这里手动释放
+    delete m_instanceAssistantWindow;
+    m_instanceAssistantWindow = nullptr;
+    delete m_bedrockInstanceAssistantWindow;
+    m_bedrockInstanceAssistantWindow = nullptr;
     delete ui;
 }
 
@@ -821,7 +840,8 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
     }
 
     if (parentIndex == 1) { // Resources child
-        // ── 基岩版子导航：0安装新实例 / 1资源包 / 2材质包 / 3地图 / 4脚本 / 5新建收藏夹 / 6+收藏夹 ──
+        // ── 基岩版子导航：0安装新实例 / 1资源包 / 2材质包 / 3地图 / 4脚本 / 5附加包 / 6新建收藏夹 / 7+收藏夹
+        //    （childIndex 10 兼容资源主页「附加包」分组卡入口） ──
         if (FavoritesManager::instance()->isBedrockMode()) {
             if (childIndex == 0) {
                 // 基岩版安装入口 → 基岩版本下载页（mcappx/mcapks/bbk 多源列表）
@@ -835,17 +855,17 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
                 };
                 if (childIndex - 1 >= 0 && childIndex - 1 < bedrockTitles.size())
                     m_topBar->setTitle(bedrockTitles[childIndex - 1]);
-            } else if (childIndex == 10) {
-                // 资源主页「附加包」分组卡：CurseForge Addons 分类
-                restoreSideBarWithSubNav(1, -1);
-                showBedrockContentPage(bedrockClassIdForChildIndex(childIndex));
+            } else if (childIndex == 5 || childIndex == 10) {
+                // 「附加包」：侧边栏第 5 项，或资源主页「附加包」分组卡（childIndex 10）
+                restoreSideBarWithSubNav(1, childIndex == 5 ? 5 : -1);
+                showBedrockContentPage(bedrockClassIdForChildIndex(10));
                 m_topBar->setTitle(tr("资源>附加包"));
-            } else if (childIndex == 5) {
+            } else if (childIndex == 6) {
                 onCreateFavoriteFolderRequested();
             } else {
-                // childIndex >= 6: 收藏夹列表
+                // childIndex >= 7: 收藏夹列表
                 QList<FavoriteFolder> folders = FavoritesManager::instance()->folders();
-                int folderIdx = childIndex - 6;
+                int folderIdx = childIndex - 7;
                 if (folderIdx >= 0 && folderIdx < folders.size())
                     showFavoritesPage(folders[folderIdx].id);
             }
@@ -971,6 +991,8 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
             m_topBar->setTitle(instanceTitles[childIndex]);
         }
         if (m_instanceManagePage) {
+            // 直连侧边栏进入时也要先把当前实例同步过去，否则子页拿到的是旧/空实例
+            syncInstanceManagePageContext();
             m_instanceManagePage->setCurrentTab(childIndex);
         }
         // 若当前正处于"修改"进入的安装新实例页，点击其他子项应切回实例管理页
@@ -1211,11 +1233,15 @@ void MainWindow::onResourcesNavItemClicked(int index)
 
 void MainWindow::onBackToMain()
 {
-    // 社区页里还开着联机大厅子页面：顶栏返回先退回社区，而不是直接回主页
+    // 社区页里还开着联机大厅子页面：顶栏返回先退回房间列表 / 社区，而不是直接回主页
     if (m_communityPage && m_stackedWidget
-        && m_stackedWidget->currentWidget() == m_communityPage
-        && m_communityPage->closeLobbyIfVisible())
-        return;
+        && m_stackedWidget->currentWidget() == m_communityPage)
+    {
+        if (m_communityPage->closeLobbyDetailIfVisible())
+            return;
+        if (m_communityPage->closeLobbyIfVisible())
+            return;
+    }
 
     // 放弃修改现有实例流程：回到主页时复位安装/加载器页的修改模式状态
     if (m_installInstancePage)
@@ -1253,11 +1279,35 @@ void MainWindow::onInstanceSelectClicked()
     m_topBar->setAccountSelected(false);
     m_topBar->setInstanceSettingsSelected(false);
     m_topBar->setInstanceSelectSelected(true);
+    // 基岩版模式：进基岩版实例管理页（Java 实例列表对基岩版无意义）
+    if (m_bedrockEdition) {
+        showBedrockInstanceSelectPage();
+        return;
+    }
     showInstanceSelectPage();
 }
 
 void MainWindow::openInstanceAssistant()
 {
+    // 基岩版模式：打开基岩版实例助手（首页/AI/快捷指令/联机/资源管理/设置）
+    if (m_bedrockEdition) {
+        BedrockInstanceManager *mgr = BedrockInstanceManager::instance();
+        mgr->ensureInitialized();
+        if (mgr->activeInstanceId().isEmpty()) {
+            NotificationManager::showInfo(this,
+                tr("还没有基岩版实例，请先在「资源>安装新实例」中安装基岩版并创建实例。"));
+            showBedrockDownloadPage();
+            return;
+        }
+        if (!m_bedrockInstanceAssistantWindow)
+            m_bedrockInstanceAssistantWindow = new BedrockInstanceAssistantWindow(this);
+        m_bedrockInstanceAssistantWindow->setInstanceId(mgr->activeInstanceId());
+        m_bedrockInstanceAssistantWindow->show();
+        m_bedrockInstanceAssistantWindow->raise();
+        m_bedrockInstanceAssistantWindow->activateWindow();
+        return;
+    }
+
     if (!m_instanceAssistantWindow) {
         m_instanceAssistantWindow = new InstanceAssistantWindow(this);
         // 转发资源管理页的存档快捷启动信号到主窗口处理
@@ -1276,8 +1326,44 @@ void MainWindow::openInstanceAssistant()
     m_instanceAssistantWindow->activateWindow();
 }
 
+void MainWindow::syncInstanceManagePageContext()
+{
+    if (!m_instanceManagePage)
+        return;
+    if (m_instanceManagePage->currentInstancePath() == m_currentInstancePath)
+        return;
+
+    m_instanceManagePage->setCurrentInstancePath(m_currentInstancePath);
+
+    QString instanceName;
+    if (!m_currentInstancePath.isEmpty())
+        instanceName = QFileInfo(m_currentInstancePath).fileName();
+    m_instanceManagePage->setInstanceName(instanceName);
+    m_instanceManagePage->setGameVersion(m_currentInstanceVersion);
+    m_instanceManagePage->setLoaderInfo(m_currentInstanceLoader);
+}
+
 void MainWindow::onInstanceSettingsClicked()
 {
+    // 基岩版模式：进基岩版实例助手的「设置」标签（实例专属启动设置与数据统计）
+    if (m_bedrockEdition) {
+        BedrockInstanceManager *mgr = BedrockInstanceManager::instance();
+        mgr->ensureInitialized();
+        if (mgr->activeInstanceId().isEmpty()) {
+            NotificationManager::showInfo(this,
+                tr("还没有基岩版实例，请先在「资源>安装新实例」中安装基岩版并创建实例。"));
+            return;
+        }
+        if (!m_bedrockInstanceAssistantWindow)
+            m_bedrockInstanceAssistantWindow = new BedrockInstanceAssistantWindow(this);
+        m_bedrockInstanceAssistantWindow->setInstanceId(mgr->activeInstanceId());
+        m_bedrockInstanceAssistantWindow->switchToTab(5);
+        m_bedrockInstanceAssistantWindow->show();
+        m_bedrockInstanceAssistantWindow->raise();
+        m_bedrockInstanceAssistantWindow->activateWindow();
+        return;
+    }
+
     if (m_currentInstancePath.isEmpty()) {
         NotificationManager::showError(this, tr("请先选择实例"));
         return;
@@ -1297,13 +1383,7 @@ void MainWindow::onInstanceSettingsClicked()
 
     if (m_instanceManagePage)
     {
-        QString instanceName = m_currentInstancePath.isEmpty()
-            ? QString()
-            : m_currentInstancePath.split("/").last();
-        m_instanceManagePage->setCurrentInstancePath(m_currentInstancePath);
-        m_instanceManagePage->setInstanceName(instanceName);
-        m_instanceManagePage->setGameVersion(m_currentInstanceVersion);
-        m_instanceManagePage->setLoaderInfo(m_currentInstanceLoader);
+        syncInstanceManagePageContext();
         m_instanceManagePage->setCurrentTab(0);
     }
     m_subNavPanel->setSelectedChild(0);
@@ -1570,6 +1650,65 @@ QStringList MainWindow::extractUpdatePackages(const QMimeData *mime) const
     return packages;
 }
 
+QStringList MainWindow::extractBedrockPacks(const QMimeData *mime) const
+{
+    QStringList packs;
+    if (!mime || !mime->hasUrls())
+        return packs;
+    const QList<QUrl> urls = mime->urls();
+    for (const QUrl &url : urls) {
+        if (!url.isLocalFile())
+            continue;
+        const QString path = url.toLocalFile();
+        if (FileImportRouter::detectFileType(path) == ImportFileType::BedrockResource)
+            packs.append(path);
+    }
+    return packs;
+}
+
+void MainWindow::installDroppedBedrockPacks(const QStringList &files)
+{
+    BedrockInstanceManager *mgr = BedrockInstanceManager::instance();
+    mgr->ensureInitialized();
+    const BedrockInstance inst = mgr->activeInstance();
+    const QString comMojangDir = inst.dataDir.isEmpty()
+                                     ? QString()
+                                     : inst.dataDir + QStringLiteral("/com.mojang");
+    if (comMojangDir.isEmpty()) {
+        NotificationManager::showInfo(this,
+            tr("还没有可安装的基岩版实例，请先在「资源>安装新实例」中安装基岩版并创建实例。"));
+        return;
+    }
+
+    int okCount = 0;
+    QString firstErr;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    for (const QString &file : files) {
+        QString err;
+        if (BedrockContentInstaller::installPack(file, comMojangDir, &err)) {
+            ++okCount;
+        } else if (firstErr.isEmpty()) {
+            firstErr = err;
+        }
+    }
+    QApplication::restoreOverrideCursor();
+
+    if (okCount == files.size()) {
+        NotificationManager::showSuccess(this,
+            files.size() == 1
+                ? tr("%1 安装成功，启动基岩版后即可在游戏中使用。")
+                      .arg(QFileInfo(files.first()).fileName())
+                : tr("已成功安装 %1 个基岩版资源。").arg(okCount),
+            7000);
+    } else if (okCount > 0) {
+        NotificationManager::showInfo(this,
+            tr("已安装 %1 个资源，其余安装失败：%2").arg(okCount).arg(firstErr), 7000);
+    } else {
+        NotificationManager::showError(this,
+            tr("基岩版资源安装失败: %1").arg(firstErr));
+    }
+}
+
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 {
     if (!event->mimeData() || !event->mimeData()->hasUrls()) {
@@ -1579,10 +1718,26 @@ void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 
     m_pendingDropPackages = extractUpdatePackages(event->mimeData());
     if (m_pendingDropPackages.isEmpty()) {
-        // 不是更新包：不接受，避免干扰其他页面自身的拖放逻辑
-        event->ignore();
+        // 不是更新包：再看是不是基岩版资源包/地图，都不是则不接受，
+        // 避免干扰其他页面自身的拖放逻辑
+        m_pendingDropBedrockPacks = extractBedrockPacks(event->mimeData());
+        if (m_pendingDropBedrockPacks.isEmpty()) {
+            event->ignore();
+            return;
+        }
+
+        event->acceptProposedAction();
+        if (!m_dropOverlay) {
+            m_dropOverlay = new FileDropOverlay(this);
+            m_dropOverlay->setGeometry(rect());
+        }
+        m_dropOverlay->setGeometry(rect());
+        m_dropOverlay->activate(m_pendingDropBedrockPacks.size());
+        m_dropOverlay->updatePreview(tr("松开以安装到基岩版实例：%1")
+                                         .arg(QFileInfo(m_pendingDropBedrockPacks.first()).fileName()));
         return;
     }
+    m_pendingDropBedrockPacks.clear();
 
     event->acceptProposedAction();
     if (!m_dropOverlay) {
@@ -1601,10 +1756,15 @@ void MainWindow::dragMoveEvent(QDragMoveEvent *event)
         event->acceptProposedAction();
         return;
     }
+    if (!m_pendingDropBedrockPacks.isEmpty() && m_dropOverlay && m_dropOverlay->isActive()) {
+        event->acceptProposedAction();
+        return;
+    }
     if (event->mimeData() && event->mimeData()->hasUrls()) {
         const QStringList packages = extractUpdatePackages(event->mimeData());
         if (!packages.isEmpty()) {
             m_pendingDropPackages = packages;
+            m_pendingDropBedrockPacks.clear();
             event->acceptProposedAction();
             if (!m_dropOverlay) {
                 m_dropOverlay = new FileDropOverlay(this);
@@ -1617,8 +1777,25 @@ void MainWindow::dragMoveEvent(QDragMoveEvent *event)
                                              .arg(QFileInfo(packages.first()).fileName()));
             return;
         }
+        const QStringList bedrockPacks = extractBedrockPacks(event->mimeData());
+        if (!bedrockPacks.isEmpty()) {
+            m_pendingDropBedrockPacks = bedrockPacks;
+            m_pendingDropPackages.clear();
+            event->acceptProposedAction();
+            if (!m_dropOverlay) {
+                m_dropOverlay = new FileDropOverlay(this);
+            }
+            m_dropOverlay->setGeometry(rect());
+            if (!m_dropOverlay->isActive()) {
+                m_dropOverlay->activate(bedrockPacks.size());
+            }
+            m_dropOverlay->updatePreview(tr("松开以安装到基岩版实例：%1")
+                                             .arg(QFileInfo(bedrockPacks.first()).fileName()));
+            return;
+        }
     }
     m_pendingDropPackages.clear();
+    m_pendingDropBedrockPacks.clear();
     if (m_dropOverlay && m_dropOverlay->isActive())
         m_dropOverlay->deactivate();
     event->ignore();
@@ -1630,6 +1807,7 @@ void MainWindow::dragLeaveEvent(QDragLeaveEvent *event)
     if (m_dropOverlay && m_dropOverlay->isActive())
         m_dropOverlay->deactivate();
     m_pendingDropPackages.clear();
+    m_pendingDropBedrockPacks.clear();
     QMainWindow::dragLeaveEvent(event);
 }
 
@@ -1639,17 +1817,29 @@ void MainWindow::dropEvent(QDropEvent *event)
     if (packages.isEmpty())
         packages = m_pendingDropPackages;
     m_pendingDropPackages.clear();
+
+    QStringList bedrockPacks = extractBedrockPacks(event->mimeData());
+    if (bedrockPacks.isEmpty())
+        bedrockPacks = m_pendingDropBedrockPacks;
+    m_pendingDropBedrockPacks.clear();
+
     if (m_dropOverlay && m_dropOverlay->isActive())
         m_dropOverlay->deactivate();
 
-    if (packages.isEmpty()) {
-        event->ignore();
+    if (!packages.isEmpty()) {
+        event->acceptProposedAction();
+        // 多文件时只安装第一个可识别更新包
+        UpdateChecker::instance()->installExternalPackage(this, packages.first());
         return;
     }
 
-    event->acceptProposedAction();
-    // 多文件时只安装第一个可识别更新包
-    UpdateChecker::instance()->installExternalPackage(this, packages.first());
+    if (!bedrockPacks.isEmpty()) {
+        event->acceptProposedAction();
+        installDroppedBedrockPacks(bedrockPacks);
+        return;
+    }
+
+    event->ignore();
 }
 
 void MainWindow::onAccountManagePageOpened()
@@ -1662,6 +1852,35 @@ void MainWindow::onAccountManagePageOpened()
 
 void MainWindow::onTopBarBackClicked()
 {
+    // 创作中心内部的作品详情子页：返回先退回作品列表，不离开创作中心
+    if (m_creationCenterPage && m_accountUiStack && m_stackedWidget &&
+        m_accountUiStack->currentWidget() == m_creationCenterPage &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::AccountManagePage) &&
+        m_creationCenterPage->returnToWorkList())
+    {
+        return;
+    }
+
+    // 添加角色页是账户页内层的一页：返回先退回角色页，不离开页面
+    if (m_addAccountPage && m_forumAccountPage && m_accountUiStack && m_stackedWidget &&
+        m_accountUiStack->currentWidget() == m_addAccountPage &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::AccountManagePage))
+    {
+        m_accountUiStack->setCurrentWidget(m_forumAccountPage);
+        m_topBar->setAccountManageTitle();
+        return;
+    }
+
+    // 创作中心是账户页内层的第二页：返回先退回账户总览，不离开页面
+    if (m_creationCenterPage && m_forumAccountPage && m_accountUiStack &&
+        m_accountUiStack->currentWidget() == m_creationCenterPage && m_stackedWidget &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::AccountManagePage))
+    {
+        m_accountUiStack->setCurrentWidget(m_forumAccountPage);
+        m_topBar->setAccountManageTitle();
+        return;
+    }
+
     // 论坛账户界面的登录 / 注册子视图：先退回账户总览，不离开页面
     if (m_forumAccountPage && m_accountUiStack &&
         m_accountUiStack->currentWidget() == m_forumAccountPage && m_stackedWidget &&
@@ -1685,6 +1904,58 @@ void MainWindow::onTopBarBackClicked()
         return;
     }
     onBackToMain();
+}
+
+bool MainWindow::handleAndroidBack()
+{
+    // 主窗口还没显示（启动阶段）：返回键交给系统，按默认行为处理
+    if (!isVisible())
+        return false;
+
+    // 1. 应用内弹窗（AppDialogBase 覆盖层，含 AppMessageBox）：关最上层一个
+    if (AppDialogBase *dialog = AppDialogBase::topMostVisibleDialog()) {
+        dialog->reject();
+        return true;
+    }
+
+    // 2. 游戏内实例助手侧栏
+    if (m_instanceAssistantWindow && m_instanceAssistantWindow->isVisible()) {
+        m_instanceAssistantWindow->hide();
+        return true;
+    }
+
+    // 3. 子导航气泡面板
+    if (m_subNavPanel && m_subNavPanel->isVisible()) {
+        m_subNavPanel->hidePanel();
+        return true;
+    }
+
+    // 4. 软键盘开着：先收键盘
+    QInputMethod *inputMethod = QGuiApplication::inputMethod();
+    if (inputMethod && inputMethod->isVisible()) {
+        inputMethod->hide();
+        return true;
+    }
+
+    // 5. 有可返回的页面层级（历史上一页 / 论坛账户登录注册子视图 / 创作中心 / 添加角色页）
+    const bool forumSubviewOpen = m_forumAccountPage && m_accountUiStack && m_stackedWidget &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::AccountManagePage) &&
+        (m_accountUiStack->currentWidget() == m_forumAccountPage ||
+         m_accountUiStack->currentWidget() == m_creationCenterPage ||
+         m_accountUiStack->currentWidget() == m_addAccountPage);
+    if (m_hasPreviousPage || forumSubviewOpen) {
+        onTopBarBackClicked();
+        return true;
+    }
+
+    // 6. 主界面：弹窗确认后才退出，避免误触返回直接丢掉整个应用
+    const AppMessageBox::StandardButton answer = AppMessageBox::question(
+        this, tr("退出 BlockBox"),
+        tr("确定要退出 BlockBox 吗？"),
+        AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
+    if (answer == AppMessageBox::Yes)
+        QCoreApplication::quit();
+    return true;
 }
 
 void MainWindow::animateScrollToTop(QScrollBar *scrollBar)
@@ -1995,12 +2266,61 @@ void MainWindow::initGameLauncher()
     if (m_taskBar) {
         connect(m_taskBar, &TaskBar::launchTaskCardClicked, this, &MainWindow::onShowDetailsPage);
     }
+
+    // 联机大厅「正在游玩」上报：进游戏后每 40 秒续一次，2 分钟没上报服务端就当人已经走了
+    m_lobbyPresenceTimer = new QTimer(this);
+    m_lobbyPresenceTimer->setInterval(40000);
+    connect(m_lobbyPresenceTimer, &QTimer::timeout, this, [this]() {
+        if (m_lobbyPlayRoomId <= 0)
+            return;
+        ForumLobbyService::instance()->sendPresence(
+            m_lobbyPlayRoomId, nullptr, [this](const QString &, int status) {
+                // 房间已经下架 / 过期：本地也不用再报了
+                if (status == 404)
+                    stopLobbyPlayReport();
+            });
+    });
+}
+
+void MainWindow::startLobbyPlayReport(int roomId)
+{
+    if (roomId <= 0)
+        return;
+    // 没登录论坛账号就没有可显示的身份，服务端也会拒收，干脆不报
+    if (!ForumAccountService::instance()->isLoggedIn())
+        return;
+
+    // 从大厅换到另一个房间：先把旧房间的记录撤掉，不要一个人挂在两个房间里
+    if (m_lobbyPlayRoomId > 0 && m_lobbyPlayRoomId != roomId)
+        ForumLobbyService::instance()->clearPresence(m_lobbyPlayRoomId, nullptr, nullptr);
+
+    m_lobbyPlayRoomId = roomId;
+    ForumLobbyService::instance()->sendPresence(roomId, nullptr, nullptr);
+    if (m_lobbyPresenceTimer && !m_lobbyPresenceTimer->isActive())
+        m_lobbyPresenceTimer->start();
+}
+
+void MainWindow::stopLobbyPlayReport()
+{
+    if (m_lobbyPresenceTimer)
+        m_lobbyPresenceTimer->stop();
+
+    const int roomId = m_lobbyPlayRoomId;
+    m_lobbyPlayRoomId = 0;
+    if (roomId > 0)
+        ForumLobbyService::instance()->clearPresence(roomId, nullptr, nullptr);
 }
 
 void MainWindow::onLaunchStatusChanged(int status)
 {
     // Update UI based on launch status if needed
     qDebug() << "[MainWindow]" << "启动状态已变更：" << status;
+
+    // 启动就没起来：这次大厅房间其实没进去，别把人算进「正在游玩」
+    if (static_cast<GameLauncher::LaunchStatus>(status) == GameLauncher::Failed) {
+        m_pendingLobbyRoomId = 0;
+        stopLobbyPlayReport();
+    }
     
     LaunchTaskCard::LaunchStatus ls = LaunchTaskCard::Idle;
     if (m_taskBar) {
@@ -2148,6 +2468,12 @@ void MainWindow::toggleGameAssistantOverlay()
 void MainWindow::onGameStarted()
 {
     qDebug() << "[MainWindow]" << "游戏已成功启动";
+
+    // 从联机大厅「一键加入」进来的：游戏真跑起来了，开始在大厅里显示「正在游玩」
+    if (m_pendingLobbyRoomId > 0) {
+        startLobbyPlayReport(m_pendingLobbyRoomId);
+        m_pendingLobbyRoomId = 0;
+    }
 #ifdef Q_OS_ANDROID
     // 游戏启动成功：显示游戏内悬浮图标（实例助手入口）
     if (m_gameFloatingIcon) {
@@ -2173,6 +2499,10 @@ void MainWindow::onGameStarted()
 void MainWindow::onGameStopped(int exitCode)
 {
     qDebug() << "[MainWindow]" << "游戏已停止，退出码：" << exitCode;
+
+    // 游戏退出 = 不在这个房间里玩了：大厅里的头像马上撤掉
+    m_pendingLobbyRoomId = 0;
+    stopLobbyPlayReport();
 
 #ifdef Q_OS_ANDROID
     // 游戏退出：隐藏游戏内悬浮图标与实例助手侧栏
@@ -2234,6 +2564,11 @@ void MainWindow::onGameCrashed(const QString &error)
 {
     qDebug() << "[MainWindow]" << "游戏崩溃：" << error;
 
+    // 崩溃也算这次进房结束：先把「正在游玩」撤掉；启动期崩溃会自动重启，起来后接着报
+    const int crashedLobbyRoomId = m_pendingLobbyRoomId > 0 ? m_pendingLobbyRoomId : m_lobbyPlayRoomId;
+    m_pendingLobbyRoomId = 0;
+    stopLobbyPlayReport();
+
 #ifdef Q_OS_ANDROID
     // 游戏崩溃：隐藏游戏内悬浮图标与实例助手侧栏
     if (m_gameFloatingIcon) {
@@ -2252,8 +2587,10 @@ void MainWindow::onGameCrashed(const QString &error)
     }
 
     // 仅在"启动期崩溃"（游戏窗口尚未出现）且尚未重试时，自动检查文件完整性并重新启动
-    // 运行期崩溃（游戏已成功运行后崩溃）不触发自动重试，交由错误分析器处理
-    if (!m_launchRetryAttempted && !m_gameLauncher->wasGameStartedSuccessfully()) {
+    // 运行期崩溃（游戏已成功运行后崩溃）不触发自动重试，交由错误分析器处理；
+    // Java 缺失自救失败也不触发——自救已经查找并尝试过安装，补文件没有意义
+    if (!m_launchRetryAttempted && !m_gameLauncher->wasGameStartedSuccessfully()
+        && !m_gameLauncher->wasJavaRescueAttempted()) {
         m_launchRetryAttempted = true;
         m_launchRetryPending = true;
         qDebug() << "[MainWindow]" << "检测到启动期崩溃，正在补全文件并重试...";
@@ -2262,8 +2599,11 @@ void MainWindow::onGameCrashed(const QString &error)
 
         // 延迟到下一个事件循环执行重试，确保当前 onProcessFinished/onProcessError
         // 中的 cleanup() 已执行完毕，避免与新启动的进程冲突
-        QTimer::singleShot(0, this, [this, error]() {
+        QTimer::singleShot(0, this, [this, error, crashedLobbyRoomId]() {
             m_launchRetryPending = false;
+            // 上次是从联机大厅「一键加入」进来的：重启的进程起来后接着在大厅里显示「正在游玩」
+            if (crashedLobbyRoomId > 0)
+                m_pendingLobbyRoomId = crashedLobbyRoomId;
 
             if (m_currentInstancePath.isEmpty()) {
                 return;
@@ -2331,7 +2671,8 @@ bool MainWindow::ensureLaunchPrerequisites()
     // 让预检失败（旧流程会把配置错误当崩溃处理，连发多条错误通知）。
     if (SettingsManager::instance()->getDefaultAccount().username.isEmpty()) {
         NotificationManager::showInfo(this, tr("尚未登录账户，请先添加账户后再启动游戏"));
-        showAccountManagePage();
+        // 没有账户就是来加账户的：直接进「添加角色」页，加好再回来启动
+        openAddAccountPage();
         return false;
     }
     return true;
@@ -2479,73 +2820,151 @@ void MainWindow::onQuickLaunchSaveClicked(const QString &saveName)
 
 void MainWindow::onQuickLaunchServerClicked(const QString &address, quint16 port)
 {
+    // 游戏已经在跑时明确提示，避免「一键启动 / 一键加入」点了没反应
+    if (m_gameLauncher->status() == GameLauncher::Running
+        || m_gameLauncher->status() == GameLauncher::Launching) {
+        NotificationManager::showError(this, tr("游戏已经在运行了，先关掉游戏再加入服务器。"));
+        return;
+    }
+
     // 使用 --server 和 --port 启动游戏并自动连接到服务器
     QStringList extraArgs;
     extraArgs << "--server" << address << "--port" << QString::number(port);
     launchGameWithExtraArgs(extraArgs);
 }
 
-void MainWindow::onLobbyJoinRequested(const QString &address, quint16 port,
-                                      const QString &gameVersion, const QString &loader,
-                                      const QStringList &mods)
+void MainWindow::onLobbyJoinRequested(const ForumLobbyRoom &room, const QString &address,
+                                      quint16 port)
 {
-    if (m_currentInstancePath.isEmpty() && LobbyInstanceMatcher::scanInstances().isEmpty()) {
-        NotificationManager::showError(this, tr("本机还没有安装任何实例，请先安装一个游戏实例。"));
-        return;
-    }
-
     if (m_gameLauncher->status() == GameLauncher::Running
         || m_gameLauncher->status() == GameLauncher::Launching) {
         NotificationManager::showError(this, tr("游戏已经在运行了，先关掉游戏再加入大厅房间。"));
         return;
     }
 
-    // 按版本 / 加载器 / 模组挑一个，「最新」由匹配器用版本 JSON 的修改时间决定
-    LobbyInstanceInfo best;
-    LobbyInstanceMatcher::MatchLevel level = LobbyInstanceMatcher::MatchLevel::None;
-    QStringList missing;
-    if (!LobbyInstanceMatcher::pickBest(gameVersion, loader, mods, &best, &level, &missing)) {
-        QString wanted = gameVersion.isEmpty() ? tr("任意版本") : gameVersion;
-        if (!loader.isEmpty())
-            wanted += QStringLiteral(" + ") + loader;
-        NotificationManager::showError(
-            this, tr("没有找到 %1 的实例，装一个对应版本后再加入大厅房间。").arg(wanted));
+    if (m_currentInstancePath.isEmpty() && LobbyInstanceMatcher::scanInstances().isEmpty()) {
+        NotificationManager::showError(this, tr("本机还没有安装任何实例，请先安装一个游戏实例。"));
         return;
     }
 
-    const QString instanceName = QDir(best.path).dirName();
-    if (best.path != m_currentInstancePath) {
-        // 切到匹配的实例（同时刷新顶栏、AI 页等上下文）
-        updateCurrentInstance(best.path);
+    // 房间要求：带「辅助」标签的模组不算门槛，资源包 / 光影包只做可选补装
+    const LobbyInstanceMatcher::Requirement requirement = LobbyInstanceMatcher::requirementFor(
+        room.gameVersion, room.loader, room.requiredMods(), room.auxMods, room.resourcePacks,
+        room.shaderPacks);
+
+    // 匹配器带扫描缓存：房间列表已经预热过，这里基本不读盘
+    const LobbyInstanceMatcher::JoinPlan plan = LobbyInstanceMatcher::makePlan(requirement);
+
+    QString instancePath = plan.best.instance.path;
+    int failedFetches = 0;
+
+    // 什么都不缺时一步进房；缺实例或缺内容才弹准备对话框
+    if (!plan.found || plan.best.hasAnythingToFetch()) {
+        LobbyJoinPrepDialog dlg(this);
+        dlg.setPlan(plan, room.title, room.joinTarget(), room.description);
+        const int result = dlg.exec();
+        if (result == LobbyJoinPrepDialog::kResultInstall) {
+            openLobbyInstallFlow(room.gameVersion, room.loader);
+            return;
+        }
+        if (result != QDialog::Accepted)
+            return;
+        instancePath = dlg.selectedInstancePath();
+        failedFetches = dlg.failedCount();
+        if (instancePath.isEmpty())
+            return;
     }
 
-    QString tip = tr("正在用实例「%1」加入联机房间").arg(instanceName);
-    if (!missing.isEmpty())
-        tip += tr("（还缺 %1 个模组，进游戏后可能不完全一致）").arg(missing.size());
+    if (instancePath.isEmpty()) {
+        NotificationManager::showError(
+            this, plan.installHint.trimmed().isEmpty()
+                      ? tr("没有找到合适的实例，装一个对应版本后再加入大厅房间。")
+                      : plan.installHint);
+        return;
+    }
+
+    if (instancePath != m_currentInstancePath) {
+        // 切到匹配的实例（同时刷新顶栏、AI 页等上下文）
+        updateCurrentInstance(instancePath);
+    }
+
+    // 刚才可能刚补装过模组 / 资源包，让匹配器的实例缓存重扫一遍
+    LobbyInstanceMatcher::invalidateCache();
+
+    QString tip = tr("正在用实例「%1」加入联机房间").arg(QDir(instancePath).dirName());
+    if (failedFetches > 0)
+        tip += tr("（还有 %1 个文件没装上，进房后可能和房主不完全一样）").arg(failedFetches);
     NotificationManager::showSuccess(this, tip);
 
+    // 记下这次进的是哪个大厅房间：游戏真正跑起来（onGameStarted）才开始上报「正在游玩」
+    m_pendingLobbyRoomId = room.id > 0 ? room.id : 0;
     onQuickLaunchServerClicked(address, port);
+}
+
+void MainWindow::openLobbyInstallFlow(const QString &gameVersion, const QString &loader)
+{
+    const QString version = gameVersion.trimmed();
+    if (version.isEmpty()) {
+        NotificationManager::showInfo(
+            this, tr("这个房间没限定版本，先在「资源 > 安装新实例」里装一个实例再回来加入。"));
+        ensurePageInitialized(PageIndex::InstallInstancePage);
+        setSideBarVisible(true);
+        m_topBar->setTitle(tr("资源>安装新实例"));
+        animatedSwitchToPage(PageIndex::InstallInstancePage);
+        return;
+    }
+
+    // 直接进这个版本的详情页：选加载器、点安装，装好回大厅再点一次「一键加入」
+    m_currentVersionId = version;
+    onVersionSelected(version, QStringLiteral("release"));
+    NotificationManager::showInfo(
+        this, tr("先装好 %1%2 的实例，再回大厅点「一键加入」就会自动进房。")
+                  .arg(version, loader.trimmed().isEmpty() ? QString() 
+                                                           : QStringLiteral(" + ") + loader));
 }
 
 void MainWindow::handleExternalJoinUrl(const QString &url)
 {
-    ForumLobbyRoom room;
+    LobbyShareLink::LinkTarget target;
     QString error;
-    if (!LobbyShareLink::parsePayload(url, &room, &error))
+    if (!LobbyShareLink::parseLink(url, &target, &error))
     {
         NotificationManager::showError(this, error);
         return;
     }
 
-    onFriendRoomJoinRequested(room);
+    // 老式链接：房间信息就压缩在链接里，直接走加入流程
+    if (target.legacy)
+    {
+        onFriendRoomJoinRequested(target.room);
+        return;
+    }
+
+    // 新式短链接：链接里只有房间号，房间信息得回论坛取；
+    // 房主结束联机后服务端已经把它删掉了，这时提示「联机可能已经结束」
+    NotificationManager::showInfo(this, tr("正在打开联机分享链接…"));
+    ForumLobbyService::instance()->fetchShare(
+        target.token,
+        [this](const ForumLobbyRoom &room) { onFriendRoomJoinRequested(room); },
+        [this](const QString &message, int status) {
+            if (status == 404)
+            {
+                AppMessageBox::information(
+                    this, tr("联机可能已经结束"),
+                    tr("这个分享链接对应的房间已经不在了：房主可能已经结束联机，"
+                       "或者这条链接放太久失效了。\n请让房主重新创建一条分享链接。"));
+                return;
+            }
+            NotificationManager::showError(this, message);
+        });
 }
 
 void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)
 {
     if (!room.isOnline())
     {
-        AppMessageBox::information(this, tr("房间已过期"),
-                                   tr("这个好友的房间已经下架，首页好友列表稍后会自动刷新。"));
+        // 加入房间只走左下角通知，不弹窗挡住详情页
+        NotificationManager::showInfo(this, tr("这个好友的房间已经下架，首页好友列表稍后会自动刷新。"));
         return;
     }
 
@@ -2580,8 +2999,8 @@ void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)
         const QString code = room.inviteCode.trimmed();
         if (code.isEmpty())
         {
-            AppMessageBox::information(this, tr("没有邀请码"),
-                                       tr("这个房间没有可用的邀请码，请让房主重新发布。"));
+            NotificationManager::showError(
+                this, tr("这个房间没有可用的邀请码，请让房主重新发布。"));
             return;
         }
 
@@ -2591,24 +3010,22 @@ void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)
                 &MainWindow::onFriendRoomJoinStateChanged, Qt::UniqueConnection);
         if (terracotta->installedVersion().isEmpty())
         {
-            AppMessageBox::information(
-                this, tr("还没安装陶瓦联机核心"),
-                tr("这是陶瓦联机的房间，需要先在实例助手的联机页安装陶瓦联机核心。"));
+            NotificationManager::showError(
+                this, tr("这是陶瓦联机的房间，需要先在实例助手的联机页安装陶瓦联机核心。"));
             openInstanceAssistant();
             return;
         }
         if (terracotta->isInRoom())
         {
-            AppMessageBox::information(this, tr("已在房间中"),
-                                       tr("你已经在陶瓦联机的房间里了，先离开当前房间再加入好友的房间。"));
+            NotificationManager::showInfo(
+                this, tr("你已经在陶瓦联机的房间里了，先离开当前房间再加入好友的房间。"));
             return;
         }
         if (terracotta->state() == TerracottaClient::State::Exception
             || terracotta->state() == TerracottaClient::State::Fatal)
         {
-            AppMessageBox::information(
-                this, tr("联机核心状态异常"),
-                tr("先打开实例助手的联机页处理一下，再回来加入好友的房间。"));
+            NotificationManager::showInfo(
+                this, tr("联机核心状态异常，先到实例助手的联机页点一次「重试」再来加入。"));
             openInstanceAssistant();
             return;
         }
@@ -2616,15 +3033,11 @@ void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)
         m_friendRoomJoinPending = true;
         m_friendRoomJoinWaitingCore = false;
         m_friendRoomJoinCode = code;
-        m_friendRoomJoinVersion = room.gameVersion;
-        m_friendRoomJoinLoader = room.loader;
-        m_friendRoomJoinMods = room.mods;
+        m_friendRoomJoinRoom = room;
         ForumLobbyService::instance()->recordJoin(room.id, nullptr, nullptr);
 
-        QString playerName;
-        if (ForumAccountService::instance()->isLoggedIn())
-            playerName = ForumAccountService::instance()->user().displayName;
-        if (playerName.trimmed().isEmpty())
+        QString playerName = ForumAccountService::instance()->playerName();
+        if (playerName.isEmpty())
             playerName = tr("BlockBox 玩家");
 
         if (terracotta->state() == TerracottaClient::State::Waiting)
@@ -2653,13 +3066,13 @@ void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)
     quint16 port = 0;
     if (!parseLobbyAddress(room.address, &host, &port))
     {
-        AppMessageBox::information(this, tr("地址无效"),
-                                   tr("这个房间没有可用的连接地址，请让房主重新发布。"));
+        NotificationManager::showError(
+            this, tr("这个房间没有可用的连接地址，请让房主重新发布。"));
         return;
     }
 
     ForumLobbyService::instance()->recordJoin(room.id, nullptr, nullptr);
-    onLobbyJoinRequested(host, port, room.gameVersion, room.loader, room.mods);
+    onLobbyJoinRequested(room, host, port);
 }
 
 void MainWindow::onFriendRoomJoinStateChanged()
@@ -2685,10 +3098,8 @@ void MainWindow::onFriendRoomJoinStateChanged()
     if (m_friendRoomJoinWaitingCore && state == TerracottaClient::State::Waiting)
     {
         m_friendRoomJoinWaitingCore = false;
-        QString playerName;
-        if (ForumAccountService::instance()->isLoggedIn())
-            playerName = ForumAccountService::instance()->user().displayName;
-        if (playerName.trimmed().isEmpty())
+        QString playerName = ForumAccountService::instance()->playerName();
+        if (playerName.isEmpty())
             playerName = tr("BlockBox 玩家");
 
         if (!terracotta->joinRoom(m_friendRoomJoinCode, playerName))
@@ -2713,12 +3124,10 @@ void MainWindow::onFriendRoomJoinStateChanged()
         return;
     }
 
-    const QString version = m_friendRoomJoinVersion;
-    const QString loader = m_friendRoomJoinLoader;
-    const QStringList mods = m_friendRoomJoinMods;
+    const ForumLobbyRoom room = m_friendRoomJoinRoom;
     m_friendRoomJoinPending = false;
     m_friendRoomJoinWaitingCore = false;
-    onLobbyJoinRequested(host, port, version, loader, mods);
+    onLobbyJoinRequested(room, host, port);
 }
 
 void MainWindow::onSaveSettingsOpened()
@@ -3035,6 +3444,89 @@ void MainWindow::onModDownloadRequested(const ModInfo &modInfo, const ModVersion
         });
 }
 
+void MainWindow::onModConvertRequested(const ModInfo &modInfo, const ModVersionFile &versionFile,
+                                       const QStringList &oldFilePaths)
+{
+    QString instancePath = m_currentInstancePath;
+    if (instancePath.isEmpty()) {
+        NotificationManager::showError(this, tr("请先选择一个实例"));
+        return;
+    }
+
+    QString fileName = versionFile.fileName;
+    if (fileName.isEmpty()) {
+        QUrl url(versionFile.downloadUrl);
+        fileName = url.fileName();
+        if (fileName.isEmpty() || fileName.contains('?')) {
+            QString safeName = modInfo.name;
+            safeName.replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+            QString ver = versionFile.version.isEmpty() ? modInfo.latestVersion : versionFile.version;
+            if (!ver.isEmpty())
+                safeName += "-" + ver;
+            fileName = safeName + ".jar";
+        }
+    }
+
+    QString destDir = instancePath + "/mods";
+    QString destPath = destDir + "/" + fileName;
+
+    QDir().mkpath(destDir);
+
+    QString instanceName = QFileInfo(instancePath).fileName();
+    QString taskId = DownloadTaskManager::instance()->addTask(
+        instanceName, instancePath, QString(), QStringList());
+    DownloadTaskManager::instance()->updateTaskStatus(
+        taskId, DownloadTaskStatus::Downloading, tr("转换模组: ") + modInfo.name);
+    DownloadTaskManager::instance()->updateTaskCurrentFile(taskId, fileName);
+    DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::ClientJar, 0);
+
+    // 下载完成后删掉旧版本文件（含 .disabled 残留），完成版本转换
+    auto removeOldFiles = [destPath](const QStringList &oldFiles) {
+        const QString newAbs = QFileInfo(destPath).absoluteFilePath();
+        for (const QString &p : oldFiles) {
+            if (p.isEmpty())
+                continue;
+            const QString abs = QFileInfo(p).absoluteFilePath();
+            if (abs == newAbs)
+                continue;
+            if (QFile::exists(abs))
+                QFile::remove(abs);
+            if (QFile::exists(abs + ".disabled"))
+                QFile::remove(abs + ".disabled");
+        }
+    };
+
+    // 镜像优先下载，失败自动回退官方源
+    const QString requestUrl = McimHelper::rewriteFileUrl(versionFile.downloadUrl);
+    QStringList candidateUrls;
+    if (requestUrl != versionFile.downloadUrl)
+        candidateUrls << requestUrl;
+    candidateUrls << versionFile.downloadUrl;
+
+    startResourceDownload(this, candidateUrls, destPath, versionFile.sha1,
+        [this, taskId, fileName, modInfo, oldFilePaths, removeOldFiles](bool success) {
+            if (success) {
+                removeOldFiles(oldFilePaths);
+                DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::Completed, 100);
+                DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, 100);
+                DownloadTaskManager::instance()->updateTaskStatus(
+                    taskId, DownloadTaskStatus::Completed, tr("转换完成"));
+                NotificationManager::showSuccess(this, tr("模组 \"%1\" 已转换到所选版本").arg(modInfo.name));
+            } else {
+                DownloadTaskManager::instance()->updateTaskStatus(
+                    taskId, DownloadTaskStatus::Failed, tr("转换失败"));
+                NotificationManager::showError(this, tr("模组 \"%1\" 转换失败").arg(modInfo.name));
+            }
+        },
+        [this, taskId, fileName](qint64 received, qint64 total) {
+            DownloadTaskManager::instance()->updateTaskFileProgress(taskId, fileName, received, total);
+            if (total > 0) {
+                int pct = qBound(0, static_cast<int>(received * 100 / total), 100);
+                DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, pct);
+            }
+        });
+}
+
 void MainWindow::initContentDownloadPage(ContentType type)
 {
     Q_UNUSED(type);
@@ -3114,6 +3606,11 @@ void MainWindow::showBedrockContentPage(int classId)
                 [this](const ModInfo &info, int bedrockClassId) {
             showBedrockContentDetailPage(info, bedrockClassId);
         });
+        // 记住「下载到实例」选择，进详情页时透传给安装目标
+        connect(m_bedrockContentPage, &BedrockContentPage::targetInstanceChanged, this,
+                [this](const QString &instanceId) {
+            m_bedrockDownloadTargetInstanceId = instanceId;
+        });
     }
 
     if (m_pageAnimator)
@@ -3149,6 +3646,7 @@ void MainWindow::showBedrockContentDetailPage(const ModInfo &info, int bedrockCl
 
     m_bedrockContentDetailPage->setBedrockClassId(bedrockClassId);
     m_bedrockContentDetailPage->setBedrockCategory(category);
+    m_bedrockContentDetailPage->setTargetInstanceId(m_bedrockDownloadTargetInstanceId);
     m_bedrockContentDetailPage->setModInfo(info);
 
     // 详情页返回键回到资源主页
@@ -3248,6 +3746,40 @@ void MainWindow::showBedrockVersionDetailPage(const BedrockVersionEntry &entry)
         m_stackedWidget->setCurrentWidget(m_bedrockVersionDetailPage);
 }
 
+void MainWindow::showBedrockInstanceSelectPage()
+{
+    if (!m_bedrockInstanceSelectPage) {
+        m_bedrockInstanceSelectPage = new BedrockInstanceSelectPage(this);
+        m_stackedWidget->addWidget(m_bedrockInstanceSelectPage);
+        connect(m_bedrockInstanceSelectPage, &BedrockInstanceSelectPage::backRequested,
+                this, &MainWindow::onBackToMain);
+        connect(m_bedrockInstanceSelectPage, &BedrockInstanceSelectPage::launchRequested,
+                this, [this](const QString &instanceId) {
+            QString err;
+            if (!BedrockInstanceManager::instance()->activateInstance(instanceId, &err)) {
+                NotificationManager::showError(this, tr("切换实例失败: %1").arg(err));
+                return;
+            }
+            m_bedrockInstanceSelectPage->refresh();
+            if (!BedrockLauncher::instance()->launchGame())
+                NotificationManager::showError(this, tr("基岩版启动失败，请确认游戏已从商店安装。"));
+        });
+    }
+    else if (m_stackedWidget->indexOf(m_bedrockInstanceSelectPage) < 0) {
+        m_stackedWidget->addWidget(m_bedrockInstanceSelectPage);
+    }
+
+    setSideBarVisible(true);
+    m_topBar->setTitle(tr("实例管理"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    if (m_pageAnimator)
+        m_pageAnimator->animateToWidget(m_bedrockInstanceSelectPage);
+    else
+        m_stackedWidget->setCurrentWidget(m_bedrockInstanceSelectPage);
+    m_bedrockInstanceSelectPage->refresh();
+}
+
 void MainWindow::showContentDownloadPage(ContentType type)
 {
     ContentTypeConfig config = ContentTypeConfig::getConfig(type);
@@ -3326,9 +3858,18 @@ void MainWindow::showContentDetailPage(const ModInfo &info, ContentType type,
     if (!filterGameVersion.isEmpty() || !filterLoader.isEmpty())
         m_contentDetailPage->setInstanceFilter(filterGameVersion, filterLoader);
 
+    // 带入当前实例：详情页据此识别下载列表里各版本的安装状态
+    m_contentDetailPage->setInstancePath(m_currentInstancePath);
+
     connect(m_contentDetailPage, &ContentDetailPage::downloadRequested, this, [this, type](const ModInfo &modInfo, const ModVersionFile &versionFile)
     {
         onContentDownloadRequested(modInfo, versionFile, type);
+    });
+
+    connect(m_contentDetailPage, &ContentDetailPage::convertRequested, this,
+            [this, type](const ModInfo &modInfo, const ModVersionFile &versionFile, const QStringList &oldFilePaths)
+    {
+        onContentConvertRequested(modInfo, versionFile, type, oldFilePaths);
     });
 
     // 左侧「一键安装」：安装与当前实例兼容的最新正式版，并自动补齐必备前置
@@ -3715,6 +4256,112 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
                 DownloadTaskManager::instance()->updateTaskStatus(
                     taskId, DownloadTaskStatus::Failed, tr("下载失败"));
                 NotificationManager::showError(this, tr("%1 \"%2\" 下载失败").arg(config.displayName, modInfo.name));
+            }
+        },
+        [this, taskId, fileName](qint64 received, qint64 total)
+        {
+            DownloadTaskManager::instance()->updateTaskFileProgress(taskId, fileName, received, total);
+            if (total > 0)
+            {
+                int pct = qBound(0, static_cast<int>(received * 100 / total), 100);
+                DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, pct);
+            }
+        });
+}
+
+void MainWindow::onContentConvertRequested(const ModInfo &modInfo, const ModVersionFile &versionFile,
+                                           ContentType contentType, const QStringList &oldFilePaths)
+{
+    QString instancePath = m_currentInstancePath;
+    if (instancePath.isEmpty())
+    {
+        NotificationManager::showError(this,
+            tr("请先选择下载实例：用顶部实例按钮或资源页的「下载实例」下拉选择"));
+        return;
+    }
+
+    ContentTypeConfig config = ContentTypeConfig::getConfig(contentType);
+
+    QString fileName = versionFile.fileName;
+    if (fileName.isEmpty())
+    {
+        QUrl url(versionFile.downloadUrl);
+        fileName = url.fileName();
+        if (fileName.isEmpty() || fileName.contains('?'))
+        {
+            QString safeName = modInfo.name;
+            safeName.replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+            QString ver = versionFile.version.isEmpty() ? modInfo.latestVersion : versionFile.version;
+            if (!ver.isEmpty())
+            {
+                safeName += "-" + ver;
+            }
+            fileName = safeName + ".jar";
+        }
+    }
+
+    // 文件名来自 Modrinth/CurseForge 返回的上传者可控字段，必须清洗成单层文件名，
+    // 否则形如 "../../Startup/x.jar" 的内容会被写到实例目录之外
+    fileName = Safety::safeFileName(fileName, QStringLiteral("download.jar"));
+
+    QString destDir = instancePath + "/" + config.folderName;
+    QString destPath = QDir::cleanPath(destDir + "/" + fileName);
+    if (!Safety::isPathInside(destDir, destPath))
+    {
+        NotificationManager::showError(this, tr("文件名非法，已取消转换"));
+        return;
+    }
+
+    QDir().mkpath(destDir);
+
+    QString instanceName = QFileInfo(instancePath).fileName();
+    QString taskId = DownloadTaskManager::instance()->addTask(
+        instanceName, instancePath, QString(), QStringList());
+    DownloadTaskManager::instance()->updateTaskStatus(
+        taskId, DownloadTaskStatus::Downloading, tr("转换%1: ").arg(config.displayName) + modInfo.name);
+    DownloadTaskManager::instance()->updateTaskCurrentFile(taskId, fileName);
+    DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::ClientJar, 0);
+
+    // 下载完成后删掉旧版本文件（含 .disabled 残留），完成版本转换
+    auto removeOldFiles = [destPath](const QStringList &oldFiles) {
+        const QString newAbs = QFileInfo(destPath).absoluteFilePath();
+        for (const QString &p : oldFiles) {
+            if (p.isEmpty())
+                continue;
+            const QString abs = QFileInfo(p).absoluteFilePath();
+            if (abs == newAbs)
+                continue;
+            if (QFile::exists(abs))
+                QFile::remove(abs);
+            if (QFile::exists(abs + ".disabled"))
+                QFile::remove(abs + ".disabled");
+        }
+    };
+
+    // 镜像优先下载，失败自动回退官方源
+    const QString requestUrl = McimHelper::rewriteFileUrl(versionFile.downloadUrl);
+    QStringList candidateUrls;
+    if (requestUrl != versionFile.downloadUrl)
+        candidateUrls << requestUrl;
+    candidateUrls << versionFile.downloadUrl;
+
+    startResourceDownload(this, candidateUrls, destPath, versionFile.sha1,
+        [this, taskId, fileName, modInfo, config, oldFilePaths, removeOldFiles](bool success)
+        {
+            if (success)
+            {
+                removeOldFiles(oldFilePaths);
+                DownloadTaskManager::instance()->updateTaskStage(taskId, DownloadStage::Completed, 100);
+                DownloadTaskManager::instance()->updateTaskProgressPercent(taskId, 100);
+                DownloadTaskManager::instance()->updateTaskStatus(
+                    taskId, DownloadTaskStatus::Completed, tr("转换完成"));
+                NotificationManager::showSuccess(this, tr("%1 \"%2\" 已转换到所选版本").arg(config.displayName, modInfo.name));
+            }
+            else
+            {
+                DownloadTaskManager::instance()->updateTaskStatus(
+                    taskId, DownloadTaskStatus::Failed, tr("转换失败"));
+                NotificationManager::showError(this, tr("%1 \"%2\" 转换失败").arg(config.displayName, modInfo.name));
             }
         },
         [this, taskId, fileName](qint64 received, qint64 total)

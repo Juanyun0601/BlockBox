@@ -25,7 +25,7 @@ enum class ImportFileType
     Modpack,          // .zip/.mrpack → ModpackImportPage
     Plugin,           // .BlockBox → PluginManager
     CommandPack,      // .json (含 commands) → 指令包管理器
-    BedrockResource,  // .mcpack/.mcaddon/.mcworld → BedrockContentInstaller
+    BedrockResource,  // .mcpack/.mcaddon/.mcworld/.mctemplate → BedrockContentInstaller
     Unknown           // 不支持
 };
 

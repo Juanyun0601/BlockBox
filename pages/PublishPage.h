@@ -1,12 +1,13 @@
 /**
  * @file   PublishPage.h
- * @brief  发布页 —— 左侧导航「发布」入口，选择发布资源还是帖子
+ * @brief  发布页 —— 左侧导航「发布」入口，选择发布资源、帖子还是教程
  * @author BlockBox Team
  * @date   2026-11-07
  *
- * 页面只放两张入口卡片：
+ * 页面放三张入口卡片：
  *   资源 → 发布资源页（选择资源类型后跳 CurseForge / Modrinth，或进插件发布页）
  *   帖子 → 发布帖子页（选择板块后填写标题正文）
+ *   教程 → 教程发布页（固定发到「教程分享」，正文自动生成目录，可挂资料附件）
  */
 #pragma once
 
@@ -24,6 +25,8 @@ signals:
     void resourcesRequested();
     /** 点了「帖子」卡片 */
     void postsRequested();
+    /** 点了「教程」卡片 */
+    void tutorialsRequested();
 
 private:
     void buildUi();

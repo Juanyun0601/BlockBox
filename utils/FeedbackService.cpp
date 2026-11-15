@@ -7,8 +7,18 @@
 
 #include "FeedbackService.h"
 
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QJsonValue>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QUrl>
+
+#include "AppVersion.h"
 
 namespace {
 
@@ -76,6 +86,73 @@ void FeedbackService::submitFeedback(const FeedbackDraft &draft,
         std::move(onFail));
 }
 
+void FeedbackService::uploadLogFile(const QString &filePath,
+                                    std::function<void(const QString &url, const QString &name, qint64 size)> onOk,
+                                    FailHandler onFail)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        if (onFail)
+            onFail(tr("打不开日志文件，请稍后再试"), 0);
+        return;
+    }
+    const QByteArray data = file.readAll();
+    file.close();
+    const QString name = QFileInfo(filePath).fileName();
+
+    if (!m_network)
+        m_network = new QNetworkAccessManager(this);
+
+    // 与聊天附件同一套上传方式：原始字节流，文件名与版本号放自定义头里
+    QNetworkRequest request{
+        QUrl(ForumAccountService::instance()->absoluteUrl(QStringLiteral("/api/upload/log")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QByteArrayLiteral("application/octet-stream"));
+    request.setRawHeader("X-File-Name", QString::fromUtf8(QUrl::toPercentEncoding(name)).toUtf8());
+    request.setRawHeader("X-App-Version",
+                         QString::fromUtf8(QUrl::toPercentEncoding(AppVersion::current())).toUtf8());
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BlockBoxLauncher"));
+    request.setRawHeader("Accept", "application/json");
+    request.setTransferTimeout(120000);
+    const QString token = ForumAccountService::instance()->token();
+    if (!token.isEmpty())
+        request.setRawHeader("Cookie", QStringLiteral("bbf_sid=%1").arg(token).toUtf8());
+    const QString humanToken = ForumAccountService::instance()->humanCheckToken();
+    if (!humanToken.isEmpty())
+        request.setRawHeader("X-Human-Token", humanToken.toUtf8());
+
+    QNetworkReply *reply = m_network->post(request, data);
+    QObject::connect(reply, &QNetworkReply::finished, reply,
+                     [this, reply, onOk = std::move(onOk), onFail = std::move(onFail)]() mutable {
+                         reply->deleteLater();
+                         const QByteArray raw = reply->readAll();
+                         if (reply->error() != QNetworkReply::NoError)
+                         {
+                             QJsonParseError parseError{};
+                             const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
+                             QString message = parseError.error == QJsonParseError::NoError
+                                                   ? doc.object().value(QStringLiteral("error")).toString()
+                                                   : QString();
+                             if (message.isEmpty())
+                                 message = tr("日志上传失败，请稍后再试");
+                             if (onFail)
+                                 onFail(message, reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt());
+                             return;
+                         }
+                         const QJsonObject object = QJsonDocument::fromJson(raw).object();
+                         const QString url = object.value(QStringLiteral("url")).toString();
+                         if (url.isEmpty())
+                         {
+                             if (onFail)
+                                 onFail(tr("日志上传失败，请稍后再试"), 0);
+                             return;
+                         }
+                         if (onOk)
+                             onOk(url, object.value(QStringLiteral("name")).toString(),
+                                  static_cast<qint64>(object.value(QStringLiteral("size")).toDouble()));
+                     });
+}
+
 void FeedbackService::fetchMyFeedbacks(
     int page,
     std::function<void(const QVector<FeedbackItem> &, const ForumPagination &)> onOk,
@@ -131,6 +208,7 @@ void FeedbackService::fetchPublicFeedbacks(
                 item.handledAt = static_cast<qint64>(object.value(QStringLiteral("handled_at")).toDouble());
                 item.createdAt = static_cast<qint64>(object.value(QStringLiteral("created_at")).toDouble());
                 const QJsonObject user = object.value(QStringLiteral("user")).toObject();
+                item.authorId = user.value(QStringLiteral("id")).toInt();
                 item.authorName = user.value(QStringLiteral("display_name")).toString();
                 if (item.authorName.isEmpty())
                     item.authorName = user.value(QStringLiteral("username")).toString();
@@ -160,4 +238,95 @@ FeedbackItem FeedbackService::parseFeedback(const QJsonObject &object)
     item.handledAt = static_cast<qint64>(object.value(QStringLiteral("handled_at")).toDouble());
     item.createdAt = static_cast<qint64>(object.value(QStringLiteral("created_at")).toDouble());
     return item;
+}
+
+// ────────────────────────────────────────────── 反馈详情页评论
+
+FeedbackComment FeedbackService::parseComment(const QJsonObject &object)
+{
+    FeedbackComment comment;
+    comment.id = object.value(QStringLiteral("id")).toInt();
+    comment.content = object.value(QStringLiteral("content")).toString();
+    comment.createdAt = qint64(object.value(QStringLiteral("created_at")).toDouble());
+    comment.isAuthor = object.value(QStringLiteral("is_author")).toBool();
+    comment.isAdmin = object.value(QStringLiteral("is_admin")).toBool();
+    comment.mine = object.value(QStringLiteral("mine")).toBool();
+
+    const QJsonObject user = object.value(QStringLiteral("user")).toObject();
+    comment.userId = user.value(QStringLiteral("id")).toInt();
+    comment.username = user.value(QStringLiteral("username")).toString();
+    comment.displayName = user.value(QStringLiteral("display_name")).toString();
+    comment.avatar = user.value(QStringLiteral("avatar")).toString();
+    if (comment.displayName.isEmpty())
+        comment.displayName = comment.username;
+    return comment;
+}
+
+void FeedbackService::fetchComments(int feedbackId, CommentListHandler onOk, FailHandler onFail)
+{
+    if (feedbackId <= 0)
+    {
+        if (onOk)
+            onOk(QVector<FeedbackComment>(), 0);
+        return;
+    }
+
+    ForumAccountService::instance()->getJson(
+        QStringLiteral("/api/feedbacks/%1/comments").arg(feedbackId),
+        [onOk](const QJsonObject &root) {
+            QVector<FeedbackComment> comments;
+            const QJsonArray array = root.value(QStringLiteral("comments")).toArray();
+            comments.reserve(array.size());
+            for (const QJsonValue &value : array)
+                comments.append(parseComment(value.toObject()));
+            if (onOk)
+                onOk(comments, root.value(QStringLiteral("total")).toInt(comments.size()));
+        },
+        std::move(onFail));
+}
+
+void FeedbackService::postComment(int feedbackId, const QString &content, CommentHandler onOk,
+                                  FailHandler onFail)
+{
+    if (feedbackId <= 0)
+    {
+        if (onFail)
+            onFail(tr("这条反馈没有评论区"), 404);
+        return;
+    }
+    if (!ForumAccountService::instance()->isLoggedIn())
+    {
+        if (onFail)
+            onFail(tr("登录论坛账号后才能评论"), 401);
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("content"), content);
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/feedbacks/%1/comments").arg(feedbackId), body,
+        [onOk](const QJsonObject &root) {
+            if (onOk)
+                onOk(parseComment(root.value(QStringLiteral("comment")).toObject()));
+        },
+        std::move(onFail));
+}
+
+void FeedbackService::deleteComment(int commentId, OkHandler onOk, FailHandler onFail)
+{
+    if (commentId <= 0)
+    {
+        if (onOk)
+            onOk();
+        return;
+    }
+
+    ForumAccountService::instance()->sendJson(
+        QByteArrayLiteral("DELETE"), QStringLiteral("/api/feedbacks/comments/%1").arg(commentId),
+        QJsonObject(),
+        [onOk](const QJsonObject &) {
+            if (onOk)
+                onOk();
+        },
+        std::move(onFail));
 }

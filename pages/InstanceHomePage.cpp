@@ -461,10 +461,12 @@ void InstanceHomePage::onSecondTick()
         {
             int fps = queryGameFps();
             m_fpsValue->setText(fps > 0 ? QString::number(fps) : QStringLiteral("--"));
+            m_liveFps = fps > 0 ? fps : 0;
         }
         else
         {
             m_fpsValue->setText(QStringLiteral("--"));
+            m_liveFps = 0;
             // 重置 DWM 增量基线，避免下次启动游戏后首秒计算偏大
 #ifdef Q_OS_WIN
             m_lastDwmFrame = 0;
@@ -472,6 +474,15 @@ void InstanceHomePage::onSecondTick()
 #endif
         }
     }
+
+    // 5. 汇总实时数据（悬浮窗收起时在标题栏右侧显示）
+    emitLiveStats();
+}
+
+void InstanceHomePage::emitLiveStats()
+{
+    emit liveStatsChanged(m_liveFps, m_liveCpuPercent, m_liveMemoryPercent, m_liveGpuPercent,
+                          m_liveCpuAvailable, m_liveMemoryAvailable, m_liveGpuAvailable);
 }
 
 void InstanceHomePage::onHardwareDataRefreshed()
@@ -499,5 +510,14 @@ void InstanceHomePage::onHardwareDataRefreshed()
         int gpuPct = gpuOk ? data.gpu0UsagePercent : 0;
         m_gpuCard->setAvailable(gpuOk);
         m_gpuCard->setPercent(gpuPct);
+        m_liveGpuAvailable = gpuOk;
+        m_liveGpuPercent = gpuPct;
     }
+
+    // 缓存 CPU / 内存数据并同步给悬浮窗收起态
+    m_liveCpuAvailable = data.cpuAvailable;
+    m_liveCpuPercent = data.cpuUsagePercent;
+    m_liveMemoryAvailable = data.memoryAvailable;
+    m_liveMemoryPercent = data.memoryUsagePercent;
+    emitLiveStats();
 }

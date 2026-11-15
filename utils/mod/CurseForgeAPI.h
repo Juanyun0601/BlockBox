@@ -49,6 +49,13 @@ public:
      */
     void fingerprintMod(quint32 fingerprint);
 
+    /**
+     * @brief 批量通过 MurmurHash2 指纹匹配本地文件（每 100 个一组分批请求，结果合并）
+     * @param fingerprints MurmurHash2 指纹列表（0 值与重复项自动忽略）
+     * POST /v1/fingerprints/432
+     */
+    void fingerprintMods(const QList<quint32> &fingerprints);
+
     static QStringList sortFields();
     static QStringList sortOrders();
 
@@ -69,12 +76,18 @@ signals:
     /** 指纹匹配失败（未找到匹配或无 API Key） */
     void fingerprintFailed(const QString &error);
 
+    /** 批量指纹匹配完成：key=文件指纹，value=所属模组 ID（未匹配的指纹不在 map 中） */
+    void fingerprintsCompleted(const QMap<quint32, QString> &fingerprintToModId);
+    /** 批量指纹匹配失败 */
+    void fingerprintsFailed(const QString &error);
+
 private slots:
     void onSearchReplyFinished();
     void onCategoriesReplyFinished();
     void onDetailReplyFinished();
     void onModsReplyFinished();
     void onFingerprintReplyFinished();
+    void onFingerprintsReplyFinished();
 
 private:
     void parseAddon(const QJsonObject &obj, ModInfo &info);
@@ -98,6 +111,13 @@ private:
     QNetworkReply *m_currentModsReply;
     QNetworkReply *m_currentFingerprintReply;
     quint32 m_pendingFingerprint = 0;
+
+    /** 批量指纹匹配（fingerprintMods）的请求队列与合并结果 */
+    QList<quint32> m_batchFingerprintQueue;
+    QMap<quint32, QString> m_batchFingerprintResults;
+    QNetworkReply *m_currentFingerprintsReply = nullptr;
+    /** 发送下一批指纹请求（队列为空时合并结果发信号） */
+    void sendNextFingerprintBatch();
     QString m_currentDetailId;      // 当前详情请求的模组 id（镜像回退后重试用）
     bool m_detailFallbackTried = false;
 };

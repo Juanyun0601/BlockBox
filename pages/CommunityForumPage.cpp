@@ -164,6 +164,7 @@ void CommunityForumPage::buildUi()
     auto *loadingStrip = new QWidget(this);
     loadingStrip->setObjectName(QStringLiteral("communityLoadingStrip"));
     loadingStrip->setFixedHeight(3);
+    m_loadingStrip = loadingStrip;
     auto *loadingStripLayout = new QVBoxLayout(loadingStrip);
     loadingStripLayout->setContentsMargins(0, 0, 0, 0);
     loadingStripLayout->setSpacing(0);
@@ -188,6 +189,7 @@ void CommunityForumPage::buildUi()
     scrollArea->setFrameShape(QFrame::NoFrame);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scrollArea->setStyleSheet(QStringLiteral("QScrollArea{background:transparent;}"));
+    m_contentScroll = scrollArea;
 
     auto *content = new QWidget(scrollArea);
     content->setAttribute(Qt::WA_StyledBackground, false);
@@ -326,7 +328,7 @@ void CommunityForumPage::buildUi()
     lobbyTitleRow->addWidget(makeSectionTitle(tr("联机大厅"), leftColumn));
     lobbyTitleRow->addStretch(1);
     auto *lobbyOpenButton = new QPushButton(tr("进入大厅 →"), leftColumn);
-    lobbyOpenButton->setObjectName(QStringLiteral("communityTag"));
+    lobbyOpenButton->setObjectName(QStringLiteral("communityLobbyLink"));
     lobbyOpenButton->setCursor(Qt::PointingHandCursor);
     lobbyOpenButton->setFlat(true);
     lobbyOpenButton->setFixedHeight(26);
@@ -840,13 +842,20 @@ void CommunityForumPage::renderBoards()
 
 void CommunityForumPage::showLobbyPage()
 {
+    // 大厅铺满整个社区页。浮层本身不刷底色，底下的论坛正文也先收起来，
+    // 否则要么挡住软件的背景，要么从大厅卡片缝隙里透出论坛内容。
+    if (m_loadingStrip)
+        m_loadingStrip->hide();
+    if (m_contentScroll)
+        m_contentScroll->hide();
+
     if (!m_lobbyOverlay)
     {
         m_lobbyOverlay = new QWidget(this);
         m_lobbyOverlay->setObjectName(QStringLiteral("communityLobbyOverlay"));
         m_lobbyOverlay->setAttribute(Qt::WA_StyledBackground, true);
         m_lobbyOverlay->setStyleSheet(
-            QStringLiteral("QWidget#communityLobbyOverlay{background:palette(base);}"));
+            QStringLiteral("QWidget#communityLobbyOverlay{background:transparent;}"));
 
         auto *layout = new QVBoxLayout(m_lobbyOverlay);
         layout->setContentsMargins(0, 0, 0, 0);
@@ -872,8 +881,18 @@ void CommunityForumPage::showLobbyPage()
 
 void CommunityForumPage::hideLobbyPage()
 {
-    if (m_lobbyOverlay)
-        m_lobbyOverlay->hide();
+    if (!m_lobbyOverlay)
+        return;
+
+    // 子页面里还开着房间详情时一起收起来，下次进大厅不会停在旧详情上
+    if (m_lobbyPage)
+        m_lobbyPage->closeDetailIfVisible();
+
+    m_lobbyOverlay->hide();
+    if (m_loadingStrip)
+        m_loadingStrip->show();
+    if (m_contentScroll)
+        m_contentScroll->show();
 }
 
 bool CommunityForumPage::closeLobbyIfVisible()
@@ -882,6 +901,13 @@ bool CommunityForumPage::closeLobbyIfVisible()
         return false;
     hideLobbyPage();
     return true;
+}
+
+bool CommunityForumPage::closeLobbyDetailIfVisible()
+{
+    if (!m_lobbyOverlay || !m_lobbyOverlay->isVisible())
+        return false;
+    return m_lobbyPage && m_lobbyPage->closeDetailIfVisible();
 }
 
 void CommunityForumPage::fetchLobby()

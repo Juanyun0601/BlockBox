@@ -146,6 +146,11 @@ private:
     void refreshCardCategoryChips();
     /** 为指定文件弹出含“设置分类”的右键菜单 */
     void showFileContextMenu(const QPoint &pos, int idx);
+    // 本地资源收藏：切换收藏 / 星标按钮视觉 / 批量刷新星标
+    void toggleFileFavorite(const QString &filePath, const QString &fileName, qint64 fileSize,
+                            const QString &displayName = QString());
+    void setFavButtonVisual(QPushButton *btn, bool fav);
+    void refreshCardFavButtons();
 
     /** 扫描文件型资源（存档/截图/资源包/光影包） */
     void scanFiles();

@@ -37,6 +37,64 @@ constexpr const char *kFlashbackExt = ".zip";
 constexpr qint64 k10MB = 10LL * 1024 * 1024;
 constexpr qint64 k100MB = 100LL * 1024 * 1024;
 
+// 解析录像里记录的服务器地址（host 或 host:port，兼容 http(s):// 前缀与 [IPv6]:端口 写法）
+// 成功返回 true 并带回主机与端口；没写端口时按默认 25565 处理。
+// 带空格的文本（如 Realms 录像的「A Realms Server」）不是可连接地址，返回 false
+bool parseServerAddress(const QString &raw, QString *hostOut, quint16 *portOut)
+{
+    QString text = raw.trimmed();
+    if (text.startsWith(QLatin1String("http://"), Qt::CaseInsensitive))
+        text.remove(0, 7);
+    else if (text.startsWith(QLatin1String("https://"), Qt::CaseInsensitive))
+        text.remove(0, 8);
+    if (text.isEmpty() || text.contains(QLatin1Char(' ')))
+        return false;
+
+    QString host = text;
+    int port = 25565;
+
+    if (host.startsWith(QLatin1Char('[')))
+    {
+        // [IPv6]:端口
+        const int close = host.indexOf(QLatin1Char(']'));
+        if (close < 0)
+            return false;
+        const QString after = host.mid(close + 1);
+        if (!after.isEmpty())
+        {
+            bool ok = false;
+            const int value = after.mid(1).toInt(&ok);
+            if (!ok || value <= 0 || value > 65535)
+                return false;
+            port = value;
+        }
+        host = host.mid(1, close - 1);
+    }
+    else
+    {
+        // host:端口；冒号后不是纯端口数字（裸 IPv6 等极端写法）就整串按主机处理
+        const int colon = host.lastIndexOf(QLatin1Char(':'));
+        if (colon > 0)
+        {
+            bool ok = false;
+            const int value = host.mid(colon + 1).toInt(&ok);
+            const QString hostPart = host.left(colon);
+            if (ok && value > 0 && value <= 65535
+                && !hostPart.contains(QLatin1Char(':')))
+            {
+                host = hostPart;
+                port = value;
+            }
+        }
+    }
+
+    if (host.isEmpty())
+        return false;
+    *hostOut = host;
+    *portOut = static_cast<quint16>(port);
+    return true;
+}
+
 } // namespace
 
 // ───────────────────────────── 生命周期 ─────────────────────────────
@@ -444,7 +502,11 @@ void InstanceRecordingsPage::parseReplayModMeta(RecordingEntry &entry,
     if (singleplayer)
         entry.worldLine = tr("单人游戏");
     else if (!serverName.isEmpty())
+    {
         entry.worldLine = serverName;
+        // 联机录像里 serverName 存的就是服务器地址（单机存世界名），记下来供一键加入
+        entry.serverAddress = serverName;
+    }
 
     if (mpdMs > 0)
         entry.durationMs = mpdMs;
@@ -706,6 +768,19 @@ QWidget *InstanceRecordingsPage::createRecordingCard(const RecordingEntry &entry
         btn->setIconSize(QSize(18, 18));
         return btn;
     };
+
+    // 一键加入：联机录像直接按录制时的地址进服
+    // （单机录像和 Flashback 录像的元数据里没有服务器地址，不显示这个按钮）
+    QString joinHost;
+    quint16 joinPort = 0;
+    if (parseServerAddress(entry.serverAddress, &joinHost, &joinPort))
+    {
+        QPushButton *joinBtn = createBtn(":/Images/Icons/play.svg", tr("一键加入"));
+        connect(joinBtn, &QPushButton::clicked, this, [this, joinHost, joinPort]() {
+            emit quickJoinServerRequested(joinHost, joinPort);
+        });
+        btnLayout->addWidget(joinBtn);
+    }
 
     // 详情按钮：弹窗展示录像完整信息
     QPushButton *detailBtn = createBtn(":/Images/Icons/list.svg", tr("查看详情"));

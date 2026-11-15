@@ -18,8 +18,7 @@
 
 #include "components/ContentViewSwitch.h"
 
-class QGraphicsOpacityEffect;
-class QPropertyAnimation;
+class CardSelectionOverlay;
 class LocalCategoryManager;
 class QMenu;
 class MasonryLayout;
@@ -97,8 +96,6 @@ private:
     QWidget *createSelectionOverlay(QWidget *card);
     /** 播放卡片选中高亮过渡动画 */
     void animateCardHighlight(int idx, bool selected);
-    /** 选中高亮遮罩样式（随主题色） */
-    QString selectionOverlayStyle() const;
     /** 刷新统计栏文案与底栏按钮（全选/删除选中）状态 */
     void updateSelectionBar();
     /** 重新填充分类筛选下拉框（保留当前选中，含智能筛选项） */
@@ -109,6 +106,10 @@ private:
     bool passesFilters(const QFileInfo &fi) const;
     /** 右键「设置分类」子菜单（key 为文件名，含扩展名） */
     void appendCategoryMenu(QMenu *menu, const QString &key);
+    // 本地资源收藏：切换收藏 / 星标按钮视觉 / 批量刷新星标
+    void toggleFileFavorite(const QString &filePath, const QString &fileName, qint64 fileSize);
+    void setFavButtonVisual(QPushButton *btn, bool fav);
+    void refreshCardFavButtons();
 
     QLineEdit *m_searchEdit;
     ContentViewSwitch *m_viewSwitch;
@@ -148,9 +149,7 @@ private:
 
     // 多选状态
     QList<QWidget *> m_cardWidgets;               // 当前可见卡片（与卡片索引一一对应）
-    QList<QWidget *> m_selectionOverlays;         // 选中高亮遮罩（与卡片索引对齐）
-    QList<QGraphicsOpacityEffect *> m_selectionEffects;
-    QList<QPropertyAnimation *> m_selectionAnims;
+    QList<CardSelectionOverlay *> m_selectionOverlays; // 选中高亮遮罩（与卡片索引对齐）
     QSet<int> m_selectedCardIndices;              // 多选索引集合
     bool m_allSelected = false;
     // 滑动快速多选状态

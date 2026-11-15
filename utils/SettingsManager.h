@@ -323,6 +323,12 @@ public:
     /** 补全协议、去掉结尾斜杠、空值回落默认 */
     static QString normalizeForumUrl(const QString &url);
 
+    /**
+     * @brief 是否已同意《方块盒子社区规范》（首次发布前弹窗确认，同意一次长期有效）
+     */
+    bool isCommunityAgreementAccepted() const;
+    void setCommunityAgreementAccepted(bool accepted);
+
 signals:
     void downloadSourceChanged(DownloadSource source);
     void accountsChanged();

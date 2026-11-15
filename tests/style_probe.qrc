@@ -1,0 +1,7 @@
+<!DOCTYPE RCC>
+<!-- 探针专用：把真实样式表挂到 ThemeManager 期望的 :/styles/style.qss 路径 -->
+<RCC version="1.0">
+  <qresource prefix="/styles">
+    <file alias="style.qss">../styles/style.qss</file>
+  </qresource>
+</RCC>

@@ -631,6 +631,30 @@ private:
     /// 修改实例版本（emit instanceModifyRequested 后立即返回，本质是下载新版本到同路径）
     QString executeModifyInstance(const QJsonObject& args);
 
+    // --- Agent 诊断/管理扩展工具（2026-11 新增，见 ai_agent_tools.json） ---
+    /// 读取实例日志尾部（参数：instance_path, tail_lines?, log_file?）
+    QString executeReadGameLog(const QJsonObject& args);
+    /// 读取实例崩溃报告清单或指定报告内容（参数：instance_path, report_index?）
+    QString executeReadCrashReport(const QJsonObject& args);
+    /// 批量启用/禁用/删除模组（参数：instance_path, action, file_names?）
+    QString executeManageMods(const QJsonObject& args);
+    /// 批量检查模组更新（子线程 QEventLoop 等待 API 信号；参数：instance_path, game_version?, loader?）
+    QString executeCheckModUpdates(const QJsonObject& args);
+    /// 列出实例世界存档（参数：instance_path）
+    QString executeListSaves(const QJsonObject& args);
+    /// 读取存档详情：种子/出生点/游戏模式/玩家坐标等（参数：instance_path, world_name）
+    QString executeReadSaveInfo(const QJsonObject& args);
+    /// 存档备份 list/create/restore（参数：instance_path, world_name, action, backup_name?）
+    QString executeManageWorldBackup(const QJsonObject& args);
+    /// 读取实例 multiplayer 服务器列表（参数：instance_path）
+    QString executeListServers(const QJsonObject& args);
+    /// 探测 MC 服务器在线状态（子线程 QEventLoop 等待 pingFinished；参数：address）
+    QString executePingServer(const QJsonObject& args);
+    /// 查询启动器下载任务列表（无参数）
+    QString executeListDownloadTasks();
+    /// 按种子计算结构坐标（纯本地 Cubiomes 计算；参数：seed, mc_version, dimension, 范围?, structures?）
+    QString executeFindStructure(const QJsonObject& args);
+
     // --- Agent 用户交互工具 ---
     /// 向用户提问并阻塞等待回答（emit userQuestionAsked + QEventLoop 等待 userAnswerProvided）
     QString executeAskUser(const QJsonObject& args);

@@ -21,9 +21,13 @@
 #include <QElapsedTimer>
 #include <QDateTime>
 #include <QPair>
+#include <QVector>
 #include <functional>
 
 class ErrorAnalyzer;
+class JavaScanWorker;
+class QThread;
+struct JavaBinaryInfo;
 
 /**
  * @brief 文件补全优先级（参考 HMCL/Prism Launcher 的任务优先级设计）
@@ -144,6 +148,9 @@ public:
     // 读不到（例如 Oracle javapath 这类转发存根、或只给了 "java"）返回 0
     static int javaBitness(const QString& javaExe);
 
+    // 从 Java 版本字符串提取主版本号（"1.8.0_301"→8，"17.0.1"→17，"21"→21）
+    static int javaMajorOf(const QString& version);
+
     // Launch related methods
     // skipFileCompletion=true: 跳过文件完整性检查与补全（首次启动）
     // skipFileCompletion=false: 执行文件完整性检查并补全缺失文件（启动失败重试时使用）
@@ -156,6 +163,10 @@ public:
 
     // 判断上一次进程结束是否由用户手动取消触发（用于在 UI 层区分"用户取消"与"游戏自然退出"）
     bool wasUserCancelled() const;
+
+    // 判断上一次启动是否触发过「Java 缺失自救」（全盘查找 + 必要时自动安装），
+    // 供 UI 层区分：自救失败后无需再做文件补全重启
+    bool wasJavaRescueAttempted() const;
 
     // 获取当前启动配置中的实例路径
     QString currentInstancePath() const;
@@ -182,6 +193,19 @@ private slots:
     void onProcessOutput();
     void onCompletionFileFinished();
 
+    // ── Java 缺失自救（先全盘查找，仍没有合适的 Java 则自动安装后继续启动）──
+    void onRescueScanProgress(const QString& currentPath, int percent, int etaMinutes,
+                              int scannedMB, int totalMB, int foundCount);
+    void onRescueScanFinished(const QList<QPair<QString, QString>>& installations);
+    void onRescueFetchError(const QString& error);
+    void onRescueDownloadProgress(const QString& fileName, int percent);
+    void onRescueDownloadBytesProgress(qint64 bytesReceived, qint64 bytesTotal);
+    void onRescueDownloadCompleted(const QString& filePath);
+    void onRescueDownloadFailed(const QString& error);
+    void onRescueExtractProgress(int percent);
+    void onRescueExtractCompleted(const QString& javaPath);
+    void onRescueExtractFailed(const QString& error);
+
 private:
     GameLauncher(QObject *parent = nullptr);
     static GameLauncher* m_instance;
@@ -195,6 +219,7 @@ private:
     QString m_processOutput;
     QNetworkAccessManager* m_networkManager;
     QTimer* m_windowCheckTimer;
+    int m_windowWaitElapsedMs = 0;         // 已等待游戏窗口/启动确认的累计毫秒数（每次启动重置）
     bool m_gameStartedSuccessfully = false; // 标记游戏窗口是否已成功出现（用于区分启动期崩溃）
     bool m_userCancelled = false;          // 标记本次进程结束是否由用户手动取消触发（区分"用户取消"与"游戏自然退出"）
 
@@ -236,6 +261,21 @@ private:
     QMap<QString, bool> m_mirrorHealth;
     QMap<QString, QDateTime> m_mirrorCooldownUntil;
 
+    // ── Java 缺失自救状态 ──
+    enum class RescueStage { None, Scanning, Installing };
+    RescueStage m_rescueStage = RescueStage::None;
+    bool m_javaRescueAttempted = false;      // 本次启动是否触发过自救（UI 层用于跳过补文件重启）
+    bool m_rescueInstallAttempted = false;   // 自动安装只尝试一次，防来回打转
+    bool m_rescueOfficialMirrorRetried = false; // TUNA 镜像失败后是否已换官方源重试
+    LaunchConfig m_rescueConfig;
+    QString m_rescueGameVersion;
+    int m_rescueJsonJavaMajor = 0;
+    int m_rescueSelectedMajor = 0;           // 本次自动安装的 Java 主版本
+    int m_rescueGeneration = 0;              // 自救代数（防止超时定时器误杀新一轮扫描）
+    int m_rescueLastProgressBucket = -1;     // 进度回显节流（按 10% 粒度）
+    JavaScanWorker* m_rescueScanWorker = nullptr;
+    QVector<QMetaObject::Connection> m_rescueDownloaderConnections;
+
     // Private methods
     QJsonObject readVersionJson(const QString& instancePath);
     QJsonObject mergeInheritsFromJson(const QString& instancePath, const QJsonObject& versionJson);
@@ -256,7 +296,25 @@ private:
 
     // 文件补全完成后的后续启动步骤（解压 Natives、构建命令、启动进程）
     void proceedWithLaunch(const LaunchConfig& config, const QString& javaPath);
-    
+
+    // ── Java 缺失自救 ──
+    // 启动时没有合适的 Java（没装/路径失效/版本不兼容）：
+    // 先全盘查找本机 Java，仍没有合适的就自动安装匹配版本，装好后再继续启动。
+    // gameVersion/jsonJavaMajor 用于计算该游戏版本所需的 Java 主版本区间
+    void beginJavaRescue(const QString& gameVersion, int jsonJavaMajor);
+    // JavaBinaryInfo 仅前向声明，moc 无法为其生成元类型，
+    // 故 versionListFetched 信号经 lambda 转调本方法（同线程直连，无需注册）
+    void onRescueVersionListFetched(const QVector<JavaBinaryInfo>& binaries);
+    void startJavaAutoInstall();
+    void finishJavaRescue(const QString& javaPath);
+    void failJavaRescue(const QString& reason);
+    void connectJavaDownloaderRescue();
+    void disconnectJavaDownloaderRescue();
+    // 镜像/下载失败时的重试判定：TUNA 失败换官方源再试一次，仍失败才放弃
+    void retryOrFailRescueDownload(const QString& reason);
+    // 在候选列表里按需求区间严格挑选 Java（逐个 validateJavaPath，64位/真实JVM优先）
+    QString selectRescueJava(const QList<JavaInfo>& candidates);
+
     // Helper methods for file download
     QByteArray downloadFile(const QUrl& url, bool* success);
     bool saveFile(const QString& filePath, const QByteArray& data);

@@ -67,6 +67,13 @@ public:
     /** 当前账号信息，未登录时返回默认构造的空对象 */
     ForumUser user() const { return m_user; }
 
+    /**
+     * @brief 联机房间里给别的玩家看的名字：优先账号昵称，没设昵称就用账号名
+     *
+     * 未登录时返回空串，兜底文案由调用方的界面自己决定（各自有翻译上下文）。
+     */
+    QString playerName() const;
+
     /** 当前会话令牌 */
     QString token() const { return m_token; }
 

@@ -24,12 +24,21 @@ struct ModVersionFile {
     qint64 fileSize = 0;
     QString releaseType; // "release", "beta", "alpha"
     QString sha1;        // 该版本文件的 SHA-1 哈希（更新判断用）
+    QString projectId;   // 所属项目 ID（Modrinth version 的 project_id，安装状态比对用）
+    quint32 murmur2 = 0; // 该版本文件的 MurmurHash2 指纹（CurseForge，SHA-1 缺失时的安装比对兜底）
     QList<ModDependency> dependencies; // 该版本所依赖的前置（仅 isRequired=true 的会被一键下载）
 };
 
 struct ModScreenshot {
     QString url;
     QString description;
+};
+
+/** 作者在下载源（Modrinth / CurseForge）自行设置的外部链接 */
+struct ModExternalLink
+{
+    QString label;   ///< 展示名（官网 / Wiki / 问题反馈 / 源代码 / Discord / 赞助…）
+    QString url;     ///< 跳转地址
 };
 
 struct ModInfo {
@@ -68,6 +77,7 @@ struct ModInfo {
     QList<ModScreenshot> screenshots;
     QList<ModDependency> dependencies;
     QList<ModVersionFile> versionFiles;
+    QList<ModExternalLink> externalLinks;   ///< 作者设置的链接（详情接口返回）
 
     // 本地模组相关字段
     QString fileName;
@@ -95,6 +105,7 @@ struct ModCategory {
     QString id;
     QString name;
     QString parentId;
+    QString projectType;   // Modrinth 专用：该分类所属的 project_type（mod/modpack/...）
 };
 
 struct ModSearchResult {

@@ -211,6 +211,11 @@ QPixmap MasonryContentCard::makeLogoPixmap(const QColor &c1, const QColor &c2, c
 
 void MasonryContentCard::paletteFor(const ModInfo &info, QColor &c1, QColor &c2)
 {
+    paletteForSeed(info.source + QStringLiteral(":") + info.id, c1, c2);
+}
+
+void MasonryContentCard::paletteForSeed(const QString &seed, QColor &c1, QColor &c2)
+{
     static const QList<QPair<QColor, QColor>> kPalette = {
         { QColor(16, 185, 129),  QColor(4, 120, 87)   },   // emerald
         { QColor(99, 102, 241),  QColor(67, 56, 202)   },  // indigo
@@ -229,7 +234,6 @@ void MasonryContentCard::paletteFor(const ModInfo &info, QColor &c1, QColor &c2)
         { QColor(101, 163, 13),  QColor(66, 111, 8)    },  // olive
         { QColor(59, 130, 246),  QColor(29, 78, 216)   }   // blue
     };
-    const QString seed = info.source + ":" + info.id;
     const uint h = qHash(seed);
     const auto &p = kPalette.at(h % kPalette.size());
     c1 = p.first;
@@ -498,6 +502,8 @@ QWidget *MasonryContentCard::build(const ModInfo &info, QWidget *parent,
             QPushButton *btn = new QPushButton();
             btn->setObjectName("contentCardActionBtn");
             btn->setFixedSize(32, 32);
+            if (!spec.tag.isEmpty())
+                btn->setProperty("localFavTag", spec.tag);
             btn->setToolTip(spec.tooltip);
             btn->setCursor(Qt::PointingHandCursor);
             const QColor iconColor = spec.iconColor.isValid() ? spec.iconColor : themeColor;

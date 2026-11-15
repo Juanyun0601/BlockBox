@@ -589,6 +589,7 @@ void GravityConeClient::resetRoomData()
     m_serverAddress.clear();
     m_gamePort = 0;
     m_onlineCount = 0;
+    m_localPlayerName.clear();
     if (!m_players.isEmpty()) {
         m_players.clear();
         emit playersChanged();
@@ -628,6 +629,7 @@ void GravityConeClient::createRoom(const QString &playerName)
     }
 
     QString name = playerName.trimmed().isEmpty() ? kDefaultPlayerName : playerName.trimmed();
+    m_localPlayerName = name;
 
     QJsonObject params;
     params.insert(QStringLiteral("protocol"), QStringLiteral("paperconnect"));
@@ -651,6 +653,7 @@ void GravityConeClient::joinRoom(const QString &code, const QString &playerName)
     }
 
     QString name = playerName.trimmed().isEmpty() ? kDefaultPlayerName : playerName.trimmed();
+    m_localPlayerName = name;
 
     QJsonObject params;
     params.insert(QStringLiteral("code"), code.trimmed().toUpper());

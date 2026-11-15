@@ -258,8 +258,11 @@ void ShareToFriendDialog::rebuildFriendRows()
         QHBoxLayout *rowLayout = new QHBoxLayout(row);
         rowLayout->setContentsMargins(4, 2, 4, 2);
         rowLayout->setSpacing(10);
-        rowLayout->addWidget(ForumKit::makeAvatar(row, friendInfo.avatar,
-                                                  friendInfo.displayName, 34));
+        // 官方客服用方块盒子图标当头像，普通好友照旧
+        rowLayout->addWidget(friendInfo.official
+                                 ? ForumKit::makeOfficialAvatar(row, 34)
+                                 : ForumKit::makeAvatar(row, friendInfo.avatar,
+                                                        friendInfo.displayName, 34));
 
         QVBoxLayout *textColumn = new QVBoxLayout();
         textColumn->setSpacing(2);

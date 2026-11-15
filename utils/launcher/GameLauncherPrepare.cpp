@@ -240,11 +240,14 @@ bool GameLauncher::preCheck(const LaunchConfig& config)
         JavaInfo javaInfo;
         if (!validateJavaPath(config.javaPath, javaInfo))
         {
-            m_errorMessage = "无效的Java路径，请检查设置";
-            emit launchDetailAdded(QString("错误: Java路径无效: %1").arg(config.javaPath));
-            return false;
+            // 指定的 Java 失效（被卸载/移动）不再直接启动失败：
+            // 记一条警告后继续走主流程，由 Java 验证步骤转入"查找 + 自动安装"自救
+            emit launchDetailAdded(QString("警告: 指定的 Java 无效，将自动查找或安装合适的 Java: %1").arg(config.javaPath));
         }
-        emit launchDetailAdded(QString("Java路径验证成功: %1 (%2)").arg(javaInfo.version).arg(config.javaPath));
+        else
+        {
+            emit launchDetailAdded(QString("Java路径验证成功: %1 (%2)").arg(javaInfo.version).arg(config.javaPath));
+        }
     }
 
     emit launchDetailAdded("检查内存设置...");

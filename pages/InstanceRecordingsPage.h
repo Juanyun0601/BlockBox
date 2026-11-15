@@ -41,6 +41,13 @@ signals:
      */
     void quickInstallModRequested(const QString &modKey);
 
+    /**
+     * 录像卡片「一键加入」：请求启动游戏并自动连接录制时的服务器
+     * @param host 服务器地址（主机名 / IP）
+     * @param port 服务器端口
+     */
+    void quickJoinServerRequested(const QString &host, quint16 port);
+
 protected:
     /** 卡片双击：打开录像所在文件夹 */
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -70,6 +77,7 @@ private:
         int source = ReplayMod;
         QString title;      // 展示标题（优先用模组内记录的名字）
         QString worldLine;  // 服务器 / 世界信息
+        QString serverAddress;  // 联机录像里记录的服务器地址（Replay Mod 录像才有，供一键加入）
         qint64 durationMs = -1;   // 时长（毫秒），未知为 -1
         QPixmap icon;       // 录像内置预览图，可能为空
     };

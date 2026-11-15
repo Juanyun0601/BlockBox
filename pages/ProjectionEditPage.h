@@ -10,6 +10,7 @@
  *   - 材料清单：聚合各区域方块统计（按数量降序）
  *   - 元数据编辑：名称 / 作者 / 描述（通过 LitematicEditor 写回）
  *   - 格式转换：导出为 .schematic（Schematica）/ .schem（Sponge）
+ *   - 三视图：一键生成正视图 / 侧视图 / 俯视图 PNG（SchematicOrthoViewRenderer）
  *
  * 本页嵌入实例管理页（InstanceManagePage）的内容栈中，通过
  * setCurrentProjection() 指定要编辑的投影文件。返回与标题复用主界面
@@ -70,6 +71,7 @@ private slots:
     void onOpenFolderClicked();
     void onConvertVersionClicked();
     void onVersionComboChanged(int index);
+    void onGenerateOrthoViewsClicked();
 
 private:
     void initUI();
@@ -127,6 +129,8 @@ private:
     QPushButton *m_openFolderBtn;
     QPushButton *m_exportSchematicBtn;
     QPushButton *m_exportSpongeBtn;
+    QPushButton *m_generateViewsBtn;
+    bool m_generatingViews = false;   ///< 三视图正在后台生成（防重入）
 
     // 版本转换
     QLabel *m_currentVersionLabel;

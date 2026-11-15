@@ -434,6 +434,232 @@
         },
         "required": ["url"]
       }
+    },
+    {
+      "name": "read_game_log",
+      "description": "读取指定实例的游戏日志尾部（默认 logs/latest.log）。用于排查启动失败、报错、性能问题等。返回日志末尾若干行文本。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          },
+          "tail_lines": {
+            "type": "integer",
+            "description": "读取末尾行数（默认 200，上限 1000）"
+          },
+          "log_file": {
+            "type": "string",
+            "description": "日志文件名（可选，默认 latest.log，可传 debug.log 等位于 logs/ 下的文件名）"
+          }
+        },
+        "required": ["instance_path"]
+      }
+    },
+    {
+      "name": "read_crash_report",
+      "description": "读取实例的崩溃报告。不传 report_index 时先返回 crash-reports/ 目录下的崩溃报告清单（按时间倒序），并附最新一份的内容；传 report_index（清单中的序号，从 1 开始）则返回对应报告内容。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          },
+          "report_index": {
+            "type": "integer",
+            "description": "崩溃报告序号（清单中的序号，从 1 开始，可选）"
+          }
+        },
+        "required": ["instance_path"]
+      }
+    },
+    {
+      "name": "manage_mods",
+      "description": "批量管理实例模组：enable 启用 / disable 禁用 / delete 删除。file_names 为模组文件名列表（如 Optifine.jar 或 Optifine.jar.disabled），省略时作用于全部模组。删除与禁用属于影响实例运行的操作，执行前必须先用 ask_user 向用户确认。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          },
+          "action": {
+            "type": "string",
+            "description": "操作类型",
+            "enum": ["enable", "disable", "delete"]
+          },
+          "file_names": {
+            "type": "array",
+            "description": "目标模组文件名列表（可选，省略时作用于全部模组）",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["instance_path", "action"]
+      }
+    },
+    {
+      "name": "check_mod_updates",
+      "description": "批量检查实例模组的可用更新。通过文件指纹在 Modrinth/CurseForge 匹配在线版本，返回每个模组的当前版本、最新版本、更新说明与下载链接。联网操作，耗时较长，请耐心等待。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          },
+          "game_version": {
+            "type": "string",
+            "description": "游戏版本过滤，如 1.20.1（可选，未传则不限版本）"
+          },
+          "loader": {
+            "type": "string",
+            "description": "加载器过滤，如 fabric/forge/neoforge（可选）"
+          }
+        },
+        "required": ["instance_path"]
+      }
+    },
+    {
+      "name": "list_saves",
+      "description": "列出指定实例的所有世界存档（存档名、文件夹名、游戏版本、最后游玩时间）。版本隔离感知。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          }
+        },
+        "required": ["instance_path"]
+      }
+    },
+    {
+      "name": "read_save_info",
+      "description": "读取指定世界存档的详细信息：存档名、游戏版本、世界种子、出生点坐标、游戏模式、难度、是否允许作弊、累计游玩时长、玩家当前坐标/朝向/所在维度。查种子常用于后续 find_structure 定位结构。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          },
+          "world_name": {
+            "type": "string",
+            "description": "存档文件夹名（list_saves 返回的 folder 字段）"
+          }
+        },
+        "required": ["instance_path", "world_name"]
+      }
+    },
+    {
+      "name": "manage_world_backup",
+      "description": "管理世界存档备份：list 列出该存档的全部备份、create 创建新备份、restore 恢复到指定备份（恢复会覆盖当前存档，属于高风险操作，执行前必须先用 ask_user 向用户确认）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          },
+          "world_name": {
+            "type": "string",
+            "description": "存档文件夹名"
+          },
+          "action": {
+            "type": "string",
+            "description": "操作类型",
+            "enum": ["list", "create", "restore"]
+          },
+          "backup_name": {
+            "type": "string",
+            "description": "备份文件名（action=restore 时必填，list 返回的 name 字段）"
+          }
+        },
+        "required": ["instance_path", "world_name", "action"]
+      }
+    },
+    {
+      "name": "list_servers",
+      "description": "读取指定实例 multiplayer 服务器列表（servers.dat），返回服务器名称与地址。版本隔离感知。无服务器时返回空列表。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "instance_path": {
+            "type": "string",
+            "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
+          }
+        },
+        "required": ["instance_path"]
+      }
+    },
+    {
+      "name": "ping_server",
+      "description": "探测 Minecraft Java 版服务器在线状态：返回在线/离线、握手延迟、服务端版本、在线人数、MOTD。支持 IP:端口 与域名（自动 SRV 解析）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "服务器地址，如 mc.hypixel.net 或 1.2.3.4:25565"
+          }
+        },
+        "required": ["address"]
+      }
+    },
+    {
+      "name": "list_download_tasks",
+      "description": "查询启动器当前的下载任务列表（名称/类型/进度/速度/状态），配合 download_resource、download_instance、modify_instance 使用，用于跟踪下载进度。无参数。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "find_structure",
+      "description": "按世界种子在指定方块范围内计算结构坐标（要塞/村庄/林地府邸/海底神殿/下界堡垒/末地城等，纯本地计算）。structures 省略时只查稀有结构；可先调 read_save_info 获取存档种子。注意要塞等结构可能超出小范围，查要塞建议扩大范围或直接用全部地图范围。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "seed": {
+            "type": "integer",
+            "description": "世界种子（可为负数）"
+          },
+          "mc_version": {
+            "type": "string",
+            "description": "游戏版本，如 1.20.1、1.21.4"
+          },
+          "dimension": {
+            "type": "string",
+            "description": "维度",
+            "enum": ["overworld", "nether", "end"]
+          },
+          "min_x": {
+            "type": "integer",
+            "description": "范围最小 X（默认 -10000）"
+          },
+          "min_z": {
+            "type": "integer",
+            "description": "范围最小 Z（默认 -10000）"
+          },
+          "max_x": {
+            "type": "integer",
+            "description": "范围最大 X（默认 10000，单边最大 ±60000）"
+          },
+          "max_z": {
+            "type": "integer",
+            "description": "范围最大 Z（默认 10000，单边最大 ±60000）"
+          },
+          "structures": {
+            "type": "array",
+            "description": "要查找的结构类型列表（可选，省略=仅稀有结构）。取值如 stronghold/village/mansion/monument/ocean_ruin/desert_pyramid/jungle_pyramid/swamp_hut/igloo/pillager_outpost/woodland_mansion/ancient_city/trail_ruins/trial_chambers/bastion/fortress/nether_fossil/end_city 等英文 key",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["seed", "mc_version", "dimension"]
+      }
     }
   ]
 }

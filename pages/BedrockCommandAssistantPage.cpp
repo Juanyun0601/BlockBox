@@ -22,6 +22,7 @@
 #include <QMessageBox>
 #include <QVBoxLayout>
 
+#include "components/AppMessageBox.h"
 #include "utils/ThemeManager.h"
 
 BedrockCommandAssistantPage::BedrockCommandAssistantPage(QWidget *parent)
@@ -344,7 +345,7 @@ void BedrockCommandAssistantPage::onInjectClicked()
     QApplication::clipboard()->setText(text);
     addHistory(m_commandInput->text().trimmed(), text);
 
-    QMessageBox::information(this, tr("指令已复制"),
+    AppMessageBox::information(this, tr("指令已复制"),
         tr("基岩版指令已复制到剪贴板。\n请在游戏中按 T 打开聊天栏，粘贴（Ctrl+V）后按回车执行。"));
 }
 
@@ -352,7 +353,7 @@ void BedrockCommandAssistantPage::showHistoryDialog()
 {
     if (m_history.isEmpty())
     {
-        QMessageBox::information(this, tr("历史记录"), tr("暂无历史记录"));
+        AppMessageBox::information(this, tr("历史记录"), tr("暂无历史记录"));
         return;
     }
 
@@ -408,7 +409,7 @@ void BedrockCommandAssistantPage::showPresetsMenu()
 {
     if (!m_commandDb->isLoaded())
     {
-        QMessageBox::information(this, tr("预设"), tr("指令数据库未加载"));
+        AppMessageBox::information(this, tr("预设"), tr("指令数据库未加载"));
         return;
     }
 

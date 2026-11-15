@@ -8,14 +8,17 @@
 #include "ResourcesPage.h"
 #include "components/BlurLoadingOverlay.h"
 #include "components/MasonryContentCard.h"
+#include "components/CardSelectionOverlay.h"
 #include "components/ContentViewSwitch.h"
 #include "components/LocalCategoryDialog.h"
 #include "components/FavoriteFolderDialog.h"
+#include "components/ModRelationDialog.h"
 #include "../layouts/FlowLayout.h"
 #include "../layouts/MasonryLayout.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
+#include "utils/LocalFavoritesManager.h"
 #include "utils/McimHelper.h"
 #include "utils/mod/ModNameFetcher.h"
 #include "utils/mod/ModrinthAPI.h"
@@ -28,7 +31,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QClipboard>
 #include <QJsonDocument>
@@ -39,7 +41,6 @@
 #include "components/AppMessageBox.h"
 #include <QMouseEvent>
 #include <QPixmapCache>
-#include <QPropertyAnimation>
 #include <QScrollBar>
 #include <QSet>
 #include <QSpacerItem>
@@ -301,6 +302,13 @@ void InstanceModsPage::initUI()
     m_detailBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/list.svg", ThemeManager::instance()->currentThemeColor(), 16));
     m_detailBtn->setIconSize(QSize(16, 16));
 
+    m_relationBtn = new QPushButton(tr("所属关系"));
+    m_relationBtn->setObjectName("bottomActionBtn");
+    m_relationBtn->setCursor(Qt::PointingHandCursor);
+    m_relationBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/link.svg", ThemeManager::instance()->currentThemeColor(), 16));
+    m_relationBtn->setIconSize(QSize(16, 16));
+    m_relationBtn->setToolTip(tr("查看模组的前置依赖与被依赖关系"));
+
     m_pasteModBtn = new QPushButton(tr("粘贴模组"));
     m_pasteModBtn->setObjectName("bottomActionBtn");
 
@@ -327,6 +335,7 @@ void InstanceModsPage::initUI()
     bottomLayout->addWidget(m_toggleSelectedBtn);
     bottomLayout->addWidget(m_openFolderBtn);
     bottomLayout->addWidget(m_detailBtn);
+    bottomLayout->addWidget(m_relationBtn);
     bottomLayout->addWidget(m_pasteModBtn);
     bottomLayout->addWidget(m_updateModBtn);
     bottomLayout->addStretch();
@@ -365,11 +374,15 @@ void InstanceModsPage::setupConnections()
             this, &InstanceModsPage::onCategoriesChanged);
     connect(m_categoryManager, &LocalCategoryManager::assignmentsChanged,
             this, &InstanceModsPage::onAssignmentsChanged);
+    // 本地收藏增删（含账户页移除）：同步刷新卡片星标
+    connect(LocalFavoritesManager::instance(), &LocalFavoritesManager::favoritesChanged,
+            this, &InstanceModsPage::refreshCardFavButtons);
     connect(m_viewSwitch, &ContentViewSwitch::viewModeChanged,
             this, &InstanceModsPage::onViewModeChanged);
     connect(m_bottomCheckUpdateBtn, &QPushButton::clicked, this, &InstanceModsPage::onCheckUpdatesClicked);
     connect(m_selectAllBtn, &QPushButton::clicked, this, &InstanceModsPage::onSelectAllClicked);
     connect(m_openFolderBtn, &QPushButton::clicked, this, &InstanceModsPage::onOpenFolderClicked);
+    connect(m_relationBtn, &QPushButton::clicked, this, &InstanceModsPage::onRelationClicked);
     connect(m_detailBtn, &QPushButton::clicked, this, [this]() {
         if (!m_selectedModIndices.isEmpty()) {
             int idx = *m_selectedModIndices.begin();
@@ -517,17 +530,7 @@ void InstanceModsPage::applySortOrder()
     m_cardInfos = m_modList.mods;
     rebuildCards();
 
-    // rebuildCards → clearCards 已清空索引映射，按新顺序重建
-    m_modIndexMap.clear();
-    m_sha1ToIndex.clear();
-    for (int i = 0; i < m_modList.mods.size(); ++i)
-    {
-        const ModInfo &info = m_modList.mods.at(i);
-        const QString key = info.id.isEmpty() ? info.fileName : info.id;
-        m_modIndexMap.insert(key, i);
-        if (!info.sha1Hash.isEmpty())
-            m_sha1ToIndex.insert(info.sha1Hash, i);
-    }
+    // 索引映射由 rebuildCards 按当前顺序重建，这里不再重复
 
     // 与分批创建完成分支保持同一顺序：更新芯片 → 分类芯片 → 过滤统计
     markCachedUpdateChips();
@@ -824,6 +827,17 @@ void InstanceModsPage::addListCard(const ModInfo &info)
 
     ModInfo capturedInfo = info;
 
+    // 收藏星标按钮：金色 = 已收藏（状态由 localFavTag 属性标记，增删后统一刷新）
+    QPushButton *favBtn = createBtn(":/Images/Icons/star.svg", tr("收藏"));
+    favBtn->setProperty("localFavTag",
+                        LocalCategoryManager::normalizeFileName(capturedInfo.fileName));
+    setFavButtonVisual(favBtn, LocalFavoritesManager::instance()->isFavorite(
+                                   m_instancePath, QStringLiteral("mods"), capturedInfo.fileName));
+    connect(favBtn, &QPushButton::clicked, this, [this, capturedInfo]() {
+        toggleLocalFavorite(capturedInfo);
+    });
+    btnLayout->addWidget(favBtn);
+
     // 详情按钮
     QPushButton *detailBtn = createBtn(":/Images/Icons/list.svg", tr("查看详情"));
     connect(detailBtn, &QPushButton::clicked, this, [this, capturedInfo]() {
@@ -903,6 +917,15 @@ QWidget *InstanceModsPage::createMasonryCardWidget(const ModInfo &info, QWidget 
 {
     QList<MasonryContentCard::ActionSpec> actions;
     ModInfo capturedInfo = info;
+
+    // 收藏星标（tag 供 favoritesChanged 后按属性刷新按钮状态）
+    const bool fav = LocalFavoritesManager::instance()->isFavorite(
+        m_instancePath, QStringLiteral("mods"), capturedInfo.fileName);
+    actions.append({ QStringLiteral(":/Images/Icons/star.svg"),
+                     fav ? tr("取消收藏") : tr("收藏"),
+                     fav ? QColor("#FFB300") : QColor(),
+                     [this, capturedInfo]() { toggleLocalFavorite(capturedInfo); },
+                     LocalCategoryManager::normalizeFileName(capturedInfo.fileName) });
 
     actions.append({ QStringLiteral(":/Images/Icons/list.svg"), tr("查看详情"), QColor(),
                      [this, capturedInfo]() { emit modDetailRequested(capturedInfo); } });
@@ -1011,6 +1034,18 @@ void InstanceModsPage::rebuildCards()
     const QList<ModInfo> infos = m_cardInfos;
     clearCards();
 
+    // clearCards 会一并清掉索引映射；视图切换走这条路时没有别处重建，
+    // 不补上的话切完视图卡片点击/滑动多选会全部失灵
+    m_modIndexMap.clear();
+    m_sha1ToIndex.clear();
+    for (int i = 0; i < m_modList.mods.size(); ++i)
+    {
+        const ModInfo &info = m_modList.mods.at(i);
+        m_modIndexMap.insert(info.id.isEmpty() ? info.fileName : info.id, i);
+        if (!info.sha1Hash.isEmpty())
+            m_sha1ToIndex.insert(info.sha1Hash, i);
+    }
+
     if (m_cardGridLayout) { delete m_cardGridLayout; m_cardGridLayout = nullptr; }
     if (m_cardFlowLayout) { delete m_cardFlowLayout; m_cardFlowLayout = nullptr; }
     if (m_viewMode == ContentViewSwitch::List) {
@@ -1029,30 +1064,12 @@ void InstanceModsPage::rebuildCards()
 
 QWidget *InstanceModsPage::createSelectionOverlay(QWidget *card)
 {
-    QWidget *overlay = new QWidget(card);
-    overlay->setObjectName("cardSelectionOverlay");
-    overlay->setGeometry(card->rect());
-    overlay->setStyleSheet(selectionOverlayStyle());
-    overlay->setAttribute(Qt::WA_TransparentForMouseEvents);
+    // 自绘遮罩：不再用 QGraphicsOpacityEffect（效果控件在滚动区内
+    // 滚一次就不再重绘，选中高亮会整个消失），详见 CardSelectionOverlay
+    CardSelectionOverlay *overlay = new CardSelectionOverlay(card);
     overlay->raise();
-    overlay->hide();
-
-    QGraphicsOpacityEffect *effect = new QGraphicsOpacityEffect(overlay);
-    effect->setOpacity(0.0);
-    overlay->setGraphicsEffect(effect);
-
-    QPropertyAnimation *anim = new QPropertyAnimation(effect, "opacity", this);
-    anim->setDuration(180);
-    anim->setEasingCurve(QEasingCurve::OutCubic);
-    // 淡出结束后隐藏遮罩（overlay 销毁时自动断开，避免悬空指针）
-    connect(anim, &QPropertyAnimation::finished, overlay, [overlay, effect]() {
-        if (effect->opacity() <= 0.01)
-            overlay->hide();
-    });
 
     m_selectionOverlays.append(overlay);
-    m_selectionEffects.append(effect);
-    m_selectionAnims.append(anim);
     return overlay;
 }
 
@@ -1061,24 +1078,7 @@ void InstanceModsPage::animateCardHighlight(int idx, bool selected)
     if (idx < 0 || idx >= m_selectionOverlays.size())
         return;
 
-    QWidget *overlay = m_selectionOverlays[idx];
-    QGraphicsOpacityEffect *effect = m_selectionEffects[idx];
-    QPropertyAnimation *anim = m_selectionAnims[idx];
-
-    anim->stop();
-    anim->setStartValue(effect->opacity());
-    anim->setEndValue(selected ? 1.0 : 0.0);
-    if (selected)
-        overlay->show();
-    anim->start();
-}
-
-QString InstanceModsPage::selectionOverlayStyle() const
-{
-    QColor c = ThemeManager::instance()->currentThemeColor();
-    return QString("#cardSelectionOverlay { background-color: rgba(%1, %2, %3, 40); "
-                   "border: 2px solid %4; border-radius: 6px; }")
-        .arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.name());
+    m_selectionOverlays[idx]->setSelected(selected);
 }
 
 void InstanceModsPage::onToggleMod(const ModInfo &info)
@@ -1149,6 +1149,12 @@ void InstanceModsPage::onModContextMenu(const QPoint &pos)
     QMenu menu(this);
 
     QAction *toggleAction = menu.addAction(enabled ? tr("禁用模组") : tr("启用模组"));
+
+    // 收藏 / 取消收藏（本地收藏，账户页「我的收藏 → 本地收藏」可见）
+    const bool fav = LocalFavoritesManager::instance()->isFavorite(
+        m_instancePath, QStringLiteral("mods"), fileName);
+    QAction *favAction = menu.addAction(fav ? tr("取消收藏") : tr("收藏"));
+
     menu.addSeparator();
 
     // ── 设置分类子菜单 ──
@@ -1208,6 +1214,20 @@ void InstanceModsPage::onModContextMenu(const QPoint &pos)
         info.filePath = filePath;
         info.enabled = enabled;
         onToggleMod(info);
+    }
+    else if (chosen == favAction)
+    {
+        // 优先用列表里的完整数据（展示名/大小更准），找不到再退回文件名
+        ModInfo info;
+        info.filePath = filePath;
+        info.fileName = fileName;
+        if (m_modIndexMap.contains(fileName))
+        {
+            const int idx = m_modIndexMap.value(fileName);
+            if (idx >= 0 && idx < m_modList.mods.size())
+                info = m_modList.mods.at(idx);
+        }
+        toggleLocalFavorite(info);
     }
     else if (chosen == detailAction)
     {
@@ -1608,6 +1628,19 @@ void InstanceModsPage::onSelectAllClicked()
     updateBottomBarState();
 }
 
+void InstanceModsPage::onRelationClicked()
+{
+    if (m_modList.mods.isEmpty())
+    {
+        AppMessageBox::information(this, tr("所属关系"),
+                                   tr("当前实例还没有模组，安装几个模组后再来看它们的前置关系吧。"));
+        return;
+    }
+
+    ModRelationDialog dialog(m_modList.mods, this);
+    dialog.exec();
+}
+
 void InstanceModsPage::onOpenFolderClicked()
 {
     if (m_instancePath.isEmpty())
@@ -1946,12 +1979,8 @@ void InstanceModsPage::clearCards()
     m_dragMoved = false;
     m_dragAnchorIdx = -1;
     m_dragLastHoverIdx = -1;
-    // 遮罩随卡片销毁，动画由本页持有，需显式释放
+    // 遮罩是卡片子控件，随卡片销毁
     m_selectionOverlays.clear();
-    m_selectionEffects.clear();
-    for (QPropertyAnimation *anim : m_selectionAnims)
-        anim->deleteLater();
-    m_selectionAnims.clear();
     updateBottomBarState();
 }
 
@@ -2526,6 +2555,68 @@ void InstanceModsPage::onAssignmentsChanged()
 {
     refreshCardCategoryChips();
     applyFilterAndSearch();
+}
+
+// ── 本地资源收藏 ──────────────────────────────────────────────
+
+LocalFavoriteEntry InstanceModsPage::localFavEntryFor(const ModInfo &info) const
+{
+    LocalFavoriteEntry entry;
+    entry.instancePath = m_instancePath;
+    entry.resourceType = QStringLiteral("mods");
+    entry.fileName = info.fileName;
+    QString displayName = info.chineseName.isEmpty()
+        ? (info.englishName.isEmpty() ? info.name : info.englishName)
+        : info.chineseName;
+    if (displayName.isEmpty())
+        displayName = info.fileName;
+    entry.displayName = displayName;
+    entry.filePath = info.filePath;
+    entry.fileSize = info.fileSize;
+    entry.loaderType = info.loaderType;
+    entry.version = info.latestVersion;
+    entry.description = info.description;
+    return entry;
+}
+
+void InstanceModsPage::toggleLocalFavorite(const ModInfo &info)
+{
+    auto *mgr = LocalFavoritesManager::instance();
+    const bool fav = mgr->isFavorite(m_instancePath, QStringLiteral("mods"), info.fileName);
+    mgr->setFavorite(localFavEntryFor(info), !fav);
+}
+
+void InstanceModsPage::setFavButtonVisual(QPushButton *btn, bool fav)
+{
+    if (!btn)
+        return;
+    if (fav)
+    {
+        btn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/star.svg", QColor("#FFB300"), 18));
+        btn->setToolTip(tr("取消收藏"));
+    }
+    else
+    {
+        btn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/star.svg", ThemeManager::instance()->currentThemeColor(), 18));
+        btn->setToolTip(tr("收藏"));
+    }
+}
+
+void InstanceModsPage::refreshCardFavButtons()
+{
+    auto *mgr = LocalFavoritesManager::instance();
+    for (QWidget *card : m_cardWidgets)
+    {
+        const QList<QPushButton *> btns = card->findChildren<QPushButton *>();
+        for (QPushButton *btn : btns)
+        {
+            const QVariant tag = btn->property("localFavTag");
+            if (!tag.isValid() || tag.toString().isEmpty())
+                continue;
+            setFavButtonVisual(btn, mgr->isFavorite(m_instancePath, QStringLiteral("mods"), tag.toString()));
+        }
+    }
 }
 
 void InstanceModsPage::refreshCardCategoryChips()

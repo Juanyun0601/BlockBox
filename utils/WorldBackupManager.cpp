@@ -128,7 +128,7 @@ WorldBackupManager::WorldBackupManager(QObject *parent)
 
 QString WorldBackupManager::backupsRoot()
 {
-    return Platform::getBackupDirectory() + "/Worlds";
+    return Platform::getDataDirectory() + "/WorldBackups/Worlds";
 }
 
 QString WorldBackupManager::instanceBackupDir(const QString &instancePath)
@@ -327,7 +327,8 @@ bool WorldBackupManager::restoreBackupSync(const QString &instancePath, const QS
 
     // 0) 恢复前先为当前世界创建快照，保证恢复操作可回退
     if (QDir(worldPath).exists()
-            && SettingsManager::instance()->getWorldBackupSnapshotBeforeRestore()) {
+            && SettingsManager::instance()->getProperty(
+               QStringLiteral("worldBackup/snapshotBeforeRestore"), true).toBool()) {
         WorldBackupInfo snapshot;
         QString snapshotError;
         if (!createBackupSync(instancePath, worldName,
@@ -412,7 +413,8 @@ void WorldBackupManager::createBackupAsync(const QString &instancePath, const QS
             return;
         if (ok)
             self->applyRetentionPolicy(instancePath, worldName,
-                                       SettingsManager::instance()->getWorldBackupKeepCount());
+                                       SettingsManager::instance()
+                           ->getProperty(QStringLiteral("worldBackup/keepCount"), 10).toInt());
         // 必须复位忙碌标志:否则第一次备份之后 m_busy 永远为 true,
         // 本会话内所有备份/恢复请求都会被"已有备份任务正在进行"拒绝
         self->m_busy = false;
@@ -466,11 +468,11 @@ bool WorldBackupManager::autoBackupBeforeLaunch(const QString &instancePath,
                                                 const std::function<void(int, const QString &)> &progress)
 {
     SettingsManager *settings = SettingsManager::instance();
-    if (!settings->getWorldBackupAutoEnabled())
+    if (!settings->getProperty(QStringLiteral("worldBackup/autoEnabled"), false).toBool())
         return false;
 
     // 频率门控：0=每次启动 1=每小时 2=每天
-    const int frequency = settings->getWorldBackupFrequency();
+    const int frequency = settings->getProperty(QStringLiteral("worldBackup/frequency"), 0).toInt();
     const QDateTime now = QDateTime::currentDateTime();
     const QDateTime last = lastAutoBackupTime();
     qint64 intervalMs = 0;
@@ -530,7 +532,8 @@ bool WorldBackupManager::autoBackupBeforeLaunch(const QString &instancePath,
 
 void WorldBackupManager::runAutoBackupBatch(const QString &instancePath, const QStringList &worlds)
 {
-    const int keepCount = SettingsManager::instance()->getWorldBackupKeepCount();
+    const int keepCount = SettingsManager::instance()
+                           ->getProperty(QStringLiteral("worldBackup/keepCount"), 10).toInt();
     int backed = 0;
     int failed = 0;
     for (int i = 0; i < worlds.size(); ++i) {

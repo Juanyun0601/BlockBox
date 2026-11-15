@@ -106,6 +106,85 @@ int main(int argc, char *argv[])
     check(ServersDatIO::read(tmp.filePath(QStringLiteral("bad.dat"))).isEmpty(),
           "read bad file empty");
 
+    // ── 未压缩 NBT（旧版本 / 第三方工具可能这么写）──
+    {
+        QByteArray raw;
+        auto putByte = [&raw](quint8 v) { raw.append(static_cast<char>(v)); };
+        auto putStr = [&raw, &putByte](const QByteArray &s) {
+            putByte(static_cast<quint8>((s.size() >> 8) & 0xFF));
+            putByte(static_cast<quint8>(s.size() & 0xFF));
+            raw.append(s);
+        };
+        putByte(0x0A);                       // root: Compound
+        putStr(QByteArray());                // 根标签无名字
+        putByte(0x09);                       // servers: List
+        putStr("servers");
+        putByte(0x0A);                       // 元素类型 Compound
+        putByte(0x00); putByte(0x00); putByte(0x00); putByte(0x01);   // 1 项
+        putByte(0x08); putStr("name"); putStr("裸NBT服");
+        putByte(0x08); putStr("ip"); putStr("plain.example.com:25566");
+        putByte(0x00);                       // 元素 Compound 结束
+        putByte(0x00);                       // 根 Compound 结束
+
+        const QString plainPath = tmp.filePath(QStringLiteral("plain.dat"));
+        QFile plain(plainPath);
+        plain.open(QIODevice::WriteOnly);
+        plain.write(raw);
+        plain.close();
+
+        const QList<ServersDatIO::Entry> plainEntries = ServersDatIO::read(plainPath);
+        check(plainEntries.size() == 1, "read uncompressed nbt count");
+        check(plainEntries.size() == 1
+                  && plainEntries[0].host == QStringLiteral("plain.example.com")
+                  && plainEntries[0].port == 25566
+                  && plainEntries[0].name == QStringLiteral("裸NBT服"),
+              "read uncompressed nbt content");
+    }
+
+    // ── 扫描位置：版本目录 + 共享 .minecraft 目录 ──
+    {
+        const QString mcRoot = tmp.filePath(QStringLiteral("mc"));
+        const QString versionDir = mcRoot + QStringLiteral("/versions/1.20.1");
+        QDir().mkpath(versionDir);
+
+        const QStringList candidates = ServersDatIO::candidatePaths(versionDir);
+        check(candidates.size() == 2, "candidate paths count");
+        check(candidates.size() == 2
+                  && QDir::cleanPath(candidates[0])
+                         == QDir::cleanPath(versionDir + QStringLiteral("/servers.dat"))
+                  && QDir::cleanPath(candidates[1])
+                         == QDir::cleanPath(mcRoot + QStringLiteral("/servers.dat")),
+              "candidate paths cover version + shared dir");
+
+        // 只有共享目录有 servers.dat（关闭版本隔离的游戏写在这里）
+        check(ServersDatIO::existingPath(candidates).isEmpty(),
+              "existing path empty when no file");
+
+        const QString sharedDat = mcRoot + QStringLiteral("/servers.dat");
+        ServersDatIO::Entry sharedEntry;
+        sharedEntry.name = QStringLiteral("共享目录服");
+        sharedEntry.host = QStringLiteral("shared.example.com");
+        sharedEntry.port = 25565;
+        check(ServersDatIO::upsert(sharedDat, sharedEntry), "upsert shared dat");
+
+        check(QDir::cleanPath(ServersDatIO::existingPath(candidates))
+                  == QDir::cleanPath(sharedDat),
+              "existing path picks shared dat");
+
+        // 版本目录也有一份时读两处都能拿到各自内容
+        const QString versionDat = versionDir + QStringLiteral("/servers.dat");
+        ServersDatIO::Entry versionEntry;
+        versionEntry.name = QStringLiteral("版本目录服");
+        versionEntry.host = QStringLiteral("version.example.com");
+        versionEntry.port = 25565;
+        check(ServersDatIO::upsert(versionDat, versionEntry), "upsert version dat");
+
+        int totalFromBoth = 0;
+        for (const QString &path : candidates)
+            totalFromBoth += ServersDatIO::read(path).size();
+        check(totalFromBoth == 2, "read merges both candidate dirs");
+    }
+
     QTextStream(stdout) << "\n==== result: " << g_pass << " passed, " << g_fail
                          << " failed ====\n";
     return g_fail == 0 ? 0 : 1;

@@ -12,6 +12,7 @@
 
 #include <QDateTime>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -19,7 +20,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-class QDialog;
+class QFrame;
 class GravityConeClient;
 
 class BedrockMultiplayerPage : public QWidget
@@ -41,8 +42,15 @@ private:
     void refreshStatusBar();     ///< 刷新联机状态/时长/地址
     void refreshInstallStatus(); ///< 刷新安装/下载状态
 
-    /// 弹出对话框提示（非左下卡片）
-    void showInfoDialog(const QString &title, const QString &text);
+    /// 进房间时报的玩家名：优先用当前登录账户的昵称，没登录才退回通用名字
+    QString localPlayerName() const;
+
+    // ---- 加入房间（邀请码就地输入，不弹窗） ----
+    void showJoinCard();    ///< 展开邀请码输入卡，焦点落到输入框
+    void hideJoinCard();    ///< 收起邀请码输入卡
+    void submitJoinCode();  ///< 校验邀请码并加入房间，出错就地提示
+    /// 输入卡里的说明 / 错误文案（空文本回到默认说明）
+    void setJoinHintText(const QString &text, bool error = false);
 
 private:
     GravityConeClient *m_client;
@@ -57,9 +65,17 @@ private:
     QWidget *m_homePage;
     QLabel *m_statusDot;          ///< 状态条小圆点
     QLabel *m_statusLabel;        ///< 顶部状态文字
+    QLabel *m_progressHint;       ///< 核心推送的建房/进房进度（就地显示，平时隐藏）
     QLabel *m_descLabel;          ///< 说明信息文字
-    QPushButton *m_joinBtn;       ///< 加入房间
+    QPushButton *m_joinBtn;       ///< 加入房间（展开邀请码输入卡）
     QPushButton *m_createBtn;     ///< 创建房间
+
+    // ---- 加入房间输入卡（就地输入邀请码，不弹窗） ----
+    QFrame *m_joinCard;           ///< 输入卡整块
+    QLineEdit *m_joinCodeEdit;    ///< 邀请码输入框
+    QLabel *m_joinHint;           ///< 卡片里的说明 / 错误提示
+    QPushButton *m_joinConfirmBtn;///< 卡片里的「加入」
+    QPushButton *m_joinCancelBtn; ///< 卡片里的「取消」
 
     // ---- 房间页控件 ----
     QWidget *m_roomPage;
@@ -76,8 +92,4 @@ private:
     QVBoxLayout *m_playersLayout;
 
     QDateTime m_roomEnterTime;    ///< 进入房间时间
-
-    // ---- 加入/创建进度弹窗（复用单一窗口，进度刷新只更新文字） ----
-    QDialog *m_progressDialog = nullptr;
-    QLabel *m_progressLabel = nullptr;
 };

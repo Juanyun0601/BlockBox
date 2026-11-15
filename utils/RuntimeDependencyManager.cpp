@@ -25,6 +25,7 @@
 #include <QUrl>
 
 #include "components/AppMessageBox.h"
+#include "platform.h"
 #include "utils/DownloadTaskManager.h"
 #include "utils/GithubAccelerator.h"
 #include "utils/RuntimeArchive.h"
@@ -213,10 +214,17 @@ QString RuntimeDependencyManager::manifestUrl()
 
 QString RuntimeDependencyManager::installRoot()
 {
+#ifdef Q_OS_ANDROID
+    // 安卓：与其他数据目录共用同一个根（外部存储不可写时统一退回应用内部目录）。
+    // 此前无条件用 GenericDataLocation，一旦外部目录不可写，Java 会装到与其他
+    // 数据（实例/配置）不同的位置上
+    return Platform::getDataDirectory();
+#else
     QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
     if (base.isEmpty())
         base = QDir::homePath();
     return base + QStringLiteral("/BlockBox");
+#endif
 }
 
 QString RuntimeDependencyManager::installDirFor(const RuntimeDependency &dependency)

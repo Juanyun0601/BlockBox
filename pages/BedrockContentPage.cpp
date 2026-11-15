@@ -14,6 +14,7 @@
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
+#include "utils/bedrock/BedrockInstanceManager.h"
 #include "utils/mod/CurseForgeAPI.h"
 #include "utils/mod/ModData.h"
 #include "utils/mod/SearchQueryResolver.h"
@@ -136,6 +137,17 @@ void BedrockContentPage::initUI()
     srcValue->setObjectName("filterLabel");
     filterLayout->addWidget(srcLabel);
     filterLayout->addWidget(srcValue);
+
+    // 下载目标实例：资源装进哪个基岩版实例（默认跟随当前激活实例）
+    QLabel *instLabel = new QLabel(tr("下载到实例:"));
+    instLabel->setObjectName("filterLabel");
+    m_instanceCombo = createCombo();
+    m_instanceCombo->setObjectName("filterCombo");
+    repopulateInstanceCombo();
+    filterLayout->addWidget(instLabel);
+    filterLayout->addWidget(m_instanceCombo);
+    connect(m_instanceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &BedrockContentPage::onInstanceChanged);
 
     QLabel *catLabel = new QLabel(tr("分类:"));
     catLabel->setObjectName("filterLabel");
@@ -899,6 +911,47 @@ bool BedrockContentPage::eventFilter(QObject *watched, QEvent *event)
         }
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void BedrockContentPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // 实例可能在上次进页后新建/删除，进页面时重读一遍
+    repopulateInstanceCombo();
+}
+
+QString BedrockContentPage::selectedTargetInstanceId() const
+{
+    return m_instanceCombo ? m_instanceCombo->currentData().toString() : QString();
+}
+
+void BedrockContentPage::onInstanceChanged(int index)
+{
+    Q_UNUSED(index);
+    emit targetInstanceChanged(m_instanceCombo ? m_instanceCombo->currentData().toString()
+                                               : QString());
+}
+
+void BedrockContentPage::repopulateInstanceCombo()
+{
+    if (!m_instanceCombo)
+        return;
+    BedrockInstanceManager *mgr = BedrockInstanceManager::instance();
+    mgr->ensureInitialized();
+    const QString prevId = m_instanceCombo->currentData().toString();
+
+    QSignalBlocker blocker(m_instanceCombo);
+    m_instanceCombo->clear();
+    m_instanceCombo->addItem(tr("当前实例"), QString());
+    const QVector<BedrockInstance> instances = mgr->instances();
+    for (const BedrockInstance &inst : instances) {
+        if (inst.id.isEmpty())
+            continue;
+        m_instanceCombo->addItem(inst.name, inst.id);
+    }
+    const int back = m_instanceCombo->findData(prevId);
+    if (back >= 0)
+        m_instanceCombo->setCurrentIndex(back);
 }
 
 void BedrockContentPage::placeCards()

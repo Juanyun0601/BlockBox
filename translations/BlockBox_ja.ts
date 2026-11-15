@@ -405,279 +405,279 @@
     </message>
 </context>
 <context>
-    <name>AddAccountDialog</name>
+    <name>AddAccountPage</name>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="88"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="118"/>
+        <location filename="../pages/AddAccountPage.cpp" line="88"/>
+        <location filename="../pages/AddAccountPage.cpp" line="118"/>
         <source>添加角色</source>
         <translation>アカウントを追加</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="123"/>
+        <location filename="../pages/AddAccountPage.cpp" line="123"/>
         <source>选择一种登录方式，把新账户加入方块盒子</source>
         <translation>ログイン方法を選んで、新しいアカウントをBlockBoxに追加します</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="137"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="329"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="638"/>
+        <location filename="../pages/AddAccountPage.cpp" line="137"/>
+        <location filename="../pages/AddAccountPage.cpp" line="329"/>
+        <location filename="../pages/AddAccountPage.cpp" line="638"/>
         <source>离线</source>
         <translation>オフライン</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="137"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="639"/>
+        <location filename="../pages/AddAccountPage.cpp" line="137"/>
+        <location filename="../pages/AddAccountPage.cpp" line="639"/>
         <source>微软正版</source>
         <translation>Microsoft アカウント</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="137"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="640"/>
+        <location filename="../pages/AddAccountPage.cpp" line="137"/>
+        <location filename="../pages/AddAccountPage.cpp" line="640"/>
         <source>第三方</source>
         <translation>サードパーティ</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="180"/>
+        <location filename="../pages/AddAccountPage.cpp" line="180"/>
         <source>微软正版登录</source>
         <translation>Microsoft アカウントでログイン</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="186"/>
+        <location filename="../pages/AddAccountPage.cpp" line="186"/>
         <source>跳转浏览器完成授权，登录后自动同步正版皮肤、成就与联机身份。</source>
         <translation>ブラウザに移動して認証を完了します。ログイン後はスキン、実績、マルチプレイ用のIDが自動的に同期されます。</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="195"/>
+        <location filename="../pages/AddAccountPage.cpp" line="195"/>
         <source>正版联机</source>
         <translation>正規マルチプレイ</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="195"/>
+        <location filename="../pages/AddAccountPage.cpp" line="195"/>
         <source>皮肤同步</source>
         <translation>スキン同期</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="195"/>
+        <location filename="../pages/AddAccountPage.cpp" line="195"/>
         <source>成就同步</source>
         <translation>実績同期</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="215"/>
+        <location filename="../pages/AddAccountPage.cpp" line="215"/>
         <source></source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="222"/>
+        <location filename="../pages/AddAccountPage.cpp" line="222"/>
         <source>使用 Microsoft 账户登录</source>
         <translation>Microsoft アカウントでログイン</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="231"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="629"/>
+        <location filename="../pages/AddAccountPage.cpp" line="231"/>
+        <location filename="../pages/AddAccountPage.cpp" line="629"/>
         <source>登录中...</source>
         <translation>ログイン中...</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="234"/>
+        <location filename="../pages/AddAccountPage.cpp" line="234"/>
         <source>正在启动登录流程...</source>
         <translation>ログイン処理を開始しています...</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="243"/>
+        <location filename="../pages/AddAccountPage.cpp" line="243"/>
         <source>登录成功！</source>
         <translation>ログインしました！</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="257"/>
+        <location filename="../pages/AddAccountPage.cpp" line="257"/>
         <source>保存失败</source>
         <translation>保存に失敗しました</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="258"/>
+        <location filename="../pages/AddAccountPage.cpp" line="258"/>
         <source>Microsoft 账户已登录成功，但账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限。</source>
         <translation>Microsoft アカウントにはログインできましたが、アカウント情報をディスクに保存できませんでした。ランチャーのフォルダーに書き込み権限があるか確認してください。</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="263"/>
+        <location filename="../pages/AddAccountPage.cpp" line="263"/>
         <source>Microsoft账户登录成功：%1</source>
         <translation>Microsoft アカウントでログインしました：%1</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="273"/>
+        <location filename="../pages/AddAccountPage.cpp" line="273"/>
         <source>登录失败</source>
         <translation>ログインに失敗しました</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="281"/>
+        <location filename="../pages/AddAccountPage.cpp" line="281"/>
         <source>登录已取消</source>
         <translation>ログインはキャンセルされました</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="297"/>
+        <location filename="../pages/AddAccountPage.cpp" line="297"/>
         <source>输入游戏内显示的名称，例如 Steve</source>
         <translation>ゲーム内に表示される名前を入力（例：Steve）</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="300"/>
+        <location filename="../pages/AddAccountPage.cpp" line="300"/>
         <source>玩家名</source>
         <translation>プレイヤー名</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="303"/>
+        <location filename="../pages/AddAccountPage.cpp" line="303"/>
         <source>离线账户无需联网验证，适合单机与局域网游戏；无法使用正版服务器、皮肤同步与成就。</source>
         <translation>オフラインアカウントはネット接続なしで使え、シングルプレイやLANプレイに向いています。正規サーバー、スキン同期、実績は使用できません。</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="307"/>
+        <location filename="../pages/AddAccountPage.cpp" line="307"/>
         <source>创建离线账户</source>
         <translation>オフラインアカウントを作成</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="317"/>
+        <location filename="../pages/AddAccountPage.cpp" line="317"/>
         <source>用户名不能为空</source>
         <translation>ユーザー名を入力してください</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="323"/>
+        <location filename="../pages/AddAccountPage.cpp" line="323"/>
         <source>该用户名已存在</source>
         <translation>そのユーザー名はすでに存在します</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="335"/>
+        <location filename="../pages/AddAccountPage.cpp" line="335"/>
         <source>离线账户创建失败：账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限</source>
         <translation>オフラインアカウントの作成に失敗しました：アカウント情報をディスクに保存できません。ランチャーのフォルダーに書き込み権限があるか確認してください</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="339"/>
+        <location filename="../pages/AddAccountPage.cpp" line="339"/>
         <source>离线账户创建成功</source>
         <translation>オフラインアカウントを作成しました</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="359"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="415"/>
+        <location filename="../pages/AddAccountPage.cpp" line="359"/>
+        <location filename="../pages/AddAccountPage.cpp" line="415"/>
         <source>添加自定义服务器</source>
         <translation>カスタムサーバーを追加</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="364"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="404"/>
+        <location filename="../pages/AddAccountPage.cpp" line="364"/>
+        <location filename="../pages/AddAccountPage.cpp" line="404"/>
         <source>未检测</source>
         <translation>未確認</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="372"/>
+        <location filename="../pages/AddAccountPage.cpp" line="372"/>
         <source>认证服务器</source>
         <translation>認証サーバー</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="376"/>
+        <location filename="../pages/AddAccountPage.cpp" line="376"/>
         <source>认证服务器上的账户名或邮箱</source>
         <translation>認証サーバー上のアカウント名またはメールアドレス</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="379"/>
+        <location filename="../pages/AddAccountPage.cpp" line="379"/>
         <source>用户名</source>
         <translation>ユーザー名</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="384"/>
+        <location filename="../pages/AddAccountPage.cpp" line="384"/>
         <source>输入密码</source>
         <translation>パスワードを入力</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="386"/>
+        <location filename="../pages/AddAccountPage.cpp" line="386"/>
         <source>密码</source>
         <translation>パスワード</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="389"/>
+        <location filename="../pages/AddAccountPage.cpp" line="389"/>
         <source>支持 LittleSkin 等 Yggdrasil 兼容认证服务器；账号密码仅发送至所选服务器。</source>
         <translation>LittleSkin など Yggdrasil 互換の認証サーバーに対応しています。アカウントとパスワードは選択したサーバーにのみ送信されます。</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="393"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="547"/>
-        <location filename="../pages/AddAccountDialog.cpp" line="607"/>
+        <location filename="../pages/AddAccountPage.cpp" line="393"/>
+        <location filename="../pages/AddAccountPage.cpp" line="547"/>
+        <location filename="../pages/AddAccountPage.cpp" line="607"/>
         <source>登录</source>
         <translation>ログイン</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="407"/>
+        <location filename="../pages/AddAccountPage.cpp" line="407"/>
         <source>检测中...</source>
         <translation>確認中...</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="420"/>
+        <location filename="../pages/AddAccountPage.cpp" line="420"/>
         <source>服务器名称：</source>
         <translation>サーバー名：</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="422"/>
+        <location filename="../pages/AddAccountPage.cpp" line="422"/>
         <source>例如 我的皮肤站</source>
         <translation>例：マイスキンサイト</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="425"/>
+        <location filename="../pages/AddAccountPage.cpp" line="425"/>
         <source>服务器地址：</source>
         <translation>サーバーアドレス：</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="431"/>
+        <location filename="../pages/AddAccountPage.cpp" line="431"/>
         <source>填 Yggdrasil API 根地址（authlib-injector 里那个地址）；只填域名会自动补成 /api/yggdrasil/。</source>
         <translation>Yggdrasil API のルートアドレス（authlib-injector で指定するアドレス）を入力します。ドメイン名だけの場合は自動で /api/yggdrasil/ が補われます。</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="437"/>
+        <location filename="../pages/AddAccountPage.cpp" line="437"/>
         <source>取消</source>
         <translation>キャンセル</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="439"/>
+        <location filename="../pages/AddAccountPage.cpp" line="439"/>
         <source>确定</source>
         <translation>OK</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="456"/>
+        <location filename="../pages/AddAccountPage.cpp" line="456"/>
         <source>服务器地址无效，请填写形如 https://littleskin.cn/api/yggdrasil/ 的地址</source>
         <translation>サーバーアドレスが無効です。https://littleskin.cn/api/yggdrasil/ のような形式で入力してください</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="529"/>
+        <location filename="../pages/AddAccountPage.cpp" line="529"/>
         <source>在线</source>
         <translation>オンライン</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="531"/>
+        <location filename="../pages/AddAccountPage.cpp" line="531"/>
         <source>无法连接</source>
         <translation>接続できません</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="572"/>
+        <location filename="../pages/AddAccountPage.cpp" line="572"/>
         <source>账户列表里已经有叫 %1 的账户了，请先删掉再添加</source>
         <translation>アカウント一覧に %1 というアカウントがすでにあります。先に削除してから追加してください</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="590"/>
+        <location filename="../pages/AddAccountPage.cpp" line="590"/>
         <source>第三方账户登录成功，但账户信息没能保存到磁盘，请检查启动器所在文件夹的写入权限</source>
         <translation>サードパーティアカウントでログインしましたが、アカウント情報をディスクに保存できませんでした。ランチャーのフォルダーに書き込み権限があるか確認してください</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="597"/>
+        <location filename="../pages/AddAccountPage.cpp" line="597"/>
         <source>第三方账户登录成功：%1</source>
         <translation>サードパーティアカウントでログインしました：%1</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="620"/>
+        <location filename="../pages/AddAccountPage.cpp" line="620"/>
         <source>用户名和密码不能为空</source>
         <translation>ユーザー名とパスワードを入力してください</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="625"/>
+        <location filename="../pages/AddAccountPage.cpp" line="625"/>
         <source>请先选择或添加一个认证服务器</source>
         <translation>先に認証サーバーを選択または追加してください</translation>
     </message>
     <message>
-        <location filename="../pages/AddAccountDialog.cpp" line="631"/>
+        <location filename="../pages/AddAccountPage.cpp" line="631"/>
         <source>正在向 %1 验证账号</source>
         <translation>%1 でアカウントを認証しています</translation>
     </message>
@@ -7575,9 +7575,44 @@
         <translation>ログ（任意）</translation>
     </message>
     <message>
-        <location filename="../pages/FeedbackComposePage.cpp" line="222"/>
-        <source>在「设置 → 高级设置 → 运行日志」里点「导出日志」；很长时贴最后几十行就可以。</source>
-        <translation>「設定 → 詳細設定 → 実行ログ」で「ログを書き出す」を押します。長い場合は最後の数十行だけでも構いません。</translation>
+        <location filename="../pages/FeedbackComposePage.cpp" line="245"/>
+        <source>一键上传日志</source>
+        <translation>ログをアップロード</translation>
+    </message>
+    <message>
+        <location filename="../pages/FeedbackComposePage.cpp" line="254"/>
+        <source>点「一键上传日志」自动附上完整运行日志；也可以手动粘贴报错内容，很长时贴最后几十行。</source>
+        <translation>「ログをアップロード」を押すと完全な実行ログを自動で添付できます。エラー内容を手動で貼り付けてもOKです（長い場合は最後の数十行で十分です）。</translation>
+    </message>
+    <message>
+        <location filename="../pages/FeedbackComposePage.cpp" line="341"/>
+        <source>还没有可上传的运行日志：可能已在「设置 → 高级设置」里关闭了日志记录</source>
+        <translation>アップロードできる実行ログがまだありません：「設定 → 詳細設定」でログ記録を無効にしている可能性があります</translation>
+    </message>
+    <message>
+        <location filename="../pages/FeedbackComposePage.cpp" line="354"/>
+        <source>日志导出失败：%1</source>
+        <translation>ログのエクスポートに失敗しました：%1</translation>
+    </message>
+    <message>
+        <location filename="../pages/FeedbackComposePage.cpp" line="359"/>
+        <source>正在上传日志…</source>
+        <translation>ログをアップロード中…</translation>
+    </message>
+    <message>
+        <location filename="../pages/FeedbackComposePage.cpp" line="367"/>
+        <source>运行日志已上传（%1）：%2</source>
+        <translation>実行ログをアップロードしました（%1）：%2</translation>
+    </message>
+    <message>
+        <location filename="../pages/FeedbackComposePage.cpp" line="372"/>
+        <source>日志已上传，链接已填进日志栏</source>
+        <translation>ログをアップロードしました。リンクをログ欄に入力済みです</translation>
+    </message>
+    <message>
+        <location filename="../pages/FeedbackComposePage.cpp" line="378"/>
+        <source>日志上传失败：%1</source>
+        <translation>ログのアップロードに失敗しました：%1</translation>
     </message>
     <message>
         <location filename="../pages/FeedbackComposePage.cpp" line="226"/>
@@ -7673,6 +7708,20 @@
         <location filename="../pages/FeedbackComposePage.cpp" line="382"/>
         <source>反馈已提交，感谢你的反馈！处理进度会在反馈列表里更新。</source>
         <translation>フィードバックを送信しました。ありがとうございます！対応状況はフィードバック一覧で更新されます。</translation>
+    </message>
+</context>
+<context>
+    <name>FeedbackService</name>
+    <message>
+        <location filename="../utils/FeedbackService.cpp" line="97"/>
+        <source>打不开日志文件，请稍后再试</source>
+        <translation>ログファイルを開けません。しばらくしてからもう一度お試しください</translation>
+    </message>
+    <message>
+        <location filename="../utils/FeedbackService.cpp" line="137"/>
+        <location filename="../utils/FeedbackService.cpp" line="147"/>
+        <source>日志上传失败，请稍后再试</source>
+        <translation>ログのアップロードに失敗しました。しばらくしてからもう一度お試しください</translation>
     </message>
 </context>
 <context>
