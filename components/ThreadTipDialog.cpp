@@ -266,7 +266,7 @@ void ThreadTipDialog::initUI()
     connect(m_confirmButton, &QPushButton::clicked, this, &ThreadTipDialog::confirmTip);
     cardLayout->addWidget(m_confirmButton);
 
-    auto *note = new QLabel(tr("打赏不会转给作者，但会提升这个帖子的推流"), m_card);
+    auto *note = new QLabel(tr("方块会转给作者，同时提升这个帖子的推流"), m_card);
     note->setObjectName(QStringLiteral("tipNote"));
     note->setWordWrap(true);
     note->setAlignment(Qt::AlignCenter);

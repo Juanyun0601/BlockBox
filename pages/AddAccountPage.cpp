@@ -428,7 +428,8 @@ void AddAccountPage::buildUi()
         buildLoginField(tr("密码"), m_thirdPartyPasswordEdit, thirdPartyTab));
 
     thirdPartyLayout->addWidget(buildLoginHint(
-        tr("支持 LittleSkin 等 Yggdrasil 兼容认证服务器；账号密码仅发送至所选服务器。"),
+        tr("支持方块皮肤站、LittleSkin 等 Yggdrasil 兼容认证服务器；账号密码仅发送至所选服务器。"
+           "登录后启动游戏会自动注入外置登录组件，游戏内可正常识别身份和皮肤。"),
         thirdPartyTab));
 
     thirdPartyLayout->addStretch();

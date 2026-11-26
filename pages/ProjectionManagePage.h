@@ -33,6 +33,9 @@ public:
 
     void setInstancePath(const QString &path);
 
+    /** 重新扫描 schematics 目录并重排卡片（投影下载完成 / 顶栏刷新时调用） */
+    Q_INVOKABLE void refresh();
+
     /** 子导航搜索框分发：同步到页内搜索框（复用既有过滤管线） */
     Q_INVOKABLE void applyPageFilter(const QString &query);
 

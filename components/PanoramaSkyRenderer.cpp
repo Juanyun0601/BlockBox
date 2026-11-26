@@ -175,12 +175,13 @@ QString PanoramaSkyRenderer::defaultSceneName()
     return QStringLiteral("overworld");
 }
 
-void PanoramaSkyRenderer::setScene(const QString &name)
+void PanoramaSkyRenderer::setScene(const QString &name, const QString &dir)
 {
     // 场景没变且已经成功生成过环带，不必重做（重复调用很常见）
-    if (m_scene == name && m_equirectRaw.isNull() && !m_band.isNull())
+    if (m_scene == name && m_sceneDir == dir && m_equirectRaw.isNull() && !m_band.isNull())
         return;
     m_scene = name;
+    m_sceneDir = dir;
     m_equirectRaw = QImage();
     reloadSource();
 }
@@ -253,9 +254,18 @@ void PanoramaSkyRenderer::ensureBand()
         if (!m_scene.isEmpty()) {
             raw.reserve(6);
             for (int face = 0; face < 6; ++face) {
-                const QString path = QStringLiteral(":/Images/Panorama/%1/panorama_%2.jpg")
-                                         .arg(m_scene, QString::number(kSceneFaceTiles[face]));
+                const QString fileName = QStringLiteral("panorama_%1.jpg")
+                                             .arg(QString::number(kSceneFaceTiles[face]));
+                const QString qrcPath =
+                    QStringLiteral(":/Images/Panorama/%1/%2").arg(m_scene, fileName);
+                // 正式版的场景图按需下载到本机目录；目录为空时回退资源内素材（开发探针）
+                QString path = qrcPath;
+                if (!m_sceneDir.isEmpty())
+                    path = m_sceneDir + QLatin1Char('/') + fileName;
+
                 QImage tile(path);
+                if (tile.isNull() && path != qrcPath)
+                    tile.load(qrcPath);
                 if (tile.isNull()) {
                     raw.clear();  // 任一面缺失则整组放弃
                     break;
@@ -264,7 +274,15 @@ void PanoramaSkyRenderer::ensureBand()
             }
             if (raw.isEmpty() && m_equirectRaw.isNull()) {
                 // 单图场景：目录里只有一张 2:1 等距全景图（如实景素材）
-                QImage eq(QStringLiteral(":/Images/Panorama/%1/equirect.jpg").arg(m_scene));
+                const QString qrcEquirect =
+                    QStringLiteral(":/Images/Panorama/%1/equirect.jpg").arg(m_scene);
+                QString equirectPath = qrcEquirect;
+                if (!m_sceneDir.isEmpty())
+                    equirectPath = m_sceneDir + QStringLiteral("/equirect.jpg");
+
+                QImage eq(equirectPath);
+                if (eq.isNull() && equirectPath != qrcEquirect)
+                    eq.load(qrcEquirect);
                 if (!eq.isNull())
                     m_equirectRaw = eq;
             }
@@ -286,8 +304,9 @@ void PanoramaSkyRenderer::ensureBand()
         if (!m_faces.isEmpty() || !m_equirectRaw.isNull())
             break;
 
-        // 场景名失效（旧版本残留或资源缺失）：回退到默认场景，避免没有任何素材
-        if (m_scene.isEmpty() || m_scene == defaultSceneName())
+        // 场景名失效（旧版本残留或资源缺失）：回退到默认场景，避免没有任何素材。
+        // 按需下载的本地目录已经绑定了具体主题，不能改个名字再拿同一个目录去读。
+        if (m_scene.isEmpty() || m_scene == defaultSceneName() || !m_sceneDir.isEmpty())
             break;
         m_scene = defaultSceneName();
     }

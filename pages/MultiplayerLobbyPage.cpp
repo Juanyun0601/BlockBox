@@ -19,7 +19,6 @@
 #include "pages/MultiplayerLobbyDetailPage.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ForumImageStore.h"
-#include "utils/Hongshi/HongshiLobbyClient.h"
 #include "utils/IconHelper.h"
 #include "utils/Lobby/LobbyInstanceMatcher.h"
 #include "utils/StyleKit.h"
@@ -44,7 +43,6 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollArea>
-#include <QSettings>
 #include <QShowEvent>
 #include <QStyle>
 #include <QTimer>
@@ -53,14 +51,6 @@
 
 namespace
 {
-/** 房间来源下拉的取值，与 QSettings 里记住的顺序一致 */
-enum LobbySource
-{
-    SourceAll = 0,       ///< 全部源
-    SourceBlockBox = 1,  ///< 方块盒子源（论坛大厅）
-    SourceHongshi = 2    ///< 红石联机源（红石联机大厅）
-};
-
 QString elide(const QString &text, int maxChars)
 {
     if (text.size() <= maxChars)
@@ -302,58 +292,6 @@ private:
     QWidget *m_chips = nullptr;
     QWidget *m_mine = nullptr;
 };
-
-/** 红石联机源的房间要不要留在本轮列表里（核心 / 关键词筛选与论坛源同口径） */
-bool hongshiRoomMatches(const HongshiRoomInfo &info, const QString &keyword, const QString &core)
-{
-    if (!core.isEmpty() && core != QLatin1String("hongshi"))
-        return false;
-    if (keyword.isEmpty())
-        return true;
-    return info.roomName.contains(keyword, Qt::CaseInsensitive)
-           || info.hostName.contains(keyword, Qt::CaseInsensitive)
-           || info.gameVersion.contains(keyword, Qt::CaseInsensitive)
-           || info.loaderType.contains(keyword, Qt::CaseInsensitive);
-}
-
-/** 红石联机源的房间 → 大厅通用的房间结构（缺的字段都给默认值，不崩） */
-ForumLobbyRoom hongshiToLobbyRoom(const HongshiRoomInfo &info)
-{
-    ForumLobbyRoom room;
-    room.source = QStringLiteral("hongshi");
-    // 红石房间没有论坛数字 id：用 roomId 的哈希取负数，永远不会和论坛房间撞上，
-    // 详情页看到负 id 也知道别去论坛拉评论
-    const uint hash = qHash(info.roomId);
-    int id = -static_cast<int>(hash & 0x7FFFFFFFu);
-    if (id == 0)
-        id = -1;
-    room.id = id;
-
-    room.title = info.roomName.trimmed();
-    room.core = QStringLiteral("hongshi");
-    room.coreLabel = QObject::tr("红石联机");
-    room.address = info.tunnelAddress.trimmed();
-    room.gameVersion = info.gameVersion.trimmed();
-    room.loader = info.loaderType.trimmed();
-    room.maxPlayers = info.maxPlayers > 0 ? info.maxPlayers : 8;
-    room.status = info.status.isEmpty() ? QStringLiteral("waiting") : info.status;
-    room.createdAt = info.createdAt;
-    room.expiresIn = 3600; // 红石源的房间拉到就是活的，按「可加入」展示
-    room.mine = false;
-
-    room.host.username = info.hostName.trimmed();
-    room.host.displayName = info.hostName.trimmed();
-    // 红石源只给人数没有名单：把房主摆出来，详情页的「正在游玩」不至于全空
-    if (!room.host.username.isEmpty())
-    {
-        ForumLobbyPlayer host;
-        host.username = room.host.username;
-        host.displayName = room.host.username;
-        host.isHost = true;
-        room.players.append(host);
-    }
-    return room;
-}
 } // namespace
 
 MultiplayerLobbyPage::MultiplayerLobbyPage(QWidget *parent)
@@ -366,12 +304,6 @@ MultiplayerLobbyPage::MultiplayerLobbyPage(QWidget *parent)
     m_viewMode = static_cast<int>(ContentViewSwitch::loadPersisted(
         QStringLiteral("multiplayer_lobby"), ContentViewSwitch::Masonry));
 
-    // 来源偏好也记住：0 全部源 / 1 方块盒子源 / 2 红石联机源
-    {
-        QSettings settings;
-        m_source = qBound(0, settings.value(QStringLiteral("bb_lobby_source"), 0).toInt(), 2);
-    }
-
     buildUi();
 
     connect(ThemeManager::instance(), &ThemeManager::themeColorChanged,
@@ -379,31 +311,6 @@ MultiplayerLobbyPage::MultiplayerLobbyPage(QWidget *parent)
     // 亮 / 暗主题互切时只发 themeChanged，内联样式里的文字与边框色要跟着重算
     connect(ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this](ThemeManager::ThemeType) { applyStyle(); });
-
-    // 红石联机源：大厅需要时拉一次，结果回来后与论坛源聚合成一份列表
-    connect(HongshiLobbyClient::instance(), &HongshiLobbyClient::roomsRefreshed, this,
-            [this](const QList<HongshiRoomInfo> &rooms) {
-                if (!m_hongshiPending)
-                    return;
-                m_hongshiPending = false;
-                m_hongshiRooms.clear();
-                const QString keyword = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
-                const QString core = m_coreCombo ? m_coreCombo->currentData().toString() : QString();
-                for (const HongshiRoomInfo &info : rooms)
-                {
-                    if (hongshiRoomMatches(info, keyword, core))
-                        m_hongshiRooms.append(hongshiToLobbyRoom(info));
-                }
-                onSourceFetchSettled();
-            });
-    connect(HongshiLobbyClient::instance(), &HongshiLobbyClient::refreshError, this,
-            [this](const QString &error) {
-                if (!m_hongshiPending)
-                    return;
-                m_hongshiPending = false;
-                m_hongshiError = error;
-                onSourceFetchSettled();
-            });
 
     m_refreshTimer = new QTimer(this);
     m_refreshTimer->setInterval(30000);
@@ -494,29 +401,6 @@ void MultiplayerLobbyPage::buildUi()
     auto *filterRow = new QHBoxLayout(filterBar);
     filterRow->setContentsMargins(12, 10, 14, 10);
     filterRow->setSpacing(10);
-
-    // ---- 来源：全部源 / 方块盒子源 / 红石联机源 ----
-    m_sourceCombo = new QComboBox(filterBar);
-    m_sourceCombo->setObjectName(QStringLiteral("mlSourceCombo"));
-    m_sourceCombo->setFixedHeight(32);
-    m_sourceCombo->setMinimumWidth(112);
-    m_sourceCombo->addItem(tr("全部源"), SourceAll);
-    m_sourceCombo->addItem(tr("方块盒子源"), SourceBlockBox);
-    m_sourceCombo->addItem(tr("红石联机源"), SourceHongshi);
-    m_sourceCombo->setCurrentIndex(m_source);
-    m_sourceCombo->setToolTip(tr("选择房间来自哪个联机大厅"));
-    connect(m_sourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int index) {
-                if (index < 0 || index == m_source)
-                    return;
-                m_source = index;
-                // 记住选择，下次进大厅直接用
-                QSettings settings;
-                settings.setValue(QStringLiteral("bb_lobby_source"), m_source);
-                settings.sync();
-                requestRooms();
-            });
-    filterRow->addWidget(m_sourceCombo);
 
     m_searchEdit = new QLineEdit(filterBar);
     m_searchEdit->setObjectName(QStringLiteral("mlSearch"));
@@ -769,13 +653,11 @@ void MultiplayerLobbyPage::updateResponsiveLayout()
         m_rootLayout->setSpacing(14);
     }
 
-    // 极窄时状态文字会把视图切换挤出去，先收起，筛选栏只留来源 / 搜索 / 核心 / 切换
+    // 极窄时状态文字会把视图切换挤出去，先收起，筛选栏只留搜索 / 核心 / 切换
     if (m_statusLabel && changed)
         m_statusLabel->setVisible(!compact);
 
-    // 窄屏下筛选栏多了一个来源下拉，把几个控件的最低宽度都收一收，避免挤出屏幕
-    if (m_sourceCombo)
-        m_sourceCombo->setMinimumWidth(compact ? 76 : 112);
+    // 窄屏下把几个控件的最低宽度都收一收，避免挤出屏幕
     if (m_searchEdit)
         m_searchEdit->setMinimumWidth(compact ? 60 : 110);
     if (m_coreCombo)
@@ -802,97 +684,62 @@ void MultiplayerLobbyPage::requestRooms()
     m_instancePool = LobbyInstanceMatcher::scanInstances();
 
     // 新的一轮：上一轮还没回来的回调全部作废。
-    // 上次成功拿到的房间先留着——某个源这次挂了，列表不至于整个清空
+    // 上次成功拿到的房间先留着——这次没拉到时列表不至于整个清空
     ++m_fetchGen;
     const int gen = m_fetchGen;
     m_forumPending = false;
-    m_hongshiPending = false;
     m_forumError.clear();
-    m_hongshiError.clear();
 
     const QString keyword = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
     const QString core = m_coreCombo ? m_coreCombo->currentData().toString() : QString();
 
-    // 方块盒子源（论坛大厅）：关键词 / 核心筛选都在服务端做
-    if (m_source != SourceHongshi)
-    {
-        m_forumPending = true;
-        ForumLobbyService::instance()->fetchRooms(
-            keyword, core,
-            [this, gen](const QVector<ForumLobbyRoom> &rooms, int total) {
-                if (gen != m_fetchGen)
-                    return;
-                m_forumPending = false;
-                m_forumRooms = rooms;
-                m_forumTotal = total;
-                m_loadedOnce = true;
-                onSourceFetchSettled();
-            },
-            [this, gen](const QString &message, int) {
-                if (gen != m_fetchGen)
-                    return;
-                m_forumPending = false;
-                m_forumError = message;
-                m_loadedOnce = true;
-                onSourceFetchSettled();
-            });
-    }
+    // 论坛大厅：关键词 / 核心筛选都在服务端做
+    m_forumPending = true;
+    ForumLobbyService::instance()->fetchRooms(
+        keyword, core,
+        [this, gen](const QVector<ForumLobbyRoom> &rooms, int total) {
+            if (gen != m_fetchGen)
+                return;
+            m_forumPending = false;
+            m_forumRooms = rooms;
+            m_forumTotal = total;
+            m_loadedOnce = true;
+            onSourceFetchSettled();
+        },
+        [this, gen](const QString &message, int) {
+            if (gen != m_fetchGen)
+                return;
+            m_forumPending = false;
+            m_forumError = message;
+            m_loadedOnce = true;
+            onSourceFetchSettled();
+        });
 
-    // 红石联机源：拉全量后在信号里按关键词 / 核心筛
-    if (m_source != SourceBlockBox)
-    {
-        m_hongshiPending = true;
-        auto *hongshi = HongshiLobbyClient::instance();
-        // 上一轮还没拉完：不用重发，等它自己的信号回来就行
-        if (!hongshi->isLoading())
-            hongshi->refreshRooms();
-    }
-
-    // 兜底：万一两个源都没启动，也当作本轮结束去聚合一次
+    // 兜底：请求没发出去时也当作本轮结束去聚合一次
     onSourceFetchSettled();
 }
 
 void MultiplayerLobbyPage::onSourceFetchSettled()
 {
-    // 还有来源没回来：等最后一个到齐再聚合
-    if (m_forumPending || m_hongshiPending)
+    // 请求还没回来：等回调到了再聚合
+    if (m_forumPending)
         return;
 
     m_loading = false;
+    m_errorText = m_forumError;
 
-    // 每个源自己报错；两个都挂了就拼成两行，出错占位卡里一起显示
-    QStringList errors;
-    if (!m_forumError.isEmpty())
-        errors << tr("方块盒子源：%1").arg(m_forumError);
-    if (!m_hongshiError.isEmpty())
-        errors << tr("红石联机源：%1").arg(m_hongshiError);
-    m_errorText = errors.join(QLatin1Char('\n'));
-
-    // 聚合成一份列表：论坛源在前，红石源殿后；
-    // 没参与本轮拉取的来源不掺进来（比如刚从「全部源」切到「红石联机源」）
-    m_rooms.clear();
-    if (m_source != SourceHongshi)
-        m_rooms += m_forumRooms;
-    if (m_source != SourceBlockBox)
-        m_rooms += m_hongshiRooms;
-    m_total = (m_source != SourceHongshi ? m_forumTotal : 0)
-              + (m_source != SourceBlockBox ? m_hongshiRooms.size() : 0);
+    m_rooms = m_forumRooms;
+    m_total = m_forumTotal;
 
     // renderRooms 里会顺带把「共 N 个房间」写进状态栏
     renderRooms();
     syncDetailRoom();
 
-    // 有房间但个别源挂了：状态栏补一句，别让人以为列表就是全部
+    // 有房间但这次没拉到：状态栏补一句，别让人以为列表就是最新的
     if (!m_rooms.isEmpty() && !m_errorText.isEmpty())
     {
-        QStringList down;
-        if (!m_forumError.isEmpty())
-            down << tr("方块盒子源");
-        if (!m_hongshiError.isEmpty())
-            down << tr("红石联机源");
-        setStatus(tr("共 %1 个房间 · %2 暂时连不上")
-                      .arg(m_rooms.size())
-                      .arg(down.join(tr("、"))), true);
+        setStatus(tr("共 %1 个房间 · 大厅暂时连不上，先看上次的结果")
+                      .arg(m_rooms.size()), true);
     }
 }
 
@@ -995,9 +842,7 @@ void MultiplayerLobbyPage::renderRooms()
             state = createStateCard(
                 QStringLiteral("🏕"),
                 tr("大厅里暂时没有房间"),
-                m_source == SourceHongshi
-                    ? tr("当前来源是「红石联机源」，房间由红石联机大厅提供；切回「全部源」或「方块盒子源」可以看到论坛发布的房间。")
-                    : tr("开好房后，在实例助手的联机页点「发布到联机大厅」，房间就会出现在这里。"),
+                tr("开好房后，在实例助手的联机页点「发布到联机大厅」，房间就会出现在这里。"),
                 tr("去实例助手开房"), [this]() { emit openInstanceAssistantRequested(); });
         }
 

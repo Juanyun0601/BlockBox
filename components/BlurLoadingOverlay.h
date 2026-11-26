@@ -2,7 +2,6 @@
 #define BLURLOADINGOVERLAY_H
 
 #include <QLabel>
-#include <QNetworkAccessManager>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTimer>
@@ -21,7 +20,6 @@ public:
     void updateProgress(int percent, const QString &processName = QString());
     void showError(const QString &errorMessage);
     void clearError();
-    void showDiagnosisResult(const QString &result);
 
 signals:
     void diagnoseRequested();
@@ -54,7 +52,6 @@ private:
     QLabel *m_triviaLabel;
     QPushButton *m_diagnoseBtn;
     QWidget *m_progressArea;
-    QNetworkAccessManager *m_diagnosisNAM;
     QTimer *m_triviaTimer;
 
     QString m_currentProcessName;

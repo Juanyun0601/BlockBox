@@ -109,13 +109,21 @@ void LaunchTaskCard::initUI()
 void LaunchTaskCard::setStatus(LaunchStatus status)
 {
     m_status = status;
+    QString text;
     switch (status) {
-    case Idle:      m_statusTextLabel->setText(tr("准备启动")); break;
-    case Launching: m_statusTextLabel->setText(tr("正在启动")); break;
-    case Running:   m_statusTextLabel->setText(tr("游戏运行中")); break;
-    case Failed:    m_statusTextLabel->setText(tr("启动失败")); break;
-    case Stopped:   m_statusTextLabel->setText(tr("游戏停止")); break;
+    case Idle:      text = tr("准备启动"); break;
+    case Launching: text = tr("正在启动"); break;
+    case Running:   text = tr("游戏运行中"); break;
+    case Failed:    text = tr("启动失败"); break;
+    case Stopped:   text = tr("游戏停止"); break;
     }
+    // 多实例并行启动时用实例名区分多张卡片；超长名字截断避免挤爆状态行
+    if (!m_name.isEmpty()) {
+        const QString shown = m_name.length() > 12
+            ? m_name.left(12) + QStringLiteral("…") : m_name;
+        text = shown + QStringLiteral(" · ") + text;
+    }
+    m_statusTextLabel->setText(text);
     updateAnimationState();
     update();
 }

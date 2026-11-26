@@ -1,9 +1,11 @@
 #include "NotificationManager.h"
 #include "NotificationCard.h"
+#include "NetworkCheckDialog.h"
 
 #include "platform.h"
 
 #include <QCoreApplication>
+#include <QEvent>
 #include <QPropertyAnimation>
 #include <QWidget>
 
@@ -46,6 +48,12 @@ void NotificationManager::showError(QWidget *parent, const QString &text, int du
     instance()->showCard(NotificationCard::Error, parent, text, duration);
 }
 
+void NotificationManager::showErrorWithNetworkCheck(QWidget *parent, const QString &text, int duration)
+{
+    instance()->showCard(NotificationCard::Error, parent, text, duration,
+                          NotificationCard::tr("网络自检"));
+}
+
 QString NotificationManager::withDetail(const QString &titleTemplate, const QString &titleArg,
                                         const QString &detail)
 {
@@ -63,12 +71,28 @@ QString NotificationManager::withDetail(const QString &titleTemplate, const QStr
 }
 
 void NotificationManager::showCard(NotificationCard::Type type, QWidget *parent,
-                                    const QString &text, int duration)
+                                    const QString &text, int duration,
+                                    const QString &actionText)
 {
-    NotificationCard *card = new NotificationCard(text, type, duration, parent);
+    // 卡片统一挂到窗口上：调用方多半传的是页面控件，页面带顶栏 / 侧栏偏移，
+    // 按页面坐标算「左下角」会把提示推到窗口外面
+    QWidget *host = parent ? parent->window() : nullptr;
+    NotificationCard *card = new NotificationCard(text, type, duration, actionText, host);
+
+    // 窗口尺寸一变就重新贴左下角，卡片不会留在旧位置露出窗口外
+    if (host && !m_hosts.contains(host)) {
+        m_hosts.insert(host);
+        host->installEventFilter(this);
+        connect(host, &QObject::destroyed, this, [this, host]() { m_hosts.remove(host); });
+    }
 
     connect(card, &NotificationCard::dismissRequested,
             this, &NotificationManager::removeCard);
+    // 点了「网络自检」：以宿主窗口为父弹出网络连通性自检对话框
+    connect(card, &NotificationCard::actionClicked, this, [host](NotificationCard *card) {
+        Q_UNUSED(card);
+        NetworkCheckDialog::runCheck(host);
+    });
     // 父控件先于本管理器销毁时（例如关闭窗口）把卡片指针摘掉，避免列表里留下悬空指针
     connect(card, &QObject::destroyed, this, [this, card]() { m_cards.removeAll(card); });
 
@@ -83,7 +107,9 @@ void NotificationManager::showCard(NotificationCard::Type type, QWidget *parent,
     if (m_history.size() > 500)
         m_history.removeFirst();
 
+    // 先让旧卡片让出位置（新卡此时还没显示），再让新卡从左边滑入底部
     repositionAll();
+    card->startSlideIn();
 }
 
 void NotificationManager::removeCard(NotificationCard *card)
@@ -113,30 +139,66 @@ void NotificationManager::clearHistory()
     instance()->m_history.clear();
 }
 
-void NotificationManager::repositionAll()
+void NotificationManager::repositionAll(bool animate)
 {
     if (m_cards.isEmpty()) return;
 
-    QWidget *win = m_cards.first()->window();
-    if (!win) return;
+    // 卡片挂在自己的窗口上，pos() 就是窗口坐标，和下面的落点计算同一套坐标系
+    QWidget *host = m_cards.first()->parentWidget();
+    if (!host || !host->isVisible()) return;
 
-    int y = win->height() - 16;
+    int y = host->height() - 16;
 
     for (int i = m_cards.size() - 1; i >= 0; --i) {
         NotificationCard *card = m_cards.at(i);
-        y -= card->height();
+        QWidget *cardHost = card->parentWidget();
+        if (!cardHost) continue;
 
-        QPoint targetPos(cardX(card, win), y);
-
-        if (card->pos() != targetPos) {
-            QPropertyAnimation *anim = new QPropertyAnimation(card, "pos", card);
-            anim->setDuration(200);
-            anim->setStartValue(card->pos());
-            anim->setEndValue(targetPos);
-            anim->setEasingCurve(QEasingCurve::OutCubic);
-            anim->start(QAbstractAnimation::DeleteWhenStopped);
+        int targetY;
+        if (cardHost == host) {
+            y -= card->height();
+            // 卡片叠得太多时压在窗口顶部，别再往上顶出窗口
+            targetY = qMax(8, y);
+            y -= 8;
+        } else {
+            // 挂在别的窗口上（例如对话框里的提示）：各自贴自己的左下角
+            targetY = qMax(8, cardHost->height() - card->height() - 16);
         }
 
-        y -= 8;
+        // 正在滑出的卡片：位置先替它留着，但不要再往下走去停动画 / 改坐标。
+        // 退场动画一旦被 stopPosAnimations() 打断，finished 就不会发出，
+        // 卡片会永远停在屏幕上（倒计时显示 0s），这就是「提示有时候不消失」的来源
+        if (card->isDismissing())
+            continue;
+
+        // 卡片比窗口还宽（窄窗 / 手机竖屏）时拉回窗口内，右侧留 8px
+        const int x = qBound(8, cardX(card, cardHost),
+                             qMax(8, cardHost->width() - card->width() - 8));
+
+        const QPoint targetPos(x, targetY);
+        if (card->pos() == targetPos)
+            continue;
+
+        // 重排前先停掉正在跑的滑入 / 旧的重排动画，别让两个动画抢同一个位置
+        card->stopPosAnimations();
+        if (!animate) {
+            card->move(targetPos);
+            continue;
+        }
+
+        QPropertyAnimation *anim = new QPropertyAnimation(card, "pos", card);
+        anim->setDuration(200);
+        anim->setStartValue(card->pos());
+        anim->setEndValue(targetPos);
+        anim->setEasingCurve(QEasingCurve::OutCubic);
+        anim->start(QAbstractAnimation::DeleteWhenStopped);
     }
+}
+
+bool NotificationManager::eventFilter(QObject *watched, QEvent *event)
+{
+    // 宿主窗口被拖动 / 缩放时卡片要立刻跟着换位，否则会停在旧坐标、露出窗口外
+    if (event->type() == QEvent::Resize && m_hosts.contains(static_cast<QWidget *>(watched)))
+        repositionAll(false);
+    return QObject::eventFilter(watched, event);
 }

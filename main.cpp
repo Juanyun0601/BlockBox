@@ -12,7 +12,9 @@
 #include <memory>
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDebug>
+#include <QFile>
 #include <QIcon>
 #include <QDir>
 #include <QFuture>
@@ -26,7 +28,10 @@
 #include <QScrollArea>
 #include <QResource>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QSurfaceFormat>
+#include <QTextStream>
+#include <QThread>
 #include <QtConcurrent>
 #include <QTimer>
 #include <QTranslator>
@@ -42,6 +47,7 @@
 #include "platform.h"
 #include "components/AppMessageBox.h"
 #include "components/QuizReminder.h"
+#include "components/UserAgreementDialog.h"
 
 #include "utils/AndroidBridge.h"
 #include "utils/AsyncInitializer.h"
@@ -313,8 +319,87 @@ void requestAndroidStartupPermissions(QWidget *parent)
 
 } // namespace
 
+namespace {
+
+/**
+ * @brief 启动轨迹要尝试写入的候选路径
+ *
+ * 优先写应用自己的媒体目录 /sdcard/Android/media/<包名>/：这个目录在手机
+ * 文件管理器里能直接看到（Android/data 看不到），启动就闪退时用户可以把
+ * 文件发过来。部分定制系统（如鸿蒙）对这条路径有限制，所以再准备两个备用
+ * 位置，总有一个写得进去。
+ */
+QStringList bbTraceDirCandidates()
+{
+#ifdef Q_OS_ANDROID
+    QStringList dirs;
+    dirs << QStringLiteral("/sdcard/Android/media/com.blockbox.launcher");
+    dirs << QStringLiteral("/storage/emulated/0/Android/media/com.blockbox.launcher");
+    dirs << (QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+             + QStringLiteral("/logs"));
+    return dirs;
+#else
+    return QStringList(QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+                       + QStringLiteral("/BlockBox"));
+#endif
+}
+
+/// 找到第一个能写进去的目录（找不到就返回空，后面的写入直接跳过）
+QString bbTraceDir()
+{
+    static const QString dir = [] {
+        const QStringList candidates = bbTraceDirCandidates();
+        for (const QString &candidate : candidates) {
+            if (!QDir().mkpath(candidate))
+                continue;
+            QFile probe(candidate + QStringLiteral("/.write_probe"));
+            if (probe.open(QIODevice::WriteOnly)) {
+                probe.close();
+                probe.remove();
+                return candidate;
+            }
+        }
+        return QString();
+    }();
+    return dir;
+}
+
+/// 追加一行启动轨迹（truncate=true 时先清空，只在启动第一行用）
+void bbStartupTrace(const QString &line, bool truncate = false)
+{
+    static const QString dir = bbTraceDir();
+    static bool loggedPath = false;
+    if (dir.isEmpty()) {
+        if (!loggedPath)
+            qWarning() << "[Trace] 没有可写的启动轨迹目录";
+        loggedPath = true;
+        return;
+    }
+    const QString path = dir + QStringLiteral("/BlockBox启动日志.txt");
+    QFile file(path);
+    QIODevice::OpenMode mode = QIODevice::WriteOnly;
+    mode |= truncate ? QIODevice::Truncate : QIODevice::Append;
+    if (!file.open(mode))
+        return;
+    loggedPath = true;
+    QTextStream out(&file);
+    out << QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"))
+        << QStringLiteral("  ") << line << QLatin1Char('\n');
+}
+
+} // namespace
+
 int main(int argc, char *argv[])
 {
+    // ── 启动轨迹：把启动过程中的关键节点写进一个用户找得到的文件 ──
+    // 安卓启动就闪退时，普通用户拿不到 logcat、也进不去 Android/data，
+    // 所以额外写一份到应用自己的媒体目录（文件管理器里看得见）：
+    //   /sdcard/Android/media/com.blockbox.launcher/BlockBox启动日志.txt
+    // 文件最后一行就是崩溃前走到的那一步，便于定位。
+    bbStartupTrace(QStringLiteral("========== 进程启动 (main 入口) 构建时间 %1 ==========")
+                       .arg(QStringLiteral(__DATE__ " " __TIME__)), true);
+
+
     // 移动端界面缩放：把整套 UI 按 0.6 倍缩小后再渲染。
     // 界面是按桌面宽屏（最小 1200×800）设计的，手机横屏逻辑高度通常只有 ~360，
     // 等比缩放后 1200×800 → 720×480，布局骨架（侧边栏/顶栏/卡片/弹窗）全部同步变小，
@@ -347,6 +432,7 @@ int main(int argc, char *argv[])
     QSurfaceFormat::setDefaultFormat(glFormat);
 
     QApplication a(argc, argv);
+    bbStartupTrace(QStringLiteral("QApplication 已创建"));
 
     // 设置应用程序图标
     a.setWindowIcon(QIcon(":/Images/icon.ico"));
@@ -561,8 +647,9 @@ int main(int argc, char *argv[])
                         buffer.left(buffer.indexOf('\n')).trimmed());
                     if (url.isEmpty())
                         return;
-                    w.raise();
-                    w.activateWindow();
+                    // 窗口可能正收在系统托盘里：先把主窗口叫回前台，再走一键加入
+                    // （直接 raise/activate 对隐藏窗口不起作用）
+                    w.showFromTray();
                     w.handleExternalJoinUrl(url);
                 });
             }
@@ -599,12 +686,45 @@ int main(int argc, char *argv[])
         
         // 短暂延迟后隐藏启动窗口并显示主窗口
         QTimer::singleShot(300, [&w, startupWidget, isFirstRun, joinUrlArgument]() {
+            bbStartupTrace(QStringLiteral("准备显示主窗口"));
             startupWidget->hideStartup();
             w.show();
+            bbStartupTrace(QStringLiteral("主窗口已显示"));
+
+            // 首次使用（以及本次更新后第一次打开）先确认使用协议与隐私政策。
+            // 只有用户明确点「不同意并退出」才退出软件：安卓上点图标启动的那一下
+            // 触摸、系统抢焦点都可能把弹窗直接关掉，那不算用户拒绝——
+            // 否则表现就是点图标一闪而过、软件根本起不来。
+            UserAgreementDialog::Decision agreement =
+                UserAgreementDialog::decide(UserAgreementDialog::FirstLaunch, &w);
+            bbStartupTrace(QStringLiteral("协议确认结果: %1")
+                               .arg(agreement == UserAgreementDialog::Accepted
+                                        ? QStringLiteral("已同意")
+                                        : (agreement == UserAgreementDialog::Declined
+                                               ? QStringLiteral("用户拒绝")
+                                               : QStringLiteral("被关闭"))));
+            for (int retry = 0;
+                 agreement == UserAgreementDialog::Dismissed && retry < 2; ++retry) {
+                QCoreApplication::processEvents();
+                QThread::msleep(250);
+                agreement = UserAgreementDialog::decide(UserAgreementDialog::FirstLaunch, &w);
+            }
+            if (agreement == UserAgreementDialog::Declined) {
+                QTimer::singleShot(0, qApp, []() { QCoreApplication::quit(); });
+                return;
+            }
+            if (agreement == UserAgreementDialog::Dismissed) {
+                // 仍被关掉：先保证软件能起来，稍后再请用户确认一次
+                qWarning() << "[App]" << "协议确认窗未能停留，稍后重试";
+                QTimer::singleShot(1500, &w, [&w]() {
+                    UserAgreementDialog::ensureAccepted(UserAgreementDialog::FirstLaunch, &w);
+                });
+            }
 
             // 安卓端先把系统权限要到手（首次启动会弹出说明 + 授权跳转），
             // 之后再进新手引导或弹公告 / 提醒，保证引导期间就有存储可用
             requestAndroidStartupPermissions(&w);
+            bbStartupTrace(QStringLiteral("启动流程完成（后续引导 / 公告 / 检查更新）"));
 
             // 通过 blockbox:// 链接启动的：窗口就绪后自动走一键加入
             const auto handlePendingJoinUrl = [&w, joinUrlArgument]() {

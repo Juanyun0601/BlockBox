@@ -122,6 +122,27 @@ public:
                               const QString &uuid, const QString &skinUrl, bool isDefault = false);
     void addMicrosoftAccount(const QString &username, const QString &accessToken, const QString &refreshToken, const QString &uuid, const QString &skinUrl, bool isDefault = false);
     void removeAccount(const QString &username);
+    /**
+     * @brief 更新账户的皮肤地址（皮肤站换装后旧地址还指向旧皮肤，首页按地址缓存）
+     * @return 是否真的写入成功（账户不存在或磁盘写入失败时返回 false）
+     */
+    bool updateAccountSkinUrl(const QString &username, const QString &skinUrl);
+
+    /**
+     * @brief 第三方（皮肤站）账户启动游戏时，是否自动注入 authlib-injector
+     *
+     * 默认开启：注入后游戏内能以该认证服务器的身份校验并自动显示皮肤。
+     * 关闭后第三方账户按离线身份进入游戏（第三方服务器可能拒绝登录），
+     * 留给排查兼容问题时使用。
+     */
+    bool isAuthlibInjectorEnabled() const;
+
+    /**
+     * @brief 开启或关闭第三方登录的游戏内注入
+     * @param enabled 是否开启
+     */
+    void setAuthlibInjectorEnabled(bool enabled);
+
     void setDefaultAccount(const QString &username);
     AccountInfo getDefaultAccount() const;
     bool accountExists(const QString &username) const;
@@ -267,6 +288,19 @@ public:
      * @param enabled 是否开启
      */
     void setAutoStartEnabled(bool enabled);
+
+    // 系统托盘（仅桌面端生效）
+    /**
+     * @brief 关闭主窗口时是否收进系统托盘
+     * @return true 表示点关闭按钮 / Alt+F4 不退出软件，只把窗口收进托盘继续后台运行
+     */
+    bool isCloseToTrayEnabled() const;
+
+    /**
+     * @brief 设置关闭主窗口时是否收进系统托盘
+     * @param enabled 是否收进托盘
+     */
+    void setCloseToTrayEnabled(bool enabled);
 
     // Translation settings methods (翻译设置)
     /**

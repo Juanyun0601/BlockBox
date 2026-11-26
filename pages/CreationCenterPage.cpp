@@ -16,6 +16,7 @@
 #include <QVBoxLayout>
 
 #include "components/AppMessageBox.h"
+#include "components/ForumClaimDialog.h"
 #include "components/NotificationManager.h"
 #include "utils/ForumAccountService.h"
 #include "utils/StyleKit.h"
@@ -63,8 +64,10 @@ void CreationCenterPage::buildUi()
     m_refreshButton->setObjectName(QStringLiteral("forumGhostButton"));
     m_refreshButton->setCursor(Qt::PointingHandCursor);
     m_refreshButton->setFixedHeight(28);
-    connect(m_refreshButton, &QPushButton::clicked, this,
-            [this]() { loadAllWorks(); });
+    connect(m_refreshButton, &QPushButton::clicked, this, [this]() {
+        loadAllWorks();
+        loadClaims();
+    });
     statusRow->addWidget(m_refreshButton);
     layout->addLayout(statusRow);
 
@@ -98,6 +101,26 @@ void CreationCenterPage::buildUi()
     summaryRow->addStretch(1);
     summaryLayout->addLayout(summaryRow);
     layout->addWidget(summaryCard);
+
+    // ── 认领请求卡：有人认领我转载的作品时出现，同意后作品直接转给对方 ──
+    m_claimsCard = ForumKit::makeCard(content, QStringLiteral("forumCard"));
+    auto *claimsCardLayout = new QVBoxLayout(m_claimsCard);
+    claimsCardLayout->setContentsMargins(20, 16, 20, 16);
+    claimsCardLayout->setSpacing(8);
+    m_claimsTitle = new QLabel(tr("认领请求"), m_claimsCard);
+    m_claimsTitle->setObjectName(QStringLiteral("forumPluginSectionTitle"));
+    claimsCardLayout->addWidget(m_claimsTitle);
+    auto *claimsHint = ForumKit::makeMuted(
+        m_claimsCard,
+        tr("有人认领你转载的作品：先和对方沟通确认，同意后作品会转到对方名下，转载标记也会去掉"));
+    claimsHint->setWordWrap(true);
+    claimsCardLayout->addWidget(claimsHint);
+    m_claimsLayout = new QVBoxLayout();
+    m_claimsLayout->setContentsMargins(0, 0, 0, 0);
+    m_claimsLayout->setSpacing(6);
+    claimsCardLayout->addLayout(m_claimsLayout);
+    m_claimsCard->hide();
+    layout->addWidget(m_claimsCard);
 
     // ── 我的作品标题 + 搜索框 ──
     auto *listHeaderRow = new QHBoxLayout();
@@ -230,6 +253,8 @@ void CreationCenterPage::open()
     m_pager->setPage(1, 1);
     updateSummary();
     updateFilterChips();
+    m_claims.clear();
+    renderClaims(m_claims);
 
     const bool loggedIn = ForumAccountService::instance()->isLoggedIn();
     m_filterRow->setVisible(loggedIn);
@@ -245,6 +270,7 @@ void CreationCenterPage::open()
         return;
     }
 
+    loadClaims();
     loadAllWorks();
 }
 
@@ -478,6 +504,8 @@ void CreationCenterPage::renderCurrentPage()
             titleRow->addWidget(ForumKit::makeBadge(row, tr("插件")));
         if (thread.schematic.isValid())
             titleRow->addWidget(ForumKit::makeBadge(row, tr("投影")));
+        if (thread.source.isRepost())
+            titleRow->addWidget(ForumKit::makeBadge(row, tr("转载")));
         if (thread.pinned)
             titleRow->addWidget(ForumKit::makeBadge(row, tr("置顶")));
         if (thread.locked)
@@ -516,6 +544,9 @@ void CreationCenterPage::renderCurrentPage()
         }
         else if (thread.schematic.isValid())
         {
+            // 一帖多份（主世界 / 下界…）：先说清有几个版本
+            if (thread.schematic.versionCount() > 1)
+                metaParts << tr("%1 个版本").arg(thread.schematic.versionCount());
             metaParts << ForumKit::humanFileSize(thread.schematic.fileSize);
             metaParts << tr("已下载 %1 次").arg(thread.schematic.downloads);
         }
@@ -643,6 +674,85 @@ void CreationCenterPage::deleteWork(const ForumThreadInfo &thread)
         [this](const QString &message, int) {
             NotificationManager::showError(this, message);
         });
+}
+
+void CreationCenterPage::loadClaims()
+{
+    if (m_claimsLoading || !ForumAccountService::instance()->isLoggedIn())
+        return;
+    m_claimsLoading = true;
+    ForumContentService::instance()->fetchClaims(
+        true, 0, QStringLiteral("pending"), 1,
+        [this](const QVector<ForumClaimInfo> &claims, const ForumPagination &) {
+            m_claimsLoading = false;
+            m_claims = claims;
+            renderClaims(claims);
+        },
+        [this](const QString &, int) {
+            m_claimsLoading = false;
+            // 认领请求是附加信息，拉不到不挡住作品列表
+        });
+}
+
+void CreationCenterPage::renderClaims(const QVector<ForumClaimInfo> &claims)
+{
+    if (!m_claimsCard || !m_claimsLayout)
+        return;
+    ForumKit::clearLayout(m_claimsLayout);
+    if (claims.isEmpty())
+    {
+        m_claimsCard->hide();
+        return;
+    }
+
+    m_claimsCard->show();
+    m_claimsTitle->setText(tr("认领请求（%1）").arg(claims.size()));
+    for (const ForumClaimInfo &claim : claims)
+    {
+        auto *row = new QFrame(m_claimsCard);
+        row->setObjectName(QStringLiteral("forumThreadRow"));
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(14, 10, 14, 10);
+        rowLayout->setSpacing(10);
+
+        auto *textColumn = new QVBoxLayout();
+        textColumn->setContentsMargins(0, 0, 0, 0);
+        textColumn->setSpacing(2);
+        auto *title = new ForumKit::ElidedLabel(row);
+        title->setObjectName(QStringLiteral("forumRowTitle"));
+        title->setFullText(tr("《%1》").arg(claim.threadTitle));
+        textColumn->addWidget(title);
+
+        const QString claimantName = claim.claimant.displayName.isEmpty()
+                                         ? claim.claimant.username
+                                         : claim.claimant.displayName;
+        QStringList metaParts;
+        metaParts << tr("认领人：%1").arg(claimantName);
+        if (claim.createdAt > 0)
+            metaParts << ForumKit::relativeTime(claim.createdAt);
+        if (claim.messageCount > 0)
+            metaParts << tr("%1 条沟通").arg(claim.messageCount);
+        auto *meta = new ForumKit::ElidedLabel(row);
+        meta->setObjectName(QStringLiteral("forumMuted"));
+        meta->setFullText(metaParts.join(QStringLiteral(" · ")));
+        textColumn->addWidget(meta);
+        rowLayout->addLayout(textColumn, 1);
+
+        auto *openButton = new QPushButton(tr("沟通并处理"), row);
+        openButton->setObjectName(QStringLiteral("forumGhostButton"));
+        openButton->setCursor(Qt::PointingHandCursor);
+        openButton->setFixedHeight(26);
+        const int claimId = claim.id;
+        connect(openButton, &QPushButton::clicked, this, [this, claimId]() {
+            ForumClaimChatDialog::showDialog(this, claimId, [this](bool approved) {
+                loadClaims();
+                if (approved)
+                    loadAllWorks();
+            });
+        });
+        rowLayout->addWidget(openButton);
+        m_claimsLayout->addWidget(row);
+    }
 }
 
 void CreationCenterPage::setStatus(const QString &text, bool error)

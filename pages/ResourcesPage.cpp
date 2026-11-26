@@ -371,6 +371,10 @@ void ResourcesPage::rebuildPageCards()
                 tr("世界"), tr("导入或备份你的存档"),
                 QColor("#84CC16"), QColor("#4D7C0F"),
                 ":/Images/Icons/nav_worlds.svg", 7));
+            flow->addWidget(createResourceCard(
+                tr("皮肤"), tr("方块皮肤站的皮肤库，一键穿上或导出"),
+                QColor("#F97316"), QColor("#C2410C"),
+                ":/Images/Icons/nav_skins.svg", 8));
 
             m_mainLayout->addWidget(row);
         }
@@ -382,8 +386,8 @@ void ResourcesPage::rebuildPageCards()
     newFavBtn->setText(tr("＋ 新建收藏夹"));
     newFavBtn->setCursor(Qt::PointingHandCursor);
     connect(newFavBtn, &QPushButton::clicked, this, [this]() {
-        // Java 版 9 / 基岩版 5：与左侧导航「新建收藏夹」行为一致
-        emit navItemClicked(m_bedrockMode ? 5 : 9);
+        // Java 版 11 / 基岩版 5：与左侧导航「新建收藏夹」行为一致
+        emit navItemClicked(m_bedrockMode ? 5 : 11);
     });
 
     m_mainLayout->addWidget(createSectionHeader(tr("收藏夹"), newFavBtn));
@@ -443,9 +447,9 @@ void ResourcesPage::rebuildFavoriteCards()
     };
     const int paletteSize = int(sizeof(palette) / sizeof(palette[0]));
 
-    // 收藏夹卡片（Java 版 childIndex = 9 + idx / 基岩版 = 6 + idx），
+    // 收藏夹卡片（Java 版 childIndex = 12 + idx / 基岩版 = 6 + idx），
     // FlowLayout 自适应换行（对齐原型 auto-fill）
-    const int favBase = m_bedrockMode ? 6 : 9;
+    const int favBase = m_bedrockMode ? 6 : 12;
     QWidget *gridHolder = new QWidget(m_favoritesContainer);
     FlowLayout *flow = new FlowLayout(gridHolder, 0, 12, 12);
     for (int i = 0; i < folders.size(); ++i) {

@@ -313,9 +313,39 @@ void SettingsManager::removeAccount(const QString &username)
             break;
         }
     }
-    
+
     // 保存更新后的账户列表
     saveAccountsToSettings(accounts);
+}
+
+bool SettingsManager::updateAccountSkinUrl(const QString &username, const QString &skinUrl)
+{
+    QList<AccountInfo> accounts = getAccounts();
+    bool changed = false;
+    for (int i = 0; i < accounts.size(); ++i) {
+        if (accounts[i].username.compare(username, Qt::CaseInsensitive) == 0) {
+            if (accounts[i].skinUrl != skinUrl) {
+                accounts[i].skinUrl = skinUrl;
+                changed = true;
+            }
+            break;
+        }
+    }
+    return changed ? saveAccountsToSettings(accounts) : true;
+}
+
+bool SettingsManager::isAuthlibInjectorEnabled() const
+{
+    // 默认开启：外置登录账户不注入的话游戏内身份是离线的，第三方服务器会拒登
+    return m_settings->value("authlibInjector/enabled", true).toBool();
+}
+
+void SettingsManager::setAuthlibInjectorEnabled(bool enabled)
+{
+    if (isAuthlibInjectorEnabled() == enabled)
+        return;
+
+    m_settings->setValue("authlibInjector/enabled", enabled);
 }
 
 QList<AuthServerInfo> SettingsManager::getAuthServers() const
@@ -383,6 +413,13 @@ void SettingsManager::removeAuthServer(const QString &url)
 
 void SettingsManager::initDefaultAuthServers()
 {
+    // 方块皮肤站：论坛账号即皮肤站账号，第三方登录里直接内置，老用户也补一次。
+    // 单独一个标记，避免已被 authServersInitialized 跳过的老配置拿不到新服务器。
+    if (!m_settings->value("skinSiteAuthServerAdded", false).toBool()) {
+        addAuthServer("https://skin.mcblockbox.top/api/yggdrasil/", "方块皮肤站");
+        m_settings->setValue("skinSiteAuthServerAdded", true);
+    }
+
     // 检查是否已经初始化过
     if (m_settings->value("authServersInitialized", false).toBool()) {
         return;
@@ -835,6 +872,18 @@ bool SettingsManager::isAutoStartEnabled() const
 void SettingsManager::setAutoStartEnabled(bool enabled)
 {
     Platform::setAutoStartEnabled(enabled);
+}
+
+bool SettingsManager::isCloseToTrayEnabled() const
+{
+    // 默认开启：桌面端点关闭多半只是「先不看了」，
+    // 直接退出会把正在进行的下载 / 启动任务一起带走。设置里可以关掉。
+    return m_settings->value("tray/closeToTray", true).toBool();
+}
+
+void SettingsManager::setCloseToTrayEnabled(bool enabled)
+{
+    m_settings->setValue("tray/closeToTray", enabled);
 }
 
 int SettingsManager::getDownloadThreadCount() const

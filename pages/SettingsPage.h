@@ -29,6 +29,7 @@
 
 class CustomCheckBox;
 class FlowLayout;
+class QProgressBar;
 
 class SettingsPage : public QWidget
 {
@@ -38,16 +39,27 @@ public:
     explicit SettingsPage(QWidget *parent = nullptr);
     ~SettingsPage();
 
+    /** 首页下载完预设封面 / 导入了自己的风景图后，同步「界面设置」里的轮播图卡片 */
+    void refreshCarouselEditor();
+
 signals:
     void backToMainRequested();
     void downloadJavaRequested();
+    /** 常规设置里点了「网络连通性自检」：弹出网络自检对话框 */
+    void networkCheckRequested();
     void jumpToInstanceSettingsRequested(const QString &instancePath);
     /** 首页轮播图被修改（添加/移除/恢复默认），首页据此刷新轮播 */
     void carouselImagesChanged();
     /** 关于页点了「意见反馈」：跳到软件内反馈页 */
     void openFeedbackRequested();
+    /** 关于页点了「文档中心」：跳到软件内方块图书馆 */
+    void openLibraryRequested();
+    /** 设置页里带目标的文档入口：打开内置图书馆并跳到指定卷 / 章（如 MCP 接入说明） */
+    void openLibraryDocRequested(const QString &volume, const QString &chapter);
     /** 通用设置里点了「打开新手引导」：跳到新手引导页（独立整页） */
     void openOnboardingRequested();
+    /** AI 助手设置里改了本地 MCP 服务器开关 / 端口 / 令牌 / 写权限 */
+    void mcpServerSettingsChanged();
 
 private slots:
     void onNavItemClicked(int index);
@@ -67,8 +79,28 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 
 public:
+    /** 设置子页标识：主窗口按页面定位页签，避免硬编码索引随版本模式错位 */
+    enum SettingsTabId {
+        GeneralTab = 0,
+        InterfaceTab,
+        GameTab,
+        InstanceTab,
+        JavaTab,
+        AdvancedTab,
+        KeyBindTab,
+        SystemInfoTab,
+        AiAssistantTab,
+        AboutTab,
+        ProjectionEditorTab,
+        ControlTab
+    };
+
     void retranslateUi();
     void setCurrentSettingsTab(int index);
+    /** 当前版本模式下某个设置子页的页签索引；该页不存在时返回 -1 */
+    int tabIndex(SettingsTabId id) const;
+    /** 页签对应的顶栏标题（随 Java / 基岩版模式自动取对应页面） */
+    QString tabTitle(int index) const;
 
     /**
      * 子导航搜索框分发：对当前设置面板做行级过滤（卡片标题/设置行文本匹配）。
@@ -77,6 +109,14 @@ public:
     Q_INVOKABLE void applyPageFilter(const QString &query);
     /** 基岩版模式：隐藏 Java 版相关设置页与设置行 */
     void setBedrockMode(bool bedrock);
+
+    /**
+     * @brief 更新「本地 MCP 服务器」卡片的状态文字
+     * @param running 是否正在监听
+     * @param port    实际端口
+     * @param detail  失败原因或附加说明
+     */
+    void setMcpServerStatus(bool running, quint16 port, const QString &detail);
 
 private:
     void initUI();
@@ -97,8 +137,14 @@ private:
     void initKeyBindSettings();
     void initSystemInfoSettings();
     void initAiAssistantSettings();
+    /** 重新扫描本机 DSH 配置，刷新「DSH 插件」卡片的下拉和状态 */
+    void refreshDshPluginCard();
+    /** 按当前选中的 DSH 配置更新「DSH 插件」卡片的状态文字与按钮 */
+    void updateDshPluginStatus();
     void initAboutSettings();
     void initProjectionEditorSettings();
+    /** 移动端「操作设置」：触屏方案、手柄与视角参数 */
+    void initControlSettings();
     /** 将存储的投影编辑器设置同步到设置页控件（初始化 / 恢复默认后调用） */
     void refreshProjectionEditorSettingsControls();
     /** 刷新 AI 助手设置页「默认模型」下拉：列出已配置/已添加的真实模型 */
@@ -163,9 +209,17 @@ private:
     QWidget *m_aiAssistantSettings;
     QWidget *m_aboutSettings;
     QWidget *m_projectionEditorSettings = nullptr;
+    QWidget *m_controlSettings = nullptr;
 
     // AI 助手设置页：默认模型下拉（列出真实已配置模型）
     QComboBox       *m_aiDefaultModelCombo = nullptr;
+    // AI 助手设置页：本地 MCP 服务器状态标签
+    QLabel          *m_mcpStatusLabel = nullptr;
+    // AI 助手设置页：DSH 插件一键安装（目标配置下拉、状态、两个按钮）
+    QComboBox       *m_dshProfileCombo = nullptr;
+    QLabel          *m_dshStatusLabel = nullptr;
+    QPushButton     *m_dshInstallButton = nullptr;
+    QPushButton     *m_dshUninstallButton = nullptr;
 
     // 投影编辑器内置设置控件
     QComboBox       *m_projToolCombo = nullptr;
@@ -196,6 +250,14 @@ private:
     QWidget *m_blurSection;
     QWidget *m_bingSection;
     QComboBox *m_sceneCombo;
+    // 全景场景按需下载的状态行
+    QLabel *m_sceneStatusLabel = nullptr;
+    QProgressBar *m_sceneProgressBar = nullptr;
+    QPushButton *m_sceneRetryBtn = nullptr;
+    QString m_pendingPanoramaScene;
+    QString m_sceneDownloadError;
+    /** 刷新「全景场景」下载状态文字 / 进度条 / 重试按钮 */
+    void updatePanoramaDownloadStatus();
     QPushButton *m_solidColorBtn;
     QLineEdit *m_imagePathEdit;
     QPushButton *m_browseImageBtn;
@@ -207,6 +269,19 @@ private:
     void refreshHomeCarouselRows();
     void addHomeCarouselImages();
     void clearHomeCarouselImages();
+
+    // 语言设置：不随安装包内置的语言在选中后要联网下载语言包
+    QComboBox *m_languageCombo = nullptr;
+    QFrame *m_languagePackRow = nullptr;
+    QLabel *m_languagePackStatusLabel = nullptr;
+    QProgressBar *m_languagePackProgressBar = nullptr;
+    QPushButton *m_languagePackActionBtn = nullptr;
+    /** 正在下载 / 待下载的语言（LanguageManager::Language 的枚举值，-1 表示没有） */
+    int m_languagePackTarget = -1;
+    QString m_languagePackError;
+    void refreshLanguageComboLabels();
+    void updateLanguagePackStatus();
+    void startLanguagePackDownload(int langIndex);
 
     // Java 管理页控件
     QListWidget *m_javaListWidget;

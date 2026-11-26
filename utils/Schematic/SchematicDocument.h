@@ -84,6 +84,21 @@ struct SchematicBlockState
 };
 
 /**
+ * @brief 投影里保存的一个生物 / 实体
+ *
+ * 坐标与方块同坐标系：相对投影包围盒最小角（0 起），单位是格，
+ * y 是脚底高度。渲染时按 yaw 决定朝向（原版约定：0 = 南，90 = 西）。
+ */
+struct SchematicEntity
+{
+    QString id;                        ///< 实体 ID，如 "minecraft:pig"
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    float yaw = 0.0f;                  ///< 朝向（度）
+};
+
+/**
  * @brief 投影方块级文档
  *
  * 使用方式：
@@ -211,6 +226,24 @@ public:
      */
     QVector<SchematicBlockState> dumpAll() const;
 
+    // ------------------------------------------------------------------ 实体
+    /**
+     * @brief 投影里保存的生物 / 实体（.litematic 的 Entities）
+     *
+     * 坐标与方块一致：相对投影包围盒最小角，单位格，y 为脚底高度。
+     */
+    const QList<SchematicEntity> &entities() const { return m_entities; }
+
+    /** 实体数量（渲染统计用） */
+    int entityCount() const { return int(m_entities.size()); }
+
+    /**
+     * @brief 直接替换投影里的生物 / 实体（坐标同方块坐标系：相对投影最小角）
+     *
+     * 供编辑器与测试使用；写回时按 Litematica Version >= 2 的摊平格式写出。
+     */
+    void setEntities(const QList<SchematicEntity> &entities) { m_entities = entities; }
+
     // ------------------------------------------------------------------ 保存
     /**
      * @brief 保存到指定路径（可等于原文件即就地覆盖）
@@ -267,5 +300,6 @@ private:
 
     QList<SchematicBlockState> m_palette;   // 调色板
     QList<int> m_indices;                   // 体积序方块索引
+    QList<SchematicEntity> m_entities;      // 投影里的生物 / 实体
 };
 

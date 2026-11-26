@@ -6,6 +6,7 @@
  */
 
 #include "HomePage.h"
+#include "components/AppMessageBox.h"
 #include "components/MasonryContentCard.h"
 #include "components/OutlinedLabel.h"
 #include "components/HomeDataVisuals.h"
@@ -34,6 +35,7 @@
 #include <QEvent>
 #include <QEasingCurve>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFutureWatcher>
@@ -67,8 +69,10 @@
 #include "components/PerformanceDetailDialog.h"
 #include "layouts/FlowLayout.h"
 #include "utils/HomeCarouselStore.h"
+#include "utils/HomePresetCovers.h"
 #include "utils/SettingsManager.h"
 #include "utils/SystemTools.h"
+#include "utils/UiMetrics.h"
 #include "utils/CommandAssistant/LevelDatReader.h"
 #include "utils/HardwareMonitor.h"
 #include "utils/IconHelper.h"
@@ -427,7 +431,9 @@ private:
 HomePage::HomePage(QWidget *parent)
     : QWidget(parent)
     , m_carouselView(nullptr)
-    , m_carouselPlaceholder(nullptr)
+    , m_carouselEmpty(nullptr)
+    , m_carouselEmptyProgress(nullptr)
+    , m_carouselEmptyDownloadBtn(nullptr)
     , m_carouselTimer(nullptr)
     , m_currentCarouselIndex(0)
     , m_recentPlaysContainer(nullptr)
@@ -468,6 +474,28 @@ HomePage::HomePage(QWidget *parent)
     refreshClassicIcons();
     refreshModeSwitchIcons();
   });
+
+  // 预设封面图下载（首页空态的「下载预设图」）：进度更新空态文字，下完直接开始轮播
+  HomePresetCovers *covers = HomePresetCovers::instance();
+  connect(covers, &HomePresetCovers::progressChanged, this,
+          [this](int done, int total) { updateCarouselEmptyProgress(done, total); });
+  connect(covers, &HomePresetCovers::finished, this, [this](const QStringList &)
+  {
+    m_carouselPaths = HomePresetCovers::localFiles();
+    rebuildCarouselSection();
+    emit carouselImagesChanged();
+  });
+  connect(covers, &HomePresetCovers::failed, this, [this](const QString &error)
+  {
+    // 失败时把按钮恢复可点，进度文字换成失败原因（不弹窗，避免刚打开首页就被打断）
+    if (m_carouselEmptyDownloadBtn)
+      m_carouselEmptyDownloadBtn->setEnabled(true);
+    if (m_carouselEmptyProgress)
+    {
+      m_carouselEmptyProgress->setText(error);
+      m_carouselEmptyProgress->show();
+    }
+  });
 }
 
 void HomePage::resizeEvent(QResizeEvent *event)
@@ -498,9 +526,9 @@ void HomePage::updateCarouselHeight()
   {
     m_carouselView->setFixedHeight(carouselHeight);
   }
-  if (m_carouselPlaceholder)
+  if (m_carouselEmpty)
   {
-    m_carouselPlaceholder->setFixedHeight(carouselHeight);
+    m_carouselEmpty->setFixedHeight(carouselHeight);
   }
   // 皮肤面板与轮播同排（垂直 Expanding），高度随行高自动对齐
 }
@@ -555,16 +583,6 @@ bool HomePage::eventFilter(QObject *watched, QEvent *event)
     // 官方新闻卡片同样按容器宽度均分三列，重建方式与最近游玩一致
     scheduleNewsRebuild();
   }
-  if (event->type() == QEvent::MouseButtonPress && watched == m_carouselPlaceholder)
-  {
-    auto *mouseEvent = static_cast<QMouseEvent*>(event);
-    // 空态占位卡片：整块可点，点击跳到设置页的「界面设置」去添加图片
-    if (mouseEvent->button() == Qt::LeftButton)
-    {
-      emit customizeCarouselRequested();
-      return true;
-    }
-  }
   if (event->type() == QEvent::MouseButtonPress)
   {
     auto *mouseEvent = static_cast<QMouseEvent*>(event);
@@ -614,14 +632,9 @@ void HomePage::loadPictures()
     return;
   }
 
-  // 2. 未自定义：使用内置风景图
-  QDir dir(":/Images/Pictures/");
-  QStringList filters;
-  filters << "*.jpg" << "*.png";
-  const QStringList entries = dir.entryList(filters, QDir::Files, QDir::Name);
-  for (const QString &entry : entries)
-    m_carouselPaths.append(dir.absoluteFilePath(entry));
-  m_carouselPaths = HomeCarouselStore::existingImages(m_carouselPaths);
+  // 2. 没自定义：用已经从官网下载好的预设封面图（8 张齐全才有内容）
+  m_carouselPaths = HomePresetCovers::localFiles();
+  // 3. 都没有 → m_carouselPaths 为空，轮播区显示「下载预设图 / 导入风景图」引导卡
 }
 
 void HomePage::reloadCarouselImages()
@@ -1094,14 +1107,7 @@ void HomePage::buildCarouselWidget()
 
   if (m_carouselPaths.isEmpty())
   {
-    auto *placeholder = new QLabel(tr("暂无轮播图片\n前往 设置 → 界面设置 添加"));
-    placeholder->setObjectName("carouselPlaceholder");
-    placeholder->setAlignment(Qt::AlignCenter);
-    placeholder->setCursor(Qt::PointingHandCursor);
-    placeholder->setToolTip(tr("前往设置添加轮播图片"));
-    placeholder->installEventFilter(this);
-    m_carouselPlaceholder = placeholder;
-    m_carouselHostLayout->addWidget(placeholder);
+    buildCarouselEmptyState();
     return;
   }
 
@@ -1169,10 +1175,12 @@ void HomePage::clearCarouselWidget()
     while (QLayoutItem *item = m_carouselHostLayout->takeAt(0))
       delete item;
   }
-  // 视图/占位卡上的按钮与浮层布局都是它的子对象，随视图一起回收
-  QWidget *oldViews[2] = { m_carouselView, m_carouselPlaceholder };
+  // 视图/空态卡上的按钮与浮层布局都是它的子对象，随视图一起回收
+  QWidget *oldViews[2] = { m_carouselView, m_carouselEmpty };
   m_carouselView = nullptr;
-  m_carouselPlaceholder = nullptr;
+  m_carouselEmpty = nullptr;
+  m_carouselEmptyProgress = nullptr;
+  m_carouselEmptyDownloadBtn = nullptr;
   for (QWidget *w : oldViews)
   {
     if (!w)
@@ -1180,6 +1188,157 @@ void HomePage::clearCarouselWidget()
     w->hide();
     w->setParent(nullptr);
     w->deleteLater();
+  }
+}
+
+// 一张封面图都没有时的引导卡：下载官网预设的 8 张，或导入自己的风景图
+void HomePage::buildCarouselEmptyState()
+{
+  if (!m_carouselHostLayout)
+    return;
+
+  auto *empty = new QWidget();
+  empty->setObjectName("carouselEmpty");
+  // 普通 QWidget 默认不画 QSS 背景，这张虚线引导卡要它自己画
+  empty->setAttribute(Qt::WA_StyledBackground, true);
+  auto *lay = new QVBoxLayout(empty);
+  lay->setContentsMargins(24, 20, 24, 20);
+  lay->setSpacing(6);
+  lay->addStretch(1);
+
+  auto *icon = new QLabel(empty);
+  icon->setObjectName("carouselEmptyIcon");
+  icon->setAlignment(Qt::AlignCenter);
+  icon->setPixmap(IconHelper::loadColoredIcon(":/Images/Icons/screenshot.svg",
+                                              QColor(ThemeManager::instance()->currentThemeColor()),
+                                              40).pixmap(40, 40));
+  lay->addWidget(icon, 0, Qt::AlignHCenter);
+
+  auto *title = new QLabel(tr("首页封面图还需要下载"), empty);
+  title->setObjectName("carouselEmptyTitle");
+  title->setAlignment(Qt::AlignCenter);
+  lay->addWidget(title);
+
+  auto *desc = new QLabel(
+      tr("预设的 %1 张风景封面不随安装包一起下载，点一下再下；也可以直接导入自己的风景图。")
+          .arg(HomePresetCovers::presetCount()),
+      empty);
+  desc->setObjectName("carouselEmptyDesc");
+  desc->setAlignment(Qt::AlignCenter);
+  desc->setWordWrap(true);
+  lay->addWidget(desc);
+
+  // 两个按钮并排居中（按钮行单独包一层，才能整体水平居中）
+  auto *btnRow = new QWidget(empty);
+  auto *btnLayout = new QHBoxLayout(btnRow);
+  btnLayout->setContentsMargins(0, 8, 0, 0);
+  btnLayout->setSpacing(10);
+
+  auto *downloadBtn = new QPushButton(tr("下载预设图"), btnRow);
+  downloadBtn->setObjectName("carouselEmptyPrimary");
+  downloadBtn->setCursor(Qt::PointingHandCursor);
+  downloadBtn->setFixedHeight(36);
+  downloadBtn->setToolTip(tr("从官网下载 %1 张预设风景封面").arg(HomePresetCovers::presetCount()));
+  btnLayout->addWidget(downloadBtn);
+
+  auto *importBtn = new QPushButton(tr("导入风景图"), btnRow);
+  importBtn->setObjectName("carouselEmptyGhost");
+  importBtn->setCursor(Qt::PointingHandCursor);
+  importBtn->setFixedHeight(36);
+  importBtn->setToolTip(tr("从本机选择图片，导入后马上在首页轮播"));
+  btnLayout->addWidget(importBtn);
+
+  lay->addWidget(btnRow, 0, Qt::AlignHCenter);
+
+  auto *progress = new QLabel(empty);
+  progress->setObjectName("carouselEmptyProgress");
+  progress->setAlignment(Qt::AlignCenter);
+  progress->setWordWrap(true);
+  progress->hide();
+  lay->addWidget(progress);
+  lay->addStretch(1);
+
+  m_carouselEmpty = empty;
+  m_carouselEmptyProgress = progress;
+  m_carouselEmptyDownloadBtn = downloadBtn;
+
+  // 刚播过首页又重建（切主题 / 改设置）时下载可能还在跑：按钮先锁住并接着显示进度
+  if (HomePresetCovers::instance()->isDownloading())
+  {
+    downloadBtn->setEnabled(false);
+    updateCarouselEmptyProgress(HomePresetCovers::instance()->downloadedCount(),
+                               HomePresetCovers::instance()->totalCount());
+  }
+
+  connect(downloadBtn, &QPushButton::clicked, this, [this]()
+  {
+    HomePresetCovers *covers = HomePresetCovers::instance();
+    if (covers->isDownloading())
+      return;
+    if (m_carouselEmptyDownloadBtn)
+      m_carouselEmptyDownloadBtn->setEnabled(false);
+    updateCarouselEmptyProgress(0, covers->totalCount());
+    covers->download();
+  });
+  connect(importBtn, &QPushButton::clicked, this, &HomePage::importCarouselImages);
+
+  m_carouselHostLayout->addWidget(empty);
+}
+
+// 空态里的下载进度：done < 0 表示清掉（没在下载）
+void HomePage::updateCarouselEmptyProgress(int done, int total)
+{
+  if (!m_carouselEmptyProgress)
+    return;
+
+  if (done < 0 || total <= 0)
+  {
+    m_carouselEmptyProgress->clear();
+    m_carouselEmptyProgress->hide();
+    return;
+  }
+
+  if (done >= total)
+    m_carouselEmptyProgress->setText(tr("正在收尾…"));
+  else
+    m_carouselEmptyProgress->setText(tr("正在下载封面图 %1 / %2").arg(done).arg(total));
+  m_carouselEmptyProgress->show();
+}
+
+// 空态里「导入风景图」：选本机图片导入（缩放后存副本），然后立刻开始轮播
+void HomePage::importCarouselImages()
+{
+  const QStringList files = QFileDialog::getOpenFileNames(
+      this, tr("选择风景图"), QString(), HomeCarouselStore::imageFileFilter());
+  if (files.isEmpty())
+    return;
+
+  QStringList images = HomeCarouselStore::existingImages(HomeCarouselStore::savedImages());
+  int failed = 0;
+  for (const QString &file : files)
+  {
+    const QString imported = HomeCarouselStore::importImage(file);
+    if (imported.isEmpty())
+    {
+      ++failed;
+      continue;
+    }
+    if (!images.contains(imported))
+      images.append(imported);
+  }
+
+  if (images != HomeCarouselStore::savedImages())
+  {
+    HomeCarouselStore::saveImages(images);
+    loadPictures();
+    rebuildCarouselSection();
+    emit carouselImagesChanged();
+  }
+
+  if (failed > 0)
+  {
+    AppMessageBox::warning(this, tr("导入风景图"),
+        tr("有 %1 张图片无法识别或读取失败，已跳过。").arg(failed));
   }
 }
 
@@ -1318,6 +1477,12 @@ void HomePage::refreshSkinPanel()
   // 同步加载当前账户皮肤（离线目录 > 缓存 > 官方默认皮肤）
   const AccountInfo acc = SettingsManager::instance()->getDefaultAccount();
   m_skin3D->setSkin(SkinDownloader::loadSkinForAccount(acc.username, acc.uuid));
+  // 披风：离线账户在账户详情页设置的本地披风，没有就不挂
+  QImage cape;
+  if (SkinDownloader::loadOfflineCape(acc.username, cape) && !cape.isNull())
+    m_skin3D->setCape(cape);
+  else
+    m_skin3D->clearCape();
   refreshClassicPage();
 
   // 正版/第三方账户皮肤可能尚未缓存，异步下载补齐（命中缓存则直接加载并发出 skinLoaded）
@@ -1717,7 +1882,10 @@ QWidget* HomePage::createRecentPlaysSection()
   vlay->addWidget(titleLabel);
 
   m_recentPlaysContainer = new QWidget();
-  m_recentPlaysLayout = new FlowLayout(m_recentPlaysContainer, 0, 12, 12);
+  // 间距取首页横排卡片流的统一值（好友 / 热门帖同源），保证卡片宽度一致
+  m_recentPlaysLayout = new FlowLayout(m_recentPlaysContainer, 0,
+                                       UiMetrics::kHomeStripSpacing,
+                                       UiMetrics::kHomeStripSpacing);
   m_recentPlaysLayout->setContentsMargins(0, 0, 0, 0);
   m_recentPlaysContainer->installEventFilter(this);
   vlay->addWidget(m_recentPlaysContainer);
@@ -1780,18 +1948,29 @@ QWidget* HomePage::createHotThreadsSection()
 int HomePage::calculateRecentPlayCardWidth() const
 {
   if (!m_recentPlaysContainer)
-    return 220;
+    return UiMetrics::kHomeStripCardWidth;
 
   const int containerW = m_recentPlaysContainer->width();
   if (containerW <= 0)
-    return 220;
+    return UiMetrics::kHomeStripCardWidth;
 
-  const int margins = m_recentPlaysLayout ? m_recentPlaysLayout->contentsMargins().left() + m_recentPlaysLayout->contentsMargins().right() : 0;
-  const int spacing = m_recentPlaysLayout ? m_recentPlaysLayout->horizontalSpacing() : 12;
-  const int availW = containerW - margins;
-  const int cols = 4;   // 一行固定四个
-  const int cardW = (availW - (cols - 1) * spacing) / cols;
-  return qMax(cardW, 120);
+  const QMargins margins = m_recentPlaysLayout ? m_recentPlaysLayout->contentsMargins() : QMargins();
+  const int availW = containerW - margins.left() - margins.right();
+  // 与好友 / 热门帖同源：三个栏目卡片宽度一致
+  return UiMetrics::homeStripCardWidth(availW);
+}
+
+int HomePage::calculateRecentPlayColumnCount() const
+{
+  if (!m_recentPlaysContainer)
+    return 1;
+
+  const int containerW = m_recentPlaysContainer->width();
+  if (containerW <= 0)
+    return 1;
+
+  const QMargins margins = m_recentPlaysLayout ? m_recentPlaysLayout->contentsMargins() : QMargins();
+  return UiMetrics::homeStripColumns(containerW - margins.left() - margins.right());
 }
 
 void HomePage::rebuildRecentPlaysContent()
@@ -1804,7 +1983,9 @@ void HomePage::rebuildRecentPlaysContent()
   if (m_recentPlaysResizing)
     return;
 
-  const int count = m_recentPlays.isEmpty() ? 0 : qMin(m_recentPlays.size(), 4);
+  // 一行能摆几张就只显示几张，不换到第二行（与好友 / 热门帖同样的规则）
+  const int columns = calculateRecentPlayColumnCount();
+  const int count = m_recentPlays.isEmpty() ? 0 : qMin(m_recentPlays.size(), columns);
   const int cardW = calculateRecentPlayCardWidth();
 
   // 数据与卡片宽度都没变化时跳过重建，避免 resize/页面显示触发的无谓刷新
@@ -1843,7 +2024,7 @@ void HomePage::rebuildRecentPlaysContent()
     return;
   }
 
-  // ── 横排卡片：一行四个（banner 渐变 + logo + 名称 + 最近游玩时间） ──
+  // ── 横排卡片：一行按容器宽度摆满（banner 渐变 + logo + 名称 + 最近游玩时间） ──
   for (int i = 0; i < count; ++i)
   {
     const RecentPlayEntry &entry = m_recentPlays[i];
@@ -1929,7 +2110,7 @@ void HomePage::hideEvent(QHideEvent *event)
     m_hotThreadsPanel->setActive(false);
 }
 
-/* 最近游玩卡片构建（一行四个横排；parent 为挂载图层） */
+/* 最近游玩卡片构建（一行横排，宽度与好友 / 热门帖卡片一致；parent 为挂载图层） */
 QWidget* HomePage::buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *parent, int cardWidth)
 {
     ModInfo seed;

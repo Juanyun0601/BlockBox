@@ -46,10 +46,26 @@ private:
   void installVersion();
   void installLoader();
   void installMods();
+  /// 模组下载主体：带直接地址的进 NetJob 并发下载，其余进串行队列
+  void startModDownloads();
   void downloadNextMod();
   void extractOverrides();
   void createInstance();
   void failInstall(const QString& error);
+
+  /**
+   * CurseForge 清单里每个条目只有项目/文件 ID，没有下载地址和文件名：
+   * 先按 ID 批量向 CurseForge（或 MCIM 镜像）换取真实地址，
+   * 全部换完再进 startModDownloads，避免几百个模组只能一个个合成地址。
+   */
+  void sendNextCurseForgeBatch();
+  /// 解析阶段收尾：无论成功失败都继续往下走（失败时退回旧的串行下载路径）
+  void finishCurseForgeResolve();
+
+  /** CurseForge OpenAPI 基址（跟随 use_mcim 设置，镜像端免 API Key） */
+  QString curseForgeApiBase() const;
+  /** 请求用 API Key（镜像端返回空） */
+  QString curseForgeApiKey() const;
 
   /// Task 进度/状态对外展示（安装页对话框直接绑定）
   void emitStage(const QString& stage);
@@ -77,6 +93,13 @@ private:
   /// 无直接下载地址、走串行下载的 mod 下标队列
   QList<int> m_serialModIndices;
   int m_serialPos = 0;
+
+  /// CurseForge 文件地址解析：待解析的 mod 下标与批内游标
+  QList<int> m_cfResolvePending;
+  int m_cfResolvePos = 0;
+  /// 镜像接口异常后强行走官方接口重试一次
+  bool m_cfForceOfficial = false;
+  QNetworkReply* m_cfResolveReply = nullptr;
 
   ModpackInfo m_info;
   QString m_zipPath;

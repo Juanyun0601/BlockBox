@@ -23,6 +23,9 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QScrollBar>
+#include <QSpinBox>
+#include <QStyle>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -277,10 +280,13 @@ QWidget *buildChild(QWidget *parent, bool first, const QString &who, const QStri
 QWidget *buildPost(QWidget *parent, bool op, const QString &title, const QString &name,
                    const QString &counts, const QString &time, const QString &editMark,
                    const QString &floor, const QString &content, bool withChildren,
-                   bool showAllChildren)
+                   bool showAllChildren, const QString &acceptText = QString())
 {
     auto *post = card(parent, QStringLiteral("forumPost"));
     post->setProperty("op", op);
+    // 问答回答楼层：左侧暖金细条（只有带采纳按钮的回答楼层才这么标）
+    if (!acceptText.isEmpty())
+        post->setProperty("answer", true);
 
     auto *lay = new QHBoxLayout(post);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -311,11 +317,19 @@ QWidget *buildPost(QWidget *parent, bool op, const QString &title, const QString
     head->setSpacing(8);
     if (op)
         head->addWidget(lab(post, QStringLiteral("forumOpBadge"), QStringLiteral("楼主")));
+    else if (!acceptText.isEmpty())
+        head->addWidget(lab(post, QStringLiteral("forumBadgeWarn"), QStringLiteral("回答")));
     head->addWidget(lab(post, QStringLiteral("forumPostTime"), time));
     if (!editMark.isEmpty())
         head->addWidget(lab(post, QStringLiteral("forumEditMark"), editMark));
     head->addStretch(1);
     head->addWidget(lab(post, QStringLiteral("forumFloorNo"), floor));
+    if (!acceptText.isEmpty()) {
+        auto *accept = new QPushButton(acceptText, post);
+        accept->setObjectName(QStringLiteral("forumAcceptButton"));
+        accept->setFixedHeight(27);
+        head->addWidget(accept);
+    }
     main->addLayout(head);
     main->addWidget(lab(post, QString(), content));
 
@@ -446,22 +460,65 @@ QWidget *buildGallery()
     }
     tags->addStretch(1);
     hl->addLayout(tags);
+
+    // 有奖问答：赏金卡（主题头里）+ 采纳按钮 + 得奖楼层，校验新增 QSS 的观感
+    auto *question = card(hero, QStringLiteral("forumQuestionCard"));
+    auto *ql = new QHBoxLayout(question);
+    ql->setContentsMargins(16, 14, 16, 14);
+    ql->setSpacing(13);
+    auto *gift = lab(question, QStringLiteral("forumQuestionGift"), QStringLiteral("🎁"));
+    gift->setFixedSize(44, 44);
+    gift->setAlignment(Qt::AlignCenter);
+    ql->addWidget(gift, 0, Qt::AlignTop);
+    auto *qtext = new QVBoxLayout;
+    qtext->setSpacing(4);
+    auto *bountyRow = new QHBoxLayout;
+    bountyRow->setSpacing(7);
+    auto *bounty = lab(question, QStringLiteral("forumQuestionBounty"),
+                       QStringLiteral("悬赏 <span style=\"font-size:20px;font-weight:900;\">10</span> 方块"));
+    bounty->setTextFormat(Qt::RichText);
+    bounty->setWordWrap(false);
+    bountyRow->addWidget(bounty, 0, Qt::AlignBaseline);
+    auto *pill = lab(question, QStringLiteral("forumQuestionPill"), QStringLiteral("待采纳"));
+    pill->setFixedHeight(22);
+    pill->setAlignment(Qt::AlignCenter);
+    pill->setWordWrap(false);
+    bountyRow->addWidget(pill, 0, Qt::AlignVCenter);
+    bountyRow->addStretch(1);
+    qtext->addLayout(bountyRow);
+    qtext->addWidget(lab(question, QStringLiteral("forumQuestionState"),
+                         QStringLiteral("还剩 29 天 · 到期后按点赞最高的回答自动发放")));
+    qtext->addWidget(lab(question, QStringLiteral("forumQuestionTip"),
+                         QStringLiteral("在下面任意一层回答上点「采纳」，赏金会立刻发给对方")));
+    ql->addLayout(qtext, 1);
+    hl->addWidget(question);
     main->addWidget(hero);
 
     // 楼层
-    main->addWidget(buildPost(
+    auto *opPost = buildPost(
         page, true, QString(), QStringLiteral("小白菜鸟"),
         QStringLiteral("24 帖 · 3 主题\n注册于 2024-11-02"), QStringLiteral("3 小时前 · 已编辑"),
         QStringLiteral("编辑于 2 小时前"), QStringLiteral("楼主"),
         QStringLiteral("启动器点「启动」后一直停在 Forge 加载界面，等了 20 分钟没动静。"
                        "已确认 Java 版本是 17，模组是 Sodium + Lithium 组合。\n\n"
                        "日志里这一段反复出现：\nClassNotFoundException: net.minecraftforge.forgespi.language.IModProvider"),
-        true, false));
-    main->addWidget(buildPost(
+        true, false);
+    // 问答题面：品牌绿细条
+    opPost->setProperty("qaop", true);
+    opPost->style()->unpolish(opPost);
+    opPost->style()->polish(opPost);
+    main->addWidget(opPost);
+    auto *answer = buildPost(
         page, false, QString(), QStringLiteral("烟雨楼台"),
         QStringLiteral("108 帖 · 12 主题\n注册于 2023-06-18"), QStringLiteral("2 小时前"), QString(),
         QStringLiteral("2 楼"),
-        QStringLiteral("同样问题 +1，我用的是 Forge 47.2.18，也是卡住。"), false, false));
+        QStringLiteral("同样问题 +1，我用的是 Forge 47.2.18，也是卡住。")
+            + QStringLiteral("\n\n把整合包作者给的 Forge 版本降到 47.2.20 之后能进去了，"
+                             "原因是 Sodium 和这个 Forge 小版本冲突。"),
+        false, false, QStringLiteral("采纳 · 发放 10 方块"));
+    answer->style()->unpolish(answer);
+    answer->style()->polish(answer);
+    main->addWidget(answer);
 
     // 加载更多 / 分页
     auto *pager = new QPushButton(QStringLiteral("下一页"), page);
@@ -510,6 +567,57 @@ QWidget *buildGallery()
     foot->addWidget(send);
     cl->addLayout(foot);
     main->addWidget(composer);
+
+    // 发布页「问答」模式的悬赏卡（QSS：赏金面板 + 右侧余额胶囊）
+    auto *bountyPanel = card(page, QStringLiteral("forumBountyPanel"));
+    auto *bpl = new QVBoxLayout(bountyPanel);
+    bpl->setContentsMargins(16, 14, 16, 14);
+    bpl->setSpacing(9);
+    auto *btitleRow = new QHBoxLayout;
+    btitleRow->addWidget(lab(bountyPanel, QStringLiteral("forumBountyTitle"),
+                             QStringLiteral("🎁 悬赏方块")));
+    btitleRow->addStretch(1);
+    auto *balance = lab(bountyPanel, QStringLiteral("forumBountyBalance"),
+                        QStringLiteral("余额 120 方块"));
+    balance->setFixedHeight(22);
+    balance->setAlignment(Qt::AlignCenter);
+    balance->setWordWrap(false);
+    btitleRow->addWidget(balance);
+    bpl->addLayout(btitleRow);
+
+    auto *binputRow = new QHBoxLayout;
+    binputRow->setSpacing(10);
+    auto *spin = new QSpinBox(bountyPanel);
+    spin->setObjectName(QStringLiteral("forumBountySpin"));
+    spin->setRange(1, 500);
+    spin->setValue(10);
+    spin->setSuffix(QStringLiteral(" 方块"));
+    spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    spin->setFixedSize(160, 40);
+    binputRow->addWidget(spin);
+    binputRow->addWidget(lab(bountyPanel, QStringLiteral("forumMuted"),
+                             QStringLiteral("发布时从余额托管，采纳后当场发给回答者")), 1);
+    bpl->addLayout(binputRow);
+
+    auto *chipsRow = new QHBoxLayout;
+    chipsRow->setSpacing(8);
+    chipsRow->addWidget(lab(bountyPanel, QStringLiteral("forumMuted"), QStringLiteral("快捷")));
+    for (int amount : {5, 10, 20, 50}) {
+        auto *chip = new QPushButton(QString::number(amount), bountyPanel);
+        chip->setObjectName(QStringLiteral("forumBountyChip"));
+        chip->setCheckable(true);
+        chip->setAutoExclusive(true);
+        chip->setFixedHeight(26);
+        chip->setChecked(amount == 10);
+        chipsRow->addWidget(chip);
+    }
+    chipsRow->addStretch(1);
+    bpl->addLayout(chipsRow);
+
+    bpl->addWidget(lab(bountyPanel, QStringLiteral("forumMuted"),
+                       QStringLiteral("30 天内没采纳，赏金自动发给点赞最多的回答；一层回答都没有则原路退回你的账户")));
+    main->addWidget(bountyPanel);
+
     main->addStretch(1);
 
     outer->addLayout(main, 1);
@@ -625,7 +733,24 @@ int main(int argc, char **argv)
         const bool ok = img.save(out);
         std::fprintf(stderr, "[%s] %s (%dx%d)\n", ok ? "ok" : "FAIL",
                      qUtf8Printable(out), img.width(), img.height());
-        qApp->quit();
+
+        // 再截一张滚到底部的：发布页的悬赏卡在列表下方，顶部截图看不到
+        auto *scroll = host.findChild<QScrollArea *>();
+        if (!scroll) {
+            qApp->quit();
+            return;
+        }
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+        QTimer::singleShot(150, [&]() {
+            const QImage bottom = host.grab().toImage();
+            const QString bottomOut =
+                QStringLiteral("D:/BlockBox/_out/forum_thread_gallery_light_bottom.png");
+            const bool bottomOk = bottom.save(bottomOut);
+            std::fprintf(stderr, "[%s] %s (%dx%d)\n", bottomOk ? "ok" : "FAIL",
+                         qUtf8Printable(bottomOut), bottom.width(), bottom.height());
+            qApp->quit();
+        });
     });
     return app.exec();
 }
+

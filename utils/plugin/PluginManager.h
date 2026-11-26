@@ -13,11 +13,16 @@
  *   - 导出插件、解包查看源码
  *   - API 兼容与依赖检查、语义化版本比较
  *   - 插件设置读写（QSettings 按插件 ID 分区）
+ *   - 启动器样式贡献汇总（manifest.style）
+ *   - 插件 AI 工具：向 AI 助手注入可调用工具并执行（manifest.aiTools，需 ai:tool 权限）
  *   - 在线更新（从 updateUrl 下载 .BlockBox 并替换）
  */
 #ifndef PLUGINMANAGER_H
 #define PLUGINMANAGER_H
 
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QList>
 #include <QObject>
 #include <QSet>
@@ -179,6 +184,60 @@ public:
      */
     QStringList activePluginStyles() const;
 
+    // ==================== AI 工具接口 ====================
+
+    /**
+     * @brief 插件是否可向 AI 助手提供工具
+     *
+     * 条件：已成功解析、声明了至少一个有效 aiTools 工具，且清单声明了
+     * 权限 "ai:tool"。未声明权限时工具不生效，避免插件在用户不知情时
+     * 被 AI 自主调用。
+     */
+    bool providesAiTools(const PluginInfo &info) const;
+
+    /**
+     * @brief 收集已启用插件的 AI 工具定义（OpenAI function calling 格式）
+     *
+     * 同名工具只保留第一个（插件顺序优先），避免污染模型工具集。
+     *
+     * @return QJsonArray，每个元素为 {type:function, function:{name,description,parameters}}
+     */
+    QJsonArray enabledAiToolsJson() const;
+
+    /**
+     * @brief 工具名 → 插件 ID 映射（用于调用分发）
+     *
+     * 与 enabledAiToolsJson() 的取舍规则一致（同名只保留第一个）。
+     */
+    QHash<QString, QString> enabledAiToolMap() const;
+
+    /**
+     * @brief 汇总已启用插件 AI 工具的说明（注入 AI 系统提示词）
+     *
+     * @return 拼接后的说明文本（无可用工具时返回空字符串）
+     */
+    QString enabledAiToolsPrompt() const;
+
+    /**
+     * @brief 执行插件提供的 AI 工具（同步阻塞，供 AiService 在子线程调用）
+     *
+     * 根据工具定义选择执行方式：
+     *   - script：解包插件到临时目录，按脚本类型执行（ps1 → powershell，
+     *             bat/cmd → cmd），标准输出作为结果返回
+     *   - http：同步 HTTP 请求，响应体作为结果返回
+     *
+     * 超时由工具 timeout 字段控制（默认 60 秒）。
+     * 插件未启用、未声明 ai:tool 权限、工具不存在时拒绝执行并通过 error 返回原因。
+     *
+     * @param pluginId 插件 ID
+     * @param toolName 工具名
+     * @param args     工具参数（JSON 对象）
+     * @param error    输出参数：失败原因
+     * @return 工具执行结果文本
+     */
+    QString executeAiTool(const QString &pluginId, const QString &toolName,
+                          const QJsonObject &args, QString &error);
+
     // ==================== 更新 ====================
 
     /**
@@ -243,6 +302,14 @@ private:
     QString settingKey(const QString &id, const QString &key) const;
     /** updatePlugin 的后半段：校验下载结果、版本比较并替换本地文件（主线程执行） */
     bool finalizePluginUpdate(const PluginInfo &info, const QString &tmpPath, QString *error);
+
+    /** 同步执行插件 AI 工具中的脚本（解包 + QProcess 阻塞等待） */
+    QString executeAiScriptTool(const PluginInfo &info, const PluginAiTool &tool,
+                                const QJsonObject &args, QString &error);
+
+    /** 同步执行插件 AI 工具中的 HTTP 请求（QNetworkAccessManager + QEventLoop 阻塞等待） */
+    QString executeAiHttpTool(const PluginAiTool &tool, const QJsonObject &args,
+                              QString &error);
 
     QList<PluginInfo> m_plugins;
     QSet<QString> m_updatingIds; ///< 正在异步更新的插件 ID（防止并发更新同一插件）

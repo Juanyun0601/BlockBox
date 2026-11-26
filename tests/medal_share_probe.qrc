@@ -1,0 +1,34 @@
+<!DOCTYPE RCC>
+<!-- 勋章分享图渲染探针：只收渲染需要的图，别名对齐 :/Images/... 真实资源路径 -->
+<RCC version="1.0">
+  <qresource prefix="/">
+    <file alias="Images/logo.png">../Images/logo.png</file>
+    <file alias="Images/blockbox_icon_dark.png">../Images/blockbox_icon_dark.png</file>
+    <file alias="Images/Icons/medals/medal_newcomer.svg">../Images/Icons/medals/medal_newcomer.svg</file>
+    <file alias="Images/Icons/medals/medal_quiz.svg">../Images/Icons/medals/medal_quiz.svg</file>
+    <file alias="Images/Icons/medals/medal_first_thread.svg">../Images/Icons/medals/medal_first_thread.svg</file>
+    <file alias="Images/Icons/medals/medal_helper.svg">../Images/Icons/medals/medal_helper.svg</file>
+    <file alias="Images/Icons/medals/medal_checkin7.svg">../Images/Icons/medals/medal_checkin7.svg</file>
+    <file alias="Images/Icons/medals/medal_creator.svg">../Images/Icons/medals/medal_creator.svg</file>
+    <file alias="Images/Icons/medals/medal_rich.svg">../Images/Icons/medals/medal_rich.svg</file>
+    <file alias="Images/Icons/medals/medal_popular.svg">../Images/Icons/medals/medal_popular.svg</file>
+    <file alias="Images/Icons/medals/medal_bug_hunter.svg">../Images/Icons/medals/medal_bug_hunter.svg</file>
+    <file alias="Images/Icons/medals/medal_veteran.svg">../Images/Icons/medals/medal_veteran.svg</file>
+    <file alias="Images/Icons/medals/medal_quiz100.svg">../Images/Icons/medals/medal_quiz100.svg</file>
+    <file alias="Images/Icons/medals/medal_fixer10.svg">../Images/Icons/medals/medal_fixer10.svg</file>
+    <file alias="Images/Icons/medals/medal_boards8.svg">../Images/Icons/medals/medal_boards8.svg</file>
+    <file alias="Images/Icons/medals/medal_streak30.svg">../Images/Icons/medals/medal_streak30.svg</file>
+    <file alias="Images/Icons/medals/medal_creator5.svg">../Images/Icons/medals/medal_creator5.svg</file>
+    <file alias="Images/Icons/medals/medal_followers100.svg">../Images/Icons/medals/medal_followers100.svg</file>
+    <file alias="Images/Icons/medals/medal_answers10.svg">../Images/Icons/medals/medal_answers10.svg</file>
+    <file alias="Images/Icons/medals/medal_likes500.svg">../Images/Icons/medals/medal_likes500.svg</file>
+    <file alias="Images/Icons/medals/medal_downloads10000.svg">../Images/Icons/medals/medal_downloads10000.svg</file>
+    <file alias="Images/Icons/medals/medal_rich10000.svg">../Images/Icons/medals/medal_rich10000.svg</file>
+    <file alias="Images/Icons/medals/game/game_story.svg">../Images/Icons/medals/game/game_story.svg</file>
+    <file alias="Images/Icons/medals/game/game_nether.svg">../Images/Icons/medals/game/game_nether.svg</file>
+    <file alias="Images/Icons/medals/game/game_end.svg">../Images/Icons/medals/game/game_end.svg</file>
+    <file alias="Images/Icons/medals/game/game_adventure.svg">../Images/Icons/medals/game/game_adventure.svg</file>
+    <file alias="Images/Icons/medals/game/game_husbandry.svg">../Images/Icons/medals/game/game_husbandry.svg</file>
+    <file alias="Images/Icons/medals/game/game_generic.svg">../Images/Icons/medals/game/game_generic.svg</file>
+  </qresource>
+</RCC>

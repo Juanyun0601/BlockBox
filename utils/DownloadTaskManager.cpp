@@ -60,6 +60,7 @@ QString taskTypeDisplayName(TaskType type)
     case TaskType::ContentDownload:   return QObject::tr("资源下载");
     case TaskType::JavaDownload:      return QObject::tr("下载 Java");
     case TaskType::LanTransfer:       return QObject::tr("局域网传输");
+    case TaskType::ChatP2P:           return QObject::tr("聊天直传");
     case TaskType::AiModel:           return QObject::tr("AI 模型");
     case TaskType::SystemTool:        return QObject::tr("系统组件");
     case TaskType::RuntimeDependency: return QObject::tr("运行依赖");

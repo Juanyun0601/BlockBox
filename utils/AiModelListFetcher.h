@@ -59,6 +59,25 @@ public:
     /// 从 /models 响应体解析模型 ID 列表（无法解析时返回空）
     static QStringList parseModelIds(const QByteArray &payload);
 
+    // ── 模型列表缓存（设置页 / 模型选择窗口共用）──
+    /// 缓存键：归一化端点（去尾斜杠、去掉对话端点后缀、无效地址返回空）
+    static QString cacheKeyFor(const QString &apiUrl);
+
+    /// 读取缓存的模型 ID（无缓存或键为空时返回空列表）
+    static QStringList cachedIds(const QString &apiUrl);
+
+    /// 缓存写入时间（UTC 秒；无缓存返回 0）
+    static qint64 cachedAt(const QString &apiUrl);
+
+    /// 覆盖写入某个端点的模型列表缓存
+    static bool storeCache(const QString &apiUrl, const QStringList &ids);
+
+    /// 从缓存中移除单个模型（用于用户隐藏某个模型）
+    static bool removeFromCache(const QString &apiUrl, const QString &id);
+
+    /// 清空全部模型列表缓存
+    static void clearCache();
+
 signals:
     void finished(const AiModelListResult &result);
 

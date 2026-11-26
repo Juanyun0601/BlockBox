@@ -33,6 +33,10 @@ public:
 
     void setStatus(LaunchStatus status);
     LaunchStatus status() const { return m_status; }
+    // 卡片归属的实例名（多实例并行启动时区分多张启动卡片）；
+    // 非空时会拼进状态行显示
+    void setName(const QString &name) { m_name = name; }
+    QString name() const { return m_name; }
     void setProgress(int progress);
     void setMessage(const QString &message);
     void addDetail(const QString &detail);
@@ -72,6 +76,7 @@ private:
     QLabel *m_messageLabel;
 
     LaunchStatus m_status;
+    QString m_name;
     int m_progress;
     QString m_message;
     QStringList m_details;

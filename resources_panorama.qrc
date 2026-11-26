@@ -2,6 +2,8 @@
 <RCC version="1.0">
     <qresource prefix="/">
         <!-- 旋转全景内置场景素材：MC 主题/主菜单取自 VersePc2 与 Nixinova/Original-Panorama，来源见关于页 -->
+        <!-- 注意：正式版不再编译本文件，场景图改为首次选择主题时按需下载（见 utils/PanoramaThemeManager）；
+             这里仅保留给 tests/rotating_bg_probe、tests/pano_bench 等开发探针离线使用。 -->
         <file>Images/Panorama/overworld/panorama_0.jpg</file>
         <file>Images/Panorama/overworld/panorama_1.jpg</file>
         <file>Images/Panorama/overworld/panorama_2.jpg</file>

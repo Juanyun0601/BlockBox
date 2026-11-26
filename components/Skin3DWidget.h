@@ -103,6 +103,20 @@ public:
   void setBackgroundColor(const QColor& color);
 
   /**
+   * @brief 设置披风纹理（标准 64×32 披风图）
+   *
+   * 披风挂在身体背后，随身体动作一起转，使用独立纹理，不影响皮肤。
+   * 传入空图等同于 clearCape()。
+   */
+  void setCape(const QImage& image);
+
+  /**
+   * @brief 去掉披风（例如账户没有自定义披风时）
+   */
+  void clearCape();
+  bool hasCape() const { return m_capeVisible; }
+
+  /**
    * @brief 设置垂直线性渐变背景（顶部颜色 → 底部颜色）
    *
    * 开启后会替代纯色背景（含主题背景）；调用 setBackgroundColor /
@@ -143,6 +157,9 @@ public:
    * @param dPhi   垂直角增量（正=抬头，负=低头），会自动限制在 ±60°
    */
   void rotateView(float dTheta, float dPhi = 0.0f);
+
+  /** 直接设置相机水平角 / 仰角 / 距离（phi 允许到接近水平，方便做正面预览） */
+  void setViewAngles(float theta, float phi, float radius);
 
   /**
    * @brief 缩放视角（倍率），>1 拉近、<1 拉远，限制在 [1.0, 8.0]
@@ -307,6 +324,13 @@ private:
   QOpenGLTexture* m_texture = nullptr;
   SkinObject m_skin;
 
+  // ---- 披风（独立纹理 + 独立网格，挂在身体背后）----
+  QOpenGLTexture* m_capeTexture = nullptr;
+  QImage m_pendingCape;
+  bool m_capeDirty = false;
+  bool m_capeVisible = false;
+  BodyPart m_cape;
+
   // ---- 状态 ----
   QColor m_background{0x1e, 0x1e, 0x2e};
   QColor m_gradientTop{0x1e, 0x1e, 0x2e};   ///< 渐变背景顶部颜色
@@ -416,6 +440,10 @@ private:
 
   // ---- 纹理上传 ----
   void uploadTexture(const QImage& image);
+  /// 上传披风纹理（单独一张 64×32 纹理，需当前 GL 上下文）
+  void uploadCapeTexture(const QImage& image);
+  /// 构建披风网格（10×16×1 的薄盒，Box UV 与标准披风图一致）
+  void buildCapeGeometry();
 
   // ---- 资源释放 ----
   void destroyGLResources();

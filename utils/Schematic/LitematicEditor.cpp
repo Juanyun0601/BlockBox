@@ -88,6 +88,17 @@ struct SchematicData
     QList<BlockState> palette;   ///< 调色板：全局索引 -> 方块状态
     QList<int> blockIndices;     ///< 体积序（y*layerSize + z*sizeX + x）方块索引
 
+    /** 投影里保存的生物 / 实体（相对最小角，与方块同坐标系） */
+    struct EntityData
+    {
+        QString id;
+        double x = 0.0;
+        double y = 0.0;
+        double z = 0.0;
+        float yaw = 0.0f;
+    };
+    QList<EntityData> entities;
+
     int volume() const
     {
         return sizeX * sizeY * sizeZ;
@@ -545,6 +556,138 @@ bool readLitematic(const QString &path, SchematicData &data, QString *errorOut)
 }
 
 // ============================================================================
+// 实体读写辅助
+// ============================================================================
+/** 读取 List<Double|Float> 形式的坐标（至少 3 个分量） */
+bool readEntityPos(const NbtTag *listTag, double &x, double &y, double &z)
+{
+    if (listTag == nullptr || listTag->type != NbtType::List || listTag->children.size() < 3)
+    {
+        return false;
+    }
+    x = listTag->children.at(0).doubleValue;
+    y = listTag->children.at(1).doubleValue;
+    z = listTag->children.at(2).doubleValue;
+    return true;
+}
+
+/**
+ * @brief 从 .schem（Sponge）或 .schematic（Schematica）里读实体列表
+ * @param container 带 Entities 列表的复合标签
+ * @param idKeys    实体 ID 字段名（Sponge 是 Id，Schematica 是 id）
+ */
+void readEntities(const NbtTag &container, SchematicData &data, const QStringList &idKeys)
+{
+    const NbtTag *entities = NbtCodec::findChild(container, QStringLiteral("Entities"));
+    if (entities == nullptr || entities->type != NbtType::List)
+    {
+        return;
+    }
+    for (const NbtTag &entry : entities->children)
+    {
+        if (entry.type != NbtType::Compound)
+        {
+            continue;
+        }
+        const NbtTag *payload = NbtCodec::findChild(entry, QStringLiteral("NBT"));
+        if (payload != nullptr && payload->type != NbtType::Compound)
+        {
+            payload = nullptr;
+        }
+
+        double x = 0.0, y = 0.0, z = 0.0;
+        bool hasPos = readEntityPos(NbtCodec::findChild(entry, QStringLiteral("Pos")), x, y, z);
+        if (!hasPos && payload != nullptr)
+        {
+            hasPos = readEntityPos(NbtCodec::findChild(*payload, QStringLiteral("Pos")), x, y, z);
+        }
+        if (!hasPos)
+        {
+            continue;
+        }
+
+        QString id;
+        for (const QString &key : idKeys)
+        {
+            if (payload != nullptr)
+            {
+                id = NbtCodec::readStringValue(*payload, key);
+            }
+            if (id.isEmpty())
+            {
+                id = NbtCodec::readStringValue(entry, key);
+            }
+            if (!id.isEmpty())
+            {
+                break;
+            }
+        }
+        if (id.isEmpty())
+        {
+            continue;
+        }
+        if (!id.contains(QLatin1Char(':')))
+        {
+            id = QStringLiteral("minecraft:") + id;
+        }
+
+        float yaw = 0.0f;
+        const NbtTag *rotation = (payload != nullptr)
+                                     ? NbtCodec::findChild(*payload, QStringLiteral("Rotation"))
+                                     : nullptr;
+        if (rotation == nullptr)
+        {
+            rotation = NbtCodec::findChild(entry, QStringLiteral("Rotation"));
+        }
+        if (rotation != nullptr && rotation->type == NbtType::List && !rotation->children.isEmpty())
+        {
+            yaw = static_cast<float>(rotation->children.first().doubleValue);
+        }
+
+        SchematicData::EntityData entity;
+        entity.id = id;
+        entity.x = x - data.originX;
+        entity.y = y - data.originY;
+        entity.z = z - data.originZ;
+        entity.yaw = yaw;
+        data.entities.append(entity);
+    }
+}
+
+/**
+ * @brief 造一个实体列表项（Litematica Version >= 2 的摊平写法）
+ *
+ * 形如 { Id: "minecraft:pig", Pos: [D; x, y, z], Rotation: [F; yaw, 0] }，
+ * 其余实体 NBT（物品、驯服状态等）在本工具里不解析，写回时按默认状态处理。
+ */
+NbtTag makeEntityEntry(const QString &id, double x, double y, double z, float yaw)
+{
+    NbtTag posList = NbtCodec::makeList(QStringLiteral("Pos"), NbtType::Double, {});
+    for (double v : { x, y, z })
+    {
+        NbtTag tag;
+        tag.type = NbtType::Double;
+        tag.doubleValue = v;
+        posList.children.append(tag);
+    }
+
+    NbtTag rotation = NbtCodec::makeList(QStringLiteral("Rotation"), NbtType::Float, {});
+    for (float v : { yaw, 0.0f })
+    {
+        NbtTag tag;
+        tag.type = NbtType::Float;
+        tag.doubleValue = static_cast<double>(v);
+        rotation.children.append(tag);
+    }
+
+    NbtTag entry = NbtCodec::makeCompound();
+    entry.children.append(NbtCodec::makeString(QStringLiteral("Id"), id));
+    entry.children.append(std::move(posList));
+    entry.children.append(std::move(rotation));
+    return entry;
+}
+
+// ============================================================================
 // 写入 .litematic（Version 6）
 // ============================================================================
 bool writeLitematic(const QString &path, const SchematicData &data, QString *errorOut)
@@ -612,7 +755,19 @@ bool writeLitematic(const QString &path, const SchematicData &data, QString *err
     region.children.append(NbtCodec::makeLongArray(QStringLiteral("BlockStates"), blockStates));
 
     region.children.append(NbtCodec::makeList(QStringLiteral("TileEntities"), NbtType::Compound, {}));
-    region.children.append(NbtCodec::makeList(QStringLiteral("Entities"), NbtType::Compound, {}));
+
+    // 生物 / 实体：坐标相对区域最小角（转换前已减去原点）
+    NbtTag entityList = NbtCodec::makeList(QStringLiteral("Entities"), NbtType::Compound, {});
+    for (const SchematicData::EntityData &entity : data.entities)
+    {
+        if (entity.id.isEmpty())
+        {
+            continue;
+        }
+        entityList.children.append(makeEntityEntry(entity.id, entity.x, entity.y, entity.z,
+                                                   entity.yaw));
+    }
+    region.children.append(std::move(entityList));
 
     regions.children.append(std::move(region));
     root.children.append(std::move(regions));
@@ -840,6 +995,9 @@ bool readSchematica(const QString &path, SchematicData &data, QString *errorOut)
         data.blockIndices[bi] = data.paletteIndex(state);
     }
 
+    // 生物 / 实体（MCEdit 格式里 Pos 同样相对投影最小角）
+    readEntities(root, data, QStringList{ QStringLiteral("id"), QStringLiteral("Id") });
+
     return true;
 }
 
@@ -1014,6 +1172,7 @@ bool readSponge(const QString &path, SchematicData &data, QString *errorOut)
     }
 
     Q_UNUSED(maxId);
+    readEntities(*container, data, QStringList{ QStringLiteral("Id"), QStringLiteral("id") });
     return true;
 }
 

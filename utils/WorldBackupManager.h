@@ -11,7 +11,7 @@
  *   - 启动游戏前按配置频率（每次启动 / 每小时 / 每天）自动备份有改动的世界。
  *
  * 备份布局：
- *   <Data>/Backups/Worlds/<实例名>_<路径哈希>/<世界名>/<时间戳>_<随机>.zip
+ *   <Data>/WorldBackups/Worlds/<实例名>_<路径哈希>/<世界名>/<时间戳>_<随机>.zip
  *   同名 .json 侧车文件保存备份元数据（时间、原始大小、压缩大小、备注等）。
  *
  * 同步核心函数（createBackupSync/restoreBackupSync/deleteBackupSync）为耗时
@@ -21,11 +21,13 @@
 #ifndef WORLDBACKUPMANAGER_H
 #define WORLDBACKUPMANAGER_H
 
+#include <QAtomicInt>
 #include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QDateTime>
 #include <QList>
+#include <QPair>
 #include <functional>
 
 /** 单个世界备份的元数据 */
@@ -69,11 +71,34 @@ public:
     /// 递归计算目录大小（字节）
     static qint64 directorySize(const QString &dirPath);
 
+    // ── 备份设置（QSettings 键 worldBackup/*，备份弹窗与设置页共用） ──
+
+    /// 启动游戏前是否自动备份（默认关闭）
+    static bool autoBackupEnabled();
+    static void setAutoBackupEnabled(bool enabled);
+    /// 自动备份频率：0=每次启动 1=每小时 2=每天
+    static int autoBackupFrequency();
+    static void setAutoBackupFrequency(int frequency);
+    /// 每个世界保留的备份份数（超出后自动删最旧的）
+    static int keepCount();
+    static void setKeepCount(int count);
+    /// 恢复前是否先为当前世界创建一份快照
+    static bool snapshotBeforeRestore();
+    static void setSnapshotBeforeRestore(bool enabled);
+
     // ── 备份列表 ──
 
     /// 列出某世界的全部备份（按创建时间从新到旧），跳过压缩包已丢失的孤儿元数据
     QList<WorldBackupInfo> listBackups(const QString &instancePath,
                                        const QString &worldName) const;
+
+    /**
+     * @brief 列出该实例下有备份的世界名（含存档已被删除、只剩备份的世界）
+     *
+     * 用于「存档备份」总览：世界被误删后，还能从这里找到并恢复它的备份。
+     * 按最新一份备份的时间从新到旧排序。
+     */
+    QStringList listBackupWorldNames(const QString &instancePath) const;
 
     // ── 同步核心（耗时，调用方应放入工作线程） ──
 
@@ -125,12 +150,12 @@ public:
     /**
      * @brief 启动游戏前按配置执行自动备份（每次启动 / 每小时 / 每天）
      *
-     * 备份自上次备份后有改动的世界。因游戏启动后会改写存档，本函数在内部
-     * 事件循环中等待备份完成后再返回（UI 不冻结，进度经 progress 回调上报）。
-     * @return 是否执行了备份（无改动/被禁用/频率未到时返回 false）
+     * 只备份自上次备份后有改动的世界，整个过程在工作线程里跑，UI 不冻结。
+     * 无论是否真的备份（未启用 / 频率未到 / 没有改动 / 已有任务在跑），
+     * 结束时都会发出 autoBackupBatchFinished（未备份时为 0, 0），
+     * 调用方据此决定是否继续启动游戏。
      */
-    bool autoBackupBeforeLaunch(const QString &instancePath,
-                                const std::function<void(int, const QString &)> &progress = {});
+    void startAutoBackupBeforeLaunch(const QString &instancePath);
 
 signals:
     /// 备份/恢复过程中的粗粒度进度（percent: 0-100，-1 表示不定进度）
@@ -146,17 +171,23 @@ private:
     explicit WorldBackupManager(QObject *parent = nullptr);
 
     /// 启动前自动备份批次的执行体（在工作线程中调用，逐个世界备份）
-    void runAutoBackupBatch(const QString &instancePath, const QStringList &worlds);
+    /// @param keep 每个世界保留的备份份数（由调用方在 UI 线程先读好，避免跨线程读设置）
+    /// @return 成功份数、失败份数
+    QPair<int, int> runAutoBackupBatch(const QString &instancePath, const QStringList &worlds,
+                                       int keep);
 
     /// 从实例版本 json 读取游戏版本号（失败返回空串）
     static QString readGameVersion(const QString &instancePath);
     /// 世界目录的"最后修改时间"（level.dat 修改时间与目录时间取较新者）
     static QDateTime worldModifiedTime(const QString &worldPath);
-    /// 最近一次自动备份完成时间
-    QDateTime lastAutoBackupTime() const;
-    void setLastAutoBackupTime(const QDateTime &time);
+    /// 某实例最近一次自动备份完成时间（按实例分开记，多实例互不影响）
+    QDateTime lastAutoBackupTime(const QString &instancePath) const;
+    void setLastAutoBackupTime(const QString &instancePath, const QDateTime &time);
+    /// 抢占/释放忙碌标志（备份与恢复互斥，跨线程安全）
+    bool tryAcquireBusy();
+    void releaseBusy();
 
-    bool m_busy = false; ///< 防止备份/恢复并发执行
+    QAtomicInt m_busy{0}; ///< 防止备份/恢复并发执行（0=空闲 1=忙）
 };
 
 #endif // WORLDBACKUPMANAGER_H

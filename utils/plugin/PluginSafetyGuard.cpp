@@ -39,6 +39,7 @@ const PermissionDef kPermissionDefs[] = {
     { "admin",      QT_TRANSLATE_NOOP("QObject", "请求管理员权限（UAC 提权）"),   RiskHigh },
     { "system",     QT_TRANSLATE_NOOP("QObject", "执行系统级操作（服务/关机/格式化等）"), RiskHigh },
     { "ui:style",   QT_TRANSLATE_NOOP("QObject", "修改启动器界面样式（仅外观）"), RiskLow },
+    { "ai:tool",    QT_TRANSLATE_NOOP("QObject", "让 AI 助手调用插件提供的工具"), RiskMedium },
 };
 
 /** 危险模式表：pattern / 说明 / 是否高危 */

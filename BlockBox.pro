@@ -4,6 +4,14 @@ QT       += core gui network concurrent svg
 android: QT += opengl openglwidgets
 !android: QT += opengl openglwidgets
 
+# 扫码登录：手机端用相机取景识别电脑上的登录二维码，取景要 Qt Multimedia。
+# 桌面端用不到相机（电脑端只负责显示二维码 / 从图片识别），所以只在安卓构建里链接，
+# 顺带定义 BLOCKBOX_HAS_QR_CAMERA 让界面知道这台设备能不能扫码。
+android {
+    QT += multimedia multimediawidgets
+    DEFINES += BLOCKBOX_HAS_QR_CAMERA
+}
+
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 CONFIG += c++11
@@ -13,6 +21,17 @@ CONFIG += c++11
 # depend on your compiler). Please consult the documentation of the
 # deprecated API in order to know how to port your code away from it.
 DEFINES += QT_DEPRECATED_WARNINGS
+
+# 官方构建标识：打包脚本（软件发布/一键打包.bat）编译时追加 DEFINES+=BLOCKBOX_OFFICIAL_BUILD。
+# 未定义该宏时一律按「非官方构建」处理：主窗口标题追加水印、启动后提示一次风险、
+# 「设置 → 关于」用告警色显示构建标识。
+
+# 发布版本号：打包脚本传 APP_VERSION=<版本>（如 qmake ... APP_VERSION=beta9.1），
+# 编译期写死进二进制，保证程序自报版本与安装包文件名、官网公示清单里的版本号一致。
+# 不传时 AppVersion::current() 用源码里的默认值（本地开发构建）。
+!isEmpty(APP_VERSION) {
+    DEFINES += BLOCKBOX_BUILD_VERSION=\\\"$$APP_VERSION\\\"
+}
 
 # ---------------------------------------------------------------- 构建速度优化
 # 预编译头：把几百个文件都要用的 Qt 头只解析一次，单文件编译变快（详见 pch.h）。
@@ -71,6 +90,7 @@ SOURCES += \
     components/UpdateProgressButton.cpp \
     components/TaskBar.cpp \
     components/SideBar.cpp \
+    components/SystemTray.cpp \
     components/LaunchTaskCard.cpp \
 components/CustomCheckBox.cpp \
      components/CustomRadioButton.cpp \
@@ -78,10 +98,13 @@ components/CustomCheckBox.cpp \
      components/InstanceFolderTree.cpp \
     components/LanTransferDialog.cpp \
     components/ShareToFriendDialog.cpp \
+    components/ForumClaimDialog.cpp \
     components/ThreadTipDialog.cpp \
     components/CreateGroupDialog.cpp \
     components/ChatForwardDialog.cpp \
+    components/MedalShareDialog.cpp \
     components/ChatBookmarkDialog.cpp \
+    components/ChatSettingsDialog.cpp \
      components/DownloadTaskCard.cpp \
      components/TaskProgressWidgets.cpp \
 components/ProgressWidget.cpp \
@@ -92,9 +115,13 @@ components/ProgressDialog.cpp \
       components/BlurLoadingOverlay.cpp \
      components/AppMessageBox.cpp \
      components/AppDialogBase.cpp \
+     components/QrLoginDialog.cpp \
+     components/LaunchLogDialog.cpp \
      components/LobbyPublishDialog.cpp \
      components/LobbyJoinPrepDialog.cpp \
      components/WorldConvertDialog.cpp \
+     components/WorldBackupDialog.cpp \
+     components/WorldBackupCenterDialog.cpp \
      components/HighRiskConfirmDialog.cpp \
      components/QuizDialog.cpp \
      components/QuizReminder.cpp \
@@ -106,10 +133,13 @@ components/ProgressDialog.cpp \
       components/ScreenshotViewer.cpp \
       components/NotificationCard.cpp \
      components/NotificationManager.cpp \
+    components/ServerDownloadDialog.cpp \
      components/NotificationHistoryDialog.cpp \
      components/FileOpStepsDialog.cpp \
      components/InstanceAssistantWindow.cpp \
      components/GameFloatingIcon.cpp \
+     components/TouchControlOverlay.cpp \
+     components/TouchLayoutEditorDialog.cpp \
      components/BedrockInstanceAssistantWindow.cpp \
      components/BackgroundWidget.cpp \
      components/PanoramaSkyRenderer.cpp \
@@ -119,15 +149,19 @@ components/ProgressDialog.cpp \
      components/PerfMonitorCard.cpp \
      components/PerformanceDetailDialog.cpp \
      components/ModelSelectDialog.cpp \
+     components/ModelProviderSettingsPanel.cpp \
      components/LocalModelDialog.cpp \
      components/CommandPackManagerDialog.cpp \
      components/CommandPackEditor.cpp \
      components/ResourceReferenceDialog.cpp \
-     components/StructureDetailDialog.cpp \
      components/FavoriteFolderDialog.cpp \
      components/ContentCategoryFilterDialog.cpp \
+     components/ResourceFilterDialog.cpp \
+     components/ResourceSyncListWindow.cpp \
      components/ContentViewSwitch.cpp \
      components/ModRelationDialog.cpp \
+     components/CompatibilityCheckDialog.cpp \
+     components/NetworkCheckDialog.cpp \
      components/SourceSwitchBar.cpp \
      components/MasonryContentCard.cpp \
      components/CardSelectionOverlay.cpp \
@@ -141,12 +175,17 @@ components/ProgressDialog.cpp \
      components/OutlinedTextEdit.cpp \
      components/LocalCategoryDialog.cpp \
      components/VoxelViewWidget.cpp \
-    components/WorldMap3DView.cpp \
 components/ProjectionBlockEditorDialog.cpp \
+components/ProjectionFillShapeDialog.cpp \
 components/OrthoViewsPreviewDialog.cpp \
+components/ProjectionPreviewDialog.cpp \
+components/ProjectionMaterialDialog.cpp \
+components/LayerBuildPlanWidget.cpp \
+components/ProjectionBuildGuideDialog.cpp \
      components/HomeDataVisuals.cpp \
      components/HomeFriendsPanel.cpp \
      components/HomeHotThreadsPanel.cpp \
+     components/AnnualReportCard.cpp \
      components/FileDropOverlay.cpp \
      components/InstanceSelectDialog.cpp \
      pages/ShaderPackSettingsPage.cpp \
@@ -166,7 +205,8 @@ pages/settings/SettingsAdvancedPage.cpp \
      pages/settings/SettingsProjectionEditorPage.cpp \
       pages/settings/SettingsKeyBindPage.cpp \
      pages/settings/SettingsSystemInfoPage.cpp \
-     pages/settings/SettingsBedrockGamePage.cpp \
+    pages/settings/SettingsBedrockGamePage.cpp \
+     pages/settings/SettingsControlPage.cpp \
      pages/settings/BedrockInstanceSettingsPage.cpp \
      pages/settings/SettingsAiAssistantPage.cpp \
      pages/settings/SettingsAboutPage.cpp \
@@ -174,6 +214,11 @@ pages/settings/SettingsAdvancedPage.cpp \
     pages/LanTransferPage.cpp \
     pages/AddAccountPage.cpp \
     pages/ForumAccountPage.cpp \
+     pages/SkinStationPage.cpp \
+    pages/LibraryPage.cpp \
+     pages/PlaytimeStatsPage.cpp \
+     pages/AnnualReportPage.cpp \
+     pages/QrScanPage.cpp \
     pages/AiChatPage.cpp \
      pages/InstanceManagePage.cpp \
      pages/InstanceModsPage.cpp \
@@ -183,10 +228,11 @@ pages/settings/SettingsAdvancedPage.cpp \
      pages/InstanceRecordingsPage.cpp \
      pages/InstanceResourcesPage.cpp \
      pages/SaveSettingsPage.cpp \
-     pages/WorldMapPage.cpp \
+     pages/WorldMapEntryPage.cpp \
      pages/InstanceHomePage.cpp \
      pages/InstanceJavaPage.cpp \
      pages/InstanceJavaDownloadPage.cpp \
+     pages/InstanceServerPage.cpp \
      pages/ProjectionManagePage.cpp \
      pages/ProjectionEditPage.cpp \
      pages/ServerManagePage.cpp \
@@ -194,6 +240,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     pages/settings/InstanceGameSettingsPage.cpp \
     pages/MicrosoftLoginDialog.cpp \
     pages/LaunchDetailsPage.cpp \
+    pages/GameLaunchPage.cpp \
     pages/InstallInstancePage.cpp \
     pages/LoaderDetailPage.cpp \
     pages/ForgeVersionListPage.cpp \
@@ -202,14 +249,19 @@ pages/settings/SettingsAdvancedPage.cpp \
     pages/TaskListPage.cpp \
     pages/TaskDetailPage.cpp \
     utils/SettingsManager.cpp \
+    utils/MobileControlSettings.cpp \
     utils/ForumAccountService.cpp \
     utils/HomeCarouselStore.cpp \
+    utils/HomePresetCovers.cpp \
     utils/QuizBank.cpp \
     utils/TriviaBank.cpp \
     utils/SkinDownloader.cpp \
     utils/SpeedCalculator.cpp \
     utils/SystemInfo.cpp \
     utils/UpdateChecker.cpp \
+    utils/trust/TrustManifest.cpp \
+    utils/trust/SelfIntegrityChecker.cpp \
+    utils/trust/LogSanitizer.cpp \
     utils/news/NewsFeed.cpp \
     utils/news/AnnouncementFeed.cpp \
     utils/RuntimeArchive.cpp \
@@ -217,6 +269,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/HarmonyBridge.cpp \
     utils/LanguageManager.cpp \
     utils/LanTransfer.cpp \
+    utils/ChatP2P.cpp \
     utils/tunnel/TunnelManager.cpp \
     utils/tunnel/EasyTierEngine.cpp \
     utils/FileExplorer.cpp \
@@ -224,8 +277,10 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/AndroidBridge.cpp \
     utils/AuthManager.cpp \
     utils/auth/AuthManagerMicrosoft.cpp \
+    utils/auth/AuthlibInjector.cpp \
     utils/BackgroundManager.cpp \
     utils/BingWallpaperManager.cpp \
+    utils/PanoramaThemeManager.cpp \
     utils/ThemeManager.cpp \
     utils/StyleKit.cpp \
     utils/GameLauncher.cpp \
@@ -235,6 +290,10 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/launcher/GameLauncherCommand.cpp \
     utils/ErrorAnalyzer.cpp \
     utils/ResourceManager.cpp \
+    utils/QrCode.cpp \
+    utils/QrDecode.cpp \
+    utils/QrTables.cpp \
+    utils/ResourceVersionSyncer.cpp \
     utils/PerformanceMonitor.cpp \
     utils/LoaderCompatibility.cpp \
     utils/MemoryAllocator.cpp \
@@ -252,6 +311,9 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/AsyncInitializer.cpp \
     utils/LowConfigMode.cpp \
     utils/JarUtils.cpp \
+    utils/compat/LocalCompatibilityChecker.cpp \
+    utils/compat/CompatMatrix.cpp \
+    utils/compat/CompatMatrixFetcher.cpp \
     utils/forge/ForgeDownloader.cpp \
     utils/forge/ForgeInstaller.cpp \
     utils/forge/ForgeNewInstallTask.cpp \
@@ -262,6 +324,11 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/optifine/OptiFineInstaller.cpp \
     utils/ManifestCache.cpp \
     utils/IconHelper.cpp \
+    utils/MedalCatalog.cpp \
+    utils/MedalShareCard.cpp \
+    utils/GameAchievementWatcher.cpp \
+    utils/GameAchievementService.cpp \
+    utils/GameAchievementCatalog.cpp \
      utils/NeoForgeInstaller.cpp \
      utils/LiteLoaderInstaller.cpp \
      utils/CleanroomInstaller.cpp \
@@ -308,6 +375,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/mod/ModNameFetcher.cpp \
     utils/mod/ModLinkResolver.cpp \
     utils/mod/MurmurHash2.cpp \
+    utils/links/LinkRouter.cpp \
     utils/modpack/ModpackDetector.cpp \
     utils/modpack/ModpackImporter.cpp \
     utils/modpack/ModpackFileAdviser.cpp \
@@ -317,6 +385,10 @@ pages/settings/SettingsAdvancedPage.cpp \
      utils/ClipboardMonitor.cpp \
      utils/FileImportRouter.cpp \
      utils/AiService.cpp \
+     utils/mcp/McpServer.cpp \
+     utils/mcp/McpToolCatalog.cpp \
+     utils/dsh/DshPluginInstaller.cpp \
+    utils/GameScreenshot.cpp \
     utils/SystemTools.cpp \
     utils/HardwareMonitor.cpp \
     utils/MultiThreadDownloader.cpp \
@@ -329,35 +401,26 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/Saves/LevelDatEditor.cpp \
     utils/ServersDatIO.cpp \
     utils/McServerPinger.cpp \
+    utils/server/LocalServerManager.cpp \
     utils/WorldBackupManager.cpp \
-    utils/WorldMap/WorldMapRenderer.cpp \
-    utils/WorldMap/SeedTerrainRenderer.cpp \
-    utils/WorldMap/TreePredictor.cpp \
-    utils/WorldMap/TreeGen.cpp \
-    utils/WorldMap/MushroomPredictor.cpp \
-    utils/WorldMap/CavePredictor.cpp \
+    utils/PlaytimeStats.cpp \
     utils/WorldMap/StructureFinder.cpp \
     utils/WorldMap/StructureIcons.cpp \
-    utils/WorldMap/StructureLoot.cpp \
-utils/WorldMap/StructureModelBuilder.cpp \
-utils/WorldMap/StructureTemplates.cpp \
-utils/WorldMap/StrongholdModel.cpp \
-utils/WorldMap/FortressModel.cpp \
-utils/WorldMap/MineshaftModel.cpp \
-    utils/WorldMap/McRandom.cpp \
-    utils/WorldMap/BiomeCatalog.cpp \
-    utils/WorldMap/BiomeName.cpp \
-    utils/WorldMap/OreFinder.cpp \
+    utils/MapBlockPalette.cpp \
+    utils/WorldMapSignalBridge.cpp \
     utils/WorldConvert/WorldConverter.cpp \
     utils/Schematic/NbtCodec.cpp \
     utils/Schematic/LitematicEditor.cpp \
     utils/Schematic/SchematicDocument.cpp \
+    utils/Schematic/ProjectionFillShape.cpp \
     utils/Schematic/SchematicCoverRenderer.cpp \
     utils/Schematic/ProjectionEditorSettings.cpp \
     utils/Schematic/InstanceTextureLoader.cpp \
     utils/Schematic/BlockShapeLoader.cpp \
     utils/Schematic/InstanceBlockNames.cpp \
     utils/Schematic/SchematicOrthoViewRenderer.cpp \
+    utils/Schematic/EntityModelLoader.cpp \
+    utils/Schematic/InstanceEntityTextures.cpp \
     utils/CommandAssistant/CommandDatabase.cpp \
     utils/CommandAssistant/CommandTranslator.cpp \
     utils/CommandAssistant/CommandCompleter.cpp \
@@ -388,6 +451,7 @@ utils/WorldMap/MineshaftModel.cpp \
     components/SkillManagerDialog.cpp \
     components/PluginRunnerDialog.cpp \
     utils/translation/TranslationService.cpp \
+    utils/translation/ContentTranslationService.cpp \
     components/TranslationSettingsDialog.cpp \
     utils/AiModelListFetcher.cpp \
     components/AiModelFetchRow.cpp \
@@ -400,10 +464,15 @@ utils/WorldMap/MineshaftModel.cpp \
     pages/CreationWorkDetailPage.cpp \
     pages/ForumFriendsPage.cpp \
     pages/ForumPluginListPage.cpp \
+    pages/ForumSchematicListPage.cpp \
+    pages/CommunitySkinPage.cpp \
+    pages/CommunitySkinDetailPage.cpp \
     pages/MultiplayerLobbyPage.cpp \
     pages/MultiplayerLobbyDetailPage.cpp \
     pages/FeedbackPage.cpp \
     pages/FeedbackComposePage.cpp \
+    pages/FeedbackDetailPage.cpp \
+    pages/TranslationComposePage.cpp \
     pages/ForumReportPage.cpp \
     utils/ForumContentService.cpp \
     utils/ForumLobbyService.cpp \
@@ -411,19 +480,28 @@ utils/WorldMap/MineshaftModel.cpp \
     utils/Lobby/LobbyContentFetcher.cpp \
     utils/Lobby/LobbyShareLink.cpp \
     utils/ForumChatService.cpp \
+    utils/ForumPlayerStatsService.cpp \
     utils/ChatUiStore.cpp \
+    utils/ChatPrefs.cpp \
     utils/ChatBookmarkStore.cpp \
     utils/FeedbackService.cpp \
     utils/ForumImageStore.cpp \
+    utils/CoverImageCache.cpp \
     components/ForumKit.cpp \
+    components/PlayerCountChart.cpp \
     components/ForumLinkRowsEditor.cpp \
+    components/ForumTagEditor.cpp \
+    components/ForumCarouselEditor.cpp \
     components/ForumPostBrowser.cpp \
     components/PublishKit.cpp \
     components/CommunityAgreementDialog.cpp \
+    components/UserAgreementDialog.cpp \
+    components/MailFeedbackDialog.cpp \
     pages/PublishPage.cpp \
     pages/PublishResourcePage.cpp \
     pages/PublishPlatformPage.cpp \
-    pages/PublishBoardPage.cpp
+    pages/PublishBoardPage.cpp \
+    pages/MorePage.cpp
 
 HEADERS += \
     platform.h \
@@ -434,6 +512,7 @@ HEADERS += \
     components/UpdateProgressButton.h \
     components/TaskBar.h \
     components/SideBar.h \
+    components/SystemTray.h \
     components/LaunchTaskCard.h \
 components/CustomCheckBox.h \
      components/CustomRadioButton.h \
@@ -441,10 +520,13 @@ components/CustomCheckBox.h \
      components/InstanceFolderTree.h \
     components/LanTransferDialog.h \
     components/ShareToFriendDialog.h \
+    components/ForumClaimDialog.h \
     components/ThreadTipDialog.h \
     components/CreateGroupDialog.h \
     components/ChatForwardDialog.h \
     components/ChatBookmarkDialog.h \
+    components/ChatSettingsDialog.h \
+    components/MedalShareDialog.h \
      components/DownloadTaskCard.h \
      components/TaskProgressWidgets.h \
 components/ProgressWidget.h \
@@ -455,9 +537,13 @@ components/ProgressDialog.h \
        components/BlurLoadingOverlay.h \
        components/AppMessageBox.h \
        components/AppDialogBase.h \
+       components/QrLoginDialog.h \
+       components/LaunchLogDialog.h \
        components/LobbyPublishDialog.h \
        components/LobbyJoinPrepDialog.h \
        components/WorldConvertDialog.h \
+       components/WorldBackupDialog.h \
+       components/WorldBackupCenterDialog.h \
        components/HighRiskConfirmDialog.h \
        components/QuizDialog.h \
        components/QuizReminder.h \
@@ -469,30 +555,38 @@ components/ProgressDialog.h \
       components/ScreenshotViewer.h \
        components/NotificationCard.h \
      components/NotificationManager.h \
+    components/ServerDownloadDialog.h \
      components/NotificationHistoryDialog.h \
      components/FileOpStepsDialog.h \
        components/BackgroundWidget.h \
        components/PanoramaSkyRenderer.h \
        components/InstanceAssistantWindow.h \
        components/GameFloatingIcon.h \
+       components/TouchControlOverlay.h \
+       components/TouchLayoutEditorDialog.h \
        components/BedrockInstanceAssistantWindow.h \
        components/NewsCard.h \
      components/HomeAnnouncementBar.h \
      components/HomeFriendsPanel.h \
      components/HomeHotThreadsPanel.h \
+     components/AnnualReportCard.h \
      components/NewsDetailDialog.h \
       components/PerfMonitorCard.h \
       components/PerformanceDetailDialog.h \
       components/ModelSelectDialog.h \
+      components/ModelProviderSettingsPanel.h \
       components/LocalModelDialog.h \
       components/CommandPackManagerDialog.h \
       components/CommandPackEditor.h \
-       components/StructureDetailDialog.h \
        components/ResourceReferenceDialog.h \
         components/FavoriteFolderDialog.h \
          components/ContentCategoryFilterDialog.h \
+         components/ResourceFilterDialog.h \
+         components/ResourceSyncListWindow.h \
          components/ContentViewSwitch.h \
          components/ModRelationDialog.h \
+         components/CompatibilityCheckDialog.h \
+         components/NetworkCheckDialog.h \
          components/SourceSwitchBar.h \
          components/MasonryContentCard.h \
          components/CardSelectionOverlay.h \
@@ -506,9 +600,13 @@ components/ProgressDialog.h \
          components/OutlinedTextEdit.h \
         components/LocalCategoryDialog.h \
         components/VoxelViewWidget.h \
-    components/WorldMap3DView.h \
 components/ProjectionBlockEditorDialog.h \
+components/ProjectionFillShapeDialog.h \
 components/OrthoViewsPreviewDialog.h \
+components/ProjectionPreviewDialog.h \
+components/ProjectionMaterialDialog.h \
+components/LayerBuildPlanWidget.h \
+components/ProjectionBuildGuideDialog.h \
          components/HomeDataVisuals.h \
          components/FileDropOverlay.h \
          components/InstanceSelectDialog.h \
@@ -524,9 +622,15 @@ components/OrthoViewsPreviewDialog.h \
     pages/LanTransferPage.h \
     pages/AddAccountPage.h \
     pages/ForumAccountPage.h \
+     pages/SkinStationPage.h \
+    pages/LibraryPage.h \
+     pages/PlaytimeStatsPage.h \
+     pages/AnnualReportPage.h \
+     pages/QrScanPage.h \
     pages/AiChatPage.h \
     pages/MicrosoftLoginDialog.h \
     pages/LaunchDetailsPage.h \
+    pages/GameLaunchPage.h \
     pages/InstallInstancePage.h \
     pages/LoaderDetailPage.h \
     pages/ForgeVersionListPage.h \
@@ -535,8 +639,11 @@ components/OrthoViewsPreviewDialog.h \
     pages/TaskListPage.h \
     pages/TaskDetailPage.h \
     utils/SettingsManager.h \
+    utils/MobileControlSettings.h \
     utils/ForumAccountService.h \
     utils/HomeCarouselStore.h \
+    utils/HomePresetCovers.h \
+    utils/AssetUrls.h \
     utils/PageFilter.h \
     utils/QuizBank.h \
     utils/TriviaBank.h \
@@ -545,6 +652,10 @@ components/OrthoViewsPreviewDialog.h \
     utils/SpeedCalculator.h \
     utils/SystemInfo.h \
     utils/UpdateChecker.h \
+    utils/trust/TrustManifest.h \
+    utils/trust/SelfIntegrityChecker.h \
+    utils/trust/LogSanitizer.h \
+    utils/trust/BuildChannel.h \
     utils/news/NewsFeed.h \
     utils/news/AnnouncementFeed.h \
     utils/RuntimeArchive.h \
@@ -552,6 +663,7 @@ components/OrthoViewsPreviewDialog.h \
     utils/HarmonyBridge.h \
     utils/LanguageManager.h \
     utils/LanTransfer.h \
+    utils/ChatP2P.h \
     utils/tunnel/TunnelManager.h \
     utils/tunnel/TunnelEngine.h \
     utils/tunnel/EasyTierEngine.h \
@@ -559,14 +671,19 @@ components/OrthoViewsPreviewDialog.h \
     utils/FileReuse.h \
     utils/AndroidBridge.h \
     utils/AuthManager.h \
+    utils/auth/AuthlibInjector.h \
     utils/BackgroundManager.h \
     utils/BingWallpaperManager.h \
+    utils/PanoramaThemeManager.h \
     utils/ThemeManager.h \
     utils/StyleKit.h \
     utils/GameLauncher.h \
     utils/BedrockLauncher.h \
     utils/ErrorAnalyzer.h \
     utils/ResourceManager.h \
+    utils/QrCode.h \
+    utils/QrTables.h \
+    utils/ResourceVersionSyncer.h \
     utils/PerformanceMonitor.h \
     utils/LoaderCompatibility.h \
     utils/MemoryAllocator.h \
@@ -594,7 +711,15 @@ components/OrthoViewsPreviewDialog.h \
     utils/AsyncInitializer.h \
     utils/LowConfigMode.h \
     utils/JarUtils.h \
+    utils/compat/LocalCompatibilityChecker.h \
+    utils/compat/CompatMatrix.h \
+    utils/compat/CompatMatrixFetcher.h \
     utils/ManifestCache.h \
+    utils/MedalCatalog.h \
+    utils/MedalShareCard.h \
+    utils/GameAchievementWatcher.h \
+    utils/GameAchievementService.h \
+    utils/GameAchievementCatalog.h \
     utils/FavoritesManager.h \
     utils/ContentFavoriteSync.h \
     utils/LocalCategoryManager.h \
@@ -641,10 +766,11 @@ components/OrthoViewsPreviewDialog.h \
     pages/InstanceRecordingsPage.h \
      pages/InstanceResourcesPage.h \
      pages/SaveSettingsPage.h \
-     pages/WorldMapPage.h \
+     pages/WorldMapEntryPage.h \
      pages/InstanceHomePage.h \
      pages/InstanceJavaPage.h \
      pages/InstanceJavaDownloadPage.h \
+     pages/InstanceServerPage.h \
 pages/ProjectionManagePage.h \
      pages/ProjectionEditPage.h \
      pages/ServerManagePage.h \
@@ -670,6 +796,7 @@ pages/ProjectionManagePage.h \
     utils/mod/ModNameFetcher.h \
     utils/mod/ModLinkResolver.h \
     utils/mod/MurmurHash2.h \
+    utils/links/LinkRouter.h \
     utils/modpack/ModpackInfo.h \
     utils/modpack/ModpackDetector.h \
     utils/modpack/ModpackImporter.h \
@@ -681,6 +808,10 @@ pages/ProjectionManagePage.h \
      utils/ClipboardMonitor.h \
      utils/FileImportRouter.h \
      utils/AiService.h \
+     utils/mcp/McpServer.h \
+     utils/mcp/McpToolCatalog.h \
+     utils/dsh/DshPluginInstaller.h \
+    utils/GameScreenshot.h \
     utils/SystemTools.h \
     utils/HardwareMonitor.h \
     utils/MultiThreadDownloader.h \
@@ -693,35 +824,26 @@ pages/ProjectionManagePage.h \
     utils/Schematic/NbtCodec.h \
     utils/Schematic/LitematicEditor.h \
     utils/Schematic/SchematicDocument.h \
+    utils/Schematic/ProjectionFillShape.h \
+    utils/Schematic/SchematicDownloadTarget.h \
     utils/Schematic/SchematicCoverRenderer.h \
     utils/Schematic/ProjectionEditorSettings.h \
     utils/Schematic/InstanceTextureLoader.h \
     utils/Schematic/BlockShapeLoader.h \
     utils/Schematic/InstanceBlockNames.h \
     utils/Schematic/SchematicOrthoViewRenderer.h \
+    utils/Schematic/EntityModelLoader.h \
+    utils/Schematic/InstanceEntityTextures.h \
     utils/Saves/LevelDatEditor.h \
     utils/ServersDatIO.h \
     utils/McServerPinger.h \
+    utils/server/LocalServerManager.h \
     utils/WorldBackupManager.h \
-    utils/WorldMap/WorldMapRenderer.h \
-    utils/WorldMap/SeedTerrainRenderer.h \
-    utils/WorldMap/TreePredictor.h \
-    utils/WorldMap/TreeGen.h \
-    utils/WorldMap/TreeData.h \
-    utils/WorldMap/MushroomPredictor.h \
-    utils/WorldMap/CavePredictor.h \
+    utils/PlaytimeStats.h \
     utils/WorldMap/StructureFinder.h \
     utils/WorldMap/StructureIcons.h \
-    utils/WorldMap/StructureLoot.h \
-utils/WorldMap/StructureModelBuilder.h \
-utils/WorldMap/StructureTemplates.h \
-utils/WorldMap/StrongholdModel.h \
-utils/WorldMap/FortressModel.h \
-utils/WorldMap/MineshaftModel.h \
-    utils/WorldMap/McRandom.h \
-    utils/WorldMap/BiomeCatalog.h \
-    utils/WorldMap/BiomeName.h \
-    utils/WorldMap/OreFinder.h \
+    utils/MapBlockPalette.h \
+    utils/WorldMapSignalBridge.h \
     utils/WorldConvert/WorldConverter.h \
     utils/CommandAssistant/CommandTranslator.h \
     utils/CommandAssistant/CommandCompleter.h \
@@ -755,6 +877,7 @@ utils/WorldMap/MineshaftModel.h \
     components/SkillManagerDialog.h \
     components/PluginRunnerDialog.h \
     utils/translation/TranslationService.h \
+    utils/translation/ContentTranslationService.h \
     components/TranslationSettingsDialog.h \
     utils/AiModelListFetcher.h \
     pages/CommunityForumPage.h \
@@ -766,10 +889,16 @@ utils/WorldMap/MineshaftModel.h \
     pages/CreationWorkDetailPage.h \
     pages/ForumFriendsPage.h \
     pages/ForumPluginListPage.h \
+    pages/ForumSchematicListPage.h \
+    pages/CommunitySkinPage.h \
+    pages/CommunitySkinDetailPage.h \
+    pages/SkinLibraryItem.h \
     pages/MultiplayerLobbyPage.h \
     pages/MultiplayerLobbyDetailPage.h \
     pages/FeedbackPage.h \
     pages/FeedbackComposePage.h \
+    pages/FeedbackDetailPage.h \
+    pages/TranslationComposePage.h \
     pages/ForumReportPage.h \
     utils/ForumContentService.h \
     utils/ForumLobbyService.h \
@@ -777,19 +906,28 @@ utils/WorldMap/MineshaftModel.h \
     utils/Lobby/LobbyContentFetcher.h \
     utils/Lobby/LobbyShareLink.h \
     utils/ForumChatService.h \
+    utils/ForumPlayerStatsService.h \
     utils/ChatUiStore.h \
+    utils/ChatPrefs.h \
     utils/ChatBookmarkStore.h \
     utils/FeedbackService.h \
     utils/ForumImageStore.h \
+    utils/CoverImageCache.h \
     components/ForumKit.h \
+    components/PlayerCountChart.h \
     components/ForumLinkRowsEditor.h \
+    components/ForumTagEditor.h \
+    components/ForumCarouselEditor.h \
     components/ForumPostBrowser.h \
     components/PublishKit.h \
     components/CommunityAgreementDialog.h \
+    components/UserAgreementDialog.h \
+    components/MailFeedbackDialog.h \
     pages/PublishPage.h \
     pages/PublishResourcePage.h \
     pages/PublishPlatformPage.h \
     pages/PublishBoardPage.h \
+    pages/MorePage.h \
     components/AiModelFetchRow.h \
     utils/TouchScroll.h
 
@@ -799,10 +937,11 @@ FORMS += \
 # 资源拆成两块：图片（很少改、体积大）和文本数据（QSS/翻译/JSON，开发时改得最勤）。
 # 以前所有资源挤在一个 qrc 里，改一句样式就要重新生成并编译几 MB 的资源代码（约 20s）；
 # 拆开后改样式只需要重编文本那一小块（约 2s）。
+# 旋转全景的六张图不再编进安装包：首次选中主题时按需下载（见 utils/PanoramaThemeManager）。
+# resources_panorama.qrc 仅保留给开发探针使用，正式版不加入编译。
 RESOURCES += \
     resources.qrc \
-    resources_data.qrc \
-    resources_panorama.qrc
+    resources_data.qrc
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
@@ -969,3 +1108,104 @@ SOURCES += \
     third_party/cubiomes/util.c \
     third_party/cubiomes/quadbase.c
 
+
+# ═══════════════════════════════════════════════════════════════════
+# 存档地图：桌面端改为「首次进入时从 CDN 下载原生模块」
+#
+# 模块源码与构建脚本在 modules/worldmap/：主程序不再把地图页 / 地图渲染
+# 编译进去，安装包因此变小，地图也能单独更新而不必重发启动器。
+#
+# 移动端（安卓 / 鸿蒙）与 Windows ARM64（MSVC 工具链）系统限制运行时
+# 加载下载的动态库，这几端继续把地图编译进主程序；入口页会自动走内置
+# 分支，调用方式与下载模块版完全一致。
+# ═══════════════════════════════════════════════════════════════════
+WORLDMAP_REMOTE_MODULE = false
+win32-g++: WORLDMAP_REMOTE_MODULE = true
+linux:!android:!ohos: WORLDMAP_REMOTE_MODULE = true
+
+equals(WORLDMAP_REMOTE_MODULE, true) {
+    DEFINES += BLOCKBOX_WORLDMAP_REMOTE_MODULE
+
+    # 模块动态库要调用主程序里的设置 / 主题 / 通知 / 图标 / 存档解析等同一份
+    # 实现（避免出现两个单例、两套状态），因此主程序需要把符号导出：
+    #   - MinGW：--export-all-symbols 并生成导入库，供模块链接；
+    #   - Linux：--export-dynamic，模块加载时从主程序全局符号里解析。
+    win32-g++ {
+        CONFIG(debug, debug|release) {
+            BB_WORLDMAP_IMPLIB_DIR = debug
+        } else {
+            BB_WORLDMAP_IMPLIB_DIR = release
+        }
+        BB_WORLDMAP_IMPLIB = $$OUT_PWD/$$BB_WORLDMAP_IMPLIB_DIR/BlockBoxWindows.dll.a
+        QMAKE_LFLAGS += -Wl,--export-all-symbols
+        QMAKE_LFLAGS += -Wl,--out-implib,$$BB_WORLDMAP_IMPLIB
+    }
+    linux:!android:!ohos {
+        QMAKE_LFLAGS += -Wl,--export-dynamic
+    }
+}
+
+!equals(WORLDMAP_REMOTE_MODULE, true) {
+    # ── 内置地图（安卓 / 鸿蒙 / Windows ARM64）──
+    # 地图资料（结构模板 / 战利品表 等）只有内置地图才随主程序编译
+    RESOURCES += resources_worldmap.qrc
+    SOURCES += \
+        pages/WorldMapPage.cpp \
+        components/WorldMap3DView.cpp \
+        components/MapExportDialog.cpp \
+        components/StructureDetailDialog.cpp \
+        utils/WorldMap/WorldMapRenderer.cpp \
+        utils/WorldMap/SeedTerrainRenderer.cpp \
+        utils/WorldMap/TreePredictor.cpp \
+        utils/WorldMap/TreeGen.cpp \
+        utils/WorldMap/MushroomPredictor.cpp \
+        utils/WorldMap/CavePredictor.cpp \
+        utils/WorldMap/StructureLoot.cpp \
+        utils/WorldMap/StructureModelBuilder.cpp \
+        utils/WorldMap/StructureTemplates.cpp \
+        utils/WorldMap/StrongholdModel.cpp \
+        utils/WorldMap/FortressModel.cpp \
+        utils/WorldMap/MineshaftModel.cpp \
+        utils/WorldMap/McRandom.cpp \
+        utils/WorldMap/BiomeCatalog.cpp \
+        utils/WorldMap/BiomeName.cpp \
+        utils/WorldMap/OreFinder.cpp
+
+    HEADERS += \
+        pages/WorldMapPage.h \
+        components/WorldMap3DView.h \
+        components/MapExportDialog.h \
+        components/StructureDetailDialog.h \
+        utils/WorldMap/WorldMapRenderer.h \
+        utils/WorldMap/SeedTerrainRenderer.h \
+        utils/WorldMap/TreePredictor.h \
+        utils/WorldMap/TreeGen.h \
+        utils/WorldMap/TreeData.h \
+        utils/WorldMap/MushroomPredictor.h \
+        utils/WorldMap/CavePredictor.h \
+        utils/WorldMap/StructureLoot.h \
+        utils/WorldMap/StructureModelBuilder.h \
+        utils/WorldMap/StructureTemplates.h \
+        utils/WorldMap/StrongholdModel.h \
+        utils/WorldMap/FortressModel.h \
+        utils/WorldMap/MineshaftModel.h \
+        utils/WorldMap/McRandom.h \
+        utils/WorldMap/BiomeCatalog.h \
+        utils/WorldMap/BiomeName.h \
+        utils/WorldMap/OreFinder.h
+}
+
+# 地图入口页与模块下载管理器：所有平台都编译。
+# 非远端平台里入口页直接转内置地图页，管理器不会联网。
+SOURCES += \
+    utils/WorldMapModule/WorldMapModuleManager.cpp
+HEADERS += \
+    utils/WorldMapModule/WorldMapModuleManager.h
+
+# 本地数据包管理：世界级数据包的扫描/启停/排序/预览/兼容性检测，桌面端与移动端通用。
+SOURCES += \
+    utils/Saves/DataPackManager.cpp \
+    components/DataPackManagerDialog.cpp
+HEADERS += \
+    utils/Saves/DataPackManager.h \
+    components/DataPackManagerDialog.h

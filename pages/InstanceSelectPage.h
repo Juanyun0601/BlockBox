@@ -69,6 +69,8 @@ signals:
     void backToMainRequested();
     void instanceSelected(const QString &instancePath);
     void launchGameRequested(const QString &instancePath);
+    /** 右键菜单「打开实例助手」：为指定实例打开独立助手窗口（窗口多开） */
+    void openAssistantRequested(const QString &instancePath);
     void installNewInstanceRequested();
     void downloadModpackRequested();
     void importModpackRequested();

@@ -8,6 +8,7 @@
 #include "WorldMapPage.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QButtonGroup>
 #include <QClipboard>
 #include <QComboBox>
@@ -63,6 +64,7 @@
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/UiMetrics.h"
+#include "utils/WorldMapSignalBridge.h"
 #include "utils/WorldMap/BiomeCatalog.h"
 #include "utils/WorldMap/BiomeName.h"
 #include "utils/WorldMap/OreFinder.h"
@@ -294,6 +296,37 @@ public:
     {
         return m_doneKeys.contains(doneKey(type, x, z));
     }
+
+    // ── 导出框选模式：开启后左键拖拽画一个矩形导出范围（Esc / 右键取消） ──
+
+    /** 开 / 关框选模式；开启时光标变十字，关闭时恢复 */
+    void setRectSelectMode(bool on)
+    {
+        if (m_rectSelectOn == on)
+            return;
+        m_rectSelectOn = on;
+        m_rectDrag = false;
+        m_rectCurBlock = QRect();
+        setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+        update();
+    }
+
+    bool rectSelectMode() const { return m_rectSelectOn; }
+
+    /** 取消框选（退出模式并通知页面；未在框选时不通知） */
+    void cancelRectSelect()
+    {
+        if (!m_rectSelectOn)
+            return;
+        setRectSelectMode(false);
+        if (onRectSelectCancelled)
+            onRectSelectCancelled();
+    }
+
+    /** 框选完成（交出方块矩形， normalized；至少 8×8 方块才算数） */
+    std::function<void(const QRect &)> onRectSelected;
+    /** 框选被取消（Esc / 右键 / 框太小） */
+    std::function<void()> onRectSelectCancelled;
 
     /** 第 idx 个标记的屏幕中心（视口外 / 无效返回 QPoint()；探针用） */
     QPoint markerScreenPos(int idx) const
@@ -987,6 +1020,41 @@ protected:
         if (m_hasSelection)
             drawSelection(p, target);
 
+        // 导出框选：主题色半透明矩形 + 尺寸标签（画在最上层，任何底色都看得清）
+        if (m_rectSelectOn && !m_rectCurBlock.isNull())
+        {
+            const QColor accent(ThemeManager::instance()->currentThemeColor());
+            const QPointF tl = screenPos(m_rectCurBlock.left(),
+                                         m_rectCurBlock.top());
+            const QPointF br = screenPos(qint64(m_rectCurBlock.right()) + 1,
+                                         qint64(m_rectCurBlock.bottom()) + 1);
+            const QRectF sr(tl, br);
+            p.fillRect(sr, QColor(accent.red(), accent.green(), accent.blue(), 46));
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(accent, 1.6));
+            p.drawRect(sr);
+            if (m_rectDrag)
+            {
+                QFont f = p.font();
+                f.setPixelSize(11);
+                f.setBold(true);
+                p.setFont(f);
+                const QString label = QStringLiteral("%1 × %2 方块")
+                    .arg(m_rectCurBlock.width())
+                    .arg(m_rectCurBlock.height());
+                const QFontMetrics fm(f);
+                const int tw = fm.horizontalAdvance(label) + 10;
+                const int th = fm.height() + 6;
+                const QRectF lb(br.x() - tw, sr.top() - th - 6.0, tw, th);
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(20, 22, 26, 185));
+                p.drawRoundedRect(lb, 4, 4);
+                p.setPen(Qt::white);
+                p.drawText(lb, Qt::AlignCenter, label);
+                p.setBrush(Qt::NoBrush);
+            }
+        }
+
         // 显式清 brush：drawMarkers 的白描边若泄漏，这里会把整图画布刷白
         p.setBrush(Qt::NoBrush);
         p.setPen(QColor(255, 255, 255, 32));
@@ -1018,6 +1086,25 @@ protected:
             return;
         }
 
+        if (m_rectSelectOn)
+        {
+            if (event->button() == Qt::LeftButton)
+            {
+                qint64 bx = 0, bz = 0;
+                blockAt(event->pos(), &bx, &bz);
+                m_rectDrag = true;
+                m_rectAnchor = QPoint(int(bx), int(bz));
+                m_rectCurBlock = QRect(m_rectAnchor, QSize(1, 1));
+                update();
+            }
+            else if (event->button() == Qt::RightButton)
+            {
+                cancelRectSelect();
+            }
+            event->accept();
+            return;
+        }
+
         if (event->button() == Qt::LeftButton
             || event->button() == Qt::MiddleButton)
         {
@@ -1045,6 +1132,16 @@ protected:
 
     void mouseMoveEvent(QMouseEvent *event) override
     {
+        if (m_rectSelectOn && m_rectDrag)
+        {
+            qint64 bx = 0, bz = 0;
+            blockAt(event->pos(), &bx, &bz);
+            m_rectCurBlock = QRect(m_rectAnchor,
+                                   QPoint(int(bx), int(bz))).normalized();
+            update();
+            event->accept();
+            return;
+        }
         if (m_panning)
         {
             const QPoint delta = event->pos() - m_lastPos;
@@ -1065,6 +1162,26 @@ protected:
 
     void mouseReleaseEvent(QMouseEvent *event) override
     {
+        if (m_rectSelectOn && event->button() == Qt::LeftButton && m_rectDrag)
+        {
+            m_rectDrag = false;
+            const QRect sel = m_rectCurBlock;
+            m_rectCurBlock = QRect();
+            update();
+            // 太小的框按误触取消（至少 8×8 方块）
+            if (sel.width() < 8 || sel.height() < 8)
+            {
+                if (onRectSelectCancelled)
+                    onRectSelectCancelled();
+                event->accept();
+                return;
+            }
+            setRectSelectMode(false);
+            if (onRectSelected)
+                onRectSelected(sel);
+            event->accept();
+            return;
+        }
         if (m_panning
             && (event->button() == Qt::LeftButton
                 || event->button() == Qt::MiddleButton))
@@ -1138,6 +1255,18 @@ protected:
         const double factor = (event->angleDelta().y() > 0) ? 1.25 : 0.8;
         zoomAt(event->position(), factor);
         event->accept();
+    }
+
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        // 框选模式里 Esc 取消（视图持有焦点时直接消费）
+        if (m_rectSelectOn && event->key() == Qt::Key_Escape)
+        {
+            cancelRectSelect();
+            event->accept();
+            return;
+        }
+        QWidget::keyPressEvent(event);
     }
 
 private:
@@ -1835,6 +1964,11 @@ private:
     /** 玩家标记（游戏运行中显示；数据由页面按自动保存节奏喂入） */
     PlayerMarkerItem m_player;
     bool m_playerOn = false;
+    // ── 导出框选模式状态 ──
+    bool m_rectSelectOn = false;
+    bool m_rectDrag = false;
+    QPoint m_rectAnchor;    ///< 拖拽起点（方块坐标）
+    QRect m_rectCurBlock;   ///< 当前框（方块坐标，normalized；空 = 未在拖）
     /** 已标记完成的结构（key = type_x_z），绘制时半透明 */
     QSet<QString> m_doneKeys;
     /** 群系叠加层（页面维护像素，这里只负责拉伸绘制） */
@@ -2052,8 +2186,9 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     m_3dBtn->setChecked(m_3dOn);
     m_3dBtn->setVisible(SettingsManager::instance()->isExperimentalMap3dEnabled());
     vgLay->addWidget(m_3dBtn);
-    connect(SettingsManager::instance(), &SettingsManager::experimentalMap3dChanged,
-            this, [this](bool enabled) {
+    // 跨模块信号：桌面端地图在动态库里，模块代码不能直接对主程序信号做
+    // 函数指针 connect（地址对不上，Qt 会报 signal not found），统一走转发桥
+    WorldMapSignalBridge::connectMap3dChanged(this, [this](bool enabled) {
         if (!m_3dBtn)
             return;
         m_3dBtn->setVisible(enabled);
@@ -2093,7 +2228,7 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     barLay->addStretch(1);
 
     // —— 右侧输出动作：带框按钮，与组内扁平控件区分 ——
-    m_exportBtn = makeBtn(tr("导出"), tr("把当前地图导出为 PNG（E）"),
+    m_exportBtn = makeBtn(tr("导出"), tr("导出地图：快速导出当前画面，或打开高级导出（E）"),
                           QStringLiteral(":/Images/Icons/export.svg"),
                           "worldMapActionBtn");
     barLay->addWidget(m_exportBtn);
@@ -2383,7 +2518,19 @@ WorldMapPage::WorldMapPage(QWidget *parent)
     connect(m_zoomOutBtn, &QPushButton::clicked, this, &WorldMapPage::onZoomOut);
     connect(m_fitBtn, &QPushButton::clicked, this, &WorldMapPage::onFitClicked);
     connect(m_oneOneBtn, &QPushButton::clicked, this, &WorldMapPage::onZoomToOneOne);
-    connect(m_exportBtn, &QPushButton::clicked, this, &WorldMapPage::onExportClicked);
+    connect(m_exportBtn, &QPushButton::clicked, this, [this]() {
+        QMenu menu(this);
+        QAction *quick = menu.addAction(tr("快速导出（当前画面 PNG）"));
+        connect(quick, &QAction::triggered, this, &WorldMapPage::onExportClicked);
+        QAction *adv = menu.addAction(tr("高级导出…"));
+        connect(adv, &QAction::triggered, this,
+                &WorldMapPage::onAdvancedExportClicked);
+        QAction *rect = menu.addAction(tr("框选导出区域…"));
+        connect(rect, &QAction::triggered, this,
+                &WorldMapPage::onExportRectSelectClicked);
+        menu.exec(m_exportBtn->mapToGlobal(
+            QPoint(0, m_exportBtn->height() + 2)));
+    });
 
     m_view->onZoomChanged = [this](double) {
         updateZoomLabel();
@@ -2425,6 +2572,13 @@ WorldMapPage::WorldMapPage(QWidget *parent)
         if (m_oreTimer)             // 矿物点：视口移动后按可见区域接着扫
             m_oreTimer->start();
     };
+    // 导出框选：框完带出高级导出弹窗，取消则恢复状态栏
+    m_view->onRectSelected = [this](const QRect &rect) {
+        onExportRectSelected(rect);
+    };
+    m_view->onRectSelectCancelled = [this]() {
+        cancelExportRectSelect();
+    };
 
     connect(m_view3d, &WorldMap3DView::viewChanged, this, [this]() {
         if (m_3dOn)
@@ -2452,6 +2606,8 @@ WorldMapPage::~WorldMapPage()
         m_job->cancel = true;
     if (m_sink)
         m_sink->cancel = true;
+    if (m_exportJob)
+        m_exportJob->cancel = true;
 }
 
 void WorldMapPage::setCurrentSave(const QString &saveFolderPath, const QString &saveName)
@@ -2546,6 +2702,9 @@ void WorldMapPage::reset()
 {
     if (m_job)
         m_job->cancel = true;
+    if (m_exportJob)
+        m_exportJob->cancel = true; // 在途导出的结果收回来后直接丢弃
+    abortExportRectSelect();        // 退出存档：框选中的范围一并作废
     m_priorLiveValid = false;
     m_priorLiveImage = QImage();
     m_savePath.clear();
@@ -2798,6 +2957,8 @@ void WorldMapPage::startRender()
         return;
     }
 
+    abortExportRectSelect(); // 画布要重渲了：进行中的导出框选先作废
+
     const WorldMapRenderer::SeedPreview seedPrev = buildSeedPreview();
     const int key = renderCacheKey();
     m_renderKey = key;
@@ -2955,6 +3116,7 @@ void WorldMapPage::onPollProgress()
     drainBiomeResult();
     drainOreScan();
     drainOreVerify();
+    drainExportJob();
     if (m_biomeNameJob && m_biomeNameJob->done.load(std::memory_order_acquire))
     {
         const auto job = m_biomeNameJob;
@@ -2970,7 +3132,7 @@ void WorldMapPage::onPollProgress()
         // 矿物在途时不能停表：扫描链靠 drainOreScan → scheduleOreScan 逐块接力，
         // 停表会断链，可见区域就无法按「先中心后四周」连续扫出来
         if (!m_structJob && !m_locateJob && !m_biomeJob && !m_biomeNameJob
-            && !m_oreJob && !m_oreVerifyJob && m_pollTimer)
+            && !m_oreJob && !m_oreVerifyJob && !m_exportJob && m_pollTimer)
             m_pollTimer->stop(); // 渲染与后台任务都收完了：停表
         return;
     }
@@ -3715,6 +3877,7 @@ void WorldMapPage::on3dToggled(bool on)
 
     if (on)
     {
+        abortExportRectSelect(); // 立体视图里框不了范围：先退出框选
         // 进入立体模式：先按当前画布建一次网格，并把视角中心对齐到俯视图中心，
         // 这样两种看法看的是同一个地方，切换不会"跳地图"
         sync3dSurface(true);
@@ -4737,6 +4900,14 @@ bool WorldMapPage::eventFilter(QObject *watched, QEvent *event)
 
 void WorldMapPage::keyPressEvent(QKeyEvent *event)
 {
+    // 导出框选中：Esc 取消（焦点不在地图视图时的兜底）
+    if (event->key() == Qt::Key_Escape && m_exportRectSelecting)
+    {
+        m_view->cancelRectSelect();
+        event->accept();
+        return;
+    }
+
     // 已有地图时才接管按键；否则交给父类（避免空白页吃掉全局键）
     const bool haveMap = m_view && m_view->hasImage();
     const bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
@@ -5030,6 +5201,528 @@ void WorldMapPage::onExportClicked()
         m_statusLabel->setText(tr("已导出到 %1").arg(path));
     else
         m_statusLabel->setText(tr("导出失败：%1").arg(path));
+}
+
+// ═══════════════ 高级导出（范围 / 清晰度 / 标注 / 信息栏） ═══════════════
+
+/**
+ * 收集高级导出的标注快照（UI 线程，值拷贝给后台任务）：
+ * 结构图标 / 矿物与图钉的图标颜色预取成 QImage（QPixmap 不能进工作线程），
+ * 结构点位由 worker 按导出范围现算，这里只收集用户标记 / 矿物点 / 玩家。
+ */
+MapExportAnnotations WorldMapPage::collectExportAnnotations() const
+{
+    MapExportAnnotations ann;
+    const auto &defs = StructureFinder::allStructures();
+    ann.structureIcons.reserve(defs.size());
+    for (int i = 0; i < defs.size(); ++i)
+    {
+        const auto &d = defs.at(i);
+        ann.structureIcons.append(
+            StructureIcons::pixmap(i, QLatin1String(d.key),
+                                   QString(QChar::fromLatin1(d.displayName[0])),
+                                   QLatin1String(d.wikiTitle),
+                                   QLatin1String(d.itemTitle),
+                                   QLatin1String(d.envSprite), 30).toImage());
+    }
+    for (const auto &d : OreFinder::allOres())
+        ann.oreColors.append(d.color.rgba());
+    const auto &udefs = userMarkerIconDefs();
+    for (const auto &d : udefs)
+    {
+        ann.userColors.append(d.color);
+        ann.userIcons.append(IconHelper::loadColoredIcon(
+            QLatin1String(d.svg), Qt::white, 16).pixmap(16, 16).toImage());
+    }
+    for (const UserMarker &m : m_userMarkers)
+    {
+        MapExportAnnotations::UserMark um;
+        um.icon = m.icon;
+        um.x = m.x;
+        um.z = m.z;
+        um.name = m.name;
+        ann.userMarkers.append(um);
+    }
+    // 矿物点用已扫描缓存的命中（勾选中的矿种），比当前画布上画的更全
+    for (auto it = m_oreHits.cbegin(); it != m_oreHits.cend(); ++it)
+    {
+        for (const OreFinder::Hit &h : it.value())
+        {
+            if (h.index < 0 || h.index >= m_oreEnabled.size()
+                || !m_oreEnabled.at(h.index))
+                continue;
+            MapExportAnnotations::OreMark om;
+            om.ore = h.index;
+            om.x = h.x;
+            om.z = h.z;
+            ann.ores.append(om);
+        }
+    }
+    if (m_view && m_view->hasPlayerMarker())
+    {
+        const QPoint pos = m_view->playerMarkerBlockPos();
+        ann.hasPlayer = true;
+        ann.playerX = pos.x();
+        ann.playerZ = pos.y();
+        ann.playerYaw = m_view->playerMarkerYaw();
+    }
+    if (ThemeManager::instance())
+        ann.accent = QColor(ThemeManager::instance()->currentThemeColor()).rgba();
+    return ann;
+}
+
+/** 「当前视野」在画布上的像素裁剪框（视野 ∩ 画布，估算尺寸与裁图共用） */
+QRect WorldMapPage::exportCropRect() const
+{
+    if (!m_view || !m_view->hasImage() || m_liveImage.isNull())
+        return QRect();
+    const qint64 originX = qint64(m_liveMinChunkX) * 16;
+    const qint64 originZ = qint64(m_liveMinChunkZ) * 16;
+    const int bpp = qMax(1, m_liveBpp);
+    const QRect canvas(originX, originZ,
+                       m_liveImage.width() * bpp, m_liveImage.height() * bpp);
+    return exportRectToCanvasPx(m_view->visibleBlockRange().intersected(canvas));
+}
+
+/** 任意方块矩形 → 画布上的像素裁剪框（越界部分裁掉） */
+QRect WorldMapPage::exportRectToCanvasPx(const QRect &blockRect) const
+{
+    if (m_liveImage.isNull() || blockRect.isNull())
+        return QRect();
+    const qint64 originX = qint64(m_liveMinChunkX) * 16;
+    const qint64 originZ = qint64(m_liveMinChunkZ) * 16;
+    const int bpp = qMax(1, m_liveBpp);
+    auto toPx = [bpp](qint64 block, qint64 origin, bool roundUp) {
+        const double v = double(block - origin) / bpp;
+        return int(roundUp ? std::ceil(v) : std::floor(v));
+    };
+    const int x0 = toPx(blockRect.left(), originX, false);
+    const int x1 = toPx(qint64(blockRect.right()) + 1, originX, true);
+    const int z0 = toPx(blockRect.top(), originZ, false);
+    const int z1 = toPx(qint64(blockRect.bottom()) + 1, originZ, true);
+    return QRect(QPoint(qBound(0, x0, m_liveImage.width()),
+                        qBound(0, z0, m_liveImage.height())),
+                 QPoint(qBound(0, x1, m_liveImage.width()),
+                        qBound(0, z1, m_liveImage.height()))).normalized();
+}
+
+void WorldMapPage::onAdvancedExportClicked()
+{
+    runAdvancedExportDialog(MapExportDialog::Options(), QRect());
+}
+
+/** 「框选导出区域…」：进入地图框选模式，框完由 onExportRectSelected 接力 */
+void WorldMapPage::onExportRectSelectClicked()
+{
+    if (!m_view || !m_view->hasImage() || m_liveImage.isNull())
+        return;
+    if (m_exportRectSelecting)
+        return;
+    if (m_exportJob)
+    {
+        m_statusLabel->setText(tr("正在导出地图，稍等"));
+        return;
+    }
+    if (m_3dOn)
+    {
+        m_statusLabel->setText(tr("先退出立体模式，再在俯视图上框选导出范围"));
+        return;
+    }
+    m_exportRectSelecting = true;
+    m_exportCarried = MapExportDialog::Options();
+    m_view->setRectSelectMode(true);
+    m_view->setFocus();
+    m_statusLabel->setText(tr("在地图上拖拽框选导出范围，Esc 或右键取消"));
+}
+
+/** 收起导出框选模式（换存档 / 重渲 / 立体模式切换时调用） */
+void WorldMapPage::abortExportRectSelect()
+{
+    if (!m_exportRectSelecting)
+        return;
+    m_exportRectSelecting = false;
+    if (m_view)
+        m_view->setRectSelectMode(false);
+}
+
+/** 框选完成：把矩形钳进画布范围，带着上一轮选项打开高级导出弹窗 */
+void WorldMapPage::onExportRectSelected(const QRect &blockRect)
+{
+    m_exportRectSelecting = false;
+    const int bpp = qMax(1, m_liveBpp);
+    const QRect canvasBlocks(qint64(m_liveMinChunkX) * 16,
+                             qint64(m_liveMinChunkZ) * 16,
+                             m_liveImage.width() * bpp,
+                             m_liveImage.height() * bpp);
+    const QRect rect = blockRect.intersected(canvasBlocks);
+    if (rect.isNull())
+    {
+        updateStatusLabel();
+        return;
+    }
+    runAdvancedExportDialog(m_exportCarried, rect);
+}
+
+/** 框选取消（Esc / 右键 / 框太小）：退出模式，恢复状态栏 */
+void WorldMapPage::cancelExportRectSelect()
+{
+    if (!m_exportRectSelecting)
+        return;
+    m_exportRectSelecting = false;
+    updateStatusLabel();
+}
+
+/** 打开高级导出弹窗并按结果发起导出；「重新框选」转入选区模式（选项带回） */
+bool WorldMapPage::runAdvancedExportDialog(const MapExportDialog::Options &initial,
+                                           const QRect &initialCustomRect)
+{
+    if (!m_view || !m_view->hasImage() || m_liveImage.isNull())
+        return false;
+    if (m_exportJob)
+    {
+        m_statusLabel->setText(tr("正在导出地图，稍等"));
+        return false;
+    }
+    if (m_exportRectSelecting)
+        return false;
+    if (m_busy)
+    {
+        m_statusLabel->setText(tr("等地图渲染完再导出"));
+        return false;
+    }
+
+    // 预估各「范围 × 清晰度」组合的导出尺寸给弹窗展示（自定义区域由弹窗按坐标实时算）
+    MapExportDialog::SizeEstimates est;
+    const int bpp = qMax(1, m_liveBpp);
+    const QRect canvasBlocks(qint64(m_liveMinChunkX) * 16,
+                             qint64(m_liveMinChunkZ) * 16,
+                             m_liveImage.width() * bpp,
+                             m_liveImage.height() * bpp);
+    const QRect visBlocks = m_view->visibleBlockRange().intersected(canvasBlocks);
+    est.wholeLo = m_liveImage.size();
+    const QRect crop = exportCropRect();
+    if (!crop.isNull())
+        est.viewLo = crop.size();
+    int estBpp = 1;
+    while (qint64(canvasBlocks.width()) / estBpp > 8192
+           || qint64(canvasBlocks.height()) / estBpp > 8192)
+        estBpp *= 2;
+    est.wholeHi = QSize(canvasBlocks.width() / estBpp,
+                        canvasBlocks.height() / estBpp);
+    if (!visBlocks.isNull())
+        est.viewHi = visBlocks.size();
+
+    MapExportDialog dlg(this, est, canvasBlocks, bpp, initial, initialCustomRect);
+    const int code = dlg.exec();
+    if (code == MapExportDialog::ReselectResult)
+    {
+        // 弹窗里点了「重新框选」：收起弹窗，去地图上再框一次（选项原样带回）
+        m_exportRectSelecting = true;
+        m_exportCarried = dlg.options();
+        m_view->setRectSelectMode(true);
+        m_view->setFocus();
+        m_statusLabel->setText(tr("在地图上拖拽框选导出范围，Esc 或右键取消"));
+        return false;
+    }
+    if (code != QDialog::Accepted)
+        return false;
+    beginExportWithOptions(dlg.options());
+    return true;
+}
+
+/** 按弹窗选项组装后台导出任务并启动（worker 结果由 drainExportJob 收） */
+void WorldMapPage::beginExportWithOptions(const MapExportDialog::Options &opt)
+{
+    const int bpp = qMax(1, m_liveBpp);
+    const QRect canvasBlocks(qint64(m_liveMinChunkX) * 16,
+                             qint64(m_liveMinChunkZ) * 16,
+                             m_liveImage.width() * bpp,
+                             m_liveImage.height() * bpp);
+    const bool wholeMap = opt.rangeMode == MapExportDialog::RangeWhole;
+    // 导出方块范围：整图 = 画布；视野 = 视口 ∩ 画布；自定义 = 钳进画布的矩形
+    QRect rangeBlocks;
+    if (wholeMap)
+        rangeBlocks = canvasBlocks;
+    else if (opt.rangeMode == MapExportDialog::RangeView)
+        rangeBlocks = m_view->visibleBlockRange().intersected(canvasBlocks);
+    else
+        rangeBlocks = opt.customRect.isValid()
+            ? opt.customRect.intersected(canvasBlocks)
+            : QRect();
+    if (rangeBlocks.isNull())
+    {
+        m_statusLabel->setText(tr("导出范围无效，请重新选择"));
+        return;
+    }
+
+    QString suggested = m_saveName.isEmpty() ? QStringLiteral("worldmap")
+                                             : m_saveName;
+    suggested += QStringLiteral("_") + m_dimCombo->currentText()
+        + (opt.png ? QStringLiteral(".png") : QStringLiteral(".jpg"));
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("导出地图图片"), suggested,
+        opt.png ? tr("PNG 图片 (*.png);;所有文件 (*.*)")
+                : tr("JPG 图片 (*.jpg *.jpeg);;所有文件 (*.*)"));
+    if (path.isEmpty())
+        return;
+
+    auto job = std::make_shared<ExportJob>();
+    job->hiRes = opt.hiRes;
+    job->wholeMap = wholeMap;
+    job->png = opt.png;
+    job->path = path;
+    job->savePath = m_savePath;
+    job->dim = static_cast<WorldMapRenderer::Dimension>(
+        m_dimCombo ? m_dimCombo->currentIndex() : 0);
+    job->mode = static_cast<WorldMapRenderer::ShadeMode>(
+        m_shadeCombo ? m_shadeCombo->currentIndex() : 0);
+    job->maxSurfaceY = m_maxSurfaceY;
+    job->seed = buildSeedPreview();
+    job->canvas = m_liveImage;
+    job->canvasMinBlockX = qint64(m_liveMinChunkX) * 16;
+    job->canvasMinBlockZ = qint64(m_liveMinChunkZ) * 16;
+    job->canvasBpp = bpp;
+    job->cropRect = wholeMap ? QRect() : exportRectToCanvasPx(rangeBlocks);
+    if (!wholeMap)
+    {
+        // 视野 / 自定义的高清底图：范围覆盖到的 region 逐块渲 1:1 拼合
+        const QRect rr(floorDiv(rangeBlocks.left(), 512),
+                       floorDiv(rangeBlocks.top(), 512),
+                       floorDiv(rangeBlocks.right(), 512) - floorDiv(rangeBlocks.left(), 512) + 1,
+                       floorDiv(rangeBlocks.bottom(), 512) - floorDiv(rangeBlocks.top(), 512) + 1);
+        job->regionRange = rr.intersected(m_view->imageRegionRange());
+        job->centerRegion = QPoint((rr.left() + rr.right()) / 2,
+                                   (rr.top() + rr.bottom()) / 2);
+    }
+    job->exportBlockRange = rangeBlocks;
+    // 结构标记与画布同源：按种子查询，读不出种子的存档不带结构
+    job->hasStructSource = opt.structures && m_hasSeed && m_mcVersion > 0
+        && std::any_of(m_structEnabled.cbegin(), m_structEnabled.cend(),
+                       [](bool b) { return b; });
+    job->structSeed = m_seed;
+    job->structMc = m_mcVersion;
+    job->structCdim = (job->dim == WorldMapRenderer::Dimension::Nether) ? -1
+        : (job->dim == WorldMapRenderer::Dimension::End) ? 1 : 0;
+    job->structEnabled = m_structEnabled;
+    job->structDoneKeys = m_structDone;
+
+    MapExportComposeInput &in = job->compose;
+    in.png = opt.png;
+    in.voidColor = kVoidColor;
+    in.structures = opt.structures;
+    in.userMarkers = opt.userMarkers;
+    in.ores = opt.ores;
+    in.player = opt.player;
+    in.grid = opt.grid;
+    in.infoBar = opt.infoBar;
+    in.ann = collectExportAnnotations();
+    in.title = m_saveName.isEmpty()
+        ? m_dimCombo->currentText()
+        : m_saveName + QStringLiteral(" · ") + m_dimCombo->currentText();
+    in.meta = m_hasSeed
+        ? tr("种子 %1 · %2").arg(m_seed).arg(
+            QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")))
+        : QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
+
+    m_exportJob = job;
+    if (m_exportBtn)
+        m_exportBtn->setEnabled(false);
+    m_statusLabel->setText(tr("正在导出地图…"));
+    if (m_pollTimer && !m_pollTimer->isActive())
+        m_pollTimer->start();
+
+    // worker 只碰 job（值拷贝），不持有页面指针：页面销毁也不悬空
+    QtConcurrent::run(&m_renderPool, [job]() {
+        MapExportComposeInput &in = job->compose;
+        if (job->cancel)
+        {
+            job->error = QObject::tr("已取消");
+            job->done.store(true, std::memory_order_release);
+            return;
+        }
+        if (job->hiRes)
+        {
+            if (job->wholeMap)
+            {
+                // 整图高清：整存档重渲一遍，边长上限放宽到 8192 换一倍细节
+                const auto res = WorldMapRenderer::render(
+                    job->savePath, job->dim, job->mode,
+                    [job]() { return job->cancel.load(); },
+                    [job](int d, int t) {
+                        job->doneCount.store(d);
+                        job->totalCount.store(t);
+                    },
+                    nullptr, 0, job->maxSurfaceY, job->seed,
+                    WorldMapRenderer::PriorCanvas(), false, 8192);
+                if (res.image.isNull() || !res.error.isEmpty())
+                {
+                    job->error = res.error.isEmpty()
+                        ? QObject::tr("渲染不出地图内容")
+                        : res.error;
+                    job->done.store(true, std::memory_order_release);
+                    return;
+                }
+                in.base = res.image;
+                in.minBlockX = qint64(res.minChunkX) * 16;
+                in.minBlockZ = qint64(res.minChunkZ) * 16;
+                in.bpp = res.blockPerPixel;
+            }
+            else
+            {
+                // 视野高清：把视野里的 region 逐块渲成 1:1 瓦片拼起来
+                const QRect &rr = job->regionRange;
+                if (rr.isNull() || rr.width() <= 0 || rr.height() <= 0)
+                {
+                    job->error = QObject::tr("导出范围超出地图范围");
+                    job->done.store(true, std::memory_order_release);
+                    return;
+                }
+                if (job->exportBlockRange.width() > 8192
+                    || job->exportBlockRange.height() > 8192)
+                {
+                    job->error = QObject::tr("范围过大：高清导出每边最大 8192 方块");
+                    job->done.store(true, std::memory_order_release);
+                    return;
+                }
+                QList<QPoint> regions;
+                for (int rx = rr.left(); rx <= rr.right(); ++rx)
+                    for (int rz = rr.top(); rz <= rr.bottom(); ++rz)
+                        regions.append(QPoint(rx, rz));
+                const QPoint c = job->centerRegion;
+                std::sort(regions.begin(), regions.end(),
+                          [c](const QPoint &a, const QPoint &b) {
+                              const int da = std::max(std::abs(a.x() - c.x()),
+                                                      std::abs(a.y() - c.y()));
+                              const int db = std::max(std::abs(b.x() - c.x()),
+                                                      std::abs(b.y() - c.y()));
+                              return da < db;
+                          });
+                job->totalCount.store(regions.size());
+                const int minX = job->exportBlockRange.left();
+                const int minZ = job->exportBlockRange.top();
+                QImage stitch(job->exportBlockRange.width(),
+                              job->exportBlockRange.height(),
+                              QImage::Format_ARGB32);
+                if (stitch.isNull())
+                {
+                    job->error = QObject::tr("导出尺寸过大");
+                    job->done.store(true, std::memory_order_release);
+                    return;
+                }
+                stitch.fill(Qt::transparent);
+                {
+                    QPainter pt(&stitch);
+                    int idx = 0;
+                    for (const QPoint &r : regions)
+                    {
+                        if (job->cancel)
+                            break;
+                        const QImage tile = WorldMapRenderer::renderRegionTile(
+                            job->savePath, job->dim, r.x(), r.y(), job->mode,
+                            job->maxSurfaceY, job->seed);
+                        pt.drawImage(QPoint(r.x() * 512 - minX,
+                                            r.y() * 512 - minZ),
+                                     tile);
+                        job->doneCount.store(++idx);
+                    }
+                }
+                in.base = stitch;
+                in.minBlockX = minX;
+                in.minBlockZ = minZ;
+                in.bpp = 1;
+            }
+        }
+        else
+        {
+            // 当前画布：整图直接引用画布像素，视野裁一块
+            in.base = job->wholeMap
+                ? job->canvas
+                : job->canvas.copy(job->cropRect);
+            in.minBlockX = job->wholeMap
+                ? job->canvasMinBlockX
+                : job->canvasMinBlockX
+                    + qint64(job->cropRect.left()) * job->canvasBpp;
+            in.minBlockZ = job->wholeMap
+                ? job->canvasMinBlockZ
+                : job->canvasMinBlockZ
+                    + qint64(job->cropRect.top()) * job->canvasBpp;
+            in.bpp = job->canvasBpp;
+            if (in.base.isNull())
+            {
+                job->error = QObject::tr("导出范围无效");
+                job->done.store(true, std::memory_order_release);
+                return;
+            }
+        }
+
+        // 结构标记按导出范围现算（跨度上限与画布一致：中心 ±8192 方块）
+        if (in.structures && job->hasStructSource
+            && !job->exportBlockRange.isNull())
+        {
+            qint64 minX = job->exportBlockRange.left();
+            qint64 minZ = job->exportBlockRange.top();
+            qint64 maxX = qint64(job->exportBlockRange.right()) + 1;
+            qint64 maxZ = qint64(job->exportBlockRange.bottom()) + 1;
+            constexpr qint64 kMaxSpan = 16384;
+            const qint64 cx = (minX + maxX) / 2;
+            const qint64 cz = (minZ + maxZ) / 2;
+            if (maxX - minX > kMaxSpan)
+            {
+                minX = cx - kMaxSpan / 2;
+                maxX = cx + kMaxSpan / 2;
+            }
+            if (maxZ - minZ > kMaxSpan)
+            {
+                minZ = cz - kMaxSpan / 2;
+                maxZ = cz + kMaxSpan / 2;
+            }
+            const auto hits = StructureFinder::find(
+                job->structSeed, job->structMc, job->structCdim,
+                minX, minZ, maxX, maxZ, job->structEnabled);
+            in.ann.structures.reserve(hits.size());
+            for (const auto &h : hits)
+            {
+                MapExportAnnotations::StructureMark m;
+                m.type = h.structIdx;
+                m.x = h.x;
+                m.z = h.z;
+                m.done = job->structDoneKeys.contains(
+                    WorldMapView::doneKey(h.structIdx, h.x, h.z));
+                in.ann.structures.append(m);
+            }
+        }
+
+        const QImage img = MapExportComposer::compose(in);
+        if (img.isNull())
+        {
+            job->error = QObject::tr("地图为空");
+            job->done.store(true, std::memory_order_release);
+            return;
+        }
+        job->ok = img.save(job->path, job->png ? "PNG" : "JPG", 90);
+        if (!job->ok)
+            job->error = job->path;
+        job->done.store(true, std::memory_order_release);
+    });
+}
+
+/** 收取已完成的导出任务：刷新状态栏与导出按钮 */
+void WorldMapPage::drainExportJob()
+{
+    if (!m_exportJob
+        || !m_exportJob->done.load(std::memory_order_acquire))
+        return;
+    const auto job = m_exportJob;
+    m_exportJob.reset();
+    if (m_exportBtn)
+        m_exportBtn->setEnabled(true);
+    // 换存档 / 退出时取消的导出不刷状态栏（页面已经给了自己的提示）
+    if (job->cancel)
+        return;
+    if (job->ok)
+        m_statusLabel->setText(tr("已导出到 %1").arg(job->path));
+    else if (!job->error.isEmpty())
+        m_statusLabel->setText(tr("导出失败：%1").arg(job->error));
 }
 
 // ═══════════════ 底部「当前群系」（中文名 + 视口中心采样） ═══════════════

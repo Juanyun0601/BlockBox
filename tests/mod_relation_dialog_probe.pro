@@ -10,7 +10,8 @@ TARGET    = mod_relation_dialog_probe
 
 LIBS     += -lz
 
-RESOURCES += ../style_probe.qrc
+RESOURCES += ../style_probe.qrc \
+    mod_relation_dialog_probe.qrc
 
 ROOT      = ..
 
@@ -22,6 +23,7 @@ SOURCES += mod_relation_dialog_probe.cpp \
     $$ROOT/utils/mod/ModData.cpp \
     $$ROOT/utils/ThemeManager.cpp \
     $$ROOT/utils/BackgroundManager.cpp \
+    $$ROOT/utils/IconHelper.cpp \
     $$ROOT/utils/plugin/PluginManager.cpp \
     $$ROOT/utils/plugin/PluginZip.cpp
 
@@ -30,6 +32,7 @@ HEADERS += \
     $$ROOT/components/AppDialogBase.h \
     $$ROOT/utils/ThemeManager.h \
     $$ROOT/utils/BackgroundManager.h \
+    $$ROOT/utils/IconHelper.h \
     $$ROOT/utils/plugin/PluginManager.h
 
 MOC_DIR     = .moc

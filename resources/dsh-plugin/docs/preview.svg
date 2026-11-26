@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-label="BlockBox launcher connected to a DSH tool list">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6f8fb"/>
+      <stop offset="1" stop-color="#e9eef6"/>
+    </linearGradient>
+    <linearGradient id="cubeTop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fd267"/>
+      <stop offset="1" stop-color="#6cb44a"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#66b84a"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="640" height="300" fill="url(#bg)"/>
+
+  <!-- 方块盒子窗口 -->
+  <rect x="48" y="64" width="196" height="172" rx="14" fill="#ffffff" stroke="#d7dfea" stroke-width="2"/>
+  <rect x="48" y="64" width="196" height="34" rx="14" fill="#eef2f8"/>
+  <rect x="48" y="84" width="196" height="14" fill="#eef2f8"/>
+  <circle cx="70" cy="81" r="4" fill="#c8d3e2"/>
+  <circle cx="84" cy="81" r="4" fill="#d8e1ec"/>
+  <rect x="100" y="76" width="120" height="10" rx="5" fill="#dde6f1"/>
+
+  <!-- 立方体 -->
+  <g transform="translate(98 128)">
+    <path d="M48 0 88 22 48 44 8 22Z" fill="url(#cubeTop)"/>
+    <path d="M8 22 48 44V88L8 66Z" fill="#4b8f38"/>
+    <path d="M88 22 48 44V88L88 66Z" fill="#3c7530"/>
+  </g>
+  <rect x="98" y="228" width="96" height="8" rx="4" fill="#dde6f1"/>
+
+  <!-- 连接线 -->
+  <path d="M256 150h48" stroke="url(#flow)" stroke-width="3" stroke-linecap="round" stroke-dasharray="8 8"/>
+  <circle cx="312" cy="150" r="9" fill="#ffffff" stroke="#3b82f6" stroke-width="3"/>
+  <path d="M308 150h8M312 146v8" stroke="#3b82f6" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M324 150h48" stroke="url(#flow)" stroke-width="3" stroke-linecap="round" stroke-dasharray="8 8"/>
+
+  <!-- DSH 工具列表 -->
+  <rect x="384" y="52" width="208" height="196" rx="14" fill="#ffffff" stroke="#d7dfea" stroke-width="2"/>
+  <rect x="400" y="70" width="86" height="9" rx="4.5" fill="#c3cede"/>
+
+  <g>
+    <rect x="400" y="92" width="176" height="26" rx="8" fill="#f1f5fa"/>
+    <rect x="408" y="99" width="12" height="12" rx="3" fill="#6cb44a"/>
+    <rect x="428" y="101" width="104" height="8" rx="4" fill="#cdd8e6"/>
+    <circle cx="564" cy="105" r="6" fill="#3fb950"/>
+    <path d="M561 105l2.4 2.4 4-4.4" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g>
+    <rect x="400" y="126" width="176" height="26" rx="8" fill="#f1f5fa"/>
+    <rect x="408" y="133" width="12" height="12" rx="3" fill="#3b82f6"/>
+    <rect x="428" y="135" width="88" height="8" rx="4" fill="#cdd8e6"/>
+    <circle cx="564" cy="139" r="6" fill="#3fb950"/>
+    <path d="M561 139l2.4 2.4 4-4.4" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g>
+    <rect x="400" y="160" width="176" height="26" rx="8" fill="#f1f5fa"/>
+    <rect x="408" y="167" width="12" height="12" rx="3" fill="#e0a33a"/>
+    <rect x="428" y="169" width="116" height="8" rx="4" fill="#cdd8e6"/>
+    <circle cx="564" cy="173" r="6" fill="#3fb950"/>
+    <path d="M561 173l2.4 2.4 4-4.4" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g>
+    <rect x="400" y="194" width="176" height="26" rx="8" fill="#f1f5fa"/>
+    <rect x="408" y="201" width="12" height="12" rx="3" fill="#8a93a3"/>
+    <rect x="428" y="203" width="74" height="8" rx="4" fill="#cdd8e6"/>
+    <circle cx="564" cy="207" r="6" fill="#c9d3e1"/>
+  </g>
+
+  <rect x="400" y="228" width="120" height="8" rx="4" fill="#dde6f1"/>
+</svg>

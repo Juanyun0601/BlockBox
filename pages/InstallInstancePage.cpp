@@ -27,6 +27,7 @@
 #include "components/ContentViewSwitch.h"
 #include "components/MasonryContentCard.h"
 #include "components/NotificationManager.h"
+#include "components/ServerDownloadDialog.h"
 #include "layouts/MasonryLayout.h"
 #include <QResizeEvent>
 #include <QTimer>
@@ -669,9 +670,8 @@ void InstallInstancePage::createVersionListCard(const QString &id, const QString
     if (serverBtn->icon().isNull()) {
         serverBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/download.svg", themeColor, 18));
     }
-    connect(serverBtn, &QPushButton::clicked, [this]() {
-        NotificationManager::showInfo(this, tr("下载服务端功能将在后续版本中实现！"));
-    });
+    connect(serverBtn, &QPushButton::clicked, this,
+            [this, id]() { ServerDownloadDialog::openFor(this, id); });
     btnLayout->addWidget(serverBtn);
 
     QPushButton *installBtn = createBtn(":/Images/Icons/install.svg", tr("安装此版本"));
@@ -729,9 +729,7 @@ void InstallInstancePage::addMasonryVersionCard(const QString &id, const QString
 
     QList<MasonryContentCard::ActionSpec> actions;
     actions.append({QStringLiteral(":/Images/Icons/server.svg"), tr("下载服务端"), QColor(),
-                    [this]() {
-                        NotificationManager::showInfo(this, tr("下载服务端功能将在后续版本中实现！"));
-                    }});
+                    [this, id]() { ServerDownloadDialog::openFor(this, id); }});
     actions.append({QStringLiteral(":/Images/Icons/install.svg"), tr("安装此版本"), QColor(),
                     [this, id]() { selectVersion(id); }});
 

@@ -30,6 +30,7 @@ class QTimer;
 class QVBoxLayout;
 class ForumPostBrowser;
 class LobbyHeroBanner;
+class PlayerCountChart;
 class QWidget;
 
 class MultiplayerLobbyDetailPage : public QWidget
@@ -77,6 +78,12 @@ private:
     void updateInfoRows();
     /** 右栏「正在游玩」：房主 + 已进游戏的玩家头像墙 */
     void updatePlayers();
+    /** 换房间 / 人数变化后刷新「人数统计」卡（必要时重新拉历史曲线） */
+    void updateStatsRoom(bool roomChanged);
+    /** 拉取房间最近 6 小时的人数曲线（拉取中 / 刚拉过时跳过） */
+    void requestStatsHistory(bool force = false);
+    /** 把房间里当前人数上报到论坛（按 60 秒节流，别人也能看到这段历史） */
+    void reportStatsSample(bool force);
     void updateMatchText();
     void copyTarget();
     /** 加入卡里的「分享」菜单：复制分享文案 / 只复制邀请码 / 分享给好友私信 */
@@ -163,6 +170,17 @@ private:
     QWidget *m_playersCard = nullptr;
     QLabel *m_playersHint = nullptr;
     QWidget *m_playersHost = nullptr;
+
+    // 「人数统计」卡片：房间里在线人数的折线图（数据来自论坛聚合采样）
+    QWidget *m_statsCard = nullptr;
+    QLabel *m_statsValue = nullptr;
+    QLabel *m_statsHint = nullptr;
+    PlayerCountChart *m_statsChart = nullptr;
+    QTimer *m_statsTimer = nullptr;
+    int m_statsRoomId = 0;          ///< 当前曲线属于哪个房间（换房间时清空重拉）
+    qint64 m_statsLastReportMs = 0; ///< 上次上报采样时刻
+    qint64 m_statsLastFetchMs = 0;  ///< 上次拉取曲线时刻
+    bool m_statsFetching = false;
 
     QWidget *m_infoCard = nullptr;
     QLabel *m_versionValue = nullptr;

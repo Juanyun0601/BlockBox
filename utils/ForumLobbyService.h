@@ -127,6 +127,16 @@ struct ForumLobbyRoom
     }
 };
 
+/** 一次图片上传的完整回执（POST /api/upload 的响应，发布帖轮播绑定要用 upload id） */
+struct ForumImageUpload
+{
+    int id = 0;          ///< 图床记录 id（发帖时绑定轮播用）
+    QString url;         ///< /uploads/xxx 原图路径
+    QString thumb;       ///< /uploads/thumbs/xxx 缩略图路径，可能为空
+
+    bool isValid() const { return id > 0 && !url.isEmpty(); }
+};
+
 class ForumLobbyService : public QObject
 {
     Q_OBJECT
@@ -144,6 +154,8 @@ public:
      * message = 失败时的提示（成功时为空）
      */
     using UploadHandler = std::function<void(const QString &url, const QString &message)>;
+    /** 图片上传完整回执回调：upload.isValid() = 成功；message = 失败时的提示 */
+    using UploadFullHandler = std::function<void(const ForumImageUpload &upload, const QString &message)>;
     /** 分享链接创建回调：房间号、续期 / 删除凭据 */
     using ShareHandler = std::function<void(const QString &token, const QString &secret)>;
     /** 房间评论列表回调：评论（旧→新）、总条数 */
@@ -223,6 +235,12 @@ public:
      * @param filePath 原图太大时先用 QImage 缩到长边 2560 以内再发
      */
     void uploadImage(const QString &filePath, UploadHandler onDone);
+
+    /**
+     * @brief 同 uploadImage，但回执带完整信息（upload id / 缩略图）
+     * 发帖页轮播要把图片绑到帖子上，必须有 upload id。
+     */
+    void uploadImageFull(const QString &filePath, UploadFullHandler onDone);
 
     /** 核心 key → 中文名 */
     static QString coreDisplayName(const QString &core);

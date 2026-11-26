@@ -98,7 +98,8 @@ private:
         TypeSave = 1,         // 存档
         TypeScreenshot = 2,   // 截图
         TypeResourcePack = 3, // 资源包
-        TypeShaderPack = 4    // 光影包
+        TypeShaderPack = 4,   // 光影包
+        TypeProjection = 5    // 投影（本地 .litematic / .schem / .schematic）
     };
 
     /** 文件型资源条目（存档/截图/资源包/光影包） */
@@ -173,6 +174,7 @@ private:
     QPushButton *m_tabScreenshotsBtn;
     QPushButton *m_tabResourcePacksBtn;
     QPushButton *m_tabShaderPacksBtn;
+    QPushButton *m_tabProjectionsBtn;
     QWidget *m_tabBar;             ///< Tab 栏容器
     QWidget *m_tabHighlight;       ///< Tab 选中指示条（位于按钮下方）
     QPropertyAnimation *m_tabAnim; ///< 指示条位移动画

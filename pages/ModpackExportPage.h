@@ -104,10 +104,6 @@ private:
   // Server extra fields
   QWidget* m_serverExtraWidget;
   QLineEdit* m_serverFileApiEdit;
-  QSlider* m_serverMinMemorySlider;
-  QLineEdit* m_serverMinMemoryEdit;
-  QLineEdit* m_serverJavaArgsEdit;
-  QLineEdit* m_serverLaunchArgsEdit;
 
   // Step 3 - file tree
   QTreeWidget* m_fileTree;

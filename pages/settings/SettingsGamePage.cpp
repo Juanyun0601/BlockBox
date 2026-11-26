@@ -9,12 +9,16 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDesktopServices>
+#include <QDir>
 #include <QFileDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include "components/AppMessageBox.h"
 #include <QPushButton>
 #include <QSlider>
+#include <QSpinBox>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include "components/CustomCheckBox.h"
@@ -22,6 +26,7 @@
 #include "utils/SettingsManager.h"
 #include "utils/GameLauncher.h"
 #include "utils/MemoryAllocator.h"
+#include "utils/WorldBackupManager.h"
 
 void SettingsPage::initGlobalGameSettings()
 {
@@ -325,6 +330,64 @@ void SettingsPage::initGlobalGameSettings()
     QHBoxLayout *isolationRow = appendSettingRow(isolationCard,
         tr("版本隔离"), tr("每个实例使用独立的游戏文件，避免版本冲突。"), QString(), true);
     isolationRow->addWidget(isolationCheck);
+
+    // ── 存档备份 ──
+    QVBoxLayout *backupCard = createSettingsCard(layout, tr("存档备份"));
+
+    CustomCheckBox *backupAutoCheck = new CustomCheckBox();
+    backupAutoCheck->setChecked(WorldBackupManager::autoBackupEnabled());
+    backupAutoCheck->setToolTip(tr("启动游戏前自动为上次备份后有改动的存档创建备份。"));
+
+    QComboBox *backupFreqCombo = new QComboBox();
+    backupFreqCombo->addItem(tr("每次启动"));
+    backupFreqCombo->addItem(tr("每小时"));
+    backupFreqCombo->addItem(tr("每天"));
+    backupFreqCombo->setCurrentIndex(qBound(0, WorldBackupManager::autoBackupFrequency(),
+                                            backupFreqCombo->count() - 1));
+    backupFreqCombo->setToolTip(tr("自动备份的频率，频率没到的时候启动不会重复备份。"));
+
+    QSpinBox *backupKeepSpin = new QSpinBox();
+    backupKeepSpin->setRange(1, 100);
+    backupKeepSpin->setValue(WorldBackupManager::keepCount());
+    backupKeepSpin->setFixedWidth(80);
+    backupKeepSpin->setToolTip(tr("每个存档最多保留几份备份，超出后自动删最旧的。"));
+
+    QPushButton *backupFolderBtn = new QPushButton(tr("打开备份目录"));
+    backupFolderBtn->setObjectName("browseBtn");
+    connect(backupFolderBtn, &QPushButton::clicked, [this]() {
+        const QString dir = WorldBackupManager::backupsRoot();
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+
+    QHBoxLayout *backupRow = appendSettingRow(backupCard,
+        tr("启动游戏前自动备份"), tr("游戏启动前自动把有改动的存档压缩存一份，存档损坏或误操作时可以恢复。"),
+        tr("备份保存在软件数据目录的 WorldBackups/Worlds 下，不在实例文件夹里，实例被误删也不会丢。"),
+        true);
+    backupRow->addWidget(backupAutoCheck);
+    backupRow->addWidget(new QLabel(tr("频率")));
+    backupRow->addWidget(backupFreqCombo);
+    backupRow->addWidget(new QLabel(tr("保留")));
+    backupRow->addWidget(backupKeepSpin);
+    backupRow->addWidget(backupFolderBtn);
+    backupRow->addStretch();
+
+    // 设置项变化立即保存（与「世界备份与恢复」弹窗共用同一份设置）
+    auto saveBackupSettings = [backupAutoCheck, backupFreqCombo, backupKeepSpin]() {
+        WorldBackupManager::setAutoBackupEnabled(backupAutoCheck->isChecked());
+        WorldBackupManager::setAutoBackupFrequency(backupFreqCombo->currentIndex());
+        WorldBackupManager::setKeepCount(backupKeepSpin->value());
+        backupFreqCombo->setEnabled(backupAutoCheck->isChecked());
+        backupKeepSpin->setEnabled(backupAutoCheck->isChecked());
+    };
+    connect(backupAutoCheck, &CustomCheckBox::toggled, this, [saveBackupSettings](bool) {
+        saveBackupSettings();
+    });
+    connect(backupFreqCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [saveBackupSettings](int) { saveBackupSettings(); });
+    connect(backupKeepSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [saveBackupSettings](int) { saveBackupSettings(); });
+    saveBackupSettings();
 
     // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();

@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QColor>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QDateTime>
@@ -17,7 +18,9 @@
 #include <QDialog>
 #include <QEvent>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLinearGradient>
@@ -34,28 +37,42 @@
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QShowEvent>
+#include <QStackedWidget>
 #include <QStyle>
 #include <QTextCursor>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVBoxLayout>
 
 #include "components/AppInputDialog.h"
 #include "components/AppMessageBox.h"
+#include "components/ForumCarouselEditor.h"
+#include "components/ForumClaimDialog.h"
 #include "components/ForumLinkRowsEditor.h"
+#include "components/ForumTagEditor.h"
 #include "components/NotificationManager.h"
+#include "components/PlayerCountChart.h"
 #include "components/PublishKit.h"
+#include "components/ProjectionMaterialDialog.h"
+#include "components/ProjectionPreviewDialog.h"
 #include "components/QuizDialog.h"
 #include "components/ShareToFriendDialog.h"
 #include "components/ThreadTipDialog.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ForumImageStore.h"
+#include "utils/ForumPlayerStatsService.h"
 #include "utils/IconHelper.h"
+#include "utils/McServerPinger.h"
+#include "utils/Schematic/SchematicDownloadTarget.h"
 #include "utils/StyleKit.h"
+#include "utils/links/LinkRouter.h"
 #include "utils/plugin/PluginManager.h"
 #include "utils/plugin/PluginSafetyGuard.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -204,6 +221,21 @@ ForumThreadDetailPage::ForumThreadDetailPage(QWidget *parent)
                 updateReplyBoxState();
                 renderHero();
             });
+
+    // 服务器导航帖的「人数统计」：探测服务器在线人数 + 拉取论坛聚合的曲线。
+    // 只在页面可见时跑（hideEvent 停表），别在后台一直 ping 别人的服务器
+    m_navPinger = new McServerPinger(this);
+    connect(m_navPinger, &McServerPinger::pingFinished, this,
+            [this](const QString &key, const McServerPinger::Result &result) {
+                if (key != m_navServerKey)
+                    return; // 已经换帖子 / 换地址，丢掉过期结果
+                const bool online = result.state == McServerPinger::Result::Online;
+                applyServerPingResult(online, result.playersOnline, result.playersMax,
+                                      result.latencyMs);
+            });
+    m_navStatsTimer = new QTimer(this);
+    m_navStatsTimer->setInterval(60000);
+    connect(m_navStatsTimer, &QTimer::timeout, this, &ForumThreadDetailPage::tickServerStats);
 }
 
 // ────────────────────────────────────────────────────────────── 骨架
@@ -275,6 +307,154 @@ void ForumThreadDetailPage::buildUi()
     m_heroBody->addWidget(ForumKit::makeMuted(m_heroCard, tr("正在加载主题…")));
     m_mainLayout->addWidget(m_heroCard);
 
+    // 轮播卡（资源帖 / 导航帖可带）：和资源详情页的「游戏截图」轮播同一套样式 ——
+    // 标题 + 圆角大图 + 两侧圆形箭头 + 下方缩略图条 + 5 秒自动翻页，无轮播时整卡隐藏
+    m_carouselCard = new QFrame(m_mainColumn);
+    m_carouselCard->setObjectName(QStringLiteral("forumBodyCard"));
+    auto *carouselLayout = new QVBoxLayout(m_carouselCard);
+    carouselLayout->setContentsMargins(14, 14, 14, 12);
+    carouselLayout->setSpacing(10);
+
+    auto *carouselHead = new QHBoxLayout();
+    carouselHead->setSpacing(8);
+    auto *carouselTitle = new QLabel(tr("展示图"), m_carouselCard);
+    carouselTitle->setObjectName(QStringLiteral("forumSectionTitle"));
+    carouselHead->addWidget(carouselTitle);
+    carouselHead->addStretch(1);
+    m_carouselCounter = new QLabel(m_carouselCard);
+    m_carouselCounter->setObjectName(QStringLiteral("forumCountPill"));
+    carouselHead->addWidget(m_carouselCounter);
+    carouselLayout->addLayout(carouselHead);
+
+    // 舞台：圆角底 + 图片 / B 站播放卡都铺在里面，左右两只圆形箭头浮在画面边上
+    m_carouselStage = new QWidget(m_carouselCard);
+    m_carouselStage->setObjectName(QStringLiteral("forumCarouselStage"));
+    m_carouselStage->setFixedHeight(240);
+    m_carouselStage->installEventFilter(this);
+    auto *stageLayout = new QGridLayout(m_carouselStage);
+    stageLayout->setContentsMargins(0, 0, 0, 0);
+    stageLayout->setSpacing(0);
+
+    m_carouselStack = new QStackedWidget(m_carouselStage);
+    // 与资源详情页截图区共用样式：圆角浅底 + 1px 描边
+    m_carouselStack->setObjectName(QStringLiteral("modDetailScreenshotStack"));
+    m_carouselStack->installEventFilter(this);
+    stageLayout->addWidget(m_carouselStack, 0, 0, 1, 3);
+
+    // 两侧箭头：半透明圆底 + 主题色箭头，和资源详情页的截图翻页按钮一模一样
+    const QString navStyle = QStringLiteral(
+        "QPushButton { background: rgba(0,0,0,45); border: none; border-radius: 16px; }"
+        "QPushButton:hover { background: rgba(0,0,0,85); border-radius: 16px; }");
+    const QColor navIconColor(StyleKit::resolve(QStringLiteral("@TEXT_PRIMARY@")));
+    m_carouselPrev = new QPushButton(m_carouselStage);
+    m_carouselPrev->setObjectName(QStringLiteral("modDetailScreenshotPrev"));
+    m_carouselPrev->setFixedSize(32, 32);
+    m_carouselPrev->setCursor(Qt::PointingHandCursor);
+    m_carouselPrev->setFlat(true);
+    m_carouselPrev->setStyleSheet(navStyle);
+    m_carouselPrev->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/chevron_left.svg"), navIconColor, 20));
+    m_carouselPrev->setIconSize(QSize(20, 20));
+    m_carouselPrev->setToolTip(tr("上一张"));
+    stageLayout->addWidget(m_carouselPrev, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
+
+    m_carouselNext = new QPushButton(m_carouselStage);
+    m_carouselNext->setObjectName(QStringLiteral("modDetailScreenshotNext"));
+    m_carouselNext->setFixedSize(32, 32);
+    m_carouselNext->setCursor(Qt::PointingHandCursor);
+    m_carouselNext->setFlat(true);
+    m_carouselNext->setStyleSheet(navStyle);
+    m_carouselNext->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/chevron_right.svg"), navIconColor, 20));
+    m_carouselNext->setIconSize(QSize(20, 20));
+    m_carouselNext->setToolTip(tr("下一张"));
+    stageLayout->addWidget(m_carouselNext, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
+
+    carouselLayout->addWidget(m_carouselStage);
+
+    // 缩略图条：和资源详情页一样 120×80、选中的加主色描边，多了可以左右滚
+    m_carouselThumbStrip = new QWidget();
+    m_carouselThumbStrip->setObjectName(QStringLiteral("modDetailThumbStrip"));
+    m_carouselThumbStrip->setFixedHeight(90);
+    m_carouselThumbStripLayout = new QHBoxLayout(m_carouselThumbStrip);
+    m_carouselThumbStripLayout->setContentsMargins(0, 0, 0, 0);
+    m_carouselThumbStripLayout->setSpacing(4);
+
+    m_carouselThumbScroll = new QScrollArea(m_carouselCard);
+    m_carouselThumbScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_carouselThumbScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_carouselThumbScroll->setFrameShape(QFrame::NoFrame);
+    m_carouselThumbScroll->setWidget(m_carouselThumbStrip);
+    m_carouselThumbScroll->setFixedHeight(90);
+
+    m_carouselThumbLeft = new QPushButton(m_carouselCard);
+    m_carouselThumbRight = new QPushButton(m_carouselCard);
+    for (QPushButton *button : { m_carouselThumbLeft, m_carouselThumbRight })
+    {
+        button->setFixedSize(24, 80);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFlat(true);
+    }
+    m_carouselThumbLeft->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/chevron_left.svg"), navIconColor, 18));
+    m_carouselThumbLeft->setIconSize(QSize(18, 18));
+    m_carouselThumbRight->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/chevron_right.svg"), navIconColor, 18));
+    m_carouselThumbRight->setIconSize(QSize(18, 18));
+
+    auto *thumbRow = new QHBoxLayout();
+    thumbRow->setContentsMargins(0, 0, 0, 0);
+    thumbRow->setSpacing(2);
+    thumbRow->addWidget(m_carouselThumbLeft);
+    thumbRow->addWidget(m_carouselThumbScroll, 1);
+    thumbRow->addWidget(m_carouselThumbRight);
+    carouselLayout->addLayout(thumbRow);
+
+    connect(m_carouselPrev, &QPushButton::clicked, this, [this]() {
+        const int count = m_carouselStack ? m_carouselStack->count() : 0;
+        if (count > 0)
+        {
+            showCarouselAt((m_carouselStack->currentIndex() + count - 1) % count);
+            noteCarouselInteraction();
+        }
+    });
+    connect(m_carouselNext, &QPushButton::clicked, this, [this]() {
+        const int count = m_carouselStack ? m_carouselStack->count() : 0;
+        if (count > 0)
+        {
+            showCarouselAt((m_carouselStack->currentIndex() + 1) % count);
+            noteCarouselInteraction();
+        }
+    });
+    connect(m_carouselThumbLeft, &QPushButton::clicked, this, [this]() {
+        if (!m_carouselThumbScroll)
+            return;
+        QScrollBar *hbar = m_carouselThumbScroll->horizontalScrollBar();
+        hbar->setValue(qMax(0, hbar->value() - 124));
+    });
+    connect(m_carouselThumbRight, &QPushButton::clicked, this, [this]() {
+        if (!m_carouselThumbScroll)
+            return;
+        QScrollBar *hbar = m_carouselThumbScroll->horizontalScrollBar();
+        hbar->setValue(qMin(hbar->maximum(), hbar->value() + 124));
+    });
+
+    m_carouselTimer = new QTimer(m_carouselCard);
+    m_carouselTimer->setInterval(5000);
+    connect(m_carouselTimer, &QTimer::timeout, this, [this]() {
+        const int count = m_carouselStack ? m_carouselStack->count() : 0;
+        if (count > 1 && m_carouselCard && m_carouselCard->isVisible())
+            showCarouselAt((m_carouselStack->currentIndex() + 1) % count);
+    });
+    // 手动翻页后暂停一分钟，和资源详情页的截图轮播一样
+    m_carouselResumeTimer = new QTimer(m_carouselCard);
+    m_carouselResumeTimer->setSingleShot(true);
+    m_carouselResumeTimer->setInterval(60000);
+    connect(m_carouselResumeTimer, &QTimer::timeout, this, [this]() { setCarouselAutoPlay(true); });
+
+    m_carouselCard->hide();
+    m_mainLayout->addWidget(m_carouselCard);
+
     // 资源帖的「详细信息」：作者发帖时写的介绍正文，摆评论前面；教程帖这里是「教程正文」
     // （目录锚点靠它跳）；普通帖不需要，默认藏起来
     m_bodyTitle = new QLabel(tr("详细信息"), m_mainColumn);
@@ -323,8 +503,8 @@ void ForumThreadDetailPage::buildUi()
     // 分页
     m_pager = new ForumKit::ForumPager(m_mainColumn);
     connect(m_pager, &ForumKit::ForumPager::pageRequested, this, [this](int page) {
-        // 资源帖的页签是评论分页，普通帖是楼层分页
-        if (isResourceThread())
+        // 资源帖 / 教程帖的页签是评论分页，其余帖子是楼层分页
+        if (usesComments())
             loadComments(page);
         else
             loadPage(page);
@@ -366,6 +546,37 @@ void ForumThreadDetailPage::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
     applyPageWidth();
     applyLayoutMode();
+    // 轮播当前页跟着卡宽重新缩放（切页时其余页各自再缩）
+    if (m_carouselStack && m_carouselCard && m_carouselCard->isVisible())
+    {
+        applyCarouselStageHeight();
+        rescaleCarouselSlide(m_carouselStack->currentIndex());
+    }
+}
+
+void ForumThreadDetailPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // 服务器导航帖：回到页面就把人数探测接上；第一次进来立刻探测一次
+    if (!m_navServerKey.isEmpty() && m_navStatsChart)
+    {
+        if (m_navStatsTimer)
+            m_navStatsTimer->start();
+        if (!m_navPinged)
+            tickServerStats();
+        else
+            requestServerStatsHistory(true);
+    }
+}
+
+void ForumThreadDetailPage::hideEvent(QHideEvent *event)
+{
+    QWidget::hideEvent(event);
+    // 离开页面就先停掉探测和曲线刷新，别在后台一直 ping 别人的服务器
+    if (m_navStatsTimer)
+        m_navStatsTimer->stop();
+    if (m_navPinger)
+        m_navPinger->cancelAll();
 }
 
 void ForumThreadDetailPage::applyPageWidth()
@@ -395,15 +606,16 @@ void ForumThreadDetailPage::applyLayoutMode()
     if (!m_bodyLayout)
         return;
 
-    // 插件帖 / 投影帖按资源详情页排：主题头通栏，左栏下载，右栏看资源详情与评论
-    const bool resourceMode = isResourceThread();
+    // 插件帖 / 投影帖 / 导航帖按资源详情页排：主题头通栏，左栏卡片，右栏看详情与评论
+    const bool resourceMode = isResourceThread() || isNavigationThread();
     // 窄窗口把侧栏折到主栏下面，避免正文被挤成一条
     const bool stacked = width() > 0 && width() < kStackBelow;
 
     // 讨论区小标题按帖子类型换文案；放这里是因为它随帖子内容变，而版面可能没变不用重排
     if (m_discussionHead)
     {
-        m_discussionHead->setVisible(resourceMode);
+        // 资源帖与教程帖都不盖楼，主栏里就是一条条评论
+        m_discussionHead->setVisible(resourceMode || isTutorialThread());
         if (m_discussionTitle)
             m_discussionTitle->setText(tr("评论"));
         updateCommentHeader();
@@ -500,14 +712,16 @@ void ForumThreadDetailPage::renderHero()
         return;
     }
 
-    // 插件帖 / 投影帖换成资源详情页的头部：大图标 + 名称 + 文件信息 + 简介
-    const bool resourceMode = isResourceThread();
+    // 插件帖 / 投影帖 / 导航帖换成资源详情页的头部：大图标 + 名称 + 信息 + 简介
+    const bool resourceMode = isResourceThread() || isNavigationThread();
     applyHeroSkin(resourceMode);
 
     appendHeroFlags();
     appendHeroTitleRow(resourceMode);
     appendHeroMeta();
     appendHeroTags();
+    appendHeroSource();
+    appendHeroQuestionCard();
     appendHeroAdmin();
 }
 
@@ -532,6 +746,7 @@ void ForumThreadDetailPage::applyHeroSkin(bool resourceMode)
 void ForumThreadDetailPage::appendHeroFlags()
 {
     // ── 置顶 / 锁定徽章 ──
+    // 有奖问答不在这里挂同名徽章：板块胶囊已经写着「有奖问答」，赏金卡就在下面，多一个太重复
     if (!m_info.pinned && !m_info.locked)
         return;
 
@@ -586,28 +801,63 @@ void ForumThreadDetailPage::appendHeroTitleRow(bool resourceMode)
             QStringLiteral(":/Images/Icons/tip.svg"),
             QColor(StyleKit::resolve(QStringLiteral("@TEXT_SECONDARY@"))), 13));
         button->setIconSize(QSize(13, 13));
-        button->setToolTip(tr("给这个帖子打赏，提升它的推流"));
+        button->setToolTip(tr("给这个帖子打赏，方块转给作者并提升推流"));
         connect(button, &QPushButton::clicked, this, &ForumThreadDetailPage::tipThread);
         return button;
     };
+
+    if (isNavigationThread())
+    {
+        // ── 导航帖：渐变地球图标 + 标题；地址与打开按钮在左栏地址卡里，不在这里重复 ──
+        // 没挂地址记录的老数据按板块认类型
+        const bool server = m_info.navigation.isServer()
+                            || (!m_info.navigation.isValid()
+                                && m_info.boardSlug == QLatin1String("server-nav"));
+        auto *headerRow = new QHBoxLayout();
+        headerRow->setSpacing(16);
+
+        auto *icon = new QLabel(m_heroCard);
+        icon->setObjectName(QStringLiteral("forumPluginHeroIcon"));
+        icon->setFixedSize(76, 76);
+        icon->setAlignment(Qt::AlignCenter);
+        icon->setPixmap(PublishKit::makeGradientIconPixmap(
+            QColor(QStringLiteral("#8B5CF6")), QColor(QStringLiteral("#6D28D9")),
+            QStringLiteral(":/Images/Icons/globe.svg"), 76));
+        headerRow->addWidget(icon, 0, Qt::AlignTop);
+
+        auto *textColumn = new QVBoxLayout();
+        textColumn->setContentsMargins(0, 0, 0, 0);
+        textColumn->setSpacing(5);
+
+        auto *titleRow = new QHBoxLayout();
+        titleRow->setSpacing(8);
+        auto *title = new QLabel(m_info.title, m_heroCard);
+        title->setObjectName(QStringLiteral("forumPluginHeroTitle"));
+        title->setWordWrap(true);
+        title->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        titleRow->addWidget(title, 1);
+        titleRow->addWidget(makeShare(), 0, Qt::AlignTop);
+        titleRow->addWidget(makeBookmark(), 0, Qt::AlignTop);
+        titleRow->addWidget(makeTip(), 0, Qt::AlignTop);
+        textColumn->addLayout(titleRow);
+
+        auto *sub = new QLabel(server ? tr("🖥️ 服务器导航") : tr("🌐 网站导航"), m_heroCard);
+        sub->setObjectName(QStringLiteral("forumPluginHeroSub"));
+        sub->setWordWrap(true);
+        textColumn->addWidget(sub);
+
+        headerRow->addLayout(textColumn, 1);
+        m_heroBody->addLayout(headerRow);
+        return;
+    }
 
     if (resourceMode)
     {
         if (resourceKind() == ResourceKind::Projection)
         {
-            // ── 投影帖：渐变图标 + 名称 / 文件名 + 大小·下载次数 ──
-            auto *headerRow = new QHBoxLayout();
-            headerRow->setSpacing(16);
-
-            auto *icon = new QLabel(m_heroCard);
-            icon->setObjectName(QStringLiteral("forumPluginHeroIcon"));
-            icon->setFixedSize(76, 76);
-            icon->setAlignment(Qt::AlignCenter);
-            icon->setPixmap(PublishKit::makeGradientIconPixmap(
-                QColor(QStringLiteral("#3B82F6")), QColor(QStringLiteral("#1D4ED8")),
-                QStringLiteral(":/Images/Icons/list.svg"), 76));
-            headerRow->addWidget(icon, 0, Qt::AlignTop);
-
+            // ── 投影帖：名称 / 文件名 + 大小·下载次数 ──
+            // 投影本身没有图标（列表页也是用名字首字占位），详情页顶部不再摆一枚
+            // 假的「投影图标」，标题直接从左边开始排
             auto *textColumn = new QVBoxLayout();
             textColumn->setContentsMargins(0, 0, 0, 0);
             textColumn->setSpacing(5);
@@ -643,18 +893,19 @@ void ForumThreadDetailPage::appendHeroTitleRow(bool resourceMode)
             // 老帖子可能没挂上投影记录（只有正文），这时不摆「0 B · 0 次下载」的空信息
             if (m_info.schematic.isValid())
             {
-                const QString metaBits = QStringList{
-                    ForumKit::humanFileSize(m_info.schematic.fileSize),
-                    tr("%1 次下载").arg(m_info.schematic.downloads),
-                }.join(QStringLiteral(" · "));
-                auto *schematicMeta = new QLabel(metaBits, m_heroCard);
+                QStringList metaBitsList;
+                const int versionCount = m_info.schematic.versionCount();
+                if (versionCount > 1)
+                    metaBitsList << tr("%1 个版本").arg(versionCount);
+                metaBitsList << ForumKit::humanFileSize(m_info.schematic.fileSize);
+                metaBitsList << tr("%1 次下载").arg(m_info.schematic.downloads);
+                auto *schematicMeta = new QLabel(metaBitsList.join(QStringLiteral(" · ")), m_heroCard);
                 schematicMeta->setObjectName(QStringLiteral("forumPluginHeroMeta"));
                 schematicMeta->setWordWrap(true);
                 textColumn->addWidget(schematicMeta);
             }
 
-            headerRow->addLayout(textColumn, 1);
-            m_heroBody->addLayout(headerRow);
+            m_heroBody->addLayout(textColumn);
             return;
         }
 
@@ -761,13 +1012,21 @@ void ForumThreadDetailPage::appendHeroMeta()
     metaRow->setSpacing(10);
     metaRow->setContentsMargins(0, 6, 0, 0);
 
-    // 插件帖 / 投影帖 / 教程帖：先挂一枚徽章，一眼看出这帖是什么类型
+    // 插件帖 / 投影帖 / 教程帖 / 导航帖：先挂一枚徽章，一眼看出这帖是什么类型
     if (m_info.plugin.isValid())
         metaRow->addWidget(ForumKit::makeBadge(m_heroCard, tr("插件")));
     else if (m_info.schematic.isValid())
         metaRow->addWidget(ForumKit::makeBadge(m_heroCard, tr("投影")));
     else if (isTutorialThread())
         metaRow->addWidget(ForumKit::makeBadge(m_heroCard, tr("教程")));
+    else if (isNavigationThread())
+        metaRow->addWidget(ForumKit::makeBadge(
+            m_heroCard,
+            m_info.navigation.isServer()
+                || (!m_info.navigation.isValid()
+                    && m_info.boardSlug == QLatin1String("server-nav"))
+                ? tr("服务器")
+                : tr("网站")));
 
     if (!m_info.boardSlug.isEmpty())
     {
@@ -805,19 +1064,32 @@ void ForumThreadDetailPage::appendHeroMeta()
         metaRow->addWidget(chip);
     }
 
-    auto *meta = new QLabel(
-        tr("发布于 %1 · %2 次浏览 · %3 条回复")
-            .arg(absoluteTime(m_info.createdAt).isEmpty() ? ForumKit::relativeTime(m_info.createdAt)
-                                                          : absoluteTime(m_info.createdAt))
-            .arg(m_info.views)
-            .arg(m_info.replies),
-        m_heroCard);
+    auto *meta = new QLabel(m_heroCard);
     meta->setObjectName(QStringLiteral("forumMuted"));
+    m_heroStatsLabel = meta;
+    updateHeroStatsLabel();
     metaRow->addWidget(meta);
 
     metaRow->addStretch(1);
 
     m_heroBody->addLayout(metaRow);
+}
+
+void ForumThreadDetailPage::updateHeroStatsLabel()
+{
+    if (!m_heroStatsLabel)
+        return;
+
+    // 教程帖 / 导航帖的讨论是评论，楼层回复数在那儿永远是 0，别让头部顶着「0 条回复」
+    const bool commentsInsteadOfFloors = isTutorialThread() || isNavigationThread();
+    const int count = commentsInsteadOfFloors ? commentCountForDisplay() : m_info.replies;
+    const QString timeText = absoluteTime(m_info.createdAt).isEmpty()
+                                 ? ForumKit::relativeTime(m_info.createdAt)
+                                 : absoluteTime(m_info.createdAt);
+    m_heroStatsLabel->setText(
+        commentsInsteadOfFloors
+            ? tr("发布于 %1 · %2 次浏览 · %3 条评论").arg(timeText).arg(m_info.views).arg(count)
+            : tr("发布于 %1 · %2 次浏览 · %3 条回复").arg(timeText).arg(m_info.views).arg(count));
 }
 
 void ForumThreadDetailPage::appendHeroTags()
@@ -838,6 +1110,237 @@ void ForumThreadDetailPage::appendHeroTags()
         tagsRow->addStretch(1);
         m_heroBody->addLayout(tagsRow);
     }
+}
+
+void ForumThreadDetailPage::appendHeroSource()
+{
+    // ── 转载作品：主题头里亮出「转载」徽章 + 可点的原链接 + 转载说明 ──
+    if (!m_info.source.isRepost() || m_info.source.url.isEmpty())
+        return;
+
+    auto *column = new QVBoxLayout();
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(4);
+
+    auto *sourceRow = new QHBoxLayout();
+    sourceRow->setSpacing(8);
+    sourceRow->addWidget(ForumKit::makeBadge(m_heroCard, tr("转载")), 0, Qt::AlignVCenter);
+
+    // 原链接可以点开：读者想找原作者时一步就到（CF / Modrinth 链接会留在软件里打开）
+    const QString url = m_info.source.url;
+    auto *link = new QLabel(m_heroCard);
+    link->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    link->setOpenExternalLinks(false);
+    link->setText(tr("原作品：<a href=\"%1\">%1</a>").arg(url.toHtmlEscaped(), url.toHtmlEscaped()));
+    connect(link, &QLabel::linkActivated, this, [this](const QString &href) {
+        LinkRouter::instance()->open(QUrl(href, QUrl::TolerantMode), this);
+    });
+    sourceRow->addWidget(link, 0, Qt::AlignVCenter);
+    sourceRow->addStretch(1);
+    column->addLayout(sourceRow);
+
+    if (!m_info.source.note.isEmpty())
+    {
+        auto *note = new QLabel(tr("转载说明：%1").arg(m_info.source.note), m_heroCard);
+        note->setObjectName(QStringLiteral("forumMuted"));
+        note->setWordWrap(true);
+        column->addWidget(note);
+    }
+
+    // ── 认领入口 ──
+    // 原创作者可以认领：转载作者同意后作品会转到认领人名下。
+    // 转载作者自己看到的是「有几个认领请求」，处理入口在创作中心。
+    if (m_info.claim.present)
+    {
+        const ForumThreadClaim &claim = m_info.claim;
+        auto *claimRow = new QHBoxLayout();
+        claimRow->setSpacing(8);
+
+        const bool loggedIn = ForumAccountService::instance()->isLoggedIn();
+        const auto makeGhost = [this](const QString &text) {
+            auto *button = new QPushButton(text, m_heroCard);
+            button->setObjectName(QStringLiteral("forumGhostButton"));
+            button->setCursor(Qt::PointingHandCursor);
+            button->setFixedHeight(26);
+            return button;
+        };
+
+        if (claim.incoming > 0)
+        {
+            auto *hint = new QLabel(
+                tr("有 %1 个认领请求，可在「创作中心」处理").arg(claim.incoming), m_heroCard);
+            hint->setObjectName(QStringLiteral("forumMuted"));
+            hint->setWordWrap(true);
+            claimRow->addWidget(hint, 1);
+        }
+        else if (claim.hasMine())
+        {
+            QString text;
+            if (claim.mineStatus == QStringLiteral("pending"))
+                text = tr("已提交认领，等待转载作者确认");
+            else if (claim.mineStatus == QStringLiteral("rejected"))
+                text = tr("上次认领被转载作者拒绝了");
+            else if (claim.mineStatus == QStringLiteral("cancelled"))
+                text = tr("上次认领已撤回");
+            else
+                text = tr("上次认领已处理");
+            auto *label = new QLabel(text, m_heroCard);
+            label->setObjectName(QStringLiteral("forumMuted"));
+            label->setWordWrap(true);
+            claimRow->addWidget(label, 1);
+
+            auto *viewButton = makeGhost(tr("查看沟通"));
+            connect(viewButton, &QPushButton::clicked, this,
+                    &ForumThreadDetailPage::openMyClaim);
+            claimRow->addWidget(viewButton);
+
+            if (claim.mineStatus != QStringLiteral("pending"))
+            {
+                auto *againButton = makeGhost(tr("重新认领"));
+                connect(againButton, &QPushButton::clicked, this,
+                        &ForumThreadDetailPage::claimThreadContent);
+                claimRow->addWidget(againButton);
+            }
+        }
+        else if (!loggedIn)
+        {
+            auto *loginButton = makeGhost(tr("认领该内容"));
+            connect(loginButton, &QPushButton::clicked, this,
+                    &ForumThreadDetailPage::claimThreadContent);
+            claimRow->addWidget(loginButton);
+            claimRow->addWidget(
+                ForumKit::makeMuted(m_heroCard, tr("登录后，如果这是你的原创作品可以认领")), 1);
+        }
+        else if (claim.canClaim)
+        {
+            auto *claimButton = new QPushButton(tr("认领该内容"), m_heroCard);
+            claimButton->setObjectName(QStringLiteral("forumPrimaryButton"));
+            claimButton->setCursor(Qt::PointingHandCursor);
+            claimButton->setFixedHeight(28);
+            connect(claimButton, &QPushButton::clicked, this,
+                    &ForumThreadDetailPage::claimThreadContent);
+            claimRow->addWidget(claimButton);
+            claimRow->addWidget(
+                ForumKit::makeMuted(m_heroCard,
+                                    tr("原创作者可以认领，转载作者同意后作品会转到你名下")),
+                1);
+        }
+
+        if (claimRow->count() > 0)
+        {
+            column->addSpacing(2);
+            column->addLayout(claimRow);
+        }
+    }
+
+    m_heroBody->addLayout(column);
+}
+
+void ForumThreadDetailPage::claimThreadContent()
+{
+    if (m_info.id <= 0 || !m_info.source.isRepost())
+        return;
+    if (!ForumAccountService::instance()->isLoggedIn())
+    {
+        emit loginRequested();
+        return;
+    }
+    ForumClaimSubmitDialog::request(this, m_info, [this]() {
+        NotificationManager::showSuccess(this, tr("认领已提交，转载作者确认后作品会转到你名下"));
+        reload();
+    });
+}
+
+void ForumThreadDetailPage::openMyClaim()
+{
+    if (m_info.claim.mineId <= 0)
+        return;
+    ForumClaimChatDialog::showDialog(this, m_info.claim.mineId, [this](bool) { reload(); });
+}
+
+void ForumThreadDetailPage::appendHeroQuestionCard()
+{
+    // ── 有奖问答：赏金状态卡（挂在主题头里，和网页版的悬赏卡同款信息） ──
+    if (!m_info.question.isValid())
+        return;
+
+    const ForumQuestionInfo &question = m_info.question;
+    auto *card = new QFrame(m_heroCard);
+    card->setObjectName(QStringLiteral("forumQuestionCard"));
+    card->setProperty("settled", question.isSettled());
+    card->setProperty("refunded", question.status == QStringLiteral("refunded"));
+    auto *row = new QHBoxLayout(card);
+    row->setContentsMargins(16, 14, 16, 14);
+    row->setSpacing(13);
+
+    // 礼物图标做成一块圆角徽章：比干放一个 emoji 更像「奖励」
+    auto *gift = new QLabel(QStringLiteral("🎁"), card);
+    gift->setObjectName(QStringLiteral("forumQuestionGift"));
+    gift->setFixedSize(44, 44);
+    gift->setAlignment(Qt::AlignCenter);
+    row->addWidget(gift, 0, Qt::AlignTop);
+
+    auto *textColumn = new QVBoxLayout();
+    textColumn->setContentsMargins(0, 0, 0, 0);
+    textColumn->setSpacing(4);
+
+    // 悬赏行：小字「悬赏」+ 放大的数字 + 单位 + 状态胶囊
+    auto *bountyRow = new QHBoxLayout();
+    bountyRow->setContentsMargins(0, 0, 0, 0);
+    bountyRow->setSpacing(7);
+    auto *bounty = new QLabel(card);
+    bounty->setObjectName(QStringLiteral("forumQuestionBounty"));
+    bounty->setTextFormat(Qt::RichText);
+    bounty->setText(tr("悬赏 <span style=\"font-size:22px;font-weight:900;\">%1</span> 方块")
+                        .arg(question.bounty));
+    bountyRow->addWidget(bounty, 0, Qt::AlignBaseline);
+
+    const bool refunded = question.status == QStringLiteral("refunded");
+    auto *pill = new QLabel(refunded ? tr("已退回") : (question.isSettled() ? tr("已发放") : tr("待采纳")), card);
+    pill->setObjectName(QStringLiteral("forumQuestionPill"));
+    pill->setProperty("state", refunded ? QStringLiteral("refunded")
+                                        : (question.isSettled() ? QStringLiteral("settled")
+                                                                : QStringLiteral("open")));
+    pill->setFixedHeight(22);
+    pill->setAlignment(Qt::AlignCenter);
+    bountyRow->addWidget(pill, 0, Qt::AlignVCenter);
+    bountyRow->addStretch(1);
+    textColumn->addLayout(bountyRow);
+
+    QString stateText;
+    if (question.isSettled())
+    {
+        const QString name = question.winnerName.isEmpty() ? tr("回答者") : question.winnerName;
+        const QString floorText = question.winnerFloor > 0 ? tr("%1 楼").arg(question.winnerFloor) : tr("回答");
+        stateText = question.settleSource == QStringLiteral("likes")
+                        ? tr("已发放给 %1 %2 · 到期按赞数自动发放").arg(floorText, name)
+                        : tr("已发放给 %1 %2").arg(floorText, name);
+    }
+    else if (refunded)
+    {
+        stateText = tr("没有人回答，赏金已退回提问者");
+    }
+    else
+    {
+        const int days = qMax(0, question.daysLeft);
+        stateText = days > 0 ? tr("还剩 %1 天 · 到期后按点赞最高的回答自动发放").arg(days)
+                             : tr("正在结算…");
+    }
+    auto *state = new QLabel(stateText, card);
+    state->setObjectName(QStringLiteral("forumQuestionState"));
+    state->setWordWrap(true);
+    textColumn->addWidget(state);
+
+    if (question.isOpen() && question.canAccept)
+    {
+        auto *tip = new QLabel(tr("在下面任意一层回答上点「采纳」，赏金会立刻发给对方"), card);
+        tip->setObjectName(QStringLiteral("forumQuestionTip"));
+        tip->setWordWrap(true);
+        textColumn->addWidget(tip);
+    }
+
+    row->addLayout(textColumn, 1);
+    m_heroBody->addWidget(card);
 }
 
 void ForumThreadDetailPage::appendHeroAdmin()
@@ -864,6 +1367,12 @@ void ForumThreadDetailPage::appendHeroAdmin()
     {
         appendActButton(adminRow, tr("编辑标题与标签"), false,
                         [this]() { editThreadMeta(); });
+        // 轮播是资源帖 / 导航帖的展示图：作者随时可以增删调序（无轮播时也能从这里加）
+        if (isResourceThread() || isNavigationThread())
+        {
+            appendActButton(adminRow, tr("编辑轮播"), false,
+                            [this]() { editThreadCarousel(); });
+        }
     }
     appendActButton(adminRow, tr("删除主题"), true, [this]() { confirmDeleteThread(); });
     m_heroBody->addLayout(adminRow);
@@ -1070,15 +1579,271 @@ void ForumThreadDetailPage::appendResourceLinksCard(const QVector<ForumResourceL
             palette().color(QPalette::ButtonText), 14));
         button->setIconSize(QSize(14, 14));
         button->setToolTip(link.url);
-        connect(button, &QPushButton::clicked, this, [url = link.url]() {
+        connect(button, &QPushButton::clicked, this, [this, url = link.url]() {
             const QUrl parsed(url, QUrl::TolerantMode);
             if (parsed.scheme() == QLatin1String("http") || parsed.scheme() == QLatin1String("https"))
-                QDesktopServices::openUrl(parsed);
+                LinkRouter::instance()->open(parsed, this);
         });
         layout->addWidget(button);
     }
 
     m_railLayout->addWidget(section);
+}
+
+void ForumThreadDetailPage::appendNavigationCard()
+{
+    const QString url = m_info.navigation.url;
+
+    auto *section = new QFrame(m_railHost);
+    section->setObjectName(QStringLiteral("forumPluginSection"));
+    auto *layout = new QVBoxLayout(section);
+    layout->setContentsMargins(14, 14, 14, 14);
+    layout->setSpacing(10);
+
+    auto *title = new QLabel(tr("地址"), section);
+    title->setObjectName(QStringLiteral("forumPluginSectionTitle"));
+    layout->addWidget(title);
+
+    // 类型行：网站 🌐 / 服务器 🖥️，一眼分清这条导航通向哪里；没挂地址记录的老数据按板块认
+    const bool server = m_info.navigation.isServer()
+                        || (!m_info.navigation.isValid()
+                            && m_info.boardSlug == QLatin1String("server-nav"));
+    auto *typeBadge = new QLabel(server ? tr("🖥️ 服务器") : tr("🌐 网站"), section);
+    typeBadge->setObjectName(QStringLiteral("forumPluginHint"));
+    layout->addWidget(typeBadge);
+
+    // 完整地址：可选中复制，行数自适应长网址
+    auto *urlLabel = new QLabel(url.toHtmlEscaped(), section);
+    urlLabel->setObjectName(QStringLiteral("forumPluginHint"));
+    urlLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    urlLabel->setWordWrap(true);
+    layout->addWidget(urlLabel);
+
+    // 一键打开：http(s) 交给系统浏览器；服务器地址（IP / 域名）浏览器打不开，按钮不出现
+    const QUrl parsed(url, QUrl::TolerantMode);
+    if (parsed.scheme() == QLatin1String("http") || parsed.scheme() == QLatin1String("https"))
+    {
+        auto *openButton = new QPushButton(tr("一键打开"), section);
+        openButton->setObjectName(QStringLiteral("forumPluginInstallBtn"));
+        openButton->setCursor(Qt::PointingHandCursor);
+        openButton->setMinimumHeight(42);
+        openButton->setIcon(IconHelper::loadColoredIcon(
+            QStringLiteral(":/Images/Icons/external_link.svg"), QColor("#ffffff"), 18));
+        openButton->setIconSize(QSize(18, 18));
+        connect(openButton, &QPushButton::clicked, this, [this, url]() {
+            LinkRouter::instance()->open(QUrl(url, QUrl::TolerantMode), this);
+        });
+        layout->addWidget(openButton);
+    }
+
+    // 复制地址：服务器地址主要靠它进游戏，网站长网址粘贴也用得上
+    auto *copyButton = new QPushButton(tr("复制地址"), section);
+    copyButton->setObjectName(QStringLiteral("forumGhostButton"));
+    copyButton->setCursor(Qt::PointingHandCursor);
+    copyButton->setMinimumHeight(34);
+    copyButton->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/link.svg"),
+        QColor(StyleKit::resolve(QStringLiteral("@TEXT_SECONDARY@"))), 15));
+    copyButton->setIconSize(QSize(15, 15));
+    connect(copyButton, &QPushButton::clicked, this, [url]() {
+        QApplication::clipboard()->setText(url);
+    });
+    layout->addWidget(copyButton);
+
+    auto *hint = new QLabel(server ? tr("进游戏添加服务器时粘贴这个地址就能加入")
+                                   : tr("点「一键打开」就能在浏览器里直达这个网站"),
+                            section);
+    hint->setObjectName(QStringLiteral("forumPluginHint"));
+    hint->setWordWrap(true);
+    layout->addWidget(hint);
+
+    m_railLayout->addWidget(section);
+}
+
+void ForumThreadDetailPage::appendPlayerStatsCard()
+{
+    auto *section = new QFrame(m_railHost);
+    section->setObjectName(QStringLiteral("forumPluginSection"));
+    auto *layout = new QVBoxLayout(section);
+    layout->setContentsMargins(14, 14, 14, 14);
+    layout->setSpacing(8);
+
+    auto *title = new QLabel(tr("人数统计"), section);
+    title->setObjectName(QStringLiteral("forumPluginSectionTitle"));
+    layout->addWidget(title);
+
+    m_navStatsValue = new QLabel(tr("正在检测服务器…"), section);
+    m_navStatsValue->setObjectName(QStringLiteral("forumPluginValue"));
+    m_navStatsValue->setWordWrap(true);
+    layout->addWidget(m_navStatsValue);
+
+    m_navStatsHint = new QLabel(tr("最近 24 小时人数变化，由打开过这个页面的玩家共同记录。"),
+                                section);
+    m_navStatsHint->setObjectName(QStringLiteral("forumPluginHint"));
+    m_navStatsHint->setWordWrap(true);
+    layout->addWidget(m_navStatsHint);
+
+    m_navStatsChart = new PlayerCountChart(section);
+    m_navStatsChart->setMinimumHeight(150);
+    m_navStatsChart->setEmptyText(tr("还没有人数记录，过几分钟再来看看"));
+    layout->addWidget(m_navStatsChart);
+
+    m_navStatsCard = section;
+    m_railLayout->addWidget(section);
+}
+
+void ForumThreadDetailPage::startServerStatsWatcher()
+{
+    if (m_navStatsTimer)
+        m_navStatsTimer->stop();
+    if (m_navPinger)
+        m_navPinger->cancelAll();
+
+    m_navServerHost.clear();
+    m_navServerPort = 25565;
+    m_navServerKey.clear();
+    m_navLastReportMs = 0;
+    m_navLastFetchMs = 0;
+    m_navFetching = false;
+    m_navPinged = false;
+
+    const ForumPlayerStatsService::ServerAddress address =
+        ForumPlayerStatsService::parseServerAddress(m_info.navigation.url);
+    if (!address.isValid())
+    {
+        // 地址不是「主机 / 主机:端口」的样子（例如误填了网址）：卡片留着说明原因，
+        // 不给按钮也不去探测，免得对着一个打不通的地址反复发请求
+        if (m_navStatsValue)
+            m_navStatsValue->setText(tr("这条导航没有填有效的服务器地址"));
+        if (m_navStatsHint)
+            m_navStatsHint->setText(tr("地址写成 mc.example.com 或 mc.example.com:25565 就能统计人数。"));
+        if (m_navStatsChart)
+            m_navStatsChart->setEmptyText(tr("地址解析不出来，暂时没法统计"));
+        return;
+    }
+
+    m_navServerHost = address.host;
+    m_navServerPort = address.port;
+    m_navServerKey = address.key();
+    if (m_navStatsValue)
+        m_navStatsValue->setText(tr("正在检测服务器…"));
+    if (m_navStatsHint)
+        m_navStatsHint->setText(tr("最近 24 小时人数变化，由打开过这个页面的玩家共同记录。"));
+    if (m_navStatsChart)
+    {
+        m_navStatsChart->clear();
+        m_navStatsChart->setEmptyText(tr("还没有人数记录，过几分钟再来看看"));
+    }
+
+    if (m_navStatsTimer)
+        m_navStatsTimer->start();
+    if (isVisible())
+        tickServerStats();
+}
+
+void ForumThreadDetailPage::tickServerStats()
+{
+    if (m_navServerKey.isEmpty() || !isVisible())
+        return;
+    if (m_navPinger && !m_navPinger->isPending(m_navServerKey))
+        m_navPinger->ping(m_navServerKey, m_navServerHost, m_navServerPort);
+    requestServerStatsHistory(false);
+}
+
+void ForumThreadDetailPage::applyServerPingResult(bool online, int onlinePlayers, int maxPlayers,
+                                                 int latencyMs)
+{
+    m_navPinged = true;
+    if (m_navStatsValue)
+    {
+        if (online)
+        {
+            const QString onlineText = tr("● 在线 · %1 / %2 人").arg(onlinePlayers).arg(maxPlayers);
+            m_navStatsValue->setText(latencyMs >= 0
+                                         ? tr("%1 · %2 ms").arg(onlineText).arg(latencyMs)
+                                         : onlineText);
+            m_navStatsValue->setStyleSheet(
+                StyleKit::resolve(QStringLiteral("color: @SUCCESS@; font-size: 13px; font-weight: 700;")));
+        }
+        else
+        {
+            m_navStatsValue->setText(tr("○ 暂时连不上"));
+            m_navStatsValue->setStyleSheet(
+                StyleKit::resolve(QStringLiteral("color: @TEXT_TERTIARY@; font-size: 13px; font-weight: 600;")));
+        }
+    }
+
+    // 在线才上报采样：离线也记一条 0 会把曲线拉成「一直没人」，反而误导
+    if (!online || onlinePlayers < 0)
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (m_navLastReportMs > 0 && nowMs - m_navLastReportMs < 60000)
+        return;
+    m_navLastReportMs = nowMs;
+
+    ForumPlayerStatsService::ServerAddress address;
+    address.host = m_navServerHost;
+    address.port = m_navServerPort;
+    ForumPlayerStatsService::instance()->reportServer(address, onlinePlayers, qMax(0, maxPlayers));
+}
+
+void ForumThreadDetailPage::requestServerStatsHistory(bool force)
+{
+    if (m_navServerKey.isEmpty() || !m_navStatsChart || m_navFetching)
+        return;
+    if (!force && !isVisible())
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!force && m_navLastFetchMs > 0 && nowMs - m_navLastFetchMs < 120000)
+        return;
+
+    m_navFetching = true;
+    m_navLastFetchMs = nowMs;
+
+    ForumPlayerStatsService::ServerAddress address;
+    address.host = m_navServerHost;
+    address.port = m_navServerPort;
+    const QString key = m_navServerKey;
+    ForumPlayerStatsService::instance()->fetchServer(
+        address, 24,
+        [this, key, nowMs](const PlayerStatSeries &series) {
+            m_navFetching = false;
+            if (key != m_navServerKey || !m_navStatsChart)
+                return; // 已经换帖子 / 换地址，丢弃过期结果
+            QVector<PlayerCountChart::Point> points;
+            points.reserve(series.points.size());
+            for (const PlayerStatPoint &point : series.points)
+            {
+                PlayerCountChart::Point item;
+                item.t = point.t;
+                item.online = point.online;
+                item.maxPlayers = point.maxPlayers;
+                points.append(item);
+            }
+            const qint64 nowSec = nowMs / 1000;
+            // 数据只覆盖窗口一小段时（比如刚上线几个小时），按实际范围铺开，
+            // 不然折线全挤在右边一小条，什么都看不清
+            qint64 fromSec = nowSec - 24 * 3600;
+            if (!points.isEmpty() && points.first().t > fromSec + 1800)
+                fromSec = qMax<qint64>(0, points.first().t - 600);
+            m_navStatsChart->setPoints(points, fromSec, nowSec);
+            m_navStatsChart->setCapacity(qMax(0, series.latestMax));
+            if (!m_navStatsHint)
+                return;
+            if (points.isEmpty())
+                m_navStatsHint->setText(tr("还没有人记录过这个服务器的人数，过几分钟再来看看。"));
+            else
+                m_navStatsHint->setText(tr("最近 24 小时人数变化 · 悬停看每个时刻"));
+        },
+        [this, key]() {
+            m_navFetching = false;
+            if (key != m_navServerKey || !m_navStatsHint)
+                return;
+            if (m_navStatsChart && !m_navStatsChart->hasData())
+                m_navStatsHint->setText(tr("读取人数记录失败，稍后会自动重试。"));
+        });
 }
 
 void ForumThreadDetailPage::uploadNewPluginVersion()
@@ -1318,6 +2083,9 @@ void ForumThreadDetailPage::downloadAndInstallPlugin()
 void ForumThreadDetailPage::appendSchematicDownloadCard()
 {
     const ForumSchematicInfo &schematic = m_info.schematic;
+    const QVector<ForumSchematicFileInfo> &files = schematic.files;
+    const bool isAuthor = m_info.authorId == ForumAccountService::instance()->user().id;
+    const bool multiVersion = files.size() > 1;
 
     auto *section = new QFrame(m_railHost);
     section->setObjectName(QStringLiteral("forumPluginSection"));
@@ -1329,27 +2097,82 @@ void ForumThreadDetailPage::appendSchematicDownloadCard()
     title->setObjectName(QStringLiteral("forumPluginSectionTitle"));
     layout->addWidget(title);
 
+    // 一帖挂了好几份（主世界 / 下界…）：先挑版本再下载
+    QComboBox *versionCombo = nullptr;
+    if (multiVersion)
+    {
+        versionCombo = new QComboBox(section);
+        versionCombo->setObjectName(QStringLiteral("forumField"));
+        versionCombo->setToolTip(tr("挑要下载的版本：主世界 / 下界等各是一份投影"));
+        for (const ForumSchematicFileInfo &file : files)
+        {
+            const QString label = file.label.isEmpty() ? QFileInfo(file.fileName).completeBaseName()
+                                                       : file.label;
+            versionCombo->addItem(tr("%1 · %2").arg(label, ForumKit::humanFileSize(file.fileSize)),
+                                  file.id);
+        }
+        layout->addWidget(versionCombo);
+    }
+    m_schematicVersionCombo = versionCombo;
+
     // 与插件帖下载卡同一套观感：整块拉满、带下载图标
-    auto *downloadButton = new QPushButton(tr("下载投影"), section);
+    auto *downloadButton = new QPushButton(multiVersion ? tr("下载选中的版本") : tr("下载投影"), section);
     downloadButton->setObjectName(QStringLiteral("forumPluginInstallBtn"));
     downloadButton->setCursor(Qt::PointingHandCursor);
     downloadButton->setMinimumHeight(42);
     downloadButton->setIcon(IconHelper::loadColoredIcon(
         QStringLiteral(":/Images/Icons/download.svg"), QColor("#ffffff"), 18));
     downloadButton->setIconSize(QSize(18, 18));
-    connect(downloadButton, &QPushButton::clicked,
-            this, &ForumThreadDetailPage::downloadSchematic);
+    connect(downloadButton, &QPushButton::clicked, this, [this, versionCombo]() {
+        downloadSchematic(versionCombo ? versionCombo->currentData().toInt() : 0);
+    });
     layout->addWidget(downloadButton);
 
-    auto *hint = new QLabel(tr("下载后放进实例的 schematics 文件夹，Litematica 就能加载"), section);
+    // 不想先下载也能看看长什么样：点一下就三维预览（文件会先悄悄取回本机缓存）
+    auto *previewButton = new QPushButton(tr("投影预览"), section);
+    previewButton->setObjectName(QStringLiteral("forumSchematicPreviewBtn"));
+    previewButton->setCursor(Qt::PointingHandCursor);
+    previewButton->setMinimumHeight(36);
+    previewButton->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/nav_projection.svg"),
+        QColor(StyleKit::resolve(QStringLiteral("@PRIMARY@"))), 16));
+    previewButton->setIconSize(QSize(16, 16));
+    previewButton->setToolTip(tr("不用先保存文件：直接在这里用三维视图看这份投影"));
+    connect(previewButton, &QPushButton::clicked, this, [this, versionCombo]() {
+        previewSchematic(versionCombo ? versionCombo->currentData().toInt() : 0);
+    });
+    layout->addWidget(previewButton);
+
+    // 备料前先看一眼要准备什么：同样不用先下载，点一下把整份投影的材料数出来
+    auto *materialButton = new QPushButton(tr("材料列表"), section);
+    materialButton->setObjectName(QStringLiteral("forumSchematicMaterialBtn"));
+    materialButton->setCursor(Qt::PointingHandCursor);
+    materialButton->setMinimumHeight(36);
+    materialButton->setIcon(IconHelper::loadColoredIcon(
+        QStringLiteral(":/Images/Icons/list.svg"),
+        QColor(StyleKit::resolve(QStringLiteral("@PRIMARY@"))), 16));
+    materialButton->setIconSize(QSize(16, 16));
+    materialButton->setToolTip(tr("不用先保存文件：看看这份投影要用哪些方块、各要多少个"));
+    connect(materialButton, &QPushButton::clicked, this, [this, versionCombo]() {
+        showSchematicMaterials(versionCombo ? versionCombo->currentData().toInt() : 0);
+    });
+    layout->addWidget(materialButton);
+
+    auto *hint = new QLabel(tr("下载会直接存进当前实例的 schematics 文件夹，Litematica 就能加载；"
+                              "还没选实例时会先让你挑保存位置"),
+                            section);
     hint->setObjectName(QStringLiteral("forumPluginHint"));
     hint->setWordWrap(true);
     layout->addWidget(hint);
 
-    auto *sizeLine = new QLabel(tr("%1 · 已下载 %2 次")
-                                    .arg(ForumKit::humanFileSize(schematic.fileSize))
-                                    .arg(schematic.downloads),
-                                section);
+    const QString sizeLineText = multiVersion
+                                     ? tr("%1 个版本 · 总下载 %2 次")
+                                           .arg(files.size())
+                                           .arg(schematic.downloads)
+                                     : tr("%1 · 已下载 %2 次")
+                                           .arg(ForumKit::humanFileSize(schematic.fileSize))
+                                           .arg(schematic.downloads);
+    auto *sizeLine = new QLabel(sizeLineText, section);
     sizeLine->setObjectName(QStringLiteral("forumPluginHint"));
     sizeLine->setWordWrap(true);
     layout->addWidget(sizeLine);
@@ -1361,12 +2184,220 @@ void ForumThreadDetailPage::appendSchematicDownloadCard()
     status->hide();
     layout->addWidget(status);
 
+    // ── 作者管理：发出去之后还能补版本、改名、删掉传错的 ──
+    if (isAuthor && !files.isEmpty())
+    {
+        auto *manageTitle = new QLabel(tr("版本管理"), section);
+        manageTitle->setObjectName(QStringLiteral("forumPluginHint"));
+        layout->addWidget(manageTitle);
+
+        auto *manageLayout = new QVBoxLayout();
+        manageLayout->setContentsMargins(0, 0, 0, 0);
+        manageLayout->setSpacing(6);
+        for (const ForumSchematicFileInfo &file : files)
+        {
+            auto *row = new QWidget(section);
+            auto *rowLayout = new QHBoxLayout(row);
+            rowLayout->setContentsMargins(0, 0, 0, 0);
+            rowLayout->setSpacing(6);
+            const QString label = file.label.isEmpty() ? QFileInfo(file.fileName).completeBaseName()
+                                                       : file.label;
+            auto *nameLabel = new QLabel(
+                tr("%1 · %2").arg(label, ForumKit::humanFileSize(file.fileSize)), row);
+            nameLabel->setObjectName(QStringLiteral("forumPluginHint"));
+            rowLayout->addWidget(nameLabel, 1);
+            auto *renameButton = new QPushButton(tr("改名"), row);
+            renameButton->setObjectName(QStringLiteral("forumGhostButton"));
+            renameButton->setCursor(Qt::PointingHandCursor);
+            renameButton->setFixedHeight(24);
+            connect(renameButton, &QPushButton::clicked, this,
+                    [this, file]() { renameSchematicVersion(file); });
+            rowLayout->addWidget(renameButton);
+            auto *deleteButton = new QPushButton(tr("删除"), row);
+            deleteButton->setObjectName(QStringLiteral("forumGhostButton"));
+            deleteButton->setCursor(Qt::PointingHandCursor);
+            deleteButton->setFixedHeight(24);
+            deleteButton->setEnabled(files.size() > 1);
+            deleteButton->setToolTip(files.size() > 1
+                                         ? tr("删掉这一份投影，下载框里就不再出现")
+                                         : tr("帖子里至少要留一份投影"));
+            connect(deleteButton, &QPushButton::clicked, this,
+                    [this, file]() { deleteSchematicVersion(file); });
+            rowLayout->addWidget(deleteButton);
+            manageLayout->addWidget(row);
+        }
+        m_schematicManageLayout = manageLayout;
+        layout->addLayout(manageLayout);
+
+        auto *addButton = new QPushButton(tr("添加投影版本…"), section);
+        addButton->setObjectName(QStringLiteral("forumGhostButton"));
+        addButton->setCursor(Qt::PointingHandCursor);
+        addButton->setFixedHeight(26);
+        addButton->setToolTip(tr("做好新的维度 / 版本后直接加进这条帖子，不用重发整帖"));
+        connect(addButton, &QPushButton::clicked, this, &ForumThreadDetailPage::addSchematicVersion);
+        layout->addWidget(addButton);
+    }
+
     m_railLayout->addWidget(section);
     m_schematicDownloadButton = downloadButton;
+    m_schematicPreviewButton = previewButton;
+    m_schematicMaterialButton = materialButton;
     m_schematicStatusLabel = status;
 }
 
-void ForumThreadDetailPage::downloadSchematic()
+void ForumThreadDetailPage::applySchematicFiles(const QVector<ForumSchematicFileInfo> &files)
+{
+    // 服务端每次增删改都回传完整清单：覆盖本地这份后重建左栏，
+    // 下拉、份数、下载计数都跟着新数据走
+    if (!files.isEmpty())
+    {
+        m_info.schematic.files = files;
+        m_info.schematic.fileCount = files.size();
+        const ForumSchematicFileInfo &first = files.first();
+        m_info.schematic.uploadId = first.uploadId;
+        m_info.schematic.fileName = first.fileName;
+        m_info.schematic.fileSize = first.fileSize;
+        const QString label = first.label.isEmpty() ? QFileInfo(first.fileName).completeBaseName()
+                                                    : first.label;
+        m_info.schematic.name = label;
+    }
+    renderRail();
+    if (m_schematicStatusLabel)
+    {
+        m_schematicStatusLabel->setText(tr("版本清单已更新"));
+        m_schematicStatusLabel->show();
+    }
+}
+
+void ForumThreadDetailPage::addSchematicVersion()
+{
+    if (m_schematicBusy || !m_info.schematic.isValid())
+        return;
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("选择投影文件"), QString(),
+        tr("投影文件 (*.litematic *.nbt *.schematic *.schem)"));
+    if (path.isEmpty())
+        return;
+
+    const QFileInfo info(path);
+    if (info.size() > 50LL * 1024 * 1024)
+    {
+        NotificationManager::showInfo(this, tr("%1 超过 50 MB，服务器不收这么大").arg(info.fileName()));
+        return;
+    }
+
+    const QString currentLabel = m_info.schematic.files.isEmpty()
+                                     ? QString()
+                                     : m_info.schematic.files.first().label;
+    bool ok = false;
+    const QString label = AppInputDialog::getText(
+                              this, tr("给这份投影起个名字"),
+                              tr("版本名（如 主世界 / 下界，留空就用文件名）"), QLineEdit::Normal,
+                              currentLabel, &ok)
+                              .trimmed();
+    if (!ok)
+        return;
+
+    m_schematicBusy = true;
+    if (m_schematicStatusLabel)
+    {
+        m_schematicStatusLabel->setText(tr("正在上传 %1…").arg(info.fileName()));
+        m_schematicStatusLabel->show();
+    }
+
+    ForumContentService::instance()->uploadSchematicFile(
+        path,
+        [this](int percent) {
+            if (m_schematicStatusLabel)
+                m_schematicStatusLabel->setText(tr("正在上传 %1%").arg(percent));
+        },
+        [this, label](const ForumSchematicUpload &upload) {
+            if (!upload.isValid())
+            {
+                m_schematicBusy = false;
+                setStatus(tr("投影上传失败，稍后再试"), true);
+                return;
+            }
+            ForumContentService::instance()->addSchematicFile(
+                m_threadId, upload.uploadId, label,
+                [this](const QVector<ForumSchematicFileInfo> &files) {
+                    m_schematicBusy = false;
+                    applySchematicFiles(files);
+                },
+                [this](const QString &message, int) {
+                    m_schematicBusy = false;
+                    setStatus(message, true);
+                });
+        },
+        [this](const QString &message, int) {
+            m_schematicBusy = false;
+            setStatus(message, true);
+        });
+}
+
+void ForumThreadDetailPage::renameSchematicVersion(const ForumSchematicFileInfo &file)
+{
+    if (m_schematicBusy || !file.isValid())
+        return;
+    const QString currentLabel = file.label.isEmpty() ? QFileInfo(file.fileName).completeBaseName()
+                                                      : file.label;
+    bool ok = false;
+    const QString label = AppInputDialog::getText(
+                              this, tr("改版本名"), tr("新的版本名（如 主世界 / 下界）"),
+                              QLineEdit::Normal, currentLabel, &ok)
+                              .trimmed();
+    if (!ok || label.isEmpty() || label == currentLabel)
+        return;
+
+    m_schematicBusy = true;
+    ForumContentService::instance()->renameSchematicFile(
+        m_threadId, file.id, label,
+        [this](const QVector<ForumSchematicFileInfo> &files) {
+            m_schematicBusy = false;
+            applySchematicFiles(files);
+        },
+        [this](const QString &message, int) {
+            m_schematicBusy = false;
+            setStatus(message, true);
+        });
+}
+
+void ForumThreadDetailPage::deleteSchematicVersion(const ForumSchematicFileInfo &file)
+{
+    if (m_schematicBusy || !file.isValid())
+        return;
+    if (m_info.schematic.files.size() <= 1)
+    {
+        NotificationManager::showInfo(this, tr("帖子里至少要留一份投影"));
+        return;
+    }
+
+    const QString label = file.label.isEmpty() ? QFileInfo(file.fileName).completeBaseName()
+                                               : file.label;
+    if (AppMessageBox::question(
+            this, tr("删除投影版本"),
+            tr("确定要删掉「%1」吗？下载框里就不再出现这一份，且不可恢复。").arg(label),
+            AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No)
+        != AppMessageBox::Yes)
+    {
+        return;
+    }
+
+    m_schematicBusy = true;
+    ForumContentService::instance()->deleteSchematicFile(
+        m_threadId, file.id,
+        [this](const QVector<ForumSchematicFileInfo> &files) {
+            m_schematicBusy = false;
+            applySchematicFiles(files);
+        },
+        [this](const QString &message, int) {
+            m_schematicBusy = false;
+            setStatus(message, true);
+        });
+}
+
+void ForumThreadDetailPage::downloadSchematic(int fileId)
 {
     if (m_schematicBusy || !m_info.schematic.isValid())
         return;
@@ -1379,6 +2410,19 @@ void ForumThreadDetailPage::downloadSchematic()
         m_schematicStatusLabel->show();
     }
 
+    // 实例还没有 schematics 目录：顺手装上投影模组并把目录建出来，
+    // 下载完 Litematica 就能直接读到（没选实例时后面会弹保存框，这里不处理）
+    if (!m_instancePath.isEmpty())
+    {
+        const QString dirPath = SchematicDownloadTarget::schematicsDir(m_instancePath);
+        if (!QDir(dirPath).exists())
+        {
+            if (!SchematicDownloadTarget::hasProjectionMod(m_instancePath))
+                emit projectionModMissing();
+            QDir().mkpath(dirPath);
+        }
+    }
+
     const auto restore = [this]() {
         m_schematicBusy = false;
         if (m_schematicDownloadButton)
@@ -1386,7 +2430,7 @@ void ForumThreadDetailPage::downloadSchematic()
     };
 
     ForumContentService::instance()->fetchSchematicDownload(
-        m_threadId,
+        m_threadId, fileId,
         [this, restore](const ForumSchematicDownload &download) {
             if (!download.isValid())
             {
@@ -1395,21 +2439,37 @@ void ForumThreadDetailPage::downloadSchematic()
                 return;
             }
 
-            // 存哪儿由用户自己挑：放实例 schematics 目录或任意位置都行
-            const QString defaultName = download.filename.isEmpty()
-                                            ? QStringLiteral("projection.litematic")
-                                            : download.filename;
-            const QString target = QFileDialog::getSaveFileName(
-                window(), tr("保存投影文件"), defaultName);
-            if (target.isEmpty())
+            // 有当前实例就直接存进它的 schematics（与资源页「下载到实例」同一套规则）；
+            // 还没选实例时才让用户自己挑位置，避免下载走空
+            QString defaultName = QFileInfo(download.filename.trimmed()).fileName();
+            if (defaultName.isEmpty())
+                defaultName = QStringLiteral("projection.litematic");
+
+            QString target;
+            if (!m_instancePath.isEmpty())
             {
-                restore();
-                if (m_schematicStatusLabel)
+                const QString dirPath = SchematicDownloadTarget::schematicsDir(m_instancePath);
+                if (!QDir().mkpath(dirPath))
                 {
-                    m_schematicStatusLabel->setText(tr("已取消保存"));
-                    m_schematicStatusLabel->show();
+                    restore();
+                    setStatus(tr("实例的 schematics 文件夹建不出来，检查一下实例目录"), true);
+                    return;
                 }
-                return;
+                target = SchematicDownloadTarget::uniquePath(dirPath, defaultName);
+            }
+            else
+            {
+                target = QFileDialog::getSaveFileName(window(), tr("保存投影文件"), defaultName);
+                if (target.isEmpty())
+                {
+                    restore();
+                    if (m_schematicStatusLabel)
+                    {
+                        m_schematicStatusLabel->setText(tr("已取消保存"));
+                        m_schematicStatusLabel->show();
+                    }
+                    return;
+                }
             }
 
             if (m_schematicStatusLabel)
@@ -1453,11 +2513,188 @@ void ForumThreadDetailPage::downloadSchematic()
                         }
                         file.close();
                         restore();
+                        // 存进实例的投影列表要能看到这份新文件
+                        emit projectionSaved();
                         if (m_schematicStatusLabel)
                         {
-                            m_schematicStatusLabel->setText(tr("已保存，放进实例的 schematics 文件夹就能用"));
+                            m_schematicStatusLabel->setText(
+                                m_instancePath.isEmpty()
+                                    ? tr("「%1」已保存，放进实例的 schematics 文件夹就能用")
+                                          .arg(QFileInfo(target).fileName())
+                                    : tr("「%1」已存进当前实例的 schematics 文件夹")
+                                          .arg(QFileInfo(target).fileName()));
                             m_schematicStatusLabel->show();
                         }
+                    });
+        },
+        [this, restore](const QString &message, int) {
+            restore();
+            setStatus(message, true);
+        });
+}
+
+QString ForumThreadDetailPage::schematicPreviewCachePath(int fileId) const
+{
+    if (!m_info.schematic.isValid() || m_threadId <= 0)
+        return QString();
+
+    // 选中的版本：有 fileId 用它，否则用第一份
+    int resolvedId = fileId;
+    QString fileName;
+    for (const ForumSchematicFileInfo &file : m_info.schematic.files)
+    {
+        if (resolvedId <= 0 || file.id == resolvedId)
+        {
+            resolvedId = file.id;
+            fileName = file.fileName;
+            break;
+        }
+    }
+    if (fileName.isEmpty())
+        fileName = m_info.schematic.fileName;
+    if (fileName.isEmpty())
+        return QString();
+
+    // 扩展名保留：预览要按后缀判断格式
+    const QString safeName = QFileInfo(fileName).fileName();
+    return QStringLiteral("%1/blockbox_projection_preview/%2_%3_%4")
+        .arg(QDir::tempPath())
+        .arg(m_threadId)
+        .arg(resolvedId)
+        .arg(safeName);
+}
+
+void ForumThreadDetailPage::previewSchematic(int fileId)
+{
+    if (m_schematicBusy || !m_info.schematic.isValid())
+        return;
+
+    // 标题用帖子里的投影名（下载 / 重建左栏期间 m_info 可能变，先抓一份）
+    const QString displayName = m_info.schematic.name;
+    ensureSchematicCached(fileId, tr("预览"), [this, displayName](const QString &cachePath) {
+        ProjectionPreviewDialog::preview(this, cachePath, m_instancePath, displayName);
+    });
+}
+
+void ForumThreadDetailPage::showSchematicMaterials(int fileId)
+{
+    if (m_schematicBusy || !m_info.schematic.isValid())
+        return;
+
+    // 与预览共用同一份缓存和实例：清单里的中文名、方块图标都按它取
+    const QString displayName = m_info.schematic.name;
+    ensureSchematicCached(fileId, tr("统计材料"), [this, displayName](const QString &cachePath) {
+        ProjectionMaterialDialog::open(this, cachePath, m_instancePath, displayName);
+    });
+}
+
+void ForumThreadDetailPage::ensureSchematicCached(int fileId, const QString &purpose,
+                                                  const std::function<void(const QString &)> &onReady)
+{
+    const QString cachePath = schematicPreviewCachePath(fileId);
+    if (cachePath.isEmpty() || !onReady)
+        return;
+
+    // 已经取回过同一份投影：直接交给回调，不必重复走网络
+    if (QFileInfo(cachePath).size() > 0)
+    {
+        onReady(cachePath);
+        return;
+    }
+
+    m_schematicBusy = true;
+    if (m_schematicDownloadButton)
+        m_schematicDownloadButton->setEnabled(false);
+    if (m_schematicPreviewButton)
+        m_schematicPreviewButton->setEnabled(false);
+    if (m_schematicMaterialButton)
+        m_schematicMaterialButton->setEnabled(false);
+    if (m_schematicStatusLabel)
+    {
+        m_schematicStatusLabel->setText(tr("正在获取投影地址…"));
+        m_schematicStatusLabel->show();
+    }
+
+    const auto restore = [this]() {
+        m_schematicBusy = false;
+        if (m_schematicDownloadButton)
+            m_schematicDownloadButton->setEnabled(true);
+        if (m_schematicPreviewButton)
+            m_schematicPreviewButton->setEnabled(true);
+        if (m_schematicMaterialButton)
+            m_schematicMaterialButton->setEnabled(true);
+    };
+
+    ForumContentService::instance()->fetchSchematicDownload(
+        m_threadId, fileId,
+        [this, restore, cachePath, purpose, onReady](const ForumSchematicDownload &download) {
+            if (!download.isValid())
+            {
+                restore();
+                setStatus(tr("拿不到投影下载地址，稍后再试"), true);
+                return;
+            }
+
+            QDir().mkpath(QFileInfo(cachePath).absolutePath());
+
+            if (m_schematicStatusLabel)
+            {
+                m_schematicStatusLabel->setText(tr("正在取回投影，用于%1…").arg(purpose));
+                m_schematicStatusLabel->show();
+            }
+
+            auto *manager = new QNetworkAccessManager(this);
+            QNetworkRequest request{QUrl(download.url)};
+            request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BlockBoxLauncher"));
+            request.setTransferTimeout(300000);
+
+            auto *reply = manager->get(request);
+            connect(reply, &QNetworkReply::downloadProgress, this,
+                    [this](qint64 received, qint64 total) {
+                        if (m_schematicStatusLabel && total > 0)
+                        {
+                            m_schematicStatusLabel->setText(
+                                tr("正在取回投影 %1%").arg(int(received * 100 / total)));
+                            m_schematicStatusLabel->show();
+                        }
+                    });
+            connect(reply, &QNetworkReply::finished, this,
+                    [this, reply, manager, cachePath, restore, onReady]() {
+                        reply->deleteLater();
+                        manager->deleteLater();
+                        const QByteArray data = reply->readAll();
+                        if (reply->error() != QNetworkReply::NoError || data.isEmpty())
+                        {
+                            restore();
+                            setStatus(tr("投影取回失败，请检查网络后再试"), true);
+                            return;
+                        }
+
+                        // 先写 .part 再换名：半截文件不会被下次当成可用缓存
+                        const QString partPath = cachePath + QStringLiteral(".part");
+                        QFile file(partPath);
+                        if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size())
+                        {
+                            file.close();
+                            QFile::remove(partPath);
+                            restore();
+                            setStatus(tr("投影写不进临时目录"), true);
+                            return;
+                        }
+                        file.close();
+                        QFile::remove(cachePath);
+                        if (!QFile::rename(partPath, cachePath))
+                        {
+                            QFile::remove(partPath);
+                            restore();
+                            setStatus(tr("投影保存失败，稍后再试"), true);
+                            return;
+                        }
+
+                        restore();
+                        if (m_schematicStatusLabel)
+                            m_schematicStatusLabel->hide();
+                        onReady(cachePath);
                     });
         },
         [this, restore](const QString &message, int) {
@@ -1511,6 +2748,13 @@ QWidget *ForumThreadDetailPage::buildPostRow(const ForumPost &post)
     auto *card = new QFrame(m_mainColumn);
     card->setObjectName(QStringLiteral("forumPost"));
     card->setProperty("op", post.floor == 1);
+    // 问答的回答楼层：左边一道暖金细条，把「题面」和「回答」分开
+    card->setProperty("answer", m_info.question.isValid() && post.floor > 1);
+    // 问答的题面（1 楼）：品牌绿细条，和回答区分开
+    card->setProperty("qaop", m_info.question.isValid() && post.floor == 1);
+    // 有奖问答得奖的那一层：QSS 会加一道金色描边
+    card->setProperty("winner",
+                      m_info.question.isSettled() && m_info.question.winnerPostId == post.id);
 
     auto *row = new QHBoxLayout(card);
     row->setContentsMargins(20, 18, 20, 16);
@@ -1569,11 +2813,18 @@ QWidget *ForumThreadDetailPage::buildPostRow(const ForumPost &post)
     bodyLayout->setContentsMargins(0, 0, 0, 0);
     bodyLayout->setSpacing(0);
 
-    // 楼层头：楼主 / 时间 / 已编辑 … 楼层号
+    // 楼层头：楼主 / 回答 / 时间 / 已编辑 … 楼层号 + 采纳
     auto *headRow = new QHBoxLayout();
     headRow->setSpacing(8);
     if (post.floor == 1)
         headRow->addWidget(ForumKit::makeBadge(body, tr("楼主")));
+    else if (m_info.question.isValid())
+        headRow->addWidget(ForumKit::makeBadge(body, tr("回答"), true));
+    if (m_info.question.isSettled() && m_info.question.winnerPostId == post.id)
+    {
+        headRow->addWidget(
+            ForumKit::makeBadge(body, tr("🏆 赏金得主 +%1 方块").arg(m_info.question.bounty), true));
+    }
 
     const QString relative = ForumKit::relativeTime(post.createdAt);
     auto *timeLabel = new QLabel(relative.isEmpty() ? absoluteTime(post.createdAt) : relative, body);
@@ -1593,6 +2844,22 @@ QWidget *ForumThreadDetailPage::buildPostRow(const ForumPost &post)
     auto *floorLabel = new QLabel(tr("%1 楼").arg(post.floor), body);
     floorLabel->setObjectName(QStringLiteral("forumFloorNo"));
     headRow->addWidget(floorLabel);
+
+    // 问答：右上角直接给「采纳」，不用在操作行里找
+    const bool canAccept = m_info.question.isOpen() && m_info.question.canAccept
+                           && post.floor > 1 && post.author.id != m_info.authorId;
+    if (canAccept)
+    {
+        auto *acceptButton =
+            new QPushButton(tr("采纳 · 发放 %1 方块").arg(m_info.question.bounty), body);
+        acceptButton->setObjectName(QStringLiteral("forumAcceptButton"));
+        acceptButton->setCursor(Qt::PointingHandCursor);
+        acceptButton->setFixedHeight(27);
+        acceptButton->setToolTip(tr("采纳这一层回答，赏金会立刻打进对方账户，采纳后不能更改"));
+        connect(acceptButton, &QPushButton::clicked, this,
+                [this, post]() { acceptAnswer(post); });
+        headRow->addWidget(acceptButton);
+    }
     bodyLayout->addLayout(headRow);
 
     // 正文
@@ -1892,7 +3159,7 @@ void ForumThreadDetailPage::renderBodyCard()
         return;
 
     // 没写正文的老帖（光秃秃只有下载）不摆一张空卡；教程帖的正文卡叫「教程正文」
-    const bool hasBody = (isResourceThread() || isTutorialThread()) && !m_bodyMarkdown.isEmpty();
+    const bool hasBody = usesComments() && !m_bodyMarkdown.isEmpty();
     m_bodyTitle->setText(isTutorialThread() ? tr("教程正文") : tr("详细信息"));
     m_bodyTitle->setVisible(hasBody);
     m_bodyCard->setVisible(hasBody);
@@ -1904,24 +3171,269 @@ void ForumThreadDetailPage::renderBodyCard()
     }
 }
 
-// ────────────────────────────────────────────────────────────── 评论（资源帖）
+// ────────────────────────────────────────────────────────────── 轮播卡
+
+void ForumThreadDetailPage::renderCarousel()
+{
+    if (!m_carouselCard || !m_carouselStack)
+        return;
+
+    setCarouselAutoPlay(false);
+    m_carouselResumeTimer->stop();
+    m_carouselSlideImages.clear();
+    m_carouselSlideLabels.clear();
+    m_carouselThumbs.clear();
+    ForumKit::clearLayout(m_carouselThumbStripLayout);
+    while (m_carouselStack->count() > 0)
+    {
+        QWidget *page = m_carouselStack->widget(0);
+        m_carouselStack->removeWidget(page);
+        page->deleteLater();
+    }
+
+    const QVector<ForumCarouselItem> &items = m_info.carousel;
+    if (items.isEmpty())
+    {
+        m_carouselCard->hide();
+        return;
+    }
+
+    for (const ForumCarouselItem &item : items)
+    {
+        // 先摆缩略图：图片项等真图回来再补图，B 站项直接写成播放小卡
+        auto *thumb = new QLabel(m_carouselThumbStrip);
+        thumb->setObjectName(QStringLiteral("modDetailScreenshotThumb"));
+        thumb->setFixedSize(120, 80);
+        thumb->setAlignment(Qt::AlignCenter);
+        thumb->setCursor(Qt::PointingHandCursor);
+        thumb->installEventFilter(this);
+        thumb->setProperty("carouselIndex", m_carouselStack->count());
+
+        if (item.isBilibili())
+        {
+            thumb->setText(tr("▶ B 站视频"));
+            thumb->setProperty("bili", true);
+            // 启动器里放不了 B 站播放器（没有内嵌网页引擎）：做成播放卡，点了跳浏览器
+            auto *videoSlide = new QWidget(m_carouselStack);
+            auto *videoLayout = new QVBoxLayout(videoSlide);
+            videoLayout->setContentsMargins(16, 16, 16, 16);
+            videoLayout->setSpacing(8);
+            videoLayout->addStretch(1);
+            auto *playButton = new QPushButton(tr("▶  在 B 站打开观看"), videoSlide);
+            playButton->setObjectName(QStringLiteral("forumGhostButton"));
+            playButton->setCursor(Qt::PointingHandCursor);
+            playButton->setMinimumHeight(44);
+            playButton->setFixedWidth(240);
+            connect(playButton, &QPushButton::clicked, this, [this, url = item.url]() {
+                QDesktopServices::openUrl(QUrl(url));
+            });
+            videoLayout->addWidget(playButton, 0, Qt::AlignCenter);
+            auto *videoTip = new QLabel(tr("B 站视频 · %1").arg(item.bv()), videoSlide);
+            videoTip->setObjectName(QStringLiteral("forumMuted"));
+            videoLayout->addWidget(videoTip, 0, Qt::AlignCenter);
+            videoLayout->addStretch(1);
+            m_carouselStack->addWidget(videoSlide);
+            m_carouselSlideImages.append(QImage());
+        }
+        else
+        {
+            // 图片页：异步取图后按舞台尺寸缩放；点击看大图走页面 eventFilter（QLabel 没有 clicked 信号）
+            auto *imageSlide = new QLabel(m_carouselStack);
+            imageSlide->setObjectName(QStringLiteral("modDetailScreenshot"));
+            imageSlide->setAlignment(Qt::AlignCenter);
+            imageSlide->setCursor(Qt::PointingHandCursor);
+            imageSlide->setToolTip(tr("点击查看大图"));
+            imageSlide->setProperty(
+                "previewUrl", ForumAccountService::instance()->absoluteUrl(item.url));
+            imageSlide->installEventFilter(this);
+            m_carouselSlideLabels.insert(imageSlide);
+            const QString source = !item.thumb.isEmpty() ? item.thumb : item.url;
+            ForumImageStore::instance()->requestImage(
+                ForumAccountService::instance()->absoluteUrl(source),
+                [this, imageSlide, thumb](const QImage &image) {
+                    // 用户切走帖子后页可能已重建：只认还在栈里的页
+                    if (!imageSlide || m_carouselStack->indexOf(imageSlide) < 0)
+                        return;
+                    const int index = m_carouselStack->indexOf(imageSlide);
+                    if (index < m_carouselSlideImages.size())
+                        m_carouselSlideImages[index] = image;
+                    if (thumb && !image.isNull()
+                        && m_carouselThumbs.value(index) == thumb)
+                    {
+                        thumb->setPixmap(QPixmap::fromImage(image).scaled(
+                            120, 80, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+                    }
+                    if (m_carouselStack->currentIndex() == index)
+                        rescaleCarouselSlide(index);
+                });
+            m_carouselStack->addWidget(imageSlide);
+            m_carouselSlideImages.append(QImage());
+        }
+
+        m_carouselThumbStripLayout->addWidget(thumb);
+        m_carouselThumbs.append(thumb);
+    }
+
+    m_carouselThumbStripLayout->addStretch(1);
+    // 缩略图条得按张数定宽，不然滚动区永远以为放得下、不会滚
+    m_carouselThumbStrip->setFixedWidth(
+        items.size() * 124 - 4 < 1 ? 0 : items.size() * 124 - 4);
+    // 图都还没回来时也把舞台撑到 16:9，别让页面先塌一下再弹开
+    applyCarouselStageHeight();
+
+    m_carouselCard->setVisible(true);
+    const int count = m_carouselStack->count();
+    const bool multi = count > 1;
+    m_carouselPrev->setVisible(multi);
+    m_carouselNext->setVisible(multi);
+    m_carouselCounter->setVisible(multi);
+    showCarouselAt(0);
+    setCarouselAutoPlay(multi);
+}
+
+void ForumThreadDetailPage::showCarouselAt(int index)
+{
+    if (!m_carouselStack || m_carouselStack->count() == 0)
+        return;
+    const int count = m_carouselStack->count();
+    const int target = ((index % count) + count) % count;
+    m_carouselStack->setCurrentIndex(target);
+    if (m_carouselCounter)
+        m_carouselCounter->setText(tr("%1 / %2").arg(target + 1).arg(count));
+    rescaleCarouselSlide(target);
+    updateCarouselThumbs();
+}
+
+void ForumThreadDetailPage::rescaleCarouselSlide(int index)
+{
+    if (!m_carouselStack || index < 0 || index >= m_carouselStack->count())
+        return;
+    QLabel *slide = qobject_cast<QLabel *>(m_carouselStack->widget(index));
+    if (!slide || index >= m_carouselSlideImages.size())
+        return;
+    const QImage &image = m_carouselSlideImages.at(index);
+    if (image.isNull())
+        return;
+    const int width = m_carouselStack->width();
+    const int height = m_carouselStack->height();
+    // 还没排好版时先不动，等 resize 再来（硬缩成一个小圆点反而更难看）
+    if (width < 32 || height < 32)
+        return;
+    slide->setPixmap(QPixmap::fromImage(image).scaled(
+        width, height, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
+void ForumThreadDetailPage::applyCarouselStageHeight()
+{
+    if (!m_carouselStage)
+        return;
+    int stageWidth = m_carouselStage->width();
+    // 刚显示出来还没排过版时，按主栏宽度估一个（卡片左右各 14px 内边距）
+    if (stageWidth <= 0 && m_mainColumn)
+        stageWidth = m_mainColumn->width() - 28;
+    if (stageWidth <= 0)
+        return;
+    const int height = qBound(180, stageWidth * 9 / 16, 360);
+    if (m_carouselStage->height() != height)
+        m_carouselStage->setFixedHeight(height);
+}
+
+void ForumThreadDetailPage::updateCarouselThumbs()
+{
+    if (!m_carouselStack)
+        return;
+    const int current = m_carouselStack->currentIndex();
+    for (int i = 0; i < m_carouselThumbs.size(); ++i)
+    {
+        QLabel *thumb = m_carouselThumbs.at(i);
+        if (!thumb)
+            continue;
+        thumb->setProperty("current", i == current);
+        thumb->style()->unpolish(thumb);
+        thumb->style()->polish(thumb);
+    }
+}
+
+void ForumThreadDetailPage::setCarouselAutoPlay(bool on)
+{
+    if (!m_carouselTimer)
+        return;
+    if (on && m_carouselStack && m_carouselStack->count() > 1)
+        m_carouselTimer->start();
+    else
+        m_carouselTimer->stop();
+}
+
+void ForumThreadDetailPage::noteCarouselInteraction()
+{
+    setCarouselAutoPlay(false);
+    if (m_carouselResumeTimer && m_carouselStack && m_carouselStack->count() > 1)
+        m_carouselResumeTimer->start();
+}
+
+void ForumThreadDetailPage::editThreadCarousel()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("编辑轮播"));
+    dialog.setMinimumWidth(560);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *editor = new ForumCarouselEditor(&dialog);
+    editor->setItems(m_info.carousel);
+    layout->addWidget(editor);
+    auto *buttons = new QHBoxLayout();
+    buttons->addStretch(1);
+    auto *cancelButton = new QPushButton(tr("取消"), &dialog);
+    auto *saveButton = new QPushButton(tr("保存"), &dialog);
+    saveButton->setObjectName(QStringLiteral("forumPrimaryButton"));
+    saveButton->setCursor(Qt::PointingHandCursor);
+    buttons->addWidget(cancelButton);
+    buttons->addWidget(saveButton);
+    layout->addLayout(buttons);
+    connect(cancelButton, &QPushButton::clicked, &dialog, &QDialog::reject);
+    connect(saveButton, &QPushButton::clicked, &dialog, [&editor, &dialog]() {
+        if (editor->hasPendingUploads())
+        {
+            NotificationManager::showInfo(&dialog, tr("轮播图片还没传完，等一下再保存"));
+            return;
+        }
+        dialog.accept();
+    });
+
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    setStatus(tr("正在保存轮播…"));
+    ForumContentService::instance()->updateThreadCarousel(
+        m_threadId, editor->items(),
+        [this]() {
+            setStatus(QString());
+            NotificationManager::showInfo(this, tr("轮播已更新"));
+            reload();
+        },
+        [this](const QString &message, int) {
+            setStatus(tr("保存失败：%1").arg(message), true);
+        });
+}
+
+// ────────────────────────────────────────────────────────────── 评论（资源帖 / 教程帖）
 
 void ForumThreadDetailPage::updateCommentHeader()
 {
     if (!m_discussionCount)
         return;
-    if (!isResourceThread())
+    if (!usesComments())
     {
         m_discussionCount->clear();
         return;
     }
-    const int total = m_commentTotal > 0 ? m_commentTotal : m_info.comments;
+    const int total = commentCountForDisplay();
     m_discussionCount->setText(tr("%1 条评论").arg(total));
+    updateHeroStatsLabel();
 }
 
 void ForumThreadDetailPage::loadComments(int page)
 {
-    if (m_threadId <= 0 || !isResourceThread())
+    if (m_threadId <= 0 || !usesComments())
         return;
 
     setStatus(tr("正在加载评论…"));
@@ -1931,6 +3443,7 @@ void ForumThreadDetailPage::loadComments(int page)
             m_commentPage = qMax(1, pagination.page);
             m_commentPages = qMax(1, pagination.pages);
             m_commentTotal = pagination.total;
+            m_commentCountKnown = true;
             // 刷新本页 / 重新进入时按评论页还原，别被楼层页码带回去
             m_page = m_commentPage;
             setStatus(QString());
@@ -1951,8 +3464,14 @@ void ForumThreadDetailPage::renderComments(const QVector<ForumComment> &comments
 
     if (comments.isEmpty())
     {
-        m_floorsLayout->addWidget(
-            ForumKit::makeMuted(m_mainColumn, tr("还没有评论，说说你用过之后的感受吧")));
+        m_floorsLayout->addWidget(ForumKit::makeMuted(
+            m_mainColumn,
+            isTutorialThread() ? tr("还没有评论，说说你看完这篇教程的想法吧")
+            : isNavigationThread()
+                ? (m_info.navigation.isServer()
+                       ? tr("还没有评论，去过这个服务器的话说说你的体验吧")
+                       : tr("还没有评论，去过这个网站的话说说你的感受吧"))
+                               : tr("还没有评论，说说你用过之后的感受吧")));
         return;
     }
 
@@ -2115,7 +3634,7 @@ void ForumThreadDetailPage::renderCommentComposer()
     m_commentSend = nullptr;
     m_commentCharCount = nullptr;
 
-    if (!isResourceThread() || !m_loaded)
+    if (!usesComments() || !m_loaded)
     {
         m_commentComposerCard->hide();
         return;
@@ -2159,7 +3678,11 @@ void ForumThreadDetailPage::renderCommentComposer()
     if (!loggedIn)
     {
         addTitle(tr("来说两句？"));
-        addHint(tr("登录后就能评论这个资源，也可以用同一账号在方块盒子论坛发帖。"));
+        addHint(isTutorialThread()
+                    ? tr("登录后就能评论这篇教程，也可以用同一账号在方块盒子论坛发帖。")
+                    : isNavigationThread()
+                          ? tr("登录后就能评论这条导航，也可以用同一账号在方块盒子论坛发帖。")
+                          : tr("登录后就能评论这个资源，也可以用同一账号在方块盒子论坛发帖。"));
         addPrimary(tr("登录 / 注册"), [this]() { emit loginRequested(); });
         return;
     }
@@ -2329,8 +3852,8 @@ void ForumThreadDetailPage::renderComposer()
     if (!m_composerBody)
         return;
 
-    // 资源帖用评论框，不用楼层回复框
-    if (isResourceThread())
+    // 资源帖 / 教程帖用评论框，不用楼层回复框
+    if (usesComments())
     {
         m_composerCard->hide();
         return;
@@ -2406,17 +3929,20 @@ void ForumThreadDetailPage::renderComposer()
     }
 
     // ── 正常回复状态 ──
+    const bool questionMode = m_info.question.isValid();
     auto *headRow = new QHBoxLayout();
     headRow->setSpacing(10);
     const ForumUser me = account->user();
     headRow->addWidget(ForumKit::makeAvatar(m_composerCard, me.avatar, authorDisplay(me), 32));
 
-    auto *title = new QLabel(tr("回复主题"), m_composerCard);
+    auto *title = new QLabel(questionMode ? tr("写回答") : tr("回复主题"), m_composerCard);
     title->setObjectName(QStringLiteral("forumComposerTitle"));
     headRow->addWidget(title);
     headRow->addStretch(1);
 
-    auto *headHint = new QLabel(tr("支持 Markdown · 可直接粘贴图片"), m_composerCard);
+    auto *headHint = new QLabel(questionMode ? tr("你的回答会参与点赞与采纳")
+                                             : tr("支持 Markdown · 可直接粘贴图片"),
+                                m_composerCard);
     headHint->setObjectName(QStringLiteral("forumComposerHint"));
     headRow->addWidget(headHint);
     m_composerBody->addLayout(headRow);
@@ -2432,7 +3958,8 @@ void ForumThreadDetailPage::renderComposer()
     m_replyEdit = new QPlainTextEdit(m_composerCard);
     m_replyEdit->setObjectName(QStringLiteral("forumReplyEdit"));
     m_replyEdit->setPlaceholderText(
-        tr("说点什么…支持 Markdown：**加粗**、`代码`、> 引用；输入 @ 可以选人，也能直接粘贴或拖入图片"));
+        questionMode ? tr("写下你的答案…支持 Markdown：**加粗**、`代码`、> 引用；输入 @ 可以选人")
+                     : tr("说点什么…支持 Markdown：**加粗**、`代码`、> 引用；输入 @ 可以选人，也能直接粘贴或拖入图片"));
     m_replyEdit->setFixedHeight(140);
     m_replyEdit->installEventFilter(this);
     connect(m_replyEdit, &QPlainTextEdit::textChanged, this, [this]() {
@@ -2443,8 +3970,9 @@ void ForumThreadDetailPage::renderComposer()
 
     auto *footRow = new QHBoxLayout();
     footRow->setSpacing(10);
-    auto *identity = new QLabel(tr("以 %1 的身份回复 · Ctrl + Enter 发送")
-                                    .arg(authorDisplay(me)),
+    auto *identity = new QLabel(tr("以 %1 的身份%2 · Ctrl + Enter 发送")
+                                    .arg(authorDisplay(me))
+                                    .arg(questionMode ? tr("回答") : tr("回复")),
                                 m_composerCard);
     identity->setObjectName(QStringLiteral("forumComposerHint"));
     footRow->addWidget(identity);
@@ -2580,8 +4108,8 @@ void ForumThreadDetailPage::loadQuote(const ForumPost &post)
 
 void ForumThreadDetailPage::scrollToComposer()
 {
-    // 资源帖滚到评论框，普通帖滚到楼层回复框
-    if (isResourceThread())
+    // 资源帖 / 教程帖滚到评论框，其余帖子滚到楼层回复框
+    if (usesComments())
     {
         if (!m_commentComposerCard)
             return;
@@ -2702,7 +4230,7 @@ void ForumThreadDetailPage::tipThread()
         return;
     }
 
-    // 打赏是烧自己的方块换这条帖子的推流，给自己的帖子打赏没有意义，直接拦下
+    // 打赏的方块会转给作者，打赏自己等于方块转一圈又回来、还白拿推流，直接拦下
     if (m_info.authorId == ForumAccountService::instance()->user().id)
     {
         NotificationManager::showInfo(this, tr("不能打赏自己的帖子"));
@@ -2711,7 +4239,7 @@ void ForumThreadDetailPage::tipThread()
 
     const int amount = ThreadTipDialog::tip(this, m_info);
     if (amount > 0)
-        NotificationManager::showSuccess(this, tr("打赏 %1 方块成功，本帖推流已提升").arg(amount));
+        NotificationManager::showSuccess(this, tr("打赏 %1 方块成功，已转给作者并提升推流").arg(amount));
 }
 
 void ForumThreadDetailPage::togglePin()
@@ -2854,6 +4382,35 @@ void ForumThreadDetailPage::confirmDeletePost(const ForumPost &post)
         [this](const QString &message, int) { NotificationManager::showError(this, message); });
 }
 
+void ForumThreadDetailPage::acceptAnswer(const ForumPost &post)
+{
+    if (!m_info.question.isOpen())
+    {
+        NotificationManager::showInfo(this, tr("这条问答已经结算过了"));
+        return;
+    }
+
+    const QString name = authorDisplay(post.author);
+    const AppMessageBox::StandardButton reply = AppMessageBox::question(
+        this, tr("采纳这层回答"),
+        tr("确定采纳 %1 楼的 %2 吗？采纳后 %3 方块会立刻发给对方，不能更改。")
+            .arg(post.floor)
+            .arg(name)
+            .arg(m_info.question.bounty),
+        AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
+    if (reply != AppMessageBox::Yes)
+        return;
+
+    ForumContentService::instance()->acceptQuestionAnswer(
+        m_threadId, post.id,
+        [this]() {
+            NotificationManager::showSuccess(
+                this, tr("%1 方块赏金已发放").arg(m_info.question.bounty));
+            reload();
+        },
+        [this](const QString &message, int) { NotificationManager::showError(this, message); });
+}
+
 void ForumThreadDetailPage::confirmDeleteThread()
 {
     const AppMessageBox::StandardButton reply = AppMessageBox::question(
@@ -2883,9 +4440,9 @@ void ForumThreadDetailPage::editThreadMeta()
     auto *titleEdit = new QLineEdit(m_info.title, &dialog);
     layout->addWidget(titleEdit);
 
-    layout->addWidget(new QLabel(tr("标签（用逗号分隔，最多 4 个）"), &dialog));
-    auto *tagsEdit = new QLineEdit(m_info.tags.join(QStringLiteral(", ")), &dialog);
-    layout->addWidget(tagsEdit);
+    auto *tagsEditor = new ForumTagEditor(&dialog);
+    tagsEditor->setTags(m_info.tags);
+    layout->addWidget(tagsEditor);
 
     // 插件帖 / 投影帖：顺带编辑绑定的相关链接（普通讨论帖没有这一节）
     ForumLinkRowsEditor *linksEditor = nullptr;
@@ -2915,15 +4472,8 @@ void ForumThreadDetailPage::editThreadMeta()
         return;
 
     const QString title = titleEdit->text().trimmed();
-    QStringList tags;
-    for (const QString &tag : tagsEdit->text().split(QLatin1Char(',')))
-    {
-        const QString trimmed = tag.trimmed();
-        if (!trimmed.isEmpty())
-            tags.append(trimmed);
-    }
-    if (tags.size() > 4)
-        tags = tags.mid(0, 4);
+    tagsEditor->commitPending();
+    const QStringList tags = tagsEditor->tags();
     if (title.isEmpty())
     {
         NotificationManager::showInfo(this, tr("标题不能为空"));
@@ -2966,10 +4516,21 @@ void ForumThreadDetailPage::renderRail()
     m_pluginStatusLabel = nullptr;
     m_pluginVersionsLayout = nullptr;
     m_schematicDownloadButton = nullptr;
+    m_schematicPreviewButton = nullptr;
+    m_schematicMaterialButton = nullptr;
+    m_schematicVersionCombo = nullptr;
+    m_schematicManageLayout = nullptr;
     m_schematicStatusLabel = nullptr;
     m_railThreadHost = nullptr;
     m_railThreadList = nullptr;
     m_railThreadIds.clear();
+    // 「人数统计」卡随侧栏一起重建：旧指针作废，定时器先停（重建完成后按新地址再开）
+    m_navStatsCard = nullptr;
+    m_navStatsValue = nullptr;
+    m_navStatsHint = nullptr;
+    m_navStatsChart = nullptr;
+    if (m_navStatsTimer)
+        m_navStatsTimer->stop();
 
     if (!m_info.isValid())
     {
@@ -3000,6 +4561,27 @@ void ForumThreadDetailPage::renderRail()
         return;
     }
 
+    // 导航帖的左栏就是「地址」这一列：地址卡（一键打开 / 复制地址）+ 同版块主题
+    // 老数据（板块对得上但没挂地址记录）不出空卡，只保留同版块主题
+    if (isNavigationThread())
+    {
+        if (m_info.navigation.isValid())
+        {
+            appendNavigationCard();
+            // 服务器导航再多一张「人数统计」：当前在线人数 + 最近 24 小时折线
+            const bool serverNav = m_info.navigation.isServer()
+                                   || m_info.boardSlug == QLatin1String("server-nav");
+            if (serverNav)
+            {
+                appendPlayerStatsCard();
+                startServerStatsWatcher();
+            }
+        }
+        appendRailThreadsCard();
+        m_railLayout->addStretch(1);
+        return;
+    }
+
     // ── 主题信息 ──
     auto *info = addRailCard(tr("主题信息"));
 
@@ -3020,11 +4602,11 @@ void ForumThreadDetailPage::renderRail()
         statsRow->addWidget(box, 1);
     };
     addStat(QString::number(m_info.views), tr("浏览"), m_railHost);
-    // 资源帖的讨论是评论，不是楼层回复
-    const bool resourceMode = isResourceThread();
-    addStat(resourceMode ? QString::number(m_commentTotal > 0 ? m_commentTotal : m_info.comments)
-                         : QString::number(m_info.replies),
-            resourceMode ? tr("评论") : tr("回复"), m_railHost);
+    // 资源帖 / 教程帖的讨论是评论，不是楼层回复
+    const bool commentMode = usesComments();
+    addStat(commentMode ? QString::number(commentCountForDisplay())
+                        : QString::number(m_info.replies),
+            commentMode ? tr("评论") : tr("回复"), m_railHost);
     info->addLayout(statsRow);
 
     auto addInfoRow = [this, info](const QString &key, QWidget *value) {
@@ -3072,12 +4654,12 @@ void ForumThreadDetailPage::renderRail()
         m_info.lastPostAt > 0 ? ForumKit::relativeTime(m_info.lastPostAt) : QStringLiteral("—"),
         m_railHost);
     lastReply->setObjectName(QStringLiteral("forumRailValue"));
-    addInfoRow(resourceMode ? tr("最后活动") : tr("最后回复"), lastReply);
+    addInfoRow(commentMode ? tr("最后活动") : tr("最后回复"), lastReply);
 
     if (m_info.locked)
     {
-        auto *note = new QLabel(resourceMode ? tr("该主题已锁定，暂不接受新评论")
-                                             : tr("该主题已锁定，暂不接受新回复"),
+        auto *note = new QLabel(commentMode ? tr("该主题已锁定，暂不接受新评论")
+                                            : tr("该主题已锁定，暂不接受新回复"),
                                 m_railHost);
         note->setObjectName(QStringLiteral("forumRailNote"));
         note->setWordWrap(true);
@@ -3337,8 +4919,10 @@ void ForumThreadDetailPage::loadRailThreads(const QString &slug)
                 auto *titleLabel = ForumKit::makeElided(item, thread.title);
                 titleLabel->setObjectName(QStringLiteral("forumRailThreadTitle"));
                 itemLayout->addWidget(titleLabel);
-                auto *meta = new QLabel(tr("%1 · %2 回复").arg(thread.authorName).arg(thread.replies),
-                                        item);
+                auto *meta = new QLabel(
+                    thread.tutorial ? tr("%1 · %2 评论").arg(thread.authorName).arg(thread.comments)
+                                    : tr("%1 · %2 回复").arg(thread.authorName).arg(thread.replies),
+                    item);
                 meta->setObjectName(QStringLiteral("forumRailThreadMeta"));
                 itemLayout->addWidget(meta);
                 m_railThreadIds.insert(item, thread.id);
@@ -3367,6 +4951,16 @@ void ForumThreadDetailPage::openThread(int threadId)
     loadPage(1);
 }
 
+void ForumThreadDetailPage::setInstancePath(const QString &instancePath)
+{
+    const QString norm = instancePath.isEmpty()
+                             ? QString()
+                             : QFileInfo(instancePath).absoluteFilePath();
+    if (m_instancePath == norm)
+        return;
+    m_instancePath = norm;
+}
+
 void ForumThreadDetailPage::clearContent()
 {
     m_threadId = 0;
@@ -3381,13 +4975,27 @@ void ForumThreadDetailPage::clearContent()
     m_commentPage = 1;
     m_commentPages = 1;
     m_commentTotal = 0;
+    m_commentCountKnown = false;
     m_pluginBusy = false;
     m_pluginUploadingVersion = false;
     m_pluginInstallButton = nullptr;
     m_pluginStatusLabel = nullptr;
     m_pluginVersionsLayout = nullptr;
     m_bodyMarkdown.clear();
+    m_heroStatsLabel = nullptr;
     clearReplyTarget();
+    // 轮播跟着帖子走：切走时先收起来（renderCarousel 在新帖加载成功后重建）
+    if (m_carouselTimer)
+        m_carouselTimer->stop();
+    if (m_carouselResumeTimer)
+        m_carouselResumeTimer->stop();
+    m_carouselSlideImages.clear();
+    m_carouselSlideLabels.clear();
+    m_carouselThumbs.clear();
+    if (m_carouselThumbStripLayout)
+        ForumKit::clearLayout(m_carouselThumbStripLayout);
+    if (m_carouselCard)
+        m_carouselCard->hide();
 
     renderHero();
     applyLayoutMode();
@@ -3404,8 +5012,25 @@ void ForumThreadDetailPage::clearContent()
         m_railThreadHost = nullptr;
         m_railThreadList = nullptr;
         m_railThreadIds.clear();
+        m_navStatsCard = nullptr;
+        m_navStatsValue = nullptr;
+        m_navStatsHint = nullptr;
+        m_navStatsChart = nullptr;
         m_railLayout->addStretch(1);
     }
+
+    // 人数统计跟着帖子一起收：停探测、丢掉旧地址，别让上一个服务器的结果落到下一个帖子
+    if (m_navStatsTimer)
+        m_navStatsTimer->stop();
+    if (m_navPinger)
+        m_navPinger->cancelAll();
+    m_navServerHost.clear();
+    m_navServerPort = 25565;
+    m_navServerKey.clear();
+    m_navLastReportMs = 0;
+    m_navLastFetchMs = 0;
+    m_navFetching = false;
+    m_navPinged = false;
 }
 
 void ForumThreadDetailPage::loadPage(int page, bool scrollToBottomAfter)
@@ -3428,9 +5053,10 @@ void ForumThreadDetailPage::loadPage(int page, bool scrollToBottomAfter)
             setStatus(QString());
 
             renderHero();
-            if (isResourceThread())
+            renderCarousel();
+            if (usesComments())
             {
-                // 资源帖：作者写的介绍正文（1 楼）先摆出来，下面才是评论。
+                // 资源帖 / 教程帖：作者写的那篇（1 楼）先摆出来，下面才是评论。
                 // 翻评论页时楼层接口翻过了 1 楼就不再带它，所以只在看到时更新缓存。
                 for (const ForumPost &post : detail.posts)
                 {
@@ -3441,27 +5067,15 @@ void ForumThreadDetailPage::loadPage(int page, bool scrollToBottomAfter)
                     }
                 }
                 renderBodyCard();
+
+                // 教程帖不盖楼：1 楼正文单独渲染成「教程正文」卡（右栏目录靠它生成跳转锚点），
+                // 讨论区换成平铺评论，楼层列表与楼层回复框都不出现
                 loadComments(m_page);
             }
             else
             {
-                // 教程帖：1 楼正文单独渲染成「教程正文」卡（右栏目录靠它生成跳转锚点），
-                // 楼层列表从 2 楼开始，回复体系与普通帖完全一样
-                QVector<ForumPost> floors = detail.posts;
-                if (isTutorialThread())
-                {
-                    for (const ForumPost &post : detail.posts)
-                    {
-                        if (post.floor == 1 && !post.deleted && !post.content.isEmpty())
-                        {
-                            m_bodyMarkdown = post.content;
-                            break;
-                        }
-                    }
-                    floors.removeIf([](const ForumPost &post) { return post.floor == 1; });
-                }
                 renderBodyCard();
-                renderPosts(floors);
+                renderPosts(detail.posts);
                 m_pager->setPage(m_page, m_totalPages);
             }
             renderComposer();
@@ -3498,6 +5112,33 @@ bool ForumThreadDetailPage::eventFilter(QObject *watched, QEvent *event)
     if (m_scroll && watched == m_scroll->viewport() && event->type() == QEvent::Resize)
         applyPageWidth();
 
+    // 轮播舞台：宽度一变就按 16:9 重算高度（和资源详情页的截图区同一套限制）；
+    // 舞台 / 图片页本身尺寸变了，当前这张图跟着重缩一次，别停在旧尺寸上
+    if (event->type() == QEvent::Resize
+        && (watched == m_carouselStage || watched == m_carouselStack))
+    {
+        if (watched == m_carouselStage)
+            applyCarouselStageHeight();
+        if (m_carouselStack)
+            rescaleCarouselSlide(m_carouselStack->currentIndex());
+    }
+
+    // 缩略图整格可点：切到对应那一页（QLabel 没有 clicked 信号）
+    if (event->type() == QEvent::MouseButtonRelease)
+    {
+        auto *thumb = qobject_cast<QLabel *>(watched);
+        if (thumb && m_carouselThumbs.contains(thumb))
+        {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->button() == Qt::LeftButton)
+            {
+                showCarouselAt(thumb->property("carouselIndex").toInt());
+                noteCarouselInteraction();
+                return true;
+            }
+        }
+    }
+
     if (watched == m_replyEdit && event->type() == QEvent::KeyPress)
     {
         auto *key = static_cast<QKeyEvent *>(event);
@@ -3516,6 +5157,22 @@ bool ForumThreadDetailPage::eventFilter(QObject *watched, QEvent *event)
         {
             submitComment();
             return true;
+        }
+    }
+    // 轮播图整页可点：点开大图预览（预览地址存在 previewUrl 属性里，永远是原图）
+    if (event->type() == QEvent::MouseButtonRelease
+        && m_carouselSlideLabels.contains(static_cast<QWidget *>(watched)))
+    {
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        if (mouse->button() == Qt::LeftButton)
+        {
+            const QString previewUrl =
+                static_cast<QWidget *>(watched)->property("previewUrl").toString();
+            if (!previewUrl.isEmpty())
+            {
+                ForumPostBrowser::showImagePreview(previewUrl);
+                return true;
+            }
         }
     }
     // 侧栏「同版块主题」整行可点（QFrame 没有 clicked 信号，走事件过滤）
@@ -3564,8 +5221,8 @@ void ForumThreadDetailPage::handleContentLink(const QUrl &url)
             return;
         }
     }
-    // 其余都是站外链接，交给系统浏览器
-    QDesktopServices::openUrl(url);
+    // 其余链接：CF / Modrinth 资源页在软件内打开对应详情，别的交给系统浏览器
+    LinkRouter::instance()->open(url, this);
 }
 
 void ForumThreadDetailPage::setStatus(const QString &text, bool error)

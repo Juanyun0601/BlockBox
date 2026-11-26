@@ -84,8 +84,7 @@ QList<qint64> encodeBlockStates(const QList<int> &indices, int bits)
 }
 
 SchematicBlockState stateFromLitematicPalette(const NbtTag &entry)
-{
-    SchematicBlockState state;
+{    SchematicBlockState state;
     state.name = NbtCodec::readStringValue(entry, QStringLiteral("Name"));
     if (state.name.isEmpty())
         state.name = QStringLiteral("minecraft:air");
@@ -113,6 +112,63 @@ NbtTag litematicPaletteEntryFromState(const SchematicBlockState &state)
         entry.children.append(std::move(props));
     }
     return entry;
+}
+
+/** 读取 List<Double|Float> 形式的坐标（至少 3 个分量） */
+bool readDoubleList3(const NbtTag *listTag, double &x, double &y, double &z)
+{
+    if (listTag == nullptr || listTag->type != NbtType::List || listTag->children.size() < 3)
+        return false;
+    x = listTag->children.at(0).doubleValue;
+    y = listTag->children.at(1).doubleValue;
+    z = listTag->children.at(2).doubleValue;
+    return true;
+}
+
+/**
+ * @brief 从 litematica 的 Entities 列表项读取一个实体
+ *
+ * 结构是 { Pos: [D; x, y, z], NBT: { id: "...", Rotation: [F; yaw, 0] } }，
+ * 坐标相对该区域的最小角。老文件里 Pos 可能被写进 NBT 里，一并兼容。
+ */
+bool readLitematicEntity(const NbtTag &entry, SchematicEntity &out)
+{
+    const NbtTag *payload = NbtCodec::findChild(entry, QStringLiteral("NBT"));
+    if (payload != nullptr && payload->type != NbtType::Compound)
+        payload = nullptr;
+
+    double x = 0.0, y = 0.0, z = 0.0;
+    bool hasPos = readDoubleList3(NbtCodec::findChild(entry, QStringLiteral("Pos")), x, y, z);
+    if (!hasPos && payload != nullptr)
+        hasPos = readDoubleList3(NbtCodec::findChild(*payload, QStringLiteral("Pos")), x, y, z);
+    if (!hasPos)
+        return false;
+
+    QString id;
+    if (payload != nullptr)
+        id = NbtCodec::readStringValue(*payload, QStringLiteral("id"));
+    if (id.isEmpty())
+        id = NbtCodec::readStringValue(entry, QStringLiteral("id"));
+    if (id.isEmpty())
+        id = NbtCodec::readStringValue(entry, QStringLiteral("Id"));
+    if (id.isEmpty())
+        return false;   // 没有实体类型就没法画，跳过
+
+    const NbtTag *rotation = (payload != nullptr)
+                                 ? NbtCodec::findChild(*payload, QStringLiteral("Rotation"))
+                                 : nullptr;
+    if (rotation == nullptr)
+        rotation = NbtCodec::findChild(entry, QStringLiteral("Rotation"));
+    float yaw = 0.0f;
+    if (rotation != nullptr && rotation->type == NbtType::List && !rotation->children.isEmpty())
+        yaw = static_cast<float>(rotation->children.first().doubleValue);
+
+    out.id = id;
+    out.x = x;
+    out.y = y;
+    out.z = z;
+    out.yaw = yaw;
+    return true;
 }
 
 } // namespace
@@ -160,6 +216,7 @@ bool SchematicDocument::load(const QString &filePath, QString *error)
         QList<SchematicBlockState> palette;
     };
     QList<RegionRaw> regionList;
+    QList<SchematicEntity> rawEntities;   ///< 世界坐标（区域解析完再统一换算到文档坐标）
     bool globalInit = false;
     int gMinX = 0, gMinY = 0, gMinZ = 0, gMaxX = 0, gMaxY = 0, gMaxZ = 0;
 
@@ -227,6 +284,25 @@ bool SchematicDocument::load(const QString &filePath, QString *error)
         }
         regionList.append(std::move(raw));
 
+        // ---- 生物 / 实体：litematica 把它们和方块一起存在区域里 ----
+        const NbtTag *entitiesTag = NbtCodec::findChild(regionEntry, QStringLiteral("Entities"));
+        if (entitiesTag != nullptr && entitiesTag->type == NbtType::List)
+        {
+            for (const NbtTag &entityEntry : entitiesTag->children)
+            {
+                if (entityEntry.type != NbtType::Compound)
+                    continue;
+                SchematicEntity entity;
+                if (!readLitematicEntity(entityEntry, entity))
+                    continue;
+                // 区域相对坐标 -> 世界坐标（与方块同一套换算）
+                entity.x += minX;
+                entity.y += minY;
+                entity.z += minZ;
+                rawEntities.append(entity);
+            }
+        }
+
         const int maxX = minX + spanX - 1, maxY = minY + spanY - 1, maxZ = minZ + spanZ - 1;
         if (!globalInit)
         {
@@ -251,6 +327,17 @@ bool SchematicDocument::load(const QString &filePath, QString *error)
     m_sizeX = gMaxX - gMinX + 1;
     m_sizeY = gMaxY - gMinY + 1;
     m_sizeZ = gMaxZ - gMinZ + 1;
+
+    // 实体换到与方块同一坐标系（相对投影最小角），渲染时直接按格摆放
+    m_entities.clear();
+    m_entities.reserve(rawEntities.size());
+    for (SchematicEntity entity : rawEntities)
+    {
+        entity.x -= m_originX;
+        entity.y -= m_originY;
+        entity.z -= m_originZ;
+        m_entities.append(entity);
+    }
 
     const int layer = layerSize();
     m_indices.fill(0, volume());
@@ -295,6 +382,7 @@ void SchematicDocument::clear()
     m_sizeX = m_sizeY = m_sizeZ = 0;
     m_palette.clear();
     m_indices.clear();
+    m_entities.clear();
 }
 
 bool SchematicDocument::createEmpty(int sizeX, int sizeY, int sizeZ)
@@ -314,6 +402,7 @@ bool SchematicDocument::createEmpty(int sizeX, int sizeY, int sizeZ)
     m_sizeZ = sizeZ;
     m_palette.clear();
     m_palette.append(SchematicBlockState{ QStringLiteral("minecraft:air"), {} });
+    m_entities.clear();
     m_indices.fill(0, volume());
     m_loaded = true;
     return true;
@@ -550,7 +639,40 @@ bool SchematicDocument::writeToNbt(NbtTag &root) const
     region.children.append(NbtCodec::makeLongArray(QStringLiteral("BlockStates"), blockStates));
 
     region.children.append(NbtCodec::makeList(QStringLiteral("TileEntities"), NbtType::Compound, {}));
-    region.children.append(NbtCodec::makeList(QStringLiteral("Entities"), NbtType::Compound, {}));
+
+    // 写出投影里的生物 / 实体：坐标相对区域最小角（与读入时同一套换算）。
+    // Litematica Version >= 2 的实体是「摊平」写法：Id / Pos / 其余实体 NBT 直接挂在
+    // 列表项的复合标签上（Version 1 才是嵌套在 NBT 里），所以这里按摊平写。
+    NbtTag entityList = NbtCodec::makeList(QStringLiteral("Entities"), NbtType::Compound, {});
+    for (const SchematicEntity &entity : m_entities)
+    {
+        if (entity.id.isEmpty())
+            continue;
+        NbtTag posList = NbtCodec::makeList(QStringLiteral("Pos"), NbtType::Double, {});
+        const double pos[3] = { entity.x, entity.y, entity.z };
+        for (double v : pos)
+        {
+            NbtTag d;
+            d.type = NbtType::Double;
+            d.doubleValue = v;
+            posList.children.append(d);
+        }
+        NbtTag rotation = NbtCodec::makeList(QStringLiteral("Rotation"), NbtType::Float, {});
+        for (float v : { entity.yaw, 0.0f })
+        {
+            NbtTag f;
+            f.type = NbtType::Float;
+            f.doubleValue = static_cast<double>(v);
+            rotation.children.append(f);
+        }
+
+        NbtTag entry = NbtCodec::makeCompound();
+        entry.children.append(NbtCodec::makeString(QStringLiteral("Id"), entity.id));
+        entry.children.append(std::move(posList));
+        entry.children.append(std::move(rotation));
+        entityList.children.append(std::move(entry));
+    }
+    region.children.append(std::move(entityList));
 
     regions.children.append(std::move(region));
     rootTag.children.append(std::move(regions));

@@ -20,6 +20,7 @@ SOURCES  += seed_tree_probe.cpp \
             ../utils/WorldMap/MushroomPredictor.cpp \
             ../utils/WorldMap/McRandom.cpp \
             ../utils/WorldMap/WorldMapRenderer.cpp \
+            ../utils/MapBlockPalette.cpp \
             ../utils/Schematic/NbtCodec.cpp \
             ../third_party/cubiomes/noise.c \
             ../third_party/cubiomes/biomes.c \

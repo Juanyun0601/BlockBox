@@ -29,6 +29,8 @@ constexpr int kRowSpacing = 12;
 // 列表页卡片展示较长的摘要（首页横排卡片仍用默认的较短摘要）
 constexpr int kListSummaryChars = 220;
 constexpr int kTwoColumnMinWidth = 760;
+// 首屏与每次「加载更多」追加的行数；官方接口约 100 条，分屏加载避免一次建满卡片
+constexpr int kRowsPerBatch = 6;
 } // namespace
 
 NewsPage::NewsPage(QWidget *parent)
@@ -38,6 +40,8 @@ NewsPage::NewsPage(QWidget *parent)
 
   NewsFeed *feed = NewsFeed::instance();
   QObject::connect(feed, &NewsFeed::entriesChanged, this, [this]() {
+    // 拉到新数据：回到第一屏，避免旧的展开进度作用到新列表上
+    m_renderedCount = 0;
     rebuildList();
     updateHeaderState();
   });
@@ -111,6 +115,41 @@ void NewsPage::initUI()
   m_scrollArea->viewport()->installEventFilter(this);
   root->addWidget(m_scrollArea, 1);
 
+  // 滚到底部自动续一屏：官方新闻有上百条，不想让用户以为列表只到这儿
+  QObject::connect(m_scrollArea->verticalScrollBar(), &QScrollBar::valueChanged, this,
+                   [this](int value) {
+                     QScrollBar *bar = m_scrollArea ? m_scrollArea->verticalScrollBar() : nullptr;
+                     if (!bar || bar->maximum() <= 0 || value < bar->maximum() - 8)
+                       return;
+                     if (m_renderedCount >= NewsFeed::instance()->entries().size())
+                       return;
+                     appendNextBatch();
+                   });
+
+  // ── 底部「加载更多」栏 ──
+  m_loadMoreBar = new QWidget(this);
+  m_loadMoreBar->setObjectName("newsLoadMoreBar");
+  auto *loadMoreRow = new QHBoxLayout(m_loadMoreBar);
+  loadMoreRow->setContentsMargins(0, 0, 0, 0);
+  loadMoreRow->setSpacing(8);
+
+  m_loadMoreHint = new QLabel(m_loadMoreBar);
+  m_loadMoreHint->setObjectName("homeNewsSource");
+  loadMoreRow->addWidget(m_loadMoreHint);
+  loadMoreRow->addStretch();
+
+  m_loadMoreBtn = new QPushButton(tr("加载更多"), m_loadMoreBar);
+  m_loadMoreBtn->setObjectName("newsLoadMoreBtn");
+  m_loadMoreBtn->setCursor(Qt::PointingHandCursor);
+  m_loadMoreBtn->setToolTip(tr("继续展开更早的官方新闻；直接下滑到列表底部也会自动加载"));
+  QObject::connect(m_loadMoreBtn, &QPushButton::clicked, this, [this]() {
+    appendNextBatch();
+  });
+  loadMoreRow->addWidget(m_loadMoreBtn);
+
+  m_loadMoreBar->setVisible(false);
+  root->addWidget(m_loadMoreBar);
+
   // ── 空态 ──
   m_emptyLabel = new QLabel(this);
   m_emptyLabel->setObjectName("homeEmptyLabel");
@@ -179,15 +218,25 @@ void NewsPage::rebuildList(bool preserveScroll)
   if (entries.isEmpty())
   {
     m_scrollArea->setVisible(false);
+    m_renderedCount = 0;
     m_emptyLabel->setText(NewsFeed::instance()->isLoading()
                               ? tr("正在获取 Minecraft 官方新闻…")
                               : tr("暂时没有可显示的官方新闻，点「刷新」再试试"));
     m_emptyLabel->setVisible(true);
+    updateLoadMoreBar();
     return;
   }
 
   m_emptyLabel->setVisible(false);
   m_scrollArea->setVisible(true);
+
+  // 宽度变化重建时保留已经展开的条数；数据变化时外部会把进度清零，从第一屏重新开始。
+  // 只展开过首屏（还没点过「加载更多」）时按新列数重算首屏，避免窄屏建出来的 6 条一直卡在宽屏上。
+  const int batchSize = qMax(1, columns * kRowsPerBatch);
+  m_renderedCount = qBound(0, m_renderedCount, entries.size());
+  if (m_renderedCount == 0 || m_renderedCount <= m_lastBatchSize)
+    m_renderedCount = qMin(batchSize, entries.size());
+  m_lastBatchSize = batchSize;
 
   const int savedScroll = preserveScroll ? m_scrollArea->verticalScrollBar()->value() : 0;
 
@@ -195,38 +244,21 @@ void NewsPage::rebuildList(bool preserveScroll)
   if (QWidget *old = m_scrollArea->takeWidget())
     old->deleteLater();
 
-  auto *content = new QWidget();
-  auto *rows = new QVBoxLayout(content);
-  rows->setContentsMargins(0, 0, 0, 0);
-  rows->setSpacing(kRowSpacing);
-  rows->setAlignment(Qt::AlignTop);
+  m_content = new QWidget();
+  m_rowsLayout = new QVBoxLayout(m_content);
+  m_rowsLayout->setContentsMargins(0, 0, 0, 0);
+  m_rowsLayout->setSpacing(kRowSpacing);
+  m_rowsLayout->setAlignment(Qt::AlignTop);
 
-  int index = 0;
-  while (index < entries.size())
-  {
-    auto *row = new QHBoxLayout();
-    row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(kColumnSpacing);
+  appendEntries(0, m_renderedCount);
 
-    for (int column = 0; column < columns && index < entries.size(); ++column, ++index)
-    {
-      const NewsEntry entry = entries.at(index);
+  m_scrollArea->setWidget(m_content);
+  updateLoadMoreBar();
 
-      auto *card = new NewsCard(entry.categoryLabel, entry.title,
-                                NewsFeed::formatNewsDate(entry.date), entry.summary,
-                                content, kListSummaryChars);
-      card->setFixedSize(card->contentSizeForWidth(cardWidth));
-      card->setToolTip(tr("点击查看详情"));
-      QObject::connect(card, &NewsCard::clicked, this, [this, entry]() {
-        showNewsDetailDialog(this, entry);
-      });
-      row->addWidget(card);
-    }
-    row->addStretch();
-    rows->addLayout(row);
-  }
+  // 窗口很高、首屏内容不满一屏时没有滚动条，也就没法「滑到底自动加载」：
+  // 补到能滚为止，剩下的交给「加载更多」
+  QTimer::singleShot(0, this, [this]() { ensureScrollable(); });
 
-  m_scrollArea->setWidget(content);
   // 宽度变化触发的重建：保持原来的滚动位置
   if (savedScroll > 0)
   {
@@ -235,6 +267,96 @@ void NewsPage::rebuildList(bool preserveScroll)
         m_scrollArea->verticalScrollBar()->setValue(savedScroll);
     });
   }
+}
+
+void NewsPage::appendEntries(int beginIndex, int endIndex)
+{
+  const QVector<NewsEntry> &entries = NewsFeed::instance()->entries();
+  if (!m_rowsLayout || !m_content)
+    return;
+
+  const int columns = qMax(1, m_builtColumns);
+  const int cardWidth = m_builtCardWidth > 0 ? m_builtCardWidth : calculateCardWidth(nullptr);
+  const int end = qMin(endIndex, entries.size());
+
+  int index = qBound(0, beginIndex, end);
+  while (index < end)
+  {
+    auto *row = new QHBoxLayout();
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(kColumnSpacing);
+
+    for (int column = 0; column < columns && index < end; ++column, ++index)
+    {
+      const NewsEntry entry = entries.at(index);
+
+      auto *card = new NewsCard(entry.categoryLabel, entry.title,
+                                NewsFeed::formatNewsDate(entry.date), entry.summary,
+                                m_content, kListSummaryChars);
+      card->setFixedSize(card->contentSizeForWidth(cardWidth));
+      card->setToolTip(tr("点击查看详情"));
+      QObject::connect(card, &NewsCard::clicked, this, [this, entry]() {
+        showNewsDetailDialog(this, entry);
+      });
+      row->addWidget(card);
+    }
+    row->addStretch();
+    m_rowsLayout->addLayout(row);
+  }
+}
+
+void NewsPage::appendNextBatch()
+{
+  const QVector<NewsEntry> &entries = NewsFeed::instance()->entries();
+  if (!m_rowsLayout || m_renderedCount >= entries.size())
+  {
+    updateLoadMoreBar();
+    return;
+  }
+
+  const int columns = qMax(1, m_builtColumns);
+  const int batchSize = qMax(1, columns * kRowsPerBatch);
+  const int end = qMin(entries.size(), m_renderedCount + batchSize);
+  appendEntries(m_renderedCount, end);
+  m_renderedCount = end;
+  updateLoadMoreBar();
+}
+
+void NewsPage::updateLoadMoreBar()
+{
+  if (!m_loadMoreBar || !m_loadMoreBtn || !m_loadMoreHint)
+    return;
+
+  const int total = NewsFeed::instance()->entries().size();
+  const bool hasMore = m_renderedCount > 0 && m_renderedCount < total;
+  m_loadMoreBar->setVisible(hasMore);
+
+  if (!hasMore)
+    return;
+
+  m_loadMoreHint->setText(tr("已显示 %1 / %2 条").arg(m_renderedCount).arg(total));
+}
+
+void NewsPage::ensureScrollable()
+{
+  if (!m_scrollArea || m_fillPending)
+    return;
+
+  const int total = NewsFeed::instance()->entries().size();
+  if (m_renderedCount <= 0 || m_renderedCount >= total)
+    return;
+
+  // 内容已经能滚动（或已经全部展开）就不用再补
+  if (m_scrollArea->verticalScrollBar()->maximum() > 0)
+    return;
+
+  // 每补一屏让事件循环跑一拍，滚动范围才能按新内容重算，下一拍再判断是否还不足一屏
+  m_fillPending = true;
+  appendNextBatch();
+  QTimer::singleShot(0, this, [this]() {
+    m_fillPending = false;
+    ensureScrollable();
+  });
 }
 
 void NewsPage::scheduleRelayout()

@@ -12,6 +12,7 @@
 #include "layouts/FlowLayout.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ThemeManager.h"
+#include "utils/UiMetrics.h"
 
 #include <QEvent>
 #include <QHBoxLayout>
@@ -27,12 +28,8 @@ namespace {
 
 // 好友与联机大厅同步间隔：好友开房后最多半分钟内出现在首页
 constexpr int kPollIntervalMs = 30000;
-// 首页这一栏最多摆多少张好友卡片，其余的去好友页看
-constexpr int kMaxCards = 12;
-// 卡片理想宽度：容器够宽时一排多摆几张，窄窗口自动减少列数
-constexpr int kIdealCardWidth = 240;
-// 卡片之间 / 行之间的间距
-constexpr int kCardSpacing = 12;
+// 卡片宽度 / 间距 / 列数来自 UiMetrics::kHomeStrip*：与首页最近游玩、热门帖卡片同宽，
+// 且一栏只摆一行（一行能放几张就显示几张），其余的去好友页看
 
 QString friendDisplayName(const ForumFriendInfo &info)
 {
@@ -123,10 +120,12 @@ void HomeFriendsPanel::buildUi()
 
     root->addLayout(header);
 
-    // ── 好友卡片流：按宽度自动换行分列 ──
+    // ── 好友卡片流：按宽度算出一行摆几张，只摆一行 ──
     m_listHost = new QWidget(this);
     m_listHost->setObjectName(QStringLiteral("homeFriendsListHost"));
-    m_listLayout = new FlowLayout(m_listHost, 0, kCardSpacing, kCardSpacing);
+    m_listLayout = new FlowLayout(m_listHost, 0,
+                                  UiMetrics::kHomeStripSpacing,
+                                  UiMetrics::kHomeStripSpacing);
     m_listLayout->setContentsMargins(0, 0, 0, 0);
     m_listHost->installEventFilter(this);
     root->addWidget(m_listHost);
@@ -356,15 +355,12 @@ void HomeFriendsPanel::rebuildHeader()
 
 int HomeFriendsPanel::calculateCardWidth() const
 {
-    const int availW = m_listHost ? m_listHost->width() : 0;
-    if (availW <= 0)
-        return kIdealCardWidth;
+    return UiMetrics::homeStripCardWidth(calculateColumns());
+}
 
-    // 一排能摆几张：宽窗口最多 6 张，窄窗口自动减到 1 张
-    int cols = (availW + kCardSpacing) / (kIdealCardWidth + kCardSpacing);
-    cols = qBound(1, cols, 6);
-    const int cardW = (availW - (cols - 1) * kCardSpacing) / cols;
-    return qMax(cardW, 160);
+int HomeFriendsPanel::calculateColumns() const
+{
+    return UiMetrics::homeStripColumns(m_listHost ? m_listHost->width() : 0);
 }
 
 void HomeFriendsPanel::clearCards()
@@ -583,7 +579,7 @@ void HomeFriendsPanel::render()
                          return false;
                      });
 
-    const int count = qMin(ordered.size(), kMaxCards);
+    const int count = qMin(ordered.size(), calculateColumns());
     for (int i = 0; i < count; ++i)
     {
         const ForumFriendInfo &info = ordered[i];

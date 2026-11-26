@@ -15,16 +15,19 @@
 #include "components/ForumKit.h"
 #include "components/ForumPostBrowser.h"
 #include "components/MasonryContentCard.h"
+#include "components/PlayerCountChart.h"
 #include "components/QuizDialog.h"
 #include "components/ShareToFriendDialog.h"
 #include "layouts/FlowLayout.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ForumImageStore.h"
+#include "utils/ForumPlayerStatsService.h"
 #include "utils/IconHelper.h"
 #include "utils/Lobby/LobbyInstanceMatcher.h"
 #include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
 #include "utils/TouchScroll.h"
+#include "utils/links/LinkRouter.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -590,6 +593,19 @@ MultiplayerLobbyDetailPage::MultiplayerLobbyDetailPage(QWidget *parent)
     });
     m_commentsTimer->start();
 
+    // 人数曲线走慢一点的时钟：定期补一次历史 + 上报一次当前人数。
+    // 房间数据每 30 秒推一次只顺带触发上报（有节流），曲线不会跟着每 30 秒重排
+    m_statsTimer = new QTimer(this);
+    m_statsTimer->setInterval(90000);
+    connect(m_statsTimer, &QTimer::timeout, this, [this]() {
+        if (!isVisible() || m_room.id <= 0)
+            return;
+        if (m_room.isOnline())
+            reportStatsSample(false);
+        requestStatsHistory(false);
+    });
+    m_statsTimer->start();
+
     applyStyle();
     updateContent();
 }
@@ -714,8 +730,8 @@ void MultiplayerLobbyDetailPage::buildUi()
     m_introBrowser->setCompactMode(true);
     connect(m_introBrowser, &ForumPostBrowser::imageClicked, this,
             [this](const QString &path) { ForumPostBrowser::showImagePreview(path, this); });
-    connect(m_introBrowser, &ForumPostBrowser::linkClicked, this, [](const QUrl &url) {
-        QDesktopServices::openUrl(url);
+    connect(m_introBrowser, &ForumPostBrowser::linkClicked, this, [this](const QUrl &url) {
+        LinkRouter::instance()->open(url, this);
     });
     introLayout->addWidget(m_introBrowser);
 
@@ -837,7 +853,7 @@ void MultiplayerLobbyDetailPage::buildUi()
     connect(m_packButton, &QPushButton::clicked, this, [this]() {
         const QString url = m_room.modpackUrl.trimmed();
         if (!url.isEmpty())
-            QDesktopServices::openUrl(QUrl(url));
+            LinkRouter::instance()->open(QUrl(url, QUrl::TolerantMode), this);
     });
     packLayout->addWidget(m_packButton, 0, Qt::AlignLeft);
     m_leftColumn->addWidget(m_modpackCard);
@@ -947,6 +963,26 @@ void MultiplayerLobbyDetailPage::buildUi()
     playersLayout->addWidget(m_playersHost);
 
     m_rightColumn->addWidget(m_playersCard);
+
+    // ---- 右栏：人数统计（房间里在线人数的折线图，数据和所有打开过详情页的人共用） ----
+    QVBoxLayout *statsLayout = nullptr;
+    m_statsCard = makeSectionCard(m_body, tr("人数统计"), &statsLayout);
+
+    m_statsValue = new QLabel(m_statsCard);
+    m_statsValue->setObjectName(QStringLiteral("mlDetailValue"));
+    statsLayout->addWidget(m_statsValue);
+
+    m_statsHint = new QLabel(m_statsCard);
+    m_statsHint->setObjectName(QStringLiteral("mlDetailMuted"));
+    m_statsHint->setWordWrap(true);
+    statsLayout->addWidget(m_statsHint);
+
+    m_statsChart = new PlayerCountChart(m_statsCard);
+    m_statsChart->setMinimumHeight(150);
+    m_statsChart->setEmptyText(tr("还没有人数记录，过几分钟再来看看"));
+    statsLayout->addWidget(m_statsChart);
+
+    m_rightColumn->addWidget(m_statsCard);
 
     QVBoxLayout *infoLayout = nullptr;
     m_infoCard = makeSectionCard(m_body, tr("房间信息"), &infoLayout);
@@ -1263,8 +1299,11 @@ void MultiplayerLobbyDetailPage::applyStyle()
 
 void MultiplayerLobbyDetailPage::setRoom(const ForumLobbyRoom &room)
 {
+    const bool roomChanged = (room.id != m_room.id);
     const QString signature = signatureFor(room);
     m_room = room;
+    // 房间数据到了就顺手维护人数统计卡（换房间清空重拉；同一房间变化时上报一次，有节流）
+    updateStatsRoom(roomChanged);
     if (signature == m_contentSignature)
         return;
     m_contentSignature = signature;
@@ -1738,6 +1777,116 @@ void MultiplayerLobbyDetailPage::updatePlayers()
         m_playersHost->layout()->addWidget(
             makePlayerChip(m_playersHost, player, isSelf));
     }
+}
+
+void MultiplayerLobbyDetailPage::updateStatsRoom(bool roomChanged)
+{
+    if (!m_statsCard || !m_statsChart)
+        return;
+
+    if (roomChanged)
+    {
+        // 换房间：旧曲线立刻清掉，免得把上一个房间的人数画到新房间里
+        m_statsRoomId = m_room.id;
+        m_statsFetching = false;
+        m_statsLastFetchMs = 0;
+        m_statsLastReportMs = 0;
+        m_statsChart->clear();
+        m_statsChart->setCapacity(qMax(1, m_room.maxPlayers));
+        if (m_statsValue)
+            m_statsValue->setText(tr("正在读取人数记录…"));
+        if (m_statsHint)
+            m_statsHint->setText(
+                tr("最近 6 小时的人数变化，由打开过这个房间详情的人共同记录。"));
+        if (m_room.id > 0 && m_room.isOnline())
+            requestStatsHistory(true);
+    }
+
+    if (!m_statsValue)
+        return;
+    if (m_room.id <= 0)
+    {
+        m_statsValue->setText(tr("还没有选中房间"));
+        return;
+    }
+    if (!m_room.isOnline())
+    {
+        m_statsValue->setText(tr("房间已下架"));
+        if (m_statsHint)
+            m_statsHint->setText(tr("下面是房间还在线时留下的人数记录。"));
+        return;
+    }
+
+    const int count = m_room.players.size();
+    const int limit = qMax(1, m_room.maxPlayers);
+    m_statsValue->setText(tr("现在 %1 / %2 人").arg(count).arg(limit));
+    reportStatsSample(false);
+}
+
+void MultiplayerLobbyDetailPage::reportStatsSample(bool force)
+{
+    if (m_room.id <= 0 || !m_room.isOnline() || !isVisible())
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!force && m_statsLastReportMs > 0 && nowMs - m_statsLastReportMs < 60000)
+        return;
+    m_statsLastReportMs = nowMs;
+    // 在线人数用「正在游玩」的人数：房主 + 已进游戏且还在上报的玩家
+    ForumPlayerStatsService::instance()->reportLobby(m_room.id, m_room.players.size());
+}
+
+void MultiplayerLobbyDetailPage::requestStatsHistory(bool force)
+{
+    if (m_room.id <= 0 || !m_statsChart || m_statsFetching)
+        return;
+    if (!force && !isVisible())
+        return;
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!force && m_statsLastFetchMs > 0 && nowMs - m_statsLastFetchMs < 120000)
+        return;
+
+    m_statsFetching = true;
+    m_statsLastFetchMs = nowMs;
+    const int roomId = m_room.id;
+    ForumPlayerStatsService::instance()->fetchLobby(
+        roomId, 6,
+        [this, roomId, nowMs](const PlayerStatSeries &series) {
+            m_statsFetching = false;
+            if (m_room.id != roomId || !m_statsChart)
+                return; // 已经换房间了，丢弃过期结果
+            QVector<PlayerCountChart::Point> points;
+            points.reserve(series.points.size());
+            for (const PlayerStatPoint &point : series.points)
+            {
+                PlayerCountChart::Point item;
+                item.t = point.t;
+                item.online = point.online;
+                item.maxPlayers = point.maxPlayers;
+                points.append(item);
+            }
+            const qint64 nowSec = nowMs / 1000;
+            // 房间一般只活一会儿：数据没铺满 6 小时时按实际范围铺开，别挤在右边一小条
+            qint64 fromSec = nowSec - 6 * 3600;
+            if (!points.isEmpty() && points.first().t > fromSec + 900)
+                fromSec = qMax<qint64>(0, points.first().t - 300);
+            m_statsChart->setPoints(points, fromSec, nowSec);
+            m_statsChart->setCapacity(qMax(1, m_room.maxPlayers));
+            if (!m_statsHint)
+                return;
+            if (points.isEmpty())
+                m_statsHint->setText(tr("还没有人记录过这个房间的人数，过几分钟再来看看。"));
+            else
+                m_statsHint->setText(tr("最近 6 小时人数变化 · 悬停看每个时刻"));
+        },
+        [this, roomId]() {
+            m_statsFetching = false;
+            if (m_room.id != roomId || !m_statsHint)
+                return;
+            if (m_statsChart && !m_statsChart->hasData())
+                m_statsHint->setText(tr("读取人数记录失败，稍后会自动重试。"));
+        });
 }
 
 void MultiplayerLobbyDetailPage::updateInfoRows()
@@ -2218,6 +2367,13 @@ void MultiplayerLobbyDetailPage::showEvent(QShowEvent *event)
     // 从列表再次点进同一个房间时也刷新一次，不然看到的是上次的评论
     if (m_room.id > 0 && m_room.isOnline() && !m_commentsLoading)
         requestComments();
+    // 人数曲线：进来先报一次当前人数、拉一次历史，离开再回来也能看到刚发生的变化
+    if (m_room.id > 0)
+    {
+        m_statsLastReportMs = 0;
+        reportStatsSample(false);
+        requestStatsHistory(true);
+    }
 }
 
 void MultiplayerLobbyDetailPage::copyTarget()
@@ -2348,6 +2504,12 @@ void MultiplayerLobbyDetailPage::updateResponsiveLayout()
                 m_rightColumn->removeWidget(m_playersCard);
                 m_leftColumn->insertWidget(1, m_playersCard);
             }
+            // 人数统计紧跟在「正在游玩」后面：先看谁在玩，再看最近的人数走势
+            if (m_statsCard)
+            {
+                m_rightColumn->removeWidget(m_statsCard);
+                m_leftColumn->insertWidget(2, m_statsCard);
+            }
         }
         m_heroBanner->setFixedHeight(232);
         if (auto *content = m_heroBanner->contentLayout())
@@ -2369,6 +2531,11 @@ void MultiplayerLobbyDetailPage::updateResponsiveLayout()
             {
                 m_leftColumn->removeWidget(m_playersCard);
                 m_rightColumn->insertWidget(1, m_playersCard);
+            }
+            if (m_statsCard)
+            {
+                m_leftColumn->removeWidget(m_statsCard);
+                m_rightColumn->insertWidget(2, m_statsCard);
             }
         }
         m_heroBanner->setFixedHeight(300);

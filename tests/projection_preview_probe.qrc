@@ -1,0 +1,10 @@
+<!DOCTYPE RCC>
+<!-- 投影预览样式探针专用资源：真实样式表 + 下拉箭头图标 -->
+<RCC version="1.0">
+  <qresource prefix="/styles">
+    <file alias="style.qss">../styles/style.qss</file>
+  </qresource>
+  <qresource prefix="/Images/Icons">
+    <file alias="arrow_down_triangle.svg">../Images/Icons/arrow_down_triangle.svg</file>
+  </qresource>
+</RCC>

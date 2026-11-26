@@ -12,7 +12,9 @@ INCLUDEPATH += $$PWD/../world_map_page_probe/fake $$PWD/../.. $$PWD/../../third_
 
 SOURCES += world_map_stress_probe.cpp \
            ../../pages/WorldMapPage.cpp \
+           ../../utils/WorldMapSignalBridge.cpp \
            ../../utils/WorldMap/WorldMapRenderer.cpp \
+           ../../utils/MapBlockPalette.cpp \
            ../../utils/WorldMap/SeedTerrainRenderer.cpp \
            ../../utils/WorldMap/StructureFinder.cpp \
            ../../utils/WorldMap/StructureIcons.cpp \

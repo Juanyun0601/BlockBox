@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="gad-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#1E40AF"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="84" height="84" rx="20" fill="url(#gad-bg)" stroke="#172554" stroke-width="3"/>
+  <circle cx="48" cy="48" r="22" fill="#FFFFFF" stroke="#1E3A8A" stroke-width="2.5"/>
+  <circle cx="48" cy="48" r="2.8" fill="#1E3A8A"/>
+  <path d="M48 27 L53 45 L48 48 L43 45 Z" fill="#F97316"/>
+  <path d="M48 69 L43 51 L48 48 L53 51 Z" fill="#93C5FD"/>
+  <path d="M27 48 L45 43 L48 48 L45 53 Z" fill="#93C5FD"/>
+  <path d="M69 48 L51 53 L48 48 L51 43 Z" fill="#93C5FD"/>
+  <path d="M34 34 L38 38 M62 34 L58 38 M34 62 L38 58 M62 62 L58 58" stroke="#60A5FA" stroke-width="2" stroke-linecap="round"/>
+</svg>

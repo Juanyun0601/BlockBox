@@ -23,6 +23,9 @@
 
 namespace {
 
+/// 进程内是否已经有一道人机验证弹窗开着（主窗口与 AI 助手共用这一份标记）
+bool sDialogRunning = false;
+
 const char kOkColor[] = "#2f9e44";
 const char kBadColor[] = "#e5484d";
 
@@ -393,8 +396,23 @@ HumanCheckDialog::HumanCheckDialog(QWidget *parent)
     fetchChallenge();
 }
 
+bool HumanCheckDialog::isChecking()
+{
+    return sDialogRunning;
+}
+
 bool HumanCheckDialog::verify(QWidget *parent)
 {
+    // 已经有一道在弹（主窗口 / AI 助手的提前验证）：不再叠第二个
+    if (sDialogRunning)
+        return false;
+
+    struct RunningGuard
+    {
+        RunningGuard() { sDialogRunning = true; }
+        ~RunningGuard() { sDialogRunning = false; }
+    } guard;
+
     HumanCheckDialog dialog(parent);
     return dialog.exec() == QDialog::Accepted;
 }

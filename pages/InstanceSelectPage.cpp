@@ -1122,6 +1122,7 @@ void InstanceSelectPage::onInstanceContextMenu(const QPoint &pos)
     menu.setStyleSheet(m_instanceListWidget->styleSheet());
 
     QAction *launchAction = menu.addAction(tr("启动游戏"));
+    QAction *assistantAction = menu.addAction(tr("打开实例助手"));
     QAction *settingsAction = menu.addAction(tr("实例设置"));
     menu.addSeparator();
     QMenu *categoryMenu = menu.addMenu(tr("移动分类"));
@@ -1139,6 +1140,11 @@ void InstanceSelectPage::onInstanceContextMenu(const QPoint &pos)
     if (chosen == launchAction)
     {
         onLaunchGameClicked(instancePath);
+    }
+    else if (chosen == assistantAction)
+    {
+        // 多实例助手窗口多开：直接打开该实例的助手窗口，不影响当前实例
+        emit openAssistantRequested(instancePath);
     }
     else if (chosen == settingsAction)
     {

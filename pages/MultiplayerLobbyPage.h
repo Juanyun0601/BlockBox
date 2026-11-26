@@ -74,7 +74,7 @@ private:
     void applyStyle();
     void updateResponsiveLayout();
     void requestRooms();
-    /** 两个来源都返回（或都失败）后聚合成一份列表；还有来源没回来时直接返回 */
+    /** 论坛大厅的请求返回（或失败）后刷新列表；请求还没回来时直接返回 */
     void onSourceFetchSettled();
     void renderRooms();
     /** 清空房间卡与当前布局（列表 / 瀑布流 / 空状态共用） */
@@ -130,22 +130,17 @@ private:
 
     QVector<ForumLobbyRoom> m_rooms;
     int m_viewMode = 1;   ///< 与 ContentViewSwitch::ViewMode 对齐（0 列表 / 1 瀑布流）
-    /** 房间来源：0 全部源 / 1 方块盒子源 / 2 红石联机源（记住上次的选择） */
-    int m_source = 0;
     bool m_loading = false;
     bool m_loadedOnce = false;
     bool m_compactLayout = false;
     QString m_errorText;
     int m_total = 0;
 
-    // 双来源聚合：一次刷新里论坛源和红石源各自拉一份，都回来后再合成列表
+    // 论坛大厅本轮拉取结果：成功时覆盖上面的列表，失败时保留上一轮
     QVector<ForumLobbyRoom> m_forumRooms;  ///< 方块盒子源（论坛大厅）本轮结果
-    QVector<ForumLobbyRoom> m_hongshiRooms; ///< 红石联机源本轮结果（已转成大厅房间结构）
     int m_forumTotal = 0;
     bool m_forumPending = false;
-    bool m_hongshiPending = false;
     QString m_forumError;
-    QString m_hongshiError;
     int m_fetchGen = 0;    ///< 刷新轮次：旧一轮的回调全部作废
 
     // 陶瓦核心：等进程就绪 / 端口转发完成后再启动游戏

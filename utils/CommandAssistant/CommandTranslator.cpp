@@ -18,6 +18,8 @@
 
 #include "CommandTranslator.h"
 
+#include <QHash>
+#include <QRegularExpression>
 #include <QtGlobal>
 
 namespace {
@@ -45,6 +47,134 @@ bool isSelectorKeyword(const QString &value)
         }
     }
     return false;
+}
+
+/**
+ * @brief 是否是带命名空间的资源 ID（minecraft:diamond、modid:item 等）
+ *
+ * 这类值本来就是游戏认识的写法，不需要再查中文表，也不该报「未知物品」。
+ */
+bool looksLikeNamespacedId(const QString &value)
+{
+    const int colon = value.indexOf(QLatin1Char(':'));
+    if (colon <= 0 || colon >= value.size() - 1)
+    {
+        return false;
+    }
+    for (int i = 0; i < colon; ++i)
+    {
+        const QChar ch = value.at(i);
+        if (!ch.isLetterOrNumber() && ch != QLatin1Char('_') && ch != QLatin1Char('-')
+            && ch != QLatin1Char('.'))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief 常见中文枚举值 → 指令数据库里的英文候选值
+ *
+ * 数据库的 enum 候选只存英文（survival / clear / destroy…），用户输入的中文值
+ * 需要先映射成英文再和候选比对，否则会被当成非法值直接拼进指令。
+ */
+QString chineseEnumAlias(const QString &value)
+{
+    static const QHash<QString, QString> aliases = {
+        // 游戏模式
+        {QStringLiteral("生存"), QStringLiteral("survival")},
+        {QStringLiteral("生存模式"), QStringLiteral("survival")},
+        {QStringLiteral("创造"), QStringLiteral("creative")},
+        {QStringLiteral("创造模式"), QStringLiteral("creative")},
+        {QStringLiteral("冒险"), QStringLiteral("adventure")},
+        {QStringLiteral("冒险模式"), QStringLiteral("adventure")},
+        {QStringLiteral("旁观"), QStringLiteral("spectator")},
+        {QStringLiteral("观察"), QStringLiteral("spectator")},
+        {QStringLiteral("观察者"), QStringLiteral("spectator")},
+        // 天气
+        {QStringLiteral("晴"), QStringLiteral("clear")},
+        {QStringLiteral("晴天"), QStringLiteral("clear")},
+        {QStringLiteral("晴朗"), QStringLiteral("clear")},
+        {QStringLiteral("放晴"), QStringLiteral("clear")},
+        {QStringLiteral("雨"), QStringLiteral("rain")},
+        {QStringLiteral("下雨"), QStringLiteral("rain")},
+        {QStringLiteral("雨天"), QStringLiteral("rain")},
+        {QStringLiteral("雷"), QStringLiteral("thunder")},
+        {QStringLiteral("雷暴"), QStringLiteral("thunder")},
+        {QStringLiteral("雷雨"), QStringLiteral("thunder")},
+        {QStringLiteral("打雷"), QStringLiteral("thunder")},
+        // 难度
+        {QStringLiteral("和平"), QStringLiteral("peaceful")},
+        {QStringLiteral("简单"), QStringLiteral("easy")},
+        {QStringLiteral("普通"), QStringLiteral("normal")},
+        {QStringLiteral("正常"), QStringLiteral("normal")},
+        {QStringLiteral("困难"), QStringLiteral("hard")},
+        // 时间操作
+        {QStringLiteral("设置"), QStringLiteral("set")},
+        {QStringLiteral("设定"), QStringLiteral("set")},
+        {QStringLiteral("设为"), QStringLiteral("set")},
+        {QStringLiteral("增加"), QStringLiteral("add")},
+        {QStringLiteral("添加"), QStringLiteral("add")},
+        {QStringLiteral("查询"), QStringLiteral("query")},
+        {QStringLiteral("查看"), QStringLiteral("query")},
+        // 放置 / 填充 / 克隆模式
+        {QStringLiteral("破坏"), QStringLiteral("destroy")},
+        {QStringLiteral("保留"), QStringLiteral("keep")},
+        {QStringLiteral("替换"), QStringLiteral("replace")},
+        {QStringLiteral("空心"), QStringLiteral("hollow")},
+        {QStringLiteral("轮廓"), QStringLiteral("outline")},
+        {QStringLiteral("遮罩"), QStringLiteral("masked")},
+        // 布尔值
+        {QStringLiteral("真"), QStringLiteral("true")},
+        {QStringLiteral("假"), QStringLiteral("false")},
+        {QStringLiteral("开启"), QStringLiteral("true")},
+        {QStringLiteral("关闭"), QStringLiteral("false")},
+        // 标题动作
+        {QStringLiteral("标题"), QStringLiteral("title")},
+        {QStringLiteral("副标题"), QStringLiteral("subtitle")},
+        {QStringLiteral("动作栏"), QStringLiteral("actionbar")},
+        {QStringLiteral("清空"), QStringLiteral("clear")},
+        {QStringLiteral("重置"), QStringLiteral("reset")},
+    };
+    return aliases.value(value.trimmed());
+}
+
+/**
+ * @brief 在候选列表里按忽略大小写查值，命中时返回候选原始写法
+ */
+QString canonicalCandidate(const QStringList &candidates, const QString &value)
+{
+    for (const QString &candidate : candidates)
+    {
+        if (candidate.compare(value, Qt::CaseInsensitive) == 0)
+        {
+            return candidate;
+        }
+    }
+    return QString();
+}
+
+/**
+ * @brief 时段中文 → /time 的英文值（白天 / 夜晚 / 正午 / 午夜…）
+ */
+QString timeOfDayAlias(const QString &value)
+{
+    static const QHash<QString, QString> aliases = {
+        {QStringLiteral("白天"), QStringLiteral("day")},
+        {QStringLiteral("日间"), QStringLiteral("day")},
+        {QStringLiteral("早上"), QStringLiteral("day")},
+        {QStringLiteral("日出"), QStringLiteral("day")},
+        {QStringLiteral("夜晚"), QStringLiteral("night")},
+        {QStringLiteral("晚上"), QStringLiteral("night")},
+        {QStringLiteral("夜间"), QStringLiteral("night")},
+        {QStringLiteral("日落"), QStringLiteral("night")},
+        {QStringLiteral("正午"), QStringLiteral("noon")},
+        {QStringLiteral("中午"), QStringLiteral("noon")},
+        {QStringLiteral("午夜"), QStringLiteral("midnight")},
+        {QStringLiteral("半夜"), QStringLiteral("midnight")},
+    };
+    return aliases.value(value.trimmed());
 }
 
 } // namespace
@@ -99,7 +229,39 @@ TranslateResult CommandTranslator::translate(const QString &input, const Command
         result.unavailableReason = checkAvailability(*cmd, ctx);
 
         QStringList warnings;
-        const QStringList translatedArgs = translateParams(*cmd, parts.mid(1), warnings);
+
+        // 「时间 正午」「时间 设置 夜晚」：补全省略的 set，并把时段换成英文值
+        QStringList args = parts.mid(1);
+        if (cmd->name == QLatin1String("time") && !args.isEmpty())
+        {
+            const QString firstTimeValue = timeOfDayAlias(args.first());
+            if (!firstTimeValue.isEmpty())
+            {
+                args = QStringList{QStringLiteral("set"), firstTimeValue} + args.mid(1);
+            }
+            else if (args.size() >= 2)
+            {
+                const QString secondTimeValue = timeOfDayAlias(args.at(1));
+                if (!secondTimeValue.isEmpty())
+                {
+                    args[1] = secondTimeValue;
+                }
+            }
+        }
+
+        // 「经验 10」：省略操作、目标时按「增加给自己」处理
+        if ((cmd->name == QLatin1String("xp") || cmd->name == QLatin1String("experience"))
+            && args.size() == 1)
+        {
+            bool isNumber = false;
+            args.first().toInt(&isNumber);
+            if (isNumber)
+            {
+                args = QStringList{QStringLiteral("add"), QStringLiteral("@s"), args.first()};
+            }
+        }
+
+        const QStringList translatedArgs = translateParams(*cmd, args, warnings);
         result.warnings = warnings;
 
         QString english = QStringLiteral("/") + cmd->name;
@@ -168,6 +330,7 @@ QStringList CommandTranslator::translateParams(const CommandInfo &cmd, const QSt
 {
     QStringList result;
     int argIndex = 0;
+    bool aborted = false;
 
     for (const ParamInfo &param : cmd.params)
     {
@@ -184,6 +347,7 @@ QStringList CommandTranslator::translateParams(const CommandInfo &cmd, const QSt
             else if (param.required)
             {
                 warnings.append(QStringLiteral("缺少必填参数：%1").arg(param.name));
+                aborted = true;
                 break;
             }
             // 可选 pos 缺失则跳过
@@ -224,6 +388,7 @@ QStringList CommandTranslator::translateParams(const CommandInfo &cmd, const QSt
             if (param.required)
             {
                 warnings.append(QStringLiteral("缺少必填参数：%1").arg(param.name));
+                aborted = true;
                 break;
             }
             else if (param.defaultValue)
@@ -232,6 +397,21 @@ QStringList CommandTranslator::translateParams(const CommandInfo &cmd, const QSt
             }
             // else 跳过可选参数
         }
+    }
+
+    // 参数表已全部走完但还有剩余词：最后一个参数是字符串类时整句拼回去
+    // （say / execute / title 这类消息体本来就是多词的，不能只留第一个词）
+    if (!aborted && argIndex < args.size() && !result.isEmpty() && !cmd.params.isEmpty()
+        && cmd.params.last().type == QStringLiteral("string"))
+    {
+        result.last() += QLatin1Char(' ') + args.mid(argIndex).join(QLatin1Char(' '));
+        argIndex = args.size();
+    }
+
+    if (argIndex < args.size())
+    {
+        warnings.append(QStringLiteral("多余的参数没有用到：%1")
+                            .arg(args.mid(argIndex).join(QLatin1Char(' '))));
     }
 
     return result;
@@ -263,6 +443,10 @@ QString CommandTranslator::translateParam(const ParamInfo &paramInfo, const QStr
 
     if (type == QStringLiteral("item"))
     {
+        if (looksLikeNamespacedId(value))
+        {
+            return value;
+        }
         auto item = m_db->findItemByChinese(value);
         if (item)
         {
@@ -280,6 +464,10 @@ QString CommandTranslator::translateParam(const ParamInfo &paramInfo, const QStr
 
     if (type == QStringLiteral("entity"))
     {
+        if (looksLikeNamespacedId(value))
+        {
+            return value;
+        }
         auto entity = m_db->findEntityByChinese(value);
         if (entity)
         {
@@ -297,6 +485,10 @@ QString CommandTranslator::translateParam(const ParamInfo &paramInfo, const QStr
 
     if (type == QStringLiteral("effect"))
     {
+        if (looksLikeNamespacedId(value))
+        {
+            return value;
+        }
         auto effect = m_db->findEffectByChinese(value);
         if (effect)
         {
@@ -314,6 +506,10 @@ QString CommandTranslator::translateParam(const ParamInfo &paramInfo, const QStr
 
     if (type == QStringLiteral("enchantment"))
     {
+        if (looksLikeNamespacedId(value))
+        {
+            return value;
+        }
         auto enchant = m_db->findEnchantmentByChinese(value);
         if (enchant)
         {
@@ -331,12 +527,17 @@ QString CommandTranslator::translateParam(const ParamInfo &paramInfo, const QStr
 
     if (type == QStringLiteral("enum"))
     {
-        for (const QString &candidate : paramInfo.candidates)
+        // 1. 用户直接写了英文候选值
+        const QString direct = canonicalCandidate(paramInfo.candidates, value);
+        if (!direct.isEmpty())
         {
-            if (candidate.compare(value, Qt::CaseInsensitive) == 0)
-            {
-                return candidate;
-            }
+            return direct;
+        }
+        // 2. 中文说法（创造 / 晴 / 破坏…）映射成英文后再和候选比对
+        const QString aliased = canonicalCandidate(paramInfo.candidates, chineseEnumAlias(value));
+        if (!aliased.isEmpty())
+        {
+            return aliased;
         }
         warning = QStringLiteral("非法枚举值：%1（候选：%2）")
                       .arg(value, paramInfo.candidates.join(QStringLiteral(", ")));
@@ -344,7 +545,28 @@ QString CommandTranslator::translateParam(const ParamInfo &paramInfo, const QStr
         return value;
     }
 
-    // int / float / string / nbt / block — 原样返回
+    if (type == QStringLiteral("block"))
+    {
+        // 方块和物品共用同一套 ID：石头 / 石头砖 等先在物品表里找，
+        // 让 /setblock、/fill 这类指令也能吃中文方块名。
+        if (looksLikeNamespacedId(value))
+        {
+            return value;
+        }
+        if (auto block = m_db->findItemByChinese(value))
+        {
+            return block->english;
+        }
+        if (auto block = m_db->findItemByEnglish(value))
+        {
+            return block->english;
+        }
+        warning = QStringLiteral("未知方块：%1").arg(value);
+        ok = false;
+        return value;
+    }
+
+    // int / float / string / nbt — 原样返回
     return value;
 }
 
@@ -494,6 +716,26 @@ TranslateResult CommandTranslator::naturalLanguageFallback(const QString &input,
         return bestEnglish;
     };
 
+    // 整句里显式写出的目标选择器（@a / @p[name=…] 等）
+    auto extractSelector = [](const QString &text) -> QString {
+        static const QRegularExpression selectorRe(QStringLiteral("@[praens](?:\\[[^\\]]*\\])?"));
+        const QRegularExpressionMatch match = selectorRe.match(text);
+        return match.hasMatch() ? match.captured(0) : QString();
+    };
+
+    // 整句里显式写出的坐标（普通数字或 ~ / ^ 相对坐标）
+    auto extractCoordinates = [](const QString &text) -> QStringList {
+        static const QRegularExpression coordRe(
+            QStringLiteral("(?:^|\\s)([~^]?(?:-?\\d+(?:\\.\\d+)?|~))(?=\\s|$)"));
+        QStringList coords;
+        auto it = coordRe.globalMatch(text);
+        while (it.hasNext())
+        {
+            coords.append(it.next().captured(1));
+        }
+        return coords;
+    };
+
     // 注意：先检查"效果"，避免与"给"冲突（如"给我一个速度效果"应为 effect 而非 give）
     if (input.contains(QStringLiteral("效果")))
     {
@@ -521,9 +763,16 @@ TranslateResult CommandTranslator::naturalLanguageFallback(const QString &input,
 
     if (input.contains(QStringLiteral("传送")) || input.contains(QStringLiteral("瞬移")))
     {
-        // 默认目标 @p（用户可在转换后手动修改）
+        // 保留用户写出来的目标和坐标，没写才用 @p 兜底
         QStringList args;
-        args << QStringLiteral("@p");
+        const QString target = extractSelector(input);
+        args << (target.isEmpty() ? QStringLiteral("@p") : target);
+        const QStringList coords = extractCoordinates(input);
+        const int coordCount = qMin(3, static_cast<int>(coords.size()));
+        for (int i = 0; i < coordCount; ++i)
+        {
+            args << coords.at(i);
+        }
         return buildResult(QStringLiteral("teleport"), args);
     }
 
@@ -561,6 +810,11 @@ TranslateResult CommandTranslator::naturalLanguageFallback(const QString &input,
         if (!mode.isEmpty())
         {
             args << mode;
+            const QString target = extractSelector(input);
+            if (!target.isEmpty())
+            {
+                args << target;
+            }
         }
         return buildResult(QStringLiteral("gamemode"), args);
     }

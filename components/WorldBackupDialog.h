@@ -7,13 +7,14 @@
  * 单个世界的备份管理界面：
  *   - 备份列表（时间、原始大小、压缩大小、自动/手动标记、备注）
  *   - 一键恢复到任意备份点（恢复前自动为当前世界创建快照）
- *   - 手动创建备份 / 删除备份 / 保留策略
+ *   - 手动创建备份（可填备注）/ 删除备份 / 保留策略
  *   - 自动备份设置（开关、频率：每次启动 / 每小时 / 每天、保留数量）
  */
 #ifndef WORLDBACKUPDIALOG_H
 #define WORLDBACKUPDIALOG_H
 
 #include <QDialog>
+#include <QFutureWatcher>
 #include <QList>
 #include <QString>
 
@@ -23,6 +24,7 @@
 class QCheckBox;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QPushButton;
 class QScrollArea;
 class QSpinBox;
@@ -48,6 +50,8 @@ private:
 
     void initUI();
     void reloadBackups();
+    /** 异步统计当前世界大小，避免大存档把弹窗卡住 */
+    void refreshWorldSize();
     void refreshSummary();
     QWidget *createBackupRow(const WorldBackupInfo &info);
     void createBackup();
@@ -56,17 +60,23 @@ private:
     void openBackupFolder();
     void setBusy(bool busy, const QString &message = QString());
     void saveAutoSettings();
+    void updateAutoControlsEnabled();
 
     QString m_instancePath; ///< 实例路径
     QString m_worldName;    ///< 世界目录名
     QList<WorldBackupInfo> m_backups; ///< 当前备份列表（新→旧）
+    qint64 m_worldSize = -1;          ///< 当前世界大小（-1 = 正在统计）
+    qint64 m_backupTotal = 0;         ///< 全部备份占用空间
+    int m_sizeToken = 0;              ///< 世界大小统计的代号（换世界/重开时丢弃旧结果）
 
     // UI
     QLabel *m_summaryLabel = nullptr;
     QLabel *m_statusLabel = nullptr;
+    QLabel *m_hintLabel = nullptr;
     QVBoxLayout *m_listLayout = nullptr;
     QScrollArea *m_scrollArea = nullptr;
     QLabel *m_emptyLabel = nullptr;
+    QLineEdit *m_noteEdit = nullptr;
     QPushButton *m_createBtn = nullptr;
     QPushButton *m_folderBtn = nullptr;
     QPushButton *m_closeBtn = nullptr;

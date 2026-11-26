@@ -26,6 +26,7 @@
 
 #include <QCoreApplication>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QSurfaceFormat>
 #include <QVector4D>
 #include <QWheelEvent>
@@ -220,6 +221,78 @@ void Skin3DWidget::setBackgroundColor(const QColor& color)
   update();
 }
 
+void Skin3DWidget::setCape(const QImage& image)
+{
+  if (image.isNull())
+  {
+    clearCape();
+    return;
+  }
+
+  // 规范成披风标准尺寸 64×32：纹理布局就是标准披风的 Box UV
+  QImage cape = image;
+  if (cape.width() < 64 || cape.height() < 32)
+    return;
+  if (cape.width() != 64 || cape.height() != 32)
+  {
+    if (cape.width() % 64 == 0)
+    {
+      const int factor = cape.width() / 64;
+      if (cape.height() % factor == 0 && cape.height() / factor >= 32)
+        cape = cape.scaled(64, cape.height() / factor,
+                           Qt::IgnoreAspectRatio, Qt::FastTransformation);
+    }
+    if (cape.width() != 64)
+      cape = cape.scaledToWidth(64, Qt::FastTransformation);
+    if (cape.height() < 32)
+      return;
+    if (cape.height() > 32)
+      cape = cape.copy(0, 0, 64, 32);
+  }
+
+  m_pendingCape = cape;
+  m_capeVisible = true;
+  m_capeDirty = true;
+
+  if (context() && context()->isValid() && m_program.isLinked())
+  {
+    makeCurrent();
+    uploadCapeTexture(cape);
+    buildCapeGeometry();
+    m_capeDirty = false;
+    doneCurrent();
+  }
+
+  if (isVisible())
+    repaint();
+  else
+    update();
+}
+
+void Skin3DWidget::clearCape()
+{
+  if (!m_capeVisible && m_pendingCape.isNull() && !m_capeTexture)
+    return;
+
+  m_capeVisible = false;
+  m_capeDirty = false;
+  m_pendingCape = QImage();
+
+  if (context() && context()->isValid())
+  {
+    makeCurrent();
+    if (m_capeTexture)
+    {
+      m_capeTexture->destroy();
+      delete m_capeTexture;
+      m_capeTexture = nullptr;
+    }
+    m_cape.inner.destroy();
+    doneCurrent();
+  }
+  update();
+}
+
 void Skin3DWidget::setBackgroundCornerRadius(qreal radius)
 {
   m_bgCornerRadius = radius;
@@ -231,6 +304,8 @@ void Skin3DWidget::setBackgroundGradient(const QColor& top, const QColor& bottom
   m_bgImageEnabled = false;
   m_gradientTop = top;
   m_gradientBottom = bottom;
+  // 圆角外的清屏色跟渐变底部一致，避免预览四周出现一圈黑边
+  m_background = bottom;
   m_bgGradient = true;
   m_bgDirty = true;
   update();
@@ -312,12 +387,27 @@ void Skin3DWidget::rotateView(float dTheta, float dPhi)
   // 与鼠标拖拽同链路：增量叠加到目标角，由动画定时器平滑跟随
   m_targetTheta += dTheta;
   m_targetPhi += dPhi;
-  m_targetPhi = qBound(-float(M_PI) / 3.0f, m_targetPhi, float(M_PI) / 3.0f);
+  m_targetPhi = qBound(-1.45f, m_targetPhi, 1.45f);
   m_velTheta = 0.0f;
   m_velPhi = 0.0f;
   m_inertiaActive = false;
   if (!m_animTimer.isActive())
     m_animTimer.start();
+  update();
+}
+
+void Skin3DWidget::setViewAngles(float theta, float phi, float radius)
+{
+  m_targetTheta = theta;
+  m_targetPhi = qBound(-1.45f, phi, 1.45f);
+  m_targetRadius = qBound(1.0f, radius, 8.0f);
+  // 立即生效，避免没有动画帧时不收敛
+  m_theta = m_targetTheta;
+  m_phi = m_targetPhi;
+  m_radius = m_targetRadius;
+  m_velTheta = 0.0f;
+  m_velPhi = 0.0f;
+  m_inertiaActive = false;
   update();
 }
 
@@ -859,6 +949,14 @@ void Skin3DWidget::initializeGL()
     m_skinDirty = false;
   }
 
+  // 上传待处理的披风纹理并建网格
+  if (m_capeVisible && !m_pendingCape.isNull())
+  {
+    uploadCapeTexture(m_pendingCape);
+    buildCapeGeometry();
+    m_capeDirty = false;
+  }
+
   emit ready();
 
   // 启动动画定时器（自动旋转或非待机动作时）
@@ -882,6 +980,7 @@ void Skin3DWidget::showEvent(QShowEvent* e)
   const bool needsTimer = m_autoRotate ||
                           m_inertiaActive ||
                           m_skinDirty ||
+                          m_capeDirty ||
                           (m_pose != SkinPose::Idle) ||
                           // Paint 模式（3D 编辑器）：持续渲染循环（参考 skinview3d），
                           // 进入显示状态即启动，保证模型一定被 paintGL 绘制
@@ -918,6 +1017,13 @@ void Skin3DWidget::paintGL()
   {
     uploadTexture(m_pendingSkin);
     m_skinDirty = false;
+  }
+  // 披风纹理 / 网格延迟上传（setCape 在 GL 未就绪时被调用）
+  if (m_capeVisible && m_capeDirty && !m_pendingCape.isNull())
+  {
+    uploadCapeTexture(m_pendingCape);
+    buildCapeGeometry();
+    m_capeDirty = false;
   }
 
   // 圆角背景模式：清屏为全透明，背景（含 alpha）由 drawBackground 的圆角矩形绘制，
@@ -963,7 +1069,7 @@ void Skin3DWidget::paintGL()
 
   // 视图矩阵（球面坐标相机）
   QMatrix4x4 view;
-  const float phi = qBound(-float(M_PI) / 3.0f, m_phi, float(M_PI) / 3.0f);
+  const float phi = qBound(-1.45f, m_phi, 1.45f);
   const float sinP = std::sin(phi), cosP = std::cos(phi);
   // 以身体（模型整体）为中心：模型经 rootTransform 平移后世界 Y 范围为 [-1, 1]，
   // 中心在 y=0，相机看向此处使模型在视口内垂直居中
@@ -1032,6 +1138,26 @@ void Skin3DWidget::paintGL()
   renderPart(m_skin.rightLeg, true);
   renderPart(m_skin.leftLeg, true);
 
+  // 披风：单独一张纹理，挂在身体背后（随身体前倾 / 躺平等动作一起转）
+  if (m_capeVisible && m_capeTexture && m_cape.inner.indexCount > 0)
+  {
+    m_capeTexture->bind(0);
+    QMatrix4x4 model = m_skin.rootTransform;
+    model.translate(m_poseRootOffset);
+    model *= bodyFrame;
+    model *= m_cape.partTransform * m_cape.rotation;
+    m_program.setUniformValue("uModel", model);
+    m_program.setUniformValue("uAlphaTest", 0.5f);
+    m_cape.inner.vao.bind();
+    glDrawElements(GL_TRIANGLES, m_cape.inner.indexCount, GL_UNSIGNED_INT, 0);
+    m_cape.inner.vao.release();
+    // 恢复皮肤纹理绑定，避免同帧后续绘制误用披风纹理
+    if (m_texture)
+      m_texture->bind(0);
+  }
+
+  if (m_capeTexture)
+    m_capeTexture->release();
   if (m_texture) m_texture->release();
   m_program.release();
 }
@@ -1443,6 +1569,73 @@ void Skin3DWidget::uploadTexture(const QImage& image)
   m_texture->setWrapMode(QOpenGLTexture::ClampToEdge);
 }
 
+void Skin3DWidget::uploadCapeTexture(const QImage& image)
+{
+  if (m_capeTexture)
+  {
+    m_capeTexture->destroy();
+    delete m_capeTexture;
+    m_capeTexture = nullptr;
+  }
+
+  // 披风图是 64×32，但网格 UV 统一按 64×64 归一化（TEX_SIZE），
+  // 这里把 64×32 贴到 64×64 画布左上角，v / 64 正好落在披风区域
+  QImage src = image;
+  if (src.width() != 64 || src.height() != 32)
+    src = src.scaled(64, 32, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+
+  // 标准披风纹理：外侧设计面在 (1,1)，内侧背面在 (12,1)，左右两侧是
+  // (0,1)/(11,1) 两条 1 像素竖条。本控件的 Box UV 按「模型绕 Y 转 180°」
+  // 的约定，把 +Z 面（角色背后、朝外）映射到 (12,1)，左右也正好相反；
+  // 这里把正/背两块和左右两条对调，保证从背后看到的是披风正面的图案。
+  QImage arranged = src.copy();
+  {
+    QPainter painter(&arranged);
+    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    painter.drawImage(12, 1, src, 1, 1, 10, 16);   // 正面图案 → 朝外的 +Z 面
+    painter.drawImage(1, 1, src, 12, 1, 10, 16);   // 内衬 → 贴身体的 -Z 面
+    painter.drawImage(0, 1, src, 11, 1, 1, 16);    // 右侧条 → +X 面
+    painter.drawImage(11, 1, src, 0, 1, 1, 16);    // 左侧条 → -X 面
+  }
+
+  QImage tex(64, 64, QImage::Format_ARGB32);
+  tex.fill(Qt::transparent);
+  {
+    QPainter painter(&tex);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    painter.drawImage(0, 0, arranged);
+  }
+  if (tex.format() != QImage::Format_RGBA8888)
+    tex = tex.convertToFormat(QImage::Format_RGBA8888);
+
+  m_capeTexture = new QOpenGLTexture(tex);
+  m_capeTexture->setMinificationFilter(QOpenGLTexture::Nearest);
+  m_capeTexture->setMagnificationFilter(QOpenGLTexture::Nearest);
+  m_capeTexture->setWrapMode(QOpenGLTexture::ClampToEdge);
+}
+
+void Skin3DWidget::buildCapeGeometry()
+{
+  m_cape.inner.destroy();
+
+  // 披风是 10×16×1 的薄盒，贴在身体背面：
+  //   x -5..5，y 8..24（从颈部垂下），z 2..3（身体背面在 z=2）
+  // Box UV 偏移 (0,0) 与标准 64×32 披风图完全对应。
+  const float S = 1.0f / 16.0f;
+  CubeSpec spec{-5.0f, 8.0f, 2.0f, 10.0f, 16.0f, 1.0f, 0.0f, 0.0f, 0.0f};
+
+  // 以披风顶部中心 (0, 24, 2.5) 为旋转轴：取下摆稍微离开身体的角度
+  spec.oy -= 24.0f;
+  spec.oz -= 2.5f;
+  buildCubeMesh(m_cape.inner, spec, S);
+
+  m_cape.partTransform.setToIdentity();
+  m_cape.partTransform.translate(0.0f, 24.0f * S, 2.5f * S);
+  m_cape.rotation.setToIdentity();
+  m_cape.rotation.rotate(-8.0f, 1.0f, 0.0f, 0.0f);
+  m_cape.visible = true;
+}
+
 // ============================================================
 // 鼠标交互（轨道相机 + 惯性；Paint 模式下左键绘制）
 // ============================================================
@@ -1548,7 +1741,7 @@ void Skin3DWidget::orbitMove(QMouseEvent* e)
   // 更新目标角度
   m_targetTheta += dTheta;
   m_targetPhi += dPhi;
-  m_targetPhi = qBound(-float(M_PI) / 3.0f, m_targetPhi, float(M_PI) / 3.0f);
+  m_targetPhi = qBound(-1.45f, m_targetPhi, 1.45f);
 
   // 记录速度（用于松手后的惯性）
   m_velTheta = dTheta;
@@ -1604,7 +1797,7 @@ void Skin3DWidget::onAnimTick()
   {
     m_targetTheta += m_velTheta;
     m_targetPhi += m_velPhi;
-    m_targetPhi = qBound(-float(M_PI) / 3.0f, m_targetPhi, float(M_PI) / 3.0f);
+    m_targetPhi = qBound(-1.45f, m_targetPhi, 1.45f);
 
     // 速度衰减（摩擦系数）
     const float friction = 0.92f;
@@ -1657,6 +1850,15 @@ void Skin3DWidget::destroyGLResources()
     delete m_texture;
     m_texture = nullptr;
   }
+  // 披风纹理与网格
+  if (m_capeTexture)
+  {
+    m_capeTexture->destroy();
+    delete m_capeTexture;
+    m_capeTexture = nullptr;
+  }
+  m_cape.inner.destroy();
+  m_capeDirty = m_capeVisible && !m_pendingCape.isNull();
   auto destroyPart = [](BodyPart& p)
   {
     p.inner.destroy();
@@ -1775,7 +1977,7 @@ Skin3DWidget::PickResult Skin3DWidget::pick(const QPoint& widgetPos) const
   const float aspect = float(width()) / float(height() ? height() : 1);
   proj.perspective(40.0f, aspect, 0.1f, 1000.0f);
   QMatrix4x4 view;
-  const float phi = qBound(-float(M_PI) / 3.0f, m_phi, float(M_PI) / 3.0f);
+  const float phi = qBound(-1.45f, m_phi, 1.45f);
   const float sinP = std::sin(phi), cosP = std::cos(phi);
   const QVector3D target(0.0f, 0.0f, 0.0f);
   const QVector3D eye(target.x() + m_radius * sinP * std::sin(m_theta),

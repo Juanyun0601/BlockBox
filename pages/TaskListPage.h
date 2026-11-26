@@ -63,15 +63,16 @@ private:
 
     void updateLaunchDisplay();
 
-    // Launch task tracking
-    QString m_launchName;
-    LaunchTaskCard::LaunchStatus m_launchStatus;
-    int m_launchProgress;
-    QString m_launchMessage;
-    bool m_hasLaunchTask;
-    QWidget *m_launchCardWidget;
-    QLabel *m_launchStatusLabel;
-    QLabel *m_launchProgressLabel;
+    // Launch tasks（多实例并行启动：按实例名一条启动条目）
+    struct LaunchEntry {
+        LaunchTaskCard::LaunchStatus status = LaunchTaskCard::Idle;
+        int progress = 0;
+        QString message;
+        QWidget *row = nullptr;
+        QLabel *statusLabel = nullptr;
+        QLabel *progressLabel = nullptr;
+    };
+    QMap<QString, LaunchEntry> m_launchEntries;
 };
 
 #endif // TASKLISTPAGE_H

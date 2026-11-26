@@ -9,10 +9,12 @@
 #include "components/BlurLoadingOverlay.h"
 #include "components/LocalCategoryDialog.h"
 #include "components/FavoriteFolderDialog.h"
+#include "components/ProjectionBuildGuideDialog.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
 #include "utils/LocalFavoritesManager.h"
+#include "utils/Schematic/SchematicCoverRenderer.h"
 #include "utils/mod/ModNameFetcher.h"
 #include "utils/mod/ModScanner.h"
 
@@ -35,6 +37,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPixmapCache>
+#include <QPointer>
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -102,6 +105,7 @@ InstanceResourcesPage::InstanceResourcesPage(QWidget *parent)
     , m_tabScreenshotsBtn(nullptr)
     , m_tabResourcePacksBtn(nullptr)
     , m_tabShaderPacksBtn(nullptr)
+    , m_tabProjectionsBtn(nullptr)
     , m_tabBar(nullptr)
     , m_tabHighlight(nullptr)
     , m_tabAnim(nullptr)
@@ -174,9 +178,10 @@ void InstanceResourcesPage::initUI()
     m_tabScreenshotsBtn = createTabButton(tr("截图"), TypeScreenshot);
     m_tabResourcePacksBtn = createTabButton(tr("资源包"), TypeResourcePack);
     m_tabShaderPacksBtn = createTabButton(tr("光影包"), TypeShaderPack);
+    m_tabProjectionsBtn = createTabButton(tr("投影"), TypeProjection);
 
     m_tabButtons = {m_tabModsBtn, m_tabSavesBtn, m_tabScreenshotsBtn,
-                    m_tabResourcePacksBtn, m_tabShaderPacksBtn};
+                    m_tabResourcePacksBtn, m_tabShaderPacksBtn, m_tabProjectionsBtn};
 
     for (QPushButton *btn : m_tabButtons)
     {
@@ -366,6 +371,7 @@ void InstanceResourcesPage::setupConnections()
     connect(m_tabScreenshotsBtn, &QPushButton::clicked, this, [this]() { switchTab(TypeScreenshot); });
     connect(m_tabResourcePacksBtn, &QPushButton::clicked, this, [this]() { switchTab(TypeResourcePack); });
     connect(m_tabShaderPacksBtn, &QPushButton::clicked, this, [this]() { switchTab(TypeShaderPack); });
+    connect(m_tabProjectionsBtn, &QPushButton::clicked, this, [this]() { switchTab(TypeProjection); });
 
     connect(m_searchEdit, &QLineEdit::textChanged, this, &InstanceResourcesPage::onSearchTextChanged);
     connect(m_categoryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -506,6 +512,7 @@ QString InstanceResourcesPage::typeDisplayName() const
     case TypeScreenshot:   return tr("截图");
     case TypeResourcePack: return tr("资源包");
     case TypeShaderPack:   return tr("光影包");
+    case TypeProjection:   return tr("投影");
     }
     return QString();
 }
@@ -519,6 +526,7 @@ QString InstanceResourcesPage::subDirName() const
     case TypeScreenshot:   return QStringLiteral("screenshots");
     case TypeResourcePack: return QStringLiteral("resourcepacks");
     case TypeShaderPack:   return QStringLiteral("shaderpacks");
+    case TypeProjection:   return QStringLiteral("schematics");
     }
     return QString();
 }
@@ -686,6 +694,12 @@ void InstanceResourcesPage::scanFiles()
     case TypeShaderPack:
         entries = dir.entryInfoList(QStringList() << QStringLiteral("*.zip")
                                                   << QStringLiteral("*.zip.disabled"),
+                                    QDir::Files, QDir::Name);
+        break;
+    case TypeProjection:
+        entries = dir.entryInfoList(QStringList() << QStringLiteral("*.litematic")
+                                                  << QStringLiteral("*.schematic")
+                                                  << QStringLiteral("*.schem"),
                                     QDir::Files, QDir::Name);
         break;
     case TypeMods:
@@ -1036,6 +1050,9 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
             case TypeScreenshot:
                 icon = ResourcesPage::loadImageThumbnail(iconPath);
                 break;
+            case TypeProjection:
+                // 投影没有通用缩略图，先用类型图标占位，下面再异步渲染 3D 封面
+                break;
             case TypeMods:
                 // 不会进入此分支
                 break;
@@ -1059,12 +1076,27 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
             case TypeShaderPack:   fallbackIcon = ":/Images/Icons/nav_shaders.svg"; break;
             case TypeSave:         fallbackIcon = ":/Images/Icons/nav_worlds.svg"; break;
             case TypeScreenshot:   fallbackIcon = ":/Images/Icons/screenshot.svg"; break;
+            case TypeProjection:   fallbackIcon = ":/Images/Icons/nav_projection.svg"; break;
             case TypeMods:         fallbackIcon = ":/Images/Icons/nav_mods.svg"; break;
             }
             iconLabel->setPixmap(IconHelper::loadColoredIcon(fallbackIcon, tc, 32).pixmap(32, 32));
         }
     }
     cardLayout->addWidget(iconLabel);
+
+    // 投影：后台渲染 3D 等距封面替换类型图标；失败保留类型图标
+    if (m_currentType == TypeProjection)
+    {
+        QPointer<QLabel> iconGuard(iconLabel);
+        SchematicCoverRenderer::instance()->request(
+            entry.filePath, 72, 72,
+            [iconGuard](const QString &, const QImage &img, bool /*textured*/) {
+                if (!iconGuard || img.isNull())
+                    return;
+                iconGuard->setPixmap(QPixmap::fromImage(img).scaled(
+                    36, 36, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            });
+    }
 
     // 信息区域
     QVBoxLayout *infoLayout = new QVBoxLayout();
@@ -1175,6 +1207,17 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
         cardLayout->addWidget(quickLaunchBtn);
     }
 
+    // 学习搭建按钮（仅投影）：按层、按材料一步步教怎么搭
+    if (m_currentType == TypeProjection)
+    {
+        QPushButton *buildBtn = createBtn(":/Images/Icons/grid.svg", tr("学习搭建"), themeColor);
+        buildBtn->setToolTip(tr("学习搭建：先看最下面一层，按材料一步步搭，四边有格子刻度"));
+        connect(buildBtn, &QPushButton::clicked, this, [this, entry]() {
+            ProjectionBuildGuideDialog::open(this, entry.filePath, m_instancePath);
+        });
+        cardLayout->addWidget(buildBtn);
+    }
+
     // 问问AI 按钮：跳转 AI 助手并引用该本地资源
     {
         QPushButton *askAiBtn = createBtn(":/Images/Icons/nav_ai.svg", tr("问问AI"), themeColor);
@@ -1187,6 +1230,7 @@ QWidget *InstanceResourcesPage::createFileCard(const FileEntry &entry)
             case TypeResourcePack: category = tr("本地资源包"); break;
             case TypeShaderPack: category = tr("本地光影包"); break;
             case TypeSave: category = tr("本地存档"); break;
+            case TypeProjection: category = tr("本地投影"); break;
             default: category = tr("文件"); break;
             }
             ResourceReference ref;
@@ -1823,6 +1867,10 @@ void InstanceResourcesPage::onPasteFileClicked()
         break;
     case TypeSave:
         pasteAsDir = true; // 存档是目录，复制整个文件夹
+        break;
+    case TypeProjection:
+        validSuffixes = { QStringLiteral(".litematic"), QStringLiteral(".schematic"),
+                          QStringLiteral(".schem") };
         break;
     }
 

@@ -22,6 +22,7 @@
 
 #include "utils/SettingsManager.h"
 #include "utils/LanguageManager.h"
+#include "utils/auth/AuthlibInjector.h"
 
 namespace {
 
@@ -841,7 +842,73 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
                                  ? generateOfflineUuid(authPlayerName)
                                  : defaultAccount.uuid;
     QString authToken      = defaultAccount.accessToken.isEmpty() ? "0" : defaultAccount.accessToken;
-    QString userType       = defaultAccount.type == "Microsoft" ? "msa" : "offline";
+
+    // ── 第三方外置登录（Yggdrasil / 皮肤站）：注入 authlib-injector ──
+    // 外置登录账户在启动器里能登录、能显示皮肤，但游戏进程本身不认识这个认证服务器，
+    // 只按离线身份进游戏会被第三方服务器判定"未通过身份验证"而拒登。这里在 JVM 参数
+    // 里加上 -javaagent 和 minecraft.api.* 指向该服务器，游戏内才会用它校验身份、拉皮肤。
+    // 注入失败绝不中断启动：退回离线身份继续启动，只多给一条提示。
+    const QString thirdPartyServerUrl = defaultAccount.serverUrl.trimmed();
+    const bool isThirdPartyAccount = !thirdPartyServerUrl.isEmpty()
+                                     && defaultAccount.type != "Microsoft";
+    QString userType = defaultAccount.type == "Microsoft" ? "msa" : "offline";
+    QStringList injectorArgs;
+    if (isThirdPartyAccount)
+    {
+        if (!SettingsManager::instance()->isAuthlibInjectorEnabled())
+        {
+            emit launchDetailAdded("已按设置关闭第三方登录注入，本次按离线身份启动");
+        }
+        else if (!AuthlibInjector::supportsServer(thirdPartyServerUrl))
+        {
+            emit launchDetailAdded(QString("认证服务器地址无法注入（%1），本次按离线身份启动")
+                                       .arg(thirdPartyServerUrl));
+        }
+        else if (defaultAccount.accessToken.trimmed().isEmpty())
+        {
+            // 从 PCL / HMCL 等导入的第三方账户往往只有服务器地址、没有登录令牌，
+            // 这样注入进去游戏会拿 "0" 令牌去校验，进第三方服务器反而必失败。
+            emit launchDetailAdded("第三方账户缺少登录令牌（可能从其他启动器导入），"
+                                   "本次按离线身份启动；重新登录一次即可正常注入");
+        }
+        else
+        {
+            QString injectError;
+            const bool injectorReady = AuthlibInjector::ensureInstalled(
+                &injectError,
+                [this](const QString &message) {
+                    emit launchDetailAdded(message);
+                    // 首次下载可能要等一会儿：启动卡片 / 安卓启动页上也同步显示，
+                    // 不会一直停在「构建启动命令…」
+                    emit launchProgressChanged(82, message);
+                });
+            if (injectorReady)
+            {
+                injectorArgs = AuthlibInjector::jvmArgs(thirdPartyServerUrl);
+            }
+            if (!injectorArgs.isEmpty())
+            {
+                userType = "mojang";
+                const QString injectorVersion = AuthlibInjector::installedVersion();
+                emit launchDetailAdded(
+                    QString("已注入 authlib-injector%1，游戏内将使用第三方账户身份")
+                        .arg(injectorVersion.isEmpty()
+                                 ? QString()
+                                 : QString(" %1").arg(injectorVersion)));
+                args << injectorArgs;
+            }
+            else
+            {
+                // 失败原因：ensureInstalled 给的更具体，jar 就绪但参数拼不出来时用兜底文案
+                const QString reason = !injectError.isEmpty()
+                                           ? injectError
+                                           : QString("authlib-injector 参数生成失败");
+                emit launchDetailAdded(QString("第三方登录注入失败：%1").arg(reason));
+                emit thirdPartyInjectWarning(
+                    "第三方登录注入失败，本次已按离线身份启动，第三方服务器可能拒绝进入");
+            }
+        }
+    }
 
     // ── 版本 JSON 有 arguments.jvm 时，JSON 为准（HMCL/ProjBobcat 做法）──
     bool hasCustomJvm = false;

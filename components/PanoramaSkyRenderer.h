@@ -26,8 +26,9 @@ class PanoramaSkyRenderer
 public:
     PanoramaSkyRenderer();
 
-    // 内置场景：加载 :/Images/Panorama/<name>/panorama_0..5.jpg（MC 全景布局）
-    void setScene(const QString &name);
+    // 全景场景：加载 <dir>/panorama_0..5.jpg（MC 全景布局）。
+    // dir 为空时回退资源内 :/Images/Panorama/<name>/（开发探针沿用，正式版素材按需下载）
+    void setScene(const QString &name, const QString &dir = QString());
     // 自定义全景图：按等距柱状投影使用
     void setPanorama(const QImage &equirect);
     void setBlurRadius(int radius);
@@ -60,6 +61,7 @@ private:
     void buildSampleTable(const QSize &size);
 
     QString m_scene;            // 内置场景名，空串表示使用自定义图片
+    QString m_sceneDir;         // 已下载场景的本地目录，空串表示回退资源内素材
     QImage m_equirectRaw;       // 等距柱状全景源图（未处理，模糊/缩放前的原样）
     QImage m_equirect;          // 已按模糊半径处理过的等距柱状全景图
     QVector<QImage> m_faces;    // 内置场景的 6 个立方体面（已按模糊半径处理）

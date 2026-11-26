@@ -15,16 +15,15 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
-#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
 #include <QRandomGenerator>
+#include <QSaveFile>
 #include <QSet>
 #include <QThreadPool>
-#include <QTimer>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -104,6 +103,30 @@ QString generateBackupId()
     return stamp + QStringLiteral("_") + QString::number(rnd, 16).rightJustified(4, QLatin1Char('0'));
 }
 
+/** 世界名 / 备份ID 都会拼进文件路径：拒绝分隔符与 .. ，防止越出备份目录 */
+bool isSafePathComponent(const QString &name)
+{
+    return !name.isEmpty()
+        && !name.contains(QLatin1Char('/'))
+        && !name.contains(QLatin1Char('\\'))
+        && name != QStringLiteral(".")
+        && name != QStringLiteral("..");
+}
+
+/** 恢复/备份过程中的临时目录后缀（这些不是真正的世界，列表里要跳过） */
+bool isTemporaryWorldName(const QString &name)
+{
+    return name.contains(QStringLiteral(".restoring_"))
+        || name.contains(QStringLiteral(".old_"));
+}
+
+/** 某实例自动备份时间戳的 QSettings 键（按实例分开记） */
+QString lastAutoBackupKey(const QString &instancePath)
+{
+    return QStringLiteral("worldBackup/lastAutoBackup/")
+        + QFileInfo(WorldBackupManager::instanceBackupDir(instancePath)).fileName();
+}
+
 } // namespace
 
 // ─────────────────────────────────────────────────────────────
@@ -165,6 +188,9 @@ QStringList WorldBackupManager::listWorldNames(const QString &instancePath)
         const QFileInfoList entries =
             savesDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
         for (const QFileInfo &fi : entries) {
+            // 恢复过程中的临时目录（xxx.restoring_* / xxx.old_*）不是真正的世界
+            if (isTemporaryWorldName(fi.fileName()))
+                continue;
             // 视为世界目录：包含 level.dat 或 region/ 子目录
             if (QFileInfo::exists(fi.absoluteFilePath() + "/level.dat")
                     || QDir(fi.absoluteFilePath() + "/region").exists()) {
@@ -185,6 +211,54 @@ qint64 WorldBackupManager::directorySize(const QString &dirPath)
         total += it.fileInfo().size();
     }
     return total;
+}
+
+// ── 设置项 ──
+
+bool WorldBackupManager::autoBackupEnabled()
+{
+    return SettingsManager::instance()
+        ->getProperty(QStringLiteral("worldBackup/autoEnabled"), false).toBool();
+}
+
+void WorldBackupManager::setAutoBackupEnabled(bool enabled)
+{
+    SettingsManager::instance()->setProperty(QStringLiteral("worldBackup/autoEnabled"), enabled);
+}
+
+int WorldBackupManager::autoBackupFrequency()
+{
+    return SettingsManager::instance()
+        ->getProperty(QStringLiteral("worldBackup/frequency"), 0).toInt();
+}
+
+void WorldBackupManager::setAutoBackupFrequency(int frequency)
+{
+    SettingsManager::instance()->setProperty(QStringLiteral("worldBackup/frequency"), frequency);
+}
+
+int WorldBackupManager::keepCount()
+{
+    return qBound(1, SettingsManager::instance()
+                         ->getProperty(QStringLiteral("worldBackup/keepCount"), 10).toInt(), 100);
+}
+
+void WorldBackupManager::setKeepCount(int count)
+{
+    SettingsManager::instance()->setProperty(QStringLiteral("worldBackup/keepCount"),
+                                             qBound(1, count, 100));
+}
+
+bool WorldBackupManager::snapshotBeforeRestore()
+{
+    return SettingsManager::instance()
+        ->getProperty(QStringLiteral("worldBackup/snapshotBeforeRestore"), true).toBool();
+}
+
+void WorldBackupManager::setSnapshotBeforeRestore(bool enabled)
+{
+    SettingsManager::instance()->setProperty(QStringLiteral("worldBackup/snapshotBeforeRestore"),
+                                             enabled);
 }
 
 // ── 备份列表 ──
@@ -251,6 +325,32 @@ QList<WorldBackupInfo> WorldBackupManager::listBackups(const QString &instancePa
     return result;
 }
 
+QStringList WorldBackupManager::listBackupWorldNames(const QString &instancePath) const
+{
+    QStringList names;
+    QDir root(instanceBackupDir(instancePath));
+    if (!root.exists())
+        return names;
+
+    QList<QPair<QDateTime, QString>> latestByName;
+    const QFileInfoList dirs =
+        root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &dirInfo : dirs) {
+        const QString worldName = dirInfo.fileName();
+        const QList<WorldBackupInfo> backups = listBackups(instancePath, worldName);
+        if (backups.isEmpty())
+            continue; // 只有空目录 / 孤儿元数据，没有可用的备份
+        latestByName.append(qMakePair(backups.first().createdAt, worldName));
+    }
+    std::sort(latestByName.begin(), latestByName.end(),
+              [](const QPair<QDateTime, QString> &a, const QPair<QDateTime, QString> &b) {
+                  return a.first > b.first;
+              });
+    for (const auto &item : latestByName)
+        names << item.second;
+    return names;
+}
+
 // ── 同步核心 ──
 
 bool WorldBackupManager::createBackupSync(const QString &instancePath, const QString &worldName,
@@ -262,10 +362,14 @@ bool WorldBackupManager::createBackupSync(const QString &instancePath, const QSt
         return false;
     };
 
+    if (!isSafePathComponent(worldName))
+        return fail(QCoreApplication::translate("WorldBackupManager", "世界名不合法: %1").arg(worldName));
+
     const QString worldPath = existingWorldDir(instancePath, worldName);
     if (!QDir(worldPath).exists())
         return fail(QCoreApplication::translate("WorldBackupManager", "世界目录不存在: %1").arg(worldPath));
-    if (directorySize(worldPath) <= 0)
+    const qint64 sourceBytes = directorySize(worldPath);
+    if (sourceBytes <= 0)
         return fail(QCoreApplication::translate("WorldBackupManager", "世界目录为空，无法备份"));
 
     const QString dir = worldBackupDir(instancePath, worldName);
@@ -288,7 +392,7 @@ bool WorldBackupManager::createBackupSync(const QString &instancePath, const QSt
     info.id = id;
     info.worldName = worldName;
     info.createdAt = QDateTime::currentDateTime();
-    info.sourceSize = directorySize(worldPath);
+    info.sourceSize = sourceBytes;
     info.archiveSize = QFileInfo(zipPath).size();
     info.automatic = automatic;
     info.note = note;
@@ -296,13 +400,17 @@ bool WorldBackupManager::createBackupSync(const QString &instancePath, const QSt
     info.gameVersion = readGameVersion(instancePath);
     info.archivePath = zipPath;
 
-    QFile metaFile(metaPath);
+    // QSaveFile：元数据要么完整写入，要么完全不落盘，避免断电留下半个 JSON
+    QSaveFile metaFile(metaPath);
     if (!metaFile.open(QIODevice::WriteOnly)) {
         QFile::remove(zipPath);
         return fail(QCoreApplication::translate("WorldBackupManager", "写入备份元数据失败"));
     }
     metaFile.write(QJsonDocument(infoToJson(info)).toJson(QJsonDocument::Compact));
-    metaFile.close();
+    if (!metaFile.commit()) {
+        QFile::remove(zipPath);
+        return fail(QCoreApplication::translate("WorldBackupManager", "写入备份元数据失败"));
+    }
 
     if (outInfo) *outInfo = info;
     return true;
@@ -316,6 +424,9 @@ bool WorldBackupManager::restoreBackupSync(const QString &instancePath, const QS
         return false;
     };
 
+    if (!isSafePathComponent(worldName) || !isSafePathComponent(backupId))
+        return fail(QCoreApplication::translate("WorldBackupManager", "备份标识不合法"));
+
     const QString zipPath = backupZipPath(instancePath, worldName, backupId);
     if (!QFileInfo::exists(zipPath))
         return fail(QCoreApplication::translate("WorldBackupManager", "备份文件不存在或已被删除"));
@@ -326,9 +437,7 @@ bool WorldBackupManager::restoreBackupSync(const QString &instancePath, const QS
         return fail(QCoreApplication::translate("WorldBackupManager", "无法创建存档目录: %1").arg(savesDir));
 
     // 0) 恢复前先为当前世界创建快照，保证恢复操作可回退
-    if (QDir(worldPath).exists()
-            && SettingsManager::instance()->getProperty(
-               QStringLiteral("worldBackup/snapshotBeforeRestore"), true).toBool()) {
+    if (QDir(worldPath).exists() && snapshotBeforeRestore()) {
         WorldBackupInfo snapshot;
         QString snapshotError;
         if (!createBackupSync(instancePath, worldName,
@@ -380,6 +489,10 @@ bool WorldBackupManager::restoreBackupSync(const QString &instancePath, const QS
 bool WorldBackupManager::deleteBackupSync(const QString &instancePath, const QString &worldName,
                                           const QString &backupId, QString *error)
 {
+    if (!isSafePathComponent(worldName) || !isSafePathComponent(backupId)) {
+        if (error) *error = QCoreApplication::translate("WorldBackupManager", "备份标识不合法");
+        return false;
+    }
     const QString zipPath = backupZipPath(instancePath, worldName, backupId);
     const QString metaPath = backupMetaPath(instancePath, worldName, backupId);
     const bool existed = QFileInfo::exists(zipPath);
@@ -393,31 +506,39 @@ bool WorldBackupManager::deleteBackupSync(const QString &instancePath, const QSt
 
 // ── 异步封装 ──
 
+bool WorldBackupManager::tryAcquireBusy()
+{
+    return m_busy.testAndSetOrdered(0, 1);
+}
+
+void WorldBackupManager::releaseBusy()
+{
+    m_busy.storeRelease(0);
+}
+
 void WorldBackupManager::createBackupAsync(const QString &instancePath, const QString &worldName,
                                            const QString &note, bool automatic)
 {
-    if (m_busy) {
+    if (!tryAcquireBusy()) {
         emit backupFinished(instancePath, worldName, false,
                             QCoreApplication::translate("WorldBackupManager", "已有备份任务正在进行"),
                             automatic);
         return;
     }
-    m_busy = true;
     const QPointer<WorldBackupManager> self(this);
-    QThreadPool::globalInstance()->start([self, instancePath, worldName, note, automatic]() {
-        WorldBackupInfo info;
-        QString error;
-        const bool ok = self ? self->createBackupSync(instancePath, worldName, note,
-                                                      automatic, &info, &error) : false;
+    const int keep = keepCount();
+    QThreadPool::globalInstance()->start([self, instancePath, worldName, note, automatic, keep]() {
         if (!self)
             return;
+        WorldBackupInfo info;
+        QString error;
+        const bool ok = self->createBackupSync(instancePath, worldName, note,
+                                               automatic, &info, &error);
         if (ok)
-            self->applyRetentionPolicy(instancePath, worldName,
-                                       SettingsManager::instance()
-                           ->getProperty(QStringLiteral("worldBackup/keepCount"), 10).toInt());
-        // 必须复位忙碌标志:否则第一次备份之后 m_busy 永远为 true,
+            self->applyRetentionPolicy(instancePath, worldName, keep);
+        // 必须有且只有一处释放：否则第一次备份之后忙碌标志永远为 1，
         // 本会话内所有备份/恢复请求都会被"已有备份任务正在进行"拒绝
-        self->m_busy = false;
+        self->releaseBusy();
         emit self->backupFinished(instancePath, worldName, ok,
                                   ok ? QString() : error, automatic);
     });
@@ -426,36 +547,33 @@ void WorldBackupManager::createBackupAsync(const QString &instancePath, const QS
 void WorldBackupManager::restoreBackupAsync(const QString &instancePath, const QString &worldName,
                                             const QString &backupId)
 {
-    if (m_busy) {
+    if (!tryAcquireBusy()) {
         emit restoreFinished(instancePath, worldName, false,
                              QCoreApplication::translate("WorldBackupManager", "已有备份任务正在进行"));
         return;
     }
-    m_busy = true;
     const QPointer<WorldBackupManager> self(this);
     QThreadPool::globalInstance()->start([self, instancePath, worldName, backupId]() {
+        if (!self)
+            return;
         QString error;
-        const bool ok = self ? self->restoreBackupSync(instancePath, worldName, backupId, &error)
-                             : false;
-        if (self)
-        {
-            self->m_busy = false; // 同 createBackupAsync:异步完成后必须复位
-            emit self->restoreFinished(instancePath, worldName, ok, ok ? QString() : error);
-        }
+        const bool ok = self->restoreBackupSync(instancePath, worldName, backupId, &error);
+        self->releaseBusy(); // 同 createBackupAsync：异步完成后必须复位
+        emit self->restoreFinished(instancePath, worldName, ok, ok ? QString() : error);
     });
 }
 
 // ── 保留策略 ──
 
 int WorldBackupManager::applyRetentionPolicy(const QString &instancePath, const QString &worldName,
-                                             int keepCount)
+                                             int keep)
 {
-    if (keepCount <= 0)
+    if (keep <= 0)
         return 0;
     const QList<WorldBackupInfo> backups = listBackups(instancePath, worldName);
     int removed = 0;
     QString error;
-    for (int i = keepCount; i < backups.size(); ++i) {
+    for (int i = keep; i < backups.size(); ++i) {
         if (deleteBackupSync(instancePath, worldName, backups[i].id, &error))
             ++removed;
     }
@@ -464,22 +582,24 @@ int WorldBackupManager::applyRetentionPolicy(const QString &instancePath, const 
 
 // ── 启动前自动备份 ──
 
-bool WorldBackupManager::autoBackupBeforeLaunch(const QString &instancePath,
-                                                const std::function<void(int, const QString &)> &progress)
+void WorldBackupManager::startAutoBackupBeforeLaunch(const QString &instancePath)
 {
-    SettingsManager *settings = SettingsManager::instance();
-    if (!settings->getProperty(QStringLiteral("worldBackup/autoEnabled"), false).toBool())
-        return false;
+    if (!autoBackupEnabled()) {
+        emit autoBackupBatchFinished(0, 0);
+        return;
+    }
 
-    // 频率门控：0=每次启动 1=每小时 2=每天
-    const int frequency = settings->getProperty(QStringLiteral("worldBackup/frequency"), 0).toInt();
+    // 频率门控：0=每次启动 1=每小时 2=每天（时间戳按实例分开记）
+    const int frequency = autoBackupFrequency();
     const QDateTime now = QDateTime::currentDateTime();
-    const QDateTime last = lastAutoBackupTime();
+    const QDateTime last = lastAutoBackupTime(instancePath);
     qint64 intervalMs = 0;
     if (frequency == 1) intervalMs = 3600LL * 1000;
     else if (frequency == 2) intervalMs = 24LL * 3600 * 1000;
-    if (intervalMs > 0 && last.isValid() && last.msecsTo(now) < intervalMs)
-        return false;
+    if (intervalMs > 0 && last.isValid() && last.msecsTo(now) < intervalMs) {
+        emit autoBackupBatchFinished(0, 0);
+        return;
+    }
 
     // 仅备份自上次备份后有改动的世界
     QStringList changedWorlds;
@@ -487,53 +607,43 @@ bool WorldBackupManager::autoBackupBeforeLaunch(const QString &instancePath,
     for (const QString &name : worlds) {
         const QString worldPath = existingWorldDir(instancePath, name);
         const QList<WorldBackupInfo> backups = listBackups(instancePath, name);
-        const bool hasBackup = !backups.isEmpty();
-        const QDateTime lastBackupTime = hasBackup ? backups.first().createdAt : QDateTime();
-        if (!hasBackup || worldModifiedTime(worldPath) > lastBackupTime)
+        const QDateTime lastBackupTime = backups.isEmpty() ? QDateTime()
+                                                           : backups.first().createdAt;
+        if (lastBackupTime.isNull() || worldModifiedTime(worldPath) > lastBackupTime)
             changedWorlds << name;
     }
-    if (changedWorlds.isEmpty())
-        return false;
-
-    if (m_busy)
-        return false; // 已有备份任务（如手动备份），跳过本次自动备份，不阻塞启动
-    m_busy = true;
-
-    QEventLoop loop;
-    int backed = 0;
-    int failed = 0;
-
-    QMetaObject::Connection c1 = connect(this, &WorldBackupManager::backupProgress, this,
-            [this, &progress](int percent, const QString &message) {
-                if (progress) progress(percent, message);
-            });
-    QMetaObject::Connection c2 = connect(this, &WorldBackupManager::autoBackupBatchFinished, this,
-            [this, &loop, &backed, &failed, &now](int okCount, int failCount) {
-                backed = okCount;
-                failed = failCount;
-                if (okCount > 0)
-                    setLastAutoBackupTime(now);
-                loop.quit();
-            });
-
-    QThreadPool::globalInstance()->start([this, instancePath, changedWorlds]() {
-        runAutoBackupBatch(instancePath, changedWorlds);
-    });
-    loop.exec();
-
-    disconnect(c1);
-    disconnect(c2);
-    m_busy = false;
-    if (failed > 0) {
-        qWarning() << "[WorldBackupManager]" << "自动备份批量完成，失败" << failed << "次";
+    if (changedWorlds.isEmpty()) {
+        emit autoBackupBatchFinished(0, 0);
+        return;
     }
-    return backed > 0;
+
+    // 已有备份任务（如用户正在手动备份）时直接跳过，不阻塞启动
+    if (!tryAcquireBusy()) {
+        emit autoBackupBatchFinished(0, 0);
+        return;
+    }
+
+    const QPointer<WorldBackupManager> self(this);
+    const int keep = keepCount();
+    QThreadPool::globalInstance()->start([self, instancePath, changedWorlds, now, keep]() {
+        if (!self)
+            return;
+        const QPair<int, int> result = self->runAutoBackupBatch(instancePath, changedWorlds, keep);
+        if (result.first > 0) {
+            // 自动备份时间戳写回 QSettings，交给 UI 线程做（QSettings 不在工作线程里用）
+            QMetaObject::invokeMethod(self, [self, instancePath, now]() {
+                if (self)
+                    self->setLastAutoBackupTime(instancePath, now);
+            }, Qt::QueuedConnection);
+        }
+        self->releaseBusy();
+        emit self->autoBackupBatchFinished(result.first, result.second);
+    });
 }
 
-void WorldBackupManager::runAutoBackupBatch(const QString &instancePath, const QStringList &worlds)
+QPair<int, int> WorldBackupManager::runAutoBackupBatch(const QString &instancePath,
+                                                      const QStringList &worlds, int keep)
 {
-    const int keepCount = SettingsManager::instance()
-                           ->getProperty(QStringLiteral("worldBackup/keepCount"), 10).toInt();
     int backed = 0;
     int failed = 0;
     for (int i = 0; i < worlds.size(); ++i) {
@@ -543,7 +653,7 @@ void WorldBackupManager::runAutoBackupBatch(const QString &instancePath, const Q
         WorldBackupInfo info;
         QString error;
         if (createBackupSync(instancePath, name, QString(), true, &info, &error)) {
-            applyRetentionPolicy(instancePath, name, keepCount);
+            applyRetentionPolicy(instancePath, name, keep);
             ++backed;
             emit backupFinished(instancePath, name, true, QString(), true);
         } else {
@@ -553,7 +663,9 @@ void WorldBackupManager::runAutoBackupBatch(const QString &instancePath, const Q
         }
     }
     emit backupProgress(100, QCoreApplication::translate("WorldBackupManager", "自动备份完成"));
-    emit autoBackupBatchFinished(backed, failed);
+    if (failed > 0)
+        qWarning() << "[WorldBackupManager]" << "自动备份批量完成，失败" << failed << "次";
+    return qMakePair(backed, failed);
 }
 
 // ── 辅助 ──
@@ -582,15 +694,15 @@ QDateTime WorldBackupManager::worldModifiedTime(const QString &worldPath)
     return latest;
 }
 
-QDateTime WorldBackupManager::lastAutoBackupTime() const
+QDateTime WorldBackupManager::lastAutoBackupTime(const QString &instancePath) const
 {
     const QString raw = SettingsManager::instance()
-                            ->getProperty("backup/lastAutoBackup").toString();
+                            ->getProperty(lastAutoBackupKey(instancePath)).toString();
     return QDateTime::fromString(raw, Qt::ISODateWithMs);
 }
 
-void WorldBackupManager::setLastAutoBackupTime(const QDateTime &time)
+void WorldBackupManager::setLastAutoBackupTime(const QString &instancePath, const QDateTime &time)
 {
-    SettingsManager::instance()->setProperty("backup/lastAutoBackup",
+    SettingsManager::instance()->setProperty(lastAutoBackupKey(instancePath),
                                              time.toString(Qt::ISODateWithMs));
 }

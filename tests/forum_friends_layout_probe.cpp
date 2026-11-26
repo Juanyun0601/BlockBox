@@ -25,6 +25,8 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QTextEdit>
+#include <QElapsedTimer>
+#include <QEventLoop>
 
 #include <cstdio>
 
@@ -58,6 +60,15 @@ ForumChatMessage makeMessage(int id, const QString &body, bool mine, qint64 minu
     message.createdAt = QDateTime::currentSecsSinceEpoch() - minutesAgo * 60;
     message.read = mine;
     return message;
+}
+
+/** 等一会儿事件循环：列表行的淡入动画跑完再截图，否则会拍到半透明 */
+void settle(int ms = 1500)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < ms)
+        QApplication::processEvents(QEventLoop::AllEvents, 20);
 }
 
 bool savePng(QWidget *widget, const QString &path)
@@ -119,6 +130,10 @@ int main(int argc, char *argv[])
         page.setPalette(palette);
     }
 
+    // 探针不联网：停掉轮询，等 showEvent 触发的那次加载落地，再注入假数据
+    page.m_pollTimer.stop();
+    settle(4000);
+
     // 注入假数据（showEvent 里的未登录分支会清空列表，所以放在 show 之后）
     page.m_snapshot.friends = {
         makeFriend(1, QStringLiteral("阿伟"), QStringLiteral("今晚一起开黑？"), true, 3, 2),
@@ -126,7 +141,7 @@ int main(int argc, char *argv[])
         makeFriend(3, QStringLiteral("Steve_2024"), QStringLiteral("好的，明天下载"), true, 0, 180),
     };
     page.m_peer = page.m_snapshot.friends.first();
-    page.renderFriendRows();
+    page.renderSide();
 
     // 右栏：开一个会话并塞几条消息（绕过网络请求）
     page.m_chatEmpty->hide();
@@ -173,6 +188,7 @@ int main(int argc, char *argv[])
                         QStringLiteral("阿伟"));
     QApplication::processEvents();
 
+    settle();
     savePng(&page, prefix + QStringLiteral("left_panel.png"));
 
     // 未选会话时的右栏空状态（不再被卡片包住）
@@ -180,12 +196,60 @@ int main(int argc, char *argv[])
     QApplication::processEvents();
     savePng(&page, prefix + QStringLiteral("empty.png"));
 
-    // 添加好友页签：搜索框落在子导航面板里
-    page.m_addTabButton->click();
-    QApplication::processEvents();
-    page.renderAddTab();
-    QApplication::processEvents();
-    savePng(&page, prefix + QStringLiteral("add_tab.png"));
+    // 系统通知面板：站内通知（好友申请可以直接同意 / 拒绝）铺在右栏
+    ForumNotificationItem friendRequest;
+    friendRequest.id = 71;
+    friendRequest.type = QStringLiteral("friend");
+    friendRequest.targetKind = QStringLiteral("friend");
+    friendRequest.requestId = 31;
+    friendRequest.actorNames = {QStringLiteral("像素小猫")};
+    friendRequest.actorIds = {2};
+    friendRequest.ids = {71};
+    friendRequest.unread = true;
+    friendRequest.unreadCount = 1;
+    friendRequest.createdAt = QDateTime::currentSecsSinceEpoch() - 300;
+
+    ForumNotificationItem replyNotice;
+    replyNotice.id = 72;
+    replyNotice.type = QStringLiteral("reply");
+    replyNotice.targetKind = QStringLiteral("post");
+    replyNotice.threadId = 301;
+    replyNotice.threadTitle = QStringLiteral("新手向：怎么装光影");
+    replyNotice.excerpt = QStringLiteral("装好 Iris 之后把光影包放进 shaderpacks 文件夹就行。");
+    replyNotice.actorNames = {QStringLiteral("阿伟")};
+    replyNotice.actorIds = {1};
+    replyNotice.ids = {72};
+    replyNotice.unread = true;
+    replyNotice.unreadCount = 1;
+    replyNotice.createdAt = QDateTime::currentSecsSinceEpoch() - 900;
+
+    ForumNotificationItem acceptedNotice;
+    acceptedNotice.id = 73;
+    acceptedNotice.type = QStringLiteral("friend_accepted");
+    acceptedNotice.targetKind = QStringLiteral("friend");
+    acceptedNotice.actorNames = {QStringLiteral("Steve_2024")};
+    acceptedNotice.ids = {73};
+    acceptedNotice.createdAt = QDateTime::currentSecsSinceEpoch() - 86400;
+
+    page.m_snapshot.incoming = {ForumFriendRequest()};
+    page.m_snapshot.incoming[0].id = 31;
+    page.m_snapshot.incoming[0].user = makeFriend(9, QStringLiteral("像素小猫"), QString(), false, 0, 5);
+    page.m_pollTimer.stop();
+    page.m_notifications = {friendRequest, replyNotice, acceptedNotice};
+    page.m_noticeUnread = 2;
+    page.m_notificationsLoaded = true;
+    page.m_chatCard->hide();
+    page.m_noticeCard->show();
+    page.renderNotificationPane();
+    settle();
+    savePng(&page, prefix + QStringLiteral("notice_pane.png"));
+
+    // 收起通知面板，回到聊天空态，核对左栏「系统通知」行的角标
+    page.m_noticeCard->hide();
+    page.m_chatCard->show();
+    page.renderSide();
+    settle();
+    savePng(&page, prefix + QStringLiteral("notice_row.png"));
 
     fprintf(stderr, "[probe] done\n");
     return 0;

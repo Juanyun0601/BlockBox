@@ -1055,7 +1055,7 @@
     },
     {
      "name": "目的地",
-     "type": "string",
+     "type": "pos",
      "required": false
     },
     {
@@ -1085,7 +1085,7 @@
     },
     {
      "name": "目的地",
-     "type": "string",
+     "type": "pos",
      "required": true
     },
     {
@@ -6890,7 +6890,8 @@
   {
    "english": "lightning_bolt",
    "chinese": [
-    "闪电束"
+    "闪电束",
+    "闪电"
    ]
   },
   {
@@ -7179,6 +7180,236 @@
    "english": "weeping",
    "chinese": [
     "哀嚎"
+   ]
+  }
+ ],
+ "enchantments": [
+  {
+   "english": "protection",
+   "chinese": [
+    "保护"
+   ]
+  },
+  {
+   "english": "fire_protection",
+   "chinese": [
+    "火焰保护"
+   ]
+  },
+  {
+   "english": "feather_falling",
+   "chinese": [
+    "摔落保护"
+   ]
+  },
+  {
+   "english": "blast_protection",
+   "chinese": [
+    "爆炸保护"
+   ]
+  },
+  {
+   "english": "projectile_protection",
+   "chinese": [
+    "弹射物保护"
+   ]
+  },
+  {
+   "english": "thorns",
+   "chinese": [
+    "荆棘"
+   ]
+  },
+  {
+   "english": "unbreaking",
+   "chinese": [
+    "耐久"
+   ]
+  },
+  {
+   "english": "mending",
+   "chinese": [
+    "经验修补"
+   ]
+  },
+  {
+   "english": "sharpness",
+   "chinese": [
+    "锋利"
+   ]
+  },
+  {
+   "english": "smite",
+   "chinese": [
+    "亡灵杀手"
+   ]
+  },
+  {
+   "english": "bane_of_arthropods",
+   "chinese": [
+    "节肢杀手"
+   ]
+  },
+  {
+   "english": "knockback",
+   "chinese": [
+    "击退"
+   ]
+  },
+  {
+   "english": "fire_aspect",
+   "chinese": [
+    "火焰附加"
+   ]
+  },
+  {
+   "english": "looting",
+   "chinese": [
+    "抢夺"
+   ]
+  },
+  {
+   "english": "sweeping",
+   "chinese": [
+    "横扫之刃"
+   ]
+  },
+  {
+   "english": "efficiency",
+   "chinese": [
+    "效率"
+   ]
+  },
+  {
+   "english": "silk_touch",
+   "chinese": [
+    "精准采集"
+   ]
+  },
+  {
+   "english": "fortune",
+   "chinese": [
+    "时运"
+   ]
+  },
+  {
+   "english": "power",
+   "chinese": [
+    "力量"
+   ]
+  },
+  {
+   "english": "punch",
+   "chinese": [
+    "冲击"
+   ]
+  },
+  {
+   "english": "flame",
+   "chinese": [
+    "火矢"
+   ]
+  },
+  {
+   "english": "infinity",
+   "chinese": [
+    "无限"
+   ]
+  },
+  {
+   "english": "loyalty",
+   "chinese": [
+    "忠诚"
+   ]
+  },
+  {
+   "english": "impaling",
+   "chinese": [
+    "穿刺"
+   ]
+  },
+  {
+   "english": "riptide",
+   "chinese": [
+    "激流"
+   ]
+  },
+  {
+   "english": "channeling",
+   "chinese": [
+    "引雷"
+   ]
+  },
+  {
+   "english": "multishot",
+   "chinese": [
+    "多重射击"
+   ]
+  },
+  {
+   "english": "quick_charge",
+   "chinese": [
+    "快速装填"
+   ]
+  },
+  {
+   "english": "piercing",
+   "chinese": [
+    "穿透"
+   ]
+  },
+  {
+   "english": "density",
+   "chinese": [
+    "密度"
+   ]
+  },
+  {
+   "english": "breach",
+   "chinese": [
+    "破甲"
+   ]
+  },
+  {
+   "english": "wind_burst",
+   "chinese": [
+    "风爆"
+   ]
+  },
+  {
+   "english": "frost_walker",
+   "chinese": [
+    "冰霜行者"
+   ]
+  },
+  {
+   "english": "depth_strider",
+   "chinese": [
+    "深海探索者"
+   ]
+  },
+  {
+   "english": "respiration",
+   "chinese": [
+    "水下呼吸"
+   ]
+  },
+  {
+   "english": "aqua_affinity",
+   "chinese": [
+    "水下速掘"
+   ]
+  },
+  {
+   "english": "soul_speed",
+   "chinese": [
+    "灵魂疾行"
+   ]
+  },
+  {
+   "english": "swift_sneak",
+   "chinese": [
+    "迅捷潜行"
    ]
   }
  ],

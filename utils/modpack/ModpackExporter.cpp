@@ -616,54 +616,115 @@ void ModpackExporter::exportAsMultiMC()
 // Server export
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// 版本 JSON 的读取与加载器识别定义在本文件末尾，先声明再在本段使用
+QJsonObject readInstanceVersionJson(const QString& instancePath);
+void loaderFromJson(const QJsonObject& obj, QString& type, QString& version);
+
+/// 服务端整合包不该带的东西（对齐 HMCL 的黑名单）：这些是运行期产物、游戏本体或本机环境
+bool isServerPackExcluded(const QString& relPath)
+{
+  static const QStringList excludedDirs = {
+    QStringLiteral("logs"),
+    QStringLiteral("backups"),
+    QStringLiteral("versions"),
+    QStringLiteral("assets"),
+    QStringLiteral("libraries"),
+    QStringLiteral("crash-reports"),
+    QStringLiteral("asm"),
+    QStringLiteral("NVIDIA"),
+    QStringLiteral("TCNodeTracker"),
+  };
+  static const QStringList excludedFiles = {
+    QStringLiteral("usernamecache.json"),
+    QStringLiteral("usercache.json"),
+    QStringLiteral("launcher_profiles.json"),
+  };
+
+  for (const QString& dir : excludedDirs)
+  {
+    if (relPath == dir || relPath.startsWith(dir + QLatin1Char('/')))
+      return true;
+  }
+  if (!relPath.contains(QLatin1Char('/')) && excludedFiles.contains(relPath))
+    return true;
+  return false;
+}
+
+/// 统一成 zip / 清单里通用的相对路径写法：正斜杠、去掉 ./ 与前导斜杠、拒绝 ..
+QString normalizePackPath(const QString& rawPath)
+{
+  QString path = rawPath.trimmed();
+  path.replace(QLatin1Char('\\'), QLatin1Char('/'));
+
+  // 逐段清洗：丢掉空段与 "."，遇到 ".." 直接判为非法（防止跳出实例目录）
+  QStringList kept;
+  const QStringList parts = path.split(QLatin1Char('/'));
+  for (const QString& part : parts)
+  {
+    if (part.isEmpty() || part == QLatin1String("."))
+      continue;
+    if (part == QLatin1String(".."))
+      return QString();
+    kept.append(part);
+  }
+  return kept.join(QLatin1Char('/'));
+}
+
+} // namespace
+
 void ModpackExporter::exportAsServer()
 {
   emit exportProgressChanged(0, tr("正在准备导出 (Server)..."));
 
-  // Build server-manifest.json
+  // 服务端整合包必须写明游戏版本：导入端靠 addons 里的 game 项决定装哪个版本，
+  // 缺了它启动器会直接报「找不到游戏版本」，整个包就打不开。
+  const QString gameVersion = detectGameVersion();
+  if (gameVersion.isEmpty())
+  {
+    emit exportFinished(false, QString(),
+                        tr("无法识别该实例的 Minecraft 版本，服务端整合包必须带上版本号"));
+    return;
+  }
+
+  QString loaderType;
+  QString loaderVersion;
+  loaderFromJson(readInstanceVersionJson(m_instancePath), loaderType, loaderVersion);
+
   QJsonObject serverManifest;
   serverManifest["name"] = m_exportInfo.name;
   serverManifest["author"] = m_exportInfo.author;
   serverManifest["version"] = m_exportInfo.version;
   serverManifest["description"] = m_exportInfo.description;
-  serverManifest["fileApi"] = m_exportInfo.fileApi;
 
-  // Calculate SHA-1 for each file
-  QJsonArray filesArray;
-  if (!m_selectedFiles.isEmpty())
+  // fileApi 是玩家端自动更新时的取源目录（静态 HTTP 根），客户端自己会拼文件名，
+  // 这里去掉末尾斜杠，避免拼出 "https://host//overrides/..."
+  QString fileApi = m_exportInfo.fileApi.trimmed();
+  while (fileApi.endsWith(QLatin1Char('/')))
+    fileApi.chop(1);
+  serverManifest["fileApi"] = fileApi;
+
+  // 游戏本体 + 加载器：导入端按这张表自动装版本，写错会装错加载器，所以只认这四种
+  QJsonArray addons;
   {
-    int total = m_selectedFiles.size();
-    int processed = 0;
-
-    for (const QString& relPath : m_selectedFiles)
-    {
-      QString fullPath = m_instancePath + "/" + relPath;
-      QByteArray sha1 = calculateSha1(fullPath);
-      if (sha1.isEmpty())
-      {
-        ++processed;
-        continue;
-      }
-
-      QJsonObject fileObj;
-      fileObj["path"] = relPath;
-      fileObj["hash"] = QString::fromLatin1(sha1.toHex());
-      filesArray.append(fileObj);
-
-      ++processed;
-      int percent = processed * 30 / total;
-      emit exportProgressChanged(percent, tr("正在计算文件哈希 (%1/%2)...").arg(processed).arg(total));
-    }
+    QJsonObject gameAddon;
+    gameAddon["id"] = QStringLiteral("game");
+    gameAddon["version"] = gameVersion;
+    addons.append(gameAddon);
   }
-  serverManifest["files"] = filesArray;
+  if (!loaderType.isEmpty() && !loaderVersion.isEmpty()
+      && (loaderType == QLatin1String("forge") || loaderType == QLatin1String("neoforge")
+          || loaderType == QLatin1String("fabric") || loaderType == QLatin1String("quilt")))
+  {
+    QJsonObject loaderAddon;
+    loaderAddon["id"] = loaderType;
+    loaderAddon["version"] = loaderVersion;
+    addons.append(loaderAddon);
+  }
+  serverManifest["addons"] = addons;
 
-  // Addons array (empty - no specific addons)
-  serverManifest["addons"] = QJsonArray();
-
-  QJsonDocument manifestDoc(serverManifest);
-  QByteArray manifestData = manifestDoc.toJson(QJsonDocument::Indented);
-
-  emit exportProgressChanged(30, tr("正在创建整合包文件..."));
+  emit exportProgressChanged(5, tr("正在创建整合包文件..."));
 
   ZipWriter zip;
   if (!zip.open(m_outputPath))
@@ -672,43 +733,92 @@ void ModpackExporter::exportAsServer()
     return;
   }
 
-  zip.addFile(QStringLiteral("server-manifest.json"), manifestData, false);
+  // 一边打包一边算 SHA-1：files 清单里的每条都对应 zip 里真实存在的 overrides 条目
+  QJsonArray filesArray;
+  QSet<QString> addedPaths;
+  const int total = m_selectedFiles.size();
+  int processed = 0;
+  int skipped = 0;
 
-  // Add selected files under "overrides/"
-  if (!m_selectedFiles.isEmpty())
-  {
-    int total = m_selectedFiles.size();
-    int processed = 0;
-
+  if (total > 0)
     zip.addDirectory(QStringLiteral("overrides"));
 
-    for (const QString& relPath : m_selectedFiles)
+  for (const QString& rawPath : m_selectedFiles)
+  {
+    ++processed;
+
+    const QString relPath = normalizePackPath(rawPath);
+    if (relPath.isEmpty() || isServerPackExcluded(relPath) || addedPaths.contains(relPath))
     {
-      QString fullPath = m_instancePath + "/" + relPath;
-      QFile file(fullPath);
-      if (!file.open(QIODevice::ReadOnly))
-      {
-        ++processed;
-        continue;
-      }
-
-      QByteArray fileData = file.readAll();
-      file.close();
-
-      QString zipPath = QStringLiteral("overrides/") + relPath;
-
-      // Ensure parent directories exist in zip（parentDir 已含前缀，勿再拼一次）
-      const QString parentDir = QFileInfo(zipPath).path();
-      if (!parentDir.isEmpty() && parentDir != QStringLiteral("."))
-        zip.addDirectory(parentDir);
-
-      zip.addFile(zipPath, fileData);
-
-      ++processed;
-      int percent = 30 + (processed * 60 / total);
-      emit exportProgressChanged(percent, tr("正在打包文件 (%1/%2)...").arg(processed).arg(total));
+      ++skipped;
+      continue;
     }
+
+    QFile file(m_instancePath + QLatin1Char('/') + relPath);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+      ++skipped;
+      continue;
+    }
+    const QByteArray fileData = file.readAll();
+    file.close();
+
+    const QString zipPath = QStringLiteral("overrides/") + relPath;
+    const QString parentDir = QFileInfo(zipPath).path();
+    if (!parentDir.isEmpty() && parentDir != QStringLiteral("."))
+      zip.addDirectory(parentDir);
+
+    // 先确认真的写进包了再登记清单，避免清单里有条目、包里却没有
+    if (!zip.addFile(zipPath, fileData))
+    {
+      ++skipped;
+      continue;
+    }
+
+    QJsonObject fileObj;
+    fileObj["path"] = relPath;
+    fileObj["hash"] = QString::fromLatin1(QCryptographicHash::hash(fileData, QCryptographicHash::Sha1).toHex());
+    filesArray.append(fileObj);
+    addedPaths.insert(relPath);
+
+    const int percent = 5 + (total > 0 ? processed * 80 / total : 0);
+    emit exportProgressChanged(percent, tr("正在打包文件 (%1/%2)...").arg(processed).arg(total));
   }
+
+  serverManifest["files"] = filesArray;
+
+  const QByteArray manifestData =
+    QJsonDocument(serverManifest).toJson(QJsonDocument::Indented);
+  zip.addFile(QStringLiteral("server-manifest.json"), manifestData, false);
+
+  // 包里没脚本，附一份说明，免得服主解压后不知道该干什么
+  QString readme;
+  readme += QStringLiteral("方块盒子 · 服务端整合包使用说明\n");
+  readme += QStringLiteral("================================\n\n");
+  readme += QStringLiteral("本包适用于 Minecraft %1").arg(gameVersion);
+  if (!loaderType.isEmpty() && !loaderVersion.isEmpty())
+    readme += QStringLiteral(" + %1 %2").arg(loaderType, loaderVersion);
+  readme += QStringLiteral("，文件都在 overrides 目录里。\n\n");
+  readme += QStringLiteral("一、玩家装客户端\n");
+  readme += QStringLiteral("  用方块盒子或 HMCL 的「导入整合包」选择本 zip，启动器会按清单自动装好版本、加载器和全部文件。\n\n");
+  readme += QStringLiteral("二、自己开服\n");
+  readme += QStringLiteral("  1. 装好对应版本的 %1 服务端（官方服务端安装器或启动器的服务端安装）；\n").arg(
+    loaderType.isEmpty() ? QStringLiteral("Minecraft") : loaderType);
+  readme += QStringLiteral("  2. 把 overrides 里的内容（mods、config 等）拷到服务端目录；\n");
+  readme += QStringLiteral("  3. 首次启动后把 eula.txt 里的 eula=false 改成 true，再用同样的启动参数启动。\n\n");
+  readme += QStringLiteral("三、让玩家的模组自动跟着服务器更新\n");
+  readme += QStringLiteral("  把整个包解压到任意静态网站目录（Nginx / 宝塔 / GitHub Pages 都行），\n");
+  readme += QStringLiteral("  导出时填的「文件API」就填这个目录的网址。玩家启动时启动器比对清单，只补有改动的文件。\n");
+  if (fileApi.isEmpty())
+  {
+    readme += QStringLiteral("\n  注意：这次导出没有填文件API，玩家端只能整包重装，不能增量更新。\n");
+  }
+  if (skipped > 0)
+  {
+    readme += QStringLiteral("\n  另外：有 %1 个文件被跳过（logs、libraries 等运行期文件，或读取失败的条目）。\n")
+                .arg(skipped);
+  }
+  zip.addFile(QStringLiteral("使用说明.txt"), readme.toUtf8());
 
   if (!zip.close())
   {

@@ -18,6 +18,7 @@
 #include <functional>
 
 #include "utils/DownloadTaskManager.h"
+#include "utils/GameLauncher.h"
 #include "utils/content/ContentData.h"
 #include "utils/FavoritesManager.h"
 #include "utils/ForumLobbyService.h"
@@ -29,11 +30,14 @@ class TaskBar;
 class SideBar;
 class InstanceAssistantWindow;
 class GameFloatingIcon;
+class GameAchievementService;
+class TouchControlOverlay;
 class InstanceSelectPage;
 class ForumAccountPage;
 class CreationCenterPage;
 class AddAccountPage;
 class LaunchDetailsPage;
+class GameLaunchPage;
 class InstallInstancePage;
 class LoaderDetailPage;
 class ForgeVersionListPage;
@@ -57,6 +61,10 @@ class BedrockInstanceSelectPage;
 class BedrockInstanceAssistantWindow;
 class InstanceManagePage;
 class AiChatPage;
+class McpServer;
+class ResourceVersionSyncer;
+class ResourceSyncListWindow;
+struct ResourceSyncItem;
 class JavaDownloadPage;
 class HomePage;
 class FavoritesPage;
@@ -70,13 +78,25 @@ class ForumComposerPage;
 class ForumUserProfilePage;
 class ForumFriendsPage;
 class ForumPluginListPage;
+class ForumSchematicListPage;
+class CommunitySkinPage;
+class CommunitySkinDetailPage;
+class SkinStationPage;
+class LibraryPage;
 class FeedbackPage;
 class FeedbackComposePage;
+class FeedbackDetailPage;
+struct PublicFeedbackItem;
+struct SkinLibraryItem;
 class ForumReportPage;
+class TranslationComposePage;
 class PublishPage;
 class PublishResourcePage;
 class PublishPlatformPage;
 class PublishBoardPage;
+class MorePage;
+class AnnualReportPage;
+class QrScanPage;
 class OnboardingWizard;
 struct ModInfo;
 struct ModVersionFile;
@@ -87,6 +107,8 @@ class SubNavPanel;
 class ClipboardMonitor;
 struct ClipboardLinkInfo;
 class FileDropOverlay;
+class SystemTray;
+class QCloseEvent;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDragLeaveEvent;
@@ -144,18 +166,51 @@ enum class PageIndex {
     PublishPlatformPage = 38,
     PublishBoardPage = 39,
     OnboardingPage = 40,
-    ForumReportPage = 41
+    ForumReportPage = 41,
+    ForumSchematicListPage = 42,
+    /** 安卓端整页启动界面（点「启动游戏」进入，替代底部任务卡形式） */
+    GameLaunchPage = 43,
+    /** 反馈详情页（反馈列表点卡片进入：正文 / 管理员回复 / 评论） */
+    FeedbackDetailPage = 44,
+    /** 创建 / 完善翻译页（在线详情页「创建翻译」进入：翻译简介与详细信息，提交后审核） */
+    TranslationComposePage = 45,
+    /** 资源页「皮肤」子页：方块皮肤站皮肤库（穿上 / 应用为离线皮肤 / 下载 PNG） */
+    CommunitySkinPage = 46,
+    /** 皮肤站整页（账户管理页「皮肤站」入口进入：衣柜 / 皮肤库 / 3D 预览都在软件内） */
+    SkinStationPage = 47,
+    /** 我的 MC 年度报告页（账户管理页「游玩」里的年度报告卡片进入，可导出分享海报） */
+    AnnualReportPage = 48,
+    /** 皮肤库作品详情页（资源>皮肤点卡片进入：3D 预览 / 穿上到皮肤站 / 离线皮肤 / 导出 PNG） */
+    CommunitySkinDetailPage = 49,
+    /** 手机端扫码登录电脑端的整页扫码界面（顶栏「扫描」按钮进入，桌面端入口不显示） */
+    QrScanPage = 50,
+    /** 方块图书馆整页（顶栏「文档」进入：使用教程 / 插件开发 / 开放平台 API / MCP，软件内阅读） */
+    LibraryPageIndex = 51,
+    /** 更多功能页（侧边栏「更多」分类的落地页：联机大厅 / 皮肤站 / 图书馆 / 任务 / 年报 / 账户 / 引导） */
+    MorePageIndex = 52
 };
 
-/** 侧边栏导航索引（SideBar::buildNavStructure 的顺序）：0首页 1资源 2设置 3AI助手 4实例管理(隐藏) 5插件 6社区 7发布 8反馈 */
+/** 侧边栏导航索引（SideBar::buildNavStructure 的顺序）：0首页 1资源 2设置 3AI助手 4实例管理(隐藏) 5插件 6社区 7发布 8更多 9反馈 */
 constexpr int PublishNavIndex = 7;
-constexpr int FeedbackNavIndex = 8;
+constexpr int MoreNavIndex = 8;
+constexpr int FeedbackNavIndex = 9;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
+    /// 单个启动会话的 UI 状态（重试标记/待执行启动/大厅待上报房间号）。
+    /// moc 不处理 slots 区里的类型声明，故放在类体最前面
+    struct LaunchSessionUiState {
+        bool retryAttempted = false;           // 已执行过「补全文件后重试」，防无限重试
+        bool retryPending = false;             // 重试已调度未执行（防重复 gameCrashed）
+        bool backupPending = false;            // 启动前自动备份进行中
+        std::function<void()> launchAfterBackup;
+        int pendingLobbyRoomId = 0;            // 大厅一键加入：等游戏起来再上报的房间号
+        int lobbyRoomId = 0;                   // 本会话游戏正在上报「正在游玩」的房间号
+    };
+
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
@@ -193,6 +248,13 @@ public:
      *         false 表示当前没有可处理的内容（如窗口尚未显示），交还系统处理。
      */
     bool handleAndroidBack();
+
+    /**
+     * @brief 把主窗口从系统托盘叫回前台（点托盘图标 / 托盘通知时调用）
+     *
+     * 窗口可能正收在托盘里、被最小化，或本来就在前台，这里统一还原成前台可交互状态。
+     */
+    void showFromTray();
 
 signals:
     /** 新手引导页走完（首次启动流程用：主程序据此弹入站答题提醒 / 检查更新） */
@@ -237,22 +299,47 @@ private slots:
     void animatedSwitchToPageDirectional(PageIndex index, int fromSidebarIndex, int toSidebarIndex);
     void animateContentEntrance(QWidget *page);
 
-    void onLaunchStatusChanged(int status);
-    void onGameStarted();
-    void onGameStopped(int exitCode);
-    void onGameCrashed(const QString &error);
-    void onLaunchProgressChanged(int progress, const QString& message);
-    void onLaunchDetailAdded(const QString& detail);
-    void onErrorReportGenerated(const QString& report);
-    void onFileCompletionProgress(int completed, int total, const QString& currentFile);
-    void onFileCompletionFinished(bool success);
+    // ── 多实例并行启动：按实例路径路由的启动会话处理 ──
+    // 每个并行启动会话（GameLauncher 对象）的信号在连接时捕获实例路径，
+    // 处理器按路径把进度/状态/日志写进各自的启动卡片与任务条目
+    void onSessionLaunchStatusChanged(const QString &instancePath, GameLauncher::LaunchStatus status);
+    void onSessionGameStarted(const QString &instancePath);
+    void onSessionGameStopped(const QString &instancePath, int exitCode);
+    void onSessionGameCrashed(const QString &instancePath, const QString &error);
+    void onSessionLaunchProgressChanged(const QString &instancePath, int progress, const QString& message);
+    void onSessionLaunchDetailAdded(const QString &instancePath, const QString& detail);
+    void onSessionErrorReportGenerated(const QString &instancePath, const QString& report);
+    void onSessionFileCompletionProgress(const QString &instancePath, int completed, int total, const QString &currentFile);
+    void onSessionFileCompletionFinished(const QString &instancePath, bool success);
+    /** 游戏内触屏键位的输入转发：摇杆向量 / 视角拖动 / 动作键按下抬起（仅安卓接线） */
+    void onTouchControlInput(const QString &action, qreal x, qreal y, bool pressed);
+
+    // ── 多实例并行启动：会话管理 ──
+    /// 统一启动入口：同实例已在启动/运行则提示并拒绝，桌面端允许多实例并行
+    bool startInstanceLaunch(const QString &instancePath, const QStringList &extraGameArgs = {});
+    /// 给会话对象接上带实例路径的信号路由（新会话调用一次）
+    void connectSessionSignals(GameLauncher *session, const QString &instancePath);
+    /// 会话结束（自然退出/取消/异常退出收尾）后的清理：移出会话表并回收对象
+    void finishLaunchSession(const QString &instancePath);
+    /// 会话的单次启动 UI 状态（结构体定义见类体开头）
+    LaunchSessionUiState *sessionState(const QString &instancePath);
+    /// 实例显示名（目录名；空路径兜底叫「游戏」）
+    static QString instanceDisplayName(const QString &instancePath);
+    /// 实例游戏版本（读实例版本 JSON 的 inheritsFrom/clientVersion/id，兜底目录名）
+    static QString instanceVersionOf(const QString &instancePath);
+    /// 实例加载器名（扫描实例版本 JSON 文本，Vanilla 返回空）
+    static QString instanceLoaderOf(const QString &instancePath);
 
     void onLaunchGameClicked();
     void onLaunchGameClicked(const QString &instancePath);
     /** 启动前置校验：账户未就绪时给出引导并返回 false，不进入启动流程 */
     bool ensureLaunchPrerequisites();
     void onQuickLaunchSaveClicked(const QString &saveName);
+    void onQuickLaunchSaveClickedFor(const QString &instancePath, const QString &saveName);
     void onQuickLaunchServerClicked(const QString &address, quint16 port);
+    /// 指定实例一键进服（实例助手「开服」页用）：带 --server/--port 启动
+    void onQuickLaunchServerClickedFor(const QString &instancePath, const QString &address,
+                                       quint16 port);
     /** 联机大厅 / 好友房间「一键加入」：按房间要求挑最合适的实例，缺东西时先问用户再补装 */
     void onLobbyJoinRequested(const ForumLobbyRoom &room, const QString &address, quint16 port);
     /** 开始「正在游玩」上报：立刻报一次，之后每 40 秒续一次（游戏已在运行时调用） */
@@ -270,7 +357,8 @@ private slots:
     void onShaderSettingsOpened();
     void onProjectionEditOpened();
     void onLaunchTaskCardClicked();
-    void onShowDetailsPage();
+    /** 启动卡片点击：详情页聚焦到该实例的启动会话 */
+    void onShowDetailsPage(const QString &instancePath = QString());
     void onDetailsPageBack();
 
     void onVersionSelected(const QString &versionId, const QString &versionType);
@@ -293,6 +381,7 @@ private slots:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -301,9 +390,33 @@ protected:
     void dropEvent(QDropEvent *event) override;
 
 private:
+    /** 创建桌面端系统托盘（手机 / 平板或系统没有托盘服务时跳过） */
+    void setupSystemTray();
+
+    /** 把主窗口收进系统托盘继续后台运行（第一次会弹一条系统通知说明） */
+    void hideToTray();
+
+    /** 托盘菜单「打开设置」：先把窗口叫回来，再跳到设置页 */
+    void openSettingsFromTray();
+
+    /** 托盘菜单「退出方块盒子」：标记为明确退出后走正常退出流程 */
+    void quitFromTray();
+
     /// 进社区前先过一道人机验证，已经验过就直接返回 true
     /// @param force 服务端已经明确要求验证时传 true，忽略本地令牌的有效期
     bool ensureHumanCheck(bool force = false);
+
+    /** 修改版本完成后：自动同步模组 / 资源包 / 光影包到新版本 */
+    void startResourceVersionSync(const QString &instancePath,
+                                  const QString &oldVersion, const QString &newVersion);
+    void onResourceSyncFinished(const QList<ResourceSyncItem> &converted,
+                                const QList<ResourceSyncItem> &pending);
+    void onResourceSyncCheckFailed(const QString &error);
+    /** 未适配新版本的资源询问弹窗：删除 / 保留 / AI 找替代 / 悬浮窗查看清单 */
+    void showResourceSyncPendingDialog(const QList<ResourceSyncItem> &pending);
+    void showResourceSyncListWindow(const QList<ResourceSyncItem> &items);
+    /** 跳转 AI 助手，注入未适配资源引用与「找替代」提示词 */
+    void openAiFindReplacement(const QList<ResourceSyncItem> &items);
 
     Ui::MainWindow *ui;
     TopBar *m_topBar;
@@ -316,7 +429,13 @@ private:
     QStackedWidget *m_stackedWidget;
 
     InstanceSelectPage *m_instanceSelectPage;
-    InstanceAssistantWindow *m_instanceAssistantWindow = nullptr;
+    /**
+     * 实例助手窗口（实例助手窗口多开：每个实例一个独立窗口，键=实例路径）。
+     * 安卓游戏内侧栏模式仍使用 m_overlayAssistantWindow 单窗口。
+     */
+    QMap<QString, InstanceAssistantWindow *> m_assistantWindows;
+    /** 安卓游戏内侧栏助手窗口（overlay 模式专用，桌面端不用） */
+    InstanceAssistantWindow *m_overlayAssistantWindow = nullptr;
     /** 基岩版实例助手窗口（首页/AI/快捷指令/联机/资源管理/设置 六标签） */
     BedrockInstanceAssistantWindow *m_bedrockInstanceAssistantWindow = nullptr;
     /** 账户管理页界面（与方块盒子论坛账号打通，桌面端唯一的账户页） */
@@ -327,6 +446,8 @@ private:
     AddAccountPage *m_addAccountPage = nullptr;
     /** 账户管理页容器（入场动画作用在内层页面，故保留一层 QStackedWidget） */
     QStackedWidget *m_accountUiStack = nullptr;    LaunchDetailsPage *m_launchDetailsPage;
+    /** 安卓端整页启动界面（按需创建；桌面端恒为空，启动进度仍走任务卡） */
+    GameLaunchPage *m_gameLaunchPage = nullptr;
     InstallInstancePage *m_installInstancePage;
     LoaderDetailPage *m_loaderDetailPage;
     ForgeVersionListPage *m_forgeVersionListPage;
@@ -354,7 +475,24 @@ private:
     /** 基岩版社区资源下载目标实例 ID（空 = 跟随当前激活实例） */
     QString m_bedrockDownloadTargetInstanceId;
     AiChatPage *m_aiChatPage = nullptr;
+    /** 本地 MCP 服务器（外部 AI 客户端接入，默认关闭） */
+    McpServer *m_mcpServer = nullptr;
+    /** 最近一次 MCP 服务状态（设置页晚创建时用来补显示） */
+    bool m_mcpRunning = false;
+    quint16 m_mcpRunningPort = 0;
+    QString m_mcpStatusDetail;
+    /** 桌面端系统托盘（平台不支持托盘时为 nullptr，关窗行为保持原样） */
+    SystemTray *m_systemTray = nullptr;
+    /** 用户在托盘菜单里明确点了退出：closeEvent 直接放行，不再收进托盘 */
+    bool m_quitConfirmed = false;
     JavaDownloadPage *m_javaDownloadPage = nullptr;
+    /** 资源版本同步器（修改实例版本后自动转化模组/资源包/光影包） */
+    ResourceVersionSyncer *m_resourceVersionSyncer = nullptr;
+    /** 未适配资源清单悬浮窗（WA_DeleteOnClose，关闭后自动置空） */
+    QPointer<ResourceSyncListWindow> m_resourceSyncListWindow;
+    /** 最近一次版本同步的新旧版本（弹窗文案与 AI 提示词用） */
+    QString m_syncOldVersion;
+    QString m_syncNewVersion;
     HomePage *m_homePage = nullptr;
     FavoritesPage *m_favoritesPage = nullptr;
     SkinEditorPage *m_skinEditorPage = nullptr;
@@ -372,10 +510,32 @@ private:
     ForumFriendsPage *m_forumFriendsPage = nullptr;
     /** 资源页「插件」子页：论坛插件帖聚合成可安装列表 */
     ForumPluginListPage *m_forumPluginListPage = nullptr;
+    /** 资源页「投影」子页：论坛投影分享板块的投影列表（一键下载到当前实例） */
+    ForumSchematicListPage *m_forumSchematicListPage = nullptr;
+    /** 资源页「皮肤」子页：方块皮肤站皮肤库（穿上 / 离线皮肤 / 导出 PNG） */
+    CommunitySkinPage *m_communitySkinPage = nullptr;
+    /** 皮肤库作品详情页（资源>皮肤点卡片进入，整页展示 3D 预览与动作） */
+    CommunitySkinDetailPage *m_communitySkinDetailPage = nullptr;
+    /** 皮肤站整页（账户管理页「皮肤站」进入，软件内打开而不是独立窗口） */
+    SkinStationPage *m_skinStationPage = nullptr;
+    /** 我的 MC 年度报告页（统计页进入，返回落点是统计页） */
+    AnnualReportPage *m_annualReportPage = nullptr;
+    /** 手机端扫码登录电脑端的扫码页（顶栏「扫描」进入，按需创建后常驻） */
+    QrScanPage *m_qrScanPage = nullptr;
+    /** 方块图书馆整页（顶栏「文档」/ 设置-关于 进入，软件内直接看四卷文档，不开浏览器） */
+    LibraryPage *m_libraryPage = nullptr;
     /** 软件内反馈页（左侧导航栏底部入口），只显示反馈列表 */
     FeedbackPage *m_feedbackPage = nullptr;
     /** 提交新反馈页（反馈页顶部「提交新反馈」进入），提交走论坛账号 */
     FeedbackComposePage *m_feedbackComposePage = nullptr;
+    /** 反馈详情页（反馈列表点卡片进入：正文 / 管理员回复 / 评论区） */
+    FeedbackDetailPage *m_feedbackDetailPage = nullptr;
+    /** 创建 / 完善翻译页（在线详情页「创建翻译」进入），提交走论坛账号 */
+    TranslationComposePage *m_translationComposePage = nullptr;
+    /** 翻译编辑页的上下文：正在翻译的资源与详情页当前显示的原文 */
+    ModInfo m_translationComposeInfo;
+    QString m_translationSourceSummary;
+    QString m_translationSourceDetailHtml;
     /** 举报楼层页（帖子详情页「举报」进入），分类 + 补充说明走论坛账号 */
     ForumReportPage *m_forumReportPage = nullptr;
     /** 发布中心：入口页 / 资源类型页 / 平台跳转页 / 帖子板块页 */
@@ -383,6 +543,8 @@ private:
     PublishResourcePage *m_publishResourcePage = nullptr;
     PublishPlatformPage *m_publishPlatformPage = nullptr;
     PublishBoardPage *m_publishBoardPage = nullptr;
+    /** 更多功能页（侧边栏「更多」类别的落地页，按需创建后常驻） */
+    MorePage *m_morePage = nullptr;
     /** 新手引导页（独立整页，按需创建后常驻；不随侧边栏导航出现） */
     OnboardingWizard *m_onboardingPage = nullptr;
     /** 本次进入引导页是否为首次启动自动进入（决定走完后是否触发首次启动后续动作） */
@@ -398,11 +560,14 @@ private:
     bool m_clipboardDialogOpen = false; ///< 剪贴板确认框是否已弹出（防剪贴板变化重入叠加弹窗）
 
     GameFloatingIcon *m_gameFloatingIcon = nullptr; ///< 游戏内悬浮图标（仅安卓：实例助手入口）
+    TouchControlOverlay *m_touchControlOverlay = nullptr; ///< 游戏内触屏键位悬浮层（仅安卓：按操作设置布局）
 
     QList<QShortcut *> m_shortcuts;
 
     BackgroundWidget *m_backgroundWidget;
     GameLauncher *m_gameLauncher;
+    /** 全局游戏成就同步（不依赖实例助手；单机读存档，方块盒子联机读日志） */
+    GameAchievementService *m_gameAchievements = nullptr;
     PageTransitionAnimator *m_pageAnimator;
     ContentAnimator *m_contentAnimator;
     QPoint m_dragPosition;
@@ -434,9 +599,21 @@ private:
      */
     QTimer *m_lobbyPresenceTimer = nullptr;
     int m_lobbyPlayRoomId = 0;      ///< 正在上报的房间号（0 = 没在玩）
-    int m_pendingLobbyRoomId = 0;   ///< 刚点了一键加入、等游戏起来再上报的房间号
-    bool m_launchRetryAttempted = false; // 标记本次启动是否已执行过"补全文件后重试"，避免无限重试
-    bool m_launchRetryPending = false;  // 标记重试已调度但尚未执行（防止重复 gameCrashed 信号清除任务）
+
+    // ── 多实例并行启动 ──
+    /// 活动的启动会话（键=实例路径，含主单例复用的会话）；会话结束即移除。
+    /// 用 QMap：sessionState() 返回值指针要求节点地址稳定
+    QMap<QString, GameLauncher *> m_launchSessions;
+    /// 各会话的单次启动 UI 状态（重试/备份/大厅待上报），键=实例路径
+    QMap<QString, LaunchSessionUiState> m_launchSessionStates;
+    /// 启动详情页当前展示的会话（卡片点击切换；空=最新会话）
+    QString m_focusedLaunchSession;
+    /// 当前正在进行「启动前自动备份」的会话（备份管理器全局单例，同一时间只跑一份）
+    QString m_backupPendingPath;
+    /// 游玩时长统计当前认领会话的实例路径（服务一次只记一个会话）
+    QString m_playtimeSessionPath;
+    /// 大厅/好友房间一键加入：随下一次 startInstanceLaunch 消费进会话状态的房间号
+    int m_nextLaunchLobbyRoomId = 0;
 
     QMap<PageIndex, bool> m_pageInitialized;
     QRecursiveMutex m_initMutex;
@@ -450,7 +627,13 @@ private:
     void initUI();
     void initPages();
     void initGameLauncher();
+    /** 登记详情页链接的分发方式：站内帖子、一键加入、CF / Modrinth 资源页都在软件内打开 */
+    void setupLinkRouter();
     void updateBackgroundWidget();
+    /** 按当前主题应用旋转全景：素材已下载则直接用本地目录，否则先触发下载 */
+    void applyRotatingPanorama(const QString &scene);
+    /** 旋转模式实际使用的场景：自定义图片为空/失效时回退到默认全景主题 */
+    QString effectiveRotatingScene() const;
     void setSideBarVisible(bool visible);
     /**
      * 显示侧边栏并恢复该页所属分组的子导航面板。
@@ -484,6 +667,11 @@ private:
     void ensurePageInitialized(PageIndex pageIndex);
     bool isPageInitialized(PageIndex pageIndex) const;
 
+    /** 按设置启停本地 MCP 服务器，并把状态回显到设置页 */
+    void applyMcpServerSettings();
+    /** 把 MCP 服务状态同步到已创建的设置页（未创建时忽略，创建时再补一次） */
+    void syncMcpStatusToSettingsPage();
+
     /** 从拖拽 mime 中取出方块盒子更新安装包的本地路径列表 */
     QStringList extractUpdatePackages(const QMimeData *mime) const;
     /** 从拖拽 mime 中取出基岩版资源包/地图（.mcpack/.mcaddon/.mcworld/.mctemplate）路径列表 */
@@ -502,6 +690,8 @@ private:
     /** 「添加角色」页：离线 / 微软正版 / 第三方添加游戏账户（账户管理页内层页） */
     void openAddAccountPage();
     void initLaunchDetailsPage();
+    /** 安卓端整页启动界面（按需创建） */
+    void initGameLaunchPage();
     void initInstallInstancePage();
     void initLoaderDetailPage();
     void initForgeVersionListPage();
@@ -527,13 +717,37 @@ private:
     void initForumUserProfilePage();
     void initFeedbackPage();
     void initFeedbackComposePage();
+    void initFeedbackDetailPage();
+    void initTranslationComposePage();
     void initForumReportPage();
     void initForumFriendsPage();
     void initForumPluginListPage();
+    void initForumSchematicListPage();
+    void initCommunitySkinPage();
+    /** 皮肤库作品详情页（资源>皮肤点卡片进入，按需创建，创建后常驻） */
+    void initCommunitySkinDetailPage();
+    /** 皮肤站整页（按需创建，创建后常驻） */
+    void initSkinStationPage();
+    /** 我的 MC 年度报告页（按需创建，创建后常驻） */
+    void initAnnualReportPage();
+    /** 手机端扫码登录电脑端的扫码页（按需创建，创建后常驻） */
+    void initQrScanPage();
+    /** 方块图书馆整页（按需创建，创建后常驻） */
+    void initLibraryPage();
+    /** 打开扫码登录页（手机端顶栏「扫描」进入，返回落点是进入前的页面） */
+    void showQrScanPage();
+    /** 扫码页自己的返回请求：仍停在扫码页时才按「返回上一页」处理 */
+    void onQrScanPageBackRequested();
     void initPublishPage();
     void initPublishResourcePage();
     void initPublishPlatformPage();
     void initPublishBoardPage();
+    /** 更多功能页（侧边栏「更多」入口，按需创建后常驻） */
+    void initMorePage();
+    /** 打开「更多」落地页：展开更多分类的子导航并选中侧边栏「更多」 */
+    void showMorePage();
+    /** 「更多」子导航 / 卡片选了第 childIndex 个分类：转到对应整页 */
+    void openMoreFeature(int childIndex);
     /** 新手引导页（首次启动时懒加载创建） */
     void initOnboardingPage();
     /** 引导页走完：回到首页，必要时通知主程序做首次启动后续动作 */
@@ -542,6 +756,9 @@ private:
     void onOnboardingBackRequested();
     /** 引导页切换语言：重启进程以干净加载新语言 */
     void onOnboardingRestartRequested();
+    // ── 安卓端整页启动界面 ──
+    /** 启动页顶栏返回 / 安卓返回键：启动中先确认取消，其余直接回主页 */
+    void onGameLaunchPageBackRequested();
     // ── 发布中心：入口 / 资源类型 / 平台跳转 / 帖子板块 ──
     void showPublishPage();
     void showPublishResourcePage();
@@ -555,6 +772,18 @@ private:
     void showPublishPostCompose(const QString &boardSlug);
     /** 教程发布页（复用论坛发帖页，切到「教程」模式，固定发到教程分享板块） */
     void showPublishTutorialCompose();
+    /** 有奖问答发布页（复用论坛发帖页，切到「问答」模式，固定发到有奖问答板块） */
+    void showPublishQuestionCompose();
+    /** 导航发布页（复用论坛发帖页，切到「导航」模式，按类型发到网站/服务器导航板块） */
+    void showPublishNavigationCompose();
+    /**
+     * @brief 把一台开好的服务器发布到社区「服务器导航」（「开服」页按钮走这里）
+     *
+     * 标题 / 正文 / 标签由开服页按服务器信息生成，地址优先用隧道地址；
+     * 未登录或没过入站答题时，发帖页自己会显示登录 / 答题入口。
+     */
+    void showPublishServerNavigationCompose(const QString &title, const QString &content,
+                                            const QStringList &tags, const QString &address);
     // ── 论坛深度集成：内层页的打开与返回 ──
     void showForumThread(int threadId);
     void showForumBoard(const QString &slug, const QString &boardName);
@@ -565,9 +794,33 @@ private:
     void showForumUserProfile(int userId);
     /** 打开资源页「插件」子页（论坛插件帖列表） */
     void showForumPluginListPage();
+    /** 打开资源页「投影」子页（论坛投影分享板块的投影列表） */
+    void showForumSchematicListPage();
+    /** 打开资源页「皮肤」子页（方块皮肤站皮肤库） */
+    void showCommunitySkinPage();
+    /** 打开皮肤库作品详情页（资源>皮肤点卡片进入，返回落点是皮肤库列表页） */
+    void showCommunitySkinDetail(const SkinLibraryItem &item);
+    /** 回到皮肤库列表页（详情页的返回落点，不重新拉列表） */
+    void returnToCommunitySkinList();
+    /** 打开皮肤站整页（账户管理页「皮肤站」入口，返回落点是账户管理页） */
+    void showSkinStationPage();
+    /** 打开「我的 MC 年度报告」页（账户管理页「游玩」里的年度报告卡片入口，返回落点也是「游玩」页签） */
+    void showAnnualReportPage(int year = 0);
     void showFeedbackPage();
+    /** 打开方块图书馆整页（顶栏「文档」与设置-关于的「文档中心」都走这里），返回落点是主界面 */
+    void showLibraryPage();
+    /** 打开图书馆并直接跳到指定卷 / 章（插件页、AI 设置里的文档入口都走这里） */
+    void openLibraryDoc(const QString &volume, const QString &chapter = QString(),
+                        const QString &anchor = QString());
     /** 提交新反馈页（从反馈列表页进入，返回落点也是反馈列表页） */
     void showFeedbackComposePage();
+    /**
+     * 进入创建 / 完善翻译页（上下文在 m_translationComposeInfo 等成员里，由详情页入口填好）。
+     * returnToDetail 为返回落点（从哪个详情页进来的就回哪个），提交成功后也走它回详情页。
+     */
+    void showTranslationComposePage(std::function<void()> returnToDetail);
+    /** 反馈详情页（从反馈列表页点卡片进入，返回落点也是反馈列表页） */
+    void showFeedbackDetail(const PublicFeedbackItem &item);
     /** 举报楼层页（从帖子详情页进入，返回落点是帖子详情页） */
     void showForumReportPage(int postId, int floor, const QString &authorName,
                              const QString &excerpt);
@@ -581,6 +834,8 @@ private:
     void presentForumUserProfile();
     void presentFeedbackPage();
     void presentFeedbackComposePage();
+    void presentTranslationComposePage();
+    void presentFeedbackDetailPage();
     void presentForumReportPage();
     void presentForumFriends();
     /** 回到社区页（恢复侧边栏选中与顶栏标题） */
@@ -590,7 +845,11 @@ private:
     /** 回到反馈列表页（提交新反馈页的返回落点） */
     void returnToFeedbackList();
     void initSettingsPage();
+    /** 当前设置页中「关于」子页的序号；设置页还没创建时返回 -1 */
+    int settingsTabIndexForAbout() const;
     void showJavaDownloadPage();
+    /** 弹出网络连通性自检对话框（设置页 / 启动加载失败诊断入口） */
+    void showNetworkCheckDialog();
     void showFavoritesPage(const QString &folderId);
     /** 打开内置「官方新闻」列表页 */
     void showNewsPage();
@@ -616,8 +875,12 @@ private:
     void showCreationCenterPage();
     /** 打开实例助手窗口（顶栏与首页经典模式面板共用），注入当前实例上下文 */
     void openInstanceAssistant();
+    /** 打开指定实例的助手窗口（窗口多开：每个实例一个独立窗口；已有则置前） */
+    void openInstanceAssistantFor(const QString &instancePath);
     void showSkinEditorPage();
     void showLaunchDetailsPage();
+    /** 安卓端：切到整页启动界面（记录来路页面，返回键可离开） */
+    void showGameLaunchPage();
     void showTaskListPage();
     void showTaskDetailPage(const QString &taskId);
     void showModDownloadPage();
@@ -636,6 +899,13 @@ private:
 
     /** 带额外 gameArgs 启动游戏（用于存档/服务器快捷启动） */
     void launchGameWithExtraArgs(const QStringList &extraGameArgs);
+    /**
+     * @brief 启动游戏前的自动存档备份：备份完成后（未启用/无需备份时立即）执行 launchAction
+     *
+     * 备份在工作线程里跑，启动任务卡显示进度；备份失败不会拦住启动，
+     * 只是本次没有新的备份点。备份进度按 instancePath 路由到对应会话的 UI。
+     */
+    void launchWithAutoBackup(const QString &instancePath, const std::function<void()> &launchAction);
     void showContentDownloadPage(ContentType type);
     void showContentDetailPage(const ModInfo &info, ContentType type,
                                const QString &filterGameVersion = QString(),
@@ -666,6 +936,13 @@ private:
     void onModConvertRequested(const ModInfo &modInfo, const ModVersionFile &versionFile,
                                const QStringList &oldFilePaths);
     void onContentDownloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile, ContentType contentType);
+    /**
+     * @brief 在线安装整合包：把网络整合包下载下来后按清单装成一个完整的新实例
+     *
+     * 整合包不是"塞进某个实例文件夹"的资源，装它等于新建实例（原版版本 + 加载器 +
+     * 模组 + 覆盖文件），所以不走普通资源下载落地流程。
+     */
+    void installOnlineModpack(const ModInfo &modInfo, const ModVersionFile &versionFile);
     /** 内容详情页（资源包/光影包）的版本转换：下载新文件后删除 oldFilePaths 里的旧文件 */
     void onContentConvertRequested(const ModInfo &modInfo, const ModVersionFile &versionFile,
                                    ContentType contentType, const QStringList &oldFilePaths);
@@ -690,6 +967,14 @@ private:
      * 安装前先确认存在适配当前实例版本与加载器的文件，没有就说明原因并引导到下载页。
      */
     void onQuickInstallModRequested(const QString &modKey);
+    /**
+     * @brief 下载投影时实例没有 schematics 目录：自动装投影模组并准备目录
+     *
+     * 同一实例只自动尝试一次；已经有 Litematica 或装不成时只提示，不打断下载。
+     */
+    void ensureProjectionModForDownload();
+    /** 快速装模组的具体实现；quiet = true 时走后台自动安装，失败只提示不跳页 */
+    void installQuickMod(const QString &modKey, bool quiet);
     void onClipboardLinkDetected(const ClipboardLinkInfo &info);
 
     // ===== 基岩版社区资源（CurseForge 游戏 ID 78022） =====
@@ -715,4 +1000,5 @@ private:
     static constexpr int kMaxCardDownloadDepth = 3; ///< 一键下载递归前置的最大深度，防止循环依赖
     QSet<QString> m_cardDownloadVisited;            ///< 一次"一键下载"流程中已处理的资源 ID（source:id）
     QSet<QString> m_cardDownloadDetailTried;        ///< 一次"一键下载"流程中已请求过详情的资源 ID，避免重复补全与死循环
+    QSet<QString> m_projectionModAutoTried;         ///< 已自动尝试装过投影模组的实例路径（失败也不反复重试）
 };

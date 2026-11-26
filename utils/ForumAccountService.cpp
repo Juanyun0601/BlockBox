@@ -21,6 +21,7 @@
 #include <QTimer>
 #include <QUrl>
 
+#include "CoverImageCache.h"
 #include "SettingsManager.h"
 #include "QuizBank.h"
 
@@ -36,6 +37,10 @@ constexpr auto kHumanBaseUrlKey = "forum/humanBaseUrl";
 constexpr auto kSessionCookieName = "bbf_sid";
 constexpr auto kHumanHeaderName = "X-Human-Token";
 constexpr int kRequestTimeoutMs = 15000;
+
+// 扫码登录：电脑端每隔 1.5 秒问一次服务端「手机上确认了没有」。
+// 手机上点完确认，电脑端几乎立刻就能落到登录状态，又不会把论坛问得太勤。
+constexpr int kQrPollIntervalMs = 1500;
 
 // 头像 / 封面的上限跟论坛服务器保持一致：超过就直接被服务器拒收（头像 512 KB、封面 3 MB），
 // 所以启动器这边拿到超限的图不报错，先压到限制以内再发。
@@ -233,6 +238,14 @@ ForumAccountService::ForumAccountService(QObject *parent) : QObject(parent)
 {
     m_settings = new QSettings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"), this);
     m_network = new QNetworkAccessManager(this);
+    m_oauthTimer = new QTimer(this);
+    m_oauthTimer->setSingleShot(true);
+    connect(m_oauthTimer, &QTimer::timeout, this, &ForumAccountService::pollOAuthStatus);
+
+    // 扫码登录：电脑端每隔一会儿问一次「手机上确认了没」
+    m_qrTimer = new QTimer(this);
+    m_qrTimer->setSingleShot(true);
+    connect(m_qrTimer, &QTimer::timeout, this, &ForumAccountService::pollQrLogin);
 
     m_token = m_settings->value(QString::fromLatin1(kTokenKey)).toString();
     m_tokenBaseUrl = m_settings->value(QString::fromLatin1(kTokenBaseUrlKey)).toString();
@@ -305,20 +318,43 @@ void ForumAccountService::login(const QString &username, const QString &password
     postAuth(QStringLiteral("/api/auth/login"), body);
 }
 
-void ForumAccountService::registerAccount(const QString &username, const QString &password)
+void ForumAccountService::registerAccount(const QString &username, const QString &password,
+                                          const QString &email, const QString &code)
 {
     QJsonObject body;
     body.insert(QStringLiteral("username"), username);
     body.insert(QStringLiteral("password"), password);
+    // 论坛要求邮箱时这两项都要有；老论坛或管理员关掉邮箱要求时可以不填，
+    // 空着就不发，免得旧服务端因为多出来的字段报参数错误
+    if (!email.trimmed().isEmpty())
+        body.insert(QStringLiteral("email"), email.trimmed());
+    if (!code.trimmed().isEmpty())
+        body.insert(QStringLiteral("code"), code.trimmed());
     postAuth(QStringLiteral("/api/auth/register"), body);
 }
 
-void ForumAccountService::postAuth(const QString &path, const QJsonObject &body)
+void ForumAccountService::fetchRegisterPolicy()
 {
-    sendAuth(path, body, 1);
+    // 只读接口，没登录也放行（也不经过人机验证），拿到的就是论坛现在的注册规矩
+    getJson(
+        QStringLiteral("/api/auth/register/policy"),
+        [this](const QJsonObject &root) {
+            const bool emailRequired = root.value(QStringLiteral("email_required")).toBool(true);
+            const bool registerOpen = root.value(QStringLiteral("register_open")).toBool(true);
+            emit registerPolicyChanged(emailRequired, registerOpen);
+        },
+        // 拿不到就按默认（要邮箱验证）走，不打扰用户
+        [](const QString &, int) {});
 }
 
-void ForumAccountService::sendAuth(const QString &path, const QJsonObject &body, int attempt)
+void ForumAccountService::postAuth(const QString &path, const QJsonObject &body,
+                                   const QString &successMessage)
+{
+    sendAuth(path, body, 1, successMessage);
+}
+
+void ForumAccountService::sendAuth(const QString &path, const QJsonObject &body, int attempt,
+                                   const QString &successMessage)
 {
     QNetworkRequest request{QUrl(absoluteUrl(path))};
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
@@ -328,7 +364,8 @@ void ForumAccountService::sendAuth(const QString &path, const QJsonObject &body,
     QNetworkReply *reply =
         m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, path, body, attempt]() {
+    connect(reply, &QNetworkReply::finished, this,
+            [this, reply, path, body, attempt, successMessage]() {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QByteArray raw = reply->readAll();
         const int networkError = int(reply->error());
@@ -342,9 +379,10 @@ void ForumAccountService::sendAuth(const QString &path, const QJsonObject &body,
             {
                 qWarning() << "[ForumAccount] 登录请求失败，准备第" << (attempt + 1)
                            << "次尝试:" << networkDetail;
-                QTimer::singleShot(retryDelayMs(attempt), this, [this, path, body, attempt]() {
+                QTimer::singleShot(retryDelayMs(attempt), this,
+                                   [this, path, body, attempt, successMessage]() {
                     m_network->clearConnectionCache(); // 别复用那条已经挂住的连接
-                    sendAuth(path, body, attempt + 1);
+                    sendAuth(path, body, attempt + 1, successMessage);
                 });
                 return;
             }
@@ -364,13 +402,13 @@ void ForumAccountService::sendAuth(const QString &path, const QJsonObject &body,
                 clearHumanCheck();
                 m_humanCheckPending = true;
                 if (m_humanReplays.size() < 12)
-                    m_humanReplays.append([this, path, body]() {
+                    m_humanReplays.append([this, path, body, successMessage]() {
                         if (m_humanToken.isEmpty())
                         {
                             emit requestFailed(tr("需要先完成人机验证，验证后再试一次"), 403);
                             return;
                         }
-                        sendAuth(path, body, 1);
+                        sendAuth(path, body, 1, successMessage);
                     });
                 emit humanCheckRequired();
                 return;
@@ -398,7 +436,9 @@ void ForumAccountService::sendAuth(const QString &path, const QJsonObject &body,
         saveSession(newToken);
         setUser(parseUser(root.value(QStringLiteral("user")).toObject()));
 
-        if (root.value(QStringLiteral("first_user")).toBool())
+        if (!successMessage.isEmpty())
+            emit requestSucceeded(successMessage);
+        else if (root.value(QStringLiteral("first_user")).toBool())
             emit requestSucceeded(tr("已创建论坛第一个账号，你现在是管理员"));
         else
             emit requestSucceeded(tr("已登录论坛账号：%1")
@@ -423,6 +463,521 @@ void ForumAccountService::logout()
     clearSession();
     emit requestSucceeded(tr("已退出论坛账号"));
     emit userChanged(m_user);
+}
+
+// ────────────────────────────────────────────────────────────── 第三方登录
+
+void ForumAccountService::fetchOAuthProviders()
+{
+    QNetworkRequest request{QUrl(absoluteUrl(QStringLiteral("/api/auth/oauth/providers")))};
+    prepareRequest(request, false);
+
+    // 这个接口只用来决定登录卡上显示哪些按钮，失败就当作没有第三方登录，
+    // 不弹错误提示、也不触发人机验证——老版本论坛没有这个接口时也应该照常用账号密码登录。
+    QNetworkReply *reply = m_network->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray raw = reply->readAll();
+        reply->deleteLater();
+
+        const QJsonDocument doc = QJsonDocument::fromJson(raw);
+        if (status == 200 && doc.isObject())
+        {
+            emit oauthProvidersChanged(
+                doc.object().value(QStringLiteral("providers")).toArray());
+            return;
+        }
+        emit oauthProvidersChanged(QJsonArray());
+    });
+}
+
+void ForumAccountService::startOAuthLogin(const QString &provider)
+{
+    if (provider.isEmpty())
+        return;
+    cancelOAuthLogin();
+    const int generation = ++m_oauthGeneration;
+
+    QJsonObject body;
+    body.insert(QStringLiteral("provider"), provider);
+    const QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
+    QNetworkRequest request{QUrl(absoluteUrl(QStringLiteral("/api/auth/oauth/device")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    prepareRequest(request, false);
+
+    QNetworkReply *reply = m_network->post(request, payload);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, provider, generation]() {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray raw = reply->readAll();
+        const int networkError = int(reply->error());
+        const QString networkDetail = reply->errorString();
+        reply->deleteLater();
+
+        // 用户已经取消 / 重新发起过一次：这次结果直接丢掉，别在后台偷偷登录
+        if (generation != m_oauthGeneration)
+            return;
+
+        if (status == 0)
+        {
+            emit oauthLoginFailed(networkFailureMessage(networkError, networkDetail, 1));
+            return;
+        }
+        if (status >= 400)
+        {
+            emit oauthLoginFailed(errorMessage(raw, reply));
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(raw);
+        if (!doc.isObject())
+        {
+            emit oauthLoginFailed(tr("论坛返回的数据无法解析"));
+            return;
+        }
+
+        const QJsonObject root = doc.object();
+        const QString deviceCode = root.value(QStringLiteral("device_code")).toString();
+        const QString verificationUrl = root.value(QStringLiteral("verification_url")).toString();
+        if (deviceCode.isEmpty() || verificationUrl.isEmpty())
+        {
+            emit oauthLoginFailed(tr("论坛没有返回登录地址，请稍后再试"));
+            return;
+        }
+
+        m_oauthProvider = provider;
+        m_oauthDeviceCode = deviceCode;
+        m_oauthIntervalMs = qMax(2000, root.value(QStringLiteral("interval")).toInt(3) * 1000);
+        const int expiresIn = qMax(60, root.value(QStringLiteral("expires_in")).toInt(600));
+        m_oauthRemainingPolls = qMax(1, (expiresIn * 1000) / m_oauthIntervalMs + 1);
+        m_oauthNetworkRetries = 0;
+        m_oauthBusy = true;
+
+        emit oauthLoginStarted(provider, absoluteUrl(verificationUrl),
+                               root.value(QStringLiteral("user_code")).toString(), expiresIn);
+        if (m_oauthTimer)
+            m_oauthTimer->start(m_oauthIntervalMs);
+    });
+}
+
+void ForumAccountService::pollOAuthStatus()
+{
+    if (!m_oauthBusy || m_oauthDeviceCode.isEmpty())
+        return;
+
+    if (m_oauthRemainingPolls <= 0)
+    {
+        stopOAuthPolling();
+        emit oauthLoginFailed(tr("等待浏览器授权超时了，请重新发起第三方登录"));
+        return;
+    }
+    --m_oauthRemainingPolls;
+
+    const int generation = m_oauthGeneration;
+    // 设备码放在请求体里发：GET 查询串会被服务端访问日志原样记下来，等于把登录凭据写进日志
+    QJsonObject body;
+    body.insert(QStringLiteral("device_code"), m_oauthDeviceCode);
+    const QByteArray payload = QJsonDocument(body).toJson(QJsonDocument::Compact);
+    QNetworkRequest request{QUrl(absoluteUrl(QStringLiteral("/api/auth/oauth/device/status")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    prepareRequest(request, false);
+
+    QNetworkReply *reply = m_network->post(request, payload);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, generation]() {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray raw = reply->readAll();
+        const int networkError = int(reply->error());
+        const QString networkDetail = reply->errorString();
+        reply->deleteLater();
+
+        if (!m_oauthBusy || generation != m_oauthGeneration)
+            return; // 用户已经取消 / 关闭了等待框，或已经重新发起
+
+        if (status == 0)
+        {
+            // 轮询偶尔会被网络抖动打断，别立刻报失败：给三次重试机会
+            if (m_oauthNetworkRetries < 3)
+            {
+                ++m_oauthNetworkRetries;
+                if (m_oauthTimer)
+                    m_oauthTimer->start(2000);
+                return;
+            }
+            stopOAuthPolling();
+            emit oauthLoginFailed(networkFailureMessage(networkError, networkDetail, 1));
+            return;
+        }
+        if (status >= 400)
+        {
+            stopOAuthPolling();
+            emit oauthLoginFailed(errorMessage(raw, reply));
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(raw);
+        if (!doc.isObject())
+        {
+            stopOAuthPolling();
+            emit oauthLoginFailed(tr("论坛返回的数据无法解析"));
+            return;
+        }
+
+        const QJsonObject root = doc.object();
+        const QString state = root.value(QStringLiteral("status")).toString();
+        if (state == QLatin1String("pending"))
+        {
+            m_oauthNetworkRetries = 0;
+            if (m_oauthTimer)
+                m_oauthTimer->start(m_oauthIntervalMs);
+            return;
+        }
+
+        if (state == QLatin1String("authorized"))
+        {
+            const QString sessionToken = root.value(QStringLiteral("token")).toString();
+            const QJsonObject userObject = root.value(QStringLiteral("user")).toObject();
+            if (sessionToken.isEmpty() || userObject.isEmpty())
+            {
+                stopOAuthPolling();
+                emit oauthLoginFailed(tr("第三方登录成功但没拿到会话，请重试"));
+                return;
+            }
+
+            stopOAuthPolling();
+            saveSession(sessionToken);
+            setUser(parseUser(userObject));
+            emit oauthLoginSucceeded(m_user);
+            emit userChanged(m_user);
+            return;
+        }
+
+        const QString message = root.value(QStringLiteral("message")).toString();
+        stopOAuthPolling();
+        emit oauthLoginFailed(message.isEmpty() ? tr("第三方登录已失效，请重新发起") : message);
+    });
+}
+
+void ForumAccountService::cancelOAuthLogin()
+{
+    // 递增代次：已经发出去、还没回来的设备码 / 轮询响应都作废
+    ++m_oauthGeneration;
+    stopOAuthPolling();
+}
+
+void ForumAccountService::stopOAuthPolling()
+{
+    if (m_oauthTimer)
+        m_oauthTimer->stop();
+    m_oauthBusy = false;
+    m_oauthProvider.clear();
+    m_oauthDeviceCode.clear();
+    m_oauthRemainingPolls = 0;
+    m_oauthNetworkRetries = 0;
+}
+
+// ────────────────────────────────────────────────────────────── 手机扫码登录
+
+void ForumAccountService::startQrLogin(const QString &deviceName)
+{
+    // 连点「刷新二维码」时先把上一张作废，免得两张码同时轮询
+    cancelQrLogin();
+    const int generation = ++m_qrGeneration;
+
+    QJsonObject body;
+    const QString name = deviceName.trimmed();
+    if (!name.isEmpty())
+        body.insert(QStringLiteral("device"), name.left(80));
+
+    QNetworkRequest request{QUrl(absoluteUrl(QStringLiteral("/api/auth/qr/create")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    // 这一步发生在登录之前，手上还没有会话，别把上一次的失效令牌带上
+    prepareRequest(request, false);
+
+    QNetworkReply *reply =
+        m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, generation]() {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray raw = reply->readAll();
+        const int networkError = int(reply->error());
+        const QString networkDetail = reply->errorString();
+        reply->deleteLater();
+
+        if (generation != m_qrGeneration)
+            return; // 用户已经关掉了弹窗或重新申请过
+
+        if (status == 0)
+        {
+            failQrLogin(networkFailureMessage(networkError, networkDetail, 1));
+            return;
+        }
+        if (status >= 400)
+        {
+            failQrLogin(errorMessage(raw, reply));
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(raw);
+        if (!doc.isObject())
+        {
+            failQrLogin(tr("论坛返回的数据无法解析"));
+            return;
+        }
+
+        const QJsonObject root = doc.object();
+        const QString ticket = root.value(QStringLiteral("ticket")).toString();
+        const QString scanUrl = root.value(QStringLiteral("scan_url")).toString();
+        if (ticket.isEmpty() || scanUrl.isEmpty())
+        {
+            failQrLogin(tr("论坛没有返回可用的二维码，请稍后再试"));
+            return;
+        }
+
+        m_qrTicket = ticket;
+        m_qrScanUrl = scanUrl;
+        m_qrScanned = false;
+        m_qrBusy = true;
+        const int expiresIn = qBound(30, root.value(QStringLiteral("expires_in")).toInt(180), 900);
+        // 1.5 秒问一次：手机上一点确认，电脑端几乎是立刻登录
+        m_qrRemainingPolls = qMax(1, (expiresIn * 1000) / kQrPollIntervalMs + 1);
+        m_qrNetworkRetries = 0;
+
+        emit qrLoginStarted(ticket, scanUrl, expiresIn);
+        if (m_qrTimer)
+            m_qrTimer->start(kQrPollIntervalMs);
+    });
+}
+
+void ForumAccountService::pollQrLogin()
+{
+    if (!m_qrBusy || m_qrTicket.isEmpty())
+        return;
+
+    if (m_qrRemainingPolls <= 0)
+    {
+        stopQrPolling();
+        emit qrLoginStateChanged(QStringLiteral("expired"), tr("二维码已过期，请刷新后重新扫码"));
+        emit qrLoginFailed(tr("二维码已过期，请刷新后重新扫码"));
+        return;
+    }
+    --m_qrRemainingPolls;
+
+    const int generation = m_qrGeneration;
+    // 票据放在请求体里：GET 查询串会被访问日志原样记下来，等于把登录凭据写进日志
+    QJsonObject body;
+    body.insert(QStringLiteral("ticket"), m_qrTicket);
+    QNetworkRequest request{QUrl(absoluteUrl(QStringLiteral("/api/auth/qr/status")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    prepareRequest(request, false);
+
+    QNetworkReply *reply =
+        m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, generation]() {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray raw = reply->readAll();
+        const int networkError = int(reply->error());
+        const QString networkDetail = reply->errorString();
+        reply->deleteLater();
+
+        if (!m_qrBusy || generation != m_qrGeneration)
+            return; // 弹窗已经关掉，或者换了一张新码
+
+        if (status == 0)
+        {
+            // 轮询偶尔会被网络抖动打断，别立刻报失败：给三次重试
+            if (m_qrNetworkRetries < 3)
+            {
+                ++m_qrNetworkRetries;
+                if (m_qrTimer)
+                    m_qrTimer->start(kQrPollIntervalMs);
+                return;
+            }
+            failQrLogin(networkFailureMessage(networkError, networkDetail, 1));
+            return;
+        }
+        if (status >= 400)
+        {
+            failQrLogin(errorMessage(raw, reply));
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(raw);
+        if (!doc.isObject())
+        {
+            failQrLogin(tr("论坛返回的数据无法解析"));
+            return;
+        }
+
+        const QJsonObject root = doc.object();
+        const QString state = root.value(QStringLiteral("status")).toString();
+        if (state == QLatin1String("pending"))
+        {
+            m_qrNetworkRetries = 0;
+            if (m_qrTimer)
+                m_qrTimer->start(kQrPollIntervalMs);
+            return;
+        }
+
+        if (state == QLatin1String("scanned"))
+        {
+            m_qrNetworkRetries = 0;
+            // 「已扫码」只报一次，后面继续等手机确认
+            if (!m_qrScanned)
+            {
+                m_qrScanned = true;
+                emit qrLoginStateChanged(QStringLiteral("scanned"),
+                                         root.value(QStringLiteral("user_name")).toString());
+            }
+            if (m_qrTimer)
+                m_qrTimer->start(kQrPollIntervalMs);
+            return;
+        }
+
+        if (state == QLatin1String("confirmed"))
+        {
+            const QString sessionToken = root.value(QStringLiteral("token")).toString();
+            const QJsonObject userObject = root.value(QStringLiteral("user")).toObject();
+            if (sessionToken.isEmpty() || userObject.isEmpty())
+            {
+                failQrLogin(tr("手机已确认，但没拿到会话，请重试"));
+                return;
+            }
+
+            stopQrPolling();
+            saveSession(sessionToken);
+            setUser(parseUser(userObject));
+            emit qrLoginSucceeded(m_user);
+            emit userChanged(m_user);
+            return;
+        }
+
+        // rejected / expired 以及别的没见过的状态：都当作这次扫码登录失败
+        const QString message = root.value(QStringLiteral("message")).toString();
+        const bool expired = state == QLatin1String("expired");
+        stopQrPolling();
+        emit qrLoginStateChanged(expired ? QStringLiteral("expired") : state,
+                                 message.isEmpty() ? QString() : message);
+        emit qrLoginFailed(message.isEmpty() ? tr("扫码登录已失效，请刷新二维码后重试") : message);
+    });
+}
+
+void ForumAccountService::cancelQrLogin()
+{
+    // 递增代次：已经发出去、还没回来的创建 / 轮询响应都作废
+    ++m_qrGeneration;
+    stopQrPolling();
+}
+
+void ForumAccountService::stopQrPolling()
+{
+    if (m_qrTimer)
+        m_qrTimer->stop();
+    m_qrBusy = false;
+    m_qrTicket.clear();
+    m_qrScanUrl.clear();
+    m_qrRemainingPolls = 0;
+    m_qrNetworkRetries = 0;
+    m_qrScanned = false;
+}
+
+void ForumAccountService::failQrLogin(const QString &message)
+{
+    stopQrPolling();
+    emit qrLoginFailed(message);
+}
+
+void ForumAccountService::scanQrTicket(const QString &ticket)
+{
+    const QString normalized = ticket.trimmed();
+    if (normalized.isEmpty())
+    {
+        emit qrTicketFailed(tr("没有读到登录码，请重新扫描"));
+        return;
+    }
+    // 扫码登录是把手机上的登录状态授权给电脑，手机上必须自己是登录着的
+    if (!isLoggedIn())
+    {
+        emit qrTicketFailed(tr("请先在方块盒子里登录账号，再扫电脑上的二维码"));
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("ticket"), normalized);
+    QNetworkRequest request{QUrl(absoluteUrl(QStringLiteral("/api/auth/qr/scan")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    prepareRequest(request);
+
+    QNetworkReply *reply =
+        m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, normalized]() {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray raw = reply->readAll();
+        const int networkError = int(reply->error());
+        const QString networkDetail = reply->errorString();
+        reply->deleteLater();
+
+        if (status == 0)
+        {
+            emit qrTicketFailed(networkFailureMessage(networkError, networkDetail, 1));
+            return;
+        }
+        if (status >= 400)
+        {
+            emit qrTicketFailed(errorMessage(raw, reply));
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(raw);
+        if (!doc.isObject())
+        {
+            emit qrTicketFailed(tr("论坛返回的数据无法解析"));
+            return;
+        }
+
+        const QJsonObject root = doc.object();
+        QJsonObject info;
+        info.insert(QStringLiteral("device"), root.value(QStringLiteral("device")).toString());
+        info.insert(QStringLiteral("ip"), root.value(QStringLiteral("ip")).toString());
+        info.insert(QStringLiteral("expires_in"), root.value(QStringLiteral("expires_in")).toInt());
+        emit qrTicketScanned(normalized, info);
+    });
+}
+
+void ForumAccountService::answerQrTicket(const QString &ticket, bool approve)
+{
+    const QString normalized = ticket.trimmed();
+    if (normalized.isEmpty())
+    {
+        emit qrTicketFailed(tr("没有读到登录码，请重新扫描"));
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("ticket"), normalized);
+    body.insert(QStringLiteral("approve"), approve);
+    QNetworkRequest request{QUrl(absoluteUrl(QStringLiteral("/api/auth/qr/confirm")))};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    prepareRequest(request);
+
+    QNetworkReply *reply =
+        m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, normalized, approve]() {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray raw = reply->readAll();
+        const int networkError = int(reply->error());
+        const QString networkDetail = reply->errorString();
+        reply->deleteLater();
+
+        if (status == 0)
+        {
+            emit qrTicketFailed(networkFailureMessage(networkError, networkDetail, 1));
+            return;
+        }
+        if (status >= 400)
+        {
+            emit qrTicketFailed(errorMessage(raw, reply));
+            return;
+        }
+        emit qrTicketAnswered(normalized, approve);
+    });
 }
 
 void ForumAccountService::refreshProfile()
@@ -493,6 +1048,46 @@ void ForumAccountService::sendEmailCode(const QString &email)
         [this](const QString &message, int status) { emit requestFailed(message, status); });
 }
 
+void ForumAccountService::sendRegisterEmailCode(const QString &email)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("email"), email);
+
+    sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/auth/register/code"), body,
+        [this](const QJsonObject &root) {
+            emit registerEmailCodeSent(root.value(QStringLiteral("expires_in")).toInt(600));
+        },
+        [this](const QString &message, int status) { emit requestFailed(message, status); });
+}
+
+void ForumAccountService::sendRecoverEmailCode(const QString &email)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("email"), email);
+
+    sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/auth/recover/code"), body,
+        [this](const QJsonObject &root) {
+            emit recoverEmailCodeSent(root.value(QStringLiteral("expires_in")).toInt(600),
+                                      root.value(QStringLiteral("username")).toString());
+        },
+        [this](const QString &message, int status) { emit requestFailed(message, status); });
+}
+
+void ForumAccountService::recoverAccount(const QString &email, const QString &code,
+                                         const QString &newPassword)
+{
+    QJsonObject body;
+    body.insert(QStringLiteral("email"), email);
+    body.insert(QStringLiteral("code"), code);
+    body.insert(QStringLiteral("password"), newPassword);
+
+    // 重设成功论坛会直接下发新会话：这里按登录成功处理，界面收到 userChanged 就回到账户总览
+    postAuth(QStringLiteral("/api/auth/recover/reset"), body,
+             tr("密码已重设，已登录方块盒子账号"));
+}
+
 void ForumAccountService::verifyEmailCode(const QString &email, const QString &code)
 {
     QJsonObject body;
@@ -518,9 +1113,19 @@ void ForumAccountService::changePassword(const QString &currentPassword,
     body.insert(QStringLiteral("current_password"), currentPassword);
     body.insert(QStringLiteral("new_password"), newPassword);
 
+    const bool firstPassword = isLoggedIn() && !m_user.passwordSet;
     sendJson(
         QByteArrayLiteral("POST"), QStringLiteral("/api/me/password"), body,
-        [this](const QJsonObject &) { emit requestSucceeded(tr("密码已修改，其它设备需重新登录")); },
+        [this, firstPassword](const QJsonObject &) {
+            if (firstPassword && isLoggedIn())
+            {
+                m_user.passwordSet = true;
+                setUser(m_user);
+                emit userChanged(m_user);
+            }
+            emit requestSucceeded(firstPassword ? tr("密码已设置，以后也能用账号密码登录")
+                                                : tr("密码已修改，其它设备需重新登录"));
+        },
         [this](const QString &message, int status) { emit requestFailed(message, status); });
 }
 
@@ -686,8 +1291,13 @@ void ForumAccountService::uploadCover(const QString &filePath)
     QNetworkReply *reply = m_network->post(request, encoded.data);
     handleReply(
         reply,
-        [this](const QJsonObject &root) {
+        [this, cover](const QJsonObject &root) {
+            const QString previous = m_user.cover;
             m_user.cover = root.value(QStringLiteral("cover")).toString();
+            // 刚上传的这张直接写进本机缓存：横幅马上就有图，不用再从服务器下一次
+            CoverImageCache::save(absoluteUrl(m_user.cover), cover);
+            if (!previous.isEmpty() && previous != m_user.cover)
+                CoverImageCache::remove(absoluteUrl(previous));
             setUser(m_user);
             emit requestSucceeded(tr("封面已更新"));
             emit userChanged(m_user);
@@ -704,7 +1314,10 @@ void ForumAccountService::removeCover()
     handleReply(
         reply,
         [this](const QJsonObject &) {
+            const QString previous = m_user.cover;
             m_user.cover.clear();
+            if (!previous.isEmpty())
+                CoverImageCache::remove(absoluteUrl(previous));
             setUser(m_user);
             emit requestSucceeded(tr("封面已删除"));
             emit userChanged(m_user);
@@ -745,6 +1358,13 @@ void ForumAccountService::prepareRequest(QNetworkRequest &request, bool withSess
     request.setTransferTimeout(kRequestTimeoutMs);
     request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("BlockBoxLauncher"));
     request.setRawHeader("Accept", "application/json");
+    // 会话 Cookie 一律由下面手工拼，不让 Qt 自带的 Cookie 罐子插手：
+    // 罐子只要收到过一次 Set-Cookie（人机验证的 bbf_hv、账号密码登录的 bbf_sid）
+    // 就会在之后的每个请求里用它自己的 Cookie 覆盖掉这里设置的 Cookie 头。
+    // 第三方登录的会话是接口以 JSON 发回来的、罐子里根本没有，被覆盖后紧接着的
+    // /api/me 就是 401 —— 于是表现为「刚提示登录成功，马上又说登录已失效」。
+    request.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
+    request.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
     // 重试时不再走 HTTP/2：个别网络 / 反向代理会把 HTTP/2 连接掐断，退回 1.1 更容易成功
     if (forceHttp1)
         request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
@@ -980,6 +1600,8 @@ ForumUser ForumAccountService::parseUser(const QJsonObject &object)
     user.createdAt = static_cast<qint64>(object.value(QStringLiteral("created_at")).toDouble());
     user.email = object.value(QStringLiteral("email")).toString();
     user.emailVerified = object.value(QStringLiteral("email_verified")).toBool();
+    // 老版本论坛不返回这个字段：缺省按「已设置密码」处理，行为与以前一致
+    user.passwordSet = object.value(QStringLiteral("password_set")).toBool(true);
     return user;
 }
 
@@ -1004,6 +1626,7 @@ void ForumAccountService::setUser(const ForumUser &user, bool cache)
             {QStringLiteral("created_at"), static_cast<double>(m_user.createdAt)},
             {QStringLiteral("email"), m_user.email},
             {QStringLiteral("email_verified"), m_user.emailVerified},
+            {QStringLiteral("password_set"), m_user.passwordSet},
         };
         m_settings->setValue(QString::fromLatin1(kUserCacheKey),
                              QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)));
@@ -1068,6 +1691,8 @@ void ForumAccountService::clearSession()
     m_token.clear();
     m_tokenBaseUrl.clear();
     m_user = ForumUser();
+    // 退出登录后本机不再留着这个账号的封面图
+    CoverImageCache::clear();
     if (m_unreadCount != 0)
     {
         m_unreadCount = 0;
@@ -1124,6 +1749,23 @@ void ForumAccountService::requestHumanChallenge()
             emit humanChallengeReady(root);
         },
         [this](const QString &message, int) { emit humanCheckFailed(message); });
+}
+
+void ForumAccountService::fetchHumanCheckStatus(
+    std::function<void(bool enabled, bool verified, int remaining)> onOk,
+    FailHandler onFail)
+{
+    getJson(
+        QStringLiteral("/api/human/status"),
+        [onOk](const QJsonObject &root) {
+            if (!onOk)
+                return;
+            const bool enabled = root.value(QStringLiteral("enabled")).toBool(false);
+            const bool verified = root.value(QStringLiteral("verified")).toBool(false);
+            const int remaining = root.value(QStringLiteral("remaining")).toInt(0);
+            onOk(enabled, verified, remaining);
+        },
+        std::move(onFail));
 }
 
 void ForumAccountService::submitHumanCheck(const QString &challengeId, int answer, int durationMs)

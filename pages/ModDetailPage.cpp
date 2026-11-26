@@ -4,6 +4,7 @@
 #include "utils/SettingsManager.h"
 #include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
+#include "utils/links/LinkRouter.h"
 #include "utils/mod/CurseForgeAPI.h"
 #include "utils/mod/ModrinthAPI.h"
 #include "utils/mod/ModScanner.h"
@@ -1293,6 +1294,7 @@ void ModDetailPage::rebuildLinkButtons()
         delete item;
     }
     m_linksLayout->addStretch();
+    m_translationComposeBtn = nullptr;
 
     struct LinkInfo {
         QString label;
@@ -1354,14 +1356,23 @@ void ModDetailPage::rebuildLinkButtons()
                 ShareToFriendDialog::share(this, m_modInfo.name, m_modInfo.pageUrl, sourceLabel);
             });
         } else if (!link.url.isEmpty()) {
-            connect(btn, &QPushButton::clicked, this, [link]() {
-                QDesktopServices::openUrl(QUrl(link.url));
+            connect(btn, &QPushButton::clicked, this, [this, link]() {
+                LinkRouter::instance()->open(QUrl(link.url), this);
             });
         } else {
             btn->setEnabled(false);
         }
         m_linksLayout->addWidget(btn);
     }
+
+    // 「创建翻译 / 完善翻译」：跳到翻译编辑页，译文审核通过后给所有人看
+    m_translationComposeBtn = new QPushButton(translationComposeButtonLabel());
+    m_translationComposeBtn->setObjectName("modDetailLinkBtn");
+    m_translationComposeBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_translationComposeBtn, &QPushButton::clicked, this, [this]() {
+        emit translationComposeRequested(m_modInfo);
+    });
+    m_linksLayout->addWidget(m_translationComposeBtn);
 
     m_linksLayout->addStretch();
 }
@@ -1450,7 +1461,8 @@ void ModDetailPage::buildDescriptionBlock(QVBoxLayout *parentLayout)
     // 描述区不再限制高度：文字按完整内容向下排版，由页面整体滚动
     m_descriptionBrowser = new AutoHeightTextBrowser();
     m_descriptionBrowser->setObjectName("modDetailDescBrowser");
-    m_descriptionBrowser->setOpenExternalLinks(true);
+    // 描述正文里的资源页链接也留在软件里打开，别的照旧走浏览器
+    LinkRouter::wireTextBrowser(m_descriptionBrowser);
     m_descriptionBrowser->setReadOnly(true);
     m_descriptionBrowser->setHtml(desc);
     sectionLayout->addWidget(m_descriptionBrowser);
@@ -2061,6 +2073,9 @@ void ModDetailPage::receiveDetail(const ModInfo &detail)
             m_descriptionBrowser->setHtml(detail.detailedDescription);
     }
 
+    // 详情齐了再去服务器查这个资源有没有审核通过的社区翻译（有就自动切「中」覆盖显示）
+    fetchCommunityTranslation();
+
     // 隐藏加载层
     if (m_loadingOverlay)
         m_loadingOverlay->hideOverlay();
@@ -2083,8 +2098,8 @@ void ModDetailPage::setMcmodUrl(const QString &url)
             btn->setEnabled(true);
             disconnect(btn, nullptr, nullptr, nullptr);
             QString urlCopy = url;
-            connect(btn, &QPushButton::clicked, this, [urlCopy]() {
-                QDesktopServices::openUrl(QUrl(urlCopy));
+            connect(btn, &QPushButton::clicked, this, [this, urlCopy]() {
+                LinkRouter::instance()->open(QUrl(urlCopy), this);
             });
             break;
         }
@@ -2203,6 +2218,11 @@ void ModDetailPage::onTranslateModeChanged(bool chinese)
         m_translateSwitch->setChineseMode(true);
         if (m_translating)
             return;
+        // 有社区翻译（其他用户提交并通过审核的）优先展示，没有才走 AI 翻译
+        if (m_hasCommunityTranslation) {
+            applyCommunityTranslation();
+            return;
+        }
         if (m_translated) {
             applyTranslatedTexts();
             return;
@@ -2369,7 +2389,91 @@ void ModDetailPage::resetTranslation()
     m_origDetailHtml.clear();
     m_zhSummary.clear();
     m_zhDetailHtml.clear();
+
+    // 换了资源：上一个资源的社区翻译一并作废
+    m_hasCommunityTranslation = false;
+    m_hasMyTranslation = false;
+    m_communitySummary.clear();
+    m_communityDetailHtml.clear();
+    m_translationFetchContext.clear();
+
     if (m_translateSwitch)
         m_translateSwitch->setChineseMode(false);
     setTranslateBusy(false);
+}
+
+// ===========================================================================
+// 社区翻译（方块盒子服务器上其他用户提交的翻译，审核通过后自动覆盖显示）
+// ===========================================================================
+
+void ModDetailPage::fetchCommunityTranslation()
+{
+    // 分享链接进入时 m_modInfo.id 可能是 slug，优先用详情回包带来的规范项目 id
+    const QString projectId = currentProjectId();
+    if (projectId.isEmpty() || m_modInfo.source.isEmpty())
+        return;
+
+    // 记下发起时的资源标识，回包时比对：用户可能已经点了别的资源，别把旧译文串过来
+    const QString context = m_modInfo.source + QStringLiteral("|") + projectId;
+    m_translationFetchContext = context;
+
+    ContentTranslationService::instance()->fetchTranslation(
+        m_modInfo.source, projectId, ContentTranslationService::defaultTargetLang(),
+        [this, context](const ContentTranslation &t) {
+            if (m_translationFetchContext != context)
+                return;
+            if (t.summary.isEmpty() && t.detailHtml.isEmpty())
+                return;
+            m_hasCommunityTranslation = true;
+            m_communitySummary = t.summary;
+            m_communityDetailHtml = t.detailHtml;
+            updateTranslationComposeButtonLabel();
+            // 用户此刻还停在 EN 态（没在 AI 翻译中）就自动切到「中」展示社区翻译
+            if (m_translateSwitch && !m_translateSwitch->isChineseMode()
+                && !m_translateSwitch->isBusy())
+                applyCommunityTranslation();
+        },
+        [this, context](const QString &, int) {
+            Q_UNUSED(context);
+            // 服务端还没有翻译接口 / 暂无翻译：静默忽略，详情页功能不受影响
+        });
+}
+
+void ModDetailPage::applyCommunityTranslation()
+{
+    if (m_communitySummary.isEmpty() && m_communityDetailHtml.isEmpty())
+        return;
+
+    // 记录原文供切回 EN 还原（AI 翻译流程没跑过时这里还没记）
+    if (m_origSummary.isEmpty() && m_descriptionLabel)
+        m_origSummary = m_descriptionLabel->text();
+    if (m_origDetailHtml.isEmpty()) {
+        m_origDetailHtml = m_modInfo.detailedDescription.isEmpty()
+            ? m_modInfo.description
+            : m_modInfo.detailedDescription;
+    }
+
+    if (!m_communitySummary.isEmpty() && m_descriptionLabel)
+        m_descriptionLabel->setText(m_communitySummary);
+    if (!m_communityDetailHtml.isEmpty() && m_descriptionBrowser)
+        m_descriptionBrowser->setHtml(m_communityDetailHtml);
+    if (m_translateSwitch)
+        m_translateSwitch->setChineseMode(true);
+}
+
+QString ModDetailPage::translationComposeButtonLabel() const
+{
+    return (m_hasCommunityTranslation || m_hasMyTranslation) ? tr("完善翻译") : tr("创建翻译");
+}
+
+void ModDetailPage::updateTranslationComposeButtonLabel()
+{
+    if (m_translationComposeBtn)
+        m_translationComposeBtn->setText(translationComposeButtonLabel());
+}
+
+void ModDetailPage::notifyTranslationSubmitted()
+{
+    m_hasMyTranslation = true;
+    updateTranslationComposeButtonLabel();
 }

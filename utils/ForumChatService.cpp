@@ -50,6 +50,13 @@ ForumChatMessage ForumChatService::parseMessage(const QJsonObject &object)
     message.id = object.value(QStringLiteral("id")).toInt();
     message.kind = object.value(QStringLiteral("kind")).toString(QStringLiteral("text"));
     message.body = object.value(QStringLiteral("body")).toString();
+    // P2P 直传邀约 / 控制消息的数据都装在 body 里（一段紧凑 JSON）
+    if (message.kind == QStringLiteral("p2p") && !message.body.isEmpty())
+    {
+        const QJsonDocument doc = QJsonDocument::fromJson(message.body.toUtf8());
+        if (doc.isObject())
+            message.p2p = ChatP2POffer::fromJson(doc.object());
+    }
     message.image = object.value(QStringLiteral("image")).toString();
     message.fileName = object.value(QStringLiteral("file_name")).toString();
     message.fileUrl = object.value(QStringLiteral("file_url")).toString();
@@ -657,6 +664,36 @@ QString ForumChatService::checkChatFile(const QString &filePath)
     if (blocked.contains(info.suffix().toLower()))
         return QObject::tr("程序安装包（exe/msi/bat 等）不支持发送，先打包成压缩包再发");
     return QString();
+}
+
+void ForumChatService::sendP2POffer(int userId, const ChatP2POffer &offer, int replyTo,
+                                    std::function<void(const ForumChatMessage &)> onOk,
+                                    FailHandler onFail)
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("kind"), QStringLiteral("p2p"));
+    payload.insert(QStringLiteral("body"),
+                   QString::fromUtf8(QJsonDocument(offer.toJson()).toJson(QJsonDocument::Compact)));
+    payload.insert(QStringLiteral("file_name"), offer.name);
+    payload.insert(QStringLiteral("file_size"), offer.size);
+    if (replyTo > 0)
+        payload.insert(QStringLiteral("reply_to"), replyTo);
+    postMessage(userId, payload, std::move(onOk), std::move(onFail));
+}
+
+void ForumChatService::sendP2PControl(int userId, const QString &tid, const QString &act,
+                                      std::function<void(const ForumChatMessage &)> onOk,
+                                      FailHandler onFail)
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("kind"), QStringLiteral("p2p"));
+    QJsonObject body;
+    body.insert(QStringLiteral("v"), 1);
+    body.insert(QStringLiteral("tid"), tid);
+    body.insert(QStringLiteral("act"), act);
+    payload.insert(QStringLiteral("body"),
+                   QString::fromUtf8(QJsonDocument(body).toJson(QJsonDocument::Compact)));
+    postMessage(userId, payload, std::move(onOk), std::move(onFail));
 }
 
 void ForumChatService::uploadChatFile(const QString &filePath, const ProgressHandler &onProgress,

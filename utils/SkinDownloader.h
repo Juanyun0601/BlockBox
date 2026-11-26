@@ -59,6 +59,67 @@ public:
   static bool loadOfflineSkin(const QString& username, QImage& image);
 
   /**
+   * @brief 获取离线披风目录（相对应用目录，非绝对路径）
+   * @return 离线披风目录路径，格式为 {applicationDirPath}/Images/Capes
+   *
+   * 离线账户没有服务端披风，用户手动选择的披风图就存这里。
+   */
+  static QString offlineCapesDir();
+
+  /**
+   * @brief 获取指定用户名的离线披风文件路径
+   * @param username 用户名
+   * @return 离线披风文件路径，格式为 {offlineCapesDir}/{username}.png
+   */
+  static QString getOfflineCapePath(const QString& username);
+
+  /**
+   * @brief 尝试从离线披风目录加载指定用户的披风
+   * @param username 用户名
+   * @param[out] image 输出加载的 QImage（成功时填充）
+   * @return 加载成功返回 true，文件不存在或加载失败返回 false
+   */
+  static bool loadOfflineCape(const QString& username, QImage& image);
+
+  /**
+   * @brief 把用户选中的图片规范成标准皮肤纹理（64×32 或 64×64）
+   * @param image 任意尺寸的图片（支持整数倍放大的皮肤图）
+   * @return 规范后的皮肤图；尺寸明显不是皮肤时返回空 QImage
+   */
+  static QImage normalizeSkinTexture(const QImage& image);
+
+  /**
+   * @brief 把用户选中的图片规范成标准披风纹理（64×32）
+   * @param image 任意尺寸的图片（支持整数倍放大的披风图）
+   * @return 规范后的披风图；尺寸不符或披风区域全透明时返回空 QImage
+   */
+  static QImage normalizeCapeTexture(const QImage& image);
+
+  /**
+   * @brief 保存离线皮肤（自动建目录，覆盖旧文件）
+   * @return 保存成功返回 true
+   */
+  static bool saveOfflineSkin(const QString& username, const QImage& image);
+
+  /**
+   * @brief 删除离线皮肤（恢复成默认皮肤）
+   * @return 删除成功或本来就没有时返回 true
+   */
+  static bool removeOfflineSkin(const QString& username);
+
+  /**
+   * @brief 保存离线披风（自动建目录，覆盖旧文件）
+   * @return 保存成功返回 true
+   */
+  static bool saveOfflineCape(const QString& username, const QImage& image);
+
+  /**
+   * @brief 删除离线披风
+   * @return 删除成功或本来就没有时返回 true
+   */
+  static bool removeOfflineCape(const QString& username);
+
+  /**
    * @brief 下载指定用户的皮肤纹理（基于用户名 URL）
    * @param username 用户名，用于缓存标识
    * @param skinUrl  皮肤图片的远程 URL

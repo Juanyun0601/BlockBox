@@ -14,7 +14,7 @@
 #include "LitematicEditor.h"
 #include "SchematicDocument.h"
 #include "utils/JarUtils.h"
-#include "utils/WorldMap/WorldMapRenderer.h"
+#include "utils/MapBlockPalette.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -178,7 +178,7 @@ QColor coverBlockColor(const QString &blockState)
     if (it != kExtra.constEnd())
         return *it;
 
-    return WorldMapRenderer::blockColor(n);
+    return MapBlockPalette::blockColor(n);
 }
 
 // ── 等距投影 ─────────────────────────────────────────────────────────

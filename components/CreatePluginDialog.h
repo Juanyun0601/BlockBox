@@ -34,6 +34,10 @@ public:
     /** 是否已打包为 .BlockBox */
     bool packaged() const { return m_packaged; }
 
+signals:
+    /** 点「开发文档」：由主窗口关掉弹窗后跳到内置图书馆的插件开发卷 */
+    void openDocsRequested();
+
 private slots:
     void onBrowseDir();
     void onGenerate();
@@ -64,6 +68,8 @@ private:
     QLabel *m_resultTextLabel;
     QPushButton *m_packageBtn;
     QPushButton *m_openDirBtn;
+    /** 「开发文档」：打开内置图书馆的插件开发卷（表单页与结果页共用） */
+    QPushButton *m_docsBtn = nullptr;
     QPushButton *m_doneBtn;
     QPushButton *m_backBtn;
 

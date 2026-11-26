@@ -6,6 +6,10 @@
  */
 #include "ForumAccountPage.h"
 
+#include "pages/PlaytimeStatsPage.h"
+
+#include "SkinStationPage.h"
+
 #include <algorithm>
 
 #include <QDateTime>
@@ -13,14 +17,20 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QFrame>
+#include <QGraphicsOpacityEffect>
 #include <QGridLayout>
+#include <QHideEvent>
 #include <QHBoxLayout>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLinearGradient>
 #include <QLineEdit>
@@ -32,6 +42,8 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPlainTextEdit>
+#include <QPolygonF>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRadialGradient>
 #include <QResizeEvent>
@@ -50,17 +62,28 @@
 #include "components/AppMessageBox.h"
 #include "components/ForumKit.h"
 #include "components/ForumPostBrowser.h"
+#include "components/MedalShareDialog.h"
 #include "components/NotificationManager.h"
+#include "components/QrLoginDialog.h"
+#include "components/UserAgreementDialog.h"
+#include "layouts/FlowLayout.h"
 #include "layouts/MasonryLayout.h"
+#include "utils/AssetUrls.h"
 #include "utils/FeedbackService.h"
 #include "utils/ForumAccountService.h"
+#include "utils/ForumChatService.h"
+#include "utils/AuthManager.h"
 #include "utils/FavoritesManager.h"
 #include "utils/IconHelper.h"
+#include "utils/GameAchievementCatalog.h"
 #include "utils/LocalFavoritesManager.h"
+#include "utils/MedalCatalog.h"
+#include "utils/MedalShareCard.h"
 #include "utils/SettingsManager.h"
 #include "utils/SkinDownloader.h"
 #include "utils/ThemeManager.h"
 #include "utils/UiMetrics.h"
+#include "utils/links/LinkRouter.h"
 
 namespace
 {
@@ -289,9 +312,10 @@ QString notificationDayGroup(qint64 seconds)
 /**
  * 表单字段：标签在上，控件在下（对照论坛网页 .field）
  * @param headerExtra 可选：与标签同一行、靠右的小控件（如简介的「预览」开关）
+ * @param outLabel    可选：把标签指针带出去，登录卡切「找回账号」时要把「密码」改成「新密码」
  */
 QWidget *buildField(const QString &labelText, QWidget *editor, QWidget *parent,
-                    QWidget *headerExtra = nullptr)
+                    QWidget *headerExtra = nullptr, QLabel **outLabel = nullptr)
 {
     auto *field = new QWidget(parent);
     auto *layout = new QVBoxLayout(field);
@@ -300,6 +324,8 @@ QWidget *buildField(const QString &labelText, QWidget *editor, QWidget *parent,
 
     auto *label = new QLabel(labelText, field);
     label->setObjectName(QStringLiteral("fbFieldLabel"));
+    if (outLabel)
+        *outLabel = label;
     if (headerExtra)
     {
         auto *headerRow = new QHBoxLayout();
@@ -336,7 +362,7 @@ QFrame *makeDivider(QWidget *parent)
 }
 
 /** 编辑表单的小节标题：文字前加一段品牌色竖条，把「资料 / 密码 / 登录状态」分段衬出来 */
-QWidget *makeSectionHeader(const QString &text, QWidget *parent)
+QWidget *makeSectionHeader(const QString &text, QWidget *parent, QLabel **outLabel = nullptr)
 {
     auto *row = new QWidget(parent);
     auto *rowLayout = new QHBoxLayout(row);
@@ -352,6 +378,8 @@ QWidget *makeSectionHeader(const QString &text, QWidget *parent)
     label->setObjectName(QStringLiteral("fbSectionTitle"));
     rowLayout->addWidget(label, 0, Qt::AlignVCenter);
     rowLayout->addStretch();
+    if (outLabel)
+        *outLabel = label;
     return row;
 }
 
@@ -431,6 +459,400 @@ QString accountTypeText(const AccountInfo &account)
     return type.isEmpty() ? QObject::tr("第三方") : type;
 }
 
+/**
+ * 账户管理页「首次进入」的聚光灯引导：
+ * 整页压暗，只在要介绍的区域抠出一块亮的，旁边挂一张气泡说明。
+ *   第一步：高亮「角色」页签 —— 这里放游戏账户，启动游戏必须选一个；
+ *   第二步：高亮资料卡   —— 这是方块盒子账户，发帖 / 加好友 / 联机都用它。
+ * 点遮罩任意处或「下一步」推进，Esc /「跳过」结束。
+ */
+class AccountTourOverlay : public QWidget
+{
+public:
+    struct Step
+    {
+        QString title;
+        QString text;
+        QPointer<QWidget> target;
+    };
+
+    explicit AccountTourOverlay(QWidget *host) : QWidget(host)
+    {
+        setObjectName(QStringLiteral("fbTourOverlay"));
+        setFocusPolicy(Qt::StrongFocus);
+        host->installEventFilter(this);
+        buildBubble();
+    }
+
+    /** 走完 / 跳过后的回调（宿主用来记「已看过」并销毁本控件） */
+    std::function<void()> onFinished;
+    /** 把目标滚进可视区（目标在下半屏时用），可为空 */
+    std::function<void(QWidget *)> ensureVisible;
+
+    void setSteps(const QList<Step> &steps) { m_steps = steps; }
+
+    void setThemeColors(const QColor &brand, const QColor &card, const QColor &line)
+    {
+        m_brandColor = brand;
+        m_cardColor = card;
+        m_lineColor = line;
+        update();
+    }
+
+    bool isRunning() const { return m_index >= 0; }
+
+    void start()
+    {
+        if (m_steps.isEmpty())
+        {
+            finish();
+            return;
+        }
+        setGeometry(parentWidget()->rect());
+        raise();
+        show();
+        setFocus(Qt::OtherFocusReason);
+        m_index = 0;
+        enterStep();
+    }
+
+    /** 目标位置变了（滚动 / 窗口尺寸）重新抠洞、重新摆气泡 */
+    void refresh()
+    {
+        if (!isRunning())
+            return;
+        const QRect hole = holeRect();
+        positionBubble(hole);
+        if (m_bubble)
+            m_bubble->show();
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const QRect hole = holeRect();
+        const QRectF holeRectF(hole.adjusted(-1, -1, 1, 1));
+
+        // 遮罩：整页压暗，把目标区域抠成圆角亮块（深色主题本来就暗，压得更重一点才看得出层次）
+        QPainterPath scrim;
+        scrim.addRect(QRectF(rect()));
+        if (!hole.isEmpty())
+        {
+            QPainterPath cut;
+            cut.addRoundedRect(holeRectF, 17, 17);
+            scrim = scrim.subtracted(cut);
+        }
+        painter.fillPath(scrim, QColor(0, 0, 0, m_cardColor.lightness() < 110 ? 176 : 142));
+
+        if (!hole.isEmpty())
+        {
+            // 外圈柔光 + 品牌色描边：深色卡片上也看得清高亮框
+            QColor glow = m_brandColor;
+            glow.setAlpha(52);
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(glow, 8.0));
+            painter.drawRoundedRect(holeRectF, 17, 17);
+            painter.setPen(QPen(m_brandColor, 2.0));
+            painter.drawRoundedRect(holeRectF, 17, 17);
+        }
+
+        paintTail(painter, hole);
+    }
+
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() == Qt::LeftButton)
+        {
+            advance();
+            event->accept();
+            return;
+        }
+        QWidget::mousePressEvent(event);
+    }
+
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        if (event->key() == Qt::Key_Escape)
+        {
+            finish();
+            return;
+        }
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter
+            || event->key() == Qt::Key_Space)
+        {
+            advance();
+            return;
+        }
+        QWidget::keyPressEvent(event);
+    }
+
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched == parentWidget())
+        {
+            if (event->type() == QEvent::Resize || event->type() == QEvent::Show)
+            {
+                setGeometry(parentWidget()->rect());
+                refresh();
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+private:
+    static QString text(const char *source)
+    {
+        return QCoreApplication::translate("ForumAccountPage", source);
+    }
+
+    void buildBubble()
+    {
+        m_bubble = new QFrame(this);
+        m_bubble->setObjectName(QStringLiteral("fbTourCard"));
+        auto *bubbleLayout = new QVBoxLayout(m_bubble);
+        bubbleLayout->setContentsMargins(18, 14, 18, 14);
+        bubbleLayout->setSpacing(6);
+
+        auto *topRow = new QHBoxLayout();
+        topRow->setContentsMargins(0, 0, 0, 0);
+        topRow->setSpacing(8);
+        m_stepLabel = new QLabel(m_bubble);
+        m_stepLabel->setObjectName(QStringLiteral("fbTourStep"));
+        topRow->addWidget(m_stepLabel);
+        topRow->addStretch();
+
+        auto *skipBtn = new QPushButton(text("跳过"), m_bubble);
+        skipBtn->setObjectName(QStringLiteral("fbTourSkip"));
+        skipBtn->setCursor(Qt::PointingHandCursor);
+        skipBtn->setFlat(true);
+        connect(skipBtn, &QPushButton::clicked, this, [this]() { finish(); });
+        topRow->addWidget(skipBtn);
+        bubbleLayout->addLayout(topRow);
+
+        m_titleLabel = new QLabel(m_bubble);
+        m_titleLabel->setObjectName(QStringLiteral("fbTourTitle"));
+        m_titleLabel->setWordWrap(true);
+        bubbleLayout->addWidget(m_titleLabel);
+
+        m_textLabel = new QLabel(m_bubble);
+        m_textLabel->setObjectName(QStringLiteral("fbTourText"));
+        m_textLabel->setWordWrap(true);
+        m_textLabel->setTextFormat(Qt::PlainText);
+        bubbleLayout->addWidget(m_textLabel);
+
+        auto *buttonRow = new QHBoxLayout();
+        buttonRow->setContentsMargins(0, 8, 0, 0);
+        buttonRow->setSpacing(8);
+        buttonRow->addStretch();
+
+        m_nextBtn = new QPushButton(text("下一步"), m_bubble);
+        m_nextBtn->setObjectName(QStringLiteral("fbTourNext"));
+        m_nextBtn->setFixedHeight(30);
+        m_nextBtn->setMinimumWidth(88);
+        m_nextBtn->setCursor(Qt::PointingHandCursor);
+        connect(m_nextBtn, &QPushButton::clicked, this, [this]() { advance(); });
+        buttonRow->addWidget(m_nextBtn);
+        bubbleLayout->addLayout(buttonRow);
+
+        m_bubble->hide();
+    }
+
+    /** 当前步骤要抠亮的区域（页面坐标）；目标不可见时返回空 */
+    QRect holeRect() const
+    {
+        if (m_index < 0 || m_index >= m_steps.size())
+            return QRect();
+        QWidget *target = m_steps.at(m_index).target;
+        QWidget *host = parentWidget();
+        if (!host || !target || !target->isVisible() || target->width() <= 0
+            || target->height() <= 0)
+        {
+            return QRect();
+        }
+
+        // 目标在滚动区里面，和遮罩是两棵分支：先映射到宿主页，再扣掉遮罩自身的偏移
+        const QPoint topLeft = target->mapTo(host, QPoint(0, 0)) - mapTo(host, QPoint(0, 0));
+        const QRect mapped(topLeft, target->size());
+        // 目标比页面还高（窗口很小）：只抠露出来的那截，别把边框画到页面外面去
+        const QRect visible = mapped.intersected(rect().adjusted(3, 3, -3, -3));
+        return visible;
+    }
+
+    void enterStep()
+    {
+        if (!isRunning())
+            return;
+        const Step &step = m_steps.at(m_index);
+        m_stepLabel->setText(QStringLiteral("%1 / %2").arg(m_index + 1).arg(m_steps.size()));
+        m_titleLabel->setText(step.title);
+        m_textLabel->setText(step.text);
+        m_nextBtn->setText(m_index + 1 >= m_steps.size() ? text("我知道了") : text("下一步"));
+
+        // 先把气泡收起来，等目标滚进可视区、布局落定后再定位，免得看到气泡乱跳
+        if (m_bubble)
+            m_bubble->hide();
+        if (step.target && ensureVisible)
+            ensureVisible(step.target);
+
+        QTimer::singleShot(90, this, [this]() {
+            if (!isRunning())
+                return;
+            refresh();
+        });
+    }
+
+    void advance()
+    {
+        if (!isRunning())
+            return;
+        if (m_index + 1 >= m_steps.size())
+        {
+            finish();
+            return;
+        }
+        ++m_index;
+        enterStep();
+    }
+
+    void finish()
+    {
+        if (!isRunning())
+            return;
+        m_index = -1;
+        if (m_bubble)
+            m_bubble->hide();
+        hide();
+        // 回调里宿主会 deleteLater 掉本控件，之后别再碰成员
+        auto callback = onFinished;
+        if (callback)
+            callback();
+    }
+
+    /** 气泡贴着高亮区域摆：优先下方，其次上方，再退到左右，最后兜底不压目标 */
+    void positionBubble(const QRect &hole)
+    {
+        if (!m_bubble)
+            return;
+
+        const int margin = 18;
+        const int gap = 18;
+        const int bubbleWidth = qMin(340, qMax(220, width() - 2 * margin));
+        m_bubble->setFixedWidth(bubbleWidth);
+        m_bubble->layout()->activate();
+        int bubbleHeight = m_bubble->heightForWidth(bubbleWidth);
+        if (bubbleHeight <= 0)
+            bubbleHeight = m_bubble->sizeHint().height();
+
+        const QRect area = rect().adjusted(margin, margin, -margin, -margin);
+        bubbleHeight = qMin(bubbleHeight, qMax(80, area.height()));
+
+        int x = area.left();
+        int y = area.top();
+        if (hole.isEmpty())
+        {
+            x = area.center().x() - bubbleWidth / 2;
+            y = area.center().y() - bubbleHeight / 2;
+        }
+        else if (area.bottom() - hole.bottom() >= bubbleHeight + gap)
+        {
+            x = hole.center().x() - bubbleWidth / 2;
+            y = hole.bottom() + gap;
+        }
+        else if (hole.top() - area.top() >= bubbleHeight + gap)
+        {
+            x = hole.center().x() - bubbleWidth / 2;
+            y = hole.top() - gap - bubbleHeight;
+        }
+        else if (area.right() - hole.right() >= bubbleWidth + gap)
+        {
+            x = hole.right() + gap;
+            y = hole.center().y() - bubbleHeight / 2;
+        }
+        else if (hole.left() - area.left() >= bubbleWidth + gap)
+        {
+            x = hole.left() - gap - bubbleWidth;
+            y = hole.center().y() - bubbleHeight / 2;
+        }
+        else
+        {
+            // 四面都挤：压在页面底部，尽量别盖住目标本身
+            x = area.center().x() - bubbleWidth / 2;
+            y = area.bottom() - bubbleHeight;
+            if (QRect(x, y, bubbleWidth, bubbleHeight).intersects(hole))
+                y = qMax(area.top(), hole.top() - gap - bubbleHeight);
+        }
+
+        const int maxX = area.right() - bubbleWidth;
+        const int maxY = area.bottom() - bubbleHeight;
+        x = (maxX <= area.left()) ? area.left() : qBound(area.left(), x, maxX);
+        y = (maxY <= area.top()) ? area.top() : qBound(area.top(), y, maxY);
+
+        m_bubble->setGeometry(x, y, bubbleWidth, bubbleHeight);
+        m_bubble->show();
+        m_bubble->raise();
+    }
+
+    /** 从气泡贴向高亮区域的小箭头（画在遮罩上，所以只能由本控件自绘） */
+    void paintTail(QPainter &painter, const QRect &hole)
+    {
+        if (!m_bubble || !m_bubble->isVisible())
+            return;
+
+        const QRect bubble = m_bubble->geometry();
+        // 气泡压在亮块上（窗口太矮时的兜底摆法）：不画箭头，免得在卡片里多出一截白尖
+        if (bubble.intersects(hole))
+            return;
+        const QPoint aim = hole.isEmpty() ? QPoint(width() / 2, height() / 2) : hole.center();
+        const int half = 9;
+        const int length = 11;
+
+        QPolygonF tail;
+        const bool vertical = aim.y() > bubble.bottom() + 6 || aim.y() < bubble.top() - 6;
+        if (vertical)
+        {
+            const int x = qBound(bubble.left() + 22, aim.x(), bubble.right() - 22);
+            if (aim.y() > bubble.bottom())
+                tail << QPointF(x - half, bubble.bottom()) << QPointF(x + half, bubble.bottom())
+                     << QPointF(x, bubble.bottom() + length);
+            else
+                tail << QPointF(x - half, bubble.top()) << QPointF(x + half, bubble.top())
+                     << QPointF(x, bubble.top() - length);
+        }
+        else
+        {
+            const int y = qBound(bubble.top() + 20, aim.y(), bubble.bottom() - 20);
+            if (aim.x() > bubble.right())
+                tail << QPointF(bubble.right(), y - half) << QPointF(bubble.right(), y + half)
+                     << QPointF(bubble.right() + length, y);
+            else
+                tail << QPointF(bubble.left(), y - half) << QPointF(bubble.left(), y + half)
+                     << QPointF(bubble.left() - length, y);
+        }
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(m_cardColor);
+        painter.drawPolygon(tail);
+        painter.setPen(QPen(m_lineColor, 1.0));
+        painter.drawLine(tail.at(0), tail.at(2));
+        painter.drawLine(tail.at(2), tail.at(1));
+    }
+
+    QList<Step> m_steps;
+    QFrame *m_bubble = nullptr;
+    QLabel *m_stepLabel = nullptr;
+    QLabel *m_titleLabel = nullptr;
+    QLabel *m_textLabel = nullptr;
+    QPushButton *m_nextBtn = nullptr;
+    int m_index = -1;
+    QColor m_brandColor = QColor(0x2e, 0x7d, 0x32);
+    QColor m_cardColor = QColor(Qt::white);
+    QColor m_lineColor = QColor(0xe4, 0xec, 0xe3);
+};
+
 } // namespace
 
 // ════════════════════════════════════════════════════════════════ 生命周期
@@ -458,6 +880,13 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
                     renderLocalFavorites();
             });
 
+    // 游戏账户增删（添加角色、皮肤站同步等）时重拉角色卡片和账户计数
+    if (SettingsManager::instance())
+    {
+        connect(SettingsManager::instance(), &SettingsManager::accountsChanged, this,
+                &ForumAccountPage::reloadCharacters);
+    }
+
     // 论坛账号状态
     connect(m_service, &ForumAccountService::userChanged, this, [this](const ForumUser &user) {
         Q_UNUSED(user);
@@ -476,6 +905,7 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
             m_threadsLoaded = m_repliesLoaded = m_bookmarksLoaded = false;
             m_myFeedbacksLoaded = false;
             m_pointsLoaded = false;
+            m_pointsShopLoaded = false;
             m_myFeedbacks.clear();
             m_contentFavorites.clear();
             m_contentFavoritesLoaded = false;
@@ -492,6 +922,10 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
         m_threadsLoaded = m_repliesLoaded = m_bookmarksLoaded = false;
         m_myFeedbacksLoaded = false;
         m_pointsLoaded = false;
+        m_pointsShopLoaded = false;
+        stopPayPolling();
+        if (m_pointsShop)
+            m_pointsShop->hide();
         m_myFeedbacks.clear();
         m_threadTotal = m_replyTotal = m_bookmarkTotal = 0;
         m_contentFavorites.clear();
@@ -543,14 +977,96 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
         m_emailBusy = false;
         updateEmailVerifyUi();
     });
+
+    // 注册 / 找回卡上的邮箱验证码：和账号设置里的那套互不干扰，各走各的倒计时
+    connect(m_service, &ForumAccountService::registerEmailCodeSent, this, [this](int) {
+        m_regEmailBusy = false;
+        m_regCodeCooldown = 60;
+        if (m_regCodeTimer)
+            m_regCodeTimer->start();
+        updateRegisterCodeUi();
+        if (m_regCodeNote)
+            m_regCodeNote->setText(tr("验证码已发送，10 分钟内有效；没收到就看看垃圾邮件箱"));
+        if (m_regCodeEdit)
+            m_regCodeEdit->setFocus();
+    });
+    // 找回账号发码成功：顺便告诉用户这个邮箱对应哪个账号（忘了用户名的也能对上号）
+    connect(m_service, &ForumAccountService::recoverEmailCodeSent, this,
+            [this](int, const QString &username) {
+                m_regEmailBusy = false;
+                m_regCodeCooldown = 60;
+                if (m_regCodeTimer)
+                    m_regCodeTimer->start();
+                updateRegisterCodeUi();
+                if (m_regCodeNote)
+                {
+                    m_regCodeNote->setText(
+                        username.isEmpty()
+                            ? tr("验证码已发送，10 分钟内有效；没收到就看看垃圾邮件箱")
+                            : tr("验证码已发送，这个邮箱对应的账号是「%1」；10 分钟内有效。")
+                                  .arg(username));
+                }
+                if (m_regCodeEdit)
+                    m_regCodeEdit->setFocus();
+            });
+    connect(m_service, &ForumAccountService::requestFailed, this, [this](const QString &, int) {
+        m_regEmailBusy = false;
+        updateRegisterCodeUi();
+    });
+    // 论坛的注册规矩（要不要邮箱验证）拿到后，正在注册卡上就直接按新规矩换
+    connect(m_service, &ForumAccountService::registerPolicyChanged, this,
+            [this](bool emailRequired, bool) {
+                m_registerEmailRequired = emailRequired;
+                if (m_viewStack && m_viewStack->currentIndex() == AuthView)
+                    setAuthMode(m_authMode);
+            });
     connect(m_service, &ForumAccountService::userChanged, this, [this](const ForumUser &) {
         m_emailBusy = false;
         if (m_service->user().emailVerified && m_emailCodeEdit && !m_emailCodeEdit->text().isEmpty())
             m_emailCodeEdit->clear();
         updateEmailVerifyUi();
+        updatePasswordUi();
+        setOAuthWaiting(false);
         if (m_emailNote)
             m_emailNote->setText(tr("验证码发到上面填的邮箱，10 分钟内有效；没收到的话看看垃圾邮件箱"));
     });
+
+    // 第三方登录：按钮是否显示、等待浏览器时的提示、失败原因都回到登录卡上
+    connect(m_service, &ForumAccountService::oauthProvidersChanged, this,
+            [this](const QJsonArray &providers) { renderOAuthProviders(providers); });
+    connect(m_service, &ForumAccountService::oauthLoginStarted, this,
+            [this](const QString &provider, const QString &url, const QString &, int) {
+                m_oauthVerificationUrl = url;
+                m_oauthProviderName =
+                    provider == QLatin1String("littleskin") ? tr("LittleSkin") : tr("GitHub");
+                setOAuthWaiting(true);
+                if (!QDesktopServices::openUrl(QUrl(url)))
+                {
+                    if (m_oauthStatus)
+                        m_oauthStatus->setText(
+                            tr("没能自动打开浏览器，请点「重新打开浏览器」完成授权。"));
+                }
+            });
+    connect(m_service, &ForumAccountService::oauthLoginSucceeded, this,
+            [this](const ForumUser &user) {
+                setOAuthWaiting(false);
+                NotificationManager::showSuccess(
+                    this, tr("已通过 %1 登录方块盒子论坛")
+                              .arg(m_oauthProviderName.isEmpty() ? tr("第三方账号") : m_oauthProviderName));
+                Q_UNUSED(user);
+            });
+    connect(m_service, &ForumAccountService::oauthLoginFailed, this,
+            [this](const QString &message) {
+                setOAuthWaiting(false);
+                if (m_viewStack && m_viewStack->currentIndex() != AuthView)
+                    return;
+                if (m_authError)
+                {
+                    m_authError->setText(message);
+                    m_authError->show();
+                    syncAuthViewHeight();
+                }
+            });
 
     // 论坛地址 / 主题变化
     connect(SettingsManager::instance(), &SettingsManager::forumBaseUrlChanged, this,
@@ -580,6 +1096,24 @@ void ForumAccountPage::showEvent(QShowEvent *event)
     QWidget::showEvent(event);
     // 每次进入页面都重新同步一次（论坛上的主题数、昵称可能已经变了）
     QTimer::singleShot(0, this, [this]() { refreshAccount(); });
+    // 第一次进来先讲讲「角色 = 游戏账户」和「方块盒子账户」的区别
+    scheduleAccountTour();
+    // 之前在等充值到账、中途离开过：回到这一页继续轮询
+    if (m_payPollTimer && !m_payOrderNo.isEmpty() && m_activeTab == PointsTab)
+        m_payPollTimer->start();
+}
+
+void ForumAccountPage::hideEvent(QHideEvent *event)
+{
+    // 走到别的页面：引导遮罩跟着收掉（没看完的下次进来重讲）
+    cancelAccountTour();
+    // 离开账户页就别再等第三方授权了，免得用户在别的页面时这里突然登录成功
+    m_service->cancelOAuthLogin();
+    setOAuthWaiting(false);
+    // 等充值的轮询也先停，回到这一页再续上
+    if (m_payPollTimer)
+        m_payPollTimer->stop();
+    QWidget::hideEvent(event);
 }
 
 bool ForumAccountPage::eventFilter(QObject *watched, QEvent *event)
@@ -800,6 +1334,16 @@ QWidget *ForumAccountPage::buildProfileCard(QWidget *parent)
     userActionsLayout->setContentsMargins(0, 0, 0, 0);
     userActionsLayout->setSpacing(8);
 
+    // 皮肤站入口放在「编辑资料」左侧：论坛账号和皮肤站是同一个账号，
+    // 点一下就在软件里整页打开，看衣柜、预览皮肤、一键穿上。
+    auto *skinSiteBtn = new QPushButton(tr("皮肤站"), m_profileUserActions);
+    skinSiteBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    skinSiteBtn->setFixedHeight(36);
+    skinSiteBtn->setMinimumWidth(78);
+    skinSiteBtn->setCursor(Qt::PointingHandCursor);
+    connect(skinSiteBtn, &QPushButton::clicked, this, [this]() { emit skinStationRequested(); });
+    userActionsLayout->addWidget(skinSiteBtn);
+
     auto *editBtn = new QPushButton(tr("编辑资料"), m_profileUserActions);
     editBtn->setObjectName(QStringLiteral("fbBtnGhost"));
     editBtn->setFixedHeight(36);
@@ -837,6 +1381,7 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
 {
     auto *card = new QFrame(parent);
     card->setObjectName(QStringLiteral("fbCard"));
+    m_tabsCard = card;
     auto *layout = new QVBoxLayout(card);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -854,7 +1399,8 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     tabsLayout->setSpacing(4);
 
     const QStringList tabLabels = {tr("角色"), tr("我的主题"), tr("我的回复"), tr("我的收藏"),
-                                   tr("通知"), tr("我的反馈"), tr("积分"), tr("账号设置")};
+                                   tr("通知"), tr("我的反馈"), tr("积分"), tr("勋章"),
+                                   tr("游玩"), tr("账号设置")};
     for (int i = 0; i < tabLabels.size(); ++i)
     {
         auto *tab = new QPushButton(tabLabels.at(i), tabsTrack);
@@ -892,6 +1438,8 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     m_contentPages.append(buildNotificationsContent(m_contentHost));                // NotificationsContent
     m_contentPages.append(buildFeedbackContent(m_contentHost));                     // FeedbackContent
     m_contentPages.append(buildPointsContent(m_contentHost));                       // PointsContent
+    m_contentPages.append(buildMedalsContent(m_contentHost));                       // MedalsContent
+    m_contentPages.append(buildPlaytimeContent(m_contentHost));                     // PlaytimeContent
     m_contentPages.append(buildSettingsContent(m_contentHost));                     // SettingsContent
     m_contentPages.append(buildLoggedOutContent(m_contentHost));                    // LoggedOutContent
     for (QWidget *page : m_contentPages)
@@ -1065,6 +1613,13 @@ QWidget *ForumAccountPage::buildLoggedOutContent(QWidget *parent)
     connect(m_loggedOutRegisterBtn, &QPushButton::clicked, this, [this]() { openAuth(RegisterMode); });
     buttonRow->addWidget(m_loggedOutRegisterBtn);
 
+    // 忘了密码 / 忘了用户名：从这里直接进找回账号卡，不用先去登录卡再翻页签
+    auto *recoverLink = new QPushButton(tr("忘了密码？找回账号"), page);
+    recoverLink->setObjectName(QStringLiteral("fbLink"));
+    recoverLink->setCursor(Qt::PointingHandCursor);
+    connect(recoverLink, &QPushButton::clicked, this, [this]() { openAuth(RecoverMode); });
+    buttonRow->addWidget(recoverLink);
+
     buttonRow->addStretch();
     layout->addLayout(buttonRow);
     layout->addStretch();
@@ -1072,6 +1627,26 @@ QWidget *ForumAccountPage::buildLoggedOutContent(QWidget *parent)
     return page;
 }
 
+QWidget *ForumAccountPage::buildPlaytimeContent(QWidget *parent)
+{
+    auto *page = new QWidget(parent);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    // 嵌的是统计页的「摊平」形态：滚动交给账户页统一处理，不会出现两层滚动条
+    m_playtimePage = new PlaytimeStatsPage(page, /*embedded=*/true);
+    // 「登录并绑定」直接打开本页自带的登录表单，登录完回到「游玩」页
+    connect(m_playtimePage, &PlaytimeStatsPage::loginRequested, this, [this]() {
+        openAuth(LoginMode);
+    });
+    // 年度报告卡片：交给主窗口打开整页（报告是独立整页，返回落点是本页签）
+    connect(m_playtimePage, &PlaytimeStatsPage::annualReportRequested, this,
+            &ForumAccountPage::annualReportRequested);
+
+    layout->addWidget(m_playtimePage);
+    return page;
+}
 QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
 {
     auto *page = new QWidget(parent);
@@ -1308,14 +1883,15 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     layout->addSpacing(16);
 
     // ── 密码 ──
-    layout->addWidget(makeSectionHeader(tr("修改密码"), page));
+    layout->addWidget(makeSectionHeader(tr("修改密码"), page, &m_passwordSectionTitle));
     layout->addSpacing(10);
 
     m_currentPasswordEdit = new QLineEdit(page);
     m_currentPasswordEdit->setObjectName(QStringLiteral("fbInput"));
     m_currentPasswordEdit->setEchoMode(QLineEdit::Password);
     m_currentPasswordEdit->setPlaceholderText(tr("输入当前密码"));
-    layout->addWidget(buildField(tr("当前密码"), m_currentPasswordEdit, page));
+    m_currentPasswordField = buildField(tr("当前密码"), m_currentPasswordEdit, page);
+    layout->addWidget(m_currentPasswordField);
     layout->addSpacing(12);
 
     m_newPasswordEdit = new QLineEdit(page);
@@ -1332,17 +1908,17 @@ QWidget *ForumAccountPage::buildSettingsContent(QWidget *parent)
     layout->addWidget(buildField(tr("确认新密码"), m_confirmPasswordEdit, page));
     layout->addSpacing(14);
 
-    auto *savePasswordBtn = new QPushButton(tr("修改密码"), page);
-    savePasswordBtn->setObjectName(QStringLiteral("fbBtnPrimary"));
-    savePasswordBtn->setFixedHeight(36);
-    savePasswordBtn->setMinimumWidth(108);
-    savePasswordBtn->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    savePasswordBtn->setCursor(Qt::PointingHandCursor);
-    connect(savePasswordBtn, &QPushButton::clicked, this, &ForumAccountPage::savePasswordForm);
+    m_savePasswordBtn = new QPushButton(tr("修改密码"), page);
+    m_savePasswordBtn->setObjectName(QStringLiteral("fbBtnPrimary"));
+    m_savePasswordBtn->setFixedHeight(36);
+    m_savePasswordBtn->setMinimumWidth(108);
+    m_savePasswordBtn->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    m_savePasswordBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_savePasswordBtn, &QPushButton::clicked, this, &ForumAccountPage::savePasswordForm);
 
     auto *savePasswordRow = new QHBoxLayout();
     savePasswordRow->setContentsMargins(0, 0, 0, 0);
-    savePasswordRow->addWidget(savePasswordBtn);
+    savePasswordRow->addWidget(m_savePasswordBtn);
     savePasswordRow->addStretch();
     layout->addLayout(savePasswordRow);
 
@@ -1414,7 +1990,7 @@ QWidget *ForumAccountPage::buildAuthCard(QWidget *parent)
     tabsLayout->setContentsMargins(4, 4, 4, 4);
     tabsLayout->setSpacing(4);
 
-    const QStringList authLabels = {tr("登录"), tr("注册新账号")};
+    const QStringList authLabels = {tr("登录"), tr("注册新账号"), tr("找回账号")};
     for (int i = 0; i < authLabels.size(); ++i)
     {
         auto *tab = new QPushButton(authLabels.at(i), tabsTrack);
@@ -1442,14 +2018,68 @@ QWidget *ForumAccountPage::buildAuthCard(QWidget *parent)
     m_authNameEdit->setObjectName(QStringLiteral("fbInput"));
     m_authNameEdit->setPlaceholderText(tr("中文、字母、数字，2–20 位"));
     m_authNameEdit->setMaxLength(20);
-    layout->addWidget(buildField(tr("用户名"), m_authNameEdit, card));
+    // 用户名整栏包一层：找回账号只认邮箱，这一栏要能整块收起来
+    m_authNameField = new QWidget(card);
+    auto *nameLayout = new QVBoxLayout(m_authNameField);
+    nameLayout->setContentsMargins(0, 0, 0, 0);
+    nameLayout->setSpacing(0);
+    nameLayout->addWidget(buildField(tr("用户名"), m_authNameEdit, m_authNameField));
+    layout->addWidget(m_authNameField);
     layout->addSpacing(14);
 
     m_authPasswordEdit = new QLineEdit(card);
     m_authPasswordEdit->setObjectName(QStringLiteral("fbInput"));
     m_authPasswordEdit->setEchoMode(QLineEdit::Password);
     m_authPasswordEdit->setPlaceholderText(tr("至少 6 位"));
-    layout->addWidget(buildField(tr("密码"), m_authPasswordEdit, card));
+    // 论坛服务端最多收 72 位，这里先挡住，免得到提交时才被打回
+    m_authPasswordEdit->setMaxLength(72);
+    layout->addWidget(
+        buildField(tr("密码"), m_authPasswordEdit, card, nullptr, &m_authPasswordLabel));
+
+    // ── 密码强度（只在注册时显示）──
+    // 四段小条 + 右侧等级文字 + 一句建议，跟着密码框内容实时刷新
+    m_pwStrengthField = new QWidget(card);
+    {
+        auto *strengthLayout = new QVBoxLayout(m_pwStrengthField);
+        // 上边距放在自己身上：登录时整块隐藏，不会多留一段空白
+        strengthLayout->setContentsMargins(0, 8, 0, 0);
+        strengthLayout->setSpacing(6);
+
+        auto *meterRow = new QHBoxLayout();
+        meterRow->setContentsMargins(0, 0, 0, 0);
+        meterRow->setSpacing(6);
+        for (int i = 0; i < 4; ++i)
+        {
+            auto *seg = new QFrame(m_pwStrengthField);
+            seg->setObjectName(QStringLiteral("fbPwSeg"));
+            seg->setFixedHeight(5);
+            seg->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            seg->setProperty("on", false);
+            seg->setProperty("tone", QStringLiteral("weak"));
+            meterRow->addWidget(seg, 1);
+            m_pwStrengthSegs.append(seg);
+        }
+        m_pwStrengthLabel = new QLabel(m_pwStrengthField);
+        m_pwStrengthLabel->setObjectName(QStringLiteral("fbPwStrengthLabel"));
+        m_pwStrengthLabel->setMinimumWidth(48);
+        m_pwStrengthLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        meterRow->addWidget(m_pwStrengthLabel, 0);
+        strengthLayout->addLayout(meterRow);
+
+        m_pwStrengthNote = new QLabel(m_pwStrengthField);
+        m_pwStrengthNote->setObjectName(QStringLiteral("fbPwStrengthNote"));
+        m_pwStrengthNote->setWordWrap(true);
+        strengthLayout->addWidget(m_pwStrengthNote);
+
+        m_pwStrengthField->hide();
+        layout->addWidget(m_pwStrengthField);
+    }
+    connect(m_authPasswordEdit, &QLineEdit::textChanged, this,
+            &ForumAccountPage::updatePasswordStrengthUi);
+    // 用户名也算进强度判断（拿用户名当密码会降一级），所以用户名变了也要刷新
+    connect(m_authNameEdit, &QLineEdit::textChanged, this,
+            &ForumAccountPage::updatePasswordStrengthUi);
+    updatePasswordStrengthUi();
     layout->addSpacing(14);
 
     m_confirmField = new QWidget(card);
@@ -1465,6 +2095,73 @@ QWidget *ForumAccountPage::buildAuthCard(QWidget *parent)
     layout->addWidget(m_confirmField);
     layout->addSpacing(18);
 
+    // ── 注册 / 找回共用：邮箱 + 邮箱验证码 ──
+    // 注册时论坛要求邮箱验证，两栏只在「注册新账号」时露出来；找回账号时也复用这两栏
+    m_regEmailField = new QWidget(card);
+    auto *regEmailLayout = new QVBoxLayout(m_regEmailField);
+    regEmailLayout->setContentsMargins(0, 0, 0, 0);
+    regEmailLayout->setSpacing(0);
+    m_regEmailEdit = new QLineEdit(m_regEmailField);
+    m_regEmailEdit->setObjectName(QStringLiteral("fbInput"));
+    m_regEmailEdit->setPlaceholderText(tr("要收验证码，请填常用邮箱"));
+    m_regEmailEdit->setMaxLength(120);
+    regEmailLayout->addWidget(buildField(tr("邮箱"), m_regEmailEdit, m_regEmailField));
+    m_regEmailField->hide();
+    layout->addWidget(m_regEmailField);
+    layout->addSpacing(14);
+
+    m_regCodeField = new QWidget(card);
+    auto *regCodeLayout = new QVBoxLayout(m_regCodeField);
+    regCodeLayout->setContentsMargins(0, 0, 0, 0);
+    regCodeLayout->setSpacing(0);
+
+    m_regCodeEdit = new QLineEdit(m_regCodeField);
+    m_regCodeEdit->setObjectName(QStringLiteral("fbInput"));
+    m_regCodeEdit->setPlaceholderText(tr("邮箱收到的 6 位验证码"));
+    m_regCodeEdit->setMaxLength(6);
+    m_regCodeEdit->setFixedHeight(36);   // 与右侧「发送验证码」按钮等高
+
+    m_regSendCodeBtn = new QPushButton(tr("发送验证码"), m_regCodeField);
+    m_regSendCodeBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    m_regSendCodeBtn->setFixedHeight(36);
+    m_regSendCodeBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_regSendCodeBtn, &QPushButton::clicked, this,
+            &ForumAccountPage::sendAuthEmailCode);
+
+    m_regCodeNote = new QLabel(tr("验证码 10 分钟内有效；没收到就看看垃圾邮件箱"), m_regCodeField);
+    m_regCodeNote->setObjectName(QStringLiteral("fbNote"));
+    m_regCodeNote->setWordWrap(true);
+
+    auto *regCodeRow = new QHBoxLayout();
+    regCodeRow->setContentsMargins(0, 0, 0, 0);
+    regCodeRow->setSpacing(8);
+    regCodeRow->addWidget(m_regCodeEdit, 1);
+    regCodeRow->addWidget(m_regSendCodeBtn);
+
+    auto *regCodeHost = new QWidget(m_regCodeField);
+    auto *regCodeHostLayout = new QVBoxLayout(regCodeHost);
+    regCodeHostLayout->setContentsMargins(0, 0, 0, 0);
+    regCodeHostLayout->setSpacing(6);
+    regCodeHostLayout->addLayout(regCodeRow);
+    regCodeHostLayout->addWidget(m_regCodeNote);
+
+    regCodeLayout->addWidget(buildField(tr("邮箱验证码"), regCodeHost, m_regCodeField));
+    m_regCodeField->hide();
+    layout->addWidget(m_regCodeField);
+
+    // 找回账号时多一句说明：忘了用户名也能找回，验证码邮件里会写账号名
+    m_recoverNote = new QLabel(tr("忘了用户名也不要紧：验证码邮件里会写明这个邮箱对应的账号。"),
+                              card);
+    m_recoverNote->setObjectName(QStringLiteral("fbNote"));
+    m_recoverNote->setWordWrap(true);
+    m_recoverNote->hide();
+    layout->addWidget(m_recoverNote);
+    layout->addSpacing(18);
+
+    m_regCodeTimer = new QTimer(card);
+    m_regCodeTimer->setInterval(1000);
+    connect(m_regCodeTimer, &QTimer::timeout, this, &ForumAccountPage::tickRegisterCodeCooldown);
+
     m_authSubmitBtn = new QPushButton(tr("登录"), card);
     m_authSubmitBtn->setObjectName(QStringLiteral("fbPrimaryBlock"));
     m_authSubmitBtn->setFixedHeight(44);
@@ -1472,11 +2169,136 @@ QWidget *ForumAccountPage::buildAuthCard(QWidget *parent)
     connect(m_authSubmitBtn, &QPushButton::clicked, this, &ForumAccountPage::submitAuth);
     layout->addWidget(m_authSubmitBtn);
 
+    // ── 手机扫码登录 ──
+    // 放在密码登录按钮下面、第三方登录上面：同属「换个方式登录」，但只对
+    // 已经在手机上登录过的账号有意义，所以只在登录模式露出来（见 setAuthMode）。
+    m_qrLoginSection = new QWidget(card);
+    {
+        auto *qrLayout = new QVBoxLayout(m_qrLoginSection);
+        // 上边距放在分区自己身上：注册 / 找回时整块隐藏，不会多留一段空白
+        qrLayout->setContentsMargins(0, 14, 0, 0);
+        qrLayout->setSpacing(8);
+
+        m_qrLoginButton = new QPushButton(tr("手机扫码登录"), m_qrLoginSection);
+        m_qrLoginButton->setObjectName(QStringLiteral("fbBtnGhost"));
+        m_qrLoginButton->setFixedHeight(40);
+        m_qrLoginButton->setCursor(Qt::PointingHandCursor);
+        connect(m_qrLoginButton, &QPushButton::clicked, this,
+                &ForumAccountPage::openQrLoginDialog);
+        qrLayout->addWidget(m_qrLoginButton);
+
+        m_qrLoginHint = new QLabel(tr("用手机端方块盒子扫一扫"), m_qrLoginSection);
+        m_qrLoginHint->setObjectName(QStringLiteral("fbNote"));
+        m_qrLoginHint->setAlignment(Qt::AlignCenter);
+        m_qrLoginHint->setWordWrap(true);
+        qrLayout->addWidget(m_qrLoginHint);
+    }
+    m_qrLoginSection->hide();
+    layout->addWidget(m_qrLoginSection);
+
+    // ── 第三方登录：GitHub / LittleSkin ──
+    // 服务端配好对应 OAuth 应用后才会显示，没配就和以前完全一样。
+    m_oauthSection = new QWidget(card);
+    auto *oauthLayout = new QVBoxLayout(m_oauthSection);
+    // 上边距放在分区自己身上：没有第三方登录时整块隐藏，不会留下多余空白
+    oauthLayout->setContentsMargins(0, 14, 0, 0);
+    oauthLayout->setSpacing(10);
+
+    auto *oauthOrRow = new QHBoxLayout();
+    oauthOrRow->setContentsMargins(0, 0, 0, 0);
+    oauthOrRow->setSpacing(10);
+    auto *oauthLine1 = new QFrame(m_oauthSection);
+    oauthLine1->setObjectName(QStringLiteral("fbDivider"));
+    oauthLine1->setFixedHeight(1);
+    oauthLine1->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto *oauthOrLabel = new QLabel(tr("或使用第三方账号"), m_oauthSection);
+    oauthOrLabel->setObjectName(QStringLiteral("fbNote"));
+    auto *oauthLine2 = new QFrame(m_oauthSection);
+    oauthLine2->setObjectName(QStringLiteral("fbDivider"));
+    oauthLine2->setFixedHeight(1);
+    oauthLine2->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    oauthOrRow->addWidget(oauthLine1, 1);
+    oauthOrRow->addWidget(oauthOrLabel, 0);
+    oauthOrRow->addWidget(oauthLine2, 1);
+    oauthLayout->addLayout(oauthOrRow);
+
+    m_oauthGithubBtn = new QPushButton(tr("使用 GitHub 登录"), m_oauthSection);
+    m_oauthGithubBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    m_oauthGithubBtn->setFixedHeight(40);
+    m_oauthGithubBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_oauthGithubBtn, &QPushButton::clicked, this,
+            [this]() { startOAuthLogin(QStringLiteral("github")); });
+    oauthLayout->addWidget(m_oauthGithubBtn);
+
+    m_oauthLittleSkinBtn = new QPushButton(tr("使用 LittleSkin 登录"), m_oauthSection);
+    m_oauthLittleSkinBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+    m_oauthLittleSkinBtn->setFixedHeight(40);
+    m_oauthLittleSkinBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_oauthLittleSkinBtn, &QPushButton::clicked, this,
+            [this]() { startOAuthLogin(QStringLiteral("littleskin")); });
+    oauthLayout->addWidget(m_oauthLittleSkinBtn);
+
+    auto *oauthHint = new QLabel(tr("无需手动注册：首次使用会自动创建方块盒子账号，已登录时会直接绑定。"),
+                                 m_oauthSection);
+    oauthHint->setObjectName(QStringLiteral("fbNote"));
+    oauthHint->setWordWrap(true);
+    oauthHint->setAlignment(Qt::AlignCenter);
+    oauthLayout->addWidget(oauthHint);
+
+    // 等待浏览器授权：先藏起来，点了第三方按钮才显示
+    m_oauthWaiting = new QWidget(m_oauthSection);
+    auto *waitLayout = new QVBoxLayout(m_oauthWaiting);
+    waitLayout->setContentsMargins(0, 2, 0, 0);
+    waitLayout->setSpacing(8);
+    m_oauthStatus = new QLabel(m_oauthWaiting);
+    m_oauthStatus->setObjectName(QStringLiteral("fbNote"));
+    m_oauthStatus->setWordWrap(true);
+    m_oauthStatus->setAlignment(Qt::AlignCenter);
+    waitLayout->addWidget(m_oauthStatus);
+
+    auto *waitRow = new QHBoxLayout();
+    waitRow->setContentsMargins(0, 0, 0, 0);
+    waitRow->addStretch();
+    m_oauthReopenBtn = new QPushButton(tr("重新打开浏览器"), m_oauthWaiting);
+    m_oauthReopenBtn->setObjectName(QStringLiteral("fbLink"));
+    m_oauthReopenBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_oauthReopenBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_oauthVerificationUrl.isEmpty())
+            QDesktopServices::openUrl(QUrl(m_oauthVerificationUrl));
+    });
+    m_oauthCancelBtn = new QPushButton(tr("取消"), m_oauthWaiting);
+    m_oauthCancelBtn->setObjectName(QStringLiteral("fbLink"));
+    m_oauthCancelBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_oauthCancelBtn, &QPushButton::clicked, this, [this]() {
+        m_service->cancelOAuthLogin();
+        setOAuthWaiting(false);
+    });
+    waitRow->addWidget(m_oauthReopenBtn);
+    waitRow->addWidget(m_oauthCancelBtn);
+    waitRow->addStretch();
+    waitLayout->addLayout(waitRow);
+    m_oauthWaiting->hide();
+    oauthLayout->addWidget(m_oauthWaiting);
+
+    m_oauthSection->hide();
+    layout->addWidget(m_oauthSection);
+
     layout->addSpacing(16);
-    auto *note = makeMutedLabel(tr("注册即表示你愿意守点规矩：友善提问、不刷屏、不发广告。"), card,
-                                "fbNote");
-    note->setAlignment(Qt::AlignCenter);
-    layout->addWidget(note);
+    // 提交前需同意协议；这里只做提示与全文入口，真正提交前还会再弹窗确认一次
+    m_authLegalNote = new QLabel(card);
+    m_authLegalNote->setObjectName(QStringLiteral("fbNote"));
+    m_authLegalNote->setWordWrap(true);
+    m_authLegalNote->setAlignment(Qt::AlignCenter);
+    m_authLegalNote->setTextFormat(Qt::RichText);
+    m_authLegalNote->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    m_authLegalNote->setOpenExternalLinks(false);
+    connect(m_authLegalNote, &QLabel::linkActivated, this, [](const QString &href) {
+        if (href == QStringLiteral("terms"))
+            UserAgreementDialog::showDocument(UserAgreementDialog::TermsOfUse);
+        else if (href == QStringLiteral("privacy"))
+            UserAgreementDialog::showDocument(UserAgreementDialog::PrivacyPolicy);
+    });
+    layout->addWidget(m_authLegalNote);
 
     layout->addSpacing(10);
     auto *backBtn = new QPushButton(tr("← 返回账户管理"), card);
@@ -1527,6 +2349,7 @@ ForumAccountPage::Palette ForumAccountPage::currentPalette() const
         p.onBrand = QStringLiteral("#08210b");
         p.danger = QStringLiteral("#ef7c74");
         p.dangerSoft = QStringLiteral("rgba(198, 40, 40, 16%)");
+        p.warn = QStringLiteral("#e0a94a");
         p.warnSoft = QStringLiteral("rgba(178, 106, 0, 16%)");
     }
     else
@@ -1546,6 +2369,7 @@ ForumAccountPage::Palette ForumAccountPage::currentPalette() const
         p.onBrand = QStringLiteral("#ffffff");
         p.danger = QStringLiteral("#c62828");
         p.dangerSoft = QStringLiteral("#fdecea");
+        p.warn = QStringLiteral("#b26a00");
         p.warnSoft = QStringLiteral("#fff5e6");
     }
     return p;
@@ -1746,6 +2570,22 @@ QPushButton#fbAuthTab {
     font-weight: 700;
 }
 QPushButton#fbAuthTab:checked { background: %CARD%; color: %BRAND%; border-color: %LINE2%; }
+
+/* ── 注册卡的密码强度：四段小条 + 右侧等级文字 ── */
+QFrame#fbPwSeg {
+    background: %LINE2%;
+    border: none;
+    border-radius: 3px;
+}
+QFrame#fbPwSeg[on="true"][tone="weak"] { background: %DANGER%; }
+QFrame#fbPwSeg[on="true"][tone="fair"] { background: %WARN%; }
+QFrame#fbPwSeg[on="true"][tone="good"] { background: %BRAND%; }
+QFrame#fbPwSeg[on="true"][tone="great"] { background: %BRAND%; }
+QLabel#fbPwStrengthLabel { color: %INK3%; font-size: 12px; font-weight: 800; }
+QLabel#fbPwStrengthLabel[tone="weak"] { color: %DANGER%; }
+QLabel#fbPwStrengthLabel[tone="fair"] { color: %WARN%; }
+QLabel#fbPwStrengthLabel[tone="good"], QLabel#fbPwStrengthLabel[tone="great"] { color: %BRAND%; }
+QLabel#fbPwStrengthNote { color: %INK3%; font-size: 12px; }
 
 QFrame#fbListRow {
     background: transparent;
@@ -1953,6 +2793,105 @@ QFrame#fbPointsHistoryRow {
 QFrame#fbPointsHistoryRow:hover { background: %BG_TINT%; border-color: %LINE%; }
 QLabel#fbPointsHistoryDay { color: %INK%; font-size: 13px; font-weight: 700; }
 QLabel#fbPointsHistoryAmount { color: %BRAND%; font-size: 13px; font-weight: 800; }
+
+/* ── 积分页 · 购买方块 ── */
+QFrame#fbPointsShop {
+    background: %BG_TINT%;
+    border: 1px solid %LINE%;
+    border-radius: 14px;
+}
+QFrame#fbShopCard {
+    background: %CARD%;
+    border: 1px solid %LINE%;
+    border-radius: 12px;
+}
+QFrame#fbShopCard:hover { border-color: %BRAND_LINE%; }
+QLabel#fbShopName { color: %INK3%; font-size: 11.5px; font-weight: 700; }
+QLabel#fbShopPoints { color: %INK%; font-size: 19px; font-weight: 900; }
+QLabel#fbShopUnit { color: %INK3%; font-size: 10.5px; font-weight: 700; }
+QLabel#fbShopPrice { color: %BRAND%; font-size: 13.5px; font-weight: 800; }
+QPushButton#fbShopBuy {
+    background: %BRAND%;
+    color: %ON_BRAND%;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    font-size: 12.5px;
+    font-weight: 800;
+}
+QPushButton#fbShopBuy:hover { background: %BRAND_HOVER%; }
+QPushButton#fbShopBuy:disabled { background: %LINE2%; color: %INK3%; }
+QWidget#fbPointsPayPanel {
+    background: %BRAND_SOFT%;
+    border: 1px solid %BRAND_LINE%;
+    border-radius: 12px;
+}
+QLabel#fbPointsPayTitle { color: %INK%; font-size: 13px; font-weight: 800; }
+
+/* ── 勋章页（和账号绑定的勋章墙） ── */
+QFrame#fbMedalsHero {
+    background: %BG_TINT%;
+    border: 1px solid %LINE%;
+    border-radius: 14px;
+}
+QLabel#fbMedalsEyebrow { color: %BRAND%; font-size: 12.5px; font-weight: 800; }
+QLabel#fbMedalsCount { color: %INK%; font-size: 34px; font-weight: 900; }
+QLabel#fbMedalsTotal { color: %INK3%; font-size: 14px; font-weight: 700; }
+QLabel#fbMedalsSummary { color: %INK2%; font-size: 12.5px; }
+QLabel#fbMedalsNotice { color: %INK3%; font-size: 12px; }
+QProgressBar#fbMedalsWallBar {
+    background: %LINE2%;
+    border: none;
+    border-radius: 4px;
+}
+QProgressBar#fbMedalsWallBar::chunk {
+    background: %BRAND%;
+    border-radius: 4px;
+}
+QFrame#fbMedalTile {
+    background: %CARD%;
+    border: 1px solid %LINE%;
+    border-radius: 14px;
+}
+QFrame#fbMedalTile:hover { border-color: %BRAND_LINE%; }
+QFrame#fbMedalTile[earned="false"] {
+    background: %BG_TINT%;
+    border-color: %LINE%;
+}
+QFrame#fbMedalTile[rarity="legendary"] { border-color: rgba(217, 119, 6, 38%); }
+QFrame#fbMedalTile[rarity="mythic"] { border-color: rgba(220, 38, 38, 45%); }
+QFrame#fbMedalTile[rarity="game"] { border-color: rgba(8, 145, 178, 38%); }
+QLabel#fbMedalName { color: %INK%; font-size: 14px; font-weight: 800; }
+QLabel#fbMedalCondition { color: %INK3%; font-size: 11.5px; }
+QLabel#fbMedalEarned { font-size: 11.5px; font-weight: 700; }
+QLabel#fbMedalProgress { color: %INK3%; font-size: 11px; font-weight: 700; }
+
+/* ── 首次进入的聚光灯引导气泡 ── */
+QFrame#fbTourCard {
+    background: %CARD%;
+    border: 1px solid %BRAND_LINE%;
+    border-radius: 14px;
+}
+QLabel#fbTourStep { color: %BRAND%; font-size: 11.5px; font-weight: 800; }
+QLabel#fbTourTitle { color: %INK%; font-size: 16px; font-weight: 800; }
+QLabel#fbTourText { color: %INK2%; font-size: 13px; }
+QPushButton#fbTourSkip {
+    background: transparent;
+    color: %INK3%;
+    border: none;
+    padding: 0 4px;
+    font-size: 12.5px;
+}
+QPushButton#fbTourSkip:hover { color: %INK2%; }
+QPushButton#fbTourNext {
+    background: %BRAND%;
+    color: %ON_BRAND%;
+    border: none;
+    border-radius: 15px;
+    padding: 0 16px;
+    font-size: 12.5px;
+    font-weight: 800;
+}
+QPushButton#fbTourNext:hover { background: %BRAND_HOVER%; }
 )QSS");
 
     auto put = [&qss](const char *token, const QString &value) {
@@ -1969,6 +2908,7 @@ QLabel#fbPointsHistoryAmount { color: %BRAND%; font-size: 13px; font-weight: 800
     // 未读行里的引用块：浅色用白卡提亮，深色同样用更亮的高光，保持“浮起来”的关系
     put("%QUOTE_BG_ALT%", p.dark ? QStringLiteral("rgba(255, 255, 255, 10%)") : p.card);
     put("%WARN_SOFT%", p.warnSoft);
+    put("%WARN%", p.warn);
     put("%DANGER_SOFT%", p.dangerSoft);
     put("%DANGER%", p.danger);
     put("%INK3%", p.ink3);
@@ -1979,6 +2919,20 @@ QLabel#fbPointsHistoryAmount { color: %BRAND%; font-size: 13px; font-weight: 800
     put("%CARD%", p.card);
 
     setStyleSheet(qss);
+
+    // 首次引导遮罩：高亮边框和气泡箭头用的是手绘颜色，换主题要同步
+    if (auto *tour = static_cast<AccountTourOverlay *>(m_tourOverlay))
+        tour->setThemeColors(QColor(p.brand), QColor(p.card), QColor(p.line));
+
+    // 登录卡底部的协议提示：链接颜色跟随主题，换主题后重新拼一次
+    if (m_authLegalNote)
+    {
+        m_authLegalNote->setText(
+            tr("<div align=\"center\">登录或注册前需同意 <a href=\"terms\" style=\"color:%1;"
+               "text-decoration:none;\">《方块盒子使用协议》</a>和 <a href=\"privacy\" "
+               "style=\"color:%1;text-decoration:none;\">《方块盒子隐私政策》</a>。</div>")
+                .arg(p.brand));
+    }
 
     // 头像占位色跟随主题
     if (!m_service->isLoggedIn())
@@ -2007,6 +2961,12 @@ void ForumAccountPage::showOverview()
 {
     if (!m_viewStack)
         return;
+    // 离开登录卡就别再等第三方授权了（浏览器那端完成后也不会突然登录）
+    if (m_viewStack->currentIndex() == AuthView)
+    {
+        m_service->cancelOAuthLogin();
+        setOAuthWaiting(false);
+    }
     // 总览 / 详情恢复自适应高度，之前给登录卡收紧的尺寸约束要放开
     releaseAuthViewHeight();
     // 详情页会把容器撑高，回到总览时恢复自适应
@@ -2044,6 +3004,11 @@ void ForumAccountPage::syncAuthViewHeight()
 
 void ForumAccountPage::openAuth(AuthMode mode)
 {
+    m_service->cancelOAuthLogin();
+    setOAuthWaiting(false);
+    m_service->fetchOAuthProviders();
+    // 顺便问一下论坛的注册规矩：要邮箱验证才显示注册卡上那两栏
+    m_service->fetchRegisterPolicy();
     if (m_authError)
     {
         m_authError->clear();
@@ -2052,40 +3017,272 @@ void ForumAccountPage::openAuth(AuthMode mode)
     m_authNameEdit->clear();
     m_authPasswordEdit->clear();
     m_authConfirmEdit->clear();
+    if (m_regEmailEdit)
+        m_regEmailEdit->clear();
+    if (m_regCodeEdit)
+        m_regCodeEdit->clear();
+    // 重新进登录卡就重新开始：上一轮的倒计时和「发送中」不要带过来
+    m_regCodeCooldown = 0;
+    m_regEmailBusy = false;
+    if (m_regCodeTimer)
+        m_regCodeTimer->stop();
+    if (m_regCodeNote)
+        m_regCodeNote->setText(tr("验证码 10 分钟内有效；没收到就看看垃圾邮件箱"));
     setAuthMode(mode);
     if (m_viewStack)
         m_viewStack->setCurrentIndex(AuthView);
     syncAuthViewHeight();
     scrollToTop();
-    QTimer::singleShot(0, this, [this]() { m_authNameEdit->setFocus(); });
+    QTimer::singleShot(0, this, [this]() {
+        // 找回账号卡上没有用户名栏，焦点直接落在邮箱上
+        if (m_authMode == RecoverMode)
+        {
+            if (m_regEmailEdit)
+                m_regEmailEdit->setFocus();
+            return;
+        }
+        m_authNameEdit->setFocus();
+    });
 }
 
 void ForumAccountPage::setAuthMode(AuthMode mode)
 {
     m_authMode = mode;
     const bool registering = (mode == RegisterMode);
+    const bool recovering = (mode == RecoverMode);
 
     for (int i = 0; i < m_authTabButtons.size(); ++i)
         m_authTabButtons.at(i)->setChecked(i == int(mode));
 
     if (m_authTitle)
-        m_authTitle->setText(registering ? tr("注册方块盒子论坛") : tr("登录方块盒子论坛"));
+    {
+        m_authTitle->setText(registering ? tr("注册方块盒子论坛")
+                                         : recovering ? tr("找回方块盒子账号")
+                                                      : tr("登录方块盒子论坛"));
+    }
     if (m_authSub)
-        m_authSub->setText(registering ? tr("取个名字，之后就能发帖和回复了。")
-                                       : tr("用你注册的账号继续参与讨论。"));
+    {
+        m_authSub->setText(
+            registering
+                ? (m_registerEmailRequired ? tr("取个名字、填个邮箱验证一下，之后就能发帖和回复了。")
+                                           : tr("取个名字，之后就能发帖和回复了。"))
+                : recovering
+                      ? tr("忘了密码或忘了用户名都不要紧：用注册时填的邮箱收验证码，重设密码后自动登录。")
+                      : tr("用你注册的账号继续参与讨论。"));
+    }
+    // 找回账号只认邮箱：用户名整栏收起来，密码栏当作「新密码」
+    if (m_authNameField)
+        m_authNameField->setVisible(!recovering);
+    if (m_authPasswordLabel)
+        m_authPasswordLabel->setText(recovering ? tr("新密码") : tr("密码"));
+    if (m_authPasswordEdit)
+    {
+        m_authPasswordEdit->setPlaceholderText(recovering ? tr("设置新密码，至少 6 位")
+                                                          : tr("至少 6 位"));
+    }
     if (m_confirmField)
-        m_confirmField->setVisible(registering);
+        m_confirmField->setVisible(registering || recovering);
+    // 注册要邮箱验证时多出「邮箱 / 邮箱验证码」两栏；论坛没这项要求就收起来。
+    // 找回账号不管论坛开没开邮箱注册，都必须走邮箱验证码
+    const bool needEmail = (registering && m_registerEmailRequired) || recovering;
+    if (m_regEmailField)
+        m_regEmailField->setVisible(needEmail);
+    if (m_regCodeField)
+        m_regCodeField->setVisible(needEmail);
+    if (m_recoverNote)
+        m_recoverNote->setVisible(recovering);
+    // 密码强度：注册和重设密码时都值得看，切回登录就收起来
+    if (m_pwStrengthField)
+        m_pwStrengthField->setVisible(registering || recovering);
+    // 手机扫码登录只对「登录」有意义：注册要走邮箱验证、找回要重设密码，
+    // 这两个模式下这个入口只会让人以为能绕过去
+    if (m_qrLoginSection)
+        m_qrLoginSection->setVisible(!registering && !recovering);
+    updatePasswordStrengthUi();
+    updateRegisterCodeUi();
     if (m_authSubmitBtn)
     {
-        m_authSubmitBtn->setText(m_busy ? (registering ? tr("注册中…") : tr("登录中…"))
-                                        : (registering ? tr("注册并登录") : tr("登录")));
-        m_authSubmitBtn->setEnabled(!m_busy);
+        m_authSubmitBtn->setText(
+            registering ? (m_busy ? tr("注册中…") : tr("注册并登录"))
+                        : recovering ? (m_busy ? tr("重设中…") : tr("重设密码并登录"))
+                                     : (m_busy ? tr("登录中…") : tr("登录")));
+        m_authSubmitBtn->setEnabled(!m_busy && !m_oauthWaitingActive);
     }
     if (m_authError && !m_authError->text().isEmpty())
         m_authError->hide();
-    // 切到注册时多出「确认密码」一栏、错误提示出现 / 消失都会改变卡片高度，
-    // 收紧后的高度要跟着卡片重新算一次
+    // 切到注册 / 找回时多出「确认密码」「邮箱」「验证码」几栏、错误提示出现 / 消失
+    // 都会改变卡片高度，收紧后的高度要跟着卡片重新算一次
     syncAuthViewHeight();
+}
+
+void ForumAccountPage::showAuthError(const QString &message)
+{
+    if (!m_authError)
+        return;
+    m_authError->setText(message);
+    m_authError->show();
+    // 错误提示会撑高卡片：同步放宽视图栈，别把提示或标签裁掉
+    syncAuthViewHeight();
+}
+
+// ── 注册卡：密码强度 ──
+// 只做「粗算」，目的不是评分而是给玩家一个直观反馈：
+// 长度打底、字符种类加成，太短 / 单字符重复 / 连续递增 / 常见弱口令直接判弱。
+
+int ForumAccountPage::passwordStrengthScore(const QString &password) const
+{
+    if (password.isEmpty())
+        return 0;
+
+    const int length = password.size();
+    int lower = 0;
+    int upper = 0;
+    int digit = 0;
+    int symbol = 0;
+    for (const QChar ch : password)
+    {
+        if (ch.isLower())
+            ++lower;
+        else if (ch.isUpper())
+            ++upper;
+        else if (ch.isDigit())
+            ++digit;
+        else
+            ++symbol;
+    }
+    const int classes = (lower > 0 ? 1 : 0) + (upper > 0 ? 1 : 0) + (digit > 0 ? 1 : 0)
+                        + (symbol > 0 ? 1 : 0);
+
+    // 同一个字符复制到底（aaaaaa）或整段等步长（123456 / abcdef）：再长也是白搭
+    if (length < 6)
+        return 1;
+    bool repeated = true;
+    for (int i = 1; i < length; ++i)
+    {
+        if (password.at(i) != password.at(0))
+        {
+            repeated = false;
+            break;
+        }
+    }
+    bool uniformStep = true;
+    const int step = int(password.at(1).unicode()) - int(password.at(0).unicode());
+    for (int i = 2; i < length; ++i)
+    {
+        if (int(password.at(i).unicode()) - int(password.at(i - 1).unicode()) != step)
+        {
+            uniformStep = false;
+            break;
+        }
+    }
+    if (repeated || uniformStep)
+        return 1;
+
+    // 论坛上最常被撞库的那些
+    static const QSet<QString> weakPasswords = {
+        QStringLiteral("123456"),    QStringLiteral("1234567"),    QStringLiteral("12345678"),
+        QStringLiteral("123456789"), QStringLiteral("111111"),     QStringLiteral("000000"),
+        QStringLiteral("666666"),    QStringLiteral("888888"),     QStringLiteral("123123"),
+        QStringLiteral("abc123"),    QStringLiteral("abc123456"),  QStringLiteral("a123456"),
+        QStringLiteral("qwerty"),    QStringLiteral("qwertyuiop"), QStringLiteral("password"),
+        QStringLiteral("passw0rd"),  QStringLiteral("admin"),      QStringLiteral("admin123"),
+        QStringLiteral("iloveyou"),  QStringLiteral("woaini"),     QStringLiteral("woaini1314"),
+        QStringLiteral("5201314"),   QStringLiteral("!@#$%^&*"),
+    };
+    if (weakPasswords.contains(password.toLower()))
+        return 1;
+
+    // 长度打底，字符种类往上加
+    int score = 1;
+    if (length >= 8)
+        score = 2;
+    if (length >= 12)
+        score = 3;
+    if (length >= 16)
+        score = 4;
+    if (classes >= 3)
+        ++score;
+    if (classes >= 4)
+        ++score;
+    // 只用一种字符（纯数字 / 纯小写）最多算一般
+    if (classes == 1)
+        score = qMin(score, 2);
+    // 拿用户名当密码、或在密码里带着用户名：降一级
+    const QString name = m_authNameEdit ? m_authNameEdit->text().trimmed().toLower() : QString();
+    if (name.size() >= 2 && password.toLower().contains(name))
+        score = qMin(score, 2);
+
+    return qBound(1, score, 4);
+}
+
+void ForumAccountPage::updatePasswordStrengthUi()
+{
+    if (!m_pwStrengthField || !m_pwStrengthLabel || !m_pwStrengthNote)
+        return;
+
+    const QString password = m_authPasswordEdit ? m_authPasswordEdit->text() : QString();
+    const int score = passwordStrengthScore(password);
+
+    static const char *const tones[] = {"weak", "fair", "good", "great"};
+    const QString tone = score > 0 ? QString::fromLatin1(tones[score - 1])
+                                   : QStringLiteral("empty");
+
+    for (int i = 0; i < m_pwStrengthSegs.size(); ++i)
+    {
+        QFrame *seg = m_pwStrengthSegs.at(i);
+        const bool on = (score > 0) && (i < score);
+        if (seg->property("on").toBool() == on && seg->property("tone").toString() == tone)
+            continue;
+        seg->setProperty("on", on);
+        seg->setProperty("tone", tone);
+        // 动态属性变化不会自动重套样式表，这里手动刷一下，颜色才跟着换
+        seg->style()->unpolish(seg);
+        seg->style()->polish(seg);
+        seg->update();
+    }
+
+    QString levelText;
+    QString noteText;
+    switch (score)
+    {
+    case 1:
+        levelText = tr("弱");
+        noteText = password.size() < 6
+                       ? tr("还差 %1 位到 6 位底线，先加长一点。").arg(6 - password.size())
+                       : tr("太简单了：再长一点，混上大写字母、数字和符号更安全。");
+        break;
+    case 2:
+        levelText = tr("一般");
+        noteText = tr("能用了，但不算牢靠：加到 12 位以上或加个符号会好很多。");
+        break;
+    case 3:
+        levelText = tr("强");
+        noteText = tr("已经不错了，再长一点就是很牢靠的密码。");
+        break;
+    case 4:
+        levelText = tr("很强");
+        noteText = tr("这个密码很牢靠，记得自己收好。");
+        break;
+    default:
+        levelText = tr("强度");
+        noteText = tr("长度至少 6 位，字母、数字和符号混着用更安全。");
+        break;
+    }
+
+    const bool textChanged = m_pwStrengthLabel->text() != levelText
+                             || m_pwStrengthNote->text() != noteText;
+    m_pwStrengthLabel->setText(levelText);
+    m_pwStrengthNote->setText(noteText);
+    if (m_pwStrengthLabel->property("tone").toString() != tone)
+    {
+        m_pwStrengthLabel->setProperty("tone", tone);
+        m_pwStrengthLabel->style()->unpolish(m_pwStrengthLabel);
+        m_pwStrengthLabel->style()->polish(m_pwStrengthLabel);
+        m_pwStrengthLabel->update();
+    }
+    // 换语言后提示可能变成两行：等这一轮布局走完，再把卡片高度重新收紧一次
+    if (textChanged)
+        QTimer::singleShot(0, this, [this]() { syncAuthViewHeight(); });
 }
 
 void ForumAccountPage::submitAuth()
@@ -2093,6 +3290,7 @@ void ForumAccountPage::submitAuth()
     if (m_busy)
         return;
 
+    const bool recovering = (m_authMode == RecoverMode);
     const QString username = m_authNameEdit->text().trimmed();
     const QString password = m_authPasswordEdit->text();
 
@@ -2103,7 +3301,8 @@ void ForumAccountPage::submitAuth()
         syncAuthViewHeight();
     };
 
-    if (username.isEmpty())
+    // 找回账号只认邮箱，不用填用户名
+    if (!recovering && username.isEmpty())
     {
         showError(tr("请输入用户名"));
         return;
@@ -2113,9 +3312,46 @@ void ForumAccountPage::submitAuth()
         showError(tr("密码至少 6 位"));
         return;
     }
-    if (m_authMode == RegisterMode && password != m_authConfirmEdit->text())
+    if ((m_authMode == RegisterMode || recovering) && password != m_authConfirmEdit->text())
     {
         showError(tr("两次输入的密码不一样"));
+        return;
+    }
+
+    // 注册必须把邮箱验证过，找回账号则完全靠邮箱：格式和 6 位验证码先在本地挡一道，少跑一趟服务器
+    QString email;
+    QString code;
+    if ((m_authMode == RegisterMode && m_registerEmailRequired) || recovering)
+    {
+        static const QRegularExpression mailPattern(
+            QStringLiteral("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"));
+        email = m_regEmailEdit ? m_regEmailEdit->text().trimmed() : QString();
+        code = m_regCodeEdit ? m_regCodeEdit->text().trimmed() : QString();
+        if (!mailPattern.match(email).hasMatch())
+        {
+            showError(tr("请填写正确的邮箱地址"));
+            return;
+        }
+        bool digits = code.length() == 6;
+        for (const QChar ch : code)
+        {
+            if (!ch.isDigit())
+            {
+                digits = false;
+                break;
+            }
+        }
+        if (!digits)
+        {
+            showError(tr("请填邮箱收到的 6 位数字验证码，点「发送验证码」会发到上面填的邮箱"));
+            return;
+        }
+    }
+
+    // 登录 / 注册 / 找回前先确认使用协议与隐私政策；拒绝就停在这一步，不提交账号密码
+    if (!UserAgreementDialog::ensureAccepted(UserAgreementDialog::ForumLogin, this))
+    {
+        showError(tr("需要同意《方块盒子使用协议》和《方块盒子隐私政策》才能登录论坛"));
         return;
     }
 
@@ -2124,9 +3360,240 @@ void ForumAccountPage::submitAuth()
     setAuthMode(m_authMode);
 
     if (m_authMode == RegisterMode)
-        m_service->registerAccount(username, password);
+        m_service->registerAccount(username, password, email, code);
+    else if (m_authMode == RecoverMode)
+        m_service->recoverAccount(email, code, password);
     else
         m_service->login(username, password);
+}
+
+// ── 登录 / 注册 / 找回卡：给邮箱发验证码 ──
+
+void ForumAccountPage::sendAuthEmailCode()
+{
+    if (m_regEmailBusy || m_regCodeCooldown > 0 || !m_regSendCodeBtn)
+        return;
+
+    const QString email = m_regEmailEdit ? m_regEmailEdit->text().trimmed() : QString();
+    static const QRegularExpression mailPattern(
+        QStringLiteral("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"));
+    if (!mailPattern.match(email).hasMatch())
+    {
+        showAuthError(tr("请先在邮箱那栏填一个正确的地址"));
+        return;
+    }
+
+    if (m_authError)
+        m_authError->hide();
+    m_regEmailBusy = true;
+    updateRegisterCodeUi();
+    // 找回账号走「按邮箱找号」的发码接口，注册走注册专用的；两边共用一个倒计时
+    if (m_authMode == RecoverMode)
+        m_service->sendRecoverEmailCode(email);
+    else
+        m_service->sendRegisterEmailCode(email);
+}
+
+void ForumAccountPage::tickRegisterCodeCooldown()
+{
+    if (m_regCodeCooldown > 0)
+        --m_regCodeCooldown;
+    if (m_regCodeCooldown <= 0 && m_regCodeTimer)
+        m_regCodeTimer->stop();
+    updateRegisterCodeUi();
+}
+
+void ForumAccountPage::updateRegisterCodeUi()
+{
+    if (!m_regSendCodeBtn)
+        return;
+
+    if (m_regCodeEdit)
+        m_regCodeEdit->setEnabled(!m_regEmailBusy);
+    m_regSendCodeBtn->setEnabled(!m_regEmailBusy && m_regCodeCooldown <= 0);
+    if (m_regEmailBusy)
+        m_regSendCodeBtn->setText(tr("发送中…"));
+    else if (m_regCodeCooldown > 0)
+        m_regSendCodeBtn->setText(tr("重新发送(%1s)").arg(m_regCodeCooldown));
+    else
+        m_regSendCodeBtn->setText(tr("发送验证码"));
+}
+
+// ── 第三方登录（GitHub / LittleSkin） ──
+
+void ForumAccountPage::renderOAuthProviders(const QJsonArray &providers)
+{
+    if (!m_oauthSection)
+        return;
+
+    bool github = false;
+    bool littleskin = false;
+    for (const auto &value : providers)
+    {
+        const QJsonObject item = value.toObject();
+        if (!item.value(QStringLiteral("enabled")).toBool())
+            continue;
+        const QString id = item.value(QStringLiteral("id")).toString();
+        if (id == QLatin1String("github"))
+            github = true;
+        else if (id == QLatin1String("littleskin"))
+            littleskin = true;
+    }
+
+    m_oauthGithubEnabled = github;
+    m_oauthLittleSkinEnabled = littleskin;
+    m_oauthHasProviders = github || littleskin;
+    if (m_oauthGithubBtn)
+        m_oauthGithubBtn->setVisible(github);
+    if (m_oauthLittleSkinBtn)
+        m_oauthLittleSkinBtn->setVisible(littleskin);
+
+    if (!m_oauthHasProviders)
+        m_service->cancelOAuthLogin();
+    m_oauthSection->setVisible(m_oauthHasProviders && !m_service->oauthLoginBusy());
+    if (!m_oauthHasProviders)
+        setOAuthWaiting(false);
+    syncAuthViewHeight();
+}
+
+void ForumAccountPage::startOAuthLogin(const QString &provider)
+{
+    if (m_busy || m_service->oauthLoginBusy())
+        return;
+
+    // 与账号密码登录共用同一份协议确认：拒绝就停在这一步，不打开浏览器
+    if (!UserAgreementDialog::ensureAccepted(UserAgreementDialog::ForumLogin, this))
+    {
+        if (m_authError)
+        {
+            m_authError->setText(
+                tr("需要同意《方块盒子使用协议》和《方块盒子隐私政策》才能登录论坛"));
+            m_authError->show();
+            syncAuthViewHeight();
+        }
+        return;
+    }
+
+    if (m_authError)
+    {
+        m_authError->clear();
+        m_authError->hide();
+    }
+
+    m_oauthProviderName = provider == QLatin1String("littleskin") ? tr("LittleSkin") : tr("GitHub");
+    m_oauthVerificationUrl.clear();
+
+    // 先切到「正在打开浏览器」，设备码到手后 oauthLoginStarted 会补上地址
+    setOAuthWaiting(true);
+    if (m_oauthStatus)
+        m_oauthStatus->setText(tr("正在打开浏览器…"));
+    if (m_oauthReopenBtn)
+        m_oauthReopenBtn->setEnabled(false);
+
+    m_service->startOAuthLogin(provider);
+}
+
+void ForumAccountPage::setOAuthWaiting(bool waiting)
+{
+    if (!m_oauthSection)
+        return;
+
+    m_oauthWaitingActive = waiting;
+    const bool busy = waiting;
+    if (m_oauthGithubBtn)
+        m_oauthGithubBtn->setEnabled(!busy);
+    if (m_oauthLittleSkinBtn)
+        m_oauthLittleSkinBtn->setEnabled(!busy);
+    if (m_authSubmitBtn)
+        m_authSubmitBtn->setEnabled(!busy && !m_busy);
+    for (QPushButton *tab : m_authTabButtons)
+        tab->setEnabled(!busy);
+    if (m_authNameEdit)
+        m_authNameEdit->setEnabled(!busy);
+    if (m_authPasswordEdit)
+        m_authPasswordEdit->setEnabled(!busy);
+    if (m_authConfirmEdit)
+        m_authConfirmEdit->setEnabled(!busy);
+
+    if (!waiting)
+    {
+        if (m_oauthWaiting)
+            m_oauthWaiting->hide();
+        if (m_oauthGithubBtn)
+            m_oauthGithubBtn->setVisible(m_oauthGithubEnabled);
+        if (m_oauthLittleSkinBtn)
+            m_oauthLittleSkinBtn->setVisible(m_oauthLittleSkinEnabled);
+        m_oauthSection->setVisible(m_oauthHasProviders);
+        syncAuthViewHeight();
+        return;
+    }
+
+    m_oauthSection->setVisible(m_oauthHasProviders);
+    if (m_oauthGithubBtn)
+        m_oauthGithubBtn->hide();
+    if (m_oauthLittleSkinBtn)
+        m_oauthLittleSkinBtn->hide();
+    if (m_oauthWaiting)
+        m_oauthWaiting->show();
+    if (m_oauthReopenBtn)
+        m_oauthReopenBtn->setEnabled(!m_oauthVerificationUrl.isEmpty());
+    if (m_oauthStatus && !m_oauthVerificationUrl.isEmpty())
+    {
+        m_oauthStatus->setText(
+            tr("已在浏览器打开 %1 授权页。完成授权后会回到这里，请稍等一下；"
+               "浏览器没有自动打开就点「重新打开浏览器」。")
+                .arg(m_oauthProviderName.isEmpty() ? tr("第三方账号") : m_oauthProviderName));
+    }
+    syncAuthViewHeight();
+}
+
+// ── 手机扫码登录 ──
+
+void ForumAccountPage::openQrLoginDialog()
+{
+    // 扫码登录同样是论坛登录：和密码 / 第三方登录共用同一份协议确认，
+    // 没同意就停在错误提示上，不弹二维码
+    if (!UserAgreementDialog::ensureAccepted(UserAgreementDialog::ForumLogin, this))
+    {
+        if (m_authError)
+        {
+            m_authError->setText(
+                tr("需要同意《方块盒子使用协议》和《方块盒子隐私政策》才能登录论坛"));
+            m_authError->show();
+            syncAuthViewHeight();
+        }
+        return;
+    }
+
+    if (m_authError)
+    {
+        m_authError->clear();
+        m_authError->hide();
+    }
+
+    // 用 exec() 模态：二维码的整个生命周期就是这一行，
+    // 弹窗关掉后本页不需要再维护任何等待态（第三方登录的等待态也不受影响）
+    QrLoginDialog dialog(this);
+    dialog.exec();
+}
+
+void ForumAccountPage::updatePasswordUi()
+{
+    const bool hasPassword =
+        !m_service->isLoggedIn() || m_service->user().passwordSet;
+    if (m_passwordSectionTitle)
+        m_passwordSectionTitle->setText(hasPassword ? tr("修改密码") : tr("设置密码"));
+    if (m_currentPasswordField)
+        m_currentPasswordField->setVisible(hasPassword);
+    if (m_savePasswordBtn)
+        m_savePasswordBtn->setText(hasPassword ? tr("修改密码") : tr("设置密码"));
+    if (m_currentPasswordEdit)
+    {
+        m_currentPasswordEdit->setPlaceholderText(
+            hasPassword ? tr("输入当前密码") : QString());
+        if (!hasPassword)
+            m_currentPasswordEdit->clear();
+    }
 }
 
 void ForumAccountPage::setActiveTab(TabIndex tab)
@@ -2134,6 +3601,15 @@ void ForumAccountPage::setActiveTab(TabIndex tab)
     m_activeTab = tab;
     for (int i = 0; i < m_tabButtons.size(); ++i)
         m_tabButtons.at(i)->setChecked(i == int(tab));
+
+    // 充值轮询只跟着「积分」页走：切走先停，切回来再续
+    if (m_payPollTimer)
+    {
+        if (tab == PointsTab && !m_payOrderNo.isEmpty())
+            m_payPollTimer->start();
+        else
+            m_payPollTimer->stop();
+    }
 
     showOverview();
     renderContentArea();
@@ -2192,6 +3668,13 @@ void ForumAccountPage::openNotificationsTab()
     scrollToTop();
 }
 
+void ForumAccountPage::openPlaytimeTab()
+{
+    // 年度报告页返回、首页入口都走这里：切到「游玩」页签并回到页顶
+    setActiveTab(PlaytimeTab);
+    scrollToTop();
+}
+
 void ForumAccountPage::openLoginForm()
 {
     showOverview();
@@ -2205,6 +3688,11 @@ void ForumAccountPage::refreshAccount()
     m_myFeedbacksLoaded = false;
     m_pointsLoaded = false;
     m_pointsState = QJsonObject();
+    // 充值档位也跟着重拉一次（换了账号或重登后档位可能变了）
+    m_pointsShopLoaded = false;
+    stopPayPolling();
+    if (m_pointsShopPayPanel)
+        m_pointsShopPayPanel->hide();
     m_myFeedbacks.clear();
     m_threads = QJsonArray();
     m_replies = QJsonArray();
@@ -2213,6 +3701,13 @@ void ForumAccountPage::refreshAccount()
     m_contentFavorites.clear();
     m_contentFavoritesLoaded = false;
     m_contentFavoriteTotal = 0;
+    m_medals = QJsonArray();
+    m_medalEarned = 0;
+    m_medalTotal = 0;
+    m_medalsLoaded = false;
+    m_medalsBusy = false;
+    m_gameAchievements = QJsonArray();
+    m_gameAchievementTotal = 0;
     m_loadedAvatarPath.clear();
 
     m_service->refreshProfile();
@@ -2342,11 +3837,14 @@ void ForumAccountPage::renderProfile()
             m_settingsAccountLine->setText(tr("当前未登录论坛账号。"));
         }
     }
+
+    updatePasswordUi();
 }
 
 void ForumAccountPage::handleBioLink(const QUrl &url)
 {
-    // 简介里的站内帖子链接在启动器内打开，其余链接交给系统浏览器
+    // 简介里的站内帖子链接在启动器内打开；CF / Modrinth 资源页也留在软件里，
+    // 其余链接交给系统浏览器
     auto *service = ForumAccountService::instance();
     QString text = url.toString();
     const QString base = service ? service->baseUrl() : QString();
@@ -2363,13 +3861,16 @@ void ForumAccountPage::handleBioLink(const QUrl &url)
             return;
         }
     }
-    QDesktopServices::openUrl(url);
+    LinkRouter::instance()->open(url, this);
 }
 
 void ForumAccountPage::setAvatarPlaceholder(const QString &name)
 {
     if (!m_avatarLabel)
         return;
+
+    // 没有真实头像时分享图也按昵称现画一个，别把上一张头像带过去
+    m_avatarRaw = QPixmap();
 
     const QColor brand = QColor(currentPalette().brand);
     if (name.trimmed().isEmpty())
@@ -2390,6 +3891,8 @@ void ForumAccountPage::setAvatarPixmap(const QPixmap &pixmap)
         return;
     }
     m_avatarLabel->setPixmap(rounded);
+    // 头像原图留一份：分享图按原图裁圆，比把 76px 小图放大清楚
+    m_avatarRaw = pixmap;
 
     if (m_settingsAvatar)
         m_settingsAvatar->setPixmap(roundPixmap(pixmap, kSettingsAvatarSize));
@@ -2724,7 +4227,7 @@ void ForumAccountPage::switchGameAccount(const QString &accountName)
 QWidget *ForumAccountPage::buildAccountDetailView(QWidget *parent)
 {
     m_detailPage = new QWidget(parent);
-    m_detailPage->setFixedHeight(UiMetrics::fitToScreen(this, QSize(0, 620)).height());
+    m_detailPage->setFixedHeight(UiMetrics::fitToScreen(this, QSize(0, 700)).height());
 
     auto *outer = new QVBoxLayout(m_detailPage);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -2870,6 +4373,70 @@ QWidget *ForumAccountPage::buildAccountDetailView(QWidget *parent)
     poseGrid->setColumnStretch(1, 1);
     panelLayout->addLayout(poseGrid);
 
+    // ── 皮肤与披风：离线账户选本地图片，皮肤站角色上传到皮肤站并立刻穿上 ──
+    m_detailOutfitSection = new QWidget(panelCard);
+    auto *outfitLayout = new QVBoxLayout(m_detailOutfitSection);
+    outfitLayout->setContentsMargins(0, 0, 0, 0);
+    outfitLayout->setSpacing(6);
+
+    auto *outfitTitle = new QLabel(tr("皮肤与披风"), m_detailOutfitSection);
+    outfitTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    outfitLayout->addWidget(outfitTitle);
+
+    auto makeOutfitRow = [this](QWidget *host, const QString &name, QLabel **stateOut,
+                                QPushButton **clearOut, QPushButton **pickOut,
+                                const QString &pickTip,
+                                void (ForumAccountPage::*pickSlot)(),
+                                void (ForumAccountPage::*clearSlot)())
+    {
+        auto *row = new QWidget(host);
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(6);
+
+        auto *nameLabel = new QLabel(name, row);
+        nameLabel->setObjectName(QStringLiteral("fbNote"));
+        nameLabel->setFixedWidth(30);
+        rowLayout->addWidget(nameLabel, 0, Qt::AlignVCenter);
+
+        auto *state = new QLabel(row);
+        state->setObjectName(QStringLiteral("fbNote"));
+        rowLayout->addWidget(state, 1, Qt::AlignVCenter);
+
+        auto *pickBtn = new QPushButton(tr("选择图片"), row);
+        pickBtn->setObjectName(QStringLiteral("fbBtnGhost"));
+        pickBtn->setFixedHeight(26);
+        pickBtn->setToolTip(pickTip);
+        pickBtn->setCursor(Qt::PointingHandCursor);
+        connect(pickBtn, &QPushButton::clicked, this, pickSlot);
+        rowLayout->addWidget(pickBtn, 0);
+
+        auto *clearBtn = new QPushButton(tr("清除"), row);
+        clearBtn->setObjectName(QStringLiteral("fbBtnText"));
+        clearBtn->setFixedHeight(26);
+        clearBtn->setCursor(Qt::PointingHandCursor);
+        clearBtn->hide();
+        connect(clearBtn, &QPushButton::clicked, this, clearSlot);
+        rowLayout->addWidget(clearBtn, 0);
+
+        *stateOut = state;
+        *clearOut = clearBtn;
+        *pickOut = pickBtn;
+        return row;
+    };
+
+    outfitLayout->addWidget(makeOutfitRow(
+        m_detailOutfitSection, tr("皮肤"), &m_detailSkinState, &m_detailSkinClearBtn, &m_detailSkinPickBtn,
+        tr("选一张 64×32 或 64×64 的 PNG 皮肤图，只对这个离线账户生效"),
+        &ForumAccountPage::pickDetailSkin, &ForumAccountPage::clearDetailSkin));
+    outfitLayout->addWidget(makeOutfitRow(
+        m_detailOutfitSection, tr("披风"), &m_detailCapeState, &m_detailCapeClearBtn, &m_detailCapePickBtn,
+        tr("选一张 64×32 的 PNG 披风图，挂在角色背后"),
+        &ForumAccountPage::pickDetailCape, &ForumAccountPage::clearDetailCape));
+
+    m_detailOutfitSection->hide();
+    panelLayout->addWidget(m_detailOutfitSection);
+
     panelLayout->addStretch();
 
     m_detailUseBtn = new QPushButton(tr("设为当前账户"), panelCard);
@@ -2923,12 +4490,17 @@ void ForumAccountPage::openAccountDetail(const QString &accountName)
         return;
 
     m_detailAccountName = accountName;
+    // 换了个账户：皮肤站档案状态作废，等 refreshAccountDetail 里重新拉
+    m_detailStationLoaded = false;
+    m_detailStationMatch = false;
+    m_detailStationSkinUrl.clear();
+    m_detailStationCapeUrl.clear();
     refreshAccountDetail();
     // 详情页有独立的高度要求，先放开登录卡留下的收紧约束
     releaseAuthViewHeight();
     if (m_viewStack)
         // 详情页比总览高：先把容器撑到详情页高度，避免被上一页的尺寸裁掉
-    m_viewStack->setMinimumHeight(m_detailPage ? m_detailPage->height() : 620);
+    m_viewStack->setMinimumHeight(m_detailPage ? m_detailPage->height() : 700);
     m_viewStack->setCurrentIndex(DetailView);
     setDetailPose(SkinPose::Idle);
     // 切换视图后尺寸才就绪，下一轮事件循环再按视口调整相机距离
@@ -2970,6 +4542,7 @@ void ForumAccountPage::refreshAccountDetail()
     m_detailAccountType = info.type;
     m_detailAccountUuid = info.uuid;
     m_detailAccountSkinUrl = info.skinUrl;
+    m_detailAccountServerUrl = info.serverUrl;
     m_detailIsDefault = info.isDefault;
 
     if (m_detailName)
@@ -3013,8 +4586,24 @@ void ForumAccountPage::refreshAccountDetail()
         m_detailSkinWidget->setSkin(skin);
     requestDetailSkin(info.username, info.uuid, info.skinUrl);
 
+    // 披风：离线账户的自定义披风（没有就保持无披风）；皮肤站角色等档案拉回来再挂
+    if (m_detailSkinWidget)
+    {
+        QImage cape;
+        if (detailAccountIsOffline()
+            && SkinDownloader::loadOfflineCape(info.username, cape) && !cape.isNull())
+            m_detailSkinWidget->setCape(cape);
+        else
+            m_detailSkinWidget->clearCape();
+    }
+
+    // 皮肤站角色：拉一次当前档案，同步状态文字和披风预览（皮肤变了也会对齐）
+    if (detailAccountIsSkinStation())
+        refreshStationProfile();
+
     updateDetailBackground();
     refreshDetailPoseIcons();
+    refreshDetailOutfit();
 }
 
 void ForumAccountPage::requestDetailSkin(const QString &accountName, const QString &uuid,
@@ -3182,6 +4771,467 @@ void ForumAccountPage::executeDetailAction()
     }
 }
 
+bool ForumAccountPage::detailAccountIsOffline() const
+{
+    // 老数据可能没存类型，按离线账户处理
+    if (m_detailAccountType.isEmpty())
+        return true;
+    return m_detailAccountType.contains(QStringLiteral("离线"))
+           || m_detailAccountType.contains(QStringLiteral("offline"), Qt::CaseInsensitive)
+           || m_detailAccountType.contains(tr("离线"));
+}
+
+bool ForumAccountPage::detailAccountIsSkinStation() const
+{
+    // 皮肤站在启动器里就是一个内置的第三方认证服务器：服务器地址对上就是
+    if (m_detailAccountServerUrl.isEmpty())
+        return false;
+    const QString skinRoot = AuthManager::normalizeAuthServerUrl(
+        SkinStationPage::skinSiteBaseUrl() + QStringLiteral("/api/yggdrasil/"));
+    return !skinRoot.isEmpty()
+           && AuthManager::normalizeAuthServerUrl(m_detailAccountServerUrl) == skinRoot;
+}
+
+void ForumAccountPage::refreshDetailOutfit()
+{
+    if (!m_detailOutfitSection)
+        return;
+
+    const bool offline = detailAccountIsOffline();
+    // 皮肤站角色要和当前论坛账号对上：换装接口改的就是论坛账号自己的档案
+    const bool stationReady = !offline && detailAccountIsSkinStation() && m_detailStationMatch;
+    m_detailOutfitSection->setVisible(offline || stationReady);
+    if (!offline && !stationReady)
+        return;
+
+    if (offline)
+    {
+        const bool customSkin =
+            QFileInfo::exists(SkinDownloader::getOfflineSkinPath(m_detailAccountName));
+        const bool customCape =
+            QFileInfo::exists(SkinDownloader::getOfflineCapePath(m_detailAccountName));
+
+        if (m_detailSkinState)
+            m_detailSkinState->setText(customSkin ? tr("自定义") : tr("默认"));
+        if (m_detailCapeState)
+            m_detailCapeState->setText(customCape ? tr("自定义") : tr("未设置"));
+        if (m_detailSkinClearBtn)
+            m_detailSkinClearBtn->setVisible(customSkin);
+        if (m_detailCapeClearBtn)
+            m_detailCapeClearBtn->setVisible(customCape);
+        // 详情页控件是所有账户共用的：换了个离线账户回来要把离线提示换回来
+        if (m_detailSkinPickBtn)
+            m_detailSkinPickBtn->setToolTip(tr("选一张 64×32 或 64×64 的 PNG 皮肤图，只对这个离线账户生效"));
+        if (m_detailCapePickBtn)
+            m_detailCapePickBtn->setToolTip(tr("选一张 64×32 的 PNG 披风图，挂在角色背后"));
+        return;
+    }
+
+    // 皮肤站角色：状态跟着皮肤站档案走；皮肤站没有「脱下」接口，清除按钮不出现
+    if (m_detailSkinState)
+        m_detailSkinState->setText(!m_detailStationLoaded ? tr("读取中…")
+                                   : m_detailStationSkinUrl.isEmpty() ? tr("默认")
+                                                                      : tr("已穿"));
+    if (m_detailCapeState)
+        m_detailCapeState->setText(!m_detailStationLoaded ? tr("读取中…")
+                                   : m_detailStationCapeUrl.isEmpty() ? tr("未设置")
+                                                                      : tr("已穿"));
+    if (m_detailSkinClearBtn)
+        m_detailSkinClearBtn->hide();
+    if (m_detailCapeClearBtn)
+        m_detailCapeClearBtn->hide();
+    if (m_detailSkinPickBtn)
+        m_detailSkinPickBtn->setToolTip(tr("选一张 PNG 皮肤上传到方块皮肤站并立刻穿上"));
+    if (m_detailCapePickBtn)
+        m_detailCapePickBtn->setToolTip(tr("选一张 PNG 披风上传到方块皮肤站并立刻穿上"));
+}
+
+void ForumAccountPage::refreshDetailAppearance()
+{
+    if (m_detailAccountName.isEmpty())
+        return;
+
+    // 皮肤 / 披风文件变了：清掉内存里的旧皮肤，重读详情页的三维预览
+    m_skinImages.remove(m_detailAccountName);
+    refreshAccountDetail();
+
+    // 角色卡片封面是正面皮肤小图，也跟着换一张
+    if (QLabel *cover = m_characterCovers.value(m_detailAccountName))
+    {
+        const int height = m_characterCoverHeights.value(m_detailAccountName, 0);
+        const QImage skin = SkinDownloader::loadSkinForAccount(
+            m_detailAccountName, m_detailAccountUuid);
+        if (!skin.isNull() && height > 0)
+            cover->setPixmap(renderCharacterCover(skin, qMax(1, cover->width()), height));
+    }
+}
+
+void ForumAccountPage::pickDetailSkin()
+{
+    if (m_detailAccountName.isEmpty())
+        return;
+
+    // 皮肤站角色：换装要走皮肤站接口（上传 + 立刻穿上），不是存本地文件
+    if (detailAccountIsSkinStation())
+    {
+        uploadStationTexture(QStringLiteral("skin"));
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("选择皮肤图片"), QString(), tr("PNG 图片 (*.png)"));
+    if (path.isEmpty())
+        return;
+
+    const QImage skin = SkinDownloader::normalizeSkinTexture(QImage(path));
+    if (skin.isNull())
+    {
+        NotificationManager::showError(
+            this, tr("这张图片不能用作皮肤：需要 64×32 或 64×64 的 PNG 皮肤图"));
+        return;
+    }
+    if (!SkinDownloader::saveOfflineSkin(m_detailAccountName, skin))
+    {
+        NotificationManager::showError(
+            this, tr("皮肤保存失败，请检查启动器所在文件夹的写入权限"));
+        return;
+    }
+
+    refreshDetailAppearance();
+    NotificationManager::showSuccess(this, tr("已设置自定义皮肤"));
+}
+
+void ForumAccountPage::pickDetailCape()
+{
+    if (m_detailAccountName.isEmpty())
+        return;
+
+    // 皮肤站角色：换装要走皮肤站接口（上传 + 立刻穿上），不是存本地文件
+    if (detailAccountIsSkinStation())
+    {
+        uploadStationTexture(QStringLiteral("cape"));
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("选择披风图片"), QString(), tr("PNG 图片 (*.png)"));
+    if (path.isEmpty())
+        return;
+
+    const QImage cape = SkinDownloader::normalizeCapeTexture(QImage(path));
+    if (cape.isNull())
+    {
+        NotificationManager::showError(
+            this, tr("这张图片不能用作披风：需要 64×32 的 PNG 披风图，且披风区域不能是空白"));
+        return;
+    }
+    if (!SkinDownloader::saveOfflineCape(m_detailAccountName, cape))
+    {
+        NotificationManager::showError(
+            this, tr("披风保存失败，请检查启动器所在文件夹的写入权限"));
+        return;
+    }
+
+    refreshDetailAppearance();
+    NotificationManager::showSuccess(this, tr("已设置自定义披风"));
+}
+
+void ForumAccountPage::clearDetailSkin()
+{
+    if (m_detailAccountName.isEmpty())
+        return;
+    if (!QFileInfo::exists(SkinDownloader::getOfflineSkinPath(m_detailAccountName)))
+        return;
+
+    const AppMessageBox::StandardButton reply = AppMessageBox::question(
+        this, tr("恢复默认皮肤"),
+        tr("确定清除「%1」的自定义皮肤吗？清除后换回默认皮肤。").arg(m_detailAccountName),
+        AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
+    if (reply != AppMessageBox::Yes)
+        return;
+
+    if (!SkinDownloader::removeOfflineSkin(m_detailAccountName))
+    {
+        NotificationManager::showError(this, tr("清除失败，请检查皮肤文件是否被占用"));
+        return;
+    }
+
+    refreshDetailAppearance();
+    NotificationManager::showSuccess(this, tr("已恢复默认皮肤"));
+}
+
+void ForumAccountPage::clearDetailCape()
+{
+    if (m_detailAccountName.isEmpty())
+        return;
+    if (!SkinDownloader::removeOfflineCape(m_detailAccountName))
+    {
+        NotificationManager::showError(this, tr("清除失败，请检查披风文件是否被占用"));
+        return;
+    }
+
+    refreshDetailAppearance();
+    NotificationManager::showSuccess(this, tr("已清除自定义披风"));
+}
+
+// ════════════════════════════════════════════════ 方块皮肤站角色（详情页换装）
+
+QNetworkRequest ForumAccountPage::stationRequestFor(const QString &path) const
+{
+    // 登录态直接复用论坛会话令牌（和皮肤站窗口同一套 Bearer 头）
+    const QString base = SkinStationPage::skinSiteBaseUrl();
+    QNetworkRequest request{QUrl(path.startsWith(QStringLiteral("http")) ? path : base + path)};
+    request.setTransferTimeout(15000);
+    request.setRawHeader("Accept", "application/json");
+    if (m_service && !m_service->token().isEmpty())
+        request.setRawHeader("Authorization", "Bearer " + m_service->token().toUtf8());
+    return request;
+}
+
+void ForumAccountPage::refreshStationProfile()
+{
+    // 论坛没登录就拿不到皮肤站档案：不弹错误打扰，状态文字停在「读取中…」
+    if (!m_service || m_service->token().isEmpty() || !m_network)
+        return;
+
+    QNetworkReply *reply = m_network->get(stationRequestFor(QStringLiteral("/api/me")));
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status != 200 || reply->error() != QNetworkReply::NoError)
+            return;
+        const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+        handleStationProfile(root.value(QStringLiteral("profile")).toObject());
+    });
+}
+
+void ForumAccountPage::handleStationProfile(const QJsonObject &profile)
+{
+    if (profile.isEmpty())
+        return;
+
+    const QString playerName = profile.value(QStringLiteral("player_name")).toString();
+    const QJsonObject skin = profile.value(QStringLiteral("skin")).toObject();
+    const QJsonObject cape = profile.value(QStringLiteral("cape")).toObject();
+
+    m_detailStationLoaded = true;
+    // 换装接口改的是当前论坛账号自己的档案：详情页这个角色得就是它才给换
+    m_detailStationMatch = !playerName.isEmpty()
+                           && playerName.compare(m_detailAccountName, Qt::CaseInsensitive) == 0;
+    // 纹理地址可能是站内相对地址，统一补全成完整网址
+    const QString base = SkinStationPage::skinSiteBaseUrl();
+    const auto fullUrl = [&base](const QJsonObject &texture) {
+        const QString url = texture.value(QStringLiteral("url")).toString();
+        if (url.isEmpty())
+            return QString();
+        return url.startsWith(QStringLiteral("http")) ? url : base + url;
+    };
+    m_detailStationSkinUrl = fullUrl(skin);
+    m_detailStationCapeUrl = fullUrl(cape);
+
+    // 披风预览：对得上号的才有服务端披风（有就挂上，没有就摘掉）
+    if (m_detailSkinWidget && m_network && m_detailStationMatch)
+    {
+        if (m_detailStationCapeUrl.isEmpty())
+        {
+            m_detailSkinWidget->clearCape();
+        }
+        else if (!m_pendingStationCape.contains(m_detailStationCapeUrl))
+        {
+            m_pendingStationCape.insert(m_detailStationCapeUrl);
+            const QString account = m_detailAccountName;
+            QNetworkReply *capeReply = m_network->get(stationRequestFor(m_detailStationCapeUrl));
+            connect(capeReply, &QNetworkReply::finished, this,
+                    [this, capeReply, account, url = m_detailStationCapeUrl]() {
+                        capeReply->deleteLater();
+                        m_pendingStationCape.remove(url);
+                        if (account != m_detailAccountName)
+                            return;
+                        QImage capeTexture;
+                        if (capeTexture.loadFromData(capeReply->readAll())
+                            && url == m_detailStationCapeUrl && m_detailSkinWidget)
+                            m_detailSkinWidget->setCape(capeTexture);
+                    });
+        }
+    }
+
+    // 皮肤地址对齐服务器最新档案：换过皮肤后账户里存的还是旧地址，
+    // 首页按旧地址缓存会一直显示旧皮肤，这里顺手一起更新掉
+    if (m_detailStationMatch && !m_detailStationSkinUrl.isEmpty()
+        && m_detailStationSkinUrl != m_detailAccountSkinUrl)
+    {
+        if (SettingsManager::instance())
+            SettingsManager::instance()->updateAccountSkinUrl(m_detailAccountName,
+                                                              m_detailStationSkinUrl);
+        m_detailAccountSkinUrl = m_detailStationSkinUrl;
+        refreshStationAppearance(m_detailStationSkinUrl);
+    }
+
+    refreshDetailOutfit();
+}
+
+void ForumAccountPage::uploadStationTexture(const QString &kind)
+{
+    if (m_detailAccountName.isEmpty() || !m_network)
+        return;
+
+    if (!m_service || m_service->token().isEmpty())
+    {
+        NotificationManager::showError(this, tr("先登录论坛账号才能设置皮肤站的皮肤和披风"));
+        return;
+    }
+
+    const bool isCape = kind == QStringLiteral("cape");
+    const QString path = QFileDialog::getOpenFileName(
+        this, isCape ? tr("选择披风图片") : tr("选择皮肤图片"), QString(), tr("PNG 图片 (*.png)"));
+    if (path.isEmpty())
+        return;
+
+    // 校验和离线账户同一套：尺寸不对直接打回
+    const QImage texture = isCape ? SkinDownloader::normalizeCapeTexture(QImage(path))
+                                  : SkinDownloader::normalizeSkinTexture(QImage(path));
+    if (texture.isNull())
+    {
+        NotificationManager::showError(
+            this, isCape
+                      ? tr("这张图片不能用作披风：需要 64×32 的 PNG 披风图，且披风区域不能是空白")
+                      : tr("这张图片不能用作皮肤：需要 64×32 或 64×64 的 PNG 皮肤图"));
+        return;
+    }
+
+    // 瘦手臂模型看纹理里手臂第二列是否全透明：穿到身上胳膊才不会变粗
+    QString model = QStringLiteral("classic");
+    if (!isCape && texture.height() == 64)
+    {
+        if (texture.pixelColor(54, 20).alpha() == 0 && texture.pixelColor(55, 20).alpha() == 0)
+            model = QStringLiteral("slim");
+    }
+
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("kind"), kind);
+    query.addQueryItem(QStringLiteral("model"), model);
+    query.addQueryItem(QStringLiteral("name"), QFileInfo(path).completeBaseName().left(40));
+    query.addQueryItem(QStringLiteral("public"), QStringLiteral("0"));
+
+    if (m_detailSkinState && !isCape)
+        m_detailSkinState->setText(tr("正在上传…"));
+    if (m_detailCapeState && isCape)
+        m_detailCapeState->setText(tr("正在上传…"));
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        NotificationManager::showError(this, tr("读不了这个文件：%1").arg(path));
+        refreshDetailOutfit();
+        return;
+    }
+    const QByteArray png = file.readAll();
+    file.close();
+
+    // 第一步：传进皮肤站衣柜（私密）
+    QNetworkRequest request = stationRequestFor(
+        QStringLiteral("/api/textures?%1").arg(query.toString(QUrl::FullyEncoded)));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("image/png"));
+    QNetworkReply *reply = m_network->post(request, png);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, isCape]() {
+        reply->deleteLater();
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+        if (status != 200)
+        {
+            QString message = status > 0
+                                  ? root.value(QStringLiteral("error")).toString(
+                                        tr("皮肤站返回了错误（%1）").arg(status))
+                                  : tr("连不上皮肤站（%1），检查网络后再试").arg(
+                                        SkinStationPage::skinSiteBaseUrl());
+            if (status == 401 || status == 403)
+                message = tr("论坛登录已失效，请重新登录论坛账号后再试");
+            NotificationManager::showError(this, message);
+            refreshDetailOutfit();
+            return;
+        }
+        const int textureId =
+            root.value(QStringLiteral("texture")).toObject().value(QStringLiteral("id")).toInt(-1);
+        if (textureId <= 0)
+        {
+            NotificationManager::showError(this, tr("皮肤站返回数据不完整，换装没有完成"));
+            refreshDetailOutfit();
+            return;
+        }
+
+        // 第二步：上传完立刻穿上
+        QNetworkRequest applyRequest =
+            stationRequestFor(QStringLiteral("/api/textures/%1/apply").arg(textureId));
+        applyRequest.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        QNetworkReply *applyReply = m_network->post(applyRequest, QByteArray("{}"));
+        connect(applyReply, &QNetworkReply::finished, this, [this, applyReply, isCape]() {
+            applyReply->deleteLater();
+            const int applyStatus =
+                applyReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QJsonObject applyRoot = QJsonDocument::fromJson(applyReply->readAll()).object();
+            if (applyStatus != 200)
+            {
+                const QString message = applyStatus > 0
+                                            ? applyRoot.value(QStringLiteral("error")).toString(
+                                                  tr("皮肤站返回了错误（%1）").arg(applyStatus))
+                                            : tr("连不上皮肤站，检查网络后再试");
+                NotificationManager::showError(this, message);
+                refreshDetailOutfit();
+                return;
+            }
+            handleStationProfile(applyRoot.value(QStringLiteral("profile")).toObject());
+            NotificationManager::showSuccess(
+                this, isCape ? tr("已换上新披风，进游戏就能看到")
+                             : tr("已换上新皮肤，进游戏就能看到"));
+        });
+    });
+}
+
+void ForumAccountPage::refreshStationAppearance(const QString &skinUrl)
+{
+    if (skinUrl.isEmpty() || !m_network)
+        return;
+
+    // 旧皮肤缓存清掉（UUID / 用户名两个键都清），预览和首页才会重新下载
+    QString normalizedUuid = m_detailAccountUuid;
+    normalizedUuid.remove(QLatin1Char('-'));
+    if (!normalizedUuid.isEmpty())
+        QFile::remove(SkinDownloader::getCachePath(normalizedUuid));
+    QFile::remove(SkinDownloader::getCachePath(m_detailAccountName));
+    m_skinImages.remove(m_detailAccountName);
+    m_pendingSkinRequests.remove(QStringLiteral("detail:") + m_detailAccountName);
+
+    const QString account = m_detailAccountName;
+    QNetworkRequest request{QUrl(skinUrl)};
+    request.setTransferTimeout(15000);
+    QNetworkReply *reply = m_network->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, account]() {
+        reply->deleteLater();
+        if (account != m_detailAccountName || reply->error() != QNetworkReply::NoError)
+            return;
+        QImage skin;
+        if (!skin.loadFromData(reply->readAll()))
+            return;
+        skin = SkinDownloader::normalizeSkinTexture(skin);
+        if (skin.isNull())
+            return;
+
+        // 存进皮肤缓存：详情页预览、角色卡片封面、首页共用这一份
+        const QString cachePath = SkinDownloader::getCachePath(account);
+        QDir().mkpath(QFileInfo(cachePath).absolutePath());
+        skin.save(cachePath, "PNG");
+        m_skinImages.insert(account, skin);
+        if (m_detailSkinWidget && account == m_detailAccountName)
+            m_detailSkinWidget->setSkin(skin);
+        if (QLabel *cover = m_characterCovers.value(account))
+        {
+            const int height = m_characterCoverHeights.value(account, 0);
+            if (height > 0)
+                cover->setPixmap(renderCharacterCover(skin, qMax(1, cover->width()), height));
+        }
+    });
+}
+
 void ForumAccountPage::updateDetailBackground()
 {
     if (!m_detailSkinWidget)
@@ -3232,6 +5282,20 @@ void ForumAccountPage::renderContentArea()
     {
         showContentPage(CharactersContent);
         reloadCharacters();
+        // 正停在某个账户的详情页时，顺便重读一次（皮肤编辑器里应用后预览跟着换）
+        if (m_viewStack && m_viewStack->currentIndex() == DetailView
+            && !m_detailAccountName.isEmpty())
+            refreshAccountDetail();
+        return;
+    }
+
+    // 「游玩」页和登录状态无关：没登录也照常显示本机统计，登录后自动切到账号云端
+    if (m_activeTab == PlaytimeTab)
+    {
+        showContentPage(PlaytimeContent);
+        setTabHint(tr("本机时长会跟着方块盒子账户走"));
+        if (m_playtimePage)
+            m_playtimePage->refresh();
         return;
     }
 
@@ -3270,8 +5334,16 @@ void ForumAccountPage::renderContentArea()
         break;
     case PointsTab:
         showContentPage(PointsContent);
-        setTabHint(tr("每天签到领方块"));
+        setTabHint(tr("签到或充值都能拿方块"));
         renderPoints();
+        break;
+    case PlaytimeTab:
+        // 上面已单独处理（和登录状态无关）+
+        break;
+    case MedalsTab:
+        showContentPage(MedalsContent);
+        setTabHint(tr("论坛勋章和游戏成就都在这里"));
+        renderMedals();
         break;
     case SettingsTab:
         showContentPage(SettingsContent);
@@ -3826,7 +5898,7 @@ QWidget *ForumAccountPage::buildPointsContent(QWidget *parent)
             &ForumAccountPage::checkInPoints);
     actionRow->addWidget(m_pointsCheckinButton);
 
-    auto *webHint = new QLabel(tr("也可以在论坛网页的「我的方块」页签到"), hero);
+    auto *webHint = new QLabel(tr("也可以在论坛网页的「我的方块」页签到、买方块"), hero);
     webHint->setObjectName(QStringLiteral("fbNote"));
     webHint->setWordWrap(true);
     actionRow->addWidget(webHint, 1, Qt::AlignVCenter);
@@ -3855,6 +5927,100 @@ QWidget *ForumAccountPage::buildPointsContent(QWidget *parent)
 
     heroLayout->addWidget(gift, 0, Qt::AlignVCenter);
     layout->addWidget(hero);
+
+    // ── 购买方块（档位由论坛下发，充值通道没开通时整块隐藏） ──
+    auto *shop = new QFrame(m_pointsPage);
+    shop->setObjectName(QStringLiteral("fbPointsShop"));
+    m_pointsShop = shop;
+    auto *shopLayout = new QVBoxLayout(shop);
+    shopLayout->setContentsMargins(16, 14, 16, 14);
+    shopLayout->setSpacing(10);
+
+    auto *shopHead = new QHBoxLayout();
+    shopHead->setContentsMargins(0, 0, 0, 0);
+    shopHead->setSpacing(8);
+    auto *shopTitle = new QLabel(tr("购买方块"), shop);
+    shopTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    shopHead->addWidget(shopTitle);
+    shopHead->addStretch();
+    m_pointsShopNote = new QLabel(tr("正在读取充值档位…"), shop);
+    m_pointsShopNote->setObjectName(QStringLiteral("fbNote"));
+    m_pointsShopNote->setWordWrap(true);
+    shopHead->addWidget(m_pointsShopNote);
+    shopLayout->addLayout(shopHead);
+
+    auto *shopGridHost = new QWidget(shop);
+    m_pointsShopGrid = new QHBoxLayout(shopGridHost);
+    m_pointsShopGrid->setContentsMargins(0, 0, 0, 0);
+    m_pointsShopGrid->setSpacing(8);
+    shopLayout->addWidget(shopGridHost);
+
+    // 支付面板：下单后出现，显示订单、打开支付页的入口和「我已完成支付」
+    m_pointsShopPayPanel = new QWidget(shop);
+    m_pointsShopPayPanel->setObjectName(QStringLiteral("fbPointsPayPanel"));
+    // 自绘底色 / 边框：QWidget 默认不按 QSS 画背景
+    m_pointsShopPayPanel->setAttribute(Qt::WA_StyledBackground, true);
+    m_pointsShopPayPanel->hide();
+    auto *payRow = new QVBoxLayout(m_pointsShopPayPanel);
+    payRow->setContentsMargins(12, 10, 12, 10);
+    payRow->setSpacing(8);
+
+    m_pointsShopPayTitle = new QLabel(tr("订单已创建"), m_pointsShopPayPanel);
+    m_pointsShopPayTitle->setObjectName(QStringLiteral("fbPointsPayTitle"));
+    payRow->addWidget(m_pointsShopPayTitle);
+    m_pointsShopPayText = new QLabel(tr("在浏览器里完成支付，付完方块会自动到账。"),
+                                     m_pointsShopPayPanel);
+    m_pointsShopPayText->setObjectName(QStringLiteral("fbNote"));
+    m_pointsShopPayText->setWordWrap(true);
+    payRow->addWidget(m_pointsShopPayText);
+
+    // 按钮单独一行：窄屏（手机）放不下一横排时就换行，不会把面板挤爆
+    auto *payActions = new QHBoxLayout();
+    payActions->setContentsMargins(0, 0, 0, 0);
+    payActions->setSpacing(6);
+    m_pointsShopPayOpen = new QPushButton(tr("打开支付页"), m_pointsShopPayPanel);
+    m_pointsShopPayOpen->setObjectName(QStringLiteral("fbBtnGhost"));
+    m_pointsShopPayOpen->setCursor(Qt::PointingHandCursor);
+    m_pointsShopPayOpen->setFixedHeight(30);
+    connect(m_pointsShopPayOpen, &QPushButton::clicked, this, [this]() {
+        if (!m_payUrl.isEmpty())
+            QDesktopServices::openUrl(QUrl(m_payUrl));
+    });
+    payActions->addWidget(m_pointsShopPayOpen);
+
+    m_pointsShopPayCheck = new QPushButton(tr("我已完成支付"), m_pointsShopPayPanel);
+    m_pointsShopPayCheck->setObjectName(QStringLiteral("fbBtnPrimary"));
+    m_pointsShopPayCheck->setCursor(Qt::PointingHandCursor);
+    m_pointsShopPayCheck->setFixedHeight(30);
+    connect(m_pointsShopPayCheck, &QPushButton::clicked, this,
+            [this]() { checkPayOrder(true); });
+    payActions->addWidget(m_pointsShopPayCheck);
+
+    auto *payCancel = new QPushButton(tr("收起"), m_pointsShopPayPanel);
+    payCancel->setObjectName(QStringLiteral("fbBtnGhost"));
+    payCancel->setCursor(Qt::PointingHandCursor);
+    payCancel->setFixedHeight(30);
+    connect(payCancel, &QPushButton::clicked, this, [this]() {
+        // 只收面板，不停轮询：用户可能收起来之后才去付款，付完照样弹到账提示
+        if (m_pointsShopPayPanel)
+            m_pointsShopPayPanel->hide();
+        NotificationManager::showInfo(
+            this, tr("已收起。付完款方块会自动到账，付完回到这一页也能看到余额。"));
+    });
+    payActions->addWidget(payCancel);
+    payActions->addStretch();
+    payRow->addLayout(payActions);
+
+    shopLayout->addWidget(m_pointsShopPayPanel);
+
+    auto *shopRule =
+        new QLabel(tr("用支付宝或微信付款，付完方块自动到账，几秒内就能刷新余额。"), shop);
+    shopRule->setObjectName(QStringLiteral("fbNote"));
+    shopRule->setWordWrap(true);
+    shopLayout->addWidget(shopRule);
+
+    shop->hide();
+    layout->addWidget(shop);
 
     // ── 7 天签到 ──
     auto *weekHost = new QFrame(m_pointsPage);
@@ -3988,6 +6154,632 @@ QWidget *ForumAccountPage::buildPointsContent(QWidget *parent)
 
     layout->addStretch(1);
     return m_pointsPage;
+}
+
+/** 账户页「勋章」：和方块盒子账号绑定的勋章墙（服务端判定，本地只负责展示） */
+QWidget *ForumAccountPage::buildMedalsContent(QWidget *parent)
+{
+    m_medalsPage = new QWidget(parent);
+    auto *layout = new QVBoxLayout(m_medalsPage);
+    layout->setContentsMargins(18, 16, 18, 18);
+    layout->setSpacing(14);
+
+    // ── 顶部汇总：已点亮数量 + 整墙完成度 ──
+    auto *hero = new QFrame(m_medalsPage);
+    hero->setObjectName(QStringLiteral("fbMedalsHero"));
+    auto *heroLayout = new QHBoxLayout(hero);
+    heroLayout->setContentsMargins(20, 18, 20, 18);
+    heroLayout->setSpacing(18);
+
+    auto *heroMain = new QVBoxLayout();
+    heroMain->setContentsMargins(0, 0, 0, 0);
+    heroMain->setSpacing(4);
+
+    auto *eyebrow = new QLabel(tr("我的勋章墙"), hero);
+    eyebrow->setObjectName(QStringLiteral("fbMedalsEyebrow"));
+    heroMain->addWidget(eyebrow);
+
+    auto *countRow = new QHBoxLayout();
+    countRow->setContentsMargins(0, 0, 0, 0);
+    countRow->setSpacing(6);
+    m_medalsCount = new QLabel(QStringLiteral("0"), hero);
+    m_medalsCount->setObjectName(QStringLiteral("fbMedalsCount"));
+    countRow->addWidget(m_medalsCount, 0, Qt::AlignBottom);
+    m_medalsTotal = new QLabel(tr("/ 0 枚"), hero);
+    m_medalsTotal->setObjectName(QStringLiteral("fbMedalsTotal"));
+    countRow->addWidget(m_medalsTotal, 0, Qt::AlignBottom);
+    countRow->addStretch();
+    heroMain->addLayout(countRow);
+
+    m_medalsWallBar = new QProgressBar(hero);
+    m_medalsWallBar->setObjectName(QStringLiteral("fbMedalsWallBar"));
+    m_medalsWallBar->setRange(0, 100);
+    m_medalsWallBar->setValue(0);
+    m_medalsWallBar->setTextVisible(false);
+    m_medalsWallBar->setFixedHeight(8);
+    m_medalsWallBar->setMaximumWidth(320);
+    heroMain->addWidget(m_medalsWallBar);
+
+    m_medalsSummary = new QLabel(tr("勋章记在方块盒子账号上，换设备登录也不会丢。"), hero);
+    m_medalsSummary->setObjectName(QStringLiteral("fbMedalsSummary"));
+    m_medalsSummary->setWordWrap(true);
+    heroMain->addWidget(m_medalsSummary);
+
+    // 「生成分享图」：把整面勋章墙排成一张竖图，方便发群聊 / 社区
+    auto *shareRow = new QHBoxLayout();
+    shareRow->setContentsMargins(0, 6, 0, 0);
+    shareRow->setSpacing(10);
+    m_medalsShareButton = new QPushButton(tr("生成分享图"), hero);
+    m_medalsShareButton->setObjectName(QStringLiteral("fbBtnPrimary"));
+    m_medalsShareButton->setCursor(Qt::PointingHandCursor);
+    m_medalsShareButton->setFixedHeight(30);
+    connect(m_medalsShareButton, &QPushButton::clicked, this,
+            &ForumAccountPage::openMedalShareImage);
+    shareRow->addWidget(m_medalsShareButton);
+
+    auto *shareHint =
+        new QLabel(tr("把点亮的勋章做成一张图，可以直接发群聊或社区"), hero);
+    shareHint->setObjectName(QStringLiteral("fbNote"));
+    shareHint->setWordWrap(true);
+    shareRow->addWidget(shareHint, 1);
+    heroMain->addLayout(shareRow);
+
+    heroLayout->addLayout(heroMain, 1);
+
+    // 右侧展示「下一枚要解锁的勋章」，全部点亮时展示最后一枚
+    m_medalsShowcase = new QLabel(hero);
+    m_medalsShowcase->setFixedSize(72, 72);
+    m_medalsShowcase->setAlignment(Qt::AlignCenter);
+    heroLayout->addWidget(m_medalsShowcase, 0, Qt::AlignVCenter);
+
+    layout->addWidget(hero);
+
+    m_medalsNotice = new QLabel(m_medalsPage);
+    m_medalsNotice->setObjectName(QStringLiteral("fbMedalsNotice"));
+    m_medalsNotice->setWordWrap(true);
+    m_medalsNotice->hide();
+    layout->addWidget(m_medalsNotice);
+
+    // ── 勋章卡片：论坛勋章和游戏成就放在同一个瀑布流里 ──
+    m_medalsHost = new QWidget(m_medalsPage);
+    m_medalFlow = new FlowLayout(m_medalsHost, 0, 12, 12);
+    layout->addWidget(m_medalsHost);
+
+    layout->addStretch(1);
+    return m_medalsPage;
+}
+
+void ForumAccountPage::clearMedalTiles()
+{
+    if (!m_medalFlow)
+        return;
+    while (QLayoutItem *item = m_medalFlow->takeAt(0))
+    {
+        if (QWidget *widget = item->widget())
+        {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+}
+
+void ForumAccountPage::loadMedals(bool force)
+{
+    if (!m_service->isLoggedIn() || !m_medalsPage)
+        return;
+    if (m_medalsBusy || (m_medalsLoaded && !force))
+        return;
+
+    m_medalsBusy = true;
+    // 记下这次请求属于哪个账号：请求回来前换了账号 / 退出登录时直接丢弃，
+    // 免得把上一个账号的勋章画到当前账号头上。
+    const int accountId = m_service->user().id;
+    m_service->getJson(
+        QStringLiteral("/api/medals"),
+        [this, accountId](const QJsonObject &root) {
+            m_medalsBusy = false;
+            if (m_service->user().id != accountId)
+                return;
+            m_medalsLoaded = true;
+            m_medals = root.value(QStringLiteral("medals")).toArray();
+            m_medalEarned = root.value(QStringLiteral("earned_count")).toInt();
+            m_medalTotal = root.value(QStringLiteral("total")).toInt();
+            m_gameAchievements = root.value(QStringLiteral("game_achievements")).toArray();
+            m_gameAchievementTotal = root.value(QStringLiteral("game_total")).toInt();
+            if (m_medalsNotice)
+                m_medalsNotice->hide();
+            renderMedals();
+
+            // 这次读取新点亮的勋章：合并成一条提示，别一次弹好几张卡片
+            const QJsonArray fresh = root.value(QStringLiteral("new_medals")).toArray();
+            if (!fresh.isEmpty())
+            {
+                QStringList names;
+                for (const QJsonValue &value : fresh)
+                {
+                    const QString name =
+                        value.toObject().value(QStringLiteral("name")).toString();
+                    if (!name.isEmpty())
+                        names.append(name);
+                }
+                if (!names.isEmpty())
+                {
+                    // 一次点亮很多枚时只报最稀有的几枚，避免提示条被名字撑满
+                    const QStringList shownNames =
+                        names.size() > 3 ? names.mid(names.size() - 3) : names;
+                    QString shown = shownNames.join(tr("、"));
+                    if (names.size() > 3)
+                        shown = tr("%1 等 %2 枚").arg(shown).arg(names.size());
+                    NotificationManager::showSuccess(
+                        this, tr("获得新勋章：%1").arg(shown));
+                }
+            }
+
+            // 进页面之前点了分享图：数据回来了再弹，不用让用户再点一次
+            if (m_medalSharePending)
+            {
+                m_medalSharePending = false;
+                openMedalShareImage();
+            }
+        },
+        [this, accountId](const QString &message, int status) {
+            Q_UNUSED(status);
+            m_medalsBusy = false;
+            if (m_service->user().id != accountId)
+                return;
+            if (m_medalsLoaded)
+                return;
+            m_medalsSummary->setText(tr("暂时读不到勋章墙，检查一下网络后再试。"));
+            m_medalsCount->setText(QStringLiteral("—"));
+            m_medalsTotal->setText(QString());
+            m_medalsWallBar->setValue(0);
+            if (m_medalsNotice)
+            {
+                m_medalsNotice->setText(message);
+                m_medalsNotice->show();
+            }
+            clearMedalTiles();
+            m_gameAchievements = QJsonArray();
+            m_gameAchievementTotal = 0;
+
+            if (m_medalSharePending)
+            {
+                m_medalSharePending = false;
+                NotificationManager::showError(
+                    this, tr("勋章墙读不出来，分享图暂时生成不了：%1").arg(message));
+            }
+        });
+}
+
+void ForumAccountPage::renderMedals()
+{
+    if (!m_medalsPage || !m_medalsCount || !m_medalsWallBar)
+        return;
+
+    if (!m_medalsLoaded)
+    {
+        m_medalsSummary->setText(tr("正在读取账号勋章…"));
+        if (m_medalsNotice)
+            m_medalsNotice->hide();
+        clearMedalTiles();
+        return;
+    }
+
+    const int staticTotal = qMax(m_medalTotal, m_medals.size());
+    const int staticEarned = qBound(0, m_medalEarned, staticTotal);
+
+    // 把固定里程碑和实际同步上来的成就合并：命中固定条目的用固定文案，
+    // 没命中的模组 / 特殊成就保留动态卡片。
+    QHash<QString, QJsonObject> rawById;
+    QHash<QString, QJsonObject> rawByTitle;
+    for (const QJsonValue &value : m_gameAchievements)
+    {
+        const QJsonObject raw = value.toObject();
+        const QString id = raw.value(QStringLiteral("id")).toString();
+        const QString title = raw.value(QStringLiteral("title")).toString();
+        if (!id.isEmpty())
+            rawById.insert(id.toLower(), raw);
+        if (!title.isEmpty())
+            rawByTitle.insert(title.toLower(), raw);
+    }
+
+    QVector<QJsonObject> gameCards;
+    QSet<QString> matchedRaw;
+    for (const GameAchievementDef &def : GameAchievementCatalog::all())
+    {
+        QJsonObject raw;
+        bool earned = false;
+        auto byId = rawById.constFind(def.id.toLower());
+        if (byId != rawById.constEnd())
+        {
+            raw = byId.value();
+            earned = true;
+        }
+        else
+        {
+            auto byTitle = rawByTitle.constFind(def.name.toLower());
+            if (byTitle != rawByTitle.constEnd())
+            {
+                raw = byTitle.value();
+                earned = true;
+            }
+        }
+
+        if (!earned)
+            continue; // 只展示已经获得的游戏成就，不把整份清单都铺出来
+
+        QJsonObject card;
+        card.insert(QStringLiteral("id"), def.id);
+        card.insert(QStringLiteral("name"), def.name);
+        card.insert(QStringLiteral("condition"), def.condition);
+        card.insert(QStringLiteral("difficulty"), def.difficulty);
+        card.insert(QStringLiteral("rarity"), QStringLiteral("game"));
+        card.insert(QStringLiteral("earned"), true);
+        const QString rawId = raw.value(QStringLiteral("id")).toString();
+        if (!rawId.isEmpty())
+            matchedRaw.insert(rawId.toLower());
+        card.insert(QStringLiteral("world"), raw.value(QStringLiteral("world")));
+        card.insert(QStringLiteral("awarded_at"), raw.value(QStringLiteral("earned_at")));
+        gameCards.append(card);
+    }
+
+    for (const QJsonValue &value : m_gameAchievements)
+    {
+        const QJsonObject raw = value.toObject();
+        const QString rawId = raw.value(QStringLiteral("id")).toString();
+        if (matchedRaw.contains(rawId.toLower()))
+            continue;
+
+        QString title = raw.value(QStringLiteral("title")).toString();
+        if (title.isEmpty())
+            title = rawId;
+        // 同一条成就可能既有真实 id 又有标题指纹 id，固定里程碑已经展示过就不再重复
+        if (GameAchievementCatalog::find(title))
+            continue;
+        QString condition = raw.value(QStringLiteral("condition")).toString();
+        if (condition.isEmpty())
+            condition = tr("在游戏中达成该成就");
+
+        QJsonObject card;
+        card.insert(QStringLiteral("id"), rawId);
+        card.insert(QStringLiteral("name"), title);
+        card.insert(QStringLiteral("condition"), condition);
+        card.insert(QStringLiteral("difficulty"),
+                    GameAchievementCatalog::difficultyForId(rawId));
+        card.insert(QStringLiteral("rarity"), QStringLiteral("game"));
+        card.insert(QStringLiteral("earned"), true);
+        card.insert(QStringLiteral("world"), raw.value(QStringLiteral("world")));
+        card.insert(QStringLiteral("awarded_at"), raw.value(QStringLiteral("earned_at")));
+        gameCards.append(card);
+    }
+
+    const int gameEarned = gameCards.size();
+
+    const int total = staticTotal + gameEarned;
+    const int earned = staticEarned + gameEarned;
+
+    m_medalsCount->setText(QString::number(earned));
+    m_medalsTotal->setText(tr("/ %1 枚").arg(total));
+    m_medalsWallBar->setValue(total > 0 ? earned * 100 / total : 0);
+    if (staticTotal > 0 && staticEarned >= staticTotal)
+        m_medalsSummary->setText(
+            tr("论坛勋章已全部点亮，另外记录了 %1 个游戏成就。勋章记在账号上，换设备也不会丢。")
+                .arg(gameEarned));
+    else
+        m_medalsSummary->setText(
+            tr("论坛勋章已点亮 %1 / %2 枚，游戏成就 %3 个；还有 %4 枚论坛勋章等你解锁。")
+                .arg(staticEarned)
+                .arg(staticTotal)
+                .arg(gameEarned)
+                .arg(qMax(0, staticTotal - staticEarned)));
+
+    // 「下一枚目标」：按从易到难的顺序找第一枚未获得的论坛勋章
+    QString showcaseId;
+    QString showcaseName;
+    for (const QJsonValue &value : m_medals)
+    {
+        const QJsonObject item = value.toObject();
+        if (item.value(QStringLiteral("earned")).toBool())
+            continue;
+        showcaseId = item.value(QStringLiteral("id")).toString();
+        showcaseName = item.value(QStringLiteral("name")).toString();
+        break;
+    }
+    if (showcaseId.isEmpty() && !m_medals.isEmpty())
+    {
+        const QJsonObject last = m_medals.last().toObject();
+        showcaseId = last.value(QStringLiteral("id")).toString();
+        showcaseName = last.value(QStringLiteral("name")).toString();
+    }
+    if (m_medalsShowcase)
+    {
+        if (showcaseId.isEmpty())
+        {
+            m_medalsShowcase->clear();
+            m_medalsShowcase->setToolTip(QString());
+        }
+        else
+        {
+            m_medalsShowcase->setPixmap(MedalCatalog::pixmapFor(showcaseId, 64));
+            m_medalsShowcase->setToolTip(
+                staticEarned >= staticTotal ? tr("论坛勋章已全部点亮")
+                                            : tr("下一枚目标：%1").arg(showcaseName));
+        }
+    }
+
+    clearMedalTiles();
+
+    const Palette p = currentPalette();
+
+    // 论坛勋章和游戏成就共用同一张卡片：同样的宽度、间距、图标尺寸和底部日期行
+    auto addCard = [this, &p](const QJsonObject &item, bool isGame) {
+        const QString id = item.value(QStringLiteral("id")).toString();
+        const QString name = item.value(QStringLiteral("name")).toString();
+        const QString condition = item.value(QStringLiteral("condition")).toString();
+        const QString description = item.value(QStringLiteral("description")).toString();
+        const QString rarity = item.value(QStringLiteral("rarity")).toString();
+        const bool isEarned = item.value(QStringLiteral("earned")).toBool();
+        const int current = item.value(QStringLiteral("current")).toInt();
+        const int target = qMax(1, item.value(QStringLiteral("target")).toInt());
+        const int percent = item.value(QStringLiteral("percent")).toInt();
+        const QString unit = item.value(QStringLiteral("unit")).toString();
+        const qint64 awardedAt =
+            static_cast<qint64>(item.value(QStringLiteral("awarded_at")).toDouble());
+
+        auto *tile = new QFrame(m_medalsHost);
+        tile->setObjectName(QStringLiteral("fbMedalTile"));
+        tile->setProperty("earned", isEarned);
+        tile->setProperty("rarity", rarity);
+        tile->setFixedWidth(214);
+        tile->setMinimumHeight(172);
+
+        if (isGame)
+        {
+            QString tip = name;
+            if (!condition.isEmpty())
+                tip += QLatin1Char('\n') + condition;
+            const QString world = item.value(QStringLiteral("world")).toString();
+            if (awardedAt > 0)
+                tip += QLatin1Char('\n')
+                     + QDateTime::fromSecsSinceEpoch(awardedAt).toString(
+                         QStringLiteral("yyyy-MM-dd HH:mm"));
+            if (!world.isEmpty())
+                tip += QLatin1Char('\n') + tr("存档：%1").arg(world);
+            tip += QLatin1Char('\n') + tr("游戏内成就 · 生存模式 · 未开作弊");
+            tile->setToolTip(tip);
+        }
+        else
+        {
+            tile->setToolTip(description.isEmpty() ? condition : description);
+        }
+
+        auto *tileLayout = new QVBoxLayout(tile);
+        tileLayout->setContentsMargins(14, 14, 14, 14);
+        tileLayout->setSpacing(6);
+
+        auto *head = new QHBoxLayout();
+        head->setContentsMargins(0, 0, 0, 0);
+        head->setSpacing(10);
+
+        auto *icon = new QLabel(tile);
+        icon->setFixedSize(48, 48);
+        icon->setAlignment(Qt::AlignCenter);
+        icon->setPixmap(isGame ? MedalCatalog::gamePixmap(id, 48)
+                               : MedalCatalog::pixmapFor(id, 48));
+        if (!isEarned)
+        {
+            // 未解锁的图标压暗，但仍看得清是什么主题
+            auto *effect = new QGraphicsOpacityEffect(icon);
+            effect->setOpacity(0.38);
+            icon->setGraphicsEffect(effect);
+        }
+        head->addWidget(icon, 0, Qt::AlignTop);
+
+        auto *titleColumn = new QVBoxLayout();
+        titleColumn->setContentsMargins(0, 0, 0, 0);
+        titleColumn->setSpacing(3);
+
+        auto *nameLabel = new QLabel(name, tile);
+        nameLabel->setObjectName(QStringLiteral("fbMedalName"));
+        nameLabel->setWordWrap(true);
+        titleColumn->addWidget(nameLabel);
+
+        QString chipText = MedalCatalog::rarityText(rarity);
+        QColor chipColor = MedalCatalog::rarityColor(rarity);
+        if (isGame)
+        {
+            QString difficulty = item.value(QStringLiteral("difficulty")).toString();
+            if (difficulty.isEmpty())
+                difficulty = tr("普通");
+            chipText = difficulty;
+            chipColor = GameAchievementCatalog::difficultyColor(difficulty);
+        }
+        auto *rarityChip = new QLabel(chipText, tile);
+        rarityChip->setStyleSheet(
+            QStringLiteral("QLabel{color:%1;background:rgba(%2,%3,%4,0.12);"
+                           "border:1px solid rgba(%2,%3,%4,0.35);border-radius:8px;"
+                           "font-size:10px;font-weight:700;padding:1px 6px;}")
+                .arg(chipColor.name())
+                .arg(chipColor.red())
+                .arg(chipColor.green())
+                .arg(chipColor.blue()));
+        rarityChip->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        titleColumn->addWidget(rarityChip, 0, Qt::AlignLeft);
+        titleColumn->addStretch();
+        head->addLayout(titleColumn, 1);
+
+        tileLayout->addLayout(head);
+
+        auto *conditionLabel = new QLabel(condition, tile);
+        conditionLabel->setObjectName(QStringLiteral("fbMedalCondition"));
+        conditionLabel->setWordWrap(true);
+        conditionLabel->setMinimumHeight(30);
+        tileLayout->addWidget(conditionLabel);
+        tileLayout->addStretch();
+
+        if (isEarned)
+        {
+            const QString date =
+                awardedAt > 0
+                    ? QDateTime::fromSecsSinceEpoch(awardedAt).toString(QStringLiteral("yyyy-MM-dd"))
+                    : QString();
+            auto *earnedLabel = new QLabel(
+                date.isEmpty() ? tr("已点亮") : tr("已点亮 · %1").arg(date), tile);
+            earnedLabel->setObjectName(QStringLiteral("fbMedalEarned"));
+            QColor accent;
+            if (isGame)
+            {
+                accent = GameAchievementCatalog::difficultyColor(
+                    item.value(QStringLiteral("difficulty")).toString());
+            }
+            else
+            {
+                accent = MedalCatalog::lookFor(id).accent;
+            }
+            earnedLabel->setStyleSheet(QStringLiteral("color:%1;").arg(accent.name()));
+            tileLayout->addWidget(earnedLabel);
+        }
+        else if (isGame)
+        {
+            // 游戏成就只展示已获得的，正常不会走到这里；保留兜底文案
+            auto *pendingLabel = new QLabel(tr("游戏成就"), tile);
+            pendingLabel->setObjectName(QStringLiteral("fbMedalProgress"));
+            tileLayout->addWidget(pendingLabel);
+        }
+        else if (target > 1)
+        {
+            const QColor accent = MedalCatalog::lookFor(id).accent;
+            auto *bar = new QProgressBar(tile);
+            bar->setRange(0, 100);
+            bar->setValue(qBound(0, percent, 100));
+            bar->setTextVisible(false);
+            bar->setFixedHeight(6);
+            bar->setStyleSheet(
+                QStringLiteral("QProgressBar{background:%1;border:none;border-radius:3px;}"
+                               "QProgressBar::chunk{background:%2;border-radius:3px;}")
+                    .arg(p.line2)
+                    .arg(accent.name()));
+            tileLayout->addWidget(bar);
+
+            auto *progress = new QLabel(
+                unit.isEmpty() ? tr("%1 / %2").arg(qMin(current, target)).arg(target)
+                               : tr("%1 / %2 %3").arg(qMin(current, target)).arg(target).arg(unit),
+                tile);
+            progress->setObjectName(QStringLiteral("fbMedalProgress"));
+            tileLayout->addWidget(progress);
+        }
+        else
+        {
+            auto *progress = new QLabel(tr("满足条件后自动点亮"), tile);
+            progress->setObjectName(QStringLiteral("fbMedalProgress"));
+            tileLayout->addWidget(progress);
+        }
+
+        m_medalFlow->addWidget(tile);
+    };
+
+    for (const QJsonValue &value : m_medals)
+        addCard(value.toObject(), false);
+
+    // 固定里程碑 + 动态游戏成就，全部用同样的卡片接在论坛勋章后面
+    for (const QJsonObject &card : gameCards)
+        addCard(card, true);
+}
+
+void ForumAccountPage::openMedalShareImage()
+{
+    if (!m_service->isLoggedIn())
+    {
+        NotificationManager::showInfo(this, tr("登录方块盒子账号后就能生成勋章分享图"));
+        return;
+    }
+
+    // 勋章墙还没读回来：先拉一次，读完后在 loadMedals 的回包里自动弹图
+    if (!m_medalsLoaded)
+    {
+        m_medalSharePending = true;
+        loadMedals(true);
+        NotificationManager::showInfo(this, tr("正在读取勋章墙，读完就给你出图"));
+        return;
+    }
+
+    const int staticTotal = qMax(m_medalTotal, m_medals.size());
+    const int staticEarned = qBound(0, m_medalEarned, staticTotal);
+
+    MedalShareCard::Data data;
+    const ForumUser user = m_service->user();
+    data.displayName = user.displayName;
+    data.username = user.username;
+    data.avatar = m_avatarRaw;
+    data.joinedAt = user.createdAt;
+    data.forumEarned = staticEarned;
+    data.forumTotal = staticTotal;
+    data.gameEarned = m_gameAchievements.size();
+    data.earned = staticEarned + data.gameEarned;
+    data.total = staticTotal + data.gameEarned;
+    data.brand = QColor(currentPalette().brand);
+    // 底部写官网地址（不是论坛地址：论坛只在软件里用，分享图对外露出官网）
+    data.siteUrl = AssetUrls::originBase();
+
+    // 论坛勋章按服务端的从易到难顺序排；游戏成就接在后面
+    for (const QJsonValue &value : m_medals)
+    {
+        const QJsonObject item = value.toObject();
+        if (!item.value(QStringLiteral("earned")).toBool())
+        {
+            // 第一枚没点亮的当「下一枚目标」：没点亮几枚时分享图下半部分靠它撑起来
+            if (data.next.name.isEmpty())
+            {
+                data.next.name = item.value(QStringLiteral("name")).toString();
+                data.next.rarity = item.value(QStringLiteral("rarity")).toString();
+                data.next.iconId = item.value(QStringLiteral("id")).toString();
+                data.nextProgress = item.value(QStringLiteral("condition")).toString();
+
+                const int target = qMax(1, item.value(QStringLiteral("target")).toInt());
+                const int current = item.value(QStringLiteral("current")).toInt();
+                const QString unit = item.value(QStringLiteral("unit")).toString();
+                if (target > 1)
+                {
+                    const QString progress =
+                        unit.isEmpty()
+                            ? tr("%1 / %2").arg(qMin(current, target)).arg(target)
+                            : tr("%1 / %2 %3").arg(qMin(current, target)).arg(target).arg(unit);
+                    data.nextProgress = data.nextProgress.isEmpty()
+                                            ? progress
+                                            : data.nextProgress + QStringLiteral("  ·  ")
+                                                  + progress;
+                }
+            }
+            continue;
+        }
+        MedalShareCard::Item entry;
+        entry.name = item.value(QStringLiteral("name")).toString();
+        entry.rarity = item.value(QStringLiteral("rarity")).toString();
+        entry.iconId = item.value(QStringLiteral("id")).toString();
+        entry.game = false;
+        if (entry.name.isEmpty() || entry.iconId.isEmpty())
+            continue;
+        data.items.append(entry);
+    }
+
+    for (const QJsonValue &value : m_gameAchievements)
+    {
+        const QJsonObject raw = value.toObject();
+        MedalShareCard::Item entry;
+        entry.iconId = raw.value(QStringLiteral("id")).toString();
+        entry.name = raw.value(QStringLiteral("title")).toString();
+        if (entry.name.isEmpty())
+            entry.name = entry.iconId;
+        if (entry.name.isEmpty())
+            continue;
+        entry.rarity = QStringLiteral("game");
+        entry.game = true;
+        data.items.append(entry);
+    }
+
+    const QImage poster = MedalShareCard::buildPoster(data);
+    MedalShareDialog::show(this, poster, MedalShareCard::suggestedFileName());
 }
 
 /** 账户页「我的反馈」条目的状态徽章（沿用反馈页的绿 / 紫 / 灰配色） */
@@ -4186,6 +6978,8 @@ void ForumAccountPage::loadPoints(bool force)
             renderPoints();
             if (m_statPoints)
                 m_statPoints->setText(QString::number(root.value(QStringLiteral("points")).toInt()));
+            // 充值档位跟着一起拉（只拉一次，之后靠支付面板自己刷新）
+            loadPointsShop();
         },
         [this](const QString &message, int status) {
             Q_UNUSED(status);
@@ -4545,6 +7339,283 @@ void ForumAccountPage::useMakeupCard()
         });
 }
 
+// ════════════════════════════════════════════════════════════════ 积分页 · 购买方块
+
+void ForumAccountPage::loadPointsShop()
+{
+    if (!m_service->isLoggedIn() || !m_pointsShop)
+        return;
+    if (m_pointsShopLoaded)
+        return;
+
+    m_service->getJson(
+        QStringLiteral("/api/points/shop"),
+        [this](const QJsonObject &root) {
+            m_pointsShopLoaded = true;
+            renderPointsShop(root);
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            // 拉不到档位就先收起来，别挡住签到那边
+            m_pointsShopLoaded = true;
+            if (m_pointsShopNote)
+                m_pointsShopNote->setText(message);
+            if (m_pointsShop)
+                m_pointsShop->hide();
+        });
+}
+
+void ForumAccountPage::renderPointsShop(const QJsonObject &shop)
+{
+    if (!m_pointsShop || !m_pointsShopGrid)
+        return;
+
+    while (QLayoutItem *item = m_pointsShopGrid->takeAt(0))
+    {
+        if (QWidget *widget = item->widget())
+            widget->deleteLater();
+        delete item;
+    }
+    m_pointsShopButtons.clear();
+
+    const bool enabled = shop.value(QStringLiteral("enabled")).toBool();
+    const QJsonArray packages = shop.value(QStringLiteral("packages")).toArray();
+    if (!enabled || packages.isEmpty())
+    {
+        // 论坛没配商户号：整块藏起来，免得用户点了才发现买不了
+        if (m_pointsShopNote)
+        {
+            const QString note = shop.value(QStringLiteral("note")).toString();
+            m_pointsShopNote->setText(note.isEmpty() ? tr("充值通道还没开通，先签到领方块吧。") : note);
+        }
+        m_pointsShop->hide();
+        return;
+    }
+
+    if (m_pointsShopNote)
+        m_pointsShopNote->setText(tr("付款后自动到账"));
+
+    QWidget *host = m_pointsShopGrid->parentWidget();
+    for (const QJsonValue &value : packages)
+    {
+        const QJsonObject pkg = value.toObject();
+        const QString id = pkg.value(QStringLiteral("id")).toString();
+        if (id.isEmpty())
+            continue;
+
+        auto *card = new QFrame(host);
+        card->setObjectName(QStringLiteral("fbShopCard"));
+        auto *cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(10, 10, 10, 10);
+        cardLayout->setSpacing(3);
+
+        auto *name = new QLabel(pkg.value(QStringLiteral("name")).toString(), card);
+        name->setObjectName(QStringLiteral("fbShopName"));
+        name->setAlignment(Qt::AlignCenter);
+        cardLayout->addWidget(name);
+
+        auto *points = new QLabel(QStringLiteral("+%1").arg(pkg.value(QStringLiteral("points")).toInt()),
+                                  card);
+        points->setObjectName(QStringLiteral("fbShopPoints"));
+        points->setAlignment(Qt::AlignCenter);
+        cardLayout->addWidget(points);
+
+        auto *unit = new QLabel(tr("方块"), card);
+        unit->setObjectName(QStringLiteral("fbShopUnit"));
+        unit->setAlignment(Qt::AlignCenter);
+        cardLayout->addWidget(unit);
+
+        auto *price = new QLabel(QStringLiteral("¥%1").arg(pkg.value(QStringLiteral("price")).toString()),
+                                 card);
+        price->setObjectName(QStringLiteral("fbShopPrice"));
+        price->setAlignment(Qt::AlignCenter);
+        cardLayout->addWidget(price);
+
+        auto *buy = new QPushButton(tr("购买"), card);
+        buy->setObjectName(QStringLiteral("fbShopBuy"));
+        buy->setCursor(Qt::PointingHandCursor);
+        buy->setFixedHeight(28);
+        connect(buy, &QPushButton::clicked, this, [this, id, buy]() { buyPointsPackage(id, buy); });
+        cardLayout->addWidget(buy);
+
+        m_pointsShopGrid->addWidget(card, 1);
+        m_pointsShopButtons.insert(id, buy);
+    }
+    m_pointsShopGrid->addStretch(0);
+
+    m_pointsShop->show();
+}
+
+void ForumAccountPage::buyPointsPackage(const QString &packageId, QPushButton *button)
+{
+    if (m_pointsBusy || !m_service->isLoggedIn() || packageId.isEmpty())
+        return;
+
+    m_pointsBusy = true;
+    if (button)
+    {
+        button->setEnabled(false);
+        button->setText(tr("下单中…"));
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("package"), packageId);
+
+    m_service->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/points/shop/order"), body,
+        [this, button](const QJsonObject &result) {
+            m_pointsBusy = false;
+            if (button)
+            {
+                button->setEnabled(true);
+                button->setText(tr("购买"));
+            }
+
+            const QJsonObject order = result.value(QStringLiteral("order")).toObject();
+            const QString orderNo = order.value(QStringLiteral("out_trade_no")).toString();
+            const QString payUrl = result.value(QStringLiteral("pay_url")).toString();
+            if (orderNo.isEmpty())
+            {
+                NotificationManager::showError(this, tr("下单失败：没有拿到订单号，请再试一次"));
+                return;
+            }
+
+            const QString title = tr("%1 %2 方块 · ¥%3")
+                                      .arg(order.value(QStringLiteral("package_name")).toString())
+                                      .arg(order.value(QStringLiteral("points")).toInt())
+                                      .arg(order.value(QStringLiteral("price")).toString());
+            startPayPolling(orderNo, order.value(QStringLiteral("points")).toInt(), title, payUrl);
+
+            // 浏览器打开收银台；打不开就提示用户点面板里的按钮
+            if (payUrl.isEmpty() || !QDesktopServices::openUrl(QUrl(payUrl)))
+            {
+                NotificationManager::showInfo(
+                    this, tr("没能自动打开浏览器，点下面的「打开支付页」继续付款"));
+            }
+        },
+        [this, button](const QString &message, int status) {
+            Q_UNUSED(status);
+            m_pointsBusy = false;
+            if (button)
+            {
+                button->setEnabled(true);
+                button->setText(tr("购买"));
+            }
+            NotificationManager::showError(this, message);
+            // 服务端说通道没开通：重新拉一次档位状态，入口该收起就收起
+            if (message.contains(QStringLiteral("还没开通")))
+            {
+                m_pointsShopLoaded = false;
+                loadPointsShop();
+            }
+        });
+}
+
+void ForumAccountPage::startPayPolling(const QString &outTradeNo, int points, const QString &title,
+                                       const QString &payUrl)
+{
+    if (m_payPollTimer)
+        m_payPollTimer->stop();
+
+    m_payOrderNo = outTradeNo;
+    m_payOrderPoints = points;
+    m_payOrderTitle = title;
+    m_payUrl = payUrl;
+    m_payPollTries = 0;
+
+    if (m_pointsShopPayPanel)
+    {
+        if (m_pointsShopPayTitle)
+            m_pointsShopPayTitle->setText(tr("待支付：%1").arg(title));
+        if (m_pointsShopPayText)
+            m_pointsShopPayText->setText(
+                tr("在浏览器里付完款，这里会自动刷新余额；没弹出浏览器就点「打开支付页」。"));
+        if (m_pointsShopPayOpen)
+            m_pointsShopPayOpen->setEnabled(!payUrl.isEmpty());
+        if (m_pointsShopPayCheck)
+            m_pointsShopPayCheck->setEnabled(true);
+        m_pointsShopPayPanel->show();
+    }
+
+    if (!m_payPollTimer)
+    {
+        m_payPollTimer = new QTimer(this);
+        m_payPollTimer->setInterval(3000);
+        connect(m_payPollTimer, &QTimer::timeout, this, [this]() { checkPayOrder(false); });
+    }
+    m_payPollTimer->start();
+}
+
+void ForumAccountPage::stopPayPolling()
+{
+    if (m_payPollTimer)
+        m_payPollTimer->stop();
+    m_payOrderNo.clear();
+    m_payPollTries = 0;
+}
+
+void ForumAccountPage::checkPayOrder(bool manual)
+{
+    if (m_payOrderNo.isEmpty() || !m_service->isLoggedIn())
+    {
+        if (manual)
+            NotificationManager::showInfo(this, tr("现在没有正在等待的订单"));
+        return;
+    }
+
+    if (manual && m_pointsShopPayCheck)
+        m_pointsShopPayCheck->setEnabled(false);
+
+    const QString orderNo = m_payOrderNo;
+    m_payPollTries += 1;
+
+    m_service->getJson(
+        QStringLiteral("/api/points/shop/order/%1").arg(orderNo),
+        [this, orderNo, manual](const QJsonObject &root) {
+            if (m_pointsShopPayCheck)
+                m_pointsShopPayCheck->setEnabled(true);
+            if (m_payOrderNo != orderNo)
+                return;
+
+            const QJsonObject order = root.value(QStringLiteral("order")).toObject();
+            const int points = root.value(QStringLiteral("points")).toInt();
+            if (order.value(QStringLiteral("status")).toString() == QStringLiteral("paid"))
+            {
+                const int gained = order.value(QStringLiteral("points")).toInt();
+                stopPayPolling();
+                if (m_pointsShopPayPanel)
+                    m_pointsShopPayPanel->hide();
+                if (m_statPoints)
+                    m_statPoints->setText(QString::number(points));
+                NotificationManager::showSuccess(
+                    this, tr("支付成功：+%1 方块已到账").arg(gained));
+                loadPoints(true);
+                m_service->refreshProfile();
+                return;
+            }
+
+            if (m_payPollTries >= 100)
+            {
+                if (m_payPollTimer)
+                    m_payPollTimer->stop();
+                if (m_pointsShopPayText)
+                    m_pointsShopPayText->setText(
+                        tr("还没收到付款。支付页还开着就继续付，付完点「我已完成支付」。"));
+            }
+            else if (manual)
+            {
+                NotificationManager::showInfo(this, tr("还没收到付款，付完稍等一下再点一次"));
+            }
+        },
+        [this, manual](const QString &message, int status) {
+            Q_UNUSED(status);
+            if (m_pointsShopPayCheck)
+                m_pointsShopPayCheck->setEnabled(true);
+            if (manual)
+                NotificationManager::showError(this, message);
+        });
+}
+
 void ForumAccountPage::loadNotifications()
 {
     ForumContentService::instance()->fetchNotifications(
@@ -4703,7 +7774,7 @@ void ForumAccountPage::renderNotifications()
         accent->setVisible(item.unread);
         rowLayout->addWidget(accent);
 
-        // 左侧类型图标：回复 / 提及 / 系统，底色区分类型，未读用主题色
+        // 左侧类型图标：回复 / 提及 / 系统 / 好友，底色区分类型，未读用主题色
         QString iconPath;
         QString typeKey = QStringLiteral("reply");
         if (item.type == QStringLiteral("mention"))
@@ -4715,6 +7786,11 @@ void ForumAccountPage::renderNotifications()
         {
             iconPath = QStringLiteral(":/Images/Icons/announce.svg");
             typeKey = QStringLiteral("system");
+        }
+        else if (item.type == QStringLiteral("friend") || item.type == QStringLiteral("friend_accepted"))
+        {
+            iconPath = QStringLiteral(":/Images/Icons/topbar_notify.svg");
+            typeKey = QStringLiteral("friend");
         }
         else
         {
@@ -4762,6 +7838,10 @@ void ForumAccountPage::renderNotifications()
         QString action;
         if (item.type == QStringLiteral("mention"))
             action = tr("提到了你");
+        else if (item.type == QStringLiteral("friend"))
+            action = tr("申请加你为好友");
+        else if (item.type == QStringLiteral("friend_accepted"))
+            action = tr("同意了你的好友申请");
         else if (item.type == QStringLiteral("system"))
             action = item.targetKind == QStringLiteral("admin") ? tr("管理团队发来消息") : tr("系统公告");
         else if (item.targetKind == QStringLiteral("post"))
@@ -4809,12 +7889,62 @@ void ForumAccountPage::renderNotifications()
 
         rowLayout->addLayout(contentLayout, 1);
 
-        auto *go = new QLabel(QStringLiteral("›"), row);
-        go->setObjectName(QStringLiteral("fbNotifGo"));
-        rowLayout->addWidget(go, 0, Qt::AlignVCenter);
-
         const QVector<int> ids = item.ids;
         const int threadId = item.threadId;
+        const int requestId = item.requestId;
+
+        // 好友申请：通知行里直接同意 / 拒绝，处理完重拉这一页（顶栏角标也跟着掉）
+        if (requestId > 0)
+        {
+            auto *actions = new QVBoxLayout();
+            actions->setContentsMargins(0, 0, 0, 0);
+            actions->setSpacing(6);
+
+            auto *acceptButton = new QPushButton(tr("同意"), row);
+            acceptButton->setObjectName(QStringLiteral("forumPrimaryButton"));
+            acceptButton->setCursor(Qt::PointingHandCursor);
+            acceptButton->setFixedHeight(26);
+            auto *declineButton = new QPushButton(tr("拒绝"), row);
+            declineButton->setObjectName(QStringLiteral("forumGhostButton"));
+            declineButton->setCursor(Qt::PointingHandCursor);
+            declineButton->setFixedHeight(26);
+            actions->addWidget(acceptButton);
+            actions->addWidget(declineButton);
+            rowLayout->addLayout(actions);
+
+            connect(acceptButton, &QPushButton::clicked, this, [this, requestId]() {
+                ForumChatService::instance()->acceptFriendRequest(
+                    requestId,
+                    [this]() {
+                        NotificationManager::showSuccess(this, tr("已同意好友申请"));
+                        m_service->refreshProfile();
+                        m_notificationsLoaded = false;
+                        loadNotifications();
+                    },
+                    [this](const QString &message, int) {
+                        NotificationManager::showError(this, message);
+                    });
+            });
+            connect(declineButton, &QPushButton::clicked, this, [this, requestId]() {
+                ForumChatService::instance()->declineFriendRequest(
+                    requestId,
+                    [this]() {
+                        m_service->refreshProfile();
+                        m_notificationsLoaded = false;
+                        loadNotifications();
+                    },
+                    [this](const QString &message, int) {
+                        NotificationManager::showError(this, message);
+                    });
+            });
+        }
+        else
+        {
+            auto *go = new QLabel(QStringLiteral("›"), row);
+            go->setObjectName(QStringLiteral("fbNotifGo"));
+            rowLayout->addWidget(go, 0, Qt::AlignVCenter);
+        }
+
         row->onClick = [this, ids, threadId]() {
             // 标已读（组内全部）然后直达帖子；回来后列表按服务端结果重新渲染
             ForumContentService::instance()->markNotificationsRead(
@@ -4892,18 +8022,20 @@ void ForumAccountPage::renderRows(QVBoxLayout *layout, const QJsonArray &items, 
         }
         else
         {
-            // 我的主题 / 我的收藏：标题 + 板块 + 回复数 + 最近回复
+            // 我的主题 / 我的收藏：标题 + 板块 + 回复数（教程帖看评论数）+ 最近回复
             threadId = item.value(QStringLiteral("id")).toInt();
             title = item.value(QStringLiteral("title")).toString();
             const QString board =
                 item.value(QStringLiteral("board")).toObject().value(QStringLiteral("name")).toString();
             const int replies = item.value(QStringLiteral("reply_count")).toInt();
+            const bool tutorial = item.value(QStringLiteral("tutorial")).toBool();
+            const int comments = item.value(QStringLiteral("comment_count")).toInt();
             const qint64 lastPost =
                 static_cast<qint64>(item.value(QStringLiteral("last_post_at")).toDouble());
             meta = board;
             if (!meta.isEmpty())
                 meta += QStringLiteral(" · ");
-            meta += tr("%1 条回复").arg(replies);
+            meta += tutorial ? tr("%1 条评论").arg(comments) : tr("%1 条回复").arg(replies);
             if (lastPost > 0)
                 meta += QStringLiteral(" · ") + relativeTime(lastPost);
         }
@@ -5038,6 +8170,12 @@ void ForumAccountPage::loadTabData()
     {
         loadPoints(false);
     }
+    else if (m_activeTab == MedalsTab)
+    {
+        // 每次切到勋章页都重新结算一次：刚发帖、刚签到或刚攒够方块时，
+        // 不用手动点刷新也能看到新点亮的勋章。
+        loadMedals(true);
+    }
 }
 
 void ForumAccountPage::fillSettingsForm()
@@ -5102,11 +8240,12 @@ void ForumAccountPage::savePasswordForm()
     if (!m_service->isLoggedIn())
         return;
 
+    const bool hasPassword = m_service->user().passwordSet;
     const QString current = m_currentPasswordEdit->text();
     const QString next = m_newPasswordEdit->text();
     const QString confirm = m_confirmPasswordEdit->text();
 
-    if (current.isEmpty())
+    if (hasPassword && current.isEmpty())
     {
         NotificationManager::showError(this, tr("请先输入当前密码"));
         return;
@@ -5270,4 +8409,101 @@ void ForumAccountPage::confirmLogout()
     setActiveTab(ThreadsTab);
     renderProfile();
     renderContentArea();
+}
+
+// ════════════════════════════════════════════════════════════════ 首次进入的引导
+
+void ForumAccountPage::scheduleAccountTour()
+{
+    if (m_tourOverlay || m_tourScheduled)
+        return;
+    SettingsManager *settings = SettingsManager::instance();
+    if (!settings
+        || settings->getProperty(QStringLiteral("account_tour/shown"), false).toBool())
+    {
+        return;
+    }
+
+    m_tourScheduled = true;
+    // 页面入场动画约 350ms，等它和卡片布局都落定再抠洞，否则高亮框会和卡片错位
+    QTimer::singleShot(650, this, [this]() {
+        m_tourScheduled = false;
+        startAccountTourIfNeeded();
+    });
+}
+
+void ForumAccountPage::startAccountTourIfNeeded()
+{
+    if (m_tourOverlay || !isVisible())
+        return;
+    SettingsManager *settings = SettingsManager::instance();
+    if (!settings
+        || settings->getProperty(QStringLiteral("account_tour/shown"), false).toBool())
+    {
+        return;
+    }
+    // 登录卡 / 账户详情里没有这两块区域，只停在总览时才讲
+    if (!m_viewStack || m_viewStack->currentIndex() != OverviewView)
+        return;
+    if (!m_profileCard || !m_tabsCard)
+        return;
+
+    auto *tour = new AccountTourOverlay(this);
+    const Palette p = currentPalette();
+    tour->setThemeColors(QColor(p.brand), QColor(p.card), QColor(p.line));
+    tour->setSteps({ { tr("游戏账户（角色）"),
+                       tr("「角色」页签里放的是游戏账户——离线、微软正版或第三方账号。"
+                          "启动游戏前，必须先在这里选好一个账户。"),
+                       m_tabsCard },
+                     { tr("方块盒子账户"),
+                       tr("这块是方块盒子账户：发帖、回复、加好友、进联机大厅都用它。"
+                          "第一次用先点「注册」，已经有账号就直接「登录」。"),
+                       m_profileCard } });
+    tour->ensureVisible = [this](QWidget *target) {
+        // 只做竖向滚动：QScrollArea::ensureWidgetVisible 会把窄窗口里的宽卡片横向挪一下，
+        // 切步骤时整页跟着平移，这里自己算滚动量更稳
+        if (!m_scroll || !m_scroll->viewport() || !target)
+            return;
+        QWidget *content = m_scroll->widget();
+        if (!content || !content->isAncestorOf(target))
+            return;
+        QScrollBar *bar = m_scroll->verticalScrollBar();
+        const int margin = 24;
+        const int top = target->mapTo(content, QPoint(0, 0)).y();
+        const int viewport = m_scroll->viewport()->height();
+        if (top < bar->value() + margin)
+            bar->setValue(qMax(0, top - margin));
+        else if (top > bar->value() + viewport - 80)
+            bar->setValue(qBound(0, top - margin, bar->maximum()));
+    };
+    tour->onFinished = [this]() { finishAccountTour(); };
+
+    m_tourOverlay = tour;
+    tour->start();
+}
+
+void ForumAccountPage::finishAccountTour()
+{
+    // 记下「已经看过」，以后进账户页不再打扰
+    if (SettingsManager::instance())
+        SettingsManager::instance()->setProperty(QStringLiteral("account_tour/shown"), true);
+
+    if (m_tourOverlay)
+    {
+        QWidget *overlay = m_tourOverlay;
+        m_tourOverlay = nullptr;
+        overlay->deleteLater();
+    }
+}
+
+void ForumAccountPage::cancelAccountTour()
+{
+    // 中途切走：不记「已看过」，下次进来从头再讲
+    m_tourScheduled = false;
+    if (m_tourOverlay)
+    {
+        QWidget *overlay = m_tourOverlay;
+        m_tourOverlay = nullptr;
+        overlay->deleteLater();
+    }
 }

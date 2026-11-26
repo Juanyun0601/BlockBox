@@ -14,10 +14,13 @@
  *   settings      （数组：插件设置项定义，宿主据此生成设置表单）
  *   commands      （数组：插件对外提供的命令/动作）
  *   style         （字符串或 {qss,file} 对象：启动器界面样式贡献，见 PluginStyleContribution）
+ *   aiTools       （数组：插件向 AI 助手提供的工具，见 PluginAiTool；
+ *                  需同时请求权限 "ai:tool"，否则不会注入 AI）
  */
 #ifndef PLUGININFO_H
 #define PLUGININFO_H
 
+#include <QFileInfo>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QMap>
@@ -224,6 +227,108 @@ struct PluginStyleContribution
 };
 
 /**
+ * @brief 插件 AI 工具的 HTTP 请求定义（对应 manifest.aiTools[].http）
+ *
+ * 声明后宿主直接发起 HTTP 请求（无需本机脚本环境），
+ * URL 支持 {参数名} 占位符，运行时替换为模型传入的参数值。
+ */
+struct PluginAiToolHttp
+{
+    QString method;                  // HTTP 方法：GET / POST / PUT / DELETE（默认 GET）
+    QString url;                     // 请求 URL（可含 {参数名} 占位符）
+    QMap<QString, QString> headers;  // 请求头
+    QString body;                    // 请求体（POST/PUT/PATCH 时使用，可为空）
+
+    bool isValid() const { return !url.trimmed().isEmpty(); }
+};
+
+/**
+ * @brief 插件 AI 工具定义（对应 manifest.aiTools[] 元素）
+ *
+ * 插件借此把自身能力开放给 AI 助手：宿主把工具以 OpenAI function calling
+ * 形式注入工作模式的工具集，模型可在对话中自主调用，调用结果回填给模型。
+ *
+ * 执行方式二选一：
+ *   - script：解包插件并执行包内脚本（.ps1 / .bat / .cmd），标准输出作为结果；
+ *             参数以 -Key Value 命令行参数传入，完整参数另经 PLUGIN_ARGS 环境变量传入
+ *   - http：宿主直接发起 HTTP 请求，响应体作为结果
+ *
+ * 安全约定：插件必须同时声明权限 "ai:tool"（与 manifest.style 需要 "ui:style"
+ * 的做法一致），未声明时工具不会注入 AI，插件详情页会给出提示。
+ */
+struct PluginAiTool
+{
+    QString name;            // 工具名（英文/数字/下划线，全局唯一；建议 <插件id>_<动作>）
+    QString label;           // 显示名称（可空，作描述兜底）
+    QString description;     // 工具描述（AI 据此决定是否调用）
+    QJsonObject parameters;  // 参数 JSON Schema（OpenAI function calling 格式）
+    QString script;          // 包内脚本相对路径（与 http 二选一）
+    PluginAiToolHttp http;   // HTTP 请求定义（与 script 二选一）
+    int timeout = 60;        // 执行超时（秒），默认 60
+    QString riskLevel;       // 声明风险等级：low / medium / high（仅作展示/预留）
+    QString riskNote;        // 风险说明（仅作展示/预留）
+
+    /** 执行方式：ps1 / bat / http / 空（无效） */
+    QString scriptType() const
+    {
+        if (http.isValid())
+            return QStringLiteral("http");
+        if (script.trimmed().isEmpty())
+            return QString();
+        const QString ext = QFileInfo(script).suffix().toLower();
+        if (ext == QStringLiteral("ps1"))
+            return QStringLiteral("ps1");
+        if (ext == QStringLiteral("bat") || ext == QStringLiteral("cmd"))
+            return QStringLiteral("bat");
+        return QString();
+    }
+
+    /** 工具名是否合法：ASCII 字母/数字/下划线/连字符，1~64 字符（函数名规则） */
+    static bool isValidName(const QString &toolName)
+    {
+        if (toolName.isEmpty() || toolName.size() > 64)
+            return false;
+        for (const QChar &c : toolName) {
+            const bool asciiAlnum = c.isLetterOrNumber() && c.unicode() < 128;
+            if (!asciiAlnum && c != QLatin1Char('_') && c != QLatin1Char('-'))
+                return false;
+        }
+        return true;
+    }
+
+    bool isValid() const
+    {
+        return isValidName(name) && (!script.trimmed().isEmpty() || http.isValid());
+    }
+
+    static PluginAiTool fromJson(const QJsonObject &obj)
+    {
+        PluginAiTool t;
+        t.name = obj.value(QStringLiteral("name")).toString().trimmed();
+        t.label = obj.value(QStringLiteral("label")).toString().trimmed();
+        t.description = obj.value(QStringLiteral("description")).toString().trimmed();
+        t.parameters = obj.value(QStringLiteral("parameters")).toObject();
+        t.script = obj.value(QStringLiteral("script")).toString().trimmed();
+        t.timeout = obj.value(QStringLiteral("timeout")).toInt(60);
+        t.riskLevel = obj.value(QStringLiteral("risk")).toString().trimmed();
+        t.riskNote = obj.value(QStringLiteral("riskNote")).toString().trimmed();
+
+        const QJsonObject httpObj = obj.value(QStringLiteral("http")).toObject();
+        if (!httpObj.isEmpty()) {
+            t.http.method = httpObj.value(QStringLiteral("method")).toString().trimmed().toUpper();
+            if (t.http.method.isEmpty())
+                t.http.method = QStringLiteral("GET");
+            t.http.url = httpObj.value(QStringLiteral("url")).toString().trimmed();
+            t.http.body = httpObj.value(QStringLiteral("body")).toString();
+            const QJsonObject headers = httpObj.value(QStringLiteral("headers")).toObject();
+            for (auto it = headers.constBegin(); it != headers.constEnd(); ++it)
+                t.http.headers.insert(it.key(), it.value().toString());
+        }
+        return t;
+    }
+};
+
+/**
  * @brief 插件信息结构体
  *
  * 对应 .BlockBox 包内 plugin.json 清单文件。
@@ -270,12 +375,40 @@ struct PluginInfo
     QList<PluginCommand> commands;      // 对外命令/动作
     PluginUi ui;                        // 内嵌界面定义（有则宿主渲染表单+动作，不弹窗）
     PluginStyleContribution style;      // 启动器样式贡献（manifest.style）
+    QList<PluginAiTool> aiTools;        // 提供给 AI 助手的工具（manifest.aiTools）
 
     QString filePath;           // .BlockBox 文件绝对路径
     bool    loaded = false;     // 是否已成功解析（清单缺失/损坏为 false）
     QString loadError;          // 解析失败时的错误信息
 
     bool isValid() const { return !id.isEmpty() && !name.isEmpty() && loaded; }
+
+    /** 是否声明了 ai:tool 权限（未声明时 aiTools 不会注入 AI） */
+    bool hasAiToolPermission() const
+    {
+        return permissions.contains(QStringLiteral("ai:tool"));
+    }
+
+    /** 有效（可注入/可执行）的 AI 工具数量 */
+    int validAiToolCount() const
+    {
+        int count = 0;
+        for (const PluginAiTool &t : aiTools) {
+            if (t.isValid())
+                ++count;
+        }
+        return count;
+    }
+
+    /** 查找指定名称的 AI 工具，未找到返回无效项 */
+    PluginAiTool aiTool(const QString &toolName) const
+    {
+        for (const PluginAiTool &t : aiTools) {
+            if (t.name == toolName)
+                return t;
+        }
+        return PluginAiTool();
+    }
 
     /** 查找指定 key 的设置项定义，未找到返回无效项 */
     PluginSettingItem settingItem(const QString &key) const

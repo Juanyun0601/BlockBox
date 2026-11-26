@@ -176,6 +176,8 @@ void GameRegistry::clear()
     m_entities.clear();
     m_effects.clear();
     m_enchantments.clear();
+    m_advancementTitles.clear();
+    m_advancementDescriptions.clear();
     m_blockIndex.clear();
     m_itemIndex.clear();
     m_entityIndex.clear();
@@ -243,6 +245,37 @@ void GameRegistry::applyLangObject(const QJsonObject &obj, int &added)
             mergeLangEntry(m_enchantments, m_enchantIndex, fullId, value);
             ++added;
         }
-        // 其他类别（potion./advancements. 等）忽略
+        else if (category == QStringLiteral("advancements"))
+        {
+            // 成就键长这样：advancements.minecraft.story.mine_stone.title
+            // 转成 advancement id：minecraft:story/mine_stone
+            bool isTitle = false;
+            bool isDescription = false;
+            QString path = id;
+            if (path.endsWith(QStringLiteral(".title")))
+            {
+                path.chop(6);
+                isTitle = true;
+            }
+            else if (path.endsWith(QStringLiteral(".description")))
+            {
+                path.chop(12);
+                isDescription = true;
+            }
+            if ((isTitle || isDescription) && !path.isEmpty())
+            {
+                path.replace(QLatin1Char('.'), QLatin1Char('/'));
+                const QString advancementId = effectiveNs + QLatin1Char(':') + path;
+                // 先解析中文再解析英文：中文已有时不覆盖，英文只做兜底
+                QHash<QString, QString> &target =
+                    isTitle ? m_advancementTitles : m_advancementDescriptions;
+                if (!target.contains(advancementId))
+                {
+                    target.insert(advancementId, value);
+                    ++added;
+                }
+            }
+        }
+        // 其他类别（potion. 等）忽略
     }
 }

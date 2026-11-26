@@ -299,7 +299,7 @@ void BedrockVersionDetailPage::startDownload()
             m_progressBar->setVisible(true);
             m_progressBar->setValue(0);
             m_progressLabel->setText(tr("下载失败: %1").arg(error));
-            NotificationManager::showError(this, tr("基岩版安装包下载失败: %1").arg(error));
+            NotificationManager::showErrorWithNetworkCheck(this, tr("基岩版安装包下载失败: %1").arg(error));
 
             m_downloader->deleteLater();
             m_downloader = nullptr;

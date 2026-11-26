@@ -20,6 +20,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 
 namespace {
 
@@ -42,8 +43,9 @@ ParamInfo parseParam(const QJsonObject &obj)
         }
         else
         {
-            // 非字符串类型（int/float/bool）转字符串保留
-            param.defaultValue = QJsonValue::fromVariant(defaultValue.toVariant()).toString();
+            // 非字符串类型（int/float/bool）转字符串保留；
+            // QJsonValue::toString() 对数字/布尔只会返回空串，这里必须走 QVariant
+            param.defaultValue = defaultValue.toVariant().toString();
         }
     }
     param.required = obj.value(QStringLiteral("required")).toBool(true);
@@ -393,6 +395,7 @@ void CommandDatabase::rebuildIndexes()
     {
         const CommandInfo &cmd = m_commands.at(i);
         m_cmdEnglishIdx.insert(cmd.name.toLower(), i);
+        QSet<QChar> firstChars;
         for (const QString &alias : cmd.chinese)
         {
             if (alias.isEmpty())
@@ -400,7 +403,11 @@ void CommandDatabase::rebuildIndexes()
                 continue;
             }
             m_cmdChineseExactIdx.insert(alias.toLower(), i);
-            m_cmdPrefixBucket[alias.at(0).toLower()].append(i);
+            firstChars.insert(alias.at(0).toLower());
+        }
+        for (const QChar &first : firstChars)
+        {
+            m_cmdPrefixBucket[first].append(i);
         }
     }
 
@@ -412,6 +419,7 @@ void CommandDatabase::rebuildIndexes()
     {
         const ItemInfo &item = m_items.at(i);
         m_itemEnglishIdx.insert(item.english.toLower(), i);
+        QSet<QChar> firstChars;
         for (const QString &alias : item.chinese)
         {
             if (alias.isEmpty())
@@ -419,7 +427,11 @@ void CommandDatabase::rebuildIndexes()
                 continue;
             }
             m_itemChineseExactIdx.insert(alias.toLower(), i);
-            m_itemPrefixBucket[alias.at(0).toLower()].append(i);
+            firstChars.insert(alias.at(0).toLower());
+        }
+        for (const QChar &first : firstChars)
+        {
+            m_itemPrefixBucket[first].append(i);
         }
     }
 
@@ -431,6 +443,7 @@ void CommandDatabase::rebuildIndexes()
     {
         const EntityInfo &entity = m_entities.at(i);
         m_entityEnglishIdx.insert(entity.english.toLower(), i);
+        QSet<QChar> firstChars;
         for (const QString &alias : entity.chinese)
         {
             if (alias.isEmpty())
@@ -438,7 +451,11 @@ void CommandDatabase::rebuildIndexes()
                 continue;
             }
             m_entityChineseExactIdx.insert(alias.toLower(), i);
-            m_entityPrefixBucket[alias.at(0).toLower()].append(i);
+            firstChars.insert(alias.at(0).toLower());
+        }
+        for (const QChar &first : firstChars)
+        {
+            m_entityPrefixBucket[first].append(i);
         }
     }
 
@@ -450,6 +467,7 @@ void CommandDatabase::rebuildIndexes()
     {
         const EffectInfo &effect = m_effects.at(i);
         m_effectEnglishIdx.insert(effect.english.toLower(), i);
+        QSet<QChar> firstChars;
         for (const QString &alias : effect.chinese)
         {
             if (alias.isEmpty())
@@ -457,7 +475,11 @@ void CommandDatabase::rebuildIndexes()
                 continue;
             }
             m_effectChineseExactIdx.insert(alias.toLower(), i);
-            m_effectPrefixBucket[alias.at(0).toLower()].append(i);
+            firstChars.insert(alias.at(0).toLower());
+        }
+        for (const QChar &first : firstChars)
+        {
+            m_effectPrefixBucket[first].append(i);
         }
     }
 
@@ -469,6 +491,7 @@ void CommandDatabase::rebuildIndexes()
     {
         const EnchantmentInfo &enchant = m_enchantments.at(i);
         m_enchantEnglishIdx.insert(enchant.english.toLower(), i);
+        QSet<QChar> firstChars;
         for (const QString &alias : enchant.chinese)
         {
             if (alias.isEmpty())
@@ -476,7 +499,11 @@ void CommandDatabase::rebuildIndexes()
                 continue;
             }
             m_enchantChineseExactIdx.insert(alias.toLower(), i);
-            m_enchantPrefixBucket[alias.at(0).toLower()].append(i);
+            firstChars.insert(alias.at(0).toLower());
+        }
+        for (const QChar &first : firstChars)
+        {
+            m_enchantPrefixBucket[first].append(i);
         }
     }
 }

@@ -1335,7 +1335,10 @@ void ContentDownloadPage::addListCard(const ModInfo &info)
     });
     btnLayout->addWidget(favBtn);
 
-    QPushButton *saveBtn = createBtn(":/Images/Icons/download.svg", tr("一键下载最新版本及前置"));
+    QPushButton *saveBtn = createBtn(":/Images/Icons/download.svg",
+                                     m_contentType == ContentType::Modpack
+                                         ? tr("一键安装最新版并新建实例")
+                                         : tr("一键下载最新版本及前置"));
     connect(saveBtn, &QPushButton::clicked, this, [this, info]() {
         emit cardDownloadRequested(info);
     });
@@ -1424,7 +1427,10 @@ QList<MasonryContentCard::ActionSpec> ContentDownloadPage::buildMasonryActions(c
         ShareToFriendDialog::share(this, displayName, info.pageUrl, m_config.displayName);
     }});
 
-    actions.append({ QStringLiteral(":/Images/Icons/download.svg"), tr("一键下载最新版本及前置"), QColor(),
+    actions.append({ QStringLiteral(":/Images/Icons/download.svg"),
+                     m_contentType == ContentType::Modpack ? tr("一键安装最新版并新建实例")
+                                                           : tr("一键下载最新版本及前置"),
+                     QColor(),
                      [this, info]() { emit cardDownloadRequested(info); } });
 
     return actions;

@@ -118,7 +118,7 @@
     },
     {
       "name": "search_resources",
-      "description": "搜索 CurseForge/Modrinth 上的 Minecraft 资源（模组/资源包/光影包/数据包/整合包/世界存档），返回前 20 条匹配结果，含项目名/作者/简介/下载量/加载器/链接。世界存档只有 CurseForge 提供",
+      "description": "搜索 Minecraft 资源：模组/资源包/光影包/数据包/整合包/世界存档来自 CurseForge/Modrinth；插件/投影（content_type=plugin/schematic）来自方块盒子论坛的社区原创作品，返回帖子号，可用 get_forum_thread 看详情。世界存档只有 CurseForge 提供",
       "parameters": {
         "type": "object",
         "properties": {
@@ -128,8 +128,8 @@
           },
           "content_type": {
             "type": "string",
-            "description": "资源类型（world 仅 CurseForge 支持）",
-            "enum": ["mod", "resourcepack", "shaderpack", "datapack", "modpack", "world"]
+            "description": "资源类型：plugin/schematic 为方块盒子论坛的社区原创插件/投影（world 仅 CurseForge 支持）",
+            "enum": ["mod", "resourcepack", "shaderpack", "datapack", "modpack", "world", "plugin", "schematic"]
           },
           "game_version": {
             "type": "string",
@@ -152,6 +152,63 @@
           }
         },
         "required": ["query", "content_type"]
+      }
+    },
+    {
+      "name": "search_forum",
+      "description": "搜索方块盒子论坛：社区帖子、插件、投影、教程、有奖问答、网站/服务器导航。支持关键词 + 板块 + 标签 + 排序，也可以不填关键词直接浏览某板块的最新/最热帖子。返回帖子号、标题、类型、板块、作者、标签、回复/浏览数、命中摘要和帖子链接；想看正文、附件或版本信息再用 get_forum_thread。找玩家原创的插件、投影、教程、社区讨论、服务器或网站推荐时优先用它（比 web_search 更准，也不用打开浏览器）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词（标题/正文/标签都能命中）；留空则按板块或标签浏览最新内容"
+          },
+          "board": {
+            "type": "string",
+            "description": "板块过滤：plugin（插件分享）、schematic（投影分享）、tutorial（教程分享）、question（有奖问答）、server-nav（服务器导航）、website-nav（网站导航）、help（使用求助）、general（综合讨论）、chat（闲聊灌水），留空搜全站"
+          },
+          "tag": {
+            "type": "string",
+            "description": "标签过滤，如 生存、1.20.1、优化（可选）"
+          },
+          "sort": {
+            "type": "string",
+            "description": "排序方式（不填关键词浏览时生效；按关键词搜索时论坛固定按最后回复排序）",
+            "enum": ["latest", "new", "hot"],
+            "default": "latest"
+          },
+          "page": {
+            "type": "integer",
+            "description": "页码，从 1 开始（默认 1）",
+            "default": 1
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_forum_thread",
+      "description": "读取方块盒子论坛帖子的详情：正文、前几层回复，以及帖子挂载的插件包（名称/版本/大小/下载量/相关链接）、投影版本清单、教程附件、有奖问答悬赏状态、导航地址。先用 search_forum 找到帖子号，再用这个工具深入看。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "thread_id": {
+            "type": "integer",
+            "description": "帖子号（search_forum / search_resources 结果里的「帖子 #N」）"
+          },
+          "page": {
+            "type": "integer",
+            "description": "回复页码，从 1 开始（默认 1）",
+            "default": 1
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "正文最多返回多少字符（默认 6000，范围 500~12000）",
+            "default": 6000
+          }
+        },
+        "required": ["thread_id"]
       }
     },
     {
@@ -501,7 +558,7 @@
     },
     {
       "name": "check_mod_updates",
-      "description": "批量检查实例模组的可用更新。通过文件指纹在 Modrinth/CurseForge 匹配在线版本，返回每个模组的当前版本、最新版本、更新说明与下载链接。联网操作，耗时较长，请耐心等待。",
+      "description": "批量检查实例里已安装资源的可用更新。resource_type 可选 mod（默认，模组）/ resourcepack（资源包）/ shader（光影包）/ datapack（数据包）；通过文件指纹在 Modrinth 匹配在线版本（模组会再兜底 CurseForge 识别），返回每个资源的当前版本、最新版本与下载链接。联网操作，耗时较长，请耐心等待。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -509,13 +566,18 @@
             "type": "string",
             "description": "实例路径（.minecraft 根目录或版本隔离目录，绝对路径）"
           },
+          "resource_type": {
+            "type": "string",
+            "enum": ["mod", "resourcepack", "shader", "datapack"],
+            "description": "要检查的资源类型，默认 mod；资源包 / 光影包 / 数据包只走 Modrinth 哈希比对"
+          },
           "game_version": {
             "type": "string",
-            "description": "游戏版本过滤，如 1.20.1（可选，未传则不限版本）"
+            "description": "游戏版本过滤，如 1.20.1（仅 mod 有效，未传则不限版本）"
           },
           "loader": {
             "type": "string",
-            "description": "加载器过滤，如 fabric/forge/neoforge（可选）"
+            "description": "加载器过滤，如 fabric/forge/neoforge（仅 mod 有效）"
           }
         },
         "required": ["instance_path"]

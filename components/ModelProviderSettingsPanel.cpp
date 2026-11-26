@@ -10,7 +10,9 @@
 #include <QButtonGroup>
 #include <QColor>
 #include <QComboBox>
+#include <QDateTime>
 #include <QFile>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QJsonDocument>
 #include <QJsonParseError>
@@ -73,6 +75,13 @@ namespace
         w->style()->unpolish(w);
         w->style()->polish(w);
     }
+
+    QString formatCacheTime(qint64 secsSinceEpoch)
+    {
+        if (secsSinceEpoch <= 0)
+            return QString();
+        return QDateTime::fromSecsSinceEpoch(secsSinceEpoch).toString(QStringLiteral("MM-dd hh:mm"));
+    }
 } // namespace
 
 ModelProviderSettingsPanel::ModelProviderSettingsPanel(QWidget *parent)
@@ -129,6 +138,29 @@ ModelProviderSettingsPanel::ModelProviderSettingsPanel(QWidget *parent)
     m_addPage = buildAddProviderPage();
     m_stack->addWidget(m_addPage);
     root->addWidget(m_stack, 1);
+
+    // 模型列表在线获取：成功后写入缓存并重建当前服务商页
+    m_fetcher = new AiModelListFetcher(this);
+    connect(m_fetcher, &AiModelListFetcher::finished, this, [this](const AiModelListResult &result) {
+        const QString rowId = m_fetchingRowId;
+        m_fetchingRowId.clear();
+
+        if (!result.ok) {
+            NotificationManager::showError(this, result.error);
+            if (rowId == m_currentId)
+                selectProvider(rowId, true);
+            return;
+        }
+
+        const QString url = providerUrlForRow(rowId);
+        if (!url.isEmpty())
+            AiModelListFetcher::storeCache(url, result.ids);
+
+        NotificationManager::showSuccess(this,
+            tr("已从服务商获取 %1 个模型，列表已缓存。").arg(result.ids.size()));
+        if (rowId == m_currentId)
+            selectProvider(rowId, true);
+    });
 
     rebuildProviderList();
     selectProvider(QStringLiteral("preset:DeepSeek"));
@@ -233,6 +265,79 @@ void ModelProviderSettingsPanel::appendFlatCustomModel(const QJsonObject &entry)
 }
 
 // ============================================================================
+// 模型列表（在线获取 + 缓存）
+// ============================================================================
+
+QString ModelProviderSettingsPanel::providerUrlForRow(const QString &rowId) const
+{
+    if (rowId.startsWith(QStringLiteral("preset:"))) {
+        const AiProviderPreset preset = aiProviderPresetByKey(rowId.mid(7));
+        if (preset.configKey.isEmpty())
+            return QString();
+        const QString saved =
+            SettingsManager::instance()->getProperty(preset.configKey + QStringLiteral("/url")).toString().trimmed();
+        return saved.isEmpty() ? preset.defaultUrl : saved;
+    }
+
+    if (rowId.startsWith(QStringLiteral("custom:"))) {
+        const QString pid = rowId.mid(7);
+        for (const QJsonValue &v : loadCustomProviders()) {
+            const QJsonObject prov = v.toObject();
+            if (prov[QStringLiteral("id")].toString() == pid)
+                return prov[QStringLiteral("apiUrl")].toString();
+        }
+    }
+    return QString();
+}
+
+void ModelProviderSettingsPanel::fetchModelList(const QString &rowId, const QString &apiUrl,
+                                                const QString &apiKey)
+{
+    // 以「当前保存的配置」为准，避免用户改了地址 / Key 后按钮仍用旧值
+    QString url = providerUrlForRow(rowId).trimmed();
+    if (url.isEmpty())
+        url = apiUrl.trimmed();
+    if (url.isEmpty()) {
+        NotificationManager::showError(this, tr("请先填写 API 地址，再获取模型列表。"));
+        return;
+    }
+
+    QString key = apiKey.trimmed();
+    if (rowId.startsWith(QStringLiteral("preset:"))) {
+        const AiProviderPreset preset = aiProviderPresetByKey(rowId.mid(7));
+        if (!preset.configKey.isEmpty())
+            key = SettingsManager::instance()
+                      ->getProperty(preset.configKey + QStringLiteral("/key")).toString().trimmed();
+    } else if (rowId.startsWith(QStringLiteral("custom:"))) {
+        const QString pid = rowId.mid(7);
+        for (const QJsonValue &v : loadCustomProviders()) {
+            const QJsonObject prov = v.toObject();
+            if (prov[QStringLiteral("id")].toString() == pid) {
+                key = prov[QStringLiteral("apiKey")].toString().trimmed();
+                break;
+            }
+        }
+    }
+
+    if (m_fetcher->isRunning())
+        m_fetcher->cancel();
+    m_fetchingRowId = rowId;
+    m_fetcher->fetch(url, key);
+}
+
+QPushButton *ModelProviderSettingsPanel::createFetchButton(const QString &rowId, const QString &apiUrl,
+                                                           const QString &apiKey)
+{
+    auto *btn = new QPushButton(tr("刷新模型列表"));
+    btn->setCursor(Qt::PointingHandCursor);
+    btn->setStyleSheet(StyleKit::outlineButton());
+    connect(btn, &QPushButton::clicked, this, [this, rowId, apiUrl, apiKey]() {
+        fetchModelList(rowId, apiUrl, apiKey);
+    });
+    return btn;
+}
+
+// ============================================================================
 // 左栏列表
 // ============================================================================
 
@@ -302,8 +407,8 @@ void ModelProviderSettingsPanel::rebuildProviderList()
     }
     for (const QJsonValue &pv : providers) {
         const QJsonObject prov = pv.toObject();
-        const bool active = !prov[QStringLiteral("apiKey")].toString().isEmpty()
-            && !prov[QStringLiteral("models")].toArray().isEmpty();
+        // 有 Key 即视为已配置；模型列表在选用时从服务商获取，不再要求预先添加模型
+        const bool active = !prov[QStringLiteral("apiKey")].toString().isEmpty();
         m_sideLayout->addWidget(createProviderRow(
             prov[QStringLiteral("name")].toString(), active,
             QStringLiteral("custom:") + prov[QStringLiteral("id")].toString()));
@@ -508,6 +613,7 @@ QWidget *ModelProviderSettingsPanel::buildPresetPage(const PresetInfo &info)
         SettingsManager::instance()->setProperty(info.configKey + QStringLiteral("/key"),
             keyEdit->text().trimmed());
         rebuildProviderList();
+        emit providersChanged();
     });
 
     // ── API 地址 ──
@@ -534,20 +640,29 @@ QWidget *ModelProviderSettingsPanel::buildPresetPage(const PresetInfo &info)
         if (url.isEmpty())
             urlEdit->setText(info.defaultUrl);
         resetUrlBtn->setVisible(!isDefault);
+        emit providersChanged();
     });
 
-    // ── 模型列表 ──
+    // ── 模型列表（优先缓存；没有缓存时用内置清单兜底，点刷新从服务商获取）──
     const QString defaultModelId =
         settings->getProperty(info.configKey + QStringLiteral("/selectedModel")).toString();
+    const QString savedKeyForFetch = savedKey;
 
+    auto *listTitleRow = new QHBoxLayout();
+    listTitleRow->setContentsMargins(0, 0, 0, 0);
+    listTitleRow->setSpacing(8);
     auto *listTitle = new QLabel(tr("模型列表"));
     listTitle->setStyleSheet(StyleKit::cardTitle());
-    pageLayout->addWidget(listTitle);
+    listTitleRow->addWidget(listTitle);
+    listTitleRow->addStretch();
+    listTitleRow->addWidget(createFetchButton(m_currentId, effectiveUrl, savedKeyForFetch));
+    pageLayout->addLayout(listTitleRow);
 
     QVBoxLayout *rowsLayout = nullptr;
     QWidget *modelCard = createModelListCard(rowsLayout);
 
-    // 预设模型（按 URL 特征从内置清单中筛选）
+    // 模型 ID → 展示名（内置清单 + 手工添加的模型）
+    QHash<QString, QString> names;
     QJsonArray presetModels;
     QFile modelsFile(QStringLiteral(":/resources/ai_models.json"));
     if (modelsFile.open(QIODevice::ReadOnly)) {
@@ -558,8 +673,11 @@ QWidget *ModelProviderSettingsPanel::buildPresetPage(const PresetInfo &info)
         if (pe.error == QJsonParseError::NoError && doc.isObject() && !hint.isEmpty()) {
             for (const QJsonValue &v : doc.object()[QStringLiteral("models")].toArray()) {
                 const QJsonObject m = v.toObject();
-                if (m[QStringLiteral("apiUrl")].toString().contains(hint))
+                if (m[QStringLiteral("apiUrl")].toString().contains(hint)) {
                     presetModels.append(m);
+                    names.insert(m[QStringLiteral("id")].toString(),
+                                 m[QStringLiteral("displayName")].toString());
+                }
             }
         }
     }
@@ -569,13 +687,37 @@ QWidget *ModelProviderSettingsPanel::buildPresetPage(const PresetInfo &info)
     for (const QJsonValue &v : loadFlatCustomModels()) {
         const QJsonObject e = v.toObject();
         if (!e.contains(QStringLiteral("providerId"))
-            && e[QStringLiteral("apiUrl")].toString() == effectiveUrl)
+            && e[QStringLiteral("apiUrl")].toString() == effectiveUrl) {
             customEntries.append(e);
+            names.insert(e[QStringLiteral("id")].toString(),
+                         e[QStringLiteral("displayName")].toString(e[QStringLiteral("id")].toString()));
+        }
     }
 
-    const bool hasAny = !presetModels.isEmpty() || !customEntries.isEmpty();
+    QStringList ids = AiModelListFetcher::cachedIds(effectiveUrl);
+    const bool fromCache = !ids.isEmpty();
+    if (!fromCache) {
+        for (const QJsonValue &v : presetModels)
+            ids.append(v.toObject()[QStringLiteral("id")].toString());
+    }
+    for (const QJsonValue &v : customEntries) {
+        const QString id = v.toObject()[QStringLiteral("id")].toString();
+        if (!id.isEmpty() && !ids.contains(id))
+            ids.append(id);
+    }
+    if (!defaultModelId.isEmpty() && !ids.contains(defaultModelId))
+        ids.prepend(defaultModelId);
+
+    if (fromCache) {
+        auto *cacheHint = new QLabel(tr("已缓存 · 更新于 %1")
+            .arg(formatCacheTime(AiModelListFetcher::cachedAt(effectiveUrl))));
+        cacheHint->setStyleSheet(StyleKit::captionLabel());
+        pageLayout->addWidget(cacheHint);
+    }
+
+    const bool hasAny = !ids.isEmpty();
     if (!hasAny) {
-        auto *empty = new QLabel(tr("该服务商暂无预设模型，可在下方输入模型 ID 添加。"));
+        auto *empty = new QLabel(tr("还没有获取过模型列表。点「刷新模型列表」从服务商获取；也可以手动输入模型 ID 添加。"));
         empty->setObjectName(QStringLiteral("mpsEmptyHint"));
         empty->setWordWrap(true);
         rowsLayout->addWidget(empty);
@@ -585,35 +727,40 @@ QWidget *ModelProviderSettingsPanel::buildPresetPage(const PresetInfo &info)
         SettingsManager::instance()->setProperty(info.configKey + QStringLiteral("/selectedModel"), id);
         SettingsManager::instance()->setProperty(info.configKey + QStringLiteral("/selectedModelName"), displayName);
         NotificationManager::showInfo(this, tr("已将 %1 设为 %2 的默认模型。").arg(displayName, info.name));
+        emit providersChanged();
         selectProvider(m_currentId, true);
     };
 
-    for (const QJsonValue &v : presetModels) {
-        const QJsonObject m = v.toObject();
-        const QString id = m[QStringLiteral("id")].toString();
-        const QString displayName = m[QStringLiteral("displayName")].toString();
-        rowsLayout->addWidget(createModelRow(displayName, id, id == defaultModelId,
-            [setDefaultModel, id, displayName]() { setDefaultModel(id, displayName); }));
-    }
-    for (const QJsonValue &v : customEntries) {
-        const QJsonObject e = v.toObject();
-        const QString id = e[QStringLiteral("id")].toString();
-        const QString displayName = e[QStringLiteral("displayName")].toString(id);
+    for (const QString &id : ids) {
+        if (id.isEmpty())
+            continue;
+        const QString displayName = names.value(id, id);
+        bool removable = false;
+        for (const QJsonValue &v : customEntries) {
+            if (v.toObject()[QStringLiteral("id")].toString() == id) {
+                removable = true;
+                break;
+            }
+        }
         rowsLayout->addWidget(createModelRow(displayName, id, id == defaultModelId,
             [setDefaultModel, id, displayName]() { setDefaultModel(id, displayName); },
-            [this, id, effectiveUrl]() {
-                // 从扁平表中移除该自定义模型（仅限无 providerId 的同端点条目）
-                QJsonArray kept;
-                for (const QJsonValue &ev : loadFlatCustomModels()) {
-                    const QJsonObject e = ev.toObject();
-                    if (e[QStringLiteral("id")].toString() != id
-                        || e.contains(QStringLiteral("providerId"))
-                        || e[QStringLiteral("apiUrl")].toString() != effectiveUrl)
-                        kept.append(e);
-                }
-                saveFlatCustomModels(kept);
-                selectProvider(m_currentId, true);
-            }));
+            removable
+                ? std::function<void()>([this, id, effectiveUrl, fromCache]() {
+                      // 从扁平表中移除该自定义模型（仅限无 providerId 的同端点条目）
+                      QJsonArray kept;
+                      for (const QJsonValue &ev : loadFlatCustomModels()) {
+                          const QJsonObject e = ev.toObject();
+                          if (e[QStringLiteral("id")].toString() != id
+                              || e.contains(QStringLiteral("providerId"))
+                              || e[QStringLiteral("apiUrl")].toString() != effectiveUrl)
+                              kept.append(e);
+                      }
+                      saveFlatCustomModels(kept);
+                      if (fromCache)
+                          AiModelListFetcher::removeFromCache(effectiveUrl, id);
+                      selectProvider(m_currentId, true);
+                  })
+                : std::function<void()>()));
     }
 
     // 空态 / 有内容时切换卡片描边（虚线 = 空态，实线 = 有内容）
@@ -628,19 +775,28 @@ QWidget *ModelProviderSettingsPanel::buildPresetPage(const PresetInfo &info)
     auto *addBtn = new QPushButton(tr("添加模型"));
     addBtn->setCursor(Qt::PointingHandCursor);
     addBtn->setStyleSheet(StyleKit::smallPrimaryButton());
-    connect(addBtn, &QPushButton::clicked, this, [this, info, customIdEdit]() {
+    connect(addBtn, &QPushButton::clicked, this, [this, info, customIdEdit, effectiveUrl]() {
         const QString id = customIdEdit->text().trimmed();
         if (id.isEmpty())
             return;
         QJsonObject entry;
         entry[QStringLiteral("id")] = id;
         entry[QStringLiteral("displayName")] = info.name + QLatin1Char(' ') + id;
-        entry[QStringLiteral("apiUrl")] = info.defaultUrl;
+        entry[QStringLiteral("apiUrl")] = effectiveUrl;
         entry[QStringLiteral("apiKey")] =
             SettingsManager::instance()->getProperty(info.configKey + QStringLiteral("/key")).toString();
         entry[QStringLiteral("isCustom")] = true;
         appendFlatCustomModel(entry);
+
+        // 已有缓存时把手工模型也并入缓存，保证列表里看得见
+        QStringList cached = AiModelListFetcher::cachedIds(effectiveUrl);
+        if (!cached.isEmpty() && !cached.contains(id)) {
+            cached.append(id);
+            AiModelListFetcher::storeCache(effectiveUrl, cached);
+        }
+
         NotificationManager::showSuccess(this, tr("已添加模型 %1。").arg(id));
+        emit providersChanged();
         selectProvider(m_currentId, true);
     });
     pageLayout->addLayout(createFormRow(tr("自定义模型"), customIdEdit, addBtn));
@@ -693,7 +849,7 @@ QWidget *ModelProviderSettingsPanel::buildCustomProviderPage(const QJsonObject &
     titleRow->addWidget(delBtn);
     pageLayout->addLayout(titleRow);
 
-    auto *desc = new QLabel(tr("自定义供应商的模型会同时出现在模型选择窗口中，修改会即时保存。"));
+    auto *desc = new QLabel(tr("模型列表从服务商在线获取并缓存；点模型可设为该供应商的默认模型，修改会即时保存。"));
     desc->setStyleSheet(StyleKit::mutedLabel());
     desc->setWordWrap(true);
     pageLayout->addWidget(desc);
@@ -708,14 +864,16 @@ QWidget *ModelProviderSettingsPanel::buildCustomProviderPage(const QJsonObject &
         updateProvider([&name](QJsonObject &p) { p[QStringLiteral("name")] = name; });
         title->setText(name);
         rebuildProviderList();
+        emit providersChanged();
     });
 
     // ── API 地址 ──
     auto *urlEdit = new QLineEdit(prov[QStringLiteral("apiUrl")].toString());
     urlEdit->setPlaceholderText(QStringLiteral("https://api.example.com/v1"));
     pageLayout->addLayout(createFormRow(tr("API 地址"), urlEdit));
-    connect(urlEdit, &QLineEdit::editingFinished, this, [updateProvider, urlEdit]() {
+    connect(urlEdit, &QLineEdit::editingFinished, this, [this, updateProvider, urlEdit]() {
         updateProvider([&urlEdit](QJsonObject &p) { p[QStringLiteral("apiUrl")] = urlEdit->text().trimmed(); });
+        emit providersChanged();
     });
 
     // ── API Key ──
@@ -735,6 +893,7 @@ QWidget *ModelProviderSettingsPanel::buildCustomProviderPage(const QJsonObject &
     connect(keyEdit, &QLineEdit::editingFinished, this, [this, updateProvider, keyEdit]() {
         updateProvider([&keyEdit](QJsonObject &p) { p[QStringLiteral("apiKey")] = keyEdit->text().trimmed(); });
         rebuildProviderList();
+        emit providersChanged();
     });
 
     // ── API 格式 ──
@@ -758,33 +917,71 @@ QWidget *ModelProviderSettingsPanel::buildCustomProviderPage(const QJsonObject &
     formatHint->setWordWrap(true);
     pageLayout->addWidget(formatHint);
 
-    // ── 模型列表 ──
+    // ── 模型列表（优先缓存；点「刷新模型列表」从服务商获取）──
     const QString defaultModelId = prov[QStringLiteral("defaultModel")].toString();
+    const QString providerUrl = prov[QStringLiteral("apiUrl")].toString();
+    const QString providerKey = prov[QStringLiteral("apiKey")].toString();
+    const QJsonArray models = prov[QStringLiteral("models")].toArray();
 
+    auto *listTitleRow = new QHBoxLayout();
+    listTitleRow->setContentsMargins(0, 0, 0, 0);
+    listTitleRow->setSpacing(8);
     auto *listTitle = new QLabel(tr("模型列表"));
     listTitle->setStyleSheet(StyleKit::cardTitle());
-    pageLayout->addWidget(listTitle);
+    listTitleRow->addWidget(listTitle);
+    listTitleRow->addStretch();
+    listTitleRow->addWidget(createFetchButton(m_currentId, providerUrl, providerKey));
+    pageLayout->addLayout(listTitleRow);
 
     QVBoxLayout *rowsLayout = nullptr;
     QWidget *modelCard = createModelListCard(rowsLayout);
 
-    const QJsonArray models = prov[QStringLiteral("models")].toArray();
-    if (models.isEmpty()) {
-        auto *empty = new QLabel(tr("当前没有配置模型，添加模型后可在聊天中使用。"));
+    QHash<QString, QString> names;
+    for (const QJsonValue &v : models) {
+        const QJsonObject m = v.toObject();
+        const QString id = m[QStringLiteral("id")].toString();
+        names.insert(id, m[QStringLiteral("displayName")].toString(id));
+    }
+
+    QStringList ids = AiModelListFetcher::cachedIds(providerUrl);
+    const bool fromCache = !ids.isEmpty();
+    if (!fromCache) {
+        for (const QJsonValue &v : models)
+            ids.append(v.toObject()[QStringLiteral("id")].toString());
+    } else {
+        for (const QJsonValue &v : models) {
+            const QString id = v.toObject()[QStringLiteral("id")].toString();
+            if (!id.isEmpty() && !ids.contains(id))
+                ids.append(id);
+        }
+    }
+    if (!defaultModelId.isEmpty() && !ids.contains(defaultModelId))
+        ids.prepend(defaultModelId);
+
+    if (fromCache) {
+        auto *cacheHint = new QLabel(tr("已缓存 · 更新于 %1")
+            .arg(formatCacheTime(AiModelListFetcher::cachedAt(providerUrl))));
+        cacheHint->setStyleSheet(StyleKit::captionLabel());
+        pageLayout->addWidget(cacheHint);
+    }
+
+    if (ids.isEmpty()) {
+        auto *empty = new QLabel(tr("还没有获取过模型列表。点「刷新模型列表」从服务商获取；也可以手动输入模型 ID 添加。"));
         empty->setObjectName(QStringLiteral("mpsEmptyHint"));
         empty->setWordWrap(true);
         rowsLayout->addWidget(empty);
     }
-    for (const QJsonValue &v : models) {
-        const QJsonObject m = v.toObject();
-        const QString id = m[QStringLiteral("id")].toString();
-        const QString displayName = m[QStringLiteral("displayName")].toString(id);
+    for (const QString &id : ids) {
+        if (id.isEmpty())
+            continue;
+        const QString displayName = names.value(id, id);
         rowsLayout->addWidget(createModelRow(displayName, id, id == defaultModelId,
             [this, updateProvider, id]() {
                 updateProvider([&id](QJsonObject &p) { p[QStringLiteral("defaultModel")] = id; });
+                emit providersChanged();
                 selectProvider(m_currentId, true);
             },
-            [this, updateProvider, id]() {
+            [this, updateProvider, id, providerUrl, fromCache]() {
                 updateProvider([&id](QJsonObject &p) {
                     QJsonArray kept;
                     for (const QJsonValue &mv : p[QStringLiteral("models")].toArray()) {
@@ -795,11 +992,14 @@ QWidget *ModelProviderSettingsPanel::buildCustomProviderPage(const QJsonObject &
                     if (p[QStringLiteral("defaultModel")].toString() == id)
                         p[QStringLiteral("defaultModel")] = QString();
                 });
+                if (fromCache)
+                    AiModelListFetcher::removeFromCache(providerUrl, id);
                 rebuildProviderList();
+                emit providersChanged();
                 selectProvider(m_currentId, true);
             }));
     }
-    modelCard->setProperty("filled", !models.isEmpty());
+    modelCard->setProperty("filled", !ids.isEmpty());
     repolish(modelCard);
     pageLayout->addWidget(modelCard);
 
@@ -811,7 +1011,7 @@ QWidget *ModelProviderSettingsPanel::buildCustomProviderPage(const QJsonObject &
     auto *addBtn = new QPushButton(tr("添加模型"));
     addBtn->setCursor(Qt::PointingHandCursor);
     addBtn->setStyleSheet(StyleKit::smallPrimaryButton());
-    connect(addBtn, &QPushButton::clicked, this, [this, updateProvider, idEdit, nameField]() {
+    connect(addBtn, &QPushButton::clicked, this, [this, updateProvider, idEdit, nameField, providerUrl]() {
         const QString id = idEdit->text().trimmed();
         if (id.isEmpty())
             return;
@@ -825,8 +1025,17 @@ QWidget *ModelProviderSettingsPanel::buildCustomProviderPage(const QJsonObject &
             models.append(m);
             p[QStringLiteral("models")] = models;
         });
+
+        // 已有缓存时把手工模型也并入缓存，保证列表里看得见
+        QStringList cached = AiModelListFetcher::cachedIds(providerUrl);
+        if (!cached.isEmpty() && !cached.contains(id)) {
+            cached.append(id);
+            AiModelListFetcher::storeCache(providerUrl, cached);
+        }
+
         NotificationManager::showSuccess(this, tr("已添加模型 %1。").arg(id));
         rebuildProviderList();
+        emit providersChanged();
         selectProvider(m_currentId, true);
     });
 
@@ -877,8 +1086,9 @@ QWidget *ModelProviderSettingsPanel::buildAddProviderPage()
     title->setStyleSheet(StyleKit::pageTitle());
     pageLayout->addWidget(title);
 
-    auto *desc = new QLabel(tr("配置一个完全自定义的 API 端点和初始模型。"));
+    auto *desc = new QLabel(tr("填写名称与 API 地址即可创建。模型不必预先添加，之后在服务商页面点「刷新模型列表」即可从服务商获取。"));
     desc->setStyleSheet(StyleKit::mutedLabel());
+    desc->setWordWrap(true);
     pageLayout->addWidget(desc);
 
     m_addNameEdit = new QLineEdit();
@@ -910,69 +1120,21 @@ QWidget *ModelProviderSettingsPanel::buildAddProviderPage()
     m_addFormatCombo->installEventFilter(this);
     pageLayout->addLayout(createFormRow(tr("API 格式"), m_addFormatCombo));
 
-    // ── 初始模型列表 ──
-    auto *listTitle = new QLabel(tr("模型列表"));
-    listTitle->setStyleSheet(StyleKit::cardTitle());
-    pageLayout->addWidget(listTitle);
-
-    QWidget *modelCard = createModelListCard(m_addModelsLayout);
-    pageLayout->addWidget(modelCard);
-
-    // 内联添加模型行（点击“添加模型”展开）
-    auto *inlineRowWidget = new QWidget();
-    auto *inlineRow = new QHBoxLayout(inlineRowWidget);
-    inlineRow->setContentsMargins(0, 0, 0, 0);
-    inlineRow->setSpacing(10);
-    auto *stageIdEdit = new QLineEdit();
-    stageIdEdit->setPlaceholderText(tr("模型 ID，如 gpt-5"));
-    auto *stageNameEdit = new QLineEdit();
-    stageNameEdit->setPlaceholderText(tr("显示名称（可选）"));
-    auto *stageConfirmBtn = new QPushButton(tr("确定"));
-    stageConfirmBtn->setCursor(Qt::PointingHandCursor);
-    stageConfirmBtn->setStyleSheet(StyleKit::smallPrimaryButton());
-    inlineRow->addWidget(stageIdEdit, 1);
-    inlineRow->addWidget(stageNameEdit, 1);
-    inlineRow->addWidget(stageConfirmBtn);
-    inlineRowWidget->hide();
-    pageLayout->addWidget(inlineRowWidget);
-
-    auto *stageBtn = new QPushButton(tr("+ 添加模型"));
-    stageBtn->setCursor(Qt::PointingHandCursor);
-    stageBtn->setStyleSheet(StyleKit::outlineButton());
-    connect(stageBtn, &QPushButton::clicked, this, [inlineRowWidget, stageIdEdit]() {
-        inlineRowWidget->setVisible(!inlineRowWidget->isVisible());
-        if (inlineRowWidget->isVisible())
-            stageIdEdit->setFocus();
-    });
-    pageLayout->addWidget(stageBtn);
-
-    auto stageModel = [this, stageIdEdit, stageNameEdit, inlineRowWidget]() {
-        const QString id = stageIdEdit->text().trimmed();
-        if (id.isEmpty())
-            return;
-        const QString displayName = stageNameEdit->text().trimmed().isEmpty()
-            ? id : stageNameEdit->text().trimmed();
-        QJsonObject m;
-        m[QStringLiteral("id")] = id;
-        m[QStringLiteral("displayName")] = displayName;
-        m_stagedModels.append(m);
-        stageIdEdit->clear();
-        stageNameEdit->clear();
-        refreshAddModelsCard();
-        inlineRowWidget->hide();
-    };
-    connect(stageConfirmBtn, &QPushButton::clicked, this, stageModel);
-    connect(stageIdEdit, &QLineEdit::returnPressed, this, stageModel);
+    // ── 说明：模型不用在这里填 ──
+    auto *hint = new QLabel(tr("添加后会出现在左侧列表里。模型不必在这里填写——回到服务商页面点「刷新模型列表」，就会从服务商在线获取并缓存。"));
+    hint->setObjectName(QStringLiteral("mpsEmptyHint"));
+    hint->setWordWrap(true);
+    pageLayout->addWidget(hint);
 
     pageLayout->addStretch();
 
-    // ── 底部：提示 + 创建按钮 ──
+    // ── 底部：创建按钮 ──
     auto *bottomRow = new QHBoxLayout();
     bottomRow->setContentsMargins(0, 0, 0, 0);
     bottomRow->setSpacing(10);
-    auto *hint = new QLabel(tr("ⓘ 添加供应商前，请至少添加一个模型。"));
-    hint->setObjectName(QStringLiteral("mpsEmptyHint"));
-    bottomRow->addWidget(hint, 1);
+    auto *tip = new QLabel(tr("填好名称和 API 地址即可添加。"));
+    tip->setObjectName(QStringLiteral("mpsEmptyHint"));
+    bottomRow->addWidget(tip, 1);
 
     m_addCreateBtn = new QPushButton(tr("添加供应商"));
     m_addCreateBtn->setCursor(Qt::PointingHandCursor);
@@ -981,24 +1143,19 @@ QWidget *ModelProviderSettingsPanel::buildAddProviderPage()
     bottomRow->addWidget(m_addCreateBtn);
     pageLayout->addLayout(bottomRow);
 
-    connect(m_addNameEdit, &QLineEdit::textChanged, this, [this]() {
-        m_addCreateBtn->setEnabled(
-            !m_addNameEdit->text().trimmed().isEmpty()
-            && !m_addUrlEdit->text().trimmed().isEmpty()
-            && !m_stagedModels.isEmpty());
-    });
-    connect(m_addUrlEdit, &QLineEdit::textChanged, this, [this]() {
-        m_addCreateBtn->setEnabled(
-            !m_addNameEdit->text().trimmed().isEmpty()
-            && !m_addUrlEdit->text().trimmed().isEmpty()
-            && !m_stagedModels.isEmpty());
-    });
+    auto updateCreateEnabled = [this]() {
+        m_addCreateBtn->setEnabled(!m_addNameEdit->text().trimmed().isEmpty()
+                                   && !m_addUrlEdit->text().trimmed().isEmpty());
+    };
+    connect(m_addNameEdit, &QLineEdit::textChanged, this, updateCreateEnabled);
+    connect(m_addUrlEdit, &QLineEdit::textChanged, this, updateCreateEnabled);
+    updateCreateEnabled();
 
-    // 确定创建
-    connect(m_addCreateBtn, &QPushButton::clicked, this, [this]() {
+    // 确定创建：只保存服务商本身，不再要求预先添加模型
+    connect(m_addCreateBtn, &QPushButton::clicked, this, [this, updateCreateEnabled]() {
         const QString name = m_addNameEdit->text().trimmed();
         const QString url = m_addUrlEdit->text().trimmed();
-        if (name.isEmpty() || url.isEmpty() || m_stagedModels.isEmpty())
+        if (name.isEmpty() || url.isEmpty())
             return;
         if (!url.startsWith(QStringLiteral("http"))) {
             NotificationManager::showError(this, tr("API 地址需以 http(s):// 开头，请检查后重试。"));
@@ -1011,9 +1168,8 @@ QWidget *ModelProviderSettingsPanel::buildAddProviderPage()
         prov[QStringLiteral("apiUrl")] = url;
         prov[QStringLiteral("apiKey")] = m_addKeyEdit->text().trimmed();
         prov[QStringLiteral("apiFormat")] = m_addFormatCombo->currentData().toString();
-        prov[QStringLiteral("models")] = m_stagedModels;
-        prov[QStringLiteral("defaultModel")] =
-            m_stagedModels.at(0).toObject()[QStringLiteral("id")].toString();
+        prov[QStringLiteral("models")] = QJsonArray();
+        prov[QStringLiteral("defaultModel")] = QString();
 
         QJsonArray providers = loadCustomProviders();
         providers.append(prov);
@@ -1025,56 +1181,17 @@ QWidget *ModelProviderSettingsPanel::buildAddProviderPage()
         m_addUrlEdit->clear();
         m_addKeyEdit->clear();
         m_addFormatCombo->setCurrentIndex(0);
-        m_stagedModels = QJsonArray();
-        refreshAddModelsCard();
+        updateCreateEnabled();
 
-        NotificationManager::showSuccess(this, tr("已添加供应商 %1。").arg(name));
-        selectProvider(QStringLiteral("custom:") + prov[QStringLiteral("id")].toString(), true);
+        emit providersChanged();
+        NotificationManager::showSuccess(this,
+            tr("已添加供应商 %1，正在获取它的模型列表…").arg(name));
+
+        const QString rowId = QStringLiteral("custom:") + prov[QStringLiteral("id")].toString();
+        selectProvider(rowId, true);
+        // 添加完成后顺手拉一次模型列表，失败也不影响供应商本身
+        fetchModelList(rowId, url, prov[QStringLiteral("apiKey")].toString());
     });
 
-    refreshAddModelsCard();
     return page;
-}
-
-void ModelProviderSettingsPanel::refreshAddModelsCard()
-{
-    if (!m_addModelsLayout)
-        return;
-
-    while (QLayoutItem *item = m_addModelsLayout->takeAt(0)) {
-        if (item->widget())
-            item->widget()->deleteLater();
-        delete item;
-    }
-
-    if (m_stagedModels.isEmpty()) {
-        auto *empty = new QLabel(tr("当前没有配置模型，添加模型后可在聊天中使用。"));
-        empty->setObjectName(QStringLiteral("mpsEmptyHint"));
-        empty->setWordWrap(true);
-        m_addModelsLayout->addWidget(empty);
-    }
-    for (const QJsonValue &v : m_stagedModels) {
-        const QJsonObject m = v.toObject();
-        const QString id = m[QStringLiteral("id")].toString();
-        m_addModelsLayout->addWidget(createModelRow(
-            m[QStringLiteral("displayName")].toString(id), id, false, nullptr, [this, id]() {
-                QJsonArray kept;
-                for (const QJsonValue &ev : m_stagedModels) {
-                    if (ev.toObject()[QStringLiteral("id")].toString() != id)
-                        kept.append(ev);
-                }
-                m_stagedModels = kept;
-                refreshAddModelsCard();
-            }));
-    }
-
-    // 空态虚线 / 有内容实线
-    if (QWidget *card = m_addModelsLayout->parentWidget()) {
-        card->setProperty("filled", !m_stagedModels.isEmpty());
-        repolish(card);
-    }
-    m_addCreateBtn->setEnabled(
-        !m_addNameEdit->text().trimmed().isEmpty()
-        && !m_addUrlEdit->text().trimmed().isEmpty()
-        && !m_stagedModels.isEmpty());
 }

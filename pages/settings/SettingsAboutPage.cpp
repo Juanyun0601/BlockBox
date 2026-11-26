@@ -6,19 +6,107 @@
 #include "pages/SettingsPage.h"
 #include "utils/UiMetrics.h"
 
+#include <QClipboard>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFrame>
+#include <QFutureWatcher>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QtConcurrent/QtConcurrentRun>
 
+#include "components/AppMessageBox.h"
+#include "components/NotificationManager.h"
 #include "components/OutlinedLabel.h"
+#include "components/UserAgreementDialog.h"
 #include "utils/AppVersion.h"
 #include "utils/RuntimeDependencyManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/UpdateChecker.h"
+#include "utils/trust/BuildChannel.h"
+#include "utils/trust/SelfIntegrityChecker.h"
+#include "utils/trust/TrustManifest.h"
+
+namespace {
+
+/** 校验结果弹窗里每类文件最多列几条（完整内容走「复制报告」） */
+constexpr int kMaxListedFilesPerCategory = 8;
+
+/**
+ * @brief 本地文件校验结果弹窗：分类明细 + 复制报告 + 打开可信校验页
+ * @param fetchError 文件清单没取到时的原因（成功时为空）
+ *
+ * 明细放在 Markdown 代码块里：文件名里的下划线、星号不会被当成格式，
+ * 内容过长时弹窗内部滚动，不会把卡片撑得超出窗口。
+ */
+void showIntegrityReport(QWidget *parent, const IntegrityReport &report, const QString &fetchError)
+{
+    AppMessageBox box(parent);
+    box.setWindowTitle(QCoreApplication::translate("SettingsPage", "本地文件校验"));
+    box.setIcon(report.hasAnomaly() || !report.manifestAvailable ? AppMessageBox::Warning
+                                                                : AppMessageBox::Information);
+    box.setText(report.statusText());
+
+    QStringList markdown;
+    markdown << QStringLiteral("**%1**：`%2`")
+                    .arg(QCoreApplication::translate("SettingsPage", "本机主程序"),
+                         QDir::toNativeSeparators(report.mainProgramPath));
+    markdown << QStringLiteral("**%1**：`%2`")
+                    .arg(QCoreApplication::translate("SettingsPage", "主程序 SHA-256"),
+                         report.mainProgramSha256.isEmpty()
+                             ? QCoreApplication::translate("SettingsPage", "读取失败")
+                             : report.mainProgramSha256);
+    if (!fetchError.isEmpty())
+        markdown << QStringLiteral("**%1**：%2")
+                        .arg(QCoreApplication::translate("SettingsPage", "清单获取失败"), fetchError);
+
+    const QStringList details = report.detailLines(kMaxListedFilesPerCategory);
+    markdown << QString();
+    markdown << QStringLiteral("```");
+    markdown << (details.isEmpty()
+                     ? QCoreApplication::translate("SettingsPage", "没有需要列出的文件。")
+                     : details.join(QLatin1Char('\n')));
+    markdown << QStringLiteral("```");
+    if (!report.manifestAvailable)
+        markdown << QStringLiteral("> %1").arg(QCoreApplication::translate(
+            "SettingsPage",
+            "当前版本还没有公示文件清单，暂时无法逐文件比对；可以点「打开可信校验页」"
+            "看看官网有没有新的公示。"));
+    markdown << QStringLiteral("> %1").arg(QCoreApplication::translate(
+        "SettingsPage", "完整报告可以点「复制报告」复制出来，贴到反馈里。"));
+
+    box.setInformativeMarkdown(markdown.join(QLatin1Char('\n')));
+    box.setCardWidthRange(560, 820);
+    box.setInfoBrowserHeightRange(220, 460);
+    box.setInfoBrowserFullWidth();
+
+    // 先摆标准按钮再追加自定义按钮：AppMessageBox::setStandardButtons 会重建按钮行，
+    // 顺序反过来的话自定义按钮会被清掉
+    box.setStandardButtons(AppMessageBox::Close);
+    QPushButton *copyBtn = box.addButton(QCoreApplication::translate("SettingsPage", "复制报告"),
+                                         AppMessageBox::ActionRole);
+    QPushButton *trustPageBtn = box.addButton(
+        QCoreApplication::translate("SettingsPage", "打开可信校验页"), AppMessageBox::ActionRole);
+    box.exec();
+
+    if (box.clickedButton() == copyBtn)
+    {
+        QGuiApplication::clipboard()->setText(report.reportText());
+        NotificationManager::showInfo(
+            parent,
+            QCoreApplication::translate("SettingsPage", "校验报告已复制到剪贴板"));
+    }
+    else if (box.clickedButton() == trustPageBtn)
+    {
+        QDesktopServices::openUrl(QUrl(TrustManifest::trustPageUrl()));
+    }
+}
+
+} // namespace
 
 void SettingsPage::initAboutSettings()
 {
@@ -81,6 +169,142 @@ void SettingsPage::initAboutSettings()
         checkUpdateBtn->setText(tr("检查更新"));
     });
     updateRow->addWidget(checkUpdateBtn);
+
+    // ── 可信下载与完整性卡片 ──
+    // 官网公示安装包哈希与安装目录文件清单，用户可以在这里自查本机文件有没有被改动
+    {
+        QVBoxLayout *trustCard = createSettingsCard(layout, tr("可信下载与完整性"));
+
+        // 1) 构建标识：官方构建用正常色，非官方构建用告警色并说明风险
+        QHBoxLayout *buildRow =
+            appendSettingRow(trustCard, tr("构建标识"), BuildChannel::buildDescription());
+        QLabel *buildValue = new QLabel(BuildChannel::buildLabel(), m_aboutSettings);
+        buildValue->setObjectName(QStringLiteral("settingValueLabel"));
+        if (!BuildChannel::isOfficialBuild())
+        {
+            // 沿用工程里已有的内联告警色写法，不新增主题依赖
+            buildValue->setStyleSheet(
+                QStringLiteral("QLabel { color: #E6A23C; font-weight: bold; }"));
+        }
+        buildRow->addWidget(buildValue);
+
+        // 2) 校验本地文件：按钮 + 状态文字；比对在后台线程跑，不卡界面
+        QHBoxLayout *verifyRow = appendSettingRow(
+            trustCard, tr("校验本地文件"),
+            tr("对照官方公示的安装目录文件清单，核对程序目录里的文件有没有被改动。"));
+        QPushButton *verifyBtn = new QPushButton(tr("开始校验"), m_aboutSettings);
+        verifyBtn->setObjectName(QStringLiteral("checkUpdateBtn"));
+        verifyBtn->setCursor(Qt::PointingHandCursor);
+        verifyBtn->setFixedWidth(96);
+        verifyRow->addWidget(verifyBtn);
+
+        QHBoxLayout *verifyStatusRow =
+            appendSettingRow(trustCard, QString(), QString(), QString());
+        QLabel *verifyStatus = new QLabel(tr("尚未校验。"), m_aboutSettings);
+        verifyStatus->setObjectName(QStringLiteral("settingValueLabel"));
+        verifyStatus->setWordWrap(true);
+        verifyStatusRow->addWidget(verifyStatus);
+
+        // 3) 安装包校验值：公示页入口 + 当前平台主安装包哈希前 16 位
+        QHBoxLayout *packageRow = appendSettingRow(
+            trustCard, tr("安装包校验值"),
+            tr("官方公示的当前平台主安装包 SHA-256，可与可信校验页对照。"));
+        QLabel *packageValue = new QLabel(tr("暂未公示"), m_aboutSettings);
+        packageValue->setObjectName(QStringLiteral("settingValueLabel"));
+        packageValue->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        packageRow->addWidget(packageValue);
+        QPushButton *trustPageBtn = new QPushButton(tr("查看公示页"), m_aboutSettings);
+        trustPageBtn->setObjectName(QStringLiteral("primaryButton"));
+        trustPageBtn->setCursor(Qt::PointingHandCursor);
+        trustPageBtn->setFixedWidth(96);
+        connect(trustPageBtn, &QPushButton::clicked, this, []() {
+            QDesktopServices::openUrl(QUrl(TrustManifest::trustPageUrl()));
+        });
+        packageRow->addWidget(trustPageBtn);
+
+        // 4) 日志隐私说明（与反馈页上传日志的脱敏行为对应）
+        appendSettingRow(trustCard, tr("日志隐私"),
+                         tr("反馈时上传的运行日志会先自动隐藏用户名、邮箱、IP 与各类令牌"
+                            "等隐私信息，再发送到服务器。"),
+                         QString(), true);
+
+        // 公示清单：进页面先拉一次，读到缓存立刻显示，网络结果回来再刷新
+        TrustManifest *trust = TrustManifest::instance();
+        auto refreshPackageValue = [packageValue]() {
+            const QString sha256 = TrustManifest::instance()->currentPackageSha256();
+            if (sha256.isEmpty())
+            {
+                packageValue->setText(tr("暂未公示"));
+                packageValue->setToolTip(QString());
+                return;
+            }
+            const QString name = TrustManifest::instance()->currentPackageName();
+            packageValue->setText(QStringLiteral("%1…").arg(sha256.left(16)));
+            packageValue->setToolTip(
+                name.isEmpty() ? sha256 : QStringLiteral("%1\nSHA-256: %2").arg(name, sha256));
+        };
+        refreshPackageValue();
+        connect(trust, &TrustManifest::manifestUpdated, this,
+                [refreshPackageValue]() { refreshPackageValue(); });
+        trust->refresh(false);
+
+        connect(verifyBtn, &QPushButton::clicked, this, [this, verifyBtn, verifyStatus]() {
+            if (!verifyBtn->isEnabled())
+                return;
+            verifyBtn->setEnabled(false);
+            verifyBtn->setText(tr("校验中…"));
+            verifyStatus->setText(tr("正在获取官方文件清单…"));
+
+            TrustManifest::instance()->requestCurrentFilesManifest(
+                [this, verifyBtn, verifyStatus](bool ok, const TrustFileManifest &manifest,
+                                                const QString &error) {
+                    // 清单取不到也照样算主程序哈希：界面退化成「只看主程序校验值」
+                    verifyStatus->setText(ok ? tr("正在比对本地文件…")
+                                             : tr("未获取到文件清单，只计算主程序校验值…"));
+
+                    auto *watcher = new QFutureWatcher<IntegrityReport>(this);
+                    connect(watcher, &QFutureWatcher<IntegrityReport>::finished, this,
+                            [this, watcher, verifyBtn, verifyStatus, ok, error]() {
+                                const IntegrityReport report = watcher->result();
+                                watcher->deleteLater();
+                                verifyBtn->setEnabled(true);
+                                verifyBtn->setText(tr("开始校验"));
+                                verifyStatus->setText(
+                                    ok ? report.statusText()
+                                       : tr("%1（清单未取到：%2）")
+                                             .arg(report.statusText(), error));
+                                showIntegrityReport(this, report, ok ? QString() : error);
+                            });
+                    watcher->setFuture(QtConcurrent::run([manifest]() {
+                        return SelfIntegrityChecker::check(manifest);
+                    }));
+                });
+        });
+    }
+
+    // ── 协议与隐私卡片 ──
+    QVBoxLayout *legalCard = createSettingsCard(layout, tr("协议与隐私"));
+
+    appendSettingRow(legalCard, QString(),
+        tr("使用方块盒子前请阅读以下条款；首次启动和登录论坛时也会提示你确认。"));
+
+    auto addLegalRow = [&](const QString &title, const QString &desc,
+                           UserAgreementDialog::Document document) {
+        QHBoxLayout *row = appendSettingRow(legalCard, title, desc);
+        QPushButton *btn = new QPushButton(tr("查看"), m_aboutSettings);
+        btn->setObjectName("primaryButton");
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setFixedWidth(80);
+        connect(btn, &QPushButton::clicked, [document]() {
+            UserAgreementDialog::showDocument(document);
+        });
+        row->addWidget(btn);
+    };
+
+    addLegalRow(tr("使用协议"), tr("软件许可、账号规则、社区内容与免责说明。"),
+                UserAgreementDialog::TermsOfUse);
+    addLegalRow(tr("隐私政策"), tr("信息收集范围、使用目的、共享对象与你的权利。"),
+                UserAgreementDialog::PrivacyPolicy);
 
     // ── 特别鸣谢卡片 ──
     QVBoxLayout *thanksCard = createSettingsCard(layout, tr("特别鸣谢"));
@@ -206,6 +430,17 @@ void SettingsPage::initAboutSettings()
     };
 
     addLinkRow(tr("官方网站"), tr("访问 BlockBox 官方网站。"), "https://blockbox.cc.cd");
+
+    // 文档中心：打开软件内置的方块图书馆（不调外部浏览器）
+    QHBoxLayout *libraryRow = appendSettingRow(linkCard,
+        tr("文档中心"),
+        tr("方块图书馆：使用教程、插件开发、开放平台 API 与 MCP 接入，在软件内直接阅读，可搜索。"));
+    QPushButton *libraryBtn = new QPushButton(tr("打开"), m_aboutSettings);
+    libraryBtn->setObjectName("primaryButton");
+    libraryBtn->setCursor(Qt::PointingHandCursor);
+    libraryBtn->setFixedWidth(80);
+    connect(libraryBtn, &QPushButton::clicked, this, &SettingsPage::openLibraryRequested);
+    libraryRow->addWidget(libraryBtn);
     addLinkRow(tr("GitHub"), tr("查看源代码、提交问题与建议。"), "https://github.com/Juanyun0601/BlockBox");
 
     // 意见反馈：跳到软件内反馈页（登录论坛账号后提交，后台统一处理）
@@ -349,6 +584,8 @@ void SettingsPage::initAboutSettings()
 
     addOpenSourceRow("Luanti（原 Minetest）", tr("开源体素沙盒。投影方块编辑器的第一人称自由视角参考了它的相机与移动实现：鼠标原地转动视角、俯仰角限制 ±90°、W/S 沿视线飞行、A/D 水平横移、空格 / Shift 升降、双击 W 或按住 Ctrl 疾跑，操作逻辑与《我的世界》原版一致。"),
         "LGPL-2.1", "https://github.com/minetest/minetest");
+    addOpenSourceRow("prismarine-viewer", tr("浏览器端 MC 世界查看器。投影预览与三视图里生物 / 实体的模型数据取自它整理的基岩版几何模型表（骨骼、立方体、贴图 UV），贴图仍从当前实例客户端 jar 里取；共 95 种生物与实体可用，没有对应模型的实体（如掉落物）不显示。"),
+        "MIT", "https://github.com/PrismarineJS/prismarine-viewer");
 
     // 地图与存档
     appendSettingRow(opensourceCard, tr("地图与存档"), QString(), QString(), true);

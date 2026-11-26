@@ -11,6 +11,7 @@
  *   - 元数据编辑：名称 / 作者 / 描述（通过 LitematicEditor 写回）
  *   - 格式转换：导出为 .schematic（Schematica）/ .schem（Sponge）
  *   - 三视图：一键生成正视图 / 侧视图 / 俯视图 PNG（SchematicOrthoViewRenderer）
+ *   - 投影预览：三维只读查看整份投影（ProjectionPreviewDialog）
  *
  * 本页嵌入实例管理页（InstanceManagePage）的内容栈中，通过
  * setCurrentProjection() 指定要编辑的投影文件。返回与标题复用主界面
@@ -72,6 +73,8 @@ private slots:
     void onConvertVersionClicked();
     void onVersionComboChanged(int index);
     void onGenerateOrthoViewsClicked();
+    /** 打开三维预览（只读查看整份投影） */
+    void onPreviewClicked();
 
 private:
     void initUI();
@@ -130,6 +133,7 @@ private:
     QPushButton *m_exportSchematicBtn;
     QPushButton *m_exportSpongeBtn;
     QPushButton *m_generateViewsBtn;
+    QPushButton *m_previewBtn;        ///< 投影预览（三维只读查看）
     bool m_generatingViews = false;   ///< 三视图正在后台生成（防重入）
 
     // 版本转换

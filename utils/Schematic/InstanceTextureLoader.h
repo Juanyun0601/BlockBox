@@ -59,6 +59,14 @@ public:
      */
     static InstanceTextureLoader *sharedForInstance(const QString &instancePath);
 
+    /**
+     * @brief 找实例的客户端 jar（实体贴图加载器复用同一套查找规则）
+     * @param instancePath 实例的 versions/<版本> 目录
+     * @param jarPath      输出 jar 绝对路径
+     * @return 找到返回 true
+     */
+    static bool clientJarPath(const QString &instancePath, QString &jarPath);
+
     bool isValid() const { return !m_atlas.isNull() && m_textureCount > 0; }
 
     /** 构建好的图集图像（32 位 RGB） */

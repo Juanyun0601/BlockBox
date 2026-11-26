@@ -254,6 +254,11 @@ void FeedbackComposePage::buildUi()
             tr("点「一键上传日志」自动附上完整运行日志；也可以手动粘贴报错内容，很长时贴最后几十行。"));
         m_logsEdit->setMinimumHeight(80);
         logsLayout->addWidget(m_logsEdit);
+        // 提前说清日志会脱敏，用户才敢点「一键上传日志」
+        QLabel *logPrivacyHint = ForumKit::makeMuted(
+            logsBlock, tr("上传前会自动隐藏日志里的用户名、邮箱、IP 和登录令牌等隐私信息。"));
+        logPrivacyHint->setWordWrap(true);
+        logsLayout->addWidget(logPrivacyHint);
         m_logsField = logsBlock;
         formLayout->addWidget(logsBlock);
     }

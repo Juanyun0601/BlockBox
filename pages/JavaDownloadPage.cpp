@@ -452,7 +452,7 @@ void JavaDownloadPage::onDownloadClicked()
         m_progressCard->setVisible(false);
         m_progressDetailLabel->clear();
         updateUIState();
-        NotificationManager::showError(this, tr("获取运行环境清单失败：\n%1").arg(message));
+        NotificationManager::showErrorWithNetworkCheck(this, tr("获取运行环境清单失败：\n%1").arg(message));
         return;
       }
       if (deps->pendingCount() <= 0) {
@@ -484,7 +484,7 @@ void JavaDownloadPage::onDownloadClicked()
 
   if (m_selectedBinary.downloadUrl.isEmpty())
   {
-    NotificationManager::showError(this, tr("下载链接不可用"));
+    NotificationManager::showErrorWithNetworkCheck(this, tr("下载链接不可用"));
     return;
   }
 
@@ -613,7 +613,7 @@ void JavaDownloadPage::onDownloadFailed(const QString &error)
   m_isDownloading = false;
   m_progressBar->setValue(0);
   m_progressDetailLabel->setText(tr("下载失败: %1").arg(error));
-  NotificationManager::showError(this, tr("Java 下载失败: %1").arg(error));
+  NotificationManager::showErrorWithNetworkCheck(this, tr("Java 下载失败: %1").arg(error));
   updateUIState();
 }
 

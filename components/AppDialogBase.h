@@ -2,6 +2,7 @@
 #define APPDIALOGBASE_H
 
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QPixmap>
 #include <QPoint>
@@ -63,6 +64,9 @@ private:
     QPixmap m_blurredBackground;
     QPoint m_blurOffset;
     QEventLoop *m_execLoop = nullptr;
+    /// 弹窗显示时刻：用来忽略刚显示时的误触（安卓点图标启动的那一下触摸
+    /// 会落到刚弹出的遮罩上，把弹窗直接关掉）
+    QElapsedTimer m_shownAt;
 };
 
 #endif // APPDIALOGBASE_H

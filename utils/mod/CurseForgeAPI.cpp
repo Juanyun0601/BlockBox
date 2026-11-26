@@ -359,6 +359,102 @@ bool CurseForgeAPI::switchOffMirror()
     return true;
 }
 
+void CurseForgeAPI::fetchModBySlug(const QString &slug)
+{
+    m_pendingSlug = slug.trimmed();
+    m_slugFallbackTried = false;
+
+    if (m_pendingSlug.isEmpty()) {
+        const QString pending = m_pendingSlug;
+        QTimer::singleShot(0, this, [this, pending]() {
+            emit modBySlugFailed(pending, tr("链接里没有资源名，没法反查"));
+        });
+        return;
+    }
+
+    if (effectiveApiKey().isEmpty() && !usingMirror()) {
+        const QString pending = m_pendingSlug;
+        QTimer::singleShot(0, this, [this, pending]() {
+            emit modBySlugFailed(pending, tr("未配置 CurseForge API Key，请在设置中填入或启用 MCIM 镜像加速"));
+        });
+        return;
+    }
+
+    startSlugRequest();
+}
+
+void CurseForgeAPI::startSlugRequest()
+{
+    QUrl url(m_baseUrl + "/v1/mods/search");
+    QUrlQuery urlQuery;
+    urlQuery.addQueryItem("gameId", m_gameId);
+    urlQuery.addQueryItem("slug", m_pendingSlug);
+    urlQuery.addQueryItem("pageSize", "1");
+    url.setQuery(urlQuery);
+
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "application/json");
+    const QString apiKey = effectiveApiKey();
+    if (!apiKey.isEmpty())
+        request.setRawHeader("X-API-KEY", apiKey.toUtf8());
+
+    abortReply(m_currentSlugReply);
+    m_currentSlugReply = m_networkManager->get(request);
+    connect(m_currentSlugReply, &QNetworkReply::finished, this, &CurseForgeAPI::onSlugReplyFinished);
+}
+
+void CurseForgeAPI::onSlugReplyFinished()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+    reply->deleteLater();
+    if (reply != m_currentSlugReply) return;
+    m_currentSlugReply = nullptr;
+
+    const QString slug = m_pendingSlug;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        // 镜像加速挂了（常见是 503）：退回官方接口再试一次
+        if (!m_slugFallbackTried && switchOffMirror()) {
+            m_slugFallbackTried = true;
+            startSlugRequest();
+            return;
+        }
+        emit modBySlugFailed(slug, reply->errorString());
+        return;
+    }
+
+    const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+    if (doc.isNull()) {
+        emit modBySlugFailed(slug, tr("服务器返回的数据解析失败"));
+        return;
+    }
+
+    const QJsonArray dataArr = doc.object()["data"].toArray();
+    if (dataArr.isEmpty()) {
+        emit modBySlugFailed(slug, tr("没有找到这个资源"));
+        return;
+    }
+
+    const QJsonObject first = dataArr.first().toObject();
+    // 服务端若没按 slug 过滤，返回的就是一条无关结果，这里再对一遍 slug
+    const QString responseSlug = first["slug"].toString();
+    if (!responseSlug.isEmpty() && responseSlug.compare(slug, Qt::CaseInsensitive) != 0) {
+        emit modBySlugFailed(slug, tr("没有找到这个资源"));
+        return;
+    }
+
+    ModInfo info;
+    parseAddon(first, info);
+    if (info.id.isEmpty()) {
+        emit modBySlugFailed(slug, tr("没有找到这个资源"));
+        return;
+    }
+
+    emit modResolvedBySlug(info);
+}
+
+
 void CurseForgeAPI::fetchModsByIds(const QStringList &modIds)
 {
     QJsonArray idArray;

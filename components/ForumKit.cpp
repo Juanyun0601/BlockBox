@@ -28,6 +28,7 @@
 
 #include <algorithm>
 
+#include "utils/CoverImageCache.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ForumImageStore.h"
 #include "utils/IconHelper.h"
@@ -266,14 +267,25 @@ void CoverBanner::setCover(const QString &coverPath)
     if (path.isEmpty())
         return;
 
+    const QString absolute = ForumAccountService::instance()->absoluteUrl(path);
+
+    // 本机缓存里已经有这张封面就直接画出来：切页面、重开软件、断网时都不用等网络。
+    // 站内封面地址每次上传都是新文件、内容不会再变，所以有缓存就不必再下一次。
+    m_image = CoverImageCache::load(absolute);
+    if (!m_image.isNull())
+    {
+        update();
+        return;
+    }
+
     QPointer<CoverBanner> guard(this);
-    ForumImageStore::instance()->requestImage(
-        ForumAccountService::instance()->absoluteUrl(path), [guard](const QImage &image) {
-            if (guard.isNull() || image.isNull())
-                return;
-            guard->m_image = image;
-            guard->update();
-        });
+    ForumImageStore::instance()->requestImage(absolute, [guard, absolute](const QImage &image) {
+        if (guard.isNull() || image.isNull())
+            return;
+        CoverImageCache::save(absolute, image);
+        guard->m_image = image;
+        guard->update();
+    });
 }
 
 void CoverBanner::paintEvent(QPaintEvent *)

@@ -67,12 +67,28 @@ struct AgentTask
 };
 
 /**
+ * @brief 聊天消息携带的图片（游戏截图等）
+ *
+ * 发给模型时用 dataUrl（OpenAI 多模态格式的 data:image/jpeg;base64,...），
+ * 同时把原始 JPEG 落到本地缓存，对话历史里只记路径，
+ * 这样 ai_conversations.json 不会被几十万字符的 base64 撑爆。
+ */
+struct ChatImage
+{
+    QString dataUrl;    // 可直接塞进请求的 data URL
+    QString cachePath;  // 本地缓存文件路径（持久化 / 展示用，可为空）
+    int width = 0;      // 原图宽（像素）
+    int height = 0;     // 原图高（像素）
+};
+
+/**
  * @brief 聊天消息
  */
 struct ChatMessage
 {
     QString role;       // "user", "assistant", "system"
     QString content;    // 消息内容
+    QList<ChatImage> images; // 本条消息附带的图片（目前仅用户消息使用）
     QString reasoning;  // 思考/推理内容（仅支持推理的模型）
     QString stats;      // 统计信息（仅 AI 回复，如 token 用量/耗时/费用）
     QList<AgentToolCall> toolCalls; // 本条 AI 消息触发的工具调用步骤（用于 UI 展示与持久化）
@@ -122,6 +138,20 @@ struct WebSearchResult
     QString url;       // 网页链接
     QString snippet;   // 摘要
     QString searchTime; // 检索时间
+};
+
+/**
+ * @brief 一条论坛搜索结果（用于 AI 聊天页把帖子标题渲染成可点击链接）
+ */
+struct ForumSearchHit
+{
+    int id = 0;          // 帖子 id（读取详情时用）
+    QString title;       // 帖子标题
+    QString boardName;   // 板块名
+    QString authorName;  // 作者昵称
+    QString kind;        // 类型：插件 / 投影 / 教程 / 问答 / 导航 / 帖子
+    QString snippet;     // 命中片段
+    QString url;         // 论坛帖子地址（软件内点击可直达）
 };
 
 /**
@@ -335,6 +365,23 @@ public:
     void generateTitle(const QString& userMessage, const QString& aiReply,
                        const AiModel& model);
 
+    // --- 本地 MCP 服务器（外部 AI 客户端）调用入口 ---
+    /**
+     * @brief 外部 MCP 客户端调用本地工具的同步入口
+     * @param name         工具名（与工作模式 Agent 工具同名，见 resources/ai_agent_tools.json）
+     * @param args         工具参数 JSON 对象
+     * @param errorMessage 失败时写回错误说明；成功时清空
+     * @return 工具结果文本（失败时为空，错误说明见 errorMessage）
+     *
+     * 与 Agent 工具共用同一套 executeXxx 实现，调用方需像 dispatchToolCall 一样
+     * 把它放到子线程执行（内部有 QEventLoop / 网络等待）。
+     * 仅开放本地工具；联网搜索、论坛、用户提问、任务清单等与聊天界面
+     * 绑定的工具不在开放范围内，会返回「未开放」错误。
+     * 工作区限制（ai/workspaceRestriction）同样生效。
+     */
+    QString executeExternalTool(const QString &name, const QJsonObject &args,
+                                QString *errorMessage = nullptr);
+
 signals:
     /**
      * @brief 流式内容增量到达
@@ -377,6 +424,12 @@ signals:
      * @param results 本轮搜索的结构化结果列表
      */
     void webSearchResultsCollected(const QList<WebSearchResult> &results);
+
+    /**
+     * @brief 论坛搜索结果已采集（用于聊天页把帖子标题渲染成可点击链接）
+     * @param hits 本批结果（在对应的工具步骤卡片完成之后发出）
+     */
+    void forumSearchResultsCollected(const QList<ForumSearchHit> &hits);
 
     /**
      * @brief Agent 工具调用开始（用于 UI 插入"进行中"步骤卡片）
@@ -569,6 +622,8 @@ private:
      * 工作模式专用。注入以下工具定义：web_search、list_instances、
      * check_loader_compatibility、get_game_versions、analyze_crash_log、
      * list_mods、detect_java、get_settings。tool_choice 设为 auto。
+     * 随后追加已启用技能（Skill）与插件（aiTools）提供的工具，并刷新各自的
+     * 工具名 → 来源映射，供 dispatchToolCall 分发。
      */
     void applyAgentTools(QJsonObject &body);
 
@@ -619,6 +674,18 @@ private:
     /// 触发资源下载到实例（emit resourceDownloadRequested 后立即返回）
     QString executeDownloadResource(const QJsonObject& args);
 
+    // --- Agent 方块盒子论坛工具（主线程异步：现有论坛服务回调都在主线程） ---
+    /// 搜索论坛帖子（插件 / 投影 / 教程 / 问答 / 导航；关键词可空，配合 board/tag/sort 浏览）
+    void executeSearchForum(const QJsonObject& args);
+    /// 读取论坛帖子详情（正文、回复、插件包 / 投影版本 / 教程附件 / 悬赏信息）
+    void executeGetForumThread(const QJsonObject& args);
+    /// 统一回填论坛类工具结果（写步骤记录 → 通知聊天页 → 继续工具循环；
+    /// hits 非空时先发 forumSearchResultsCollected，让聊天页把标题铺成可点击链接）
+    void finishForumToolCall(const QString& toolName, const QString& toolCallId,
+                             const QString& resultText, const QString& summary,
+                             qint64 durationMs, bool success, const QString& argumentsJson,
+                             const QList<ForumSearchHit>& hits = QList<ForumSearchHit>());
+
     // --- Agent 任务清单工具 ---
     /// 覆盖式更新 AI 自维护任务清单（emit taskListUpdated 后回填确认信息）
     QString executeUpdateTaskList(const QJsonObject& args);
@@ -640,6 +707,8 @@ private:
     QString executeManageMods(const QJsonObject& args);
     /// 批量检查模组更新（子线程 QEventLoop 等待 API 信号；参数：instance_path, game_version?, loader?）
     QString executeCheckModUpdates(const QJsonObject& args);
+    /// 批量检查资源包 / 光影包 / 数据包更新（参数：instance_path, resource_type）
+    QString executeCheckFileResourceUpdates(const QJsonObject& args, const QString &resourceType);
     /// 列出实例世界存档（参数：instance_path）
     QString executeListSaves(const QJsonObject& args);
     /// 读取存档详情：种子/出生点/游戏模式/玩家坐标等（参数：instance_path, world_name）
@@ -671,6 +740,18 @@ private:
      */
     QString executeSkillTool(const QString& toolName, const QJsonObject& args);
 
+    // --- Agent 插件（Plugin）工具 ---
+    /**
+     * @brief 执行插件提供的 AI 工具（在子线程中同步阻塞执行）
+     * @param toolName 工具名（通过 m_pluginToolMap 定位所属插件 ID）
+     * @param args     工具参数 JSON 对象
+     * @return 执行结果文本（失败时返回带 ERROR 前缀的错误说明）
+     *
+     * 查找 m_pluginToolMap 获取插件 ID，调用 PluginManager::executeAiTool 执行。
+     * 插件被停用或未声明 ai:tool 权限时返回带 ERROR 前缀的错误说明。
+     */
+    QString executePluginAiTool(const QString& toolName, const QJsonObject& args);
+
     // --- 资源 API 同步化封装（子线程 QEventLoop 阻塞等待信号，超时 15s 兜底） ---
     /// 同步搜索 CurseForge；apiKey 缺失时 error 置为 "CURSEFORGE_API_KEY_MISSING"
     ModSearchResult syncSearchCurseForge(const QString& query, const QString& classId,
@@ -690,12 +771,13 @@ private:
      * @param toolCallId 关联的 tool_call ID
      * @param toolName 工具名（写入 tool 消息的 name 字段）
      * @param result 工具执行结果文本
+     * @param maxLength 回填给模型的文本上限（字符数；论坛帖子详情等长内容可放宽）
      *
      * 替代原 continueWithSearchResults，支持任意工具的结果回填。
      * 重新请求时仍会附加 Agent 工具集，允许模型继续多步调用。
      */
     void continueWithToolResult(const QString &toolCallId, const QString &toolName,
-                                const QString &result);
+                                const QString &result, int maxLength = 4000);
 
     /**
      * @brief 截断工具结果文本到合理长度，避免超出模型上下文窗口
@@ -839,6 +921,7 @@ private:
     QList<WebSearchResult> m_allSearchResults; ///< 累积所有轮次的搜索结果（供汇总卡片）
     QList<AgentToolCall> m_pendingToolCalls;  ///< 当前回合累积的工具调用记录（供 UI 持久化）
     QHash<QString, QString> m_skillToolMap;  ///< 技能工具名 → 技能 ID 映射（每次请求刷新）
+    QHash<QString, QString> m_pluginToolMap; ///< 插件工具名 → 插件 ID 映射（每次请求刷新）
     QList<AgentTask> m_taskList;             ///< AI 自维护任务清单（由 update_task_list 覆盖式更新）
     static constexpr int MAX_SEARCH_ROUNDS = 3; ///< 最大搜索轮次（聊天模式联网搜索用）
     static constexpr int MAX_TOOL_ROUNDS = 50;  ///< Agent 工具调用兜底上限（工作模式防失控）

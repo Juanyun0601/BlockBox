@@ -123,6 +123,13 @@ void CreatePluginDialog::initUI()
 
     QHBoxLayout *btnRow = new QHBoxLayout();
     btnRow->setSpacing(10);
+
+    m_docsBtn = new QPushButton(tr("开发文档"), m_formPage);
+    m_docsBtn->setObjectName(QStringLiteral("appDialogBtn"));
+    m_docsBtn->setCursor(Qt::PointingHandCursor);
+    m_docsBtn->setToolTip(tr("在软件内打开插件开发文档：清单字段、权限、UI、脚本与打包"));
+
+    btnRow->addWidget(m_docsBtn);
     btnRow->addStretch();
 
     m_cancelBtn = new QPushButton(tr("取消"), m_formPage);
@@ -162,6 +169,12 @@ void CreatePluginDialog::initUI()
     m_openDirBtn->setObjectName(QStringLiteral("appDialogBtn"));
     m_openDirBtn->setCursor(Qt::PointingHandCursor);
 
+    QPushButton *resultDocsBtn = new QPushButton(tr("查看开发文档"), m_resultPage);
+    resultDocsBtn->setObjectName(QStringLiteral("appDialogBtn"));
+    resultDocsBtn->setCursor(Qt::PointingHandCursor);
+    resultDocsBtn->setToolTip(tr("接下来怎么改 plugin.json、写脚本、打包发布，文档里都有"));
+    connect(resultDocsBtn, &QPushButton::clicked, this, &CreatePluginDialog::openDocsRequested);
+
     m_backBtn = new QPushButton(tr("继续制作"), m_resultPage);
     m_backBtn->setObjectName(QStringLiteral("appDialogBtn"));
     m_backBtn->setCursor(Qt::PointingHandCursor);
@@ -176,6 +189,7 @@ void CreatePluginDialog::initUI()
     resultLayout->addSpacing(4);
     resultLayout->addWidget(m_packageBtn);
     resultLayout->addWidget(m_openDirBtn);
+    resultLayout->addWidget(resultDocsBtn);
     resultLayout->addWidget(m_backBtn);
     resultLayout->addWidget(m_doneBtn);
 
@@ -194,6 +208,8 @@ void CreatePluginDialog::initUI()
     connect(m_cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
     connect(m_packageBtn, &QPushButton::clicked, this, &CreatePluginDialog::onPackage);
     connect(m_openDirBtn, &QPushButton::clicked, this, &CreatePluginDialog::onOpenTemplateDir);
+    if (m_docsBtn)
+        connect(m_docsBtn, &QPushButton::clicked, this, &CreatePluginDialog::openDocsRequested);
     connect(m_backBtn, &QPushButton::clicked, this, &CreatePluginDialog::onBackToForm);
     connect(m_doneBtn, &QPushButton::clicked, this, &QDialog::accept);
 

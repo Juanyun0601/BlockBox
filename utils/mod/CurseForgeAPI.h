@@ -36,6 +36,15 @@ public:
     void fetchModDetail(const QString &modId);
 
     /**
+     * @brief 按 CurseForge 项目页地址里的 slug 反查资源
+     * GET /v1/mods/search?gameId=432&slug=<slug>
+     *
+     * 详情页里点到的 curseforge.com/minecraft/{类型}/{slug} 链接只有 slug，
+     * 而取详情要数字 modId，先用它换一次。
+     */
+    void fetchModBySlug(const QString &slug);
+
+    /**
      * @brief 批量按模组 ID 取基础信息（供详情页展示前置资源用）
      * POST /v1/mods，body: {"modIds":[...]}
      * @param modIds 模组 ID 列表（非数字 ID 会被忽略）
@@ -71,6 +80,11 @@ signals:
     void modsResolved(const QList<ModInfo> &mods);
     void modsResolveFailed(const QString &error);
 
+    /** 按 slug 反查成功：返回带数字 modId 的资源基础信息 */
+    void modResolvedBySlug(const ModInfo &info);
+    /** 按 slug 反查失败（链接里的资源不存在、网络错误或没配 Key） */
+    void modBySlugFailed(const QString &slug, const QString &error);
+
     /** 指纹匹配完成 */
     void fingerprintCompleted(quint32 fingerprint, const QString &modId, const QString &pageUrl);
     /** 指纹匹配失败（未找到匹配或无 API Key） */
@@ -88,6 +102,7 @@ private slots:
     void onModsReplyFinished();
     void onFingerprintReplyFinished();
     void onFingerprintsReplyFinished();
+    void onSlugReplyFinished();
 
 private:
     void parseAddon(const QJsonObject &obj, ModInfo &info);
@@ -120,6 +135,13 @@ private:
     void sendNextFingerprintBatch();
     QString m_currentDetailId;      // 当前详情请求的模组 id（镜像回退后重试用）
     bool m_detailFallbackTried = false;
+
+    /** 按 slug 反查（fetchModBySlug）：当前请求的 slug 与镜像回退标记 */
+    QNetworkReply *m_currentSlugReply = nullptr;
+    QString m_pendingSlug;
+    bool m_slugFallbackTried = false;
+    /** 真正发出 slug 反查请求（fetchModBySlug 与镜像回退重试共用） */
+    void startSlugRequest();
 };
 
 #endif

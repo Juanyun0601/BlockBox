@@ -69,6 +69,13 @@ public:
     const QList<EntityInfo> &entities() const { return m_entities; }
     const QList<EffectInfo> &effects() const { return m_effects; }
     const QList<EnchantmentInfo> &enchantments() const { return m_enchantments; }
+    /** 成就标题：minecraft:story/mine_stone → 石器时代（实例助手同步游戏成就时用） */
+    const QHash<QString, QString> &advancementTitles() const { return m_advancementTitles; }
+    /** 成就描述：键与 advancementTitles 相同 */
+    const QHash<QString, QString> &advancementDescriptions() const
+    {
+        return m_advancementDescriptions;
+    }
 
 private:
     /**
@@ -83,6 +90,8 @@ private:
     QList<EntityInfo> m_entities;                 ///< 实体（含生物）
     QList<EffectInfo> m_effects;                  ///< 状态效果
     QList<EnchantmentInfo> m_enchantments;        ///< 附魔
+    QHash<QString, QString> m_advancementTitles;  ///< 成就 id → 标题
+    QHash<QString, QString> m_advancementDescriptions; ///< 成就 id → 描述
 
     QHash<QString, int> m_blockIndex;             ///< 方块：小写 ID -> 索引
     QHash<QString, int> m_itemIndex;              ///< 物品：小写 ID -> 索引

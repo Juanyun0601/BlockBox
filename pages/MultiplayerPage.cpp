@@ -420,6 +420,35 @@ void MultiplayerPage::setInstanceContext(const QString &path, const QString &ver
     m_instanceLoader = loader;
 }
 
+QString MultiplayerPage::currentTunnelAddress() const
+{
+    // 只认“看起来就是个地址”的文字：标签里也可能是「正在连接节点…」
+    // 「已建立，可在面板查看地址」这类说明，不能当地址用
+    const auto usable = [](const QString &text) {
+        const QString value = text.trimmed();
+        if (value.isEmpty() || value.contains(QLatin1Char(' ')))
+            return QString();
+        if (!value.contains(QLatin1Char(':')))
+            return QString();
+        if (!value.contains(QLatin1Char('.')) && !value.contains(QStringLiteral("localhost")))
+            return QString();
+        return value;
+    };
+
+    // frp 隧道（樱花 / OpenFrp）优先，其次是红石隧道
+    if (m_frpAddrLabel) {
+        const QString address = usable(m_frpAddrLabel->text());
+        if (!address.isEmpty())
+            return address;
+    }
+    if (m_tunnelAddrLabel) {
+        const QString address = usable(m_tunnelAddrLabel->text());
+        if (!address.isEmpty())
+            return address;
+    }
+    return QString();
+}
+
 bool MultiplayerPage::hongshiActive() const
 {
     return m_coreCombo && m_coreCombo->currentIndex() == 1;

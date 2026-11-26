@@ -22,6 +22,7 @@
 #include "../components/TranslateSwitchCard.h"
 #include "../utils/content/ContentData.h"
 #include "../utils/translation/TranslationService.h"
+#include "../utils/translation/ContentTranslationService.h"
 
 class QParallelAnimationGroup;
 class SourceSwitchBar;
@@ -44,6 +45,8 @@ public:
     /** 当前左侧筛选对应的实例版本/加载器（从列表页带入，跳转其他资源详情时沿用） */
     QString instanceGameVersion() const { return m_instanceGameVersion; }
     QString instanceLoaderType() const { return m_instanceLoaderType; }
+    /** 翻译已在编辑页提交成功：按钮换成「完善翻译」（本会话内不再等服务器确认） */
+    void notifyTranslationSubmitted();
     void setCurrentSource(const QString &source);
     void setReturnFolderId(const QString &folderId);
 
@@ -65,6 +68,8 @@ signals:
     void backToFavoriteFolderRequested(const QString &folderId);
     /** 点击「问问AI」：请求跳转 AI 助手并引用当前网络资源 */
     void askAiRequested(const ResourceReference &ref);
+    /** 点击「创建翻译 / 完善翻译」：请求进入翻译编辑页 */
+    void translationComposeRequested(const ModInfo &modInfo);
 
 public slots:
     void refreshFavoriteState();
@@ -162,6 +167,12 @@ private:
     void restoreOriginalTexts();
     void setTranslateBusy(bool busy);
     void resetTranslation();
+
+    // ── 社区翻译（方块盒子服务器上其他用户的翻译，审核通过后自动覆盖显示）──
+    void fetchCommunityTranslation();
+    void applyCommunityTranslation();
+    QString translationComposeButtonLabel() const;
+    void updateTranslationComposeButtonLabel();
 
     enum TranslateChunkKind {
         TranslateSummary = 0,          // 只翻译顶部简介
@@ -281,6 +292,13 @@ private:
     QString m_origDetailHtml;
     QString m_zhSummary;
     QString m_zhDetailHtml;
+
+    QPushButton *m_translationComposeBtn = nullptr; ///< 「创建翻译 / 完善翻译」动作按钮
+    bool m_hasCommunityTranslation = false;
+    bool m_hasMyTranslation = false;
+    QString m_communitySummary;
+    QString m_communityDetailHtml;
+    QString m_translationFetchContext; ///< 发起拉取时的资源标识，回包时比对防串页
 };
 
 #endif

@@ -14,6 +14,8 @@
 #include <QStackedWidget>
 #include <functional>
 
+#include "utils/AiModelListFetcher.h"
+
 class QButtonGroup;
 class QComboBox;
 class QHBoxLayout;
@@ -27,14 +29,18 @@ class QVBoxLayout;
  *
  * 左栏为服务商分组列表（内置服务商 / 自定义供应商，行尾状态点标记是否已配置），
  * 底部为“添加供应商”入口；右栏为当前选中项的内联页面：
- *  - 内置服务商：API Key / API 地址 + 预设模型列表（点击设为默认模型）
- *  - 自定义供应商：名称 / 端点 / Key / API 格式 + 模型增删
- *  - 添加供应商：名称、端点、Key、API 格式与初始模型表单（至少一个模型才能创建）
+ *  - 内置服务商：API Key / API 地址 + 模型列表（从服务商在线获取，点击设为默认模型）
+ *  - 自定义供应商：名称 / 端点 / Key / API 格式 + 模型列表（在线获取）
+ *  - 添加供应商：名称、端点、Key、API 格式（模型留到使用时再选，无需预先添加）
+ *
+ * 模型列表优先读取本地缓存（utils/AiModelListFetcher），没有缓存或点「刷新」时
+ * 才向服务商请求，获取成功后写回缓存。
  *
  * 存储保持与旧消费方（AiChatPage / ModelSelectDialog）兼容：
  *  - 内置服务商配置键：ai/provider_<key>/{url,key,selectedModel,selectedModelName}
  *  - 自定义模型扁平表：ai/customModels（自定义供应商的模型带 providerId 标记展开写入）
- *  - 自定义供应商：ai/customProviders（本面板新增，含 models 子数组与 apiFormat）
+ *  - 自定义供应商：ai/customProviders（含 models 子数组与 apiFormat）
+ *  - 模型列表缓存：ai/modelListCache
  */
 class ModelProviderSettingsPanel : public QFrame
 {
@@ -42,6 +48,10 @@ class ModelProviderSettingsPanel : public QFrame
 
 public:
     explicit ModelProviderSettingsPanel(QWidget *parent = nullptr);
+
+signals:
+    /// 服务商配置发生变化（设置页据此刷新默认模型下拉框）
+    void providersChanged();
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -79,7 +89,14 @@ private:
     QWidget *buildPresetPage(const PresetInfo &info);
     QWidget *buildCustomProviderPage(const QJsonObject &prov);
     QWidget *buildAddProviderPage();
-    void refreshAddModelsCard();
+
+    // ── 模型列表（在线获取 + 缓存）──
+    /// 某个服务商行的有效 API 端点（内置取已保存 url 或默认 url，自定义取记录里的 url）
+    QString providerUrlForRow(const QString &rowId) const;
+    /// 发起模型列表请求（结果写入缓存后重建当前页）
+    void fetchModelList(const QString &rowId, const QString &apiUrl, const QString &apiKey);
+    /// 在页面标题旁生成「刷新模型列表」按钮
+    QPushButton *createFetchButton(const QString &rowId, const QString &apiUrl, const QString &apiKey);
 
     // ── 通用小件 ──
     QHBoxLayout *createFormRow(const QString &labelText, QWidget *field, QWidget *trailing = nullptr) const;
@@ -106,9 +123,11 @@ private:
     QLineEdit *m_addUrlEdit = nullptr;
     QLineEdit *m_addKeyEdit = nullptr;
     QComboBox *m_addFormatCombo = nullptr;
-    QVBoxLayout *m_addModelsLayout = nullptr;
     QPushButton *m_addCreateBtn = nullptr;
-    QJsonArray m_stagedModels;
+
+    // 模型列表在线获取
+    AiModelListFetcher *m_fetcher = nullptr;
+    QString m_fetchingRowId;
 };
 
 #endif // MODELPROVIDERSETTINGSPANEL_H

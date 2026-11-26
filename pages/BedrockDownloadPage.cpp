@@ -155,7 +155,7 @@ void BedrockDownloadPage::onVersionListFetched(const QVector<BedrockVersionEntry
 
 void BedrockDownloadPage::onFetchError(const QString &sourceName, const QString &error)
 {
-    NotificationManager::showError(this, tr("%1 版本列表获取失败: %2").arg(sourceName, error));
+    NotificationManager::showErrorWithNetworkCheck(this, tr("%1 版本列表获取失败: %2").arg(sourceName, error));
 }
 
 // ────────────────────────────────────────────────────────────

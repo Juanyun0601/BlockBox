@@ -1,0 +1,31 @@
+[ThemeManager] ��ʽ�ļ��Ѽ��أ� 412033 bytes
+[probe] 现造一份 3 层投影                                   OK
+[probe] 投影文件已落盘                                      OK
+qt.svg: Cannot open file ':/Images/Icons/grid.svg', because: No such file or directory
+[probe] 搭建顺序树存在                                      OK
+[probe] 平面图存在                                            OK
+[probe] 材料标签存在                                         OK
+[probe] 步骤标签存在                                         OK
+[probe] 进度条存在                                            OK
+[probe] 下一步按钮存在                                      OK
+[probe] 后台解析完成并出现层列表                       OK
+[probe] 识别出 3 层                                            OK
+[probe] 最下面一层第一项存在                             OK
+[probe] 第一步是这一层数量最多的材料（石头）     OK
+[probe] 第一步数量 60                                         OK
+[probe] 打开后停在第 1 层第 1 步                          OK
+[probe] 材料标签显示石头 × 60                             OK
+[probe] 进度 0 / 6                                               OK
+[probe] 平面图画出琥珀色高亮/刻度                      OK
+[probe] 下一步进入本层第 2 种材料（木板）           OK
+[probe] 进度 1 / 6                                               OK
+[probe] 仍在第 1 层                                            OK
+[probe] 走完最后一步后显示全部完成                    OK
+[probe] 完成时进度拉满                                      OK
+[probe] 完成后下一步按钮禁用                             OK
+[probe] shot probe_out/build_guide_complete.png 1240x820 ok
+qt.svg: Cannot open file ':/Images/Icons/grid.svg', because: No such file or directory
+[probe] shot probe_out/build_guide_light.png 1240x820 ok
+qt.svg: Cannot open file ':/Images/Icons/grid.svg', because: No such file or directory
+[probe] shot probe_out/build_guide_dark.png 1240x820 ok
+[probe] failures: 0

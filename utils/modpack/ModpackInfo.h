@@ -15,6 +15,8 @@ enum class ModpackType
   MultiMC,
   MCBBS,
   HMCL,
+  /// 自安装服务器包（zip 根 server-manifest.json + overrides/，HMCL 服务端整合包）
+  Server,
   Generic,
   /// 方块盒子原生格式（zip 内含 blockbox.pack.json 清单）
   BlockBox

@@ -16,6 +16,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QMutex>
+#include <QPointer>
 #include <QQueue>
 #include <QJsonObject>
 #include <QElapsedTimer>
@@ -103,6 +104,20 @@ public:
     static GameLauncher* instance();
     ~GameLauncher();
 
+    // ── 多实例并行启动会话 ──
+    // GameLauncher 不再把启动限制在单例对象上：所有启动状态都是成员变量，
+    // 每个对象天然自包含。第一个启动复用主单例（原有 UI 接线不变），
+    // 并行的新启动由 createSession() 造出独立对象，按实例路径登记在
+    // 静态注册表里，供 UI 层按实例查询/路由信号。
+    // 创建一个并行启动会话（不占用主单例；对象由调用方/上层持有）
+    static GameLauncher* createSession();
+    // 查找指定实例当前正在启动/运行中的会话；没有则返回 nullptr。
+    // 路径先经 QFileInfo 归一化再比较，避免分隔符/大小写差异误判
+    static GameLauncher* sessionForInstance(const QString& instancePath);
+    // 所有正在启动/运行中的会话
+    static QList<GameLauncher*> busySessions();
+    static bool anySessionBusy();
+
     LaunchStatus status() const;
     QString errorMessage() const;
 
@@ -170,7 +185,18 @@ public:
 
     // 获取当前启动配置中的实例路径
     QString currentInstancePath() const;
-    
+
+    // 触屏键位 → 游戏输入桥（安卓游戏内悬浮键位用）：把触屏输入按
+    // BlockBox 输入协议写进游戏进程 stdin，游戏侧按行读取后映射成键鼠
+    // 事件。action：move（x/y 为归一化向量）、look（x/y 为像素增量）、
+    // jump / sneak / attack / use / inventory / sprint（pressed 按下/抬起）。
+    // 游戏进程没在跑时是空操作，桌面端同样安全。
+    void sendTouchInput(const QString &action, qreal x, qreal y, bool pressed);
+
+    // 组合键版本（自定义键位绑定）：keys 为一组同时按下的键名，
+    // 按下按钮时整组 key state=1 发出，抬起时整组 state=0
+    void sendTouchInputKeys(const QStringList &keys, bool pressed);
+
     // Account related methods
     bool checkAccountStatus();
     bool refreshMicrosoftToken(const QString &refreshToken);
@@ -182,6 +208,8 @@ signals:
     void gameCrashed(const QString& error);
     void launchProgressChanged(int progress, const QString& message);
     void launchDetailAdded(const QString& detail);
+    // 第三方账户注入 authlib-injector 失败时的提醒（仅提示，不影响本次启动）
+    void thirdPartyInjectWarning(const QString &message);
     void errorReportGenerated(const QString& report);
     void fileCompletionFinished(bool success);
     void fileCompletionProgress(int completed, int total, const QString& currentFile);
@@ -210,6 +238,8 @@ private:
     GameLauncher(QObject *parent = nullptr);
     static GameLauncher* m_instance;
     static QMutex m_instanceMutex;
+    // 多实例并行启动会话注册表（含主单例），构造登记 / 析构移除
+    static QList<QPointer<GameLauncher>> s_sessions;
 
     QProcess* m_gameProcess;
     LaunchStatus m_status;
@@ -285,7 +315,7 @@ private:
     QStringList buildLaunchCommand(const LaunchConfig& config);
     bool prepareLaunchEnvironment();
     void cleanup();
-    void analyzeError(const QString& errorOutput);
+    void analyzeError(const QString& errorOutput, int exitCode = -1);
     
     // New methods for improved launch flow
     bool preCheck(const LaunchConfig& config);

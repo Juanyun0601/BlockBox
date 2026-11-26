@@ -184,6 +184,10 @@ protected:
 
     // Step0 语言设置
     QList<QPushButton *> m_languageCards;   ///< 语言卡片（与 LanguageManager::Language 顺序一致）
+    // 不随安装包内置的语言：卡片上标「需下载」，选中后先下语言包再重启
+    bool m_languagePackDownloading = false;
+    int m_languagePackLangIndex = -1;
+    void startLanguagePackDownload(int langIndex);
 
     // Step1 引导方式
     QWidget *m_methodCards[3] = {nullptr, nullptr, nullptr};

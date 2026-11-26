@@ -8,8 +8,12 @@
  * 功能：
  *   - 3D 立体查看（WASD 移动、空格升、Shift 降、拖动转向、滚轮前后）
  *   - 交互编辑：顶部两个模式 —— 选取（左键选中方块）、编辑（左键破坏、右键放置当前方块）
+ *   - 两点框选：选取范围切换成「框选（两点）」后，左键先后点两个对角方块，
+ *     两点围出的整块区域里所有方块一起选中（金色描边标出第一个角点）
  *   - 方块调色板：浏览/选择投影中出现的方块进行放置
- *   - 批量操作：整块替换、全空间填充、区域填充
+ *   - 批量操作：替换选中的方块（一键换成当前方块）、整份投影的整体替换、
+ *     全空间填充；「填充方块」可从居中弹窗选形状（实心/空心/框架/倾斜地板/
+ *     方形/三角形/圆形/圆柱），再在视图里点两个对角方块生成（也可按坐标填充）
  *   - 图层过滤（按 Y 层突出显示）
  *   - 撤销/重做、保存副本、就地保存
  *
@@ -26,6 +30,7 @@
 #include "utils/Schematic/SchematicDocument.h"
 #include "utils/Schematic/InstanceTextureLoader.h"
 #include "utils/Schematic/BlockShapeLoader.h"
+#include "utils/Schematic/ProjectionFillShape.h"
 
 class VoxelViewWidget;
 class QComboBox;
@@ -100,7 +105,8 @@ private slots:
     void onSaveInPlace();
     void onReplaceAll();
     void onFillAll();
-    void onFillBox();
+    /** 打开居中的形状选择弹窗；选完形状后进入两点拾取或按坐标填充 */
+    void onFillShapeClicked();
     void onPickBlock();
     void onRefreshStats();
     void filterPalette(const QString &text);
@@ -147,13 +153,43 @@ private:
     /** 把某条记录应用到文档（useBefore = 撤销，false = 重做） */
     bool applyUndoStep(const UndoStep &step, bool useBefore);
     void trimUndoStack();
-    /** 当前选取范围：0 = 只选这一个方块；1 = 选中全部同类型方块 */
+    /** 当前选取范围：0 = 只选这一个方块；1 = 选中全部同类型方块；2 = 两点框选 */
     int selectScope() const;
+    /** 当前是否是「两点框选」范围 */
+    bool isBoxSelectScope() const { return selectScope() == 2; }
     /** 按当前选取范围收集要选中的方块格（体积序索引）；点击空气返回空集 */
     QSet<int> collectSelection(int x, int y, int z) const;
+    /** 两点框选：收集两个对角点围出的立方体里全部非空气方块（框超出投影的部分忽略） */
+    QSet<int> collectBoxSelection(int x1, int y1, int z1, int x2, int y2, int z2) const;
+    /** 两点框选是否已点下第一个角点、正等第二个角点 */
+    bool boxSelectPending() const { return m_boxPivotX != INT_MIN; }
+    /** 上一次框选是否已完整点过两个角点（用于显示范围尺寸） */
+    bool hasDoneBox() const { return m_boxAX != INT_MIN && m_boxBX != INT_MIN; }
+    /** 收起待定角点（金色描边），不动已有选中 */
+    void clearBoxPivot();
+    /** 把待定角点同步成视图里的金色描边 */
+    void syncBoxPivotMarker();
     void updateSelectionLabel();
-    /** 取消全部选中（同时忘掉上次点击的锚点） */
+    /** 取消全部选中（同时忘掉上次点击的锚点与框选角点） */
     void clearSelection();
+
+    // ── 填充方块（选形状 → 两点生成） ──
+    /** 进入两点填充：按所选形状，在视图里先后点两个对角方块生成 */
+    void startFillPick(ProjectionFillShape shape, bool airOnly);
+    /** 退出两点填充（已经生成的方块保持不动） */
+    void cancelFillPick();
+    /** 是否正在等待填充的第一个/第二个角点 */
+    bool fillPickPending() const { return m_fillActive; }
+    /** 把待定的第一个角点同步成视图里的金色描边 */
+    void syncFillMarker();
+    /** 弹窗里的「按坐标填充…」：按输入的坐标范围生成形状 */
+    void fillShapeByCoordinates(ProjectionFillShape shape, bool airOnly);
+    /**
+     * @brief 把形状写进文档（世界坐标范围，含边界；超出投影的部分忽略）
+     * @return 实际写入的格子（体积序索引）；没有产生改动时返回空
+     */
+    QVector<int> applyFillShape(ProjectionFillShape shape, bool airOnly,
+                                int x0, int y0, int z0, int x1, int y1, int z1);
 
     bool            m_dirty = false;
     QString         m_filePath;
@@ -229,6 +265,16 @@ private:
     int m_hoverX = INT_MIN, m_hoverY = INT_MIN, m_hoverZ = INT_MIN;
     // 最近一次选取点击的方块（切换选取范围时据此重新选中）
     int m_selAnchorX = INT_MIN, m_selAnchorY = INT_MIN, m_selAnchorZ = INT_MIN;
+    // 两点框选：第一个角点（INT_MIN = 还没点），以及上一次框选完成的两个对角（显示尺寸用）
+    int m_boxPivotX = INT_MIN, m_boxPivotY = INT_MIN, m_boxPivotZ = INT_MIN;
+    int m_boxAX = INT_MIN, m_boxAY = INT_MIN, m_boxAZ = INT_MIN;
+    int m_boxBX = INT_MIN, m_boxBY = INT_MIN, m_boxBZ = INT_MIN;
+
+    // 填充方块：当前形状、是否只填空格、是否在等两点、已点的第一个角点
+    ProjectionFillShape m_fillShape = ProjectionFillShape::Solid;
+    bool            m_fillAirOnly = false;
+    bool            m_fillActive = false;
+    int m_fillAX = INT_MIN, m_fillAY = INT_MIN, m_fillAZ = INT_MIN;
 
     QList<SchematicBlockState> m_blocks;   // 用于调色板/收藏（含空气占位）
 };

@@ -35,6 +35,7 @@
 #include "utils/Schematic/SchematicOrthoViewRenderer.h"
 #include "components/CollapsibleSectionCard.h"
 #include "components/OrthoViewsPreviewDialog.h"
+#include "components/ProjectionPreviewDialog.h"
 
 #include <QIcon>
 #include <QPixmap>
@@ -60,6 +61,7 @@ ProjectionEditPage::ProjectionEditPage(QWidget *parent)
     , m_openFolderBtn(nullptr)
     , m_exportSchematicBtn(nullptr)
     , m_exportSpongeBtn(nullptr)
+    , m_previewBtn(nullptr)
     , m_currentVersionLabel(nullptr)
     , m_targetVersionCombo(nullptr)
     , m_targetVersionHint(nullptr)
@@ -257,6 +259,14 @@ void ProjectionEditPage::initUI()
     // ── 底部按钮 ──
     auto *bottomRow = new QHBoxLayout();
     bottomRow->setSpacing(10);
+
+    m_previewBtn = new QPushButton(tr("投影预览"), contentWidget);
+    m_previewBtn->setObjectName("bottomActionBtn");
+    m_previewBtn->setCursor(Qt::PointingHandCursor);
+    m_previewBtn->setToolTip(tr("用三维视图看整份投影，可拖动转视角、按层掀开看内部"));
+    connect(m_previewBtn, &QPushButton::clicked, this, &ProjectionEditPage::onPreviewClicked);
+    bottomRow->addWidget(m_previewBtn);
+
     m_openFolderBtn = new QPushButton(tr("打开所在文件夹"), contentWidget);
     m_openFolderBtn->setObjectName("bottomActionBtn");
     m_openFolderBtn->setCursor(Qt::PointingHandCursor);
@@ -351,6 +361,7 @@ void ProjectionEditPage::reset()
     m_exportSchematicBtn->setEnabled(false);
     m_exportSpongeBtn->setEnabled(false);
     m_generateViewsBtn->setEnabled(false);
+    m_previewBtn->setEnabled(false);
     m_currentVersionLabel->setText(tr("当前版本：未知"));
     m_targetVersionCombo->setEnabled(false);
     m_targetVersionHint->clear();
@@ -457,6 +468,7 @@ void ProjectionEditPage::loadProjection()
     m_exportSchematicBtn->setEnabled(true);
     m_exportSpongeBtn->setEnabled(true);
     m_generateViewsBtn->setEnabled(true);
+    m_previewBtn->setEnabled(true);
 
     m_currentVersionLabel->setText(tr("当前版本：V%1（Minecraft %2）")
         .arg(m_info.version)
@@ -704,6 +716,15 @@ void ProjectionEditPage::onGenerateOrthoViewsClicked()
             },
             Qt::QueuedConnection);
     });
+}
+
+void ProjectionEditPage::onPreviewClicked()
+{
+    if (m_filePath.isEmpty())
+        return;
+
+    // 三维预览只读查看，不影响当前页的信息与编辑状态
+    ProjectionPreviewDialog::preview(this, m_filePath, m_instancePath, m_info.name);
 }
 
 void ProjectionEditPage::onVersionComboChanged(int index)

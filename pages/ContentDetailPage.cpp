@@ -5,6 +5,7 @@
 #include "utils/ThemeManager.h"
 #include "utils/FavoritesManager.h"
 #include "utils/SettingsManager.h"
+#include "utils/links/LinkRouter.h"
 #include "utils/mod/CurseForgeAPI.h"
 #include "utils/mod/ModrinthAPI.h"
 #include "utils/mod/ModScanner.h"
@@ -912,6 +913,8 @@ void ContentDetailPage::buildLeftSidebar()
 void ContentDetailPage::buildInstallBlock(QVBoxLayout *parentLayout)
 {
     auto config = ContentTypeConfig::getConfig(m_contentType);
+    // 整合包不是往实例里塞文件：装了就是新建一个实例
+    const bool isModpack = (m_contentType == ContentType::Modpack);
 
     QWidget *section = new QWidget();
     section->setObjectName("modDetailSection");
@@ -923,7 +926,8 @@ void ContentDetailPage::buildInstallBlock(QVBoxLayout *parentLayout)
     title->setObjectName("modDetailSectionTitle");
     sectionLayout->addWidget(title);
 
-    m_installBtn = new QPushButton(tr("一键安装最新正式版"));
+    m_installBtn = new QPushButton(isModpack ? tr("一键安装最新版（新建实例）")
+                                             : tr("一键安装最新正式版"));
     m_installBtn->setObjectName("modDetailInstallBtn");
     m_installBtn->setCursor(Qt::PointingHandCursor);
     m_installBtn->setMinimumHeight(42);
@@ -931,8 +935,10 @@ void ContentDetailPage::buildInstallBlock(QVBoxLayout *parentLayout)
     m_installBtn->setIcon(IconHelper::loadColoredIcon(
         ":/Images/Icons/download.svg", QColor("#ffffff"), 18));
     m_installBtn->setIconSize(QSize(18, 18));
-    m_installBtn->setToolTip(tr("安装与当前实例匹配的最新正式版，并自动安装它必需的%1")
-                                 .arg(config.displayName));
+    m_installBtn->setToolTip(isModpack
+                                 ? tr("下载最新正式版并装成一个新实例（自带游戏版本、加载器与全部模组）")
+                                 : tr("安装与当前实例匹配的最新正式版，并自动安装它必需的%1")
+                                       .arg(config.displayName));
     connect(m_installBtn, &QPushButton::clicked, this, [this]() {
         // 短时间内避免连点造成两套安装流程并行
         m_installBtn->setEnabled(false);
@@ -942,8 +948,10 @@ void ContentDetailPage::buildInstallBlock(QVBoxLayout *parentLayout)
     });
     sectionLayout->addWidget(m_installBtn);
 
-    QLabel *hint = new QLabel(tr("自动安装最新正式版及它必需的%1到当前实例")
-                                  .arg(config.displayName));
+    QLabel *hint = new QLabel(isModpack
+                                  ? tr("自动下载整合包并新建实例，不用先选实例；装好后在实例列表里启动")
+                                  : tr("自动安装最新正式版及它必需的%1到当前实例")
+                                        .arg(config.displayName));
     hint->setWordWrap(true);
     hint->setStyleSheet(StyleKit::mutedLabel());
     sectionLayout->addWidget(hint);
@@ -1346,7 +1354,9 @@ QWidget *ContentDetailPage::createDownloadCard(const ModVersionFile &vf)
                                                QColor("#ffffff"), 18));
     dlBtn->setIconSize(QSize(18, 18));
     dlBtn->setFixedSize(32, 32);
-    dlBtn->setToolTip(tr("下载"));
+    // 整合包的下载动作其实是「装成一个新实例」，提示词跟实际行为对齐
+    dlBtn->setToolTip(m_contentType == ContentType::Modpack ? tr("安装（新建实例）")
+                                                            : tr("下载"));
     dlBtn->setCursor(Qt::PointingHandCursor);
     if (!vf.downloadUrl.isEmpty()) {
         // 点击时按最新安装状态分发（下载 / 转换 / 已安装不响应）
@@ -1572,6 +1582,7 @@ void ContentDetailPage::rebuildLinkButtons()
         delete item;
     }
     m_linksLayout->addStretch();
+    m_translationComposeBtn = nullptr;
 
     struct LinkInfo {
         QString label;
@@ -1651,14 +1662,23 @@ void ContentDetailPage::rebuildLinkButtons()
                 ShareToFriendDialog::share(this, m_modInfo.name, m_modInfo.pageUrl, category);
             });
         } else if (!link.url.isEmpty()) {
-            connect(btn, &QPushButton::clicked, this, [link]() {
-                QDesktopServices::openUrl(QUrl(link.url));
+            connect(btn, &QPushButton::clicked, this, [this, link]() {
+                LinkRouter::instance()->open(QUrl(link.url), this);
             });
         } else {
             btn->setEnabled(false);
         }
         m_linksLayout->addWidget(btn);
     }
+
+    // 「创建翻译 / 完善翻译」：跳到翻译编辑页，译文审核通过后给所有人看
+    m_translationComposeBtn = new QPushButton(translationComposeButtonLabel());
+    m_translationComposeBtn->setObjectName("modDetailLinkBtn");
+    m_translationComposeBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_translationComposeBtn, &QPushButton::clicked, this, [this]() {
+        emit translationComposeRequested(m_modInfo);
+    });
+    m_linksLayout->addWidget(m_translationComposeBtn);
 
     m_linksLayout->addStretch();
 }
@@ -1745,7 +1765,8 @@ void ContentDetailPage::buildDescriptionBlock(QVBoxLayout *parentLayout)
     // 描述区不再限制高度：文字按完整内容向下排版，由页面整体滚动
     m_descriptionBrowser = new AutoHeightTextBrowser();
     m_descriptionBrowser->setObjectName("modDetailDescBrowser");
-    m_descriptionBrowser->setOpenExternalLinks(true);
+    // 描述正文里的资源页链接也留在软件里打开，别的照旧走浏览器
+    LinkRouter::wireTextBrowser(m_descriptionBrowser);
     m_descriptionBrowser->setReadOnly(true);
     m_descriptionBrowser->setHtml(desc);
     sectionLayout->addWidget(m_descriptionBrowser);
@@ -2270,6 +2291,9 @@ void ContentDetailPage::receiveDetail(const ModInfo &detail)
         rebuildLinkButtons();
     }
 
+    // 详情齐了再去服务器查这个资源有没有审核通过的社区翻译（有就自动切「中」覆盖显示）
+    fetchCommunityTranslation();
+
     // Hide loading overlay
     if (m_loadingOverlay)
         m_loadingOverlay->hideOverlay();
@@ -2301,8 +2325,8 @@ void ContentDetailPage::setMcmodUrl(const QString &url)
             btn->setEnabled(true);
             disconnect(btn, nullptr, nullptr, nullptr);
             QString urlCopy = url;
-            connect(btn, &QPushButton::clicked, this, [urlCopy]() {
-                QDesktopServices::openUrl(QUrl(urlCopy));
+            connect(btn, &QPushButton::clicked, this, [this, urlCopy]() {
+                LinkRouter::instance()->open(QUrl(urlCopy), this);
             });
             break;
         }
@@ -2416,6 +2440,11 @@ void ContentDetailPage::onTranslateModeChanged(bool chinese)
         m_translateSwitch->setChineseMode(true);
         if (m_translating)
             return;
+        // 有社区翻译（其他用户提交并通过审核的）优先展示，没有才走 AI 翻译
+        if (m_hasCommunityTranslation) {
+            applyCommunityTranslation();
+            return;
+        }
         if (m_translated) {
             applyTranslatedTexts();
             return;
@@ -2581,7 +2610,92 @@ void ContentDetailPage::resetTranslation()
     m_origDetailHtml.clear();
     m_zhSummary.clear();
     m_zhDetailHtml.clear();
+
+    // 换了资源：上一个资源的社区翻译一并作废
+    m_hasCommunityTranslation = false;
+    m_hasMyTranslation = false;
+    m_communitySummary.clear();
+    m_communityDetailHtml.clear();
+    m_translationFetchContext.clear();
+
     if (m_translateSwitch)
         m_translateSwitch->setChineseMode(false);
     setTranslateBusy(false);
+}
+
+// ===========================================================================
+// 社区翻译（方块盒子服务器上其他用户提交的翻译，审核通过后自动覆盖显示）
+// ===========================================================================
+
+void ContentDetailPage::fetchCommunityTranslation()
+{
+    // 分享链接进入时 m_modInfo.id 可能是 slug，优先用详情回包带来的规范项目 id
+    const QString projectId = currentProjectId();
+    const QString source = m_currentSource.isEmpty() ? m_modInfo.source : m_currentSource;
+    if (projectId.isEmpty() || source.isEmpty())
+        return;
+
+    // 记下发起时的资源标识，回包时比对：用户可能已经点了别的资源，别把旧译文串过来
+    const QString context = source + QStringLiteral("|") + projectId;
+    m_translationFetchContext = context;
+
+    ContentTranslationService::instance()->fetchTranslation(
+        source, projectId, ContentTranslationService::defaultTargetLang(),
+        [this, context](const ContentTranslation &t) {
+            if (m_translationFetchContext != context)
+                return;
+            if (t.summary.isEmpty() && t.detailHtml.isEmpty())
+                return;
+            m_hasCommunityTranslation = true;
+            m_communitySummary = t.summary;
+            m_communityDetailHtml = t.detailHtml;
+            updateTranslationComposeButtonLabel();
+            // 用户此刻还停在 EN 态（没在 AI 翻译中）就自动切到「中」展示社区翻译
+            if (m_translateSwitch && !m_translateSwitch->isChineseMode()
+                && !m_translateSwitch->isBusy())
+                applyCommunityTranslation();
+        },
+        [this, context](const QString &, int) {
+            Q_UNUSED(context);
+            // 服务端还没有翻译接口 / 暂无翻译：静默忽略，详情页功能不受影响
+        });
+}
+
+void ContentDetailPage::applyCommunityTranslation()
+{
+    if (m_communitySummary.isEmpty() && m_communityDetailHtml.isEmpty())
+        return;
+
+    // 记录原文供切回 EN 还原（AI 翻译流程没跑过时这里还没记）
+    if (m_origSummary.isEmpty() && m_descriptionLabel)
+        m_origSummary = m_descriptionLabel->text();
+    if (m_origDetailHtml.isEmpty()) {
+        m_origDetailHtml = m_modInfo.detailedDescription.isEmpty()
+            ? m_modInfo.description
+            : m_modInfo.detailedDescription;
+    }
+
+    if (!m_communitySummary.isEmpty() && m_descriptionLabel)
+        m_descriptionLabel->setText(m_communitySummary);
+    if (!m_communityDetailHtml.isEmpty() && m_descriptionBrowser)
+        m_descriptionBrowser->setHtml(m_communityDetailHtml);
+    if (m_translateSwitch)
+        m_translateSwitch->setChineseMode(true);
+}
+
+QString ContentDetailPage::translationComposeButtonLabel() const
+{
+    return (m_hasCommunityTranslation || m_hasMyTranslation) ? tr("完善翻译") : tr("创建翻译");
+}
+
+void ContentDetailPage::updateTranslationComposeButtonLabel()
+{
+    if (m_translationComposeBtn)
+        m_translationComposeBtn->setText(translationComposeButtonLabel());
+}
+
+void ContentDetailPage::notifyTranslationSubmitted()
+{
+    m_hasMyTranslation = true;
+    updateTranslationComposeButtonLabel();
 }

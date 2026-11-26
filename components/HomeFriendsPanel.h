@@ -8,7 +8,8 @@
  *   - 已登录时列出论坛好友，点卡片进入和该好友的私信页；
  *   - 每隔半分钟同步一次好友与联机大厅房间，好友开了大厅房间就把卡片置顶、
  *     右侧出现「一起玩」按钮，点击直接加入他的房间；
- *   - 卡片按窗口宽度自动分列排布，好友太多时只摆前几张，其余去好友页看；
+ *   - 卡片与「最近游玩」「论坛热门帖」卡片同宽，只摆一行（一行能放几张就显示几张），
+ *     其余好友去好友页看；
  *   - 未登录 / 没有好友 / 加载失败都有对应的空态提示。
  */
 
@@ -69,7 +70,9 @@ private:
     void hideState();
     /** 卡片流容器宽度变化后延迟一拍重排，合并连续 resize */
     void scheduleRebuild();
-    /** 按容器宽度算出每张卡片的宽度（一排 1~6 张） */
+    /** 按容器宽度算出一行能摆几张卡片（一栏只摆一行，与最近游玩 / 热门帖同宽） */
+    int calculateColumns() const;
+    /** 按容器宽度算出每张卡片的宽度 */
     int calculateCardWidth() const;
     QWidget *createFriendCard(const ForumFriendInfo &info, const ForumLobbyRoom *room, int cardWidth);
     void rebuildHeader();

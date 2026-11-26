@@ -21,9 +21,11 @@
 
 #include "components/AppMessageBox.h"
 #include "components/ForumPostBrowser.h"
+#include "components/ForumTagEditor.h"
 #include "components/NotificationManager.h"
 #include "utils/ForumAccountService.h"
 #include "utils/StyleKit.h"
+#include "utils/links/LinkRouter.h"
 #include "utils/plugin/PluginManager.h"
 
 CreationWorkDetailPage::CreationWorkDetailPage(QWidget *parent)
@@ -162,6 +164,10 @@ void CreationWorkDetailPage::buildUi()
     contentLayout->addWidget(m_contentBrowser);
     connect(m_contentBrowser, &ForumPostBrowser::imageClicked, this,
             [](const QString &path) { ForumPostBrowser::showImagePreview(path); });
+    // 作品正文里的链接：CF / Modrinth 资源页留在软件里打开，其它走浏览器
+    connect(m_contentBrowser, &ForumPostBrowser::linkClicked, this, [this](const QUrl &url) {
+        LinkRouter::instance()->open(url, this);
+    });
     layout->addWidget(contentCard);
 
     // ── 操作行 ──
@@ -222,6 +228,8 @@ void CreationWorkDetailPage::renderWork()
         m_badgeLayout->addWidget(ForumKit::makeBadge(m_badgeLayout->parentWidget(), tr("插件")));
     if (m_thread.schematic.isValid())
         m_badgeLayout->addWidget(ForumKit::makeBadge(m_badgeLayout->parentWidget(), tr("投影")));
+    if (m_thread.source.isRepost())
+        m_badgeLayout->addWidget(ForumKit::makeBadge(m_badgeLayout->parentWidget(), tr("转载")));
     if (m_thread.pinned)
         m_badgeLayout->addWidget(ForumKit::makeBadge(m_badgeLayout->parentWidget(), tr("置顶")));
     if (m_thread.locked)
@@ -520,9 +528,9 @@ bool CreationWorkDetailPage::runEditDialog(QWidget *parent, const QString &title
     auto *titleEdit = new QLineEdit(title, &dialog);
     layout->addWidget(titleEdit);
 
-    layout->addWidget(new QLabel(tr("标签（用逗号分隔，最多 4 个）"), &dialog));
-    auto *tagsEdit = new QLineEdit(tags.join(QStringLiteral(", ")), &dialog);
-    layout->addWidget(tagsEdit);
+    auto *tagsEditor = new ForumTagEditor(&dialog);
+    tagsEditor->setTags(tags);
+    layout->addWidget(tagsEditor);
 
     layout->addWidget(new QLabel(tr("正文（Markdown）"), &dialog));
     auto *contentEdit = new QPlainTextEdit(&dialog);
@@ -551,15 +559,8 @@ bool CreationWorkDetailPage::runEditDialog(QWidget *parent, const QString &title
         return false;
     }
 
-    QStringList newTags;
-    for (const QString &tag : tagsEdit->text().split(QLatin1Char(',')))
-    {
-        const QString trimmed = tag.trimmed();
-        if (!trimmed.isEmpty())
-            newTags.append(trimmed);
-    }
-    if (newTags.size() > 4)
-        newTags = newTags.mid(0, 4);
+    tagsEditor->commitPending();
+    const QStringList newTags = tagsEditor->tags();
 
     if (outTitle)
         *outTitle = newTitle;

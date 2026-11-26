@@ -12,8 +12,10 @@
 #include "components/OutlinedLabel.h"
 #include "components/OutlinedTextEdit.h"
 #include "components/ResourceReferenceDialog.h"
+#include "components/ScreenshotViewer.h"
 
 #include <QApplication>
+#include <QBuffer>
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
@@ -43,11 +45,14 @@
 #include "components/AppMessageBox.h"
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSet>
 #include <QSettings>
 #include <QSpacerItem>
 #include <QStandardPaths>
 #include <QStyle>
 #include <QTcpSocket>
+#include <QPen>
+#include <QPointer>
 #include <QTimer>
 #include <QNetworkAccessManager>
 #include <QtConcurrent>
@@ -69,11 +74,15 @@
 
 #include "components/ModelSelectDialog.h"
 #include "components/NotificationManager.h"
+#include "components/HumanCheckDialog.h"
 #include "components/SkillManagerDialog.h"
 #include "layouts/FlowLayout.h"
 #include "utils/AiProviderPresets.h"
+#include "utils/links/LinkRouter.h"
 #include "utils/AiService.h"
 #include "utils/DownloadTaskManager.h"
+#include "utils/ForumAccountService.h"
+#include "utils/GameScreenshot.h"
 #include "utils/IconHelper.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
@@ -91,6 +100,70 @@ namespace
     constexpr const char *kChevronCollapsed = ":/Images/Icons/chevron_right.svg";
     constexpr const char *kChevronExpanded = ":/Images/Icons/chevron_down.svg";
     constexpr int kChevronSize = 12;
+
+    /// 一条消息最多能带几张截图（再多既费 token 又挤占窗口）
+    constexpr int kMaxPendingImages = 3;
+
+    /// 截图缓存目录（AppData/BlockBox/ai_images），不存在时自动创建
+    QString aiImageCacheDir()
+    {
+        QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        if (dir.isEmpty())
+        {
+            return QString();
+        }
+        dir += QStringLiteral("/ai_images");
+        QDir().mkpath(dir);
+        return dir;
+    }
+
+    /// 把截图 JPEG 落到缓存目录，返回文件路径（失败返回空字符串）
+    QString saveAiImageToCache(const QByteArray &jpeg)
+    {
+        const QString dir = aiImageCacheDir();
+        if (dir.isEmpty() || jpeg.isEmpty())
+        {
+            return QString();
+        }
+        const QString path = dir + QStringLiteral("/")
+                             + QUuid::createUuid().toString(QUuid::WithoutBraces)
+                             + QStringLiteral(".jpg");
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly))
+        {
+            return QString();
+        }
+        file.write(jpeg);
+        file.close();
+        return path;
+    }
+
+    /**
+     * @brief 从缓存文件还原一张历史截图
+     * @param path   缓存文件路径
+     * @param width  原图宽（仅用于展示，可为 0）
+     * @param height 原图高
+     * @return 补齐 dataUrl 的截图（文件已不存在时 dataUrl 为空，展示用占位图）
+     */
+    ChatImage loadChatImageFromCache(const QString &path, int width, int height)
+    {
+        ChatImage image;
+        image.cachePath = path;
+        image.width = width;
+        image.height = height;
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly))
+        {
+            const QByteArray bytes = file.readAll();
+            file.close();
+            if (!bytes.isEmpty())
+            {
+                image.dataUrl = QStringLiteral("data:image/jpeg;base64,")
+                                + QString::fromLatin1(bytes.toBase64());
+            }
+        }
+        return image;
+    }
 
     /// 过程行折叠箭头图标（收起 ▶ / 展开 ∨）
     void setChevronPixmap(QLabel *chevronLabel, bool expanded)
@@ -189,6 +262,8 @@ namespace
             {QStringLiteral("get_settings"), QObject::tr("查询配置")},
             {QStringLiteral("read_litematic"), QObject::tr("读取投影")},
             {QStringLiteral("search_resources"), QObject::tr("搜索资源")},
+            {QStringLiteral("search_forum"), QObject::tr("搜索论坛")},
+            {QStringLiteral("get_forum_thread"), QObject::tr("读取帖子")},
             {QStringLiteral("get_resource_detail"), QObject::tr("资源详情")},
             {QStringLiteral("list_resource_files"), QObject::tr("资源文件列表")},
             {QStringLiteral("download_resource"), QObject::tr("下载资源")},
@@ -489,6 +564,13 @@ AiChatPage::AiChatPage(QWidget *parent)
     , m_systemPromptBtn(nullptr)
     , m_promptOptimizeBtn(nullptr)
     , m_promptOptimizeBusy(false)
+    , m_screenshotBtn(nullptr)
+    , m_imageStrip(nullptr)
+    , m_imageStripLayout(nullptr)
+    , m_imageRow(nullptr)
+    , m_imageRowLayout(nullptr)
+    , m_imageStripHint(nullptr)
+    , m_imageHintTimer(nullptr)
     , m_mobileMode(false)
     , m_mobileBar(nullptr)
     , m_mobileInputBtn(nullptr)
@@ -506,7 +588,14 @@ AiChatPage::AiChatPage(QWidget *parent)
     , m_welcomeQuickBtns(nullptr)
     , m_welcomeQuickLayout(nullptr)
     , m_currentMode(0)
+    , m_forumHumanStatusKnown(false)
+    , m_forumHumanEnabled(false)
+    , m_forumHumanPrompted(false)
+    , m_forumHumanStatusPending(false)
     , m_compactMode(false)
+    , m_modeBar(nullptr)
+    , m_chatOnlyMode(false)
+    , m_gameScreenshotEnabled(false)
 {
     initUI();
     initDefaultModels();
@@ -598,6 +687,9 @@ AiChatPage::AiChatPage(QWidget *parent)
 
     initConnections();
     loadConversations();
+    // 没有任何历史对话时也要在面板里写明「暂无历史对话」，
+    // 否则展开对话选择后只剩一个标题和「新建对话」，看起来像没加载出来
+    updateConvEmptyHint();
 
     // 首次进入 AI 助手页始终进入新对话草稿态（不自动加载历史对话）
     m_currentConvIndex = -1;
@@ -703,12 +795,10 @@ void AiChatPage::initUI()
     m_leftPanel->setAttribute(Qt::WA_StyledBackground);
     m_bubbleWidth = m_compactMode ? kCompactBubbleWidth : kBubbleWidth;
     m_leftPanel->setVisible(false);
-    // 悬浮气泡外阴影
-    auto *convShadow = new QGraphicsDropShadowEffect(m_leftPanel);
-    convShadow->setBlurRadius(20);
-    convShadow->setOffset(0, 4);
-    convShadow->setColor(QColor(0, 0, 0, 50));
-    m_leftPanel->setGraphicsEffect(convShadow);
+    // 悬浮气泡外阴影不在这里挂：QGraphicsDropShadowEffect 会把整块面板改成离屏渲染，
+    // 而展开时面板宽度是从 0 连续动画到 m_bubbleWidth 的，离屏缓存不会跟着几何失效。
+    // 某些平台/驱动下就表现为「点了对话选择、面板占位让开了，但面板本身一片空白」。
+    // 因此阴影统一由 setConvPanelShadowEnabled() 管理：动画期间不挂，落位后再挂上。
 
     auto *leftLayout = new QVBoxLayout(m_leftPanel);
     leftLayout->setContentsMargins(0, 0, 0, 0);
@@ -724,6 +814,7 @@ void AiChatPage::initUI()
     // 模式切换容器 - 聊天/工作
     auto *modeBar = new QWidget();
     modeBar->setObjectName("aiChatModeBar");
+    m_modeBar = modeBar;  // 只聊天模式（实例助手）下整条藏起来
     auto *modeLayout = new QHBoxLayout(modeBar);
     modeLayout->setContentsMargins(3, 3, 3, 3);
     modeLayout->setSpacing(0);
@@ -917,6 +1008,43 @@ void AiChatPage::initUI()
     m_inputEdit->setAcceptRichText(false);
     m_inputEdit->setFrameShape(QFrame::NoFrame);
     m_inputEdit->installEventFilter(this);
+
+    // ====================================================================
+    // 待发送截图区：贴在文本域上方，提示文字一行、缩略图一行，
+    // 随输入卡片一起（手机端弹窗时也跟着搬进弹窗）
+    // ====================================================================
+    m_imageStrip = new QWidget();
+    m_imageStrip->setObjectName("aiChatImageStrip");
+    m_imageStripLayout = new QVBoxLayout(m_imageStrip);
+    m_imageStripLayout->setContentsMargins(0, 0, 0, 2);
+    m_imageStripLayout->setSpacing(4);
+
+    m_imageStripHint = new QLabel(m_imageStrip);
+    m_imageStripHint->setObjectName("aiChatImageStripHint");
+    m_imageStripHint->setWordWrap(true);
+    // 提示是长句（还带中文），不能被它顶宽输入卡片，宽度交给布局分配、超出就换行
+    m_imageStripHint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_imageStripHint->setVisible(false);
+    m_imageStripLayout->addWidget(m_imageStripHint);
+
+    m_imageRow = new QWidget(m_imageStrip);
+    m_imageRow->setObjectName("aiChatImageRow");
+    m_imageRowLayout = new QHBoxLayout(m_imageRow);
+    m_imageRowLayout->setContentsMargins(0, 0, 0, 0);
+    m_imageRowLayout->setSpacing(6);
+    m_imageRowLayout->addStretch();
+    m_imageRow->setVisible(false);
+    m_imageStripLayout->addWidget(m_imageRow);
+
+    m_imageStrip->setVisible(false);
+    inputBoxLayout->addWidget(m_imageStrip);
+
+    // 截图状态提示约 4 秒后自动消失（截取中 / 已截取 / 失败原因）
+    m_imageHintTimer = new QTimer(this);
+    m_imageHintTimer->setSingleShot(true);
+    m_imageHintTimer->setInterval(4000);
+    connect(m_imageHintTimer, &QTimer::timeout, this, [this]() { showImageHint(QString()); });
+
     inputBoxLayout->addWidget(m_inputEdit);
 
     // ====================================================================
@@ -981,6 +1109,21 @@ void AiChatPage::initUI()
     m_permissionCombo->addItem(tr("权限: 关键确认"), 1);
     m_permissionCombo->addItem(tr("权限: 完全访问"), 2);
     m_permissionCombo->setCurrentIndex(0); // 默认"全部确认"
+
+    // --- 右侧：截图游戏画面（实例助手内聊天时把画面发给 AI） ---
+    m_screenshotBtn = new QPushButton(m_toolsArea);
+    m_screenshotBtn->setObjectName("aiChatToolIconBtn");
+    m_screenshotBtn->setCursor(Qt::PointingHandCursor);
+    m_screenshotBtn->setFlat(true);
+    m_screenshotBtn->setFixedSize(30, 30);
+    m_screenshotBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/screenshot.svg", mutedIconColor(), 16));
+    m_screenshotBtn->setIconSize(QSize(16, 16));
+    m_screenshotBtn->setToolTip(tr("截取当前游戏画面，随下一条消息一起发给 AI\n"
+                                   "（需要支持图片输入的模型，如 GPT-4o、Gemini、Claude 等）"));
+    // 只在实例助手（游戏内聊天）里出现，主界面的 AI 页不显示
+    m_screenshotBtn->setVisible(false);
+    connect(m_screenshotBtn, &QPushButton::clicked, this, &AiChatPage::onScreenshotClicked);
 
     // --- 右侧：引用图标 ---
     m_referenceBtn = new QPushButton(m_toolsArea);
@@ -1079,6 +1222,7 @@ void AiChatPage::rebuildToolsRows()
 
     auto *rightRow = new QHBoxLayout();
     rightRow->setSpacing(2);
+    rightRow->addWidget(m_screenshotBtn);
     rightRow->addWidget(m_referenceBtn);
     rightRow->addWidget(m_promptOptimizeBtn);
     rightRow->addWidget(m_systemPromptBtn);
@@ -1093,7 +1237,7 @@ void AiChatPage::rebuildToolsRows()
     }
     else
     {
-        // 普通模式：左四选择框 + 弹性 + 右五图标，同一行
+        // 普通模式：左四选择框 + 弹性 + 右六图标，同一行
         auto *singleRow = new QHBoxLayout();
         singleRow->setSpacing(6);
         singleRow->addWidget(m_modelBtn);
@@ -1101,6 +1245,7 @@ void AiChatPage::rebuildToolsRows()
         singleRow->addWidget(m_thinkingEffortCombo);
         singleRow->addWidget(m_permissionCombo);
         singleRow->addStretch();
+        singleRow->addWidget(m_screenshotBtn);
         singleRow->addWidget(m_referenceBtn);
         singleRow->addWidget(m_promptOptimizeBtn);
         singleRow->addWidget(m_systemPromptBtn);
@@ -1513,6 +1658,8 @@ void AiChatPage::initConnections()
     // Ctrl+Enter 也发送
     connect(m_inputEdit, &QTextEdit::textChanged, this, [this]() {
         const bool hasText = !m_inputEdit->toPlainText().trimmed().isEmpty();
+        // 只挂了截图（没打字）也能发
+        const bool canSend = hasText || !m_pendingImages.isEmpty();
         if (m_isStreaming)
         {
             // 流式期间"停止"按钮始终可点击
@@ -1520,7 +1667,7 @@ void AiChatPage::initConnections()
         }
         else
         {
-            m_sendBtn->setEnabled(hasText);
+            m_sendBtn->setEnabled(canSend);
         }
         // 提示词优化仅在草稿非空且无优化请求在飞行时可用
         if (!m_promptOptimizeBusy)
@@ -1576,6 +1723,10 @@ void AiChatPage::initConnections()
     // 累积搜索结果，实时向汇总区域追加联网卡片
     connect(m_aiService, &AiService::webSearchResultsCollected,
             this, &AiChatPage::onWebSearchResultsCollected);
+
+    // 论坛搜索结果：把帖子标题铺成可点击链接（软件内直接打开帖子详情）
+    connect(m_aiService, &AiService::forumSearchResultsCollected,
+            this, &AiChatPage::onForumSearchResultsCollected);
 
     // Agent 工具调用进度（工作模式步骤卡片）
     connect(m_aiService, &AiService::agentToolCallStarted,
@@ -1683,9 +1834,62 @@ void AiChatPage::updateConvBubbleGeometry()
     }
     const int x = kBubbleMargin;
     const int y = kBubbleMargin;
-    const int h = qMax(120, m_bubbleHost->height() - 2 * kBubbleMargin);
-    m_leftPanel->setGeometry(x, y, m_bubbleWidth, h);
+    // 宿主还没完成布局（高度为 0 或小于两侧留白）时退回整页高度兜底：
+    // 否则会算出一个只有 120px 的迷你气泡，看起来和「没显示」没区别
+    int hostH = m_bubbleHost->height();
+    if (hostH <= 2 * kBubbleMargin)
+    {
+        hostH = height();
+    }
+    const int h = qMax(120, hostH - 2 * kBubbleMargin);
+    const QRect target(x, y, m_bubbleWidth, h);
+    if (m_leftPanel->geometry() != target)
+    {
+        // 尺寸变了先摘掉投影再改几何：投影按旧尺寸缓存的离屏画面不会自动失效，
+        // 留到下一次绘制就可能画成一片空白；改完尺寸重新挂上即可
+        const bool hadShadow = m_leftPanel->graphicsEffect() != nullptr;
+        if (hadShadow)
+        {
+            m_leftPanel->setGraphicsEffect(nullptr);
+        }
+        m_leftPanel->setGeometry(target);
+        if (hadShadow)
+        {
+            setConvPanelShadowEnabled(true);
+        }
+    }
     m_leftPanel->raise();
+    m_leftPanel->update();
+}
+
+void AiChatPage::setConvPanelShadowEnabled(bool enabled)
+{
+    if (!m_leftPanel)
+    {
+        return;
+    }
+    // 手机端不挂离屏特效：部分机型 / 游戏内覆盖层上，带投影的子控件会被画成一片空白，
+    // 而气泡本身已有圆角加描边，观感不受影响
+    if (m_mobileMode)
+    {
+        enabled = false;
+    }
+    if (enabled)
+    {
+        if (!m_leftPanel->graphicsEffect())
+        {
+            auto *shadow = new QGraphicsDropShadowEffect(m_leftPanel);
+            shadow->setBlurRadius(20);
+            shadow->setOffset(0, 4);
+            shadow->setColor(QColor(0, 0, 0, 50));
+            m_leftPanel->setGraphicsEffect(shadow);
+        }
+    }
+    else if (m_leftPanel->graphicsEffect())
+    {
+        // setGraphicsEffect(nullptr) 会连带删掉旧的阴影特效
+        m_leftPanel->setGraphicsEffect(nullptr);
+    }
 }
 
 void AiChatPage::updateConvButtonTitles()
@@ -1889,6 +2093,8 @@ void AiChatPage::switchToMode(int mode)
     }
 
     m_currentMode = mode;
+    // 每次重新进入工作模式都允许再问一次人机验证（用户上次取消过也照问）
+    m_forumHumanPrompted = false;
 
     // 更新模式按钮选中态
     m_modeChatBtn->setChecked(mode == 0);
@@ -1921,6 +2127,108 @@ void AiChatPage::switchToMode(int mode)
 
     // 手机端底部栏回到「输入」按钮（切模式会中断流式）
     syncMobileInputBar();
+
+    // 工作模式会用到社区工具（搜论坛 / 读帖子）：进模式先在后台问一下论坛要不要人机验证，
+    // 发送时再按结果把滑块补上，免得 AI 干到一半才被验证卡住。
+    // 延后一拍，先让模式切换与动画走完。
+    if (mode == 1)
+    {
+        QTimer::singleShot(0, this, [this]() { refreshForumHumanCheckStatus(); });
+    }
+}
+
+void AiChatPage::refreshForumHumanCheckStatus()
+{
+    auto *forum = ForumAccountService::instance();
+    if (!forum || m_forumHumanStatusPending)
+    {
+        return;
+    }
+
+    // 已验过就不必再问服务端，直接记成「这次不用管」
+    if (forum->humanCheckSatisfied())
+    {
+        m_forumHumanStatusKnown = true;
+        m_forumHumanEnabled = true;
+        m_forumHumanPrompted = false;
+        return;
+    }
+
+    m_forumHumanStatusPending = true;
+    QPointer<AiChatPage> self(this);
+    forum->fetchHumanCheckStatus(
+        [self](bool enabled, bool verified, int remaining) {
+            Q_UNUSED(remaining);
+            if (!self)
+            {
+                return;
+            }
+            self->m_forumHumanStatusPending = false;
+            self->m_forumHumanStatusKnown = true;
+            self->m_forumHumanEnabled = enabled;
+            // 服务端说已经验过（本机令牌还有效）时，把「已弹过」也清掉，
+            // 等令牌真的过期后还能再提示一次
+            if (verified)
+            {
+                self->m_forumHumanPrompted = false;
+            }
+        },
+        [self](const QString &, int) {
+            // 查不到就保持未知：发送时按「未知」处理，社区请求被拦时还有兜底弹窗
+            if (self)
+            {
+                self->m_forumHumanStatusPending = false;
+            }
+        });
+}
+
+void AiChatPage::ensureForumHumanCheckBeforeSend()
+{
+    if (m_currentMode != 1 || m_chatOnlyMode)
+    {
+        return;
+    }
+
+    auto *forum = ForumAccountService::instance();
+    if (!forum)
+    {
+        return;
+    }
+
+    if (forum->humanCheckSatisfied())
+    {
+        m_forumHumanPrompted = false;
+        return;
+    }
+    if (m_forumHumanPrompted || HumanCheckDialog::isChecking())
+    {
+        return;
+    }
+
+    // 状态还没查回来（刚进模式就立刻发送）：先发消息，查询结果回来时再决定要不要补弹
+    if (!m_forumHumanStatusKnown)
+    {
+        refreshForumHumanCheckStatus();
+        return;
+    }
+
+    // 论坛没开人机验证：这次工作模式都不用再问
+    if (!m_forumHumanEnabled)
+    {
+        m_forumHumanPrompted = true;
+        return;
+    }
+
+    // 论坛开了验证且本机没验过：先滑完再发消息，AI 后面调社区工具就不会被打断。
+    // 用户取消后本次工作模式不再追问（真被拦住时，社区请求会再触发一次验证）。
+    m_forumHumanPrompted = true;
+    const bool passed = HumanCheckDialog::verify(window());
+    if (!passed && forum->needsHumanCheck())
+    {
+        // 取消时如果别的页面已经有请求被拦下排队，就把它们放掉（和主窗口取消时的处理一致），
+        // 免得社区页一直停在「正在连接论坛…」
+        forum->abortHumanCheck();
+    }
 }
 
 void AiChatPage::switchToConversation(int index)
@@ -2223,6 +2531,8 @@ void AiChatPage::onDeleteConversation()
         }
     }
 
+    // 对话里带过的截图缓存已经没人引用了，顺手清掉
+    sweepImageCache();
     saveConversations();
 }
 
@@ -2318,7 +2628,53 @@ void AiChatPage::onClearAllConversations()
     {
         m_convTitleLabel->setText(tr("新对话"));
     }
+
+    // 对话清空后，落在缓存目录里、已经没人引用的截图文件一并删掉
+    // （对话文件里只存路径，不清理的话图片会一直堆在 AppData 里）
+    sweepImageCache();
+
     saveConversations();
+}
+
+void AiChatPage::sweepImageCache()
+{
+    QSet<QString> referencedImages;
+    for (const Conversation &conv : m_conversations)
+    {
+        for (const ChatMessage &msg : conv.messages)
+        {
+            for (const ChatImage &image : msg.images)
+            {
+                if (!image.cachePath.isEmpty())
+                {
+                    referencedImages.insert(QFileInfo(image.cachePath).fileName());
+                }
+            }
+        }
+    }
+    // 还没发出去的截图也算「在用」，别刚截完就被当垃圾清掉
+    for (const ChatImage &image : m_pendingImages)
+    {
+        if (!image.cachePath.isEmpty())
+        {
+            referencedImages.insert(QFileInfo(image.cachePath).fileName());
+        }
+    }
+
+    const QString imageDir = aiImageCacheDir();
+    if (imageDir.isEmpty())
+    {
+        return;
+    }
+    QDir dir(imageDir);
+    const QStringList cachedImages = dir.entryList({QStringLiteral("*.jpg")}, QDir::Files);
+    for (const QString &name : cachedImages)
+    {
+        if (!referencedImages.contains(name))
+        {
+            QFile::remove(dir.filePath(name));
+        }
+    }
 }
 
 // ============================================================================
@@ -2543,10 +2899,16 @@ void AiChatPage::updateWelcomeContent()
     {
         // 聊天模式
         m_welcomeTitleLabel->setText(tr("与 AI 助手一起聊天"));
-        m_welcomeDescLabel->setText(
-            tr("你好！在这里可以和我聊聊关于 Minecraft 的一切——"
-               "询问生存技巧与红石生电、分享游戏中的趣事、"
-               "获取游戏灵感与模组推荐，也可以让我帮你解读游戏崩溃日志。"));
+        QString desc = tr("你好！在这里可以和我聊聊关于 Minecraft 的一切——"
+                          "询问生存技巧与红石生电、分享游戏中的趣事、"
+                          "获取游戏灵感与模组推荐，也可以让我帮你解读游戏崩溃日志。");
+        if (m_gameScreenshotEnabled)
+        {
+            // 实例助手内：提示可以直接截游戏画面给 AI 看
+            desc += QStringLiteral("\n\n")
+                    + tr("游戏里遇到看不懂的东西，点输入框上的截图按钮，把画面截给我看看。");
+        }
+        m_welcomeDescLabel->setText(desc);
         // 聊天模式不显示快捷按钮
         if (m_welcomeQuickBtns)
         {
@@ -2665,6 +3027,9 @@ void AiChatPage::refreshToolIcons()
             ":/Images/Icons/arrow_down_triangle.svg", muted, 12));
     if (m_referenceBtn)
         m_referenceBtn->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/link.svg", muted, 16));
+    if (m_screenshotBtn)
+        m_screenshotBtn->setIcon(IconHelper::loadColoredIcon(
+            ":/Images/Icons/screenshot.svg", muted, 16));
     if (m_promptOptimizeBtn)
         m_promptOptimizeBtn->setIcon(IconHelper::loadColoredIcon(
             ":/Images/Icons/sparkles.svg", muted, 16));
@@ -2749,6 +3114,11 @@ void AiChatPage::setConvListExpanded(bool expanded, bool animate)
         if (m_convListExpanded)
         {
             updateConvBubbleGeometry();
+            setConvPanelShadowEnabled(true);
+        }
+        else
+        {
+            setConvPanelShadowEnabled(false);
         }
         if (m_bubbleHostLayout)
         {
@@ -2759,7 +3129,17 @@ void AiChatPage::setConvListExpanded(bool expanded, bool animate)
         return;
     }
 
-    const int hostH = qMax(120, m_bubbleHost ? m_bubbleHost->height() - 2 * kBubbleMargin : 120);
+    // 展开/收起动画期间先摘掉投影特效：特效会把面板整块转成离屏渲染，
+    // 而宽度在动画里连续变化，离屏缓存不跟着失效就会画出一片空白
+    setConvPanelShadowEnabled(false);
+
+    // 宿主高度还没算出来时退回整页高度，避免滑出一个 120px 的迷你面板
+    int hostH = m_bubbleHost ? m_bubbleHost->height() : 0;
+    if (hostH <= 2 * kBubbleMargin)
+    {
+        hostH = height();
+    }
+    hostH = qMax(120, hostH - 2 * kBubbleMargin);
     const QRect targetGeo(kBubbleMargin, kBubbleMargin,
                           expanded ? m_bubbleWidth : 0, hostH);
     const int targetGap = expanded ? m_bubbleWidth + kBubbleMargin : 0;
@@ -2798,8 +3178,29 @@ void AiChatPage::setConvListExpanded(bool expanded, bool animate)
         m_convToggleAnim = nullptr;
         if (expanded)
         {
+            // 落位后再校正一次几何，然后才挂投影并整块重绘：
+            // 保证面板是按最终尺寸画的，不会停留在动画中间的空白帧
+            updateConvBubbleGeometry();
             m_leftPanel->raise();
+            // 先挂上投影再重绘，否则这一帧画的是没有阴影的旧状态
+            setConvPanelShadowEnabled(true);
+            m_leftPanel->update();
+            if (m_bubbleHost)
+            {
+                m_bubbleHost->update();
+            }
             repositionOverlays();
+            // 窗口刚显示或刚缩放完时布局可能还在收尾，下一个事件循环再校正一次尺寸，
+            // 避免面板停在「刚从 0 滑出来」那一帧、只剩一条窄边
+            QTimer::singleShot(0, this, [this]() {
+                if (!m_convListExpanded || !m_leftPanel)
+                {
+                    return;
+                }
+                updateConvBubbleGeometry();
+                m_leftPanel->raise();
+                m_leftPanel->update();
+            });
         }
         else
         {
@@ -2935,7 +3336,8 @@ void AiChatPage::updateChatStatus(ChatStatus status)
         else
         {
             m_sendBtn->setEnabled(
-                !m_inputEdit->toPlainText().trimmed().isEmpty());
+                !m_inputEdit->toPlainText().trimmed().isEmpty()
+                || !m_pendingImages.isEmpty());
         }
     }
 
@@ -3044,9 +3446,15 @@ void AiChatPage::onStopStreaming()
 void AiChatPage::onSendMessage()
 {
     QString text = m_inputEdit->toPlainText().trimmed();
-    if (text.isEmpty() || m_isStreaming)
+    // 只挂了截图、没打字也能发
+    if (m_isStreaming || (text.isEmpty() && m_pendingImages.isEmpty()))
     {
         return;
+    }
+    // 只发图片时补一句引导语，避免请求里出现空文本
+    if (text.isEmpty())
+    {
+        text = tr("帮我看看这张游戏截图。");
     }
 
     // 重置中断标志：上一次切换对话/停止可能残留 m_streamAborting=true，
@@ -3133,10 +3541,15 @@ void AiChatPage::onSendMessage()
         socket.disconnectFromHost();
     }
 
+    // 工作模式兜底：发送前确认社区人机验证，尽量让 AI 真正开始干活时已经拿到免验令牌
+    ensureForumHumanCheckBeforeSend();
+
     // 添加用户消息（若有待发送引用，将引用描述附加到消息文本末尾作为上下文）
     ChatMessage userMsg;
     userMsg.role = "user";
     userMsg.content = text;
+    // 本轮的截图（游戏画面）随消息一起发给 AI，气泡里也回显缩略图
+    userMsg.images = m_pendingImages;
     const QString refText = buildReferenceText();
     if (!refText.isEmpty())
     {
@@ -3149,8 +3562,9 @@ void AiChatPage::onSendMessage()
 
     m_inputEdit->clear();
     m_sendBtn->setEnabled(false);
-    // 引用随消息发出后清空，避免下一条消息重复携带
+    // 引用与截图随消息发出后清空，避免下一条消息重复携带
     clearPendingReferences();
+    clearPendingImages();
 
     // 手机端：消息已发出，收起输入弹窗，底部栏随即切换到「进行中 + 中止」
     closeMobileCompose();
@@ -3526,7 +3940,8 @@ void AiChatPage::onStreamFinished(const TokenUsage &usage)
     m_currentPendingStepCard = nullptr;
     m_currentTaskListCard = nullptr;
 
-    m_sendBtn->setEnabled(!m_inputEdit->toPlainText().trimmed().isEmpty());
+    m_sendBtn->setEnabled(!m_inputEdit->toPlainText().trimmed().isEmpty()
+                          || !m_pendingImages.isEmpty());
     m_inputEdit->setFocus();
     saveConversations();
 
@@ -3743,7 +4158,7 @@ void AiChatPage::addMessageBubble(const ChatMessage &msg)
         rebuildToolStepCards(msg.toolCalls);
     }
 
-    QWidget *bubble = createMessageWidget(msg.content, isUser, msg.references);
+    QWidget *bubble = createMessageWidget(msg.content, isUser, msg.references, msg.images);
 
     // 插入到 stretch 之前
     m_messageLayout->insertWidget(m_messageLayout->count() - 1, bubble);
@@ -3767,8 +4182,8 @@ void AiChatPage::addMessageBubble(const ChatMessage &msg)
 
 void AiChatPage::setupTextContextMenu(QLabel *label, bool isUser)
 {
-    // 启用文本可选（鼠标拖选）
-    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // 启用文本可选（鼠标拖选）；AI 气泡已经开好的「点击链接」标志要保留
+    label->setTextInteractionFlags(label->textInteractionFlags() | Qt::TextSelectableByMouse);
     label->setContextMenuPolicy(Qt::CustomContextMenu);
 
     connect(label, &QWidget::customContextMenuRequested, this, [this, label, isUser](const QPoint &pos) {
@@ -3845,7 +4260,8 @@ void AiChatPage::setupTextContextMenu(QLabel *label, bool isUser)
 }
 
 QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
-                                         const QList<ResourceReference> &refs)
+                                         const QList<ResourceReference> &refs,
+                                         const QList<ChatImage> &images)
 {
     auto *container = new QWidget();
     container->setObjectName("aiChatBubbleContainer");
@@ -3865,7 +4281,7 @@ QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
 
     auto *bubbleLayout = new QVBoxLayout(bubble);
     bubbleLayout->setContentsMargins(14, 10, 14, 10);
-    bubbleLayout->setSpacing(0);
+    bubbleLayout->setSpacing(images.isEmpty() ? 0 : 6);
 
     // 用户消息且有引用：剥离附加的引用文本块，仅展示用户输入文本，
     // 引用部分改用样式化卡片展示（AI 侧仍通过 content 中的引用文本感知）
@@ -3885,9 +4301,22 @@ QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
     contentLabel->setWordWrap(true);
     // 用户气泡用纯文本；AI 气泡用 Markdown 渲染
     contentLabel->setTextFormat(isUser ? Qt::PlainText : Qt::MarkdownText);
-    contentLabel->setOpenExternalLinks(true);
-    // 文本可选（鼠标拖选）
-    contentLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    if (isUser)
+    {
+        contentLabel->setOpenExternalLinks(true);
+        // 文本可选（鼠标拖选）
+        contentLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    }
+    else
+    {
+        // 回答里的链接交给 LinkRouter：方块盒子论坛的帖子 / 板块、CF / Modrinth 资源页
+        // 都在软件内打开，认不出的链接再交给浏览器
+        contentLabel->setOpenExternalLinks(false);
+        contentLabel->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::LinksAccessibleByMouse);
+        connect(contentLabel, &QLabel::linkActivated, this, [this](const QString &url) {
+            LinkRouter::instance()->open(QUrl(url, QUrl::TolerantMode), this);
+        });
+    }
     // AI 气泡正文顶部对齐，保证描边层与 QLabel 正文位置一致
     if (!isUser)
         contentLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -3906,7 +4335,20 @@ QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
     }
 
     setupTextContextMenu(contentLabel, isUser);
-    bubbleLayout->addWidget(contentLabel);
+    if (!displayText.isEmpty())
+    {
+        bubbleLayout->addWidget(contentLabel);
+    }
+
+    // 用户消息：气泡顶部先回显随消息一起发出去的截图（点开可看大图）
+    if (!images.isEmpty())
+    {
+        QWidget *imagesWidget = buildMessageImages(images, isUser);
+        if (imagesWidget)
+        {
+            bubbleLayout->insertWidget(0, imagesWidget);
+        }
+    }
 
     // 用户消息：在气泡内追加只读引用卡片（样式化展示已发送引用）
     if (isUser && !refs.isEmpty())
@@ -4190,6 +4632,9 @@ void AiChatPage::regenerateLastAnswer()
         return;
     }
 
+    // 工作模式下重新生成同样会用到社区工具：先把社区人机验证确认掉
+    ensureForumHumanCheckBeforeSend();
+
     auto &msgs = m_conversations[m_currentConvIndex].messages;
 
     // 找最后一条 assistant 消息
@@ -4393,6 +4838,20 @@ void AiChatPage::doSaveConversations()
                 }
                 msgObj["references"] = refArray;
             }
+            // 序列化消息携带的截图：只存缓存文件路径，不把 base64 塞进对话文件
+            if (!msg.images.isEmpty())
+            {
+                QJsonArray imageArray;
+                for (const ChatImage &image : msg.images)
+                {
+                    QJsonObject imageObj;
+                    imageObj["cachePath"] = image.cachePath;
+                    imageObj["width"] = image.width;
+                    imageObj["height"] = image.height;
+                    imageArray.append(imageObj);
+                }
+                msgObj["images"] = imageArray;
+            }
             msgArray.append(msgObj);
         }
         convObj["messages"] = msgArray;
@@ -4488,6 +4947,21 @@ void AiChatPage::loadConversations()
                 ref.size = refObj["size"].toVariant().toLongLong();
                 ref.extra = refObj["extra"].toString();
                 msg.references.append(ref);
+            }
+            // 反序列化消息携带的截图（向后兼容：旧数据无此字段时为空）。
+            // 历史截图按缓存文件补回 dataUrl，下一轮请求仍能把画面发给模型。
+            QJsonArray imageArray = msgObj["images"].toArray();
+            for (const QJsonValue &imageVal : imageArray)
+            {
+                const QJsonObject imageObj = imageVal.toObject();
+                const QString cachePath = imageObj["cachePath"].toString();
+                if (cachePath.isEmpty())
+                {
+                    continue;
+                }
+                msg.images.append(loadChatImageFromCache(cachePath,
+                                                         imageObj["width"].toInt(),
+                                                         imageObj["height"].toInt()));
             }
             conv.messages.append(msg);
         }
@@ -5201,6 +5675,85 @@ void AiChatPage::onWebSearchResultsCollected(const QList<WebSearchResult> &resul
     }
 
     // 自动滚动到底部
+    QScrollBar *sb = m_messageArea->verticalScrollBar();
+    sb->setValue(sb->maximum());
+}
+
+void AiChatPage::onForumSearchResultsCollected(const QList<ForumSearchHit> &hits)
+{
+    if (hits.isEmpty())
+    {
+        return;
+    }
+
+    // 刚完成的那张步骤卡片（工具结束前发来的结果，此时仍是进行中卡片）
+    QWidget *card = m_currentPendingStepCard;
+    if (!card && !m_currentToolStepCards.isEmpty())
+    {
+        card = m_currentToolStepCards.last();
+    }
+    if (!card)
+    {
+        return;
+    }
+    auto *resultLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepResult"));
+    if (!resultLabel)
+    {
+        return;
+    }
+
+    // 帖子标题铺成可点击链接：点了在软件内打开帖子详情（LinkRouter 认论坛地址）
+    QString html;
+    for (const ForumSearchHit &hit : hits)
+    {
+        if (!html.isEmpty())
+        {
+            html += QStringLiteral("<br>");
+        }
+        const QString title = hit.title.isEmpty() ? tr("(无标题)") : hit.title;
+        if (!hit.url.isEmpty())
+        {
+            html += QStringLiteral("<a href=\"%1\">%2</a>")
+                        .arg(hit.url.toHtmlEscaped(), title.toHtmlEscaped());
+        }
+        else
+        {
+            html += title.toHtmlEscaped();
+        }
+
+        QStringList meta;
+        if (!hit.kind.isEmpty())
+        {
+            meta << hit.kind;
+        }
+        if (!hit.boardName.isEmpty())
+        {
+            meta << hit.boardName;
+        }
+        if (!hit.authorName.isEmpty())
+        {
+            meta << hit.authorName;
+        }
+        if (!meta.isEmpty())
+        {
+            html += QStringLiteral(" <span style=\"color:#888;\">· %1</span>")
+                        .arg(meta.join(QStringLiteral(" · ")).toHtmlEscaped());
+        }
+    }
+
+    // 标记为富文本结果：完成信号回来时不再用一行摘要覆盖这串链接
+    resultLabel->setProperty("richResult", true);
+    resultLabel->setTextFormat(Qt::RichText);
+    resultLabel->setOpenExternalLinks(false);
+    if (!resultLabel->property("forumLinkRouted").toBool())
+    {
+        resultLabel->setProperty("forumLinkRouted", true);
+        connect(resultLabel, &QLabel::linkActivated, this, [this](const QString &url) {
+            LinkRouter::instance()->open(QUrl(url, QUrl::TolerantMode), this);
+        });
+    }
+    resultLabel->setText(html);
+
     QScrollBar *sb = m_messageArea->verticalScrollBar();
     sb->setValue(sb->maximum());
 }
@@ -6188,7 +6741,11 @@ void AiChatPage::applyToolStepFinish(QWidget *card, const QString &resultSummary
         {
             resultLabel->setProperty("status", success ? QStringLiteral("success") : QStringLiteral("danger"));
             resultLabel->style()->polish(resultLabel);
-            resultLabel->setText(resultSummary.isEmpty() ? tr("（无）") : resultSummary);
+            // 论坛搜索结果已经把标题铺成了可点击链接，别用一行摘要盖掉
+            if (!resultLabel->property("richResult").toBool())
+            {
+                resultLabel->setText(resultSummary.isEmpty() ? tr("（无）") : resultSummary);
+            }
         }
     }
 }
@@ -6287,6 +6844,19 @@ void AiChatPage::addExternalReference(const ResourceReference &ref)
             }
         });
     }
+}
+
+void AiChatPage::addExternalPrompt(const QList<ResourceReference> &refs, const QString &prompt)
+{
+    for (const ResourceReference &ref : refs)
+    {
+        if (ref.path.isEmpty() && ref.extra.isEmpty() && ref.name.isEmpty())
+            continue;
+        if (!m_pendingReferences.contains(ref))
+            m_pendingReferences.append(ref);
+    }
+    rebuildReferenceChips();
+    injectPromptToInput(prompt);
 }
 
 void AiChatPage::onReferenceClicked()
@@ -6507,4 +7077,293 @@ QString AiChatPage::buildReferenceText() const
         text += line + QStringLiteral(" (") + parts.join(QStringLiteral(", ")) + QStringLiteral(")");
     }
     return text;
+}
+
+// ============================
+// 仅聊天模式 / 截图游戏画面发给 AI（实例助手内）
+// ============================
+
+void AiChatPage::setChatOnlyMode(bool chatOnly)
+{
+    m_chatOnlyMode = chatOnly;
+
+    // 「聊天 / 工作」切换整条藏起来：实例助手浮在游戏上，工作模式那套文件操作不适用
+    if (m_modeBar)
+    {
+        m_modeBar->setVisible(!chatOnly);
+    }
+    if (chatOnly && m_currentMode != 0)
+    {
+        switchToMode(0);
+    }
+}
+
+void AiChatPage::setGameScreenshotEnabled(bool enabled)
+{
+    m_gameScreenshotEnabled = enabled;
+    if (m_screenshotBtn)
+    {
+        m_screenshotBtn->setVisible(enabled);
+    }
+    // 工具行里多/少一个图标，重新排一次版面
+    rebuildToolsRows();
+    updateWelcomeContent();
+}
+
+void AiChatPage::onScreenshotClicked()
+{
+    if (m_isStreaming)
+    {
+        return;
+    }
+    if (m_pendingImages.size() >= kMaxPendingImages)
+    {
+        showImageHint(tr("一条消息最多带 %1 张截图").arg(kMaxPendingImages), true);
+        return;
+    }
+
+    // 截图期间窗口会短暂消失，按钮先锁住防止连点
+    if (m_screenshotBtn)
+    {
+        m_screenshotBtn->setEnabled(false);
+    }
+    showImageHint(tr("正在截取游戏画面…"));
+
+    // 先让提示绘制出来，再藏窗口抓屏（否则用户完全看不到反馈）
+    QTimer::singleShot(80, this, [this]() {
+        QList<QWidget *> windowsToHide;
+        windowsToHide << this->window();
+        if (m_mobileComposeDialog && m_mobileComposeDialog->isVisible())
+        {
+            windowsToHide << m_mobileComposeDialog;
+        }
+
+        const GameScreenshot::Result shot = GameScreenshot::capture(windowsToHide);
+        if (m_screenshotBtn)
+        {
+            m_screenshotBtn->setEnabled(true);
+        }
+        if (shot.image.isNull())
+        {
+            showImageHint(shot.error.isEmpty() ? tr("截图失败，请稍后再试") : shot.error, true);
+            return;
+        }
+
+        QByteArray jpeg;
+        ChatImage image;
+        image.dataUrl = GameScreenshot::toJpegDataUrl(shot.image, &jpeg);
+        if (image.dataUrl.isEmpty())
+        {
+            showImageHint(tr("截图失败：图片编码出错"), true);
+            return;
+        }
+        image.width = shot.image.width();
+        image.height = shot.image.height();
+        image.cachePath = saveAiImageToCache(jpeg);
+
+        m_pendingImages.append(image);
+        rebuildImageStrip();
+        showImageHint(shot.windowTitle.isEmpty()
+                          ? tr("已截取屏幕画面，随下一条消息发给 AI")
+                          : tr("已截取游戏画面，随下一条消息发给 AI"));
+        if (m_inputEdit)
+        {
+            m_inputEdit->setFocus();
+        }
+    });
+}
+
+void AiChatPage::rebuildImageStrip()
+{
+    if (!m_imageStrip || !m_imageRowLayout)
+    {
+        return;
+    }
+
+    // 清掉旧缩略图（先藏起来再延后销毁，避免重建瞬间闪一下）
+    const QList<QPushButton *> oldChips =
+        m_imageRow->findChildren<QPushButton *>(QStringLiteral("aiChatImageChip"));
+    for (QPushButton *chip : oldChips)
+    {
+        chip->hide();
+        chip->deleteLater();
+    }
+    while (QLayoutItem *item = m_imageRowLayout->takeAt(0))
+    {
+        delete item;
+    }
+
+    for (int i = 0; i < m_pendingImages.size(); ++i)
+    {
+        const ChatImage image = m_pendingImages.at(i);
+
+        auto *chip = new QPushButton(m_imageRow);
+        chip->setObjectName(QStringLiteral("aiChatImageChip"));
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setFlat(true);
+        chip->setFixedSize(52, 52);
+        const QPixmap thumb = chatImagePixmap(image, 48);
+        if (!thumb.isNull())
+        {
+            chip->setIcon(QIcon(thumb));
+            chip->setIconSize(QSize(48, 48));
+        }
+        chip->setToolTip(tr("点击查看大图"));
+        connect(chip, &QPushButton::clicked, this, [this, image]() {
+            ScreenshotViewer viewer({chatImagePixmap(image, 0)}, 0, this);
+            viewer.exec();
+        });
+
+        auto *closeBtn = new QPushButton(QStringLiteral("×"), chip);
+        closeBtn->setObjectName(QStringLiteral("aiChatImageChipClose"));
+        closeBtn->setCursor(Qt::PointingHandCursor);
+        closeBtn->setFlat(true);
+        closeBtn->setFixedSize(16, 16);
+        closeBtn->move(52 - 17, 1);
+        closeBtn->setToolTip(tr("移除这张截图"));
+        connect(closeBtn, &QPushButton::clicked, this, [this, i]() { removePendingImage(i); });
+
+        m_imageRowLayout->addWidget(chip, 0, Qt::AlignVCenter);
+    }
+    m_imageRowLayout->addStretch();
+    m_imageRow->setVisible(!m_pendingImages.isEmpty());
+
+    // 有截图或有提示时才占位置
+    const bool hasHint = m_imageStripHint && m_imageStripHint->isVisible()
+                         && !m_imageStripHint->text().isEmpty();
+    m_imageStrip->setVisible(!m_pendingImages.isEmpty() || hasHint);
+
+    // 只挂了截图、没打字也能发
+    if (m_sendBtn && !m_isStreaming)
+    {
+        m_sendBtn->setEnabled(!m_inputEdit->toPlainText().trimmed().isEmpty()
+                              || !m_pendingImages.isEmpty());
+    }
+}
+
+void AiChatPage::removePendingImage(int index)
+{
+    if (index < 0 || index >= m_pendingImages.size())
+    {
+        return;
+    }
+    m_pendingImages.removeAt(index);
+    rebuildImageStrip();
+    if (m_pendingImages.isEmpty())
+    {
+        showImageHint(QString());
+    }
+}
+
+void AiChatPage::clearPendingImages()
+{
+    if (m_pendingImages.isEmpty())
+    {
+        return;
+    }
+    m_pendingImages.clear();
+    rebuildImageStrip();
+}
+
+void AiChatPage::showImageHint(const QString &text, bool error)
+{
+    if (!m_imageStripHint)
+    {
+        return;
+    }
+
+    m_imageStripHint->setText(text);
+    m_imageStripHint->setProperty("error", error);
+    m_imageStripHint->setVisible(!text.isEmpty());
+    // 错误态是动态属性，改了要重新走一遍样式计算
+    m_imageStripHint->style()->unpolish(m_imageStripHint);
+    m_imageStripHint->style()->polish(m_imageStripHint);
+
+    if (m_imageHintTimer)
+    {
+        if (text.isEmpty())
+        {
+            m_imageHintTimer->stop();
+        }
+        else
+        {
+            m_imageHintTimer->start();
+        }
+    }
+
+    if (m_imageStrip)
+    {
+        const bool hasHint = !text.isEmpty();
+        m_imageStrip->setVisible(!m_pendingImages.isEmpty() || hasHint);
+        if (m_imageRow)
+        {
+            m_imageRow->setVisible(!m_pendingImages.isEmpty());
+        }
+    }
+}
+
+QWidget* AiChatPage::buildMessageImages(const QList<ChatImage> &images, bool isUser)
+{
+    if (images.isEmpty())
+    {
+        return nullptr;
+    }
+
+    auto *areaWidget = new QWidget();
+    areaWidget->setObjectName(QStringLiteral("aiChatBubbleImages"));
+    auto *flow = new FlowLayout(areaWidget, 0, 4, 4);
+
+    // 用户气泡里小一点，避免把窄窗口的消息区顶得太宽
+    const int side = isUser ? 96 : 120;
+    const int iconSide = side - 4;
+    for (const ChatImage &image : images)
+    {
+        auto *thumb = new QPushButton(areaWidget);
+        thumb->setObjectName(QStringLiteral("aiChatImageChip"));
+        thumb->setCursor(Qt::PointingHandCursor);
+        thumb->setFlat(true);
+        thumb->setFixedSize(side, side);
+        const QPixmap pix = chatImagePixmap(image, iconSide);
+        if (!pix.isNull())
+        {
+            thumb->setIcon(QIcon(pix));
+            thumb->setIconSize(QSize(iconSide, iconSide));
+        }
+        thumb->setToolTip(tr("点击查看大图"));
+        connect(thumb, &QPushButton::clicked, this, [this, image]() {
+            ScreenshotViewer viewer({chatImagePixmap(image, 0)}, 0, this);
+            viewer.exec();
+        });
+        flow->addWidget(thumb);
+    }
+    return areaWidget;
+}
+
+QPixmap AiChatPage::chatImagePixmap(const ChatImage &image, int side)
+{
+    QImage img;
+    if (!image.cachePath.isEmpty())
+    {
+        img = QImage(image.cachePath);
+    }
+    if (img.isNull() && !image.dataUrl.isEmpty())
+    {
+        // data:image/jpeg;base64,xxxx → 解码后半段
+        const int comma = image.dataUrl.indexOf(QLatin1Char(','));
+        if (comma > 0)
+        {
+            const QByteArray base64 = image.dataUrl.mid(comma + 1).toLatin1();
+            img.loadFromData(QByteArray::fromBase64(base64));
+        }
+    }
+    if (img.isNull())
+    {
+        return QPixmap();
+    }
+    if (side <= 0)
+    {
+        return QPixmap::fromImage(img);
+    }
+    return QPixmap::fromImage(img.scaled(side, side, Qt::KeepAspectRatio,
+                                        Qt::SmoothTransformation));
 }

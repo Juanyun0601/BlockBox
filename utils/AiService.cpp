@@ -22,6 +22,8 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QSet>
+#include <QHash>
+#include <QSharedPointer>
 #include <QTimer>
 #include <QPointer>
 #include <QtConcurrent>
@@ -49,6 +51,8 @@
 #include "utils/AiEndpointUrl.h"
 #include "utils/CommandAssistant/LitematicReader.h"
 #include "utils/skill/SkillManager.h"
+#include "utils/plugin/PluginManager.h"
+#include "utils/ForumContentService.h"
 
 namespace {
 
@@ -263,6 +267,16 @@ void AiService::finishSendMessageAfterCompression(int generation,
             sysObj["content"] = skillPrompt;
             messagesArray.append(sysObj);
         }
+
+        // 2.6 工作模式下注入已启用插件提供的 AI 工具说明
+        QString pluginPrompt = PluginManager::instance()->enabledAiToolsPrompt();
+        if (!pluginPrompt.isEmpty())
+        {
+            QJsonObject sysObj;
+            sysObj["role"] = "system";
+            sysObj["content"] = pluginPrompt;
+            messagesArray.append(sysObj);
+        }
     }
 
     // 3. 追加对话历史（压缩成功时为压缩后的历史，早期消息已替换为摘要）
@@ -283,7 +297,44 @@ void AiService::finishSendMessageAfterCompression(int generation,
         }
         QJsonObject msgObj;
         msgObj["role"] = msg.role;
-        msgObj["content"] = msg.content;
+        if (!msg.images.isEmpty())
+        {
+            // 带图片的消息：content 改用 OpenAI 多模态分段格式（文本 + image_url），
+            // 图片以 data URL 内联，服务商不需要能访问本地文件
+            QJsonArray parts;
+            if (!msg.content.isEmpty())
+            {
+                QJsonObject textPart;
+                textPart["type"] = QStringLiteral("text");
+                textPart["text"] = msg.content;
+                parts.append(textPart);
+            }
+            for (const ChatImage &image : msg.images)
+            {
+                if (image.dataUrl.isEmpty())
+                {
+                    continue;
+                }
+                QJsonObject urlObj;
+                urlObj["url"] = image.dataUrl;
+                QJsonObject imagePart;
+                imagePart["type"] = QStringLiteral("image_url");
+                imagePart["image_url"] = urlObj;
+                parts.append(imagePart);
+            }
+            if (parts.isEmpty())
+            {
+                msgObj["content"] = msg.content;
+            }
+            else
+            {
+                msgObj["content"] = parts;
+            }
+        }
+        else
+        {
+            msgObj["content"] = msg.content;
+        }
         messagesArray.append(msgObj);
     }
 
@@ -1558,7 +1609,7 @@ QList<WebSearchResult> AiService::parseBingSearchResults(const QString &html, co
 }
 
 void AiService::continueWithToolResult(const QString &toolCallId, const QString &toolName,
-                                       const QString &result)
+                                       const QString &result, int maxLength)
 {
     // 部分服务商不返回 tool_call id，生成一个占位 id
     QString id = toolCallId;
@@ -1572,7 +1623,7 @@ void AiService::continueWithToolResult(const QString &toolCallId, const QString 
     toolMsg["role"] = "tool";
     toolMsg["tool_call_id"] = id;
     toolMsg["name"] = toolName;
-    toolMsg["content"] = truncateToolResult(result);
+    toolMsg["content"] = truncateToolResult(result, maxLength);
     m_pendingMessages.append(toolMsg);
     m_turnToolPhase.append(toolMsg);
 
@@ -1665,6 +1716,8 @@ int AiService::estimateTokenCount(const QList<ChatMessage> &messages) const
         {
             tokens += estimateTokenCount(msg.toolPhase);
         }
+        // 图片按张粗估（各服务商计费差异大，这里取一个偏保守的固定值）
+        tokens += msg.images.size() * 800;
     }
     return tokens;
 }
@@ -1904,6 +1957,28 @@ void AiService::applyAgentTools(QJsonObject &body)
         tools.append(v);
     m_skillToolMap = sm->enabledToolMap();
 
+    // 合并已启用插件（Plugin）提供的 AI 工具：与内置/技能工具重名时跳过，
+    // 并刷新工具名 → 插件 ID 映射供 dispatchToolCall 分发
+    QSet<QString> takenNames;
+    for (const QJsonValue &v : tools) {
+        takenNames.insert(v.toObject().value(QStringLiteral("function")).toObject()
+                              .value(QStringLiteral("name")).toString());
+    }
+    m_pluginToolMap.clear();
+    PluginManager *pm = PluginManager::instance();
+    const QHash<QString, QString> pluginToolMap = pm->enabledAiToolMap();
+    const QJsonArray pluginTools = pm->enabledAiToolsJson();
+    for (const QJsonValue &v : pluginTools) {
+        const QString toolName = v.toObject().value(QStringLiteral("function")).toObject()
+                                     .value(QStringLiteral("name")).toString();
+        const auto it = pluginToolMap.constFind(toolName);
+        if (toolName.isEmpty() || it == pluginToolMap.constEnd() || takenNames.contains(toolName))
+            continue;
+        takenNames.insert(toolName);
+        m_pluginToolMap.insert(toolName, it.value());
+        tools.append(v);
+    }
+
     body["tools"] = tools;
     body["tool_choice"] = QStringLiteral("auto");
 }
@@ -1989,6 +2064,32 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
         int maxLength = args["max_length"].toInt(10000);
         executeFetchWebpage(url, extractText, maxLength);
         return;
+    }
+
+    // 方块盒子论坛：搜索帖子 / 读取帖子详情。
+    // 论坛服务（ForumContentService）的请求与回调都在主线程，不能像本地工具那样
+    // 丢进 QtConcurrent 用 QEventLoop 等，改为「发起请求 → 回调里回填结果」的异步流程。
+    if (name == QStringLiteral("search_forum"))
+    {
+        executeSearchForum(args);
+        return;
+    }
+    if (name == QStringLiteral("get_forum_thread"))
+    {
+        executeGetForumThread(args);
+        return;
+    }
+    // search_resources 的「插件 / 投影」类型落到方块盒子论坛：
+    // 这两类原创资源只在社区里发布（插件分享 / 投影分享板块），CurseForge/Modrinth 上没有。
+    if (name == QStringLiteral("search_resources"))
+    {
+        const QString contentType = args["content_type"].toString().trimmed().toLower();
+        if (contentType == QStringLiteral("plugin") || contentType == QStringLiteral("schematic")
+            || contentType == QStringLiteral("projection"))
+        {
+            executeSearchForum(args);
+            return;
+        }
     }
 
     // update_task_list：纯本地内存操作（覆盖 m_taskList + 发 taskListUpdated 信号），
@@ -2274,6 +2375,13 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
             return this->executeSkillTool(name, args);
         });
     }
+    else if (m_pluginToolMap.contains(name))
+    {
+        // 插件（Plugin）提供的 AI 工具：通过 PluginManager 执行脚本或 HTTP 请求
+        future = QtConcurrent::run([this, args, name]() {
+            return this->executePluginAiTool(name, args);
+        });
+    }
     else
     {
         // 未知工具
@@ -2326,6 +2434,143 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
         continueWithToolResult(toolCallId, name, result);
     });
     watcher->setFuture(future);
+}
+
+// ============================================================================
+// 外部 MCP 客户端调用入口
+// ============================================================================
+
+QString AiService::executeExternalTool(const QString &name, const QJsonObject &args,
+                                       QString *errorMessage)
+{
+    if (errorMessage)
+    {
+        errorMessage->clear();
+    }
+
+    // 与工作模式 Agent 工具共用工作区限制：越界路径直接拒绝，别让外部客户端绕过
+    const QString instancePath = args.value(QStringLiteral("instance_path")).toString().trimmed();
+    if (!instancePath.isEmpty() && !isPathAllowed(instancePath))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("路径不在工作区允许范围内：%1").arg(instancePath);
+        }
+        return QString();
+    }
+    const QString filePath = args.value(QStringLiteral("file_path")).toString().trimmed();
+    if (!filePath.isEmpty() && !isPathAllowed(filePath))
+    {
+        if (errorMessage)
+        {
+            *errorMessage = QStringLiteral("路径不在工作区允许范围内：%1").arg(filePath);
+        }
+        return QString();
+    }
+
+    // 纯本地只读工具
+    if (name == QStringLiteral("list_instances"))
+    {
+        return executeListInstances();
+    }
+    if (name == QStringLiteral("check_loader_compatibility"))
+    {
+        return executeCheckLoaderCompatibility(args);
+    }
+    if (name == QStringLiteral("get_game_versions"))
+    {
+        return executeGetGameVersions();
+    }
+    if (name == QStringLiteral("analyze_crash_log"))
+    {
+        return executeAnalyzeCrashLog(args);
+    }
+    if (name == QStringLiteral("list_mods"))
+    {
+        return executeListMods(args);
+    }
+    if (name == QStringLiteral("detect_java"))
+    {
+        return executeDetectJava();
+    }
+    if (name == QStringLiteral("get_settings"))
+    {
+        return executeGetSettings();
+    }
+    if (name == QStringLiteral("read_litematic"))
+    {
+        return executeReadLitematic(args);
+    }
+    if (name == QStringLiteral("read_game_log"))
+    {
+        return executeReadGameLog(args);
+    }
+    if (name == QStringLiteral("read_crash_report"))
+    {
+        return executeReadCrashReport(args);
+    }
+    if (name == QStringLiteral("list_saves"))
+    {
+        return executeListSaves(args);
+    }
+    if (name == QStringLiteral("read_save_info"))
+    {
+        return executeReadSaveInfo(args);
+    }
+    if (name == QStringLiteral("list_servers"))
+    {
+        return executeListServers(args);
+    }
+    if (name == QStringLiteral("list_download_tasks"))
+    {
+        return executeListDownloadTasks();
+    }
+    if (name == QStringLiteral("find_structure"))
+    {
+        return executeFindStructure(args);
+    }
+
+    // 需要网络的只读工具（内部用 QEventLoop 等待，调用方需放在子线程）
+    if (name == QStringLiteral("check_mod_updates"))
+    {
+        return executeCheckModUpdates(args);
+    }
+    if (name == QStringLiteral("ping_server"))
+    {
+        return executePingServer(args);
+    }
+
+    // 写操作（MCP 层已校验写入开关与 confirm，这里只负责执行）
+    if (name == QStringLiteral("manage_mods"))
+    {
+        return executeManageMods(args);
+    }
+    if (name == QStringLiteral("manage_world_backup"))
+    {
+        return executeManageWorldBackup(args);
+    }
+    if (name == QStringLiteral("launch_game"))
+    {
+        return executeLaunchGame(args);
+    }
+    if (name == QStringLiteral("download_instance"))
+    {
+        return executeDownloadInstance(args);
+    }
+    if (name == QStringLiteral("modify_instance"))
+    {
+        return executeModifyInstance(args);
+    }
+    if (name == QStringLiteral("download_resource"))
+    {
+        return executeDownloadResource(args);
+    }
+
+    if (errorMessage)
+    {
+        *errorMessage = QStringLiteral("该工具未开放给外部 MCP 客户端：%1").arg(name);
+    }
+    return QString();
 }
 
 // ============================================================================
@@ -2502,15 +2747,27 @@ QString AiService::executeAnalyzeCrashLog(const QJsonObject &args)
     }
 
     auto *analyzer = ErrorAnalyzer::instance();
-    // 截取前 4000 字符避免过长
-    QString truncated = logText.size() > 4000 ? logText.left(4000) : logText;
-    ErrorAnalyzer::ErrorInfo info = analyzer->analyzeError(truncated);
+    // 崩溃关键信息通常在日志末尾，保留末尾而不是开头
+    QString truncated = logText.size() > 8000 ? logText.right(8000) : logText;
+    ErrorAnalyzer::ErrorInfo info = analyzer->analyzeLog(truncated);
 
     QStringList lines;
     lines.append(QStringLiteral("错误类型: %1").arg(analyzer->getErrorTypeName(info.errorType)));
     if (!info.errorCode.isEmpty())
     {
         lines.append(QStringLiteral("错误代码: %1").arg(info.errorCode));
+    }
+    if (!info.ruleName.isEmpty())
+    {
+        lines.append(QStringLiteral("命中规则: %1").arg(info.ruleName));
+    }
+    if (!info.cause.isEmpty())
+    {
+        lines.append(QStringLiteral("可能原因: %1").arg(info.cause));
+    }
+    if (!info.verify.isEmpty())
+    {
+        lines.append(QStringLiteral("验证方法: %1").arg(info.verify));
     }
     if (!info.errorMessage.isEmpty())
     {
@@ -2520,6 +2777,11 @@ QString AiService::executeAnalyzeCrashLog(const QJsonObject &args)
     {
         lines.append(QStringLiteral("\n## 修复建议"));
         lines.append(info.solution);
+    }
+    if (!info.evidence.isEmpty())
+    {
+        lines.append(QStringLiteral("\n## 日志证据"));
+        lines.append(info.evidence.join('\n'));
     }
     if (!info.details.isEmpty())
     {
@@ -3484,6 +3746,798 @@ QString AiService::executeDownloadResource(const QJsonObject& args)
     return lines.join('\n');
 }
 
+// ============================================================================
+// 方块盒子论坛工具实现（主线程异步）
+//
+// 论坛接口封装在 ForumContentService 里，请求与回调都跑在主线程，所以这两个工具
+// 不能像本地工具那样丢进 QtConcurrent 用 QEventLoop 阻塞等待；改为发起请求后
+// 在回调里回填结果，工具循环（dispatch → continueWithToolResult）保持原样。
+// ============================================================================
+
+namespace {
+
+/** 论坛板块：中文名 / 英文别名 → 服务端 slug（返回空串表示全站） */
+QString normalizeForumBoardSlug(const QString &raw)
+{
+    const QString key = raw.trimmed().toLower();
+    if (key.isEmpty() || key == QLatin1String("all") || key == QStringLiteral("全部"))
+    {
+        return QString();
+    }
+
+    static const QHash<QString, QString> kBoards = {
+        // 社区原创资源：插件 / 投影 / 教程 / 有奖问答
+        {QStringLiteral("plugin-share"), QStringLiteral("plugin-share")},
+        {QStringLiteral("plugin"), QStringLiteral("plugin-share")},
+        {QStringLiteral("插件"), QStringLiteral("plugin-share")},
+        {QStringLiteral("插件分享"), QStringLiteral("plugin-share")},
+        {QStringLiteral("schematic-share"), QStringLiteral("schematic-share")},
+        {QStringLiteral("schematic"), QStringLiteral("schematic-share")},
+        {QStringLiteral("projection"), QStringLiteral("schematic-share")},
+        {QStringLiteral("投影"), QStringLiteral("schematic-share")},
+        {QStringLiteral("投影分享"), QStringLiteral("schematic-share")},
+        {QStringLiteral("tutorial-share"), QStringLiteral("tutorial-share")},
+        {QStringLiteral("tutorial"), QStringLiteral("tutorial-share")},
+        {QStringLiteral("教程"), QStringLiteral("tutorial-share")},
+        {QStringLiteral("教程分享"), QStringLiteral("tutorial-share")},
+        {QStringLiteral("qa"), QStringLiteral("qa")},
+        {QStringLiteral("question"), QStringLiteral("qa")},
+        {QStringLiteral("问答"), QStringLiteral("qa")},
+        {QStringLiteral("有奖问答"), QStringLiteral("qa")},
+        // 导航与普通讨论板块
+        {QStringLiteral("server-nav"), QStringLiteral("server-nav")},
+        {QStringLiteral("服务器导航"), QStringLiteral("server-nav")},
+        {QStringLiteral("服务器"), QStringLiteral("server-nav")},
+        {QStringLiteral("website-nav"), QStringLiteral("website-nav")},
+        {QStringLiteral("网站导航"), QStringLiteral("website-nav")},
+        {QStringLiteral("网站"), QStringLiteral("website-nav")},
+        {QStringLiteral("general"), QStringLiteral("general")},
+        {QStringLiteral("综合讨论"), QStringLiteral("general")},
+        {QStringLiteral("chat"), QStringLiteral("chat")},
+        {QStringLiteral("闲聊"), QStringLiteral("chat")},
+        {QStringLiteral("help"), QStringLiteral("help")},
+        {QStringLiteral("求助"), QStringLiteral("help")},
+        {QStringLiteral("使用求助"), QStringLiteral("help")},
+        {QStringLiteral("guide"), QStringLiteral("guide")},
+        {QStringLiteral("教程与分享"), QStringLiteral("guide")},
+        {QStringLiteral("feedback"), QStringLiteral("feedback")},
+        {QStringLiteral("反馈"), QStringLiteral("feedback")},
+        {QStringLiteral("意见建议"), QStringLiteral("feedback")},
+        {QStringLiteral("plugin-dev"), QStringLiteral("plugin")},
+        {QStringLiteral("插件与开发"), QStringLiteral("plugin")},
+    };
+    return kBoards.value(key);
+}
+
+/** 板块 slug → 中文名（搜索结果里给模型一个能读懂的范围说明） */
+QString forumBoardDisplayName(const QString &slug)
+{
+    static const QHash<QString, QString> kNames = {
+        {QStringLiteral("general"), QStringLiteral("综合讨论")},
+        {QStringLiteral("help"), QStringLiteral("使用求助")},
+        {QStringLiteral("guide"), QStringLiteral("教程与分享")},
+        {QStringLiteral("plugin"), QStringLiteral("插件与开发")},
+        {QStringLiteral("plugin-share"), QStringLiteral("插件分享")},
+        {QStringLiteral("schematic-share"), QStringLiteral("投影分享")},
+        {QStringLiteral("tutorial-share"), QStringLiteral("教程分享")},
+        {QStringLiteral("website-nav"), QStringLiteral("网站导航")},
+        {QStringLiteral("server-nav"), QStringLiteral("服务器导航")},
+        {QStringLiteral("qa"), QStringLiteral("有奖问答")},
+        {QStringLiteral("feedback"), QStringLiteral("意见建议")},
+        {QStringLiteral("chat"), QStringLiteral("闲聊灌水")},
+    };
+    return kNames.value(slug, slug);
+}
+
+/** 帖子类型：优先看帖子上挂的作品信息，其次按板块兜底 */
+QString forumThreadKindText(const ForumThreadInfo &info)
+{
+    if (info.plugin.isValid())
+        return QStringLiteral("插件");
+    if (info.schematic.isValid())
+        return QStringLiteral("投影");
+    if (info.tutorial)
+        return QStringLiteral("教程");
+    if (info.question.isValid())
+        return QStringLiteral("有奖问答");
+    if (info.navigation.isValid())
+        return info.navigation.isServer() ? QStringLiteral("服务器导航") : QStringLiteral("网站导航");
+    if (info.boardSlug == QLatin1String("plugin-share"))
+        return QStringLiteral("插件");
+    if (info.boardSlug == QLatin1String("schematic-share"))
+        return QStringLiteral("投影");
+    if (info.boardSlug == QLatin1String("tutorial-share"))
+        return QStringLiteral("教程");
+    if (info.boardSlug == QLatin1String("qa"))
+        return QStringLiteral("有奖问答");
+    if (info.boardSlug == QLatin1String("server-nav"))
+        return QStringLiteral("服务器导航");
+    if (info.boardSlug == QLatin1String("website-nav"))
+        return QStringLiteral("网站导航");
+    return QStringLiteral("帖子");
+}
+
+/** 帖子网页版地址：软件内的 LinkRouter 能识别 thread.html?id=xxx 并就地打开 */
+QString forumThreadWebUrl(int threadId)
+{
+    if (threadId <= 0)
+        return QString();
+    auto *account = ForumAccountService::instance();
+    const QString base = account ? account->baseUrl() : QString();
+    if (base.isEmpty())
+        return QString();
+    return base + QStringLiteral("/thread.html?id=%1").arg(threadId);
+}
+
+/** 秒级时间戳 → yyyy-MM-dd（0 返回空串） */
+QString formatForumTime(qint64 seconds)
+{
+    if (seconds <= 0)
+        return QString();
+    return QDateTime::fromSecsSinceEpoch(seconds).toString(QStringLiteral("yyyy-MM-dd"));
+}
+
+/** 文件大小（论坛接口给的是字节数） */
+QString formatForumSize(qint64 bytes)
+{
+    if (bytes <= 0)
+        return QStringLiteral("大小未知");
+    if (bytes < 1024)
+        return QStringLiteral("%1 B").arg(bytes);
+    if (bytes < 1024 * 1024)
+        return QStringLiteral("%1 KB").arg(QString::number(bytes / 1024.0, 'f', 1));
+    return QStringLiteral("%1 MB").arg(QString::number(bytes / (1024.0 * 1024.0), 'f', 1));
+}
+
+/** 标签拼成 #a、#b，帖子上没有标签时返回空串 */
+QString forumTagsText(const ForumThreadInfo &info)
+{
+    QStringList parts;
+    for (const QString &tag : info.tags)
+    {
+        const QString trimmed = tag.trimmed();
+        if (!trimmed.isEmpty())
+            parts << QStringLiteral("#") + trimmed;
+    }
+    return parts.join(QStringLiteral("、"));
+}
+
+/** 一句话摘要：压掉换行，超长截断 */
+QString forumBrief(const QString &text, int maxChars)
+{
+    QString flat = text;
+    flat.replace(QLatin1Char('\r'), QLatin1Char(' '));
+    flat.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    flat = flat.simplified();
+    if (flat.size() > maxChars)
+        flat = flat.left(maxChars) + QStringLiteral("…");
+    return flat;
+}
+
+/** 主题列表 → 模型可读文本 */
+QString formatForumThreadList(const QString &query, const QString &scope,
+                              const QVector<ForumThreadInfo> &threads,
+                              const ForumPagination &pagination)
+{
+    QStringList lines;
+    lines.append(QStringLiteral("## 方块盒子论坛搜索结果"));
+    QStringList scopeParts;
+    scopeParts << (scope.isEmpty() ? QStringLiteral("全站") : scope);
+    if (!query.isEmpty())
+        scopeParts << QStringLiteral("关键词「%1」").arg(query);
+    else
+        scopeParts << QStringLiteral("未填关键词，按板块 / 排序浏览");
+    lines.append(QStringLiteral("范围：%1").arg(scopeParts.join(QStringLiteral(" · "))));
+    lines.append(QStringLiteral("共 %1 条，第 %2/%3 页")
+                     .arg(pagination.total > 0 ? pagination.total : threads.size())
+                     .arg(pagination.page)
+                     .arg(pagination.pages));
+    lines.append(QString());
+
+    if (threads.isEmpty())
+    {
+        lines.append(QStringLiteral("没有找到匹配的帖子。可以换关键词、去掉板块限制，或改用他人常用的叫法再搜一次。"));
+        return lines.join(QLatin1Char('\n'));
+    }
+
+    int index = 1;
+    for (const ForumThreadInfo &info : threads)
+    {
+        const QString title = info.title.trimmed().isEmpty() ? QStringLiteral("(无标题)")
+                                                             : info.title.trimmed();
+        lines.append(QStringLiteral("%1. 【%2】%3")
+                         .arg(index++)
+                         .arg(forumThreadKindText(info), title));
+
+        QStringList meta;
+        if (!info.boardName.isEmpty())
+            meta << info.boardName;
+        if (!info.authorName.trimmed().isEmpty())
+            meta << QStringLiteral("作者 %1").arg(info.authorName.trimmed());
+        const QString published = formatForumTime(info.createdAt);
+        if (!published.isEmpty())
+            meta << QStringLiteral("发布于 %1").arg(published);
+        if (!meta.isEmpty())
+            lines.append(QStringLiteral("   %1").arg(meta.join(QStringLiteral(" · "))));
+
+        if (info.plugin.isValid())
+        {
+            QString pluginLine = info.plugin.name.trimmed();
+            if (!info.plugin.version.trimmed().isEmpty())
+                pluginLine += QStringLiteral(" v") + info.plugin.version.trimmed();
+            pluginLine += QStringLiteral("（%1，下载 %2 次）")
+                              .arg(formatForumSize(info.plugin.fileSize))
+                              .arg(info.plugin.downloads);
+            lines.append(QStringLiteral("   插件包：%1").arg(pluginLine));
+        }
+        if (info.schematic.isValid())
+        {
+            QString schematicLine = info.schematic.name.trimmed();
+            if (schematicLine.isEmpty())
+                schematicLine = info.schematic.fileName.trimmed();
+            schematicLine += QStringLiteral("（%1 个版本，%2，下载 %3 次）")
+                                 .arg(info.schematic.versionCount())
+                                 .arg(formatForumSize(info.schematic.fileSize))
+                                 .arg(info.schematic.downloads);
+            lines.append(QStringLiteral("   投影：%1").arg(schematicLine));
+        }
+        if (info.question.isValid())
+        {
+            QString statusText = QStringLiteral("未知");
+            if (info.question.isOpen())
+                statusText = QStringLiteral("托管中");
+            else if (info.question.isSettled())
+                statusText = QStringLiteral("已发放");
+            else if (info.question.status == QLatin1String("refunded"))
+                statusText = QStringLiteral("已退回");
+            lines.append(QStringLiteral("   悬赏：%1 方块 ｜ 状态：%2")
+                             .arg(info.question.bounty)
+                             .arg(statusText));
+        }
+        if (info.navigation.isValid())
+        {
+            lines.append(QStringLiteral("   导航：%1 → %2")
+                             .arg(info.navigation.isServer() ? QStringLiteral("服务器")
+                                                             : QStringLiteral("网站"),
+                                  info.navigation.url));
+        }
+
+        const QString tags = forumTagsText(info);
+        if (!tags.isEmpty())
+            lines.append(QStringLiteral("   标签：%1").arg(tags));
+
+        QStringList stats;
+        stats << QStringLiteral("回复 %1").arg(info.replies);
+        stats << QStringLiteral("浏览 %1").arg(info.views);
+        const QString lastPost = formatForumTime(info.lastPostAt);
+        if (!lastPost.isEmpty())
+            stats << QStringLiteral("最后回复 %1").arg(lastPost);
+        lines.append(QStringLiteral("   %1").arg(stats.join(QStringLiteral(" ｜ "))));
+
+        const QString snippet = forumBrief(info.snippet, 160);
+        if (!snippet.isEmpty())
+            lines.append(QStringLiteral("   摘要：%1").arg(snippet));
+
+        const QString url = forumThreadWebUrl(info.id);
+        lines.append(QStringLiteral("   帖子 #%1：%2")
+                         .arg(info.id)
+                         .arg(url.isEmpty() ? QStringLiteral("（论坛地址未配置）") : url));
+        lines.append(QString());
+    }
+
+    lines.append(QStringLiteral("提示：需要看正文、附件或下载方式时，调用 get_forum_thread(thread_id = 帖子号) 读取详情。"));
+    return lines.join(QLatin1Char('\n'));
+}
+
+/** 主题列表 → 聊天页展示用的轻量结果（只保留标题 / 类型 / 链接） */
+QList<ForumSearchHit> buildForumSearchHits(const QVector<ForumThreadInfo> &threads)
+{
+    QList<ForumSearchHit> hits;
+    for (const ForumThreadInfo &info : threads)
+    {
+        ForumSearchHit hit;
+        hit.id = info.id;
+        hit.title = info.title.trimmed();
+        hit.boardName = info.boardName.trimmed().isEmpty() ? forumBoardDisplayName(info.boardSlug)
+                                                           : info.boardName.trimmed();
+        hit.authorName = info.authorName.trimmed();
+        hit.kind = forumThreadKindText(info);
+        hit.snippet = forumBrief(info.snippet, 120);
+        hit.url = forumThreadWebUrl(info.id);
+        hits.append(hit);
+    }
+    return hits;
+}
+
+/** 帖子详情 → 模型可读文本（正文 + 附件 / 作品信息 + 前几层回复） */
+QString formatForumThreadDetail(const ForumThreadDetail &detail, int maxBodyChars)
+{
+    const ForumThreadInfo &info = detail.info;
+    QStringList lines;
+    lines.append(QStringLiteral("# 方块盒子论坛帖子 #%1：%2")
+                     .arg(info.id)
+                     .arg(info.title.trimmed().isEmpty() ? QStringLiteral("(无标题)") : info.title));
+
+    QStringList meta;
+    if (!info.boardName.trimmed().isEmpty())
+        meta << QStringLiteral("板块：%1").arg(info.boardName);
+    meta << QStringLiteral("类型：%1").arg(forumThreadKindText(info));
+    if (!info.authorName.trimmed().isEmpty())
+        meta << QStringLiteral("作者：%1").arg(info.authorName.trimmed());
+    lines.append(QStringLiteral("- %1").arg(meta.join(QStringLiteral(" ｜ "))));
+
+    QStringList stats;
+    stats << QStringLiteral("浏览 %1").arg(info.views);
+    stats << QStringLiteral("回复 %1").arg(info.replies);
+    if (info.comments > 0)
+        stats << QStringLiteral("评论 %1").arg(info.comments);
+    const QString created = formatForumTime(info.createdAt);
+    if (!created.isEmpty())
+        stats << QStringLiteral("发布于 %1").arg(created);
+    lines.append(QStringLiteral("- %1").arg(stats.join(QStringLiteral(" ｜ "))));
+
+    const QString tags = forumTagsText(info);
+    if (!tags.isEmpty())
+        lines.append(QStringLiteral("- 标签：%1").arg(tags));
+
+    const QString url = forumThreadWebUrl(info.id);
+    if (!url.isEmpty())
+        lines.append(QStringLiteral("- 链接：%1").arg(url));
+
+    if (info.source.isRepost())
+    {
+        QString sourceLine = QStringLiteral("- 作品来源：转载");
+        if (!info.source.url.trimmed().isEmpty())
+            sourceLine += QStringLiteral("（原作品 %1）").arg(info.source.url.trimmed());
+        if (!info.source.note.trimmed().isEmpty())
+            sourceLine += QStringLiteral("：%1").arg(forumBrief(info.source.note, 200));
+        lines.append(sourceLine);
+    }
+    else
+    {
+        lines.append(QStringLiteral("- 作品来源：原创"));
+    }
+
+    if (info.plugin.isValid())
+    {
+        QString line = QStringLiteral("- 插件包：%1").arg(info.plugin.name.trimmed());
+        if (!info.plugin.version.trimmed().isEmpty())
+            line += QStringLiteral(" v%1").arg(info.plugin.version.trimmed());
+        line += QStringLiteral("（作者 %1，%2，下载 %3 次）")
+                    .arg(info.plugin.author.trimmed().isEmpty() ? QStringLiteral("未知")
+                                                                : info.plugin.author.trimmed())
+                    .arg(formatForumSize(info.plugin.fileSize))
+                    .arg(info.plugin.downloads);
+        lines.append(line);
+        const QString desc = forumBrief(info.plugin.description, 300);
+        if (!desc.isEmpty())
+            lines.append(QStringLiteral("  插件简介：%1").arg(desc));
+        for (const ForumResourceLink &link : info.plugin.links)
+        {
+            if (link.isValid())
+                lines.append(QStringLiteral("  相关链接：%1 → %2")
+                                 .arg(link.label.trimmed().isEmpty() ? QStringLiteral("链接") : link.label.trimmed(),
+                                      link.url));
+        }
+        lines.append(QStringLiteral("  安装方式：在软件的帖子页面点「安装插件」即可；AI 不能直接装插件包。"));
+    }
+
+    if (info.schematic.isValid())
+    {
+        QString line = QStringLiteral("- 投影：%1（%2 个版本，%3，下载 %4 次）")
+                           .arg(info.schematic.name.trimmed().isEmpty() ? info.schematic.fileName.trimmed()
+                                                                        : info.schematic.name.trimmed())
+                           .arg(info.schematic.versionCount())
+                           .arg(formatForumSize(info.schematic.fileSize))
+                           .arg(info.schematic.downloads);
+        lines.append(line);
+        for (const ForumSchematicFileInfo &file : info.schematic.files)
+        {
+            lines.append(QStringLiteral("  - 版本「%1」：%2（%3，下载 %4 次）")
+                             .arg(file.label.trimmed().isEmpty() ? QStringLiteral("默认") : file.label.trimmed(),
+                                  file.fileName)
+                             .arg(formatForumSize(file.fileSize))
+                             .arg(file.downloads));
+        }
+        for (const ForumResourceLink &link : info.schematic.links)
+        {
+            if (link.isValid())
+                lines.append(QStringLiteral("  相关链接：%1 → %2")
+                                 .arg(link.label.trimmed().isEmpty() ? QStringLiteral("链接") : link.label.trimmed(),
+                                      link.url));
+        }
+        lines.append(QStringLiteral("  下载方式：在软件的帖子页面点「下载」，会存进当前实例的 schematics 文件夹；AI 不能直接下载。"));
+    }
+
+    if (!info.attachments.isEmpty())
+    {
+        lines.append(QStringLiteral("- 教程附件（%1 个）：").arg(info.attachments.size()));
+        for (const ForumAttachmentInfo &attachment : info.attachments)
+        {
+            lines.append(QStringLiteral("  - %1：%2（下载 %3 次）")
+                             .arg(attachment.name.trimmed().isEmpty() ? attachment.fileName : attachment.name,
+                                  formatForumSize(attachment.fileSize))
+                             .arg(attachment.downloads));
+        }
+    }
+
+    if (info.question.isValid())
+    {
+        QString statusText = QStringLiteral("未知");
+        if (info.question.isOpen())
+            statusText = QStringLiteral("托管中");
+        else if (info.question.isSettled())
+            statusText = QStringLiteral("已发放");
+        else if (info.question.status == QLatin1String("refunded"))
+            statusText = QStringLiteral("已退回");
+        QString line = QStringLiteral("- 有奖问答：悬赏 %1 方块 ｜ 状态：%2")
+                           .arg(info.question.bounty)
+                           .arg(statusText);
+        if (info.question.daysLeft > 0)
+            line += QStringLiteral(" ｜ 还剩 %1 天自动结算").arg(info.question.daysLeft);
+        if (!info.question.winnerName.trimmed().isEmpty())
+        {
+            line += QStringLiteral(" ｜ 得主：%1（%2 楼）")
+                        .arg(info.question.winnerName)
+                        .arg(info.question.winnerFloor);
+        }
+        lines.append(line);
+    }
+
+    if (info.navigation.isValid())
+    {
+        lines.append(QStringLiteral("- 导航：%1 → %2")
+                         .arg(info.navigation.isServer() ? QStringLiteral("服务器地址")
+                                                         : QStringLiteral("网站地址"),
+                              info.navigation.url));
+    }
+
+    // 正文：顶层第一层（1 楼）。搜索接口不返回正文，所以这里给全一点
+    QString body;
+    int firstTopLevelIndex = -1;
+    for (int i = 0; i < detail.posts.size(); ++i)
+    {
+        if (detail.posts[i].parentPostId == 0)
+        {
+            firstTopLevelIndex = i;
+            break;
+        }
+    }
+    if (firstTopLevelIndex >= 0)
+        body = detail.posts[firstTopLevelIndex].content;
+    body = body.trimmed();
+
+    lines.append(QString());
+    lines.append(QStringLiteral("## 正文"));
+    if (body.isEmpty())
+    {
+        lines.append(QStringLiteral("（正文为空或接口没有返回正文）"));
+    }
+    else if (body.size() > maxBodyChars)
+    {
+        lines.append(body.left(maxBodyChars));
+        lines.append(QStringLiteral("\n…（正文过长已截断，想看后面部分可以换 page 参数或用 fetch_webpage 打开帖子链接）"));
+    }
+    else
+    {
+        lines.append(body);
+    }
+
+    // 回复：跳过 1 楼，取前 3 层有效回复，方便 AI 参考别人的结论
+    QVector<ForumPost> replies;
+    for (int i = firstTopLevelIndex + 1; i >= 0 && i < detail.posts.size(); ++i)
+    {
+        const ForumPost &post = detail.posts[i];
+        if (post.parentPostId != 0 || post.deleted || post.content.trimmed().isEmpty())
+            continue;
+        replies.append(post);
+        if (replies.size() >= 3)
+            break;
+    }
+    if (!replies.isEmpty())
+    {
+        lines.append(QString());
+        lines.append(QStringLiteral("## 回复（前 %1 条）").arg(replies.size()));
+        for (const ForumPost &post : replies)
+        {
+            const QString author = post.author.displayName.trimmed().isEmpty()
+                                       ? post.author.username.trimmed()
+                                       : post.author.displayName.trimmed();
+            lines.append(QStringLiteral("%1 楼 %2：%3")
+                             .arg(post.floor)
+                             .arg(author.isEmpty() ? QStringLiteral("匿名") : author,
+                                  forumBrief(post.content, 300)));
+        }
+    }
+
+    if (detail.pagination.pages > 1)
+    {
+        lines.append(QString());
+        lines.append(QStringLiteral("（共 %1 页，当前第 %2 页；想继续看回复可传 page 参数）")
+                         .arg(detail.pagination.pages)
+                         .arg(detail.pagination.page));
+    }
+
+    return lines.join(QLatin1Char('\n'));
+}
+
+} // namespace
+
+void AiService::executeSearchForum(const QJsonObject &args)
+{
+    const QJsonObject toolCall = currentDispatchedToolCall();
+    const QJsonObject functionObj = toolCall.value(QStringLiteral("function")).toObject();
+    QString toolName = functionObj.value(QStringLiteral("name")).toString();
+    if (toolName.isEmpty())
+        toolName = QStringLiteral("search_forum");
+    const QString toolCallId = toolCall.value(QStringLiteral("id")).toString();
+    QString argumentsJson = functionObj.value(QStringLiteral("arguments")).toString();
+    if (argumentsJson.isEmpty())
+        argumentsJson = QString::fromUtf8(QJsonDocument(args).toJson(QJsonDocument::Compact));
+
+    const int generation = m_sendGeneration;
+    QElapsedTimer timer;
+    timer.start();
+
+    const QString contentType = args.value(QStringLiteral("content_type")).toString().trimmed().toLower();
+    const QString query = args.value(QStringLiteral("query")).toString().trimmed().left(60);
+    QString boardRaw = args.value(QStringLiteral("board")).toString().trimmed();
+    if (boardRaw.isEmpty())
+    {
+        if (contentType == QStringLiteral("plugin"))
+            boardRaw = QStringLiteral("plugin-share");
+        else if (contentType == QStringLiteral("schematic") || contentType == QStringLiteral("projection"))
+            boardRaw = QStringLiteral("schematic-share");
+    }
+    const QString boardSlug = normalizeForumBoardSlug(boardRaw);
+    if (!boardRaw.isEmpty() && boardSlug.isEmpty())
+    {
+        const QString message = QStringLiteral(
+            "未知板块「%1」。可用：plugin（插件分享）、schematic（投影分享）、tutorial（教程分享）、"
+            "question（有奖问答）、server-nav（服务器导航）、website-nav（网站导航）、"
+            "help（使用求助）、general（综合讨论）、chat（闲聊），或者不传 board 搜全站。")
+            .arg(boardRaw);
+        finishForumToolCall(toolName, toolCallId, message, QStringLiteral("板块参数错误"), 0, false, argumentsJson);
+        return;
+    }
+
+    // search_resources 走到这里时关键词是必需的（不能只按板块浏览）
+    if (toolName == QStringLiteral("search_resources") && query.isEmpty())
+    {
+        finishForumToolCall(toolName, toolCallId, QStringLiteral("错误：缺少 query 参数"),
+                            QStringLiteral("参数错误"), 0, false, argumentsJson);
+        return;
+    }
+
+    QString sort = args.value(QStringLiteral("sort")).toString().trimmed().toLower();
+    if (sort != QStringLiteral("latest") && sort != QStringLiteral("new") && sort != QStringLiteral("hot"))
+        sort = QStringLiteral("latest");
+    const QString tag = args.value(QStringLiteral("tag")).toString().trimmed().left(20);
+    // search_forum 的 page 从 1 开始；search_resources 的 page 是 0 基（与 CF / Modrinth 一致），
+    // 走论坛时换算成论坛的 1 基页码
+    const bool fromSearchResources = (toolName == QStringLiteral("search_resources"));
+    const int page = qMax(1, args.value(QStringLiteral("page")).toInt(fromSearchResources ? 0 : 1)
+                             + (fromSearchResources ? 1 : 0));
+
+    QSharedPointer<bool> settled(new bool(false));
+    QPointer<AiService> guard(this);
+
+    const auto finishOnce = [guard, settled, generation, toolName, toolCallId, argumentsJson, timer](
+                                const QString &resultText, const QString &summary, bool success,
+                                const QList<ForumSearchHit> &hits) {
+        if (*settled)
+            return;
+        *settled = true;
+        if (!guard || guard->m_sendGeneration != generation)
+            return;
+        guard->finishForumToolCall(toolName, toolCallId, resultText, summary,
+                                   timer.elapsed(), success, argumentsJson, hits);
+    };
+
+    // 45 秒兜底：论坛慢、断网或被人机验证拦住时，别让工具循环一直挂着
+    QTimer::singleShot(45000, this, [finishOnce]() {
+        finishOnce(QStringLiteral("论坛搜索超时（45 秒没有响应）。如果软件弹出了人机验证，在里面完成验证后重试即可；"
+                                  "也可能是网络较慢，稍后再试，或先用 web_search 查通用资料。"),
+                   QStringLiteral("搜索超时"), false, QList<ForumSearchHit>());
+    });
+
+    const auto onFail = [finishOnce](const QString &message, int httpStatus) {
+        QString text = QStringLiteral("论坛搜索失败：%1").arg(message);
+        if (httpStatus == 403)
+        {
+            text += QStringLiteral("\n（论坛可能要求人机验证：若弹出了验证滑块，完成后再试一次即可。）");
+        }
+        finishOnce(text, QStringLiteral("搜索失败"), false, QList<ForumSearchHit>());
+    };
+
+    auto *service = ForumContentService::instance();
+    const QString scope = boardSlug.isEmpty() ? QStringLiteral("全站")
+                                              : forumBoardDisplayName(boardSlug);
+
+    if (!query.isEmpty())
+    {
+        // 关键词搜索（可限定板块）
+        service->searchThreads(
+            query, page,
+            [finishOnce, query, scope](const QString &, const QVector<ForumThreadInfo> &threads,
+                                       const ForumPagination &pagination) {
+                const QString text = formatForumThreadList(query, scope, threads, pagination);
+                const QString summary = threads.isEmpty()
+                                            ? QStringLiteral("没有找到相关帖子")
+                                            : QStringLiteral("找到 %1 个帖子").arg(threads.size());
+                finishOnce(text, summary, true, buildForumSearchHits(threads));
+            },
+            onFail, boardSlug);
+        return;
+    }
+
+    // 没有关键词：按标签 / 板块 / 排序浏览最新或最热内容
+    if (!tag.isEmpty())
+    {
+        const QString tagScope = QStringLiteral("标签 #%1").arg(tag);
+        service->fetchTagThreads(
+            tag, sort, page,
+            [finishOnce, tagScope, sort](const QVector<ForumThreadInfo> &threads,
+                                         const ForumPagination &pagination) {
+                const QString text = formatForumThreadList(QString(), tagScope, threads, pagination);
+                QString summary = threads.isEmpty()
+                                      ? QStringLiteral("这个标签下暂时没有帖子")
+                                      : QStringLiteral("找到 %1 个帖子").arg(threads.size());
+                if (!sort.isEmpty())
+                    summary += QStringLiteral(" · 按%1")
+                                   .arg(sort == QStringLiteral("hot")
+                                            ? QStringLiteral("热度")
+                                            : sort == QStringLiteral("new") ? QStringLiteral("发布时间")
+                                                                            : QStringLiteral("最新回复"));
+                finishOnce(text, summary, true, buildForumSearchHits(threads));
+            },
+            onFail);
+        return;
+    }
+
+    if (!boardSlug.isEmpty())
+    {
+        service->fetchBoardThreads(
+            boardSlug, sort, page,
+            [finishOnce, scope](const ForumBoard &board, const QVector<ForumThreadInfo> &threads,
+                                const ForumPagination &pagination) {
+                const QString boardName = board.name.trimmed().isEmpty() ? scope : board.name.trimmed();
+                const QString text = formatForumThreadList(QString(), boardName, threads, pagination);
+                const QString summary = threads.isEmpty()
+                                            ? QStringLiteral("%1 暂时没有帖子").arg(boardName)
+                                            : QStringLiteral("%1 找到 %2 个帖子").arg(boardName).arg(threads.size());
+                finishOnce(text, summary, true, buildForumSearchHits(threads));
+            },
+            onFail);
+        return;
+    }
+
+    // 既没关键词也没限定板块：给全站最新 / 最热主题
+    service->fetchTagThreads(
+        QString(), sort, page,
+        [finishOnce, sort](const QVector<ForumThreadInfo> &threads, const ForumPagination &pagination) {
+            const QString scope = sort == QStringLiteral("hot") ? QStringLiteral("全站热门")
+                                                               : QStringLiteral("全站最新");
+            const QString text = formatForumThreadList(QString(), scope, threads, pagination);
+            const QString summary = threads.isEmpty()
+                                        ? QStringLiteral("论坛暂时没有帖子")
+                                        : QStringLiteral("%1 · %2 个帖子").arg(scope).arg(threads.size());
+            finishOnce(text, summary, true, buildForumSearchHits(threads));
+        },
+        onFail);
+}
+
+void AiService::executeGetForumThread(const QJsonObject &args)
+{
+    const QJsonObject toolCall = currentDispatchedToolCall();
+    const QJsonObject functionObj = toolCall.value(QStringLiteral("function")).toObject();
+    QString toolName = functionObj.value(QStringLiteral("name")).toString();
+    if (toolName.isEmpty())
+        toolName = QStringLiteral("get_forum_thread");
+    const QString toolCallId = toolCall.value(QStringLiteral("id")).toString();
+    QString argumentsJson = functionObj.value(QStringLiteral("arguments")).toString();
+    if (argumentsJson.isEmpty())
+        argumentsJson = QString::fromUtf8(QJsonDocument(args).toJson(QJsonDocument::Compact));
+
+    const int generation = m_sendGeneration;
+    QElapsedTimer timer;
+    timer.start();
+
+    int threadId = args.value(QStringLiteral("thread_id")).toInt();
+    if (threadId <= 0)
+        threadId = args.value(QStringLiteral("threadId")).toInt();
+    if (threadId <= 0)
+        threadId = args.value(QStringLiteral("id")).toInt();
+    if (threadId <= 0)
+    {
+        finishForumToolCall(toolName, toolCallId,
+                            QStringLiteral("错误：缺少 thread_id 参数（就是 search_forum 结果里的「帖子 #N」）"),
+                            QStringLiteral("参数错误"), 0, false, argumentsJson);
+        return;
+    }
+
+    const int page = qMax(1, args.value(QStringLiteral("page")).toInt(1));
+    const int maxBodyChars = qBound(500, args.value(QStringLiteral("max_chars")).toInt(6000), 12000);
+
+    QSharedPointer<bool> settled(new bool(false));
+    QPointer<AiService> guard(this);
+
+    const auto finishOnce = [guard, settled, generation, toolName, toolCallId, argumentsJson, timer](
+                                const QString &resultText, const QString &summary, bool success) {
+        if (*settled)
+            return;
+        *settled = true;
+        if (!guard || guard->m_sendGeneration != generation)
+            return;
+        guard->finishForumToolCall(toolName, toolCallId, resultText, summary,
+                                   timer.elapsed(), success, argumentsJson, QList<ForumSearchHit>());
+    };
+
+    QTimer::singleShot(45000, this, [finishOnce]() {
+        finishOnce(QStringLiteral("读取帖子超时（45 秒没有响应）。如果软件弹出了人机验证，在里面完成验证后重试即可；"
+                                  "也可能是网络较慢，稍后再试。"),
+                   QStringLiteral("读取超时"), false);
+    });
+
+    const auto onFail = [finishOnce](const QString &message, int httpStatus) {
+        QString text = QStringLiteral("读取帖子失败：%1").arg(message);
+        if (httpStatus == 403)
+        {
+            text += QStringLiteral("\n（论坛可能要求人机验证：若弹出了验证滑块，完成后再试一次即可。）");
+        }
+        finishOnce(text, QStringLiteral("读取失败"), false);
+    };
+
+    ForumContentService::instance()->fetchThread(
+        threadId, page,
+        [finishOnce, maxBodyChars](const ForumThreadDetail &detail) {
+            if (!detail.info.isValid())
+            {
+                finishOnce(QStringLiteral("没有找到这个帖子，可能已被删除或线程号不对。"),
+                           QStringLiteral("帖子不存在"), false);
+                return;
+            }
+            const QString text = formatForumThreadDetail(detail, maxBodyChars);
+            QString summary = QStringLiteral("《%1》· %2 条回复")
+                                  .arg(detail.info.title.trimmed().isEmpty()
+                                           ? QStringLiteral("未命名帖子")
+                                           : detail.info.title.trimmed())
+                                  .arg(detail.info.replies);
+            finishOnce(text, summary, true);
+        },
+        onFail);
+}
+
+void AiService::finishForumToolCall(const QString &toolName, const QString &toolCallId,
+                                    const QString &resultText, const QString &summary,
+                                    qint64 durationMs, bool success, const QString &argumentsJson,
+                                    const QList<ForumSearchHit> &hits)
+{
+    // 先让聊天页把帖子标题铺成可点击链接（步骤卡片此刻仍是「进行中」态），
+    // 再发完成信号；卡片上会记住这是富文本结果，不会被结果摘要覆盖。
+    if (!hits.isEmpty())
+    {
+        emit forumSearchResultsCollected(hits);
+    }
+
+    emit agentToolCallFinished(toolName, summary, durationMs, success);
+
+    AgentToolCall rec;
+    rec.name = toolName;
+    rec.arguments = argumentsJson;
+    rec.result = resultText;
+    rec.resultSummary = summary;
+    rec.durationMs = durationMs;
+    rec.success = success;
+    if (!success)
+    {
+        rec.errorMessage = resultText;
+    }
+    m_pendingToolCalls.append(rec);
+
+    continueWithToolResult(toolCallId, toolName, resultText, 9000);
+}
+
 QString AiService::executeUpdateTaskList(const QJsonObject& args)
 {
     QJsonArray tasksArr = args["tasks"].toArray();
@@ -3633,8 +4687,8 @@ QString AiService::executeLaunchGame(const QJsonObject& args)
 
     auto *launcher = GameLauncher::instance();
 
-    // 若已有游戏在运行，拒绝重复启动
-    if (launcher->isGameRunning())
+    // 若已有游戏在启动/运行（含并行启动的其他实例会话），拒绝重复启动
+    if (GameLauncher::anySessionBusy() || launcher->isGameRunning())
     {
         return QStringLiteral("已有一个游戏实例正在运行，请先关闭后再启动");
     }
@@ -3930,6 +4984,46 @@ QString AiService::executeSkillTool(const QString &toolName, const QJsonObject &
     {
         return QStringLiteral("ERROR: 技能「") + skillId +
                QStringLiteral("」未被信任，请在技能管理中确认信任后再使用。");
+    }
+
+    if (result.isEmpty() && !error.isEmpty())
+    {
+        return QStringLiteral("ERROR: ") + error;
+    }
+    if (!error.isEmpty())
+    {
+        // 有错误但有部分输出，附加警告
+        result = result + QStringLiteral("\n[警告: ") + error + QStringLiteral("]");
+    }
+    if (result.isEmpty())
+    {
+        result = QStringLiteral("(工具执行完成，无输出)");
+    }
+    return result;
+}
+
+QString AiService::executePluginAiTool(const QString &toolName, const QJsonObject &args)
+{
+    // 通过工具名映射定位所属插件 ID
+    const auto it = m_pluginToolMap.constFind(toolName);
+    if (it == m_pluginToolMap.constEnd())
+    {
+        return QStringLiteral("ERROR: 未找到插件工具: ") + toolName;
+    }
+
+    const QString pluginId = it.value();
+    QString error;
+    QString result = PluginManager::instance()->executeAiTool(pluginId, toolName, args, error);
+
+    if (error == QStringLiteral("PLUGIN_DISABLED"))
+    {
+        return QStringLiteral("ERROR: 插件「") + pluginId +
+               QStringLiteral("」已停用，无法调用其工具。");
+    }
+    if (error == QStringLiteral("PLUGIN_AI_TOOL_NOT_ALLOWED"))
+    {
+        return QStringLiteral("ERROR: 插件「") + pluginId +
+               QStringLiteral("」未声明 ai:tool 权限，无法调用其工具。");
     }
 
     if (result.isEmpty() && !error.isEmpty())
@@ -4456,6 +5550,14 @@ QString AiService::executeCheckModUpdates(const QJsonObject &args)
         return QStringLiteral("错误：缺少 instance_path 参数");
     }
 
+    // 资源包 / 光影包 / 数据包走同一套哈希比对，只是扫描目录和文案不同
+    const QString resourceType = args["resource_type"].toString().trimmed().toLower();
+    if (!resourceType.isEmpty() && resourceType != QStringLiteral("mod")
+        && resourceType != QStringLiteral("mods"))
+    {
+        return executeCheckFileResourceUpdates(args, resourceType);
+    }
+
     ModScanner scanner;
     LocalModList modList;
     if (!scanner.scanModsSync(instancePath, modList))
@@ -4668,6 +5770,218 @@ QString AiService::executeCheckModUpdates(const QJsonObject &args)
     return lines.join('\n');
 }
 
+QString AiService::executeCheckFileResourceUpdates(const QJsonObject &args,
+                                                   const QString &resourceType)
+{
+    const QString instancePath = args["instance_path"].toString().trimmed();
+    if (instancePath.isEmpty())
+    {
+        return QStringLiteral("错误：缺少 instance_path 参数");
+    }
+
+    QString folder;
+    QString displayName;
+    QStringList validSuffixes;
+    const QString type = resourceType.trimmed().toLower();
+    if (type == QStringLiteral("resourcepack") || type == QStringLiteral("resourcepacks"))
+    {
+        folder = QStringLiteral("resourcepacks");
+        displayName = QStringLiteral("资源包");
+        validSuffixes << QStringLiteral(".zip");
+    }
+    else if (type == QStringLiteral("shader") || type == QStringLiteral("shaderpack")
+             || type == QStringLiteral("shaderpacks"))
+    {
+        folder = QStringLiteral("shaderpacks");
+        displayName = QStringLiteral("光影包");
+        validSuffixes << QStringLiteral(".zip");
+    }
+    else if (type == QStringLiteral("datapack") || type == QStringLiteral("datapacks")
+             || type == QStringLiteral("data_pack"))
+    {
+        folder = QStringLiteral("datapacks");
+        displayName = QStringLiteral("数据包");
+        validSuffixes << QStringLiteral(".zip") << QStringLiteral(".jar");
+    }
+    else
+    {
+        return QStringLiteral("错误：不支持的 resource_type「%1」，可选 mod / resourcepack / shader / datapack")
+            .arg(resourceType);
+    }
+
+    const QDir dir(instancePath + QStringLiteral("/") + folder);
+    if (!dir.exists())
+    {
+        return QStringLiteral("实例 %1 没有 %2 目录（%3），没有可检查的%4。")
+            .arg(instancePath, folder, dir.absolutePath(), displayName);
+    }
+
+    // 收集本地文件指纹：sha1 → 文件显示名列表（同名内容可能存了多份）
+    QMap<QString, QStringList> namesBySha1;
+    QStringList disabledNames;
+    const QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::NoSymLinks, QDir::Name);
+    for (const QFileInfo &fi : entries)
+    {
+        const QString lower = fi.fileName().toLower();
+        bool matched = false;
+        for (const QString &suffix : validSuffixes)
+        {
+            if (lower.endsWith(suffix) || lower.endsWith(suffix + QStringLiteral(".disabled")))
+            {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched)
+            continue;
+
+        QFile file(fi.absoluteFilePath());
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        QCryptographicHash hash(QCryptographicHash::Sha1);
+        hash.addData(&file);
+        const QString sha1 = QString::fromLatin1(hash.result().toHex());
+        file.close();
+        if (sha1.isEmpty())
+            continue;
+
+        namesBySha1[sha1].append(fi.fileName());
+        if (fi.fileName().endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive))
+            disabledNames.append(fi.fileName());
+    }
+
+    if (namesBySha1.isEmpty())
+    {
+        return QStringLiteral("实例 %1 的 %2 目录（%3）里没有可联网检查更新的%4。")
+            .arg(instancePath, folder, displayName);
+    }
+
+    QStringList sha1s = namesBySha1.keys();
+    sha1s.sort();
+
+    QMap<QString, ModVersionFile> installed;
+    QMap<QString, ModVersionFile> latest;
+    {
+        ModrinthAPI api;
+        QVariant mcimVal = SettingsManager::instance()->property("use_mcim");
+        bool useMcim = mcimVal.isValid() ? mcimVal.toBool() : true;
+        if (useMcim)
+        {
+            api.setBaseUrl(QStringLiteral("https://mod.mcimirror.top/modrinth"));
+        }
+
+        // 第一步：批量哈希匹配，拿到已安装版本
+        {
+            QEventLoop loop;
+            QTimer::singleShot(30000, &loop, [&]() { loop.quit(); });
+            QObject::connect(&api, &ModrinthAPI::hashesMatched, &loop,
+                [&](const QMap<QString, ModVersionFile> &versions) {
+                    installed = versions;
+                    loop.quit();
+                });
+            QObject::connect(&api, &ModrinthAPI::hashesMatchFailed, &loop,
+                             [&]() { loop.quit(); });
+            api.matchHashes(sha1s);
+            loop.exec();
+        }
+
+        // 第二步：批量取最新版本。资源包 / 光影包 / 数据包不按加载器与游戏版本过滤
+        {
+            QEventLoop loop;
+            QTimer::singleShot(30000, &loop, [&]() { loop.quit(); });
+            QObject::connect(&api, &ModrinthAPI::updatesChecked, &loop,
+                [&](const QMap<QString, ModVersionFile> &versions) {
+                    latest = versions;
+                    loop.quit();
+                });
+            QObject::connect(&api, &ModrinthAPI::updatesCheckFailed, &loop,
+                             [&]() { loop.quit(); });
+            api.checkModUpdates(sha1s, QStringList(), QStringList());
+            loop.exec();
+        }
+    }
+
+    QStringList updatableLines;
+    QStringList upToDateLines;
+    QStringList unknownLines;
+    for (const QString &sha1 : sha1s)
+    {
+        const QStringList names = namesBySha1.value(sha1);
+        const QString label = names.join(QStringLiteral("、"));
+        if (!latest.contains(sha1) || !installed.contains(sha1))
+        {
+            unknownLines.append(label);
+            continue;
+        }
+
+        const ModVersionFile target = latest.value(sha1);
+        const ModVersionFile current = installed.value(sha1);
+        bool hasUpdate = false;
+        if (target.sha1.isEmpty() || current.sha1.isEmpty())
+        {
+            hasUpdate = target.sha1 != current.sha1;
+        }
+        else if (target.sha1 != current.sha1
+                 && current.datePublished.isValid()
+                 && target.datePublished > current.datePublished)
+        {
+            hasUpdate = true;
+        }
+
+        if (!hasUpdate)
+        {
+            upToDateLines.append(label);
+            continue;
+        }
+
+        updatableLines.append(
+            QStringLiteral("- %1：%2 → %3，新文件 %4，发布于 %5\n  下载: %6")
+                .arg(label,
+                     current.version.isEmpty() ? QStringLiteral("未知版本") : current.version,
+                     target.version.isEmpty() ? QStringLiteral("新版本") : target.version,
+                     target.fileName,
+                     target.datePublished.toString(QStringLiteral("yyyy-MM-dd")),
+                     target.downloadUrl));
+    }
+
+    QStringList lines;
+    lines.append(QStringLiteral("%1更新检查结果（共 %2 个，联网检查 %3 个；可更新 %4，已是最新 %5，未匹配 %6）")
+                     .arg(displayName)
+                     .arg(namesBySha1.size())
+                     .arg(sha1s.size())
+                     .arg(updatableLines.size())
+                     .arg(upToDateLines.size())
+                     .arg(unknownLines.size()));
+    if (!disabledNames.isEmpty())
+    {
+        lines.append(QStringLiteral("注意：其中 %1 个处于禁用状态（.disabled），更新后会保持禁用。")
+                         .arg(disabledNames.size()));
+    }
+    if (installed.isEmpty() && latest.isEmpty())
+    {
+        lines.append(QStringLiteral("联网检查没有拿到结果（可能是网络或镜像不可用），稍后可在「实例管理 > %1」页手动点「检查更新」重试。")
+                         .arg(displayName));
+    }
+    if (!updatableLines.isEmpty())
+    {
+        lines.append(QStringLiteral("\n## 可更新的%1（%2 个）").arg(displayName).arg(updatableLines.size()));
+        lines.append(updatableLines.join(QStringLiteral("\n")));
+    }
+    if (!upToDateLines.isEmpty())
+    {
+        lines.append(QStringLiteral("\n## 已是最新（%1 个）").arg(upToDateLines.size()));
+        lines.append(upToDateLines.join(QStringLiteral("、")));
+    }
+    if (!unknownLines.isEmpty())
+    {
+        lines.append(QStringLiteral("\n## 未匹配到在线数据（%1 个）").arg(unknownLines.size()));
+        lines.append(unknownLines.join(QStringLiteral("、")));
+    }
+    lines.append(QStringLiteral("\n提示：在「实例管理 > %1」页可以点「检查更新」查看可更新标记，并一键更新。")
+                     .arg(displayName));
+    return lines.join('\n');
+}
+
 QString AiService::executeListSaves(const QJsonObject &args)
 {
     QString instancePath = args["instance_path"].toString().trimmed();
@@ -4852,6 +6166,8 @@ QString AiService::executeManageWorldBackup(const QJsonObject &args)
         {
             return QStringLiteral("备份失败：%1").arg(error.isEmpty() ? QStringLiteral("未知错误") : error);
         }
+        // 与手动备份一致：超出保留份数时清理最旧的备份
+        wbm->applyRetentionPolicy(instancePath, worldName, WorldBackupManager::keepCount());
         return QStringLiteral("备份成功：存档 %1 已备份为 %2（创建于 %3，包大小 %4）。")
             .arg(worldName,
                  outInfo.id,

@@ -8,6 +8,31 @@
 #include <QFile>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QtMath>
+
+namespace {
+
+/// WCAG 相对亮度用的单通道线性化
+qreal channelToLinear(qreal v)
+{
+    return v <= 0.03928 ? v / 12.92 : qPow((v + 0.055) / 1.055, 2.4);
+}
+
+qreal relativeLuminance(const QColor &c)
+{
+    return 0.2126 * channelToLinear(c.redF())
+         + 0.7152 * channelToLinear(c.greenF())
+         + 0.0722 * channelToLinear(c.blueF());
+}
+
+qreal contrastRatio(const QColor &a, const QColor &b)
+{
+    const qreal la = relativeLuminance(a);
+    const qreal lb = relativeLuminance(b);
+    return (qMax(la, lb) + 0.05) / (qMin(la, lb) + 0.05);
+}
+
+} // namespace
 
 ThemeManager* ThemeManager::m_instance = nullptr;
 
@@ -232,6 +257,22 @@ QList<ThemeManager::PresetColor> ThemeManager::presetColors() const
         {tr("湖蓝"), "#03A9F4"},
         {tr("草绿"), "#8BC34A"}
     };
+}
+
+QColor ThemeManager::accentTextColor() const
+{
+    QColor c(m_currentThemeColor);
+    if (!c.isValid())
+        c = QColor(QStringLiteral("#2E7D32"));
+    if (m_currentTheme == LightTheme)
+        return c;
+
+    // 深色 / 自定义主题：在卡片底色上至少保留 4.5:1 的对比度。
+    // 用户可能选了很深的主题色（默认深绿就是），不处理会直接糊进深色背景里。
+    const QColor surface(QStringLiteral("#2d2d2d"));
+    for (int i = 0; i < 12 && contrastRatio(c, surface) < 4.5; ++i)
+        c = c.lighter(112);
+    return c;
 }
 
 QString ThemeManager::getThemeColorHover() const
@@ -547,6 +588,14 @@ QMap<QString, QString> ThemeManager::buildTokenTable() const
                                 : pc.lighter(150).name();
     // 主色背景上的说明文字（modifyBanner / modifyInfoBar 等）
     T["@PRIMARY_TEXT@"]      = T.value("@TEXT_ACCENT@");
+
+    // 压在页面 / 卡片上的主色文字与图标：浅色主题等同主色，深色主题自动提亮
+    const QColor accentText = accentTextColor();
+    T["@ACCENT_TEXT@"]        = accentText.name();
+    T["@ACCENT_TEXT_MEDIUM@"] = isLight ? pc.lighter(120).name()
+                                        : accentText.lighter(115).name();
+    T["@ACCENT_TEXT_LIGHT@"]  = isLight ? pc.lighter(150).name()
+                                        : accentText.lighter(130).name();
 
     // 主色 rgba（box-shadow / 半透明背景共用）
     static const QStringList primaryAlphas = {

@@ -20,6 +20,7 @@
 
 #include <QMap>
 #include <QString>
+#include <QStringList>
 #include <optional>
 
 /**
@@ -93,6 +94,19 @@ struct SaveChanges
 };
 
 /**
+ * @brief level.dat 里的数据包启停列表（Data.DataPacks）
+ *
+ * Enabled / Disabled 都是字符串列表：值形如 "vanilla"、"mod:xxx"、
+ * "file/数据包文件名.zip"；Enabled 的顺序就是数据包加载顺序。
+ */
+struct DataPackLists
+{
+    QStringList enabled;       ///< 已启用（按加载顺序）
+    QStringList disabled;      ///< 已禁用
+    bool hasDataPacks = false; ///< level.dat 中是否存在 DataPacks 复合标签
+};
+
+/**
  * @brief 从 level.dat 解析得到的主机玩家状态
  *
  * 单机模式下主机玩家的数据保存在 level.dat 的 Data.Player 下，
@@ -132,6 +146,30 @@ public:
      *         没有玩家位置数据时返回 std::nullopt
      */
     static std::optional<PlayerState> readPlayerState(const QString &folderPath);
+
+    /**
+     * @brief 读取数据包启停列表（Data.DataPacks.Enabled / Disabled）
+     * @param folderPath 存档文件夹绝对路径（内含 level.dat）
+     * @return 解析成功返回列表（没有 DataPacks 标签时返回空列表且
+     *         hasDataPacks == false）；level.dat 缺失或无法解析时返回 std::nullopt
+     */
+    static std::optional<DataPackLists> readDataPacks(const QString &folderPath);
+
+    /**
+     * @brief 写入数据包启停列表（原子写入，自动备份 level.dat_old）
+     *
+     * DataPacks 复合标签不存在时会自动创建；列表中其它字段原样保留。
+     *
+     * @param folderPath 存档文件夹绝对路径
+     * @param enabled    已启用列表（顺序即加载顺序）
+     * @param disabled   已禁用列表
+     * @param errorOut   可选，失败时输出原因
+     * @return 写入成功返回 true
+     */
+    static bool writeDataPacks(const QString &folderPath,
+                               const QStringList &enabled,
+                               const QStringList &disabled,
+                               QString *errorOut = nullptr);
 
     /**
      * @brief 将修改应用到指定存档的 level.dat（原子写入）

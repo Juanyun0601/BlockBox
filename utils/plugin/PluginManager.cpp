@@ -19,11 +19,16 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPainter>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
 #include <QSettings>
 #include <QTextStream>
+#include <QTimer>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QPointer>
 #include <QtConcurrent>
 #include <QtGlobal>
@@ -224,6 +229,16 @@ PluginInfo PluginManager::parsePluginFile(const QString &filePath) const
 
     // 启动器样式贡献（manifest.style：字符串内联 QSS 或 { qss, file } 对象）
     info.style = PluginStyleContribution::fromJson(obj.value(QStringLiteral("style")));
+
+    // AI 工具定义（manifest.aiTools）：需同时声明权限 ai:tool 才会生效
+    const QJsonArray aiToolsArr = obj.value(QStringLiteral("aiTools")).toArray();
+    for (const QJsonValue &v : aiToolsArr) {
+        if (v.isObject()) {
+            const PluginAiTool tool = PluginAiTool::fromJson(v.toObject());
+            if (tool.isValid())
+                info.aiTools.append(tool);
+        }
+    }
 
     if (info.id.isEmpty() || info.name.isEmpty()) {
         info.loadError = QObject::tr("清单缺少 id 或 name 字段");
@@ -571,6 +586,333 @@ QStringList PluginManager::activePluginStyles() const
     return styles;
 }
 
+// ==================== AI 工具接口 ====================
+
+bool PluginManager::providesAiTools(const PluginInfo &info) const
+{
+    if (!info.loaded || info.aiTools.isEmpty())
+        return false;
+    // 声明了工具却没申请 ai:tool 权限：不注入，避免 AI 在用户不知情时调用插件；
+    // 插件详情页会给出「未声明 ai:tool 权限，暂不生效」提示
+    if (!info.hasAiToolPermission())
+        return false;
+    return info.validAiToolCount() > 0;
+}
+
+QJsonArray PluginManager::enabledAiToolsJson() const
+{
+    QJsonArray tools;
+    QSet<QString> usedNames;
+    for (const PluginInfo &info : m_plugins) {
+        if (!providesAiTools(info) || !isEnabled(info.id))
+            continue;
+        for (const PluginAiTool &tool : info.aiTools) {
+            if (!tool.isValid() || usedNames.contains(tool.name))
+                continue;
+            usedNames.insert(tool.name);
+
+            QJsonObject function;
+            function["name"] = tool.name;
+            function["description"] = tool.description.isEmpty() ? tool.label : tool.description;
+            if (tool.parameters.isEmpty()) {
+                function["parameters"] = QJsonObject{
+                    {QStringLiteral("type"), QStringLiteral("object")},
+                    {QStringLiteral("properties"), QJsonObject{}},
+                    {QStringLiteral("required"), QJsonArray{}}};
+            } else {
+                function["parameters"] = tool.parameters;
+            }
+
+            QJsonObject def;
+            def["type"] = QStringLiteral("function");
+            def["function"] = function;
+            tools.append(def);
+        }
+    }
+    return tools;
+}
+
+QHash<QString, QString> PluginManager::enabledAiToolMap() const
+{
+    QHash<QString, QString> map;
+    QSet<QString> usedNames;
+    for (const PluginInfo &info : m_plugins) {
+        if (!providesAiTools(info) || !isEnabled(info.id))
+            continue;
+        for (const PluginAiTool &tool : info.aiTools) {
+            if (!tool.isValid() || usedNames.contains(tool.name))
+                continue;
+            usedNames.insert(tool.name);
+            map.insert(tool.name, info.id);
+        }
+    }
+    return map;
+}
+
+QString PluginManager::enabledAiToolsPrompt() const
+{
+    QStringList sections;
+    for (const PluginInfo &info : m_plugins) {
+        if (!providesAiTools(info) || !isEnabled(info.id))
+            continue;
+
+        QStringList lines;
+        for (const PluginAiTool &tool : info.aiTools) {
+            if (!tool.isValid())
+                continue;
+            const QString desc = tool.description.isEmpty() ? tool.label : tool.description;
+            lines << QStringLiteral("- %1：%2").arg(tool.name, desc);
+        }
+        if (lines.isEmpty())
+            continue;
+
+        sections << QStringLiteral("## 插件「%1」提供的工具\n%2")
+                        .arg(info.name, lines.join(QLatin1Char('\n')));
+    }
+
+    if (sections.isEmpty())
+        return QString();
+
+    return QStringLiteral("以下工具由已安装并启用的插件提供，可按需调用"
+                          "（参数说明见各工具定义）：\n\n") +
+           sections.join(QStringLiteral("\n\n"));
+}
+
+QString PluginManager::executeAiScriptTool(const PluginInfo &info, const PluginAiTool &tool,
+                                           const QJsonObject &args, QString &error)
+{
+    // 解包到临时目录（与插件页脚本执行的目录分开，避免互相覆盖）；
+    // 插件 ID 来自清单，先清洗再拼路径，避免 ../ 逃出临时目录
+    QString safeId = info.id;
+    safeId.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_-]")),
+                   QStringLiteral("_"));
+    const QString tmpDir = QDir::tempPath() + QStringLiteral("/BlockBox/plugin_ai_") + safeId;
+    QDir(tmpDir).removeRecursively();
+    QDir().mkpath(tmpDir);
+
+    bool ok = false;
+    PluginZip::extractAllToDir(info.filePath, tmpDir, &ok);
+    if (!ok) {
+        error = tr("解包插件失败");
+        return QString();
+    }
+
+    const QString scriptPath = QDir::cleanPath(tmpDir + QStringLiteral("/") + tool.script);
+    // 脚本必须落在解包目录内（拒绝 ../ 之类的越界路径）
+    if (!scriptPath.startsWith(QDir::cleanPath(tmpDir) + QLatin1Char('/'))) {
+        error = tr("脚本路径越界：%1").arg(tool.script);
+        return QString();
+    }
+    if (!QFileInfo::exists(scriptPath)) {
+        error = tr("包内未找到脚本：%1").arg(tool.script);
+        return QString();
+    }
+
+    QStringList procArgs;
+    QString program;
+    const QString type = tool.scriptType();
+
+    if (type == QLatin1String("ps1")) {
+        program = QStringLiteral("powershell");
+        procArgs << QStringLiteral("-NoProfile") << QStringLiteral("-NonInteractive")
+                 << QStringLiteral("-ExecutionPolicy")
+                 << QStringLiteral("Bypass") << QStringLiteral("-WindowStyle")
+                 << QStringLiteral("Hidden") << QStringLiteral("-File")
+                 << QDir::toNativeSeparators(scriptPath);
+    } else if (type == QLatin1String("bat")) {
+        program = QStringLiteral("cmd");
+        procArgs << QStringLiteral("/c") << QStringLiteral("call")
+                 << QDir::toNativeSeparators(scriptPath);
+    } else {
+        error = tr("不支持的脚本类型：%1").arg(tool.script);
+        return QString();
+    }
+
+    // 工具参数作为命令行参数传入（-Key Value）；cmd 会重新解析命令行，
+    // 带元字符或空值的参数只走 PLUGIN_ARGS 环境变量，不进命令行
+    const bool isCmdScript = (type == QLatin1String("bat"));
+    for (auto it = args.constBegin(); it != args.constEnd(); ++it) {
+        const QString val = it.value().isString()
+            ? it.value().toString()
+            : QString::fromUtf8(QJsonDocument(it.value().toObject()).toJson(QJsonDocument::Compact));
+        if (val.isEmpty())
+            continue;
+        if (isCmdScript && val.contains(QRegularExpression(QStringLiteral("[&|<>^%\"\\r\\n]")))) {
+            qWarning() << "[PluginManager] 参数包含 cmd 元字符，仅通过 PLUGIN_ARGS 传入："
+                       << it.key();
+            continue;
+        }
+        procArgs << QStringLiteral("-%1").arg(it.key()) << val;
+    }
+
+    QProcess proc;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("PLUGIN_ARGS"),
+               QString::fromUtf8(QJsonDocument(args).toJson(QJsonDocument::Compact)));
+    env.insert(QStringLiteral("PLUGIN_ID"), info.id);
+    env.insert(QStringLiteral("PLUGIN_TOOL"), tool.name);
+    proc.setProcessEnvironment(env);
+    proc.setWorkingDirectory(tmpDir);
+
+    proc.start(program, procArgs);
+    if (!proc.waitForStarted(5000)) {
+        error = tr("启动脚本失败：%1").arg(proc.errorString());
+        return QString();
+    }
+
+    int timeoutMs = tool.timeout * 1000;
+    if (timeoutMs <= 0)
+        timeoutMs = 60000;
+
+    if (!proc.waitForFinished(timeoutMs)) {
+        proc.kill();
+        proc.waitForFinished(2000);
+        error = tr("脚本执行超时（%1 秒）").arg(tool.timeout);
+        return QString();
+    }
+
+    QString output = QString::fromLocal8Bit(proc.readAllStandardOutput()).trimmed();
+    const QString errOutput = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
+
+    if (proc.exitCode() != 0) {
+        error = tr("脚本退出码 %1%2")
+                    .arg(proc.exitCode())
+                    .arg(errOutput.isEmpty() ? QString() : QStringLiteral("：") + errOutput);
+        return output; // 仍返回标准输出（可能含部分结果）
+    }
+
+    if (output.isEmpty() && !errOutput.isEmpty())
+        output = errOutput;
+
+    return output;
+}
+
+QString PluginManager::executeAiHttpTool(const PluginAiTool &tool, const QJsonObject &args,
+                                         QString &error)
+{
+    QString urlStr = tool.http.url;
+    if (urlStr.isEmpty()) {
+        error = tr("HTTP 工具未定义 url");
+        return QString();
+    }
+
+    // URL 模板替换：{key} → args[key]
+    for (auto it = args.constBegin(); it != args.constEnd(); ++it)
+        urlStr.replace(QStringLiteral("{%1}").arg(it.key()), it.value().toString());
+
+    QUrl url(urlStr);
+    if (!url.isValid()) {
+        error = tr("无效的 URL：%1").arg(urlStr);
+        return QString();
+    }
+    // 只允许 http/https，避免插件借 file:// 读取本机文件后回传给模型
+    if (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https")) {
+        error = tr("仅支持 http/https 地址：%1").arg(urlStr);
+        return QString();
+    }
+
+    QNetworkAccessManager nam;
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    for (auto it = tool.http.headers.constBegin(); it != tool.http.headers.constEnd(); ++it)
+        request.setRawHeader(it.key().toUtf8(), it.value().toUtf8());
+
+    QString method = tool.http.method.toUpper();
+    if (method.isEmpty())
+        method = QStringLiteral("GET");
+
+    QByteArray bodyData;
+    if (method == QLatin1String("POST") || method == QLatin1String("PUT") ||
+        method == QLatin1String("PATCH")) {
+        bodyData = tool.http.body.isEmpty()
+            ? QJsonDocument(args).toJson(QJsonDocument::Compact)
+            : tool.http.body.toUtf8();
+    } else {
+        // GET/DELETE：未用于占位符替换的参数追加为 query
+        QUrlQuery query(url);
+        for (auto it = args.constBegin(); it != args.constEnd(); ++it) {
+            if (!tool.http.url.contains(QStringLiteral("{%1}").arg(it.key())))
+                query.addQueryItem(it.key(), it.value().toString());
+        }
+        url.setQuery(query);
+        request.setUrl(url);
+    }
+
+    QNetworkReply *reply = nullptr;
+    if (method == QLatin1String("GET"))
+        reply = nam.get(request);
+    else if (method == QLatin1String("POST"))
+        reply = nam.post(request, bodyData);
+    else if (method == QLatin1String("PUT"))
+        reply = nam.put(request, bodyData);
+    else if (method == QLatin1String("DELETE"))
+        reply = nam.deleteResource(request);
+    else
+        reply = nam.sendCustomRequest(request, method.toUtf8(), bodyData);
+
+    if (!reply) {
+        error = tr("创建 HTTP 请求失败");
+        return QString();
+    }
+
+    int timeoutMs = tool.timeout * 1000;
+    if (timeoutMs <= 0)
+        timeoutMs = 60000;
+
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    timer.start(timeoutMs);
+    loop.exec();
+
+    QString result;
+    if (timer.isActive()) {
+        timer.stop();
+        if (reply->error() != QNetworkReply::NoError) {
+            error = tr("HTTP 请求失败：%1").arg(reply->errorString());
+            result = QString::fromUtf8(reply->readAll());
+        } else {
+            result = QString::fromUtf8(reply->readAll());
+        }
+    } else {
+        reply->abort();
+        error = tr("HTTP 请求超时（%1 秒）").arg(tool.timeout);
+    }
+
+    reply->deleteLater();
+    return result;
+}
+
+QString PluginManager::executeAiTool(const QString &pluginId, const QString &toolName,
+                                     const QJsonObject &args, QString &error)
+{
+    const PluginInfo info = pluginById(pluginId);
+    if (!info.isValid()) {
+        error = QStringLiteral("PLUGIN_NOT_FOUND");
+        return QString();
+    }
+    if (!isEnabled(pluginId)) {
+        error = QStringLiteral("PLUGIN_DISABLED");
+        return QString();
+    }
+    if (!info.hasAiToolPermission()) {
+        error = QStringLiteral("PLUGIN_AI_TOOL_NOT_ALLOWED");
+        return QString();
+    }
+
+    const PluginAiTool tool = info.aiTool(toolName);
+    if (!tool.isValid()) {
+        error = QStringLiteral("PLUGIN_TOOL_NOT_FOUND: ") + toolName;
+        return QString();
+    }
+
+    if (tool.http.isValid())
+        return executeAiHttpTool(tool, args, error);
+    return executeAiScriptTool(info, tool, args, error);
+}
+
 // ==================== 更新 ====================
 
 bool PluginManager::updatePlugin(const QString &id, QString *error)
@@ -725,6 +1067,53 @@ bool PluginManager::createTemplate(const QString &name, const QString &id, const
     manifest.insert(QStringLiteral("tags"), QJsonArray());
     manifest.insert(QStringLiteral("dependencies"), QJsonArray());
 
+    // 能力权限示例：向 AI 助手提供工具必须声明 ai:tool
+    {
+        QJsonArray permissions;
+        permissions.append(QStringLiteral("ai:tool"));
+        manifest.insert(QStringLiteral("permissions"), permissions);
+    }
+
+    // AI 工具示例（宿主把工具注入 AI 助手，模型可自主调用 scripts/ai_tool.ps1）
+    {
+        // 工具名需符合函数名规则（ASCII 字母/数字/下划线/连字符），从插件 ID 清洗得到
+        QString toolPrefix;
+        for (const QChar &c : dirName) {
+            if ((c.isLetterOrNumber() && c.unicode() < 128) || c == QLatin1Char('_')
+                || c == QLatin1Char('-'))
+                toolPrefix.append(c);
+            else
+                toolPrefix.append(QLatin1Char('_'));
+        }
+        if (toolPrefix.isEmpty())
+            toolPrefix = QStringLiteral("plugin");
+        if (toolPrefix.size() > 48)
+            toolPrefix = toolPrefix.left(48);
+
+        QJsonObject parameters;
+        parameters.insert(QStringLiteral("type"), QStringLiteral("object"));
+        QJsonObject textProp;
+        textProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        textProp.insert(QStringLiteral("description"), QStringLiteral("要回显的文字"));
+        QJsonObject properties;
+        properties.insert(QStringLiteral("text"), textProp);
+        parameters.insert(QStringLiteral("properties"), properties);
+        parameters.insert(QStringLiteral("required"), QJsonArray());
+
+        QJsonObject tool;
+        tool.insert(QStringLiteral("name"), toolPrefix + QStringLiteral("_hello"));
+        tool.insert(QStringLiteral("label"), QStringLiteral("示例工具"));
+        tool.insert(QStringLiteral("description"),
+                    QStringLiteral("示例 AI 工具：回显传入的文字，用于演示插件如何为 AI 助手提供工具"));
+        tool.insert(QStringLiteral("parameters"), parameters);
+        tool.insert(QStringLiteral("script"), QStringLiteral("scripts/ai_tool.ps1"));
+        tool.insert(QStringLiteral("timeout"), 30);
+
+        QJsonArray aiTools;
+        aiTools.append(tool);
+        manifest.insert(QStringLiteral("aiTools"), aiTools);
+    }
+
     // 设置项示例（宿主据此生成设置表单）
     {
         QJsonObject settingObj;
@@ -761,7 +1150,20 @@ bool PluginManager::createTemplate(const QString &name, const QString &id, const
         jsFile.close();
     }
 
-    // 3. README.md 说明
+    // 3. scripts/ai_tool.ps1：AI 工具示例脚本
+    dir.mkpath(templateRoot + QStringLiteral("/scripts"));
+    QFile aiScriptFile(templateRoot + QStringLiteral("/scripts/ai_tool.ps1"));
+    if (aiScriptFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QTextStream ts(&aiScriptFile);
+        ts << "# BlockBox plugin AI tool demo.\n"
+           << "# Host passes tool args as -Key Value; full JSON is in $env:PLUGIN_ARGS.\n"
+           << "# Standard output is returned to the AI as the tool result.\n"
+           << "param([string]$text = \"hello\")\n\n"
+           << "Write-Output (\"plugin \" + $env:PLUGIN_ID + \" hello: \" + $text)\n";
+        aiScriptFile.close();
+    }
+
+    // 4. README.md 说明
     QFile readmeFile(templateRoot + QStringLiteral("/README.md"));
     if (readmeFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         QTextStream ts(&readmeFile);
@@ -773,19 +1175,26 @@ bool PluginManager::createTemplate(const QString &name, const QString &id, const
            << "## 打包为 .BlockBox\n\n"
            << "在启动器「插件 - 制作插件」中点击「打包为 BlockBox 文件」，"
               "即可将本目录压缩为 .BlockBox 插件包（本质是 zip，后缀不同）。\n\n"
+           << "## AI 工具\n\n"
+           << "plugin.json 里的 aiTools 会把工具注入 AI 助手（工作模式），"
+              "模型可自主调用；同时需要在 permissions 中声明 ai:tool 权限。\n"
+           << "示例工具执行 scripts/ai_tool.ps1，可改成自己的脚本，"
+              "脚本标准输出会作为结果回填给 AI。\n\n"
            << "## 目录结构\n\n"
            << "```\n"
            << dirName << "/\n"
-           << "├── plugin.json   # 插件清单（包内必需，保存插件信息）\n"
-           << "├── main.js       # 插件入口脚本\n"
-           << "├── README.md     # 说明文档\n"
+           << "├── plugin.json       # 插件清单（包内必需，保存插件信息）\n"
+           << "├── main.js           # 插件入口脚本\n"
+           << "├── README.md         # 说明文档\n"
+           << "├── scripts/\n"
+           << "│   └── ai_tool.ps1   # AI 工具示例脚本\n"
            << "└── assets/\n"
-           << "    └── icon.png  # 插件图标\n"
+           << "    └── icon.png      # 插件图标\n"
            << "```\n";
         readmeFile.close();
     }
 
-    // 4. 默认图标 assets/icon.png（128x128 主题色块 + 字母）
+    // 5. 默认图标 assets/icon.png（128x128 主题色块 + 字母）
     QImage icon(128, 128, QImage::Format_ARGB32);
     icon.fill(Qt::transparent);
     {

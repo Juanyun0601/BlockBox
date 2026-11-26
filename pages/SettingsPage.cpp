@@ -98,6 +98,11 @@ void SettingsPage::initRightContent()
     m_aboutSettings->setObjectName("settingsAboutContent");
     m_projectionEditorSettings = new QWidget(m_contentStack);
     m_projectionEditorSettings->setObjectName("settingsProjectionEditorContent");
+    // 操作设置是手机 / 平板专属：桌面端没有触屏与手柄操作，不创建这一页
+    if (Platform::isMobile()) {
+        m_controlSettings = new QWidget(m_contentStack);
+        m_controlSettings->setObjectName("settingsControlContent");
+    }
     initGeneralSettings();
     initInterfaceSettings();
     initGlobalGameSettings();
@@ -110,6 +115,8 @@ void SettingsPage::initRightContent()
     initAiAssistantSettings();
     initAboutSettings();
     initProjectionEditorSettings();
+    if (m_controlSettings)
+        initControlSettings();
     m_contentStack->addWidget(m_generalSettings);
     m_contentStack->addWidget(m_interfaceSettings);
     m_contentStack->addWidget(m_globalGameSettings);
@@ -122,6 +129,8 @@ void SettingsPage::initRightContent()
     m_contentStack->addWidget(m_aiAssistantSettings);
     m_contentStack->addWidget(m_aboutSettings);
     m_contentStack->addWidget(m_projectionEditorSettings);
+    if (m_controlSettings)
+        m_contentStack->addWidget(m_controlSettings);
     // 按当前版本模式重建顺序，保证页签索引与侧边栏一致
     rebuildEditionStack();
     // 手机端：内容堆叠整体套一层滚动区，子设置页装不下时上下滑动查看
@@ -154,66 +163,33 @@ void SettingsPage::resetSettingsScroll()
 
 void SettingsPage::onRestoreDefaults()
 {
-    if (m_bedrockMode) {
-        switch (m_currentIndex) {
-        case 0: qDebug() << "[SettingsPage]" << "恢复常规设置默认值"; break;
-        case 1:
-            qDebug() << "[SettingsPage]" << "恢复界面设置默认值";
-            ThemeManager::instance()->setSidebarBgColor("");
-            ThemeManager::instance()->resetColorOverrides();
-            HomeCarouselStore::clearCustom();
-            refreshHomeCarouselRows();
-            emit carouselImagesChanged();
-            break;
-    case 2: qDebug() << "[SettingsPage]" << "恢复全局游戏设置默认值"; break;
-    case 3: qDebug() << "[SettingsPage]" << "恢复按键绑定默认值"; break;
-    case 4: qDebug() << "[SettingsPage]" << "恢复系统信息设置默认值"; break;
-    case 5:
-        qDebug() << "[SettingsPage]" << "恢复AI助手设置默认值";
-        SettingsManager::instance()->setProperty("ai/customSystemPrompt/chat", QString());
-        SettingsManager::instance()->setProperty("ai/customSystemPrompt/work", QString());
-        SettingsManager::instance()->setProperty("ai/systemPromptLibrary", QString());
-        SettingsManager::instance()->setProperty("ai/defaultModelId", QString());
-        refreshAiDefaultModelCombo();
-        break;
-        default: break;
-        }
+    // 按当前页面判断，而不是按页签序号：Java / 基岩版模式的页签顺序不同，
+    // 新增子页后序号会整体后移，顺序判断很容易恢复错页面。
+    QWidget *page = m_contentStack ? m_contentStack->currentWidget() : nullptr;
+    if (!page)
         return;
-    }
 
-    switch (m_currentIndex) {
-    case 0: qDebug() << "[SettingsPage]" << "恢复常规设置默认值"; break;
-    case 1:
+    if (page == m_interfaceSettings) {
         qDebug() << "[SettingsPage]" << "恢复界面设置默认值";
         ThemeManager::instance()->setSidebarBgColor("");
         ThemeManager::instance()->resetColorOverrides();
         HomeCarouselStore::clearCustom();
         refreshHomeCarouselRows();
         emit carouselImagesChanged();
-        break;
-    case 2: qDebug() << "[SettingsPage]" << "恢复全局游戏设置默认值"; break;
-    case 3: qDebug() << "[SettingsPage]" << "恢复实例设置默认值"; break;
-    case 4: qDebug() << "[SettingsPage]" << "恢复Java管理设置默认值"; break;
-    case 5:
+    } else if (page == m_advancedSettings) {
         qDebug() << "[SettingsPage]" << "恢复高级设置默认值";
         SettingsManager::instance()->setForumBaseUrl(QString());
-        break;
-    case 6: qDebug() << "[SettingsPage]" << "恢复按键绑定默认值"; break;
-    case 7: qDebug() << "[SettingsPage]" << "恢复系统信息设置默认值"; break;
-    case 8:
+    } else if (page == m_aiAssistantSettings) {
         qDebug() << "[SettingsPage]" << "恢复AI助手设置默认值";
         SettingsManager::instance()->setProperty("ai/customSystemPrompt/chat", QString());
         SettingsManager::instance()->setProperty("ai/customSystemPrompt/work", QString());
         SettingsManager::instance()->setProperty("ai/systemPromptLibrary", QString());
         SettingsManager::instance()->setProperty("ai/defaultModelId", QString());
         refreshAiDefaultModelCombo();
-        break;
-    case 10:
+    } else if (page == m_projectionEditorSettings) {
         qDebug() << "[SettingsPage]" << "恢复投影编辑器设置默认值";
         ProjectionEditorSettings::resetToDefaults();
         refreshProjectionEditorSettingsControls();
-        break;
-    default: break;
     }
 }
 
@@ -248,6 +224,55 @@ void SettingsPage::setCurrentSettingsTab(int index)
     }
     // 切换设置子页时重置外层滚动位置，避免新页面停留在上一子页的滚动位置
     resetSettingsScroll();
+}
+
+int SettingsPage::tabIndex(SettingsTabId id) const
+{
+    if (!m_contentStack)
+        return -1;
+
+    QWidget *page = nullptr;
+    switch (id) {
+    case GeneralTab: page = m_generalSettings; break;
+    case InterfaceTab: page = m_interfaceSettings; break;
+    case GameTab: page = m_bedrockMode ? m_bedrockGameSettings : m_globalGameSettings; break;
+    case InstanceTab: page = m_instanceSettings; break;
+    case JavaTab: page = m_javaManagerSettings; break;
+    case AdvancedTab: page = m_advancedSettings; break;
+    case KeyBindTab: page = m_keyBindSettings; break;
+    case SystemInfoTab: page = m_systemInfoSettings; break;
+    case AiAssistantTab: page = m_aiAssistantSettings; break;
+    case AboutTab: page = m_aboutSettings; break;
+    case ProjectionEditorTab: page = m_projectionEditorSettings; break;
+    case ControlTab: page = m_controlSettings; break;
+    }
+
+    return page ? m_contentStack->indexOf(page) : -1;
+}
+
+QString SettingsPage::tabTitle(int index) const
+{
+    if (!m_contentStack)
+        return QString();
+
+    QWidget *page = m_contentStack->widget(index);
+    if (!page)
+        return QString();
+
+    if (page == m_generalSettings) return tr("设置>常规设置");
+    if (page == m_interfaceSettings) return tr("设置>界面设置");
+    if (page == m_globalGameSettings || page == m_bedrockGameSettings)
+        return tr("设置>全局游戏设置");
+    if (page == m_controlSettings) return tr("设置>操作设置");
+    if (page == m_instanceSettings) return tr("设置>实例设置");
+    if (page == m_javaManagerSettings) return tr("设置>Java管理");
+    if (page == m_advancedSettings) return tr("设置>高级设置");
+    if (page == m_keyBindSettings) return tr("设置>按键绑定");
+    if (page == m_systemInfoSettings) return tr("设置>系统信息");
+    if (page == m_aiAssistantSettings) return tr("设置>AI 助手");
+    if (page == m_aboutSettings) return tr("设置>关于");
+    if (page == m_projectionEditorSettings) return tr("设置>投影编辑器");
+    return QString();
 }
 
 void SettingsPage::applyPageFilter(const QString &query)
@@ -286,6 +311,8 @@ void SettingsPage::rebuildEditionStack()
     m_contentStack->removeWidget(m_aiAssistantSettings);
     m_contentStack->removeWidget(m_aboutSettings);
     m_contentStack->removeWidget(m_projectionEditorSettings);
+    if (m_controlSettings)
+        m_contentStack->removeWidget(m_controlSettings);
 
     m_contentStack->addWidget(m_generalSettings);
     m_contentStack->addWidget(m_interfaceSettings);
@@ -294,6 +321,9 @@ void SettingsPage::rebuildEditionStack()
     } else {
         m_contentStack->addWidget(m_globalGameSettings);
     }
+    // 操作设置紧跟游戏设置，和侧边栏顺序保持一致
+    if (m_controlSettings)
+        m_contentStack->addWidget(m_controlSettings);
     if (!m_bedrockMode) {
         m_contentStack->addWidget(m_instanceSettings);
         m_contentStack->addWidget(m_javaManagerSettings);

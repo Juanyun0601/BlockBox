@@ -47,6 +47,7 @@
 #include "layouts/FlowLayout.h"
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
+#include "utils/links/LinkRouter.h"
 #include "utils/plugin/PluginManager.h"
 #include "utils/plugin/PluginZip.h"
 #include "utils/plugin/ServerStatusChecker.h"
@@ -164,17 +165,20 @@ void PluginPage::initUI()
 
     m_importBtn = new QPushButton(tr("导入插件"), header);
     m_createBtn = new QPushButton(tr("制作插件"), header);
+    m_docsBtn = new QPushButton(tr("开发文档"), header);
     m_openDirBtn = new QPushButton(tr("插件文件夹"), header);
 
-    for (QPushButton *btn : {m_importBtn, m_createBtn, m_openDirBtn}) {
+    for (QPushButton *btn : {m_importBtn, m_createBtn, m_docsBtn, m_openDirBtn}) {
         btn->setObjectName(QStringLiteral("pluginPageActionBtn"));
         btn->setCursor(Qt::PointingHandCursor);
         btn->setFixedHeight(32);
     }
     m_createBtn->setObjectName(QStringLiteral("pluginPageActionBtnPrimary"));
+    m_docsBtn->setToolTip(tr("在软件内打开插件开发文档（plugin.json、权限、UI、打包与更新）"));
 
     headerLayout->addWidget(m_importBtn);
     headerLayout->addWidget(m_createBtn);
+    headerLayout->addWidget(m_docsBtn);
     headerLayout->addWidget(m_openDirBtn);
 
     headerWrapLayout->addWidget(header);
@@ -266,6 +270,13 @@ void PluginPage::initUI()
     m_detailStyle->setWordWrap(true);
     m_detailStyle->setVisible(false);
     cardLayout->addWidget(m_detailStyle);
+
+    // 插件向 AI 助手提供的工具提示（manifest.aiTools）
+    m_detailAiTools = new QLabel(detailCard);
+    m_detailAiTools->setObjectName(QStringLiteral("pluginDetailStyle"));
+    m_detailAiTools->setWordWrap(true);
+    m_detailAiTools->setVisible(false);
+    cardLayout->addWidget(m_detailAiTools);
 
     // 操作按钮行（固定靠左，不随页面切换右移）
     QHBoxLayout *detailBtnRow = new QHBoxLayout();
@@ -426,6 +437,7 @@ void PluginPage::initUI()
     // 信号
     connect(m_importBtn, &QPushButton::clicked, this, &PluginPage::importPluginRequested);
     connect(m_createBtn, &QPushButton::clicked, this, &PluginPage::createPluginRequested);
+    connect(m_docsBtn, &QPushButton::clicked, this, &PluginPage::openDocsRequested);
     connect(m_openDirBtn, &QPushButton::clicked, this, &PluginPage::openPluginsDirRequested);
     connect(m_removeBtn, &QPushButton::clicked, this, [this]() {
         if (m_currentDetailIndex >= 0 && m_currentDetailIndex < m_plugins.size())
@@ -514,7 +526,7 @@ void PluginPage::initUI()
         if (m_currentDetailIndex >= 0 && m_currentDetailIndex < m_plugins.size()) {
             const QString url = m_plugins[m_currentDetailIndex].homepage;
             if (!url.isEmpty())
-                QDesktopServices::openUrl(QUrl(url));
+                LinkRouter::instance()->open(QUrl(url), this);
         }
     });
 
@@ -764,8 +776,8 @@ void PluginPage::rebuildCards()
         // 主页（有条件显示）
         if (!info.homepage.isEmpty()) {
             QPushButton *homeBtn = createBtn(":/Images/Icons/nav_home.svg", tr("打开主页"));
-            connect(homeBtn, &QPushButton::clicked, this, [pluginHomepage]() {
-                QDesktopServices::openUrl(QUrl(pluginHomepage));
+            connect(homeBtn, &QPushButton::clicked, this, [this, pluginHomepage]() {
+                LinkRouter::instance()->open(QUrl(pluginHomepage), this);
             });
             btnLayout->addWidget(homeBtn);
         }
@@ -922,6 +934,31 @@ void PluginPage::updateDetailView(const PluginInfo &info)
         m_detailStyle->setVisible(true);
     } else {
         m_detailStyle->setVisible(false);
+    }
+
+    // 插件向 AI 助手提供的工具（manifest.aiTools，需声明 ai:tool 权限才生效）
+    const int aiToolCount = info.validAiToolCount();
+    if (aiToolCount > 0) {
+        QString aiText;
+        if (!info.hasAiToolPermission()) {
+            aiText = tr("⚠ 本插件提供了 %1 个 AI 工具，但清单未声明 ai:tool 权限，暂不生效")
+                         .arg(aiToolCount);
+        } else if (!enabled) {
+            aiText = tr("◆ 本插件提供 %1 个 AI 工具（插件已停用，暂不生效）").arg(aiToolCount);
+        } else {
+            QStringList names;
+            for (const PluginAiTool &tool : info.aiTools) {
+                if (tool.isValid())
+                    names << tool.name;
+            }
+            aiText = tr("◆ 已向 AI 助手提供 %1 个工具：%2（工作模式下可被调用）")
+                         .arg(aiToolCount)
+                         .arg(names.join(QStringLiteral(", ")));
+        }
+        m_detailAiTools->setText(aiText);
+        m_detailAiTools->setVisible(true);
+    } else {
+        m_detailAiTools->setVisible(false);
     }
 
     // 启用/停用按钮

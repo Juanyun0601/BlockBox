@@ -11,6 +11,9 @@
  *
  * 渲染管线要点（性能与观感）：
  *   - 只生成「看得见」的面：相邻格是不透明白色整方块时，该面直接丢弃；
+ *   - 水 / 岩浆按真实液面高度画：一整片水连成一体（同类液体之间的内部面不画、
+ *     上面还有水时拉满整格），只有表面收口到 14/16，水流按 level 逐级下落；
+ *     水是半透明蓝色、岩浆自发光满亮，水里水下的结构能直接看清；
  *   - 逐顶点 AO（角点遮挡）+ 方向性面光照，无需额外贴图即有明显立体感；
  *   - 同一种方块状态（调色板条目）只解析一次形状/贴图，整份几何按调色板缓存生成；
  *   - 拾取用 DDA 体素步进，只测试射线真正经过的格子；
@@ -40,6 +43,7 @@
 #include <climits>
 
 #include "utils/Schematic/BlockShapeLoader.h"
+#include "utils/Schematic/InstanceEntityTextures.h"
 #include "utils/Schematic/InstanceTextureLoader.h"
 #include "utils/Schematic/SchematicDocument.h"
 
@@ -56,6 +60,13 @@ public:
         All,      ///< 显示全部（忽略图层过滤）
         Single,   ///< 仅显示当前图层（默认）
         Below     ///< 当前图层及以下，下方变暗
+    };
+
+    /** 剖切轴：沿哪一坐标轴抽层，Y 为水平层，X / Z 用于从侧面剖开建筑 */
+    enum class LayerAxis {
+        Y,   ///< 水平层（默认，自下往上）
+        X,   ///< 沿 X 轴剖切（自西向东）
+        Z    ///< 沿 Z 轴剖切（自北向南）
     };
 
     /** 视角预设 */
@@ -90,6 +101,19 @@ public:
     void setShapeLoader(BlockShapeLoader *loader);
     BlockShapeLoader *shapeLoader() const { return m_shapeLoader; }
 
+    /**
+     * @brief 设置实体贴图来源（不转移所有权；nullptr 表示不画投影里的生物）
+     */
+    void setEntityTextures(InstanceEntityTextures *textures);
+    InstanceEntityTextures *entityTextures() const { return m_entityTextures; }
+
+    /** 是否绘制投影里保存的生物 / 实体（默认开启） */
+    void setShowEntities(bool show);
+    bool showEntities() const { return m_showEntities; }
+
+    /** 当前实际画出来的实体数量（统计用） */
+    int drawnEntityCount() const { return m_drawnEntities; }
+
     void setShowAir(bool show);
     bool showAir() const { return m_showAir; }
 
@@ -107,6 +131,12 @@ public:
 
     /** 应用视角预设（保持取景中心与距离，换一个方向观察） */
     void applyViewPreset(ViewPreset preset);
+
+    /**
+     * @brief 绕取景中心水平旋转视角（自动转台 / 缓慢环绕观察用）
+     * @param degrees 旋转角度（正数向右转）；取景中心与距离保持不变
+     */
+    void orbitYaw(float degrees);
 
     /** 鼠标灵敏度（0..1，与《我的世界》的「鼠标灵敏度」选项一致） */
     void setLookSensitivity(float sensitivity);
@@ -171,6 +201,15 @@ public:
      */
     void setLayerView(int layer, LayerMode mode);
 
+    /**
+     * @brief 设置剖切轴（配 setLayerView / setLayerFilter 使用）
+     *
+     * Y 是常见的「按层掀开屋顶」；换成 X / Z 就变成从左右或前后方向剖开，
+     * 看墙体和楼梯这类竖向结构更方便。
+     */
+    void setLayerAxis(LayerAxis axis);
+    LayerAxis layerAxis() const { return m_layerAxis; }
+
     /** 当前几何的三角形面数（用于界面上的实时统计） */
     int quadCount() const { return m_quadCount; }
 
@@ -186,7 +225,7 @@ signals:
     void placeRequested(int x, int y, int z);
     /** 用户请求破坏 (x,y,z)（左键单击） */
     void breakRequested(int x, int y, int z);
-    /** 用户以选取工具点击了 (x,y,z)（左键单击） */
+    /** 用户以选取工具点击了 (x,y,z)（左键单击）；点在空白/天空时坐标为 INT_MIN */
     void selectRequested(int x, int y, int z);
     /** 鼠标悬停方块变化（未悬停时坐标为 INT_MIN） */
     void hoverChanged(int x, int y, int z);
@@ -256,10 +295,22 @@ private:
         bool fullCube = false;        // 整格满方块
         bool tinted = false;          // 已带真实材质（不再叠加逐格明度扰动）
         float solidity = 1.0f;        // 实心占比（台阶 0.5 / 平面植物 0）：决定接触阴影强度
+        // 液体（水 / 岩浆）专用：原版这两类没有方块模型，按液面高度画，
+        // 并且要和相邻同类液体连成一片（内部面不画、上面还有水就拉满整格）
+        bool fluid = false;
+        bool fluidLava = false;
+        float fluidTop = 0.875f;      // 单独一格时的液面高度（level 越高越低）
+        // 红石线（红石粉）专用：颜色按信号强度从暗红渐变到亮红，连接方向看状态属性，
+        // 状态里没写连接属性时（旧格式转换过来的投影）再按四周邻居推断
+        bool redstoneWire = false;
+        int redstonePower = 0;        // 0..15
+        bool redstoneProcedural = false;   // 没有方块模型（纯色模式/缺材质）时自己画粉尘
         QVector<RenderBox> boxes;
     };
 
     void buildGeometry();
+    /** 生成投影里生物 / 实体的三角面（独立顶点缓冲，随方块一起重建） */
+    void buildEntityGeometry();
     void destroyGL();
     void lookBy(float dYaw, float dPitch);
     void applyFlyKeys(float dt);
@@ -288,11 +339,14 @@ private:
 
     /** 上传顶点数据到 VBO（须在 GL 上下文有效时调用） */
     void uploadGeometry();
+    void uploadEntityGeometry();
     void uploadSelectionGeometry();
     void uploadHoverGeometry();
     void uploadHighlightGeometry();
     /** 绑定/更新材质图集纹理（须在 GL 上下文有效时调用；仅在材质变化后真正重建） */
     void uploadAtlasTexture();
+    /** 绑定/更新实体贴图图集（须在 GL 上下文有效时调用） */
+    void uploadEntityAtlasTexture();
     void ensureBackgroundResources();
 
     static QColor colorForName(const QString &blockName);
@@ -313,6 +367,7 @@ private:
     SchematicDocument *m_doc = nullptr;
     InstanceTextureLoader *m_loader = nullptr;
     BlockShapeLoader *m_shapeLoader = nullptr;
+    InstanceEntityTextures *m_entityTextures = nullptr;
     bool m_showAir = false;
     bool m_placeAdjacent = false;
 
@@ -330,6 +385,17 @@ private:
     bool m_uploadDirty = true;         // 需要重传 VBO
     bool m_atlasDirty = true;          // 需要重建图集纹理
     bool m_needsRepaint = true;
+
+    // ---- 实体通道（投影里保存的生物，贴图来自实例的 textures/entity）----
+    QOpenGLBuffer m_entVbo{QOpenGLBuffer::VertexBuffer};
+    QOpenGLVertexArrayObject m_entVao;
+    QOpenGLTexture *m_entAtlasTex = nullptr;
+    QByteArray m_entityData;           // 与方块同格式的顶点（复用同一套着色器）
+    int m_entityVertexCount = 0;
+    bool m_entityUploadDirty = true;
+    bool m_entAtlasDirty = true;
+    bool m_showEntities = true;
+    int m_drawnEntities = 0;           // 本轮几何里真正画出来的实体数
 
     // ---- 叠加通道（选中线框 / 悬停高亮）----
     QOpenGLShaderProgram m_ovProgram;
@@ -393,6 +459,7 @@ private:
     int m_hoverX = INT_MIN, m_hoverY = INT_MIN, m_hoverZ = INT_MIN;
     int m_layerFilter = -1;
     LayerMode m_layerMode = LayerMode::Single;
+    LayerAxis m_layerAxis = LayerAxis::Y;
     LeftAction m_leftAction = LeftAction::Break;
     QSet<int> m_selectedCells;
 };

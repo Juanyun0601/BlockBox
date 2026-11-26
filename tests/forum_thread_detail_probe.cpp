@@ -13,12 +13,19 @@
  */
 
 #include <QApplication>
+#include <QBuffer>
+#include <QColor>
 #include <QDir>
 #include <QFile>
+#include <QFont>
+#include <QHash>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLinearGradient>
+#include <QPainter>
 #include <QSettings>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -248,6 +255,88 @@ QJsonObject pluginThreadResponse(int page)
     return root;
 }
 
+/** 投影帖：主题上挂了 .litematic 投影，还带作者传的展示图轮播（图片 + B 站视频），
+ *  用来核对「投影详情页的轮播图」和资源详情页的「游戏截图」轮播是不是同一套样式 */
+QJsonObject schematicThreadResponse(int page)
+{
+    QJsonObject root;
+
+    QJsonObject thread;
+    thread.insert(QStringLiteral("id"), 3);
+    thread.insert(QStringLiteral("title"), QStringLiteral("中世纪风车磨坊 · 完整投影分享"));
+    thread.insert(QStringLiteral("pinned"), false);
+    thread.insert(QStringLiteral("locked"), false);
+    thread.insert(QStringLiteral("views"), 2014);
+    thread.insert(QStringLiteral("reply_count"), 12);
+    thread.insert(QStringLiteral("created_at"), epochDaysAgo(5));
+    thread.insert(QStringLiteral("last_post_at"), epochDaysAgo(0));
+    thread.insert(QStringLiteral("bookmarked"), false);
+
+    QJsonObject board;
+    board.insert(QStringLiteral("slug"), QStringLiteral("schematic-share"));
+    board.insert(QStringLiteral("name"), QStringLiteral("投影分享"));
+    thread.insert(QStringLiteral("board"), board);
+
+    QJsonArray tags;
+    tags.append(QStringLiteral("建筑"));
+    tags.append(QStringLiteral("中世纪"));
+    thread.insert(QStringLiteral("tags"), tags);
+
+    thread.insert(QStringLiteral("author"),
+                  makeAuthor(QStringLiteral("风车匠"), QStringLiteral("user"), 17, 42, 6, 260));
+
+    QJsonObject schematic;
+    schematic.insert(QStringLiteral("id"), 11);
+    schematic.insert(QStringLiteral("upload_id"), 5);
+    schematic.insert(QStringLiteral("name"), QStringLiteral("风车磨坊"));
+    schematic.insert(QStringLiteral("file_name"), QStringLiteral("windmill.litematic"));
+    schematic.insert(QStringLiteral("file_size"), 5242880);
+    schematic.insert(QStringLiteral("file_count"), 1);
+    schematic.insert(QStringLiteral("downloads"), 1893);
+    thread.insert(QStringLiteral("schematic"), schematic);
+
+    QJsonArray carousel;
+    QJsonObject shot1;
+    shot1.insert(QStringLiteral("kind"), QStringLiteral("image"));
+    shot1.insert(QStringLiteral("url"), QStringLiteral("/uploads/probe_carousel_1.png"));
+    shot1.insert(QStringLiteral("thumb"), QStringLiteral("/uploads/probe_carousel_1.png"));
+    carousel.append(shot1);
+    QJsonObject shot2;
+    shot2.insert(QStringLiteral("kind"), QStringLiteral("image"));
+    shot2.insert(QStringLiteral("url"), QStringLiteral("/uploads/probe_carousel_2.png"));
+    shot2.insert(QStringLiteral("thumb"), QStringLiteral("/uploads/probe_carousel_2.png"));
+    carousel.append(shot2);
+    QJsonObject video;
+    video.insert(QStringLiteral("kind"), QStringLiteral("bilibili"));
+    video.insert(QStringLiteral("url"), QStringLiteral("https://www.bilibili.com/video/BV1xx411c7mD"));
+    carousel.append(video);
+    thread.insert(QStringLiteral("carousel"), carousel);
+
+    root.insert(QStringLiteral("thread"), thread);
+
+    QJsonArray posts;
+    posts.append(makePost(
+        301, 1, 0,
+        QStringLiteral("**风车磨坊**\n\n"
+                       "照着山城小镇搭的风车，叶片会跟着风向转（红石驱动）。\n\n"
+                       "- 占地：32×24\n"
+                       "- 材料：橡木、石砖、白色羊毛\n"
+                       "- 存档版本：1.21.4\n\n"
+                       "示意图见上方轮播，B 站有整段旋转演示。"),
+        QStringLiteral("风车匠"), QStringLiteral("user"), 26, false, false, 0, 5));
+    posts.append(makePost(302, 2, 0, QStringLiteral("叶片轴心那一段能发一下细节吗？"),
+                          QStringLiteral("红石党"), QStringLiteral("user"), 2, false, false, 0, 2));
+    root.insert(QStringLiteral("posts"), posts);
+
+    QJsonObject pagination;
+    pagination.insert(QStringLiteral("page"), page);
+    pagination.insert(QStringLiteral("per_page"), 20);
+    pagination.insert(QStringLiteral("total"), 12);
+    pagination.insert(QStringLiteral("pages"), 1);
+    root.insert(QStringLiteral("pagination"), pagination);
+    return root;
+}
+
 QJsonObject boardResponse(int page)
 {
     QJsonObject root;
@@ -298,11 +387,18 @@ QJsonObject boardResponse(int page)
     return root;
 }
 
-/** 极简假论坛服务：读请求行 → 按路径回 JSON */
+/** 极简假论坛服务：读请求行 → 按路径回 JSON / PNG */
 class FakeForumServer : public QTcpServer
 {
 public:
     explicit FakeForumServer(QObject *parent = nullptr) : QTcpServer(parent) {}
+
+    /** 预置一张探针图（路径 → PNG 字节），轮播图直接吃这里的图，不连外网 */
+    void setProbeImage(const QString &path, const QByteArray &png, const QByteArray &mime)
+    {
+        m_images.insert(path, png);
+        m_mimes.insert(path, mime);
+    }
 
 protected:
     void incomingConnection(qintptr socketDescriptor) override
@@ -323,13 +419,39 @@ protected:
                     page = pair.mid(5).toInt();
             }
 
+            // 轮播图：直接回一张探针 PNG
+            if (path.startsWith("/uploads/"))
+            {
+                const QString key = QString::fromLatin1(path);
+                const QByteArray bytes = m_images.value(key);
+                if (!bytes.isEmpty())
+                {
+                    const QByteArray mime = m_mimes.value(key, QByteArrayLiteral("image/png"));
+                    QByteArray reply = "HTTP/1.1 200 OK\r\n";
+                    reply += "Content-Type: " + mime + "\r\n";
+                    reply += "Content-Length: " + QByteArray::number(bytes.size()) + "\r\n";
+                    reply += "Connection: close\r\n\r\n";
+                    reply += bytes;
+                    socket->write(reply);
+                    socket->flush();
+                    socket->disconnectFromHost();
+                    std::fprintf(stderr, "[fake] %s -> %d bytes png\n", path.constData(),
+                                 int(bytes.size()));
+                    return;
+                }
+            }
+
             QJsonObject body;
             if (path.startsWith("/api/threads/"))
             {
-                // 1 号是普通求助帖，2 号是挂了插件包的插件帖
+                // 1 号是普通求助帖，2 号是挂了插件包的插件帖，3 号是带轮播的投影帖
                 const int threadId = path.mid(13).split('/').value(0).toInt();
-                body = threadId == 2 ? pluginThreadResponse(qMax(1, page))
-                                     : threadsResponse(qMax(1, page));
+                if (threadId == 2)
+                    body = pluginThreadResponse(qMax(1, page));
+                else if (threadId == 3)
+                    body = schematicThreadResponse(qMax(1, page));
+                else
+                    body = threadsResponse(qMax(1, page));
             }
             else if (path.startsWith("/api/boards/"))
                 body = boardResponse(qMax(1, page));
@@ -346,10 +468,14 @@ protected:
             socket->flush();
             socket->disconnectFromHost();
             std::fprintf(stderr, "[fake] %s?page=%d -> %d bytes\n", path.constData(), page,
-                         payload.size());
+                         int(payload.size()));
         });
         connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
     }
+
+private:
+    QHash<QString, QByteArray> m_images;
+    QHash<QString, QByteArray> m_mimes;
 };
 
 void waitMs(int ms)
@@ -401,6 +527,49 @@ int main(int argc, char **argv)
 
     // 2) 假论坛服务
     FakeForumServer server;
+
+    // 卡片轮播要的假「游戏截图」：两张 1280×720 的渐变图，不连外网
+    const auto makeProbeShot = [](const QColor &skyTop, const QColor &skyBottom,
+                                  const QColor &ground, const QString &caption) {
+        QImage image(1280, 720, QImage::Format_RGB32);
+        QPainter painter(&image);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        QLinearGradient sky(0, 0, 0, image.height());
+        sky.setColorAt(0.0, skyTop);
+        sky.setColorAt(0.72, skyBottom);
+        painter.fillRect(image.rect(), sky);
+        painter.fillRect(QRect(0, 520, image.width(), 200), ground);
+        // 几块「房子」，让截图看起来像建筑投影
+        painter.setBrush(QColor(226, 214, 190));
+        painter.setPen(Qt::NoPen);
+        painter.drawRect(QRect(120, 380, 260, 180));
+        painter.drawRect(QRect(880, 330, 300, 230));
+        painter.setBrush(QColor(122, 92, 68));
+        painter.drawRect(QRect(960, 220, 30, 140));
+        painter.setBrush(QColor(96, 148, 72));
+        painter.drawEllipse(QPoint(300, 470), 110, 90);
+        QFont font = painter.font();
+        font.setPixelSize(42);
+        font.setBold(true);
+        painter.setFont(font);
+        painter.setPen(Qt::white);
+        painter.drawText(QRect(0, 560, image.width(), 80), Qt::AlignCenter, caption);
+        painter.end();
+        QByteArray png;
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        image.save(&buffer, "PNG");
+        return png;
+    };
+    server.setProbeImage(QStringLiteral("/uploads/probe_carousel_1.png"),
+                         makeProbeShot(QColor(122, 180, 236), QColor(206, 232, 252),
+                                       QColor(76, 140, 64), QStringLiteral("风车磨坊 · 正面")),
+                         QByteArrayLiteral("image/png"));
+    server.setProbeImage(QStringLiteral("/uploads/probe_carousel_2.png"),
+                         makeProbeShot(QColor(246, 176, 112), QColor(252, 226, 190),
+                                       QColor(88, 132, 68), QStringLiteral("风车磨坊 · 夜景")),
+                         QByteArrayLiteral("image/png"));
+
     if (!server.listen(QHostAddress::LocalHost, 0))
     {
         std::fprintf(stderr, "cannot listen\n");
@@ -451,6 +620,43 @@ int main(int argc, char **argv)
     waitMs(600);
     QApplication::processEvents();
     grab(page, outDir + QStringLiteral("/forum_thread_detail_plugin_narrow_%1.png")
+                     .arg(dark ? QStringLiteral("dark") : QStringLiteral("light")));
+
+    // 6) 投影帖：轮播卡要和资源详情页的「游戏截图」轮播同一套样式
+    page->resize(1480, 2600);
+    waitMs(300);
+    page->openThread(3);
+    waitMs(2200);
+    QApplication::processEvents();
+    grab(page, outDir + QStringLiteral("/forum_thread_detail_projection_%1.png")
+                     .arg(dark ? QStringLiteral("dark") : QStringLiteral("light")));
+
+    // 6.1) 点下一张：缩略图高亮和计数要跟着走（顺带验证翻页不花）
+    if (auto *next = page->findChild<QPushButton *>(QStringLiteral("modDetailScreenshotNext")))
+    {
+        QApplication::processEvents();
+        next->click();
+        waitMs(900);
+        QApplication::processEvents();
+        grab(page, outDir + QStringLiteral("/forum_thread_detail_projection_next_%1.png")
+                         .arg(dark ? QStringLiteral("dark") : QStringLiteral("light")));
+    }
+
+    // 6.15) 再点一张：翻到 B 站视频页（播放卡），缩略图条上的播放格同步高亮
+    if (auto *next = page->findChild<QPushButton *>(QStringLiteral("modDetailScreenshotNext")))
+    {
+        next->click();
+        waitMs(900);
+        QApplication::processEvents();
+        grab(page, outDir + QStringLiteral("/forum_thread_detail_projection_video_%1.png")
+                         .arg(dark ? QStringLiteral("dark") : QStringLiteral("light")));
+    }
+
+    // 6.2) 投影帖的窄窗口：舞台按 16:9 收窄，缩略图条仍然可见
+    page->resize(900, 2200);
+    waitMs(700);
+    QApplication::processEvents();
+    grab(page, outDir + QStringLiteral("/forum_thread_detail_projection_narrow_%1.png")
                      .arg(dark ? QStringLiteral("dark") : QStringLiteral("light")));
 
     QTimer::singleShot(10, &app, &QCoreApplication::quit);

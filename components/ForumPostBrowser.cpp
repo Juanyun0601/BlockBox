@@ -331,7 +331,8 @@ QString expandVideoMarkers(const QString &html)
  * @brief 给正文 HTML 里的一 / 二 / 三级标题加锚点，顺带生成目录
  *
  * Qt 的 Markdown 导出不带锚点，这里按出现顺序给每级标题包一层
- * <a name="sec-N">，目录点击跳转就靠这个名字定位。
+ * <a name="sec-N">，目录点击跳转就靠这个名字定位；锚点只负责定位，
+ * 标题文字颜色仍旧由标题自己决定，不会被链接色染蓝。
  */
 QString injectHeadingAnchors(const QString &html, QVector<ForumTocEntry> *toc, int *headingSeq)
 {
@@ -362,8 +363,15 @@ QString injectHeadingAnchors(const QString &html, QVector<ForumTocEntry> *toc, i
             entry.text = text.simplified();
             if (toc)
                 toc->append(entry);
-            result += QStringLiteral("<h%1%2><a name=\"%3\">%4</a></h%1>")
-                          .arg(match.captured(1), match.captured(2), anchor, match.captured(3));
+            // 标题文字被锚点包住后，会跟着文档样式里的 a { color: @LINK@ } 变成链接蓝，
+            // 正文标题不该是这个颜色。这里在锚点上行内写回正文墨色（行内样式优先级最高，
+            // 不受主题/链接色影响），跳转用的 anchor 名字保持不变。
+            const QString headingInk = StyleKit::resolve(QStringLiteral("@TEXT_PRIMARY@"));
+            result += QStringLiteral("<h%1%2>").arg(match.captured(1), match.captured(2))
+                      + QStringLiteral("<a name=\"%1\" style=\"color:%2; text-decoration:none;\">")
+                            .arg(anchor, headingInk)
+                      + match.captured(3)
+                      + QStringLiteral("</a></h%1>").arg(match.captured(1));
         }
         else
         {

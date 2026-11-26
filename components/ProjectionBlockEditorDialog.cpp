@@ -10,10 +10,12 @@
 #include "VoxelViewWidget.h"
 #include "AppMessageBox.h"
 #include "AppInputDialog.h"
+#include "ProjectionFillShapeDialog.h"
 #include <QFileDialog>
 #include "utils/Schematic/ProjectionEditorSettings.h"
 #include "utils/Schematic/InstanceBlockNames.h"
 #include "utils/Schematic/InstanceTextureLoader.h"
+#include "utils/Schematic/ProjectionFillShape.h"
 #include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
 
@@ -38,6 +40,7 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSet>
 #include <QShortcut>
 #include <QSignalBlocker>
@@ -369,7 +372,7 @@ void ProjectionBlockEditorDialog::initUI()
         // 顶部只有两个模式：选取（左键选中）与编辑（左键破坏 / 右键放置）
         struct ToolSpec { Glyph glyph; QString text; QString tip; };
         const QVector<ToolSpec> tools{
-            { Glyph::Select, tr("选取"), tr("左键单击选中方块，可切换为「同类型全部」多选；右键仍为放置（快捷键 1）") },
+            { Glyph::Select, tr("选取"), tr("左键单击选中方块；范围可切换为「同类型全部」或「框选（两点）」整块多选；右键仍为放置（快捷键 1）") },
             { Glyph::Edit,   tr("编辑"), tr("左键破坏方块、右键放置当前方块，拖动鼠标可像《我的世界》一样转动视角（快捷键 2）") },
         };
         auto *toolGroup = new QButtonGroup(this);
@@ -562,7 +565,11 @@ void ProjectionBlockEditorDialog::initUI()
         m_selectScopeCombo->setObjectName(QStringLiteral("projBlockCombo"));
         m_selectScopeCombo->addItem(tr("单方块"), 0);
         m_selectScopeCombo->addItem(tr("同类型全部"), 1);
+        m_selectScopeCombo->addItem(tr("框选（两点）"), 2);
         m_selectScopeCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        m_selectScopeCombo->setToolTip(tr("单方块：只选点到的那一个\n"
+                                          "同类型全部：整份投影里同种方块一起选\n"
+                                          "框选（两点）：左键点两个对角方块，框住的那一整块一起选"));
         selRow->addWidget(m_selectScopeCombo, 1);
 
         m_clearSelBtn = new QPushButton(tr("取消"), side);
@@ -668,29 +675,31 @@ void ProjectionBlockEditorDialog::initUI()
     {
         auto *batchGrid = new QGridLayout();
         batchGrid->setSpacing(5);
-        auto *replaceBtn = new QPushButton(tr("整体替换"), side);
+        auto *replaceBtn = new QPushButton(tr("替换方块"), side);
         auto *fillAllBtn = new QPushButton(tr("全部填充"), side);
-        auto *fillBoxBtn = new QPushButton(tr("区域填充"), side);
-        const QList<QPushButton *> batchButtons{ replaceBtn, fillAllBtn, fillBoxBtn };
+        auto *fillShapeBtn = new QPushButton(tr("填充方块"), side);
+        const QList<QPushButton *> batchButtons{ replaceBtn, fillAllBtn, fillShapeBtn };
         for (QPushButton *btn : batchButtons)
         {
             btn->setObjectName(QStringLiteral("projToolBtn"));
             btn->setCursor(Qt::PointingHandCursor);
         }
-        replaceBtn->setToolTip(tr("把投影中的某种方块整体替换成另一种"));
+        replaceBtn->setToolTip(tr("有选中方块时：一键把选中的方块都换成「当前方块」\n"
+                                  "没有选中时：按方块名把整份投影里的某种方块换成另一种"));
         fillAllBtn->setToolTip(tr("用当前方块填满整个投影范围"));
-        fillBoxBtn->setToolTip(tr("用当前方块填充指定坐标范围"));
+        fillShapeBtn->setToolTip(tr("选一个形状（实心 / 空心 / 框架 / 倾斜地板 / 方形 / 三角形 / 圆形 / 圆柱），\n"
+                                    "再在视图里点两个对角方块即可生成；也可以按坐标精确填充"));
         batchGrid->addWidget(replaceBtn, 0, 0);
         batchGrid->addWidget(fillAllBtn, 0, 1);
-        batchGrid->addWidget(fillBoxBtn, 1, 0, 1, 2);
+        batchGrid->addWidget(fillShapeBtn, 1, 0, 1, 2);
         sideLay->addLayout(batchGrid);
 
         connect(replaceBtn, &QPushButton::clicked,
                 this, &ProjectionBlockEditorDialog::onReplaceAll);
         connect(fillAllBtn, &QPushButton::clicked,
                 this, &ProjectionBlockEditorDialog::onFillAll);
-        connect(fillBoxBtn, &QPushButton::clicked,
-                this, &ProjectionBlockEditorDialog::onFillBox);
+        connect(fillShapeBtn, &QPushButton::clicked,
+                this, &ProjectionBlockEditorDialog::onFillShapeClicked);
     }
     mainRow->addWidget(side, 0);
     root->addLayout(mainRow, 1);
@@ -755,8 +764,21 @@ void ProjectionBlockEditorDialog::initUI()
     // 切换选取范围后，按新范围重新选中上次点到的方块
     connect(m_selectScopeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
-        if (m_selAnchorX == INT_MIN)
+        if (isBoxSelectScope())
+        {
+            // 框选靠左键点两个角点，顺手切到「选取」模式，
+            // 否则当前若在「编辑」模式，左键点角点会把方块直接破坏掉
+            if (m_tool != ToolSelect && m_toolCombo)
+                m_toolCombo->setCurrentIndex(0);
+            // 进入框选从头开始：清掉其他范围留下的选中和上一次的框
+            clearSelection();
             return;
+        }
+        if (m_selAnchorX == INT_MIN)
+        {
+            updateSelectionLabel();
+            return;
+        }
         m_view->setSelectedCells(collectSelection(m_selAnchorX, m_selAnchorY, m_selAnchorZ));
         updateSelectionLabel();
     });
@@ -1272,6 +1294,9 @@ void ProjectionBlockEditorDialog::onToolChanged(int index)
     applyToolToView();
     if (tool != ToolSelect)
         m_view->setCursor(Qt::ArrowCursor);
+    // 切走「选取」模式时，还没点完的填充角点自动作废，免得之后误点生成
+    if (tool != ToolSelect && m_fillActive)
+        cancelFillPick();
     updateSelectionLabel();
     m_view->setDirty();
 
@@ -1320,6 +1345,143 @@ void ProjectionBlockEditorDialog::onSelect(int x, int y, int z)
 {
     if (!m_doc.isLoaded())
         return;
+
+    // ── 填充方块：先把两个对角点收齐，再按所选形状生成 ──
+    // 两步都用左键点击视图里的方块（和「框选（两点）」一致），
+    // 第一个角点用金色描边标出来，点到空白处则放弃这次填充。
+    if (m_fillActive)
+    {
+        if (x == INT_MIN || y == INT_MIN || z == INT_MIN)
+        {
+            cancelFillPick();
+            if (m_selectLabel)
+                m_selectLabel->setText(tr("已取消填充（点到了空白处）；需要时重新点「填充方块」选形状"));
+            return;
+        }
+
+        if (m_fillAX == INT_MIN)
+        {
+            m_fillAX = x;
+            m_fillAY = y;
+            m_fillAZ = z;
+            if (m_view)
+                m_view->clearSelection();
+            syncFillMarker();
+            updateSelectionLabel();
+            return;
+        }
+
+        const int ax = m_fillAX, ay = m_fillAY, az = m_fillAZ;
+        const ProjectionFillShape shape = m_fillShape;
+        const bool airOnly = m_fillAirOnly;
+        m_fillActive = false;
+        m_fillAX = m_fillAY = m_fillAZ = INT_MIN;
+        syncFillMarker();
+
+        const QVector<int> written = applyFillShape(shape, airOnly, ax, ay, az, x, y, z);
+        if (written.isEmpty())
+        {
+            if (m_view)
+                m_view->clearSelection();
+            updateSelectionLabel();
+            AppMessageBox::information(this, tr("填充方块"),
+                tr("这个范围里没有可填充的格子：可能已经都是当前方块，"
+                   "或勾选了「只填充空气」而位置都被占用了。"));
+            return;
+        }
+
+        if (m_view)
+        {
+            // 生成结果太多时不再整片标绿：选中线框是按格画的，几万格就能明显拖慢渲染
+            if (written.size() <= 60000)
+            {
+                QSet<int> cells;
+                cells.reserve(written.size());
+                for (int cell : written)
+                    cells.insert(cell);
+                m_view->setSelectedCells(cells);
+            }
+            else
+            {
+                m_view->clearSelection();
+            }
+        }
+        updateSelectionLabel();
+        if (m_selectLabel)
+            m_selectLabel->setText(tr("已用「%1」生成 %2 个方块%3；可继续点两个角点，或重新选形状")
+                .arg(ProjectionFillShapes::displayName(shape))
+                .arg(QLocale().toString(written.size()))
+                .arg(written.size() <= 60000 ? tr("（绿色边框）") : QString()));
+        return;
+    }
+
+    // 点到空白/天空（视图给的坐标是 INT_MIN）：先收起待定角点，再清掉选中
+    if (x == INT_MIN || y == INT_MIN || z == INT_MIN)
+    {
+        if (boxSelectPending())
+        {
+            clearBoxPivot();
+            updateSelectionLabel();
+        }
+        else
+        {
+            clearSelection();
+        }
+        return;
+    }
+
+    // ── 两点框选：第一次左键记下第一个角点，第二次左键完成整块框选 ──
+    if (isBoxSelectScope())
+    {
+        if (m_doc.block(x, y, z).isAir())
+        {
+            // 点到空气格：先收起待定角点，再考虑清空选中
+            if (boxSelectPending())
+            {
+                clearBoxPivot();
+                updateSelectionLabel();
+            }
+            else
+            {
+                clearSelection();
+            }
+            return;
+        }
+
+        if (!boxSelectPending())
+        {
+            // 第一个角点：清掉上一次的选中，先用金色描边标出起点
+            m_boxPivotX = x;
+            m_boxPivotY = y;
+            m_boxPivotZ = z;
+            m_boxAX = m_boxAY = m_boxAZ = INT_MIN;
+            m_boxBX = m_boxBY = m_boxBZ = INT_MIN;
+            if (m_view)
+                m_view->clearSelection();
+            syncBoxPivotMarker();
+            updateSelectionLabel();
+            return;
+        }
+
+        // 第二个角点：两点围出的立方体里所有方块一起选中
+        if (m_view)
+            m_view->setSelectedCells(
+                collectBoxSelection(m_boxPivotX, m_boxPivotY, m_boxPivotZ, x, y, z));
+        m_boxAX = m_boxPivotX;
+        m_boxAY = m_boxPivotY;
+        m_boxAZ = m_boxPivotZ;
+        m_boxBX = x;
+        m_boxBY = y;
+        m_boxBZ = z;
+        clearBoxPivot();
+        // 之后若切回单方块 / 同类型，以第二个角点为准重新选中
+        m_selAnchorX = x;
+        m_selAnchorY = y;
+        m_selAnchorZ = z;
+        updateSelectionLabel();
+        return;
+    }
+
     const SchematicBlockState st = m_doc.block(x, y, z);
     if (st.isAir())
     {
@@ -1378,19 +1540,144 @@ QSet<int> ProjectionBlockEditorDialog::collectSelection(int x, int y, int z) con
     return cells;
 }
 
+QSet<int> ProjectionBlockEditorDialog::collectBoxSelection(int x1, int y1, int z1,
+                                                           int x2, int y2, int z2) const
+{
+    QSet<int> cells;
+    if (!m_doc.isLoaded())
+        return cells;
+
+    // 世界坐标 → 本地坐标；框可以超出投影边界，超出的部分直接忽略
+    const int sx = m_doc.sizeX();
+    const int sy = m_doc.sizeY();
+    const int sz = m_doc.sizeZ();
+    const int lx0 = qMin(x1, x2) - m_doc.originX();
+    const int lx1 = qMax(x1, x2) - m_doc.originX();
+    const int ly0 = qMin(y1, y2) - m_doc.originY();
+    const int ly1 = qMax(y1, y2) - m_doc.originY();
+    const int lz0 = qMin(z1, z2) - m_doc.originZ();
+    const int lz1 = qMax(z1, z2) - m_doc.originZ();
+    if (lx1 < 0 || ly1 < 0 || lz1 < 0 || lx0 >= sx || ly0 >= sy || lz0 >= sz)
+        return cells;   // 整个框都在投影外面
+
+    const int xa = qMax(0, lx0), xb = qMin(sx - 1, lx1);
+    const int ya = qMax(0, ly0), yb = qMin(sy - 1, ly1);
+    const int za = qMax(0, lz0), zb = qMin(sz - 1, lz1);
+
+    // 逐格只查调色板下标是否空气，不构造方块状态字符串（大框也够快）
+    const int layer = m_doc.layerSize();
+    for (int y = ya; y <= yb; ++y)
+    {
+        const int planeBase = y * layer;
+        for (int z = za; z <= zb; ++z)
+        {
+            const int rowBase = planeBase + z * sx;
+            for (int x = xa; x <= xb; ++x)
+            {
+                const int cell = rowBase + x;
+                if (!m_doc.paletteEntry(m_doc.paletteIndexAt(cell)).isAir())
+                    cells.insert(cell);
+            }
+        }
+    }
+    return cells;
+}
+
+void ProjectionBlockEditorDialog::clearBoxPivot()
+{
+    m_boxPivotX = INT_MIN;
+    m_boxPivotY = INT_MIN;
+    m_boxPivotZ = INT_MIN;
+    syncBoxPivotMarker();
+}
+
+void ProjectionBlockEditorDialog::syncBoxPivotMarker()
+{
+    if (!m_view)
+        return;
+    // 第一个角点用视图自带的高亮通道（金色描边 + 淡金填充）标出来，
+    // 第二个角点还没点时，用户始终能看见框选的起点在哪
+    QSet<int> marker;
+    if (boxSelectPending())
+    {
+        const int cell = cellIndexAt(m_boxPivotX, m_boxPivotY, m_boxPivotZ);
+        if (cell >= 0)
+            marker.insert(cell);
+    }
+    m_view->setHighlightCells(marker);
+}
+
 void ProjectionBlockEditorDialog::updateSelectionLabel()
 {
     if (!m_selectLabel)
         return;
     const int n = m_view ? m_view->selectedCells().size() : 0;
-    if (n > 0)
-        m_selectLabel->setText(tr("已选中 %1 个方块（绿色边框）").arg(n));
+
+    // 「填充方块」正在等两个角点：优先提示这一步该点哪里
+    if (m_fillActive)
+    {
+        const QString name = ProjectionFillShapes::displayName(m_fillShape);
+        const QString airOnlyHint = m_fillAirOnly
+            ? tr("；只填空格，已有方块不会被覆盖") : QString();
+        if (m_fillAX == INT_MIN)
+        {
+            m_selectLabel->setText(tr("填充·%1：左键点第一个对角方块（会标成金色框），"
+                                      "再点对角方块生成%2").arg(name).arg(airOnlyHint));
+        }
+        else
+        {
+            m_selectLabel->setText(tr("填充·%1：已标记第一个角点 (%2, %3, %4)，"
+                                      "左键点对角方块生成%5")
+                .arg(name).arg(m_fillAX).arg(m_fillAY).arg(m_fillAZ).arg(airOnlyHint));
+        }
+        if (m_clearSelBtn)
+            m_clearSelBtn->setEnabled(true);
+        return;
+    }
+
+    if (isBoxSelectScope())
+    {
+        if (boxSelectPending())
+        {
+            m_selectLabel->setText(tr("已标记第一个角点 (%1, %2, %3)（金色框），左键点对角方块完成框选")
+                .arg(m_boxPivotX).arg(m_boxPivotY).arg(m_boxPivotZ));
+        }
+        else if (n > 0 && hasDoneBox())
+        {
+            const int w = qAbs(m_boxBX - m_boxAX) + 1;
+            const int h = qAbs(m_boxBY - m_boxAY) + 1;
+            const int d = qAbs(m_boxBZ - m_boxAZ) + 1;
+            m_selectLabel->setText(tr("已框选 %1×%2×%3 区域，共 %4 个方块（绿色边框）；点「替换方块」可一键换成当前方块")
+                .arg(w).arg(h).arg(d).arg(n));
+        }
+        else if (hasDoneBox())
+        {
+            m_selectLabel->setText(tr("这个框选范围里没有方块，重新点两个角点试试"));
+        }
+        else if (m_tool == ToolSelect)
+        {
+            m_selectLabel->setText(tr("左键先后点两个对角方块，框住的那一整块会一起选中"));
+        }
+        else
+        {
+            m_selectLabel->setText(tr("切到「选取」模式（快捷键 1）后左键点两个对角方块即可框选"));
+        }
+    }
+    else if (n > 0)
+    {
+        m_selectLabel->setText(tr("已选中 %1 个方块（绿色边框），点「替换方块」可一键换成当前方块").arg(n));
+    }
     else if (m_tool == ToolSelect)
+    {
         m_selectLabel->setText(tr("左键单击方块即可选中"));
+    }
     else
+    {
         m_selectLabel->setText(tr("切到「选取」模式（快捷键 1）后左键单击方块即可选中"));
+    }
+
     if (m_clearSelBtn)
-        m_clearSelBtn->setEnabled(n > 0);
+        m_clearSelBtn->setEnabled(n > 0 || boxSelectPending());
 }
 
 void ProjectionBlockEditorDialog::clearSelection()
@@ -1398,6 +1685,12 @@ void ProjectionBlockEditorDialog::clearSelection()
     m_selAnchorX = INT_MIN;
     m_selAnchorY = INT_MIN;
     m_selAnchorZ = INT_MIN;
+    m_boxAX = m_boxAY = m_boxAZ = INT_MIN;
+    m_boxBX = m_boxBY = m_boxBZ = INT_MIN;
+    // 取消填充的待定角点（已经生成的方块保持不动）
+    m_fillActive = false;
+    m_fillAX = m_fillAY = m_fillAZ = INT_MIN;
+    clearBoxPivot();
     if (m_view)
         m_view->clearSelection();
     updateSelectionLabel();
@@ -1801,6 +2094,71 @@ void ProjectionBlockEditorDialog::onReplaceAll()
 {
     if (!m_doc.isLoaded())
         return;
+
+    // ── 有选中：一键把选中的方块换成「当前方块」 ──
+    // 选中范围可以是单方块、同类型全部或两点框选，替换只动选中的那些格子
+    const QSet<int> selection = m_view ? m_view->selectedCells() : QSet<int>();
+    if (!selection.isEmpty())
+    {
+        const SchematicBlockState target = SchematicBlockState::fromString(currentBlockId());
+        if (target.name.isEmpty())
+        {
+            AppMessageBox::warning(this, tr("替换方块"),
+                tr("请先在侧栏「当前方块」里选好要换成的方块。"));
+            return;
+        }
+        const int targetIndex = m_doc.ensurePaletteEntry(target);
+        const int volume = m_doc.volume();
+
+        QVector<int> cells;
+        QVector<int> beforeIndices;
+        cells.reserve(selection.size());
+        beforeIndices.reserve(selection.size());
+        for (int cell : selection)
+        {
+            if (cell < 0 || cell >= volume)
+                continue;
+            const int before = m_doc.paletteIndexAt(cell);
+            if (before == targetIndex)
+                continue;   // 已经是这个方块，不算一次改动
+            cells.append(cell);
+            beforeIndices.append(before);
+        }
+
+        const QString targetLabel = friendlyBlockStateLabel(target, m_blockCnMap);
+        if (cells.isEmpty())
+        {
+            AppMessageBox::information(this, tr("替换方块"),
+                tr("选中的方块已经是「%1」了，不用再替换。").arg(targetLabel));
+            return;
+        }
+
+        for (int cell : cells)
+            m_doc.setPaletteIndexAt(cell, targetIndex);
+
+        // 只记被改动的格子，撤销时逐格还原即可，不用整表快照
+        UndoStep step;
+        step.label = tr("替换选中方块");
+        step.cells = cells;
+        step.beforeIndices = beforeIndices;
+        step.afterIndices = QVector<int>(cells.size(), targetIndex);
+        m_undoStack.append(step);
+        trimUndoStack();
+        m_redoStack.clear();
+        updateUndoRedo();
+
+        m_dirty = true;
+        updateTitle();
+        rebuildView();
+        onRefreshStats();
+        // 选中范围原样保留，方便接着把它们再换成别的方块
+        updateSelectionLabel();
+        AppMessageBox::information(this, tr("替换完成"),
+            tr("已把 %1 个选中的方块换成「%2」。").arg(cells.size()).arg(targetLabel));
+        return;
+    }
+
+    // ── 没有选中：保持整份投影的「整体替换」（按方块名换一种方块） ──
     bool ok1 = false;
     const QString from = AppInputDialog::getText(this, tr("替换方块"),
         tr("要替换的方块（英文 ID 或中文名，如 minecraft:stone、石头）："), QLineEdit::Normal,
@@ -1845,55 +2203,219 @@ void ProjectionBlockEditorDialog::onFillAll()
     AppMessageBox::information(this, tr("填充完成"), tr("已填充 %1 个格子。").arg(n));
 }
 
-void ProjectionBlockEditorDialog::onFillBox()
+void ProjectionBlockEditorDialog::onFillShapeClicked()
 {
     if (!m_doc.isLoaded())
         return;
-    bool ok2 = false;
-    const QString text = AppInputDialog::getText(this, tr("区域填充"),
-        tr("请输入区域范围（含边界）：\n格式 x0,y0,z0 → x1,y1,z1\n例如：0,0,0 → 10,20,30"),
-        QLineEdit::Normal, QString(), &ok2);
-    if (!ok2 || text.trimmed().isEmpty())
-        return;
-
-    // 解析
-    const QString cleaned = text.trimmed();
-    const QStringList halves = cleaned.split(QStringLiteral("→"));
-    if (halves.size() != 2)
+    if (currentBlockId().trimmed().isEmpty())
     {
-        AppMessageBox::warning(this, tr("输入无效"), tr("请使用 x0,y0,z0 → x1,y1,z1 格式。"));
-        return;
-    }
-    auto parse3 = [](const QString &s, int &a, int &b, int &c) -> bool {
-        const QStringList p = s.split(QLatin1Char(','));
-        if (p.size() != 3)
-            return false;
-        bool o1,o2,o3;
-        a = p[0].trimmed().toInt(&o1);
-        b = p[1].trimmed().toInt(&o2);
-        c = p[2].trimmed().toInt(&o3);
-        return o1 && o2 && o3;
-    };
-    int x0,y0,z0,x1,y1,z1;
-    if (!parse3(halves[0].trimmed(), x0,y0,z0) || !parse3(halves[1].trimmed(), x1,y1,z1))
-    {
-        AppMessageBox::warning(this, tr("输入无效"), tr("无法解析坐标。"));
+        AppMessageBox::warning(this, tr("填充方块"),
+            tr("请先在侧栏「当前方块」里选好要用哪个方块填充。"));
         return;
     }
 
-    const QString sel = currentBlockId();
+    // 居中的形状选择弹窗：选完形状后要么进两点拾取，要么改走坐标输入
+    ProjectionFillShapeDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    const ProjectionFillShape shape = dlg.selectedShape();
+    const bool airOnly = dlg.airOnly();
+    if (dlg.mode() == ProjectionFillShapeDialog::Mode::Coordinates)
+    {
+        fillShapeByCoordinates(shape, airOnly);
+        return;
+    }
+    startFillPick(shape, airOnly);
+}
+
+void ProjectionBlockEditorDialog::startFillPick(ProjectionFillShape shape, bool airOnly)
+{
+    if (!m_doc.isLoaded())
+        return;
+
+    // 两点拾取靠左键点方块完成：必须切到「选取」模式，
+    // 否则当前若在「编辑」模式，左键点角点会先把方块破坏掉
+    if (m_tool != ToolSelect && m_toolCombo)
+        m_toolCombo->setCurrentIndex(0);
+
+    clearSelection();   // 清掉旧的选中与框选角点（也会清掉上一次的填充角点）
+    m_fillShape = shape;
+    m_fillAirOnly = airOnly;
+    m_fillActive = true;
+    m_fillAX = m_fillAY = m_fillAZ = INT_MIN;
+    if (m_view)
+        m_view->setDirty();
+    updateSelectionLabel();
+}
+
+void ProjectionBlockEditorDialog::cancelFillPick()
+{
+    if (!m_fillActive && m_fillAX == INT_MIN)
+        return;
+    m_fillActive = false;
+    m_fillAX = m_fillAY = m_fillAZ = INT_MIN;
+    syncFillMarker();   // 只清金色角点描边，绿色选中保持
+    updateSelectionLabel();
+}
+
+void ProjectionBlockEditorDialog::syncFillMarker()
+{
+    if (!m_view)
+        return;
+    QSet<int> marker;
+    if (m_fillActive && m_fillAX != INT_MIN)
+    {
+        const int cell = cellIndexAt(m_fillAX, m_fillAY, m_fillAZ);
+        if (cell >= 0)
+            marker.insert(cell);
+    }
+    m_view->setHighlightCells(marker);
+}
+
+void ProjectionBlockEditorDialog::fillShapeByCoordinates(ProjectionFillShape shape, bool airOnly)
+{
+    if (!m_doc.isLoaded())
+        return;
+
+    const QString shapeName = ProjectionFillShapes::displayName(shape);
+    bool ok = false;
+    const QString text = AppInputDialog::getText(this, tr("填充方块 · %1").arg(shapeName),
+        tr("请输入范围（含边界），两种写法都行：\n"
+           "x0,y0,z0 → x1,y1,z1\n"
+           "或直接写 6 个数字：x0 y0 z0 x1 y1 z1\n"
+           "例如：0,60,0 → 10,80,10"),
+        QLineEdit::Normal, QString(), &ok);
+    if (!ok || text.trimmed().isEmpty())
+        return;
+
+    // 从任意写法里取出全部整数：够 6 个就认前三个 / 后三个，省得纠结分隔符
+    QVector<int> numbers;
+    const QRegularExpression re(QStringLiteral("-?\\d+"));
+    auto it = re.globalMatch(text);
+    while (it.hasNext())
+        numbers.append(it.next().captured(0).toInt());
+    if (numbers.size() != 6)
+    {
+        AppMessageBox::warning(this, tr("输入无效"),
+            tr("需要正好 6 个坐标数字，例如：0,60,0 → 10,80,10"));
+        return;
+    }
+
+    const QVector<int> written = applyFillShape(shape, airOnly,
+        numbers.at(0), numbers.at(1), numbers.at(2),
+        numbers.at(3), numbers.at(4), numbers.at(5));
+    if (written.isEmpty())
+    {
+        AppMessageBox::information(this, tr("填充方块"),
+            tr("这个范围里没有可填充的格子：可能已经都是当前方块，"
+               "或勾选了「只填充空气」而位置都被占用了。"));
+        return;
+    }
+
+    if (m_view)
+    {
+        if (written.size() <= 60000)
+        {
+            QSet<int> cells;
+            cells.reserve(written.size());
+            for (int cell : written)
+                cells.insert(cell);
+            m_view->setSelectedCells(cells);
+        }
+        else
+        {
+            m_view->clearSelection();
+        }
+    }
+    updateSelectionLabel();
+    if (m_selectLabel)
+        m_selectLabel->setText(tr("已用「%1」填充 %2 个方块（绿色边框）")
+            .arg(shapeName).arg(QLocale().toString(written.size())));
+    AppMessageBox::information(this, tr("填充完成"),
+        tr("已用「%1」填充 %2 个方块。").arg(shapeName).arg(QLocale().toString(written.size())));
+}
+
+QVector<int> ProjectionBlockEditorDialog::applyFillShape(ProjectionFillShape shape, bool airOnly,
+                                                         int x0, int y0, int z0,
+                                                         int x1, int y1, int z1)
+{
+    QVector<int> written;
+    if (!m_doc.isLoaded())
+        return written;
+
+    const QString id = currentBlockId().trimmed();
+    if (id.isEmpty())
+        return written;
+    const SchematicBlockState target = SchematicBlockState::fromString(id);
+
+    // 世界坐标 → 本地坐标；范围可以超出投影，超出的部分直接忽略
+    const int sx = m_doc.sizeX();
+    const int sy = m_doc.sizeY();
+    const int sz = m_doc.sizeZ();
+    int lx0 = qMin(x0, x1) - m_doc.originX();
+    int lx1 = qMax(x0, x1) - m_doc.originX();
+    int ly0 = qMin(y0, y1) - m_doc.originY();
+    int ly1 = qMax(y0, y1) - m_doc.originY();
+    int lz0 = qMin(z0, z1) - m_doc.originZ();
+    int lz1 = qMax(z0, z1) - m_doc.originZ();
+    if (lx1 < 0 || ly1 < 0 || lz1 < 0 || lx0 >= sx || ly0 >= sy || lz0 >= sz)
+        return written;   // 整个范围都在投影外面
+    lx0 = qMax(0, lx0);
+    ly0 = qMax(0, ly0);
+    lz0 = qMax(0, lz0);
+    lx1 = qMin(sx - 1, lx1);
+    ly1 = qMin(sy - 1, ly1);
+    lz1 = qMin(sz - 1, lz1);
+
+    const int dx = lx1 - lx0 + 1;
+    const int dy = ly1 - ly0 + 1;
+    const int dz = lz1 - lz0 + 1;
+    // 单次生成的格子数兜底：手输超大坐标时先拦下来，免得一次吃掉几百 MB 内存把视图卡死
+    const qint64 boxVolume = static_cast<qint64>(dx) * dy * dz;
+    if (boxVolume > 8000000LL)
+    {
+        AppMessageBox::warning(this, tr("填充方块"),
+            tr("这个范围太大（%1 格），一次生成会占用大量内存并卡住视图。\n"
+               "请把范围拆小一点，或改用「全部填充」。").arg(QLocale().toString(boxVolume)));
+        return written;
+    }
+    const QVector<ProjectionFillShapes::Cell> offsets =
+        ProjectionFillShapes::cells(shape, dx, dy, dz);
+    if (offsets.isEmpty())
+        return written;
+
+    const int targetIndex = m_doc.ensurePaletteEntry(target);
+    if (targetIndex < 0)
+        return written;
+    const int layer = m_doc.layerSize();
     const QList<int> beforeAll = m_doc.indices();
-    SchematicBlockState st = SchematicBlockState::fromString(sel);
-    QString err;
-    const int n = m_doc.fillBox(x0,y0,z0,x1,y1,z1, st, &err);
+    written.reserve(offsets.size());
+    for (const ProjectionFillShapes::Cell &offset : offsets)
+    {
+        const int cell = (ly0 + offset.y) * layer
+                       + (lz0 + offset.z) * sx
+                       + (lx0 + offset.x);
+        if (cell < 0 || cell >= m_doc.volume())
+            continue;
+        const int before = m_doc.paletteIndexAt(cell);
+        if (before == targetIndex)
+            continue;   // 已经是这个方块，不算改动
+        if (airOnly && !m_doc.paletteEntry(before).isAir())
+            continue;   // 只填空格：已有方块保留
+        if (!m_doc.setPaletteIndexAt(cell, targetIndex))
+            continue;
+        written.append(cell);
+    }
+    if (written.isEmpty())
+        return written;
+
     m_dirty = true;
     updateTitle();
     rebuildView();
-    clearSelection();
     onRefreshStats();
-    recordBulkEdit(beforeAll, tr("区域填充"));
-    AppMessageBox::information(this, tr("填充完成"),
-                               tr("已填充 %1 个格子。%2").arg(n).arg(err.isEmpty()?QString():QStringLiteral("\n")+err));
+    recordBulkEdit(beforeAll, tr("填充·%1").arg(ProjectionFillShapes::displayName(shape)));
+    return written;
 }
 
 void ProjectionBlockEditorDialog::onPickBlock()
@@ -1932,7 +2454,19 @@ void ProjectionBlockEditorDialog::keyPressEvent(QKeyEvent *e)
 {
     if (e->key() == Qt::Key_Escape)
     {
-        // Esc 优先取消方块选取，没有选中时才考虑关闭
+        // Esc 先放弃还没点完的填充（已生成的方块不动），再收起框选角点、取消选中
+        if (m_fillActive)
+        {
+            cancelFillPick();
+            return;
+        }
+        // Esc 优先收起还没点完的框选角点，再取消方块选取，都没有时才考虑关闭
+        if (boxSelectPending())
+        {
+            clearBoxPivot();
+            updateSelectionLabel();
+            return;
+        }
         if (m_view && !m_view->selectedCells().isEmpty())
         {
             clearSelection();

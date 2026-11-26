@@ -63,6 +63,8 @@ public:
 signals:
     /** 世界重命名完成（旧名，新名） */
     void saveRenamed(const QString &oldName, const QString &newName);
+    /** 请求打开该存档的备份与恢复弹窗（参数为存档目录名） */
+    void backupRequested(const QString &saveName);
 
 private slots:
     void onSaveClicked();         ///< 「保存修改」按钮
@@ -143,6 +145,7 @@ private:
     QPushButton *m_minecraftSearchBtn;
     QPushButton *m_saveBtn;
     QPushButton *m_openFolderBtn;
+    QPushButton *m_backupBtn;   ///< 「备份与恢复」按钮
 
     // 游戏规则区
     QVector<RuleControl> m_rules;           ///< 全部可编辑规则控件

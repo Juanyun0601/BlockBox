@@ -9,7 +9,10 @@
 #include <QUrl>
 
 #include "components/BlurLoadingOverlay.h"
+#include "components/DataPackManagerDialog.h"
 #include "components/WorldConvertDialog.h"
+#include "components/WorldBackupDialog.h"
+#include "components/WorldBackupCenterDialog.h"
 #include "pages/settings/InstanceGameSettingsPage.h"
 #include "pages/InstanceModsPage.h"
 #include "pages/InstanceFilePage.h"
@@ -20,7 +23,7 @@
 #include "pages/ProjectionManagePage.h"
 #include "pages/ProjectionEditPage.h"
 #include "pages/SaveSettingsPage.h"
-#include "pages/WorldMapPage.h"
+#include "pages/WorldMapEntryPage.h"
 #include "pages/ShaderPackSettingsPage.h"
 #include "pages/InstanceLogPage.h"
 #include "pages/InstanceRecordingsPage.h"
@@ -38,10 +41,11 @@ InstanceManagePage::InstanceManagePage(QWidget *parent)
     , m_screenshotsPage(nullptr)
     , m_resourcePacksPage(nullptr)
     , m_shaderPacksPage(nullptr)
+    , m_datapacksPage(nullptr)
     , m_logPage(nullptr)
     , m_recordingsPage(nullptr)
     , m_saveSettingsPage(nullptr)
-    , m_worldMapPage(nullptr)
+    , m_worldMapEntryPage(nullptr)
     , m_shaderSettingsPage(nullptr)
     , m_projectionEditPage(nullptr)
 {
@@ -60,12 +64,12 @@ void InstanceManagePage::setCurrentTab(int index)
     //            11=光影设置（非侧边栏页，仅由光影包列表进入），
     //            12=投影编辑（非侧边栏页，仅由投影列表进入），
     //            13=日志, 14=文件传输, 15=存档地图（非侧边栏页，仅由存档列表进入），
-    //            16=录像
+    //            16=录像, 17=数据包
     // 侧边栏"修改"子项已改为直接前往安装新实例页进入修改模式，不再对应本页标签
     // 侧边栏子项: 0=概览 1=设置 2=修改 3=导出整合包 4=文件传输 5=存档 6=服务器
-    //            7=投影 8=截图 9=录像 10=模组 11=资源包 12=光影包 13=日志
-    static const int tabMap[] = {0, 1, -1, 2, 14, 4, 8, 9, 5, 16, 3, 6, 7, 13};
-    if (index < 0 || index > 13)
+    //            7=投影 8=截图 9=录像 10=模组 11=资源包 12=光影包 13=数据包 14=日志
+    static const int tabMap[] = {0, 1, -1, 2, 14, 4, 8, 9, 5, 16, 3, 6, 7, 17, 13};
+    if (index < 0 || index > 14)
         return;
     const int stackIndex = tabMap[index];
     if (stackIndex < 0)
@@ -75,20 +79,28 @@ void InstanceManagePage::setCurrentTab(int index)
     loadSubPage(stackIndex);
     // 子导航搜索词保持生效：应用到新切换到的子页
     applyFilterToCurrentSubPage();
+    // 下载过投影但当时不在投影页：现在切过来了，再重扫目录
+    if (stackIndex == 9 && m_projectionPage && m_projectionListStale)
+    {
+        m_projectionListStale = false;
+        m_projectionPage->refresh();
+    }
 }
 
 void InstanceManagePage::setCurrentInstancePath(const QString &instancePath)
 {
     m_currentInstancePath = instancePath;
+    // 新实例的投影列表本来就会重新加载，旧的「待重扫」标记作废
+    m_projectionListStale = false;
 
     // 存档设置页可能残留上个实例的信息，切换实例时重置
     if (m_saveSettingsPage)
         m_saveSettingsPage->reset();
     // 地图页可能残留上个实例的地表地图
-    if (m_worldMapPage)
+    if (m_worldMapEntryPage)
     {
-        m_worldMapPage->reset();
-        m_worldMapPage->setInstancePath(instancePath);
+        m_worldMapEntryPage->reset();
+        m_worldMapEntryPage->setInstancePath(instancePath);
     }
     // 光影设置页可能残留上个实例的信息，切换实例时重置
     if (m_shaderSettingsPage)
@@ -138,6 +150,8 @@ void InstanceManagePage::setInstanceIcon(const QString &iconPath)
 
 void InstanceManagePage::setGameVersion(const QString &version)
 {
+    // 记下实例版本：数据包管理弹窗用它兜底判断数据包兼容性
+    m_gameVersion = version;
     if (m_overviewPage)
         m_overviewPage->setGameVersion(version);
     if (m_instanceSettingsPage)
@@ -170,6 +184,7 @@ void InstanceManagePage::initUI()
     // 13=日志, 14=文件传输
     // 15=存档地图（非侧边栏页，仅由存档列表进入）
     // 16=录像
+    // 17=数据包
 
     // 0: 概览页
     m_overviewPage = new InstanceOverviewPage(this);
@@ -348,20 +363,20 @@ void InstanceManagePage::initUI()
     m_contentStack->addWidget(m_lanTransferPage); // index 14
 
     // 15: 存档地表地图（由存档列表卡片「地图」按钮进入，非侧边栏页）
-    m_worldMapPage = new WorldMapPage(this);
-    m_contentStack->addWidget(m_worldMapPage); // index 15
+    m_worldMapEntryPage = new WorldMapEntryPage(this);
+    m_contentStack->addWidget(m_worldMapEntryPage); // index 15
     // 地图页真上了前台（也含整页被切走、被顶栏切走）时通知主窗口给背景降档；
     // 用事件过滤盯 Show/Hide，地图页自身不用关心背景的事
-    m_worldMapPage->installEventFilter(this);
+    m_worldMapEntryPage->installEventFilter(this);
     connect(m_savesPage, &InstanceFilePage::saveMapRequested, this,
             [this](const QString &saveName) {
         if (m_currentInstancePath.isEmpty())
             return;
-        if (m_worldMapPage)
+        if (m_worldMapEntryPage)
         {
             // 先切换到地图页再渲染，避免在隐藏页上执行
-            m_contentStack->setCurrentWidget(m_worldMapPage);
-            m_worldMapPage->setCurrentSave(
+            m_contentStack->setCurrentWidget(m_worldMapEntryPage);
+            m_worldMapEntryPage->setCurrentSave(
                 m_currentInstancePath + QStringLiteral("/saves/") + saveName, saveName);
             // 通知主窗口更新 TopBar 返回按钮与标题
             emit saveMapOpened();
@@ -381,6 +396,29 @@ void InstanceManagePage::initUI()
         dlg->exec();
     });
 
+    // 存档备份与恢复弹窗（由存档列表卡片「备份与恢复」按钮、存档设置页按钮打开）
+    auto openWorldBackup = [this](const QString &saveName) {
+        if (m_currentInstancePath.isEmpty() || saveName.isEmpty())
+            return;
+        WorldBackupDialog::openForWorld(this, m_currentInstancePath, saveName);
+    };
+    connect(m_savesPage, &InstanceFilePage::saveBackupRequested, this, openWorldBackup);
+    connect(m_saveSettingsPage, &SaveSettingsPage::backupRequested, this, openWorldBackup);
+    connect(m_savesPage, &InstanceFilePage::backupCenterRequested, this, [this]() {
+        if (m_currentInstancePath.isEmpty())
+            return;
+        WorldBackupCenterDialog::openForInstance(this, m_currentInstancePath);
+    });
+
+    // 存档数据包管理弹窗（由存档列表卡片「数据包」按钮打开）
+    connect(m_savesPage, &InstanceFilePage::saveDatapacksRequested, this,
+            [this](const QString &saveName) {
+        if (m_currentInstancePath.isEmpty() || saveName.isEmpty())
+            return;
+        DataPackManagerDialog::openForWorld(this, m_currentInstancePath, saveName,
+                                           m_gameVersion);
+    });
+
     // 16: 录像（Replay Mod / Flashback 录像列表）
     m_recordingsPage = new InstanceRecordingsPage(this);
     m_contentStack->addWidget(m_recordingsPage); // index 16
@@ -389,6 +427,17 @@ void InstanceManagePage::initUI()
     // 录像卡片「一键加入」：与服务器管理页共用同一条快捷进服链路
     connect(m_recordingsPage, &InstanceRecordingsPage::quickJoinServerRequested,
             this, &InstanceManagePage::quickLaunchServerRequested);
+
+    // 17: 数据包（实例 datapacks 目录：在线下载的数据包在这里统一管理、检查更新，
+    //     也可以从这里导入到某个存档）
+    m_datapacksPage = new InstanceFilePage(InstanceFilePage::DataPack, this);
+    m_contentStack->addWidget(m_datapacksPage); // index 17
+    connect(m_datapacksPage, &InstanceFilePage::fileSearchRequested,
+            this, [this](const QString &keyword) {
+        emit fileSearchRequested(ContentType::DataPack, keyword);
+    });
+    connect(m_datapacksPage, &InstanceFilePage::askAiRequested,
+            this, &InstanceManagePage::askAiRequested);
 
     m_contentStack->setCurrentIndex(0);
     mainLayout->addWidget(m_contentStack);
@@ -403,7 +452,7 @@ bool InstanceManagePage::eventFilter(QObject *watched, QEvent *event)
 {
     // 存档地图页真正可见 / 不可见（Qt 会把 Show/Hide 派发给所有子控件：
     // 换内层子页、切顶栏页、窗口最小化都会走到这里）
-    if (watched == m_worldMapPage
+    if (watched == m_worldMapEntryPage
         && (event->type() == QEvent::Show || event->type() == QEvent::Hide)) {
         emit worldMapActiveChanged(event->type() == QEvent::Show);
     }
@@ -429,6 +478,7 @@ void InstanceManagePage::loadSubPage(int stackIndex)
     case 13: lazyApplyPath(m_logPage); break;
     case 14: lazyApplyPath(m_lanTransferPage); break;
     case 16: lazyApplyPath(m_recordingsPage); break;
+    case 17: lazyApplyPath(m_datapacksPage); break;
     default: break;
     }
 }
@@ -442,11 +492,29 @@ void InstanceManagePage::refresh()
     if (m_contentStack && m_contentStack->currentIndex() == 8 && m_serverPage)
         m_serverPage->refresh();
     // 存档地图页：顶栏刷新 = 重新渲染当前维度
-    if (m_contentStack && m_contentStack->currentIndex() == 15 && m_worldMapPage)
-        m_worldMapPage->refresh();
+    if (m_contentStack && m_contentStack->currentIndex() == 15 && m_worldMapEntryPage)
+        m_worldMapEntryPage->refresh();
     // 录像页：顶栏刷新 = 重新扫描录像文件
     if (m_contentStack && m_contentStack->currentIndex() == 16 && m_recordingsPage)
         m_recordingsPage->refreshFileList();
+    // 数据包页：顶栏刷新 = 重新扫描 datapacks 目录
+    if (m_contentStack && m_contentStack->currentIndex() == 17 && m_datapacksPage)
+        m_datapacksPage->refreshFileList();
+    // 投影页：顶栏刷新 = 重新扫描 schematics 目录
+    if (m_contentStack && m_contentStack->currentIndex() == 9 && m_projectionPage)
+        m_projectionPage->refresh();
+}
+
+void InstanceManagePage::refreshProjectionPage()
+{
+    if (!m_projectionPage)
+        return;
+    // 正停在投影页就当场重扫；不在这一页只记个标记，
+    // 等切过去时再重扫，避免刚下完文件就在后台解析整个 schematics 目录
+    if (m_contentStack && m_contentStack->currentIndex() == 9)
+        m_projectionPage->refresh();
+    else
+        m_projectionListStale = true;
 }
 
 void InstanceManagePage::applyPageFilter(const QString &query)

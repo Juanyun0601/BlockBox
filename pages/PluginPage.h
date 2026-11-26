@@ -59,6 +59,8 @@ signals:
     void createPluginRequested();
     void removePluginRequested(const QString &id);
     void openPluginsDirRequested();
+    /** 插件页「开发文档」：打开内置图书馆的插件开发卷 */
+    void openDocsRequested();
     /** 请求使用当前实例加入指定服务器（address, port） */
     void serverJoinRequested(const QString &address, quint16 port);
 
@@ -141,6 +143,8 @@ private:
     QLabel *m_countLabel;
     QPushButton *m_importBtn;
     QPushButton *m_createBtn;
+    /** 「开发文档」：打开软件内置的插件开发文档 */
+    QPushButton *m_docsBtn = nullptr;
     QPushButton *m_openDirBtn;
 
     // 内容
@@ -159,6 +163,7 @@ private:
     QLabel *m_detailDesc;
     QLabel *m_detailPath;
     QLabel *m_detailStyle;
+    QLabel *m_detailAiTools;
     QLabel *m_detailWarn;
     QPushButton *m_enableBtn;
     QPushButton *m_settingsBtn;

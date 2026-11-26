@@ -13,7 +13,9 @@ INCLUDEPATH += $$PWD/fake $$PWD/../.. $$PWD/../../third_party/cubiomes
 
 SOURCES += world_map_page_probe.cpp \
            ../../pages/WorldMapPage.cpp \
+           ../../utils/WorldMapSignalBridge.cpp \
            ../../utils/WorldMap/WorldMapRenderer.cpp \
+           ../../utils/MapBlockPalette.cpp \
            ../../utils/WorldMap/SeedTerrainRenderer.cpp \
            ../../utils/WorldMap/CavePredictor.cpp \
            ../../utils/WorldMap/TreePredictor.cpp \

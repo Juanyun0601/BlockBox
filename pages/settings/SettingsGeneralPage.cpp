@@ -82,6 +82,18 @@ void SettingsPage::initGeneralSettings()
     });
     cfKeyRow->addWidget(cfKeyEdit);
 
+    // ── 网络自检 ──
+    QVBoxLayout *networkCheckCard = createSettingsCard(layout, tr("网络自检"));
+
+    QPushButton *networkCheckBtn = new QPushButton(tr("网络连通性自检"));
+    networkCheckBtn->setObjectName("networkCheckBtn");
+    connect(networkCheckBtn, &QPushButton::clicked, this, &SettingsPage::networkCheckRequested);
+
+    QHBoxLayout *networkCheckRow = appendSettingRow(networkCheckCard,
+        tr("网络连通性自检"), tr("逐项检测官方源、镜像源与登录服务的连通情况。"),
+        tr("下载或登录失败时，先在这里看看是哪个服务不通，再决定要不要切换下载源。"));
+    networkCheckRow->addWidget(networkCheckBtn);
+
     // ── 模组加载器下载源 ──
     QVBoxLayout *forgeSourceCard = createSettingsCard(layout, tr("模组加载器下载源"));
 
@@ -236,6 +248,9 @@ void SettingsPage::initGeneralSettings()
     // ── 启动行为 ──
     QVBoxLayout *startupCard = createSettingsCard(layout, tr("启动行为"));
 
+    // 系统托盘是桌面端能力：手机 / 平板没有托盘，这一项不出现，开机自启动仍单独保留
+    const bool hasSystemTray = !Platform::isMobile();
+
     CustomCheckBox *autoStartCheck = new CustomCheckBox();
     autoStartCheck->setChecked(settings->isAutoStartEnabled());
     connect(autoStartCheck, &CustomCheckBox::toggled, [](bool checked) {
@@ -244,8 +259,24 @@ void SettingsPage::initGeneralSettings()
 
     QHBoxLayout *autoStartRow = appendSettingRow(startupCard,
         tr("开机自启动"), tr("登录系统后自动启动方块盒子。"),
-        tr("Windows 上写入当前用户注册表 Run 键，macOS 写入 LaunchAgents，Linux 写入 autostart 目录；关闭时移除对应条目。"), true);
+        tr("Windows 上写入当前用户注册表 Run 键，macOS 写入 LaunchAgents，Linux 写入 autostart 目录；关闭时移除对应条目。"),
+        !hasSystemTray);
     autoStartRow->addWidget(autoStartCheck);
+
+    if (hasSystemTray) {
+        CustomCheckBox *closeToTrayCheck = new CustomCheckBox();
+        closeToTrayCheck->setChecked(settings->isCloseToTrayEnabled());
+        connect(closeToTrayCheck, &CustomCheckBox::toggled, [](bool checked) {
+            SettingsManager::instance()->setCloseToTrayEnabled(checked);
+        });
+
+        QHBoxLayout *closeToTrayRow = appendSettingRow(startupCard,
+            tr("关闭窗口时最小化到系统托盘"),
+            tr("点右上角关闭或按 Alt+F4 时收进系统托盘继续后台运行，不退出软件。"),
+            tr("收进托盘后下载、启动、联机上报都会继续；点托盘图标可以重新打开窗口，右键托盘图标选「退出方块盒子」才是彻底退出。关掉这一项就恢复成关窗即退出。"),
+            true);
+        closeToTrayRow->addWidget(closeToTrayCheck);
+    }
 
     // ── 启动器更新 ──
     QVBoxLayout *updaterCard = createSettingsCard(layout, tr("启动器更新"));

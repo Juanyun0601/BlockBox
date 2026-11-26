@@ -47,7 +47,8 @@ public:
         ResourcePack,   // 资源包 - resourcepacks/
         ShaderPack,     // 光影包 - shaderpacks/
         Save,           // 存档 - saves/
-        Screenshot      // 截图 - screenshots/
+        Screenshot,     // 截图 - screenshots/
+        DataPack        // 数据包 - datapacks/
     };
 
     explicit InstanceFilePage(FileType type, QWidget *parent = nullptr);
@@ -75,6 +76,12 @@ signals:
     void saveMapRequested(const QString &saveName);
     /** 请求打开指定存档的版本转换弹窗（Java ⇄ 基岩，仅 Save 类型触发） */
     void saveConvertRequested(const QString &saveName);
+    /** 请求打开指定存档的备份与恢复弹窗（仅 Save 类型触发） */
+    void saveBackupRequested(const QString &saveName);
+    /** 请求打开指定存档的数据包管理弹窗（仅 Save 类型触发） */
+    void saveDatapacksRequested(const QString &saveName);
+    /** 请求打开实例级的「存档备份」总览（仅 Save 类型触发，含已删除存档的备份） */
+    void backupCenterRequested();
     /** 请求打开指定光影包的光影设置页（仅 ShaderPack 类型触发） */
     void shaderSettingsRequested(const QString &packPath);
     /**
@@ -168,6 +175,8 @@ private:
     void animateCardHighlight(int idx, bool selected);
     QString formatFileSize(qint64 bytes) const;
     QString computeFileSha1(const QString &filePath);
+    /** 该类型是否支持在线检查更新（资源包 / 光影包 / 数据包） */
+    bool supportsUpdateCheck() const;
     void resetUpdateState();
     void markCardHasUpdate(int index, const ModVersionFile &target);
     void processNextModUpdate();
@@ -230,6 +239,7 @@ private:
     QPushButton *m_checkUpdateBtn;
     QPushButton *m_copyBtn;
     QPushButton *m_openFolderBtn;
+    QPushButton *m_backupCenterBtn;    // 存档页「备份管理」总览（仅 Save 类型显示）
     QPushButton *m_detailBtn;
     QPushButton *m_deleteBtn;
     QPushButton *m_pasteBtn;

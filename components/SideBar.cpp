@@ -23,6 +23,7 @@
 #include "utils/FavoritesManager.h"
 #include "utils/plugin/PluginManager.h"
 #include "utils/ThemeManager.h"
+#include "platform.h"
 
 namespace {
 
@@ -44,10 +45,8 @@ SideBar::SideBar(QWidget *parent)
 {
     setAttribute(Qt::WA_StyledBackground);
 
-    // 选中图标初始取当前主题主色
-    QColor themeColor(ThemeManager::instance()->currentThemeColor());
-    if (themeColor.isValid())
-        m_iconSelectedColor = themeColor;
+    // 选中图标初始取当前主题主色（深色主题下自动提亮，保证深底上看得清）
+    m_iconSelectedColor = ThemeManager::instance()->accentTextColor();
 
     initUI();
 }
@@ -115,18 +114,18 @@ void SideBar::initUI()
     refreshNavIcons();
 
     // 跟随主题主色刷新选中图标颜色
-    connect(ThemeManager::instance(), &ThemeManager::themeColorChanged, this, [this](const QString &color) {
-        QColor c(color);
-        if (c.isValid())
-            m_iconSelectedColor = c;
+    connect(ThemeManager::instance(), &ThemeManager::themeColorChanged, this, [this](const QString &) {
+        m_iconSelectedColor = ThemeManager::instance()->accentTextColor();
         refreshNavIcons();
     });
 
     // 明暗切换：未选中 SVG 图标默认灰度要跟着变，否则深色底上仍是浅色主题的 #666
     auto applyThemeIconNormal = [this]() {
-        m_iconNormalColor = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme)
+        ThemeManager *tm = ThemeManager::instance();
+        m_iconNormalColor = (tm->currentTheme() == ThemeManager::DarkTheme)
                                 ? QColor(QStringLiteral("#9CA3AF"))
                                 : QColor(QStringLiteral("#666666"));
+        m_iconSelectedColor = tm->accentTextColor();
         refreshNavIcons();
     };
     connect(ThemeManager::instance(), &ThemeManager::themeChanged, this,
@@ -150,23 +149,24 @@ void SideBar::buildNavStructure()
 
     m_parentItems.clear();
 
-    // 首页 - 无子项
-    if (settings->isHomeButtonVisible())
+    // 首页 - 无子项。设置里可以隐藏：数据项照旧保留、只是不在侧边栏渲染，
+    // 否则「发布 / 更多 / 反馈」这些按索引定位的入口会整体前移一位
     {
         NavItem home;
         home.text = tr("首页");
         home.iconPath = ":/Images/Icons/nav_home.svg";
         home.isParentItem = true;
+        home.hideInSidebar = !settings->isHomeButtonVisible();
         m_parentItems.append(home);
     }
 
     // 资源 - 有子项（含分组），子导航内容随版本（Java版/基岩版）切换
-    if (settings->isResourcesButtonVisible())
     {
         NavItem resources;
         resources.text = tr("资源");
         resources.iconPath = ":/Images/Icons/nav_resources.svg";
         resources.isParentItem = true;
+        resources.hideInSidebar = !settings->isResourcesButtonVisible();
 
         if (m_bedrockMode)
         {
@@ -269,6 +269,16 @@ void SideBar::buildNavStructure()
             worlds.iconPath = ":/Images/Icons/nav_worlds.svg";
             gameResSection.children.append(worlds);
 
+            NavItem skins;
+            skins.text = tr("皮肤");
+            skins.iconPath = ":/Images/Icons/nav_skins.svg";
+            gameResSection.children.append(skins);
+
+            NavItem projections;
+            projections.text = tr("投影");
+            projections.iconPath = ":/Images/Icons/nav_projection.svg";
+            gameResSection.children.append(projections);
+
             NavItem forumPlugins;
             forumPlugins.text = tr("插件");
             forumPlugins.iconPath = ":/Images/Icons/nav_plugin.svg";
@@ -305,75 +315,84 @@ void SideBar::buildNavStructure()
     }
 
     // 设置 - 有子项（无分组）
-    if (settings->isSettingsButtonVisible())
     {
-        NavItem settings;
-        settings.text = tr("设置");
-        settings.iconPath = ":/Images/Icons/nav_settings.svg";
-        settings.isParentItem = true;
+        NavItem settingsItem;
+        settingsItem.text = tr("设置");
+        settingsItem.iconPath = ":/Images/Icons/nav_settings.svg";
+        settingsItem.isParentItem = true;
+        settingsItem.hideInSidebar = !settings->isSettingsButtonVisible();
 
         NavItem general;
         general.text = tr("常规设置");
         general.iconPath = ":/Images/Icons/nav_general.svg";
-        settings.children.append(general);
+        settingsItem.children.append(general);
 
         NavItem appearance;
         appearance.text = tr("界面设置");
         appearance.iconPath = ":/Images/Icons/nav_appearance.svg";
-        settings.children.append(appearance);
+        settingsItem.children.append(appearance);
 
         NavItem game;
         game.text = tr("全局游戏设置");
         game.iconPath = ":/Images/Icons/nav_game.svg";
-        settings.children.append(game);
+        settingsItem.children.append(game);
+
+        // 操作设置是手机 / 平板专属：桌面端用键鼠，不需要触屏方案与手柄选项
+        if (Platform::isMobile())
+        {
+            NavItem control;
+            control.text = tr("操作设置");
+            control.iconPath = ":/Images/Icons/nav_control.svg";
+            settingsItem.children.append(control);
+        }
 
         if (!m_bedrockMode)
         {
             NavItem instance;
             instance.text = tr("实例设置");
             instance.iconPath = ":/Images/Icons/nav_instance.svg";
-            settings.children.append(instance);
+            settingsItem.children.append(instance);
 
             NavItem java;
             java.text = tr("Java管理");
             java.iconPath = ":/Images/Icons/nav_java.svg";
-            settings.children.append(java);
+            settingsItem.children.append(java);
 
             NavItem advanced;
             advanced.text = tr("高级设置");
             advanced.iconPath = ":/Images/Icons/nav_advanced.svg";
-            settings.children.append(advanced);
+            settingsItem.children.append(advanced);
         }
 
         NavItem keyBind;
         keyBind.text = tr("按键绑定");
         keyBind.iconPath = ":/Images/Icons/nav_advanced.svg";
-        settings.children.append(keyBind);
+        settingsItem.children.append(keyBind);
 
         NavItem systemInfo;
         systemInfo.text = tr("系统信息");
         systemInfo.iconPath = ":/Images/Icons/nav_system.svg";
-        settings.children.append(systemInfo);
+        settingsItem.children.append(systemInfo);
 
         NavItem aiAssistant;
         aiAssistant.text = tr("AI 助手");
         aiAssistant.iconPath = ":/Images/Icons/nav_ai.svg";
-        settings.children.append(aiAssistant);
+        settingsItem.children.append(aiAssistant);
 
         NavItem about;
         about.text = tr("关于");
         about.iconPath = ":/Images/Icons/nav_about.svg";
-        settings.children.append(about);
+        settingsItem.children.append(about);
 
         if (!m_bedrockMode)
         {
             NavItem projectionEditor;
             projectionEditor.text = tr("投影编辑器");
             projectionEditor.iconPath = ":/Images/Icons/brush.svg";
-            settings.children.append(projectionEditor);
+            settingsItem.children.append(projectionEditor);
         }
 
-        m_parentItems.append(settings);
+        m_parentItems.append(settingsItem);
     }
 
     // AI 助手 - 无子项
@@ -469,6 +488,11 @@ void SideBar::buildNavStructure()
         shader.text = tr("光影包");
         shader.iconPath = ":/Images/Icons/nav_shaders.svg";
         resourceSection.children.append(shader);
+
+        NavItem datapacks;
+        datapacks.text = tr("数据包");
+        datapacks.iconPath = ":/Images/Icons/nav_datapacks.svg";
+        resourceSection.children.append(datapacks);
 
         instanceManage.children.append(resourceSection);
 
@@ -573,6 +597,65 @@ void SideBar::buildNavStructure()
         publish.iconPath = ":/Images/Icons/nav_publish.svg";
         publish.isParentItem = true;
         m_parentItems.append(publish);
+    }
+
+    // 更多 - 一级入口放不下的分类都收在这里（社区与联机 / 我的与帮助）
+    {
+        NavItem more;
+        more.text = tr("更多");
+        more.iconPath = ":/Images/Icons/grid.svg";
+        more.isParentItem = true;
+
+        // 社区与联机分组
+        NavItem communitySection;
+        communitySection.text = tr("社区与联机");
+        communitySection.isSectionLabel = true;
+
+        NavItem lobby;
+        lobby.text = tr("联机大厅");
+        lobby.iconPath = ":/Images/Icons/nav_multiplayer.svg";
+        communitySection.children.append(lobby);
+
+        NavItem skinStation;
+        skinStation.text = tr("皮肤站");
+        skinStation.iconPath = ":/Images/Icons/nav_skins.svg";
+        communitySection.children.append(skinStation);
+
+        NavItem library;
+        library.text = tr("方块图书馆");
+        library.iconPath = ":/Images/Icons/nav_library.svg";
+        communitySection.children.append(library);
+
+        more.children.append(communitySection);
+
+        // 我的与帮助分组
+        NavItem mineSection;
+        mineSection.text = tr("我的与帮助");
+        mineSection.isSectionLabel = true;
+
+        NavItem taskCenter;
+        taskCenter.text = tr("任务中心");
+        taskCenter.iconPath = ":/Images/Icons/download.svg";
+        mineSection.children.append(taskCenter);
+
+        NavItem annualReport;
+        annualReport.text = tr("年度报告");
+        annualReport.iconPath = ":/Images/Icons/sparkles.svg";
+        mineSection.children.append(annualReport);
+
+        NavItem account;
+        account.text = tr("账户管理");
+        account.iconPath = ":/Images/Icons/smile.svg";
+        mineSection.children.append(account);
+
+        NavItem onboarding;
+        onboarding.text = tr("新手引导");
+        onboarding.iconPath = ":/Images/Icons/tip.svg";
+        mineSection.children.append(onboarding);
+
+        more.children.append(mineSection);
+
+        m_parentItems.append(more);
     }
 
     // 反馈 - 侧边栏底部的反馈列表入口，无子项

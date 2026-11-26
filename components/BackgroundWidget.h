@@ -26,6 +26,8 @@ public:
     void setBlurRadius(int radius);
     // 旋转全景内置场景（空串=使用自定义图片）
     void setPanoramaScene(const QString &scene);
+    // 旋转全景来源：场景名 + 已下载素材目录（dir 为空时回退资源内素材，仅供开发探针）
+    void setPanoramaSource(const QString &scene, const QString &dir);
     // 旋转全景自转速度（百分比，100 = 默认速度，0 = 静止）
     void setRotatingSpeed(int percent);
 
@@ -85,6 +87,7 @@ private:
     QColor m_solidColor;
     QString m_imagePath;
     QString m_panoramaScene;
+    QString m_panoramaDir;
     int m_blurRadius;
     bool m_darkScrim = false;
     QPixmap m_originalPixmap;

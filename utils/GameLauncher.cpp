@@ -11,11 +11,14 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QWindow>
+#include <utility>
 
 #include "utils/ErrorAnalyzer.h"
 #include "utils/SettingsManager.h"
@@ -25,6 +28,7 @@
 
 GameLauncher* GameLauncher::m_instance = nullptr;
 QMutex GameLauncher::m_instanceMutex;
+QList<QPointer<GameLauncher>> GameLauncher::s_sessions;
 
 const int GameLauncher::MAX_COMPLETION_CONCURRENT;
 
@@ -37,6 +41,52 @@ GameLauncher* GameLauncher::instance()
         }
     }
     return m_instance;
+}
+
+GameLauncher* GameLauncher::createSession()
+{
+    // 并行启动会话：所有启动状态都在对象自身上，直接新造即可。
+    // 上层（MainWindow）负责持有并连接其信号。
+    return new GameLauncher();
+}
+
+static QString normalizeInstancePath(const QString& path)
+{
+    const QFileInfo fi(path);
+    return fi.absoluteFilePath();
+}
+
+GameLauncher* GameLauncher::sessionForInstance(const QString& instancePath)
+{
+    const QString want = normalizeInstancePath(instancePath);
+    if (want.isEmpty())
+        return nullptr;
+    for (const QPointer<GameLauncher>& session : std::as_const(s_sessions)) {
+        if (!session)
+            continue;
+        if (session->m_status != Launching && session->m_status != Running)
+            continue;
+        if (normalizeInstancePath(session->m_currentConfig.instancePath) == want)
+            return session;
+    }
+    return nullptr;
+}
+
+QList<GameLauncher*> GameLauncher::busySessions()
+{
+    QList<GameLauncher*> result;
+    for (const QPointer<GameLauncher>& session : std::as_const(s_sessions)) {
+        if (!session)
+            continue;
+        if (session->m_status == Launching || session->m_status == Running)
+            result.append(session);
+    }
+    return result;
+}
+
+bool GameLauncher::anySessionBusy()
+{
+    return !busySessions().isEmpty();
 }
 
 GameLauncher::GameLauncher(QObject *parent)
@@ -57,10 +107,14 @@ GameLauncher::GameLauncher(QObject *parent)
 {
     m_downloadSpeedTimer.start();
     m_lastProgressEmit.start();
+
+    // 登记到多实例会话注册表（QPointer 自动感知对象销毁）
+    s_sessions.append(QPointer<GameLauncher>(this));
 }
 
 GameLauncher::~GameLauncher()
 {
+    s_sessions.removeAll(QPointer<GameLauncher>(this));
     stopGame();
     // m_gameProcess 以 this 为 parent 创建（new QProcess(this)），由 Qt 父子机制自动释放，
     // 手动 delete 会与父对象销毁时的释放造成双重释放，故不在此删除。
@@ -97,13 +151,25 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     {
         MemoryAllocationMode mode = SettingsManager::instance()->getMemoryAllocationMode();
         MemoryAllocation alloc = MemoryAllocator::instance()->calculateRecommendedAllocation(mode);
-        m_currentConfig.minMemory = alloc.minMemoryMb;
-        m_currentConfig.maxMemory = alloc.maxMemoryMb;
+
+        // 多实例并行启动：推荐值按同时启动的会话数均分，避免每个游戏都拿满
+        // 推荐内存导致系统内存超卖、双双崩到交换区。此处本会话尚未进入
+        // Launching，busySessions() 不含自身，+1 把自己也算进去
+        const int concurrentGames = GameLauncher::busySessions().size() + 1;
+
+        m_currentConfig.minMemory = qMax(512, alloc.minMemoryMb / concurrentGames);
+        m_currentConfig.maxMemory = qMax(m_currentConfig.minMemory,
+                                         alloc.maxMemoryMb / concurrentGames);
+        if (concurrentGames > 1) {
+            emit launchDetailAdded(
+                QString("检测到另有 %1 个游戏正在启动/运行，自动内存按 %2 个游戏均分")
+                    .arg(concurrentGames - 1).arg(concurrentGames));
+        }
         emit launchDetailAdded(
             QString("自动内存分配 [%1]: %2MB ~ %3MB (系统总内存: %4GB)")
                 .arg(MemoryAllocator::modeDisplayName(mode))
-                .arg(alloc.minMemoryMb)
-                .arg(alloc.maxMemoryMb)
+                .arg(m_currentConfig.minMemory)
+                .arg(m_currentConfig.maxMemory)
                 .arg(alloc.totalSystemMemoryMb / 1024));
     }
 
@@ -380,6 +446,42 @@ QString GameLauncher::currentInstancePath() const
     return m_currentConfig.instancePath;
 }
 
+void GameLauncher::sendTouchInput(const QString &action, qreal x, qreal y, bool pressed)
+{
+    if (!m_gameProcess || m_gameProcess->state() != QProcess::Running)
+        return;
+
+    // BlockBox 输入协议：一行一个 JSON，前缀 BBIN 便于游戏侧逐行扫描。
+    // move/look 携带向量，动作键带 state；写入失败不影响启动器本身。
+    QJsonObject input;
+    input.insert(QStringLiteral("action"), action);
+    input.insert(QStringLiteral("x"), x);
+    input.insert(QStringLiteral("y"), y);
+    input.insert(QStringLiteral("state"), pressed ? 1 : 0);
+    const QByteArray line = "BBIN "
+        + QJsonDocument(input).toJson(QJsonDocument::Compact) + '\n';
+    m_gameProcess->write(line);
+}
+
+void GameLauncher::sendTouchInputKeys(const QStringList &keys, bool pressed)
+{
+    if (!m_gameProcess || m_gameProcess->state() != QProcess::Running
+        || keys.isEmpty())
+        return;
+
+    // 自定义键值 / 组合键：{"action":"keys","keys":["Ctrl","Q"],"state":1}
+    QJsonObject input;
+    input.insert(QStringLiteral("action"), QStringLiteral("keys"));
+    QJsonArray keyArray;
+    for (const QString &key : keys)
+        keyArray.append(key);
+    input.insert(QStringLiteral("keys"), keyArray);
+    input.insert(QStringLiteral("state"), pressed ? 1 : 0);
+    const QByteArray line = "BBIN "
+        + QJsonDocument(input).toJson(QJsonDocument::Compact) + '\n';
+    m_gameProcess->write(line);
+}
+
 void GameLauncher::stopGame()
 {
     if (m_gameProcess && m_gameProcess->state() == QProcess::Running) {
@@ -424,18 +526,27 @@ void GameLauncher::logInfo(const QString& message)
     emit launchDetailAdded(QString("[INFO] %1").arg(message));
 }
 
-void GameLauncher::analyzeError(const QString& errorOutput)
+void GameLauncher::analyzeError(const QString& errorOutput, int exitCode)
 {
-    if (!errorOutput.isEmpty() && m_errorAnalyzer) {
-        emit launchDetailAdded("开始分析错误...");
-        ErrorAnalyzer::ErrorInfo errorInfo = m_errorAnalyzer->analyzeError(errorOutput);
-        QString report = m_errorAnalyzer->generateErrorReport(errorInfo);
-        emit errorReportGenerated(report);
-        emit launchDetailAdded("错误分析完成");
-        
-        // 记录错误分析结果
-        logError("Analysis", "错误分析完成", report.left(200) + (report.length() > 200 ? "..." : ""));
+    if (errorOutput.isEmpty() || !m_errorAnalyzer)
+        return;
+
+    emit launchDetailAdded("开始分析错误...");
+    ErrorAnalyzer::ErrorInfo errorInfo = m_errorAnalyzer->analyzeLog(errorOutput, exitCode);
+
+    // 退出码为 0 的正常退出只有在规则库明确命中问题时才弹报告，
+    // 避免用户正常游玩退出后被误报打扰；异常退出保持原有行为（无论是否命中都出报告）
+    if (exitCode == 0 && errorInfo.ruleId.isEmpty()) {
+        emit launchDetailAdded("游戏正常退出，未发现明显的错误特征");
+        return;
     }
+
+    QString report = m_errorAnalyzer->generateErrorReport(errorInfo);
+    emit errorReportGenerated(report);
+    emit launchDetailAdded("错误分析完成");
+
+    // 记录错误分析结果
+    logError("Analysis", "错误分析完成", report.left(200) + (report.length() > 200 ? "..." : ""));
 }
 
 void GameLauncher::waitForGameWindow()
@@ -535,13 +646,14 @@ void GameLauncher::onProcessFinished(int exitCode, QProcess::ExitStatus exitStat
         m_status = Failed;
         m_errorMessage = "游戏崩溃";
         emit gameCrashed(m_errorMessage);
-        analyzeError(m_processOutput);
+        analyzeError(m_processOutput, exitCode);
     } else {
         m_status = Stopped;
         emit gameStopped(exitCode);
-        if (exitCode != 0) {
-            analyzeError(m_processOutput);
-        }
+        // 退出码 0 的正常退出也做一次轻量规则检查：只有显式声明"退出码 0 也算问题"的
+        // 规则（如退出码 0 却生成了崩溃报告）才可能命中，普通规则不会触发，解决
+        // "退出码 0 但有报错特征/缺前置模组无异常退出码"被漏检的问题
+        analyzeError(m_processOutput, exitCode);
     }
 
     emit launchStatusChanged(m_status);
@@ -576,7 +688,7 @@ void GameLauncher::onProcessError(QProcess::ProcessError error)
     m_status = Failed;
     emit launchStatusChanged(m_status);
     emit gameCrashed(m_errorMessage);
-    analyzeError(m_processOutput);
+    analyzeError(m_processOutput, -1);
     cleanup();
 }
 
@@ -592,7 +704,11 @@ void GameLauncher::onProcessOutput()
         static const QRegularExpression gameTimestampRE("^\\[\\d{1,2}:\\d{2}:\\d{2}\\]\\s*");
 
         auto emitLines = [this](const QByteArray &data) {
-            QString dataStr = QString::fromLocal8Bit(data);
+            // 启动参数里强制了 -Dstdout.encoding=UTF-8 / -Dfile.encoding=UTF-8，
+            // 优先按 UTF-8 解码；极少数老版本仍输出本地编码时再兜底。
+            QString dataStr = QString::fromUtf8(data);
+            if (dataStr.contains(QChar::ReplacementCharacter))
+                dataStr = QString::fromLocal8Bit(data);
             m_processOutput += dataStr;
             QStringList lines = dataStr.split('\n', Qt::SkipEmptyParts);
             for (const QString &line : lines) {

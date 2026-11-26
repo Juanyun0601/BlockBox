@@ -233,6 +233,7 @@ SaveSettingsPage::SaveSettingsPage(QWidget *parent)
     , m_minecraftSearchBtn(nullptr)
     , m_saveBtn(nullptr)
     , m_openFolderBtn(nullptr)
+    , m_backupBtn(nullptr)
 {
     initUI();
 }
@@ -485,6 +486,18 @@ void SaveSettingsPage::initUI()
     m_openFolderBtn->setCursor(Qt::PointingHandCursor);
     connect(m_openFolderBtn, &QPushButton::clicked, this, &SaveSettingsPage::onOpenFolderClicked);
     bottomRow->addWidget(m_openFolderBtn);
+
+    // 备份与恢复：随时给这个存档留一份、或退回之前的进度
+    m_backupBtn = new QPushButton(tr("备份与恢复"), contentWidget);
+    m_backupBtn->setObjectName("bottomActionBtn");
+    m_backupBtn->setCursor(Qt::PointingHandCursor);
+    m_backupBtn->setToolTip(tr("为这个存档创建备份，或恢复到之前的备份点"));
+    connect(m_backupBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_saveName.isEmpty())
+            emit backupRequested(m_saveName);
+    });
+    bottomRow->addWidget(m_backupBtn);
+
     bottomRow->addStretch();
 
     m_saveBtn = new QPushButton(tr("保存修改"), contentWidget);

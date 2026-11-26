@@ -8,10 +8,12 @@
 #include "SchematicOrthoViewRenderer.h"
 
 #include "BlockShapeLoader.h"
+#include "EntityModelLoader.h"
+#include "InstanceEntityTextures.h"
 #include "InstanceTextureLoader.h"
 #include "LitematicEditor.h"
 #include "SchematicDocument.h"
-#include "utils/WorldMap/WorldMapRenderer.h"
+#include "utils/MapBlockPalette.h"
 
 #include <QAtomicInt>
 #include <QDir>
@@ -340,7 +342,7 @@ QVector<OrthoEntry> buildPalette(const SchematicDocument &doc,
                 }
                 face.tex = cropFaceTexture(texLoader, sf.texture, st.name,
                                            sf.uv, sf.hasUv, sf.tintIndex >= 0);
-                face.color = WorldMapRenderer::blockColor(st.name);
+                face.color = MapBlockPalette::blockColor(st.name);
                 entry.faces.append(face);
             }
 
@@ -360,7 +362,7 @@ QVector<OrthoEntry> buildPalette(const SchematicDocument &doc,
                     }
                     face.tex = cropFaceTexture(texLoader, QString(), st.name,
                                                nullptr, false, isVegetationLike(st.name));
-                    face.color = WorldMapRenderer::blockColor(st.name);
+                    face.color = MapBlockPalette::blockColor(st.name);
                     entry.faces.append(face);
                 }
             }
@@ -388,9 +390,237 @@ int axisSize(const SchematicDocument &doc, int axis)
     return axis == 0 ? doc.sizeX() : (axis == 1 ? doc.sizeY() : doc.sizeZ());
 }
 
+// ============================================================================
+// 生物 / 实体：三视图里的合成
+// ============================================================================
+/** 三视图共用的一份实体资源（模型三角面 + 贴图矩形） */
+struct OrthoEntitySet
+{
+    struct Item
+    {
+        const SchematicEntity *entity = nullptr;
+        QRect rect;                             ///< 图集里的贴图矩形
+        QSize sourceSize;                       ///< 贴图在图集里的实际尺寸
+        QVector<EntityMeshTriangle> mesh;       ///< 模型三角面（模型空间）
+    };
+    QVector<Item> items;
+    QImage atlas;
+
+    bool empty() const { return items.isEmpty() || atlas.isNull(); }
+};
+
+/** 把投影里的生物准备好（没有实体贴图 / 没有模型的实体直接跳过） */
+OrthoEntitySet prepareEntities(const SchematicDocument &doc, InstanceEntityTextures *textures)
+{
+    OrthoEntitySet set;
+    if (textures == nullptr || !textures->isValid() || doc.entities().isEmpty())
+        return set;
+    set.atlas = textures->atlasImage();
+    if (set.atlas.isNull())
+        return set;
+
+    QHash<QString, QVector<EntityMeshTriangle>> meshCache;
+    QHash<QString, QPair<QRect, QSize>> rectCache;
+    for (const SchematicEntity &entity : doc.entities())
+    {
+        EntityModel model;
+        if (!EntityModelLoader::instance()->modelFor(entity.id, model))
+            continue;
+
+        auto rectIt = rectCache.constFind(model.textureKey);
+        if (rectIt == rectCache.constEnd())
+        {
+            QRect rect;
+            QSize sourceSize;
+            if (!textures->rectForKey(model.textureKey, rect, &sourceSize))
+            {
+                rect = QRect();
+                sourceSize = QSize();
+            }
+            rectIt = rectCache.insert(model.textureKey, QPair<QRect, QSize>(rect, sourceSize));
+        }
+        if (rectIt.value().first.isEmpty() || rectIt.value().second.isEmpty())
+            continue;
+        // 模型布局和实例贴图对不上就跳过（详见 EntityModel::uvLimit）
+        if (model.uvLimitU > float(rectIt.value().second.width()) + 2.0f
+            || model.uvLimitV > float(rectIt.value().second.height()) + 2.0f)
+        {
+            continue;
+        }
+
+        auto meshIt = meshCache.constFind(model.id);
+        if (meshIt == meshCache.constEnd())
+            meshIt = meshCache.insert(model.id, buildEntityMesh(model));
+        if (meshIt.value().isEmpty())
+            continue;
+
+        OrthoEntitySet::Item item;
+        item.entity = &entity;
+        item.rect = rectIt.value().first;
+        item.sourceSize = rectIt.value().second;
+        item.mesh = meshIt.value();
+        set.items.append(item);
+    }
+    return set;
+}
+
+/** 世界坐标按轴取分量 */
+inline float axisComponent(float x, float y, float z, int axis)
+{
+    return axis == 0 ? x : (axis == 1 ? y : z);
+}
+
+/**
+ * @brief 把实体画进正交视图
+ *
+ * 方块已经按列扫描画完了，这里再做一遍实体三角形光栅化：
+ *   1) 顶点变换到屏幕坐标（正交投影，天然无透视，贴图仿射即可）；
+ *   2) 每像素与「该屏幕格里最近的方块面」比深度，被墙挡住的部分自动不画；
+ *   3) 实体之间用像素级 z-buffer，前后关系正确。
+ */
+void compositeEntities(QImage &out, const QVector<float> &cellDepth, int uSize, int vSize,
+                        int dSize, qreal scale, const ViewConfig &vc,
+                        const OrthoEntitySet &entities)
+{
+    if (entities.empty() || scale <= 0.0 || uSize <= 0 || vSize <= 0)
+        return;
+
+    const int w = out.width();
+    const int h = out.height();
+    if (w <= 0 || h <= 0)
+        return;
+
+    QImage layer(w, h, QImage::Format_ARGB32_Premultiplied);
+    if (layer.isNull())
+        return;
+    layer.fill(Qt::transparent);
+    QVector<float> zbuf(w * h, 1e30f);
+
+    const QImage atlas = entities.atlas;
+    const QVector3D lightDir = QVector3D(0.32f, 0.86f, 0.38f).normalized();
+
+    for (const OrthoEntitySet::Item &item : entities.items)
+    {
+        const SchematicEntity &entity = *item.entity;
+        // 模型面朝 -Z，原版 yaw 0 面朝 +Z，所以绕 Y 转 180 - yaw
+        const float yawRad = qDegreesToRadians(180.0f - entity.yaw);
+        const float cy = qCos(yawRad);
+        const float sy = qSin(yawRad);
+
+        for (const EntityMeshTriangle &tri : item.mesh)
+        {
+            float px[3], py[3], pd[3], pu[3], pv[3];
+            for (int k = 0; k < 3; ++k)
+            {
+                const QVector3D &p = tri.pos[k];
+                const float wx = p.x() * cy + p.z() * sy + float(entity.x);
+                const float wy = p.y() + float(entity.y);
+                const float wz = -p.x() * sy + p.z() * cy + float(entity.z);
+
+                const float cu = axisComponent(wx, wy, wz, vc.uAxis);
+                const float cv = axisComponent(wx, wy, wz, vc.vAxis);
+                const float cd = axisComponent(wx, wy, wz, vc.dAxis);
+
+                const float su = vc.uFlip ? (uSize - cu) : cu;
+                const float sv = vc.vFlip ? (vSize - cv) : cv;
+                const float sd = vc.dNearAtMax ? (dSize - cd) : cd;
+
+                px[k] = float(su * scale);
+                py[k] = float(sv * scale);
+                pd[k] = sd;
+                pu[k] = tri.uv[k].x();
+                pv[k] = tri.uv[k].y();
+            }
+
+            const float area = (px[1] - px[0]) * (py[2] - py[0])
+                               - (px[2] - px[0]) * (py[1] - py[0]);
+            if (qAbs(area) < 1e-5f)
+                continue;
+            const float invArea = 1.0f / area;
+
+            // 面光：与三维视图的实体一致（法线绕 Y 转后按方向光取绝对值）
+            const float nx = tri.normal.x() * cy + tri.normal.z() * sy;
+            const float nz = -tri.normal.x() * sy + tri.normal.z() * cy;
+            const float nd = qAbs(nx * lightDir.x() + tri.normal.y() * lightDir.y()
+                                  + nz * lightDir.z());
+            const float light = 0.56f + 0.44f * qBound(0.0f, nd, 1.0f);
+
+            const int minX = qBound(0, int(qFloor(qMin(px[0], qMin(px[1], px[2])))), w - 1);
+            const int maxX = qBound(0, int(qCeil(qMax(px[0], qMax(px[1], px[2])))), w - 1);
+            const int minY = qBound(0, int(qFloor(qMin(py[0], qMin(py[1], py[2])))), h - 1);
+            const int maxY = qBound(0, int(qCeil(qMax(py[0], qMax(py[1], py[2])))), h - 1);
+
+            for (int iy = minY; iy <= maxY; ++iy)
+            {
+                uchar *line = layer.scanLine(iy);
+                const float fy = float(iy) + 0.5f;
+                for (int ix = minX; ix <= maxX; ++ix)
+                {
+                    const float fx = float(ix) + 0.5f;
+                    const float b0 = ((px[1] - fx) * (py[2] - fy)
+                                      - (px[2] - fx) * (py[1] - fy)) * invArea;
+                    const float b1 = ((px[2] - fx) * (py[0] - fy)
+                                      - (px[0] - fx) * (py[2] - fy)) * invArea;
+                    const float b2 = 1.0f - b0 - b1;
+                    if (b0 < -0.0002f || b1 < -0.0002f || b2 < -0.0002f)
+                        continue;
+
+                    const float depth = b0 * pd[0] + b1 * pd[1] + b2 * pd[2];
+
+                    // 和该屏幕格里最近的方块面比深度：被墙/地板挡住就不画
+                    const int cellC = qBound(0, int(fx / float(scale)), uSize - 1);
+                    const int cellR = qBound(0, int(fy / float(scale)), vSize - 1);
+                    const float cellD = cellDepth.at(cellR * uSize + cellC);
+                    if (depth >= cellD - 0.02f)
+                        continue;
+
+                    const int idx = iy * w + ix;
+                    if (depth >= zbuf.at(idx))
+                        continue;
+
+                    const float u = b0 * pu[0] + b1 * pu[1] + b2 * pu[2];
+                    const float v = b0 * pv[0] + b1 * pv[1] + b2 * pv[2];
+                    // 模型 uv 是像素；贴图在图集里可能被等比缩过，按实际尺寸换算
+                    const float texelU = float(item.rect.width())
+                                         / float(qMax(1, item.sourceSize.width()));
+                    const float texelV = float(item.rect.height())
+                                         / float(qMax(1, item.sourceSize.height()));
+                    const int tx = item.rect.x()
+                                   + qBound(0, int(u * texelU), item.rect.width() - 1);
+                    const int ty = item.rect.y()
+                                   + qBound(0, int(v * texelV), item.rect.height() - 1);
+                    if (tx < 0 || ty < 0 || tx >= atlas.width() || ty >= atlas.height())
+                        continue;
+                    // 图集是 RGBA8888：按字节读，别当 QRgb（内存序是 BGRA，红蓝会颠倒）
+                    const uchar *src = atlas.constScanLine(ty) + tx * 4;
+                    const int alpha = src[3];
+                    if (alpha < 40)
+                        continue;   // 贴图透明区（四肢缝隙等）不占像素
+
+                    const int rr = qBound(0, int(src[0] * light), 255);
+                    const int gg = qBound(0, int(src[1] * light), 255);
+                    const int bb = qBound(0, int(src[2] * light), 255);
+                    uchar *dst = line + ix * 4;
+                    // 层是 ARGB32_Premultiplied（内存序 B, G, R, A）：颜色先乘 alpha
+                    const int a8 = qBound(0, alpha, 255);
+                    dst[0] = uchar(bb * a8 / 255);
+                    dst[1] = uchar(gg * a8 / 255);
+                    dst[2] = uchar(rr * a8 / 255);
+                    dst[3] = uchar(a8);
+                    zbuf[idx] = depth;
+                }
+            }
+        }
+    }
+
+    QPainter painter(&out);
+    painter.drawImage(0, 0, layer);
+}
+
+
 /** 渲染一张视图：逐列近→远扫描可见块，再远→近画正对相机的那一类面 */
 QImage renderView(const SchematicDocument &doc, const QVector<OrthoEntry> &palette,
-                  const ViewConfig &vc, qreal scale)
+                  const ViewConfig &vc, qreal scale, const OrthoEntitySet &entities)
 {
     const int sizeX = doc.sizeX(), sizeZ = doc.sizeZ();
     const int layer = sizeX * sizeZ;
@@ -407,6 +637,9 @@ QImage renderView(const SchematicDocument &doc, const QVector<OrthoEntry> &palet
     QPainter p(&out);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
 
+    // 每个屏幕格里「最近的方块面」深度（单位：格，越小越近），实体合成时用来判断遮挡
+    QVector<float> cellDepth(uSize * vSize, 1e30f);
+
     for (int c = 0; c < uSize; ++c)
     {
         const int ua = vc.uFlip ? (uSize - 1 - c) : c;
@@ -416,6 +649,7 @@ QImage renderView(const SchematicDocument &doc, const QVector<OrthoEntry> &palet
 
             // ── 近→远收集本列可见块（满格不透明处截断） ──
             QList<int> visible;
+            float nearestDepth = 1e30f;
             for (int di = 0; di < dSize; ++di)
             {
                 const int d = vc.dNearAtMax ? (dSize - 1 - di) : di;
@@ -428,10 +662,16 @@ QImage renderView(const SchematicDocument &doc, const QVector<OrthoEntry> &palet
                 const OrthoEntry &e = palette[pal];
                 if (e.air)
                     continue;
+                if (visible.isEmpty())
+                {
+                    // 本列最近的可见方块：它的「朝向相机的那一面」就是遮挡深度
+                    nearestDepth = vc.dNearAtMax ? float(dSize - (d + 1)) : float(d);
+                }
                 visible.append(pal);
                 if (e.occludes)
                     break;
             }
+            cellDepth[r * uSize + c] = nearestDepth;
 
             // ── 远→近绘制：每个可见块只画正对相机的那一类面 ──
             for (int k = visible.size() - 1; k >= 0; --k)
@@ -457,9 +697,12 @@ QImage renderView(const SchematicDocument &doc, const QVector<OrthoEntry> &palet
                                  });
                 for (const OrthoFace *f : faces)
                 {
-                    // 盒子在屏幕两轴上的投影范围（块坐标）→ 图像像素
-                    float u0 = f->from[vc.uAxis], u1 = f->to[vc.uAxis];
-                    float v0 = f->from[vc.vAxis], v1 = f->to[vc.vAxis];
+                    // 面的 from/to 是「格内」的 0..1 坐标，先平移到这一格在投影里的位置，
+                    // 之后翻面/缩放才是正确的屏幕范围（漏了这一步所有方块会叠在同一格里）
+                    float u0 = f->from[vc.uAxis] + float(ua);
+                    float u1 = f->to[vc.uAxis] + float(ua);
+                    float v0 = f->from[vc.vAxis] + float(va);
+                    float v1 = f->to[vc.vAxis] + float(va);
                     if (vc.uFlip)
                     {
                         const float t0 = u0;
@@ -487,6 +730,9 @@ QImage renderView(const SchematicDocument &doc, const QVector<OrthoEntry> &palet
         }
     }
     p.end();
+
+    // 生物 / 实体：方块画完后再合成（被方块挡住的部分按深度丢弃）
+    compositeEntities(out, cellDepth, uSize, vSize, dSize, scale, vc, entities);
     return out;
 }
 
@@ -596,6 +842,12 @@ SchematicOrthoResult SchematicOrthoViewRenderer::render(const QString &filePath,
 
     const QVector<OrthoEntry> palette = buildPalette(doc, shapeLoader, texLoader);
 
+    // ── 生物 / 实体（贴图同样取自当前实例；没有生物就不必解实体贴图） ──
+    InstanceEntityTextures *entityTextures = nullptr;
+    if (!instancePath.isEmpty() && doc.entities().isEmpty() == false)
+        entityTextures = InstanceEntityTextures::sharedForInstance(instancePath);
+    const OrthoEntitySet entities = prepareEntities(doc, entityTextures);
+
     // ── 三视图共用一个比例，保证预览时相对大小一致 ──
     const int dims[3] = {doc.sizeX(), doc.sizeY(), doc.sizeZ()};
     const ViewConfig configs[3] = {
@@ -614,9 +866,9 @@ SchematicOrthoResult SchematicOrthoViewRenderer::render(const QString &filePath,
     }
     scale = qBound(0.01, scale, kMaxScalePerBlock);
 
-    result.front = renderView(doc, palette, configs[0], scale);
-    result.left = renderView(doc, palette, configs[1], scale);
-    result.top = renderView(doc, palette, configs[2], scale);
+    result.front = renderView(doc, palette, configs[0], scale, entities);
+    result.left = renderView(doc, palette, configs[1], scale, entities);
+    result.top = renderView(doc, palette, configs[2], scale, entities);
 
     if (!result.isValid())
         result.error = QStringLiteral("三视图渲染失败，请稍后再试");

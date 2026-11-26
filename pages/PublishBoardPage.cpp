@@ -128,10 +128,11 @@ void PublishBoardPage::renderBoards(const QVector<ForumBoard> &boards)
     for (const ForumBoard &board : boards)
     {
         // 「插件分享」「投影分享」只能从「资源」发（必须带文件）、「教程分享」只能从
-        // 「教程」发：帖子这里都不列出来
+        // 「教程」发、「有奖问答」只能从「问答」发：帖子这里都不列出来
         if (board.slug == QLatin1String("plugin-share")
             || board.slug == QLatin1String("schematic-share")
-            || board.slug == QLatin1String("tutorial-share"))
+            || board.slug == QLatin1String("tutorial-share")
+            || board.slug == QLatin1String("qa"))
             continue;
         auto *card = new ForumKit::ClickableCard(this);
         card->setObjectName(QStringLiteral("communityBoardCard"));

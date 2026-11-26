@@ -64,6 +64,14 @@ public:
      */
     void setInstanceContext(const QString &path, const QString &version, const QString &loader);
 
+    /**
+     * @brief 当前已经建立的隧道地址（"域名:端口" / "IP:端口"），没建立时返回空
+     *
+     * 「开服」页发布到服务器导航时用它做默认地址：本机 127.0.0.1 别人连不上，
+     * 有了隧道地址才是真正能发给别人的那个。
+     */
+    QString currentTunnelAddress() const;
+
 signals:
     /** 发布到联机大厅需要登录论坛账号：请求主窗口打开账户页 */
     void forumLoginRequested();

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="qz-outer" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A5B4FC"/>
+      <stop offset="1" stop-color="#4F46E5"/>
+    </linearGradient>
+  </defs>
+  <path d="M34 62 L26 90 L38 83 L45 92 L49 64 Z" fill="#4338CA"/>
+  <path d="M62 62 L70 90 L58 83 L51 92 L47 64 Z" fill="#3730A3"/>
+  <circle cx="48" cy="43" r="31" fill="url(#qz-outer)" stroke="#312E81" stroke-width="3"/>
+  <circle cx="48" cy="43" r="23" fill="#EEF2FF"/>
+  <path d="M26 40 L48 28 L70 40 L48 52 Z" fill="#4F46E5" stroke="#312E81" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M38 46 V55 C38 59 43 61 48 61 C53 61 58 59 58 55 V46" fill="none" stroke="#312E81" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M66 42 V53" stroke="#F59E0B" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="66" cy="56" r="3.2" fill="#FBBF24" stroke="#B45309" stroke-width="1.5"/>
+</svg>

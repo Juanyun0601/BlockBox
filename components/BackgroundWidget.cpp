@@ -167,9 +167,20 @@ void BackgroundWidget::applyRenderBudget()
 
 void BackgroundWidget::setPanoramaScene(const QString &scene)
 {
-    if (m_panoramaScene == scene)
+    setPanoramaSource(scene, QString());
+}
+
+void BackgroundWidget::setPanoramaSource(const QString &scene, const QString &dir)
+{
+    if (m_panoramaScene == scene && m_panoramaDir == dir)
         return;
     m_panoramaScene = scene;
+    m_panoramaDir = dir;
+
+    // 预览图随场景/目录变化失效，下一次绘制重新读取
+    m_rotatingPreviewScene.clear();
+    m_rotatingPreview = QPixmap();
+
     if (m_mode == Rotating) {
         applyRotatingSource();
         reloadRotatingFrame();
@@ -180,7 +191,8 @@ void BackgroundWidget::setPanoramaScene(const QString &scene)
 void BackgroundWidget::applyRotatingSource()
 {
     if (!m_panoramaScene.isEmpty()) {
-        m_panorama->setScene(m_panoramaScene);
+        // 场景素材可能还在下载：目录为空时渲染器自己会判空，外层用静态图/深色兜底
+        m_panorama->setScene(m_panoramaScene, m_panoramaDir);
         return;
     }
     if (!m_imagePath.isEmpty()) {
@@ -205,13 +217,20 @@ QPixmap BackgroundWidget::rotatingPreview() const
     const QString scene = m_panoramaScene.isEmpty()
                               ? PanoramaSkyRenderer::defaultSceneName()
                               : m_panoramaScene;
-    if (m_rotatingPreviewScene == scene)
+    const QString key = m_panoramaDir + QLatin1Char('|') + scene;
+    if (m_rotatingPreviewScene == key)
         return m_rotatingPreview;
 
-    m_rotatingPreviewScene = scene;
-    m_rotatingPreview = QPixmap(QStringLiteral(":/Images/Panorama/%1/panorama_0.jpg").arg(scene));
-    if (m_rotatingPreview.isNull())
-        qDebug() << "[BackgroundWidget]" << "场景没有回退全景图块:" << scene;
+    m_rotatingPreviewScene = key;
+    const QString path = m_panoramaDir.isEmpty()
+        ? QStringLiteral(":/Images/Panorama/%1/panorama_0.jpg").arg(scene)
+        : m_panoramaDir + QStringLiteral("/panorama_0.jpg");
+    m_rotatingPreview = QPixmap(path);
+    if (m_rotatingPreview.isNull()) {
+        // 场景素材还没下完时，有自定义图片就先拿它垫底，别整块黑
+        m_rotatingPreview = m_pixmap;
+        qDebug() << "[BackgroundWidget]" << "场景没有回退全景图块:" << scene << path;
+    }
     return m_rotatingPreview;
 }
 

@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "BlockBox bridge",
+    "description": "Brings the local BlockBox launcher's AI capabilities into DSH. The plugin reads the MCP port and access token from BlockBox's own settings, connects to its local MCP server, and exposes instance, mod, game-log, crash-report, world-save, server-list, and structure-finder tools as mcp__blockbox__*. Enable \"Local MCP server\" under BlockBox Settings > AI assistant and the tools appear within 20 seconds; when BlockBox closes they are removed again, so no dead tools stay listed. Read-only by default; enabling/disabling mods, backing up or restoring saves, downloading instances, and launching the game are write operations that also need \"Allow write operations\" in BlockBox, and every DSH call still passes confirm.",
+    "detail": "docs/DETAIL.md"
+  }
+}

@@ -7,6 +7,7 @@
 
 #include "ForumPluginListPage.h"
 
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -15,10 +16,13 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QStyle>
 #include <QVBoxLayout>
 #include <QFileDialog>
 #include "components/NotificationManager.h"
 #include "components/ForumKit.h"
+#include "components/ResourceFilterDialog.h"
+#include "../layouts/FlowLayout.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ForumImageStore.h"
 #include "utils/IconHelper.h"
@@ -102,20 +106,60 @@ void ForumPluginListPage::buildUi()
     searchLayout->addWidget(m_searchEdit);
     connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString &text) {
         m_keyword = text.trimmed();
-        loadPage(m_page);   // 关键字变化就地重渲染（列表数据已在手）
+        // 列表已经在手：关键字变化就地重渲染，不再回头请求服务端
+        if (m_loaded)
+            renderLoaded();
+        else
+            loadPage(m_page);
     });
     auto *searchButton = new QPushButton(tr("搜索"), filterCard);
     searchButton->setObjectName(QStringLiteral("modSearchBtn"));
     searchButton->setFixedHeight(36);
     searchButton->setFixedWidth(80);
-    connect(searchButton, &QPushButton::clicked, this, [this]() { loadPage(m_page); });
+    connect(searchButton, &QPushButton::clicked, this, [this]() {
+        m_keyword = m_searchEdit->text().trimmed();
+        if (m_loaded)
+            renderLoaded();
+        else
+            loadPage(m_page);
+    });
     searchLayout->addWidget(searchButton);
     cardLayout->addLayout(searchLayout);
 
-    auto *intro = new QLabel(tr("论坛里发布、装到启动器就能用的插件，点「安装」即可下载安装"), filterCard);
-    intro->setObjectName(QStringLiteral("searchHintLabel"));
-    intro->setWordWrap(true);
-    cardLayout->addWidget(intro);
+    // ── 排序 / 筛选行（控件与「模组」「资源包」等在线资源列表页同款） ──
+    auto *filterLayout = new FlowLayout(nullptr, 0, 10, 8);
+
+    auto *sortLabel = new QLabel(tr("排序方式:"), filterCard);
+    sortLabel->setObjectName(QStringLiteral("filterLabel"));
+    m_sortCombo = new QComboBox(filterCard);
+    m_sortCombo->setObjectName(QStringLiteral("sortCombo"));
+    m_sortCombo->setFixedHeight(32);
+    m_sortCombo->setMinimumWidth(120);
+    m_sortCombo->addItem(tr("最新发布"), QStringLiteral("latest"));
+    m_sortCombo->addItem(tr("最热"), QStringLiteral("hot"));
+    m_sortCombo->addItem(tr("下载最多"), QStringLiteral("downloads"));
+    filterLayout->addWidget(sortLabel);
+    filterLayout->addWidget(m_sortCombo);
+    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) {
+                const QString sort = m_sortCombo->currentData().toString();
+                if (sort == m_sort)
+                    return;
+                m_sort = sort;
+                loadPage(1);
+            });
+
+    m_filterBtn = new QPushButton(tr("筛选"), filterCard);
+    m_filterBtn->setObjectName(QStringLiteral("contentFilterBtn"));
+    m_filterBtn->setFixedHeight(32);
+    m_filterBtn->setCursor(Qt::PointingHandCursor);
+    m_filterBtn->setToolTip(tr("按安装状态筛选插件"));
+    updateFilterButton();
+    filterLayout->addWidget(m_filterBtn);
+    connect(m_filterBtn, &QPushButton::clicked, this,
+            &ForumPluginListPage::onFilterClicked);
+
+    cardLayout->addLayout(filterLayout);
     mainLayout->addWidget(filterCard);
 
     // ── 中部：插件列表 ──
@@ -211,15 +255,19 @@ void ForumPluginListPage::loadPage(int page)
     if (page < 1)
         page = 1;
 
+    m_loaded = false;
     m_statusLabel->setText(tr("正在加载插件列表…"));
     m_statusLabel->show();
     m_paginationBar->hide();
 
-    const QString path = QStringLiteral("/api/forum-plugins?page=%1").arg(page);
+    const QString path = QStringLiteral("/api/forum-plugins?page=%1&sort=%2")
+                             .arg(page)
+                             .arg(m_sort);
     ForumAccountService::instance()->getJson(
         path,
         [this](const QJsonObject &root) {
             m_plugins.clear();
+            m_threadIdByPlugin.clear();
             const QJsonArray array = root.value(QStringLiteral("plugins")).toArray();
             for (const QJsonValue &value : array)
             {
@@ -258,9 +306,11 @@ void ForumPluginListPage::loadPage(int page)
             m_page = pagination.page;
             m_totalPages = pagination.pages;
 
+            m_loaded = true;
             renderLoaded();
         },
         [this](const QString &message, int httpStatus) {
+            m_loaded = false;
             clearList();
             m_statusLabel->setText(message);
             m_statusLabel->show();
@@ -278,6 +328,9 @@ void ForumPluginListPage::renderLoaded()
     QVector<ForumPluginInfo> visible;
     for (const ForumPluginInfo &plugin : m_plugins)
     {
+        // 安装状态筛选：只留已安装 / 未安装的那一边
+        if (!m_status.isEmpty() && (m_status == QLatin1String("installed")) != isPluginInstalled(plugin))
+            continue;
         if (keyword.isEmpty()
             || plugin.name.contains(keyword, Qt::CaseInsensitive)
             || plugin.pluginId.contains(keyword, Qt::CaseInsensitive)
@@ -290,11 +343,24 @@ void ForumPluginListPage::renderLoaded()
 
     if (visible.isEmpty())
     {
-        m_statusLabel->setText(keyword.isEmpty()
-                                   ? tr("还没有插件，在论坛发一个插件帖就会出现在这里")
-                                   : tr("没有匹配「%1」的插件").arg(keyword));
-        m_statusLabel->show();
-        m_paginationBar->hide();
+        if (!m_plugins.isEmpty())
+        {
+            // 本页被筛空：分页留着，方便直接翻下一页继续找
+            const QString hint = keyword.isEmpty()
+                                     ? tr("本页没有符合条件的插件，翻页或换个筛选看看")
+                                     : tr("本页没有匹配「%1」的插件，翻页或换个筛选看看").arg(keyword);
+            m_statusLabel->setText(hint);
+            m_statusLabel->show();
+            updatePager();
+        }
+        else
+        {
+            m_statusLabel->setText(keyword.isEmpty()
+                                       ? tr("还没有插件，在论坛发一个插件帖就会出现在这里")
+                                       : tr("没有匹配「%1」的插件").arg(keyword));
+            m_statusLabel->show();
+            m_paginationBar->hide();
+        }
         return;
     }
     m_statusLabel->hide();
@@ -361,6 +427,8 @@ void ForumPluginListPage::renderLoaded()
             chip->setProperty("cardRole", "chip");
             chipsLayout->addWidget(chip);
         };
+        if (isPluginInstalled(plugin))
+            addChip(tr("已安装"));
         if (!plugin.version.isEmpty())
             addChip(tr("v%1").arg(plugin.version));
         addChip(plugin.author.isEmpty() ? tr("作者未知") : plugin.author);
@@ -406,12 +474,67 @@ void ForumPluginListPage::renderLoaded()
         m_listLayout->addWidget(card);
     }
 
+    updatePager();
+}
+
+void ForumPluginListPage::updatePager()
+{
     m_pageLabel->setText(tr("第 %1/%2 页").arg(m_page).arg(m_totalPages));
-    m_paginationBar->show();
+    // 与其他在线资源列表页一致：只有一页时不占底部位置
+    m_paginationBar->setVisible(m_totalPages > 1);
     m_firstButton->setEnabled(m_page > 1);
     m_prevButton->setEnabled(m_page > 1);
     m_nextButton->setEnabled(m_page < m_totalPages);
     m_lastButton->setEnabled(m_page < m_totalPages);
+}
+
+bool ForumPluginListPage::isPluginInstalled(const ForumPluginInfo &plugin) const
+{
+    if (plugin.pluginId.isEmpty())
+        return false;
+    const QList<PluginInfo> installed = PluginManager::instance()->plugins();
+    for (const PluginInfo &info : installed)
+    {
+        if (info.id == plugin.pluginId)
+            return true;
+    }
+    return false;
+}
+
+void ForumPluginListPage::updateFilterButton()
+{
+    if (!m_filterBtn)
+        return;
+    const bool active = !m_status.isEmpty();
+    m_filterBtn->setText(active ? tr("筛选 · 1") : tr("筛选"));
+    m_filterBtn->setProperty("active", active);
+    m_filterBtn->style()->unpolish(m_filterBtn);
+    m_filterBtn->style()->polish(m_filterBtn);
+}
+
+void ForumPluginListPage::onFilterClicked()
+{
+    ResourceFilterDialog dialog(
+        tr("插件筛选"),
+        tr("按安装状态筛选：可以只看还没装过的插件，或只看已经装上的插件。"),
+        tr("安装状态"), this);
+
+    QVector<QPair<QString, QString>> options;
+    options.append({QString(), tr("全部插件")});
+    options.append({QStringLiteral("installed"), tr("已安装")});
+    options.append({QStringLiteral("uninstalled"), tr("未安装")});
+    dialog.setSelectedId(m_status);
+    dialog.setOptions(options);
+
+    connect(&dialog, &ResourceFilterDialog::filterApplied, this,
+            [this](const QString &id) {
+                if (id == m_status)
+                    return;
+                m_status = id;
+                updateFilterButton();
+                renderLoaded();
+            });
+    dialog.exec();
 }
 
 void ForumPluginListPage::installPlugin(const ForumPluginInfo &plugin)
@@ -476,6 +599,9 @@ void ForumPluginListPage::installPlugin(const ForumPluginInfo &plugin)
                         }
                         PluginManager::instance()->refresh();
                         emit pluginInstalled();
+                        // 刷新列表：卡片上的「已安装」芯片与安装状态筛选立即跟上
+                        if (m_loaded)
+                            renderLoaded();
                         m_statusLabel->setText(tr("%1 安装成功！到「插件」列表里查看").arg(info.name));
                         m_statusLabel->show();
                     });

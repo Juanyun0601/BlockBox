@@ -53,10 +53,6 @@ ModpackExportPage::ModpackExportPage(QWidget* parent)
   , m_launchArgsEdit(nullptr)
   , m_serverExtraWidget(nullptr)
   , m_serverFileApiEdit(nullptr)
-  , m_serverMinMemorySlider(nullptr)
-  , m_serverMinMemoryEdit(nullptr)
-  , m_serverJavaArgsEdit(nullptr)
-  , m_serverLaunchArgsEdit(nullptr)
   , m_fileTree(nullptr)
   , m_moduleSelectionPage(nullptr)
 {
@@ -374,7 +370,7 @@ QWidget* ModpackExportPage::createStep1()
     {tr("Packwiz 格式"), tr("Git 友好的 TOML 格式，模组包开发者首选"), tr("输出: 目录"), "packwiz"},
     {tr("MCBBS 格式"), tr("国内最流行的格式，同时生成 MCBBS 和 CurseForge 兼容清单"), tr("输出: .zip"), "mcbbs"},
     {tr("MultiMC 格式"), tr("MultiMC / PrismLauncher 原生格式"), tr("输出: .zip"), "multimc"},
-    {tr("自安装服务器包"), tr("HMCL 自安装格式，含自动安装脚本"), tr("输出: .zip"), "server"},
+    {tr("服务端整合包"), tr("带游戏版本与加载器清单，玩家导入即自动装好，也支持增量更新"), tr("输出: .zip"), "server"},
     {tr("Modrinth 格式"), tr("Modrinth 原生格式，支持模组自动下载"), tr("输出: .mrpack"), "modrinth"}
   };
 
@@ -641,7 +637,8 @@ QWidget* ModpackExportPage::createStep2()
   layout->addWidget(m_mcbbsExtraWidget);
   m_mcbbsExtraWidget->hide();
 
-  // Server 额外字段
+  // Server 额外字段：服务端整合包的清单里只有「文件API」这一项可配（没有内存/启动参数的字段），
+  // 玩家端靠它指向的静态目录做增量更新，所以这里只留输入框 + 一段用途说明。
   m_serverExtraWidget = new QWidget();
   m_serverExtraWidget->setObjectName("mpxExtraGroup");
   QVBoxLayout* svLayout = new QVBoxLayout(m_serverExtraWidget);
@@ -653,59 +650,17 @@ QWidget* ModpackExportPage::createStep2()
   svLayout->addWidget(svTitle);
 
   m_serverFileApiEdit = new QLineEdit();
-  m_serverFileApiEdit->setPlaceholderText(tr("文件 API 地址（可选）"));
+  m_serverFileApiEdit->setPlaceholderText(tr("例如 https://example.com/pack ，玩家端增量更新的取源目录"));
   m_serverFileApiEdit->setObjectName("mpxFieldEdit");
   m_serverFileApiEdit->setFixedHeight(36);
   svLayout->addLayout(createField(tr("文件API"), m_serverFileApiEdit));
 
-  // 最低内存
-  QHBoxLayout* svMemRow = new QHBoxLayout();
-  svMemRow->setSpacing(12);
-  QLabel* svMemLbl = new QLabel(tr("最低内存"));
-  svMemLbl->setFixedWidth(80);
-  svMemLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  svMemLbl->setObjectName("mpxFieldLabel");
-  svMemRow->addWidget(svMemLbl);
-
-  m_serverMinMemorySlider = new QSlider(Qt::Horizontal);
-  m_serverMinMemorySlider->setRange(512, 16384);
-  m_serverMinMemorySlider->setValue(2048);
-  m_serverMinMemorySlider->setTickInterval(512);
-  svMemRow->addWidget(m_serverMinMemorySlider, 1);
-
-  m_serverMinMemoryEdit = new QLineEdit();
-  m_serverMinMemoryEdit->setText("2048");
-  m_serverMinMemoryEdit->setFixedWidth(64);
-  m_serverMinMemoryEdit->setAlignment(Qt::AlignCenter);
-  m_serverMinMemoryEdit->setObjectName("mpxFieldEdit");
-  svMemRow->addWidget(m_serverMinMemoryEdit);
-
-  QLabel* svMemUnit = new QLabel("MB");
-  svMemUnit->setObjectName("mpxFieldLabel");
-  svMemRow->addWidget(svMemUnit);
-
-  svLayout->addLayout(svMemRow);
-
-  connect(m_serverMinMemorySlider, &QSlider::valueChanged, this, [this](int value) {
-    if (m_serverMinMemoryEdit)
-    {
-      m_serverMinMemoryEdit->setText(QString::number(value));
-    }
-  });
-
-  // JVM 参数
-  m_serverJavaArgsEdit = new QLineEdit();
-  m_serverJavaArgsEdit->setPlaceholderText(tr("JVM 参数（可选）"));
-  m_serverJavaArgsEdit->setObjectName("mpxFieldEdit");
-  m_serverJavaArgsEdit->setFixedHeight(36);
-  svLayout->addLayout(createField(tr("JVM参数"), m_serverJavaArgsEdit));
-
-  // 启动参数
-  m_serverLaunchArgsEdit = new QLineEdit();
-  m_serverLaunchArgsEdit->setPlaceholderText(tr("启动参数（可选）"));
-  m_serverLaunchArgsEdit->setObjectName("mpxFieldEdit");
-  m_serverLaunchArgsEdit->setFixedHeight(36);
-  svLayout->addLayout(createField(tr("启动参数"), m_serverLaunchArgsEdit));
+  QLabel* svHint = new QLabel(tr("包里的清单会写明游戏版本和加载器，玩家用方块盒子或 HMCL 导入这个 zip 就能自动装好。"
+                                 "把整个包解压到静态网站目录（宝塔 / Nginx / GitHub Pages 都行），再把该目录的网址填在上面，"
+                                 "玩家启动时只会补有改动的文件；不填也能导入，只是没法自动更新。"));
+  svHint->setWordWrap(true);
+  svHint->setObjectName("mpxSectionDesc");
+  svLayout->addWidget(svHint);
 
   layout->addWidget(m_serverExtraWidget);
   m_serverExtraWidget->hide();
@@ -1421,9 +1376,6 @@ void ModpackExportPage::onExportClicked()
   {
     exportFormat = modpack::ExportFormat::Server;
     exportInfo.fileApi = m_serverFileApiEdit->text().trimmed();
-    exportInfo.minMemory = m_serverMinMemorySlider->value();
-    exportInfo.javaArgs = m_serverJavaArgsEdit->text().trimmed();
-    exportInfo.launchArgs = m_serverLaunchArgsEdit->text().trimmed();
   }
   else if (m_selectedFormat == "modrinth")
   {

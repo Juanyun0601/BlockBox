@@ -241,10 +241,12 @@ void LoadingOverlay::initUI()
 void LoadingOverlay::initStyle()
 {
     ThemeManager *tm = ThemeManager::instance();
-    const QString themeColor = tm->currentThemeColor();
-    const QString themeHover = tm->getThemeColorHover();
 
     const bool isLight = (tm->currentTheme() == ThemeManager::LightTheme);
+    // 深色主题下原始主色在深色轨道上几乎看不见，进度条起点改用提亮后的主色
+    const QColor accentQ = tm->accentTextColor();
+    const QString accentColor = accentQ.name();
+    const QString accentEnd   = isLight ? tm->getThemeColorHover() : accentQ.lighter(110).name();
     const QString cardBg      = isLight ? "rgba(255, 255, 255, 245)" : "rgba(45, 45, 45, 245)";
     const QString cardBorder  = isLight ? "#e0e0e0" : "#444444";
     const QString barBg       = isLight ? "#e8e8e8" : "#3d3d3d";
@@ -279,7 +281,7 @@ void LoadingOverlay::initStyle()
         "    background-color: transparent;"
         "    font-style: italic;"
         "}"
-    ).arg(themeColor).arg(themeHover).arg(cardBg).arg(cardBorder).arg(barBg).arg(textColor);
+    ).arg(accentColor).arg(accentEnd).arg(cardBg).arg(cardBorder).arg(barBg).arg(textColor);
 
     setStyleSheet(style);
 }

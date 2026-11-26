@@ -19,6 +19,7 @@
 #include <QUrl>
 
 #include "AppVersion.h"
+#include "utils/trust/LogSanitizer.h"
 
 namespace {
 
@@ -69,8 +70,10 @@ void FeedbackService::submitFeedback(const FeedbackDraft &draft,
         body.insert(QStringLiteral("expected"), draft.expected);
     if (!draft.actual.isEmpty())
         body.insert(QStringLiteral("actual"), draft.actual);
+    // 日志里常带用户名、邮箱、IP 和令牌：发给服务器前先脱敏
+    // （只改上传的副本，用户输入框里的内容保持原样）
     if (!draft.logs.isEmpty())
-        body.insert(QStringLiteral("logs"), draft.logs);
+        body.insert(QStringLiteral("logs"), LogSanitizer::sanitize(draft.logs));
     if (!draft.screenshots.isEmpty())
         body.insert(QStringLiteral("screenshots"), draft.screenshots);
     if (!draft.scene.isEmpty())
@@ -97,7 +100,9 @@ void FeedbackService::uploadLogFile(const QString &filePath,
             onFail(tr("打不开日志文件，请稍后再试"), 0);
         return;
     }
-    const QByteArray data = file.readAll();
+    // 上传前脱敏：日志里的用户名、邮箱、IP、令牌等隐私片段一律换成占位符。
+    // 只处理内存里的这份数据，用户本地的日志文件保持原样（不改用户的文件）。
+    const QByteArray data = LogSanitizer::sanitizeBytes(file.readAll());
     file.close();
     const QString name = QFileInfo(filePath).fileName();
 

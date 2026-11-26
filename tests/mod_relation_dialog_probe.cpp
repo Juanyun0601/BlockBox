@@ -49,6 +49,31 @@ void savePng(QWidget *widget, const QString &path)
             ok ? "ok" : "FAILED");
 }
 
+/// 底部统计行由「概览 + 名称 + 若干数量胶囊」拼成，断言时合并成一段文字
+QString summaryText(QWidget *root)
+{
+    QStringList parts;
+    const QList<QLabel *> labels = root->findChildren<QLabel *>();
+    for (QLabel *label : labels)
+    {
+        const QString name = label->objectName();
+        if (name == QStringLiteral("relationSummaryLabel")
+            || name == QStringLiteral("relationCurrentLabel")
+            || name.startsWith(QStringLiteral("relationStatChip")))
+        {
+            if (!label->text().isEmpty())
+                parts << label->text();
+        }
+    }
+    return parts.join(QStringLiteral("  "));
+}
+
+bool summaryChipVisible(QWidget *root, const QString &objectName)
+{
+    auto *chip = root->findChild<QLabel *>(objectName);
+    return chip && chip->isVisible() && !chip->text().isEmpty();
+}
+
 ModInfo makeMod(const QString &name, const QString &id, const QString &version)
 {
     ModInfo info;
@@ -124,7 +149,11 @@ int main(int argc, char *argv[])
         expect("Fabric API 无前置", tree->topLevelItem(0)->text(0).contains(QStringLiteral("（0）")));
         expect("Fabric API 被 4 个模组依赖", tree->topLevelItem(1)->text(0).contains(QStringLiteral("（4）")));
     }
-    expect("汇总行包含前置/被依赖统计", summary && summary->text().contains(QStringLiteral("被 4 个模组依赖")));
+    expect("汇总行包含前置/被依赖统计",
+           summaryText(&dialog).contains(QStringLiteral("被 4 个模组依赖")));
+    expect("列表行显示名称与版本两行信息",
+           list && list->item(0)->data(Qt::UserRole + 201).toString() == QStringLiteral("Fabric API")
+               && list->item(0)->data(Qt::UserRole + 202).toString() == QStringLiteral("0.100.0"));
     savePng(&dialog, shotDir + QStringLiteral("/mod_relation_tree_fabric.png"));
 
     // 切到关系图模式
@@ -153,7 +182,7 @@ int main(int argc, char *argv[])
         QThread::msleep(20);
         QApplication::processEvents();
     }
-    expect("图内点击后汇总切到 Sodium", summary && summary->text().contains(QStringLiteral("Sodium")));
+    expect("图内点击后汇总切到 Sodium", summaryText(&dialog).contains(QStringLiteral("Sodium")));
     expect("Sodium 有 2 个前置", tree && tree->topLevelItem(0)->text(0).contains(QStringLiteral("（2）")));
     if (tree && tree->topLevelItem(0)->childCount() == 2)
     {
@@ -164,26 +193,20 @@ int main(int argc, char *argv[])
 
     // 真实鼠标点击关系图右侧第一个「被依赖」节点：Sodium 的被依赖是 Reese's Sodium Options
     auto *graph2 = dialog.findChild<ModRelationGraphWidget *>();
+    expect("关系图提供节点矩形用于定位", graph2 && graph2->nodeRect(2, 0).isValid());
     if (graph2)
     {
-        // 布局常量对齐 ModRelationDialog.cpp：三列 170 宽、列距 64、边距 20；
-        // Sodium 只有 1 个被依赖节点，点第三列中心
-        const int contentW = 170 * 3 + 64 * 2;
-        const int gw = graph2->width();
-        const int gh = graph2->height();
-        const int leftX = qMax(20, (gw - contentW) / 2);
-        const int y0 = qMax(20, gh / 2 - 23);
-        const QPoint nodeCenter(leftX + 2 * (170 + 64) + 85, y0 + 23);
-        QTest::mouseClick(graph2, Qt::LeftButton, Qt::NoModifier, nodeCenter);
+        const QRectF target = graph2->nodeRect(2, 0);
+        QTest::mouseClick(graph2, Qt::LeftButton, Qt::NoModifier, target.center().toPoint());
         for (int k = 0; k < 10; ++k)
         {
             QThread::msleep(20);
             QApplication::processEvents();
         }
         expect("真实点击被依赖节点切到 Reese's Sodium Options",
-               summary && summary->text().contains(QStringLiteral("Reese's Sodium Options")));
+               summaryText(&dialog).contains(QStringLiteral("Reese's Sodium Options")));
         expect("点击后汇总显示 1 个前置",
-               summary && summary->text().contains(QStringLiteral("前置 1 个")));
+               summaryText(&dialog).contains(QStringLiteral("前置 1 个")));
     }
 
     // 左侧列表点选 Xaero's Minimap：包含未安装前置
@@ -212,6 +235,11 @@ int main(int argc, char *argv[])
     {
         expect("Xaero 有 2 个前置条目", false);
     }
+    expect("缺失数量以红色胶囊显示",
+           summaryChipVisible(&dialog, QStringLiteral("relationStatChipDanger"))
+               && dialog.findChild<QLabel *>(QStringLiteral("relationStatChipDanger"))
+                      ->text()
+                      .contains(QStringLiteral("缺失 1 个")));
 
     // 切回依赖树模式截图（带缺失前置的场景）
     QPushButton *treeBtn = nullptr;
@@ -228,9 +256,68 @@ int main(int argc, char *argv[])
     expect("切回依赖树模式", stack && stack->currentIndex() == 0);
     savePng(&dialog, shotDir + QStringLiteral("/mod_relation_tree_xaero.png"));
 
+    // 分组标题左侧的自绘箭头可以收起 / 展开（关系树已改为自绘分支装饰）
+    if (tree && tree->topLevelItemCount() > 0)
+    {
+        QTreeWidgetItem *section = tree->topLevelItem(0);
+        const QRect r = tree->visualItemRect(section);
+        const QPoint chevron(r.left() - tree->indentation() / 2 - 1, r.center().y());
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, chevron);
+        for (int k = 0; k < 6; ++k)
+        {
+            QThread::msleep(20);
+            QApplication::processEvents();
+        }
+        expect("点击分组箭头可收起前置依赖", !section->isExpanded());
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, chevron);
+        for (int k = 0; k < 6; ++k)
+        {
+            QThread::msleep(20);
+            QApplication::processEvents();
+        }
+        expect("再次点击可展开前置依赖", section->isExpanded());
+    }
+
+    // 选中一条依赖：真实点击一行，验证整行选中底色（不会像以前那样被拆成一段段小胶囊）
+    if (tree && tree->topLevelItem(0)->childCount() > 1)
+    {
+        const QRect rowRect = tree->visualItemRect(tree->topLevelItem(0)->child(1));
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          rowRect.center());
+        for (int k = 0; k < 6; ++k)
+        {
+            QThread::msleep(20);
+            QApplication::processEvents();
+        }
+        expect("点击依赖条目后整行选中",
+               tree->currentItem() == tree->topLevelItem(0)->child(1)
+                   && tree->currentItem()->isSelected());
+        savePng(&dialog, shotDir + QStringLiteral("/mod_relation_tree_selected.png"));
+    }
+
+    // 关系图模式再截一张（带缺失前置与空列占位）
+    if (graphBtn)
+        graphBtn->click();
+    for (int k = 0; k < 10; ++k)
+    {
+        QThread::msleep(20);
+        QApplication::processEvents();
+    }
+    expect("关系图展示缺失前置节点",
+           graph && graph->nodeRect(0, 0).isValid());
+    savePng(&dialog, shotDir + QStringLiteral("/mod_relation_graph_xaero.png"));
+
     // 深色主题：验证关系图与树的配色适配（令牌色应随主题翻转）
     if (ThemeManager::instance())
         ThemeManager::instance()->loadTheme(ThemeManager::DarkTheme);
+    for (int k = 0; k < 10; ++k)
+    {
+        QThread::msleep(20);
+        QApplication::processEvents();
+    }
+    savePng(&dialog, shotDir + QStringLiteral("/mod_relation_graph_xaero_dark.png"));
+    if (treeBtn)
+        treeBtn->click();
     for (int k = 0; k < 10; ++k)
     {
         QThread::msleep(20);

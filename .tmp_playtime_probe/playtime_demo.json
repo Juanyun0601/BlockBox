@@ -1,0 +1,266 @@
+{
+    "instances": {
+        "D:/Games/.minecraft/versions/1.20.1-Forge": {
+            "last": 1794000000,
+            "loader": "Forge",
+            "name": "1.20.1-Forge",
+            "version": "1.20.1"
+        },
+        "D:/Games/.minecraft/versions/1.21.9-Fabric": {
+            "last": 1795000000,
+            "loader": "Fabric",
+            "name": "1.21.9-Fabric",
+            "version": "1.21.9"
+        }
+    },
+    "meta": {
+        "first_day": "2024-03-02",
+        "last_day": "2026-11-25",
+        "last_sync_at": 0,
+        "launches": 22,
+        "sessions": 22
+    },
+    "sessions": [
+        {
+            "end": 1795615800,
+            "id": "demo-0-7200",
+            "instance_name": "1.21.9-Fabric",
+            "instance_path": "D:/Games/.minecraft/versions/1.21.9-Fabric",
+            "loader": "Fabric",
+            "room_id": 0,
+            "save": "æµ·è¾¹çæ©¡æ¨å°å±",
+            "seconds": 7200,
+            "start": 1795608600,
+            "synced": false,
+            "version": "1.21.9"
+        },
+        {
+            "end": 1795527600,
+            "id": "demo-1-5400",
+            "instance_name": "1.21.9-Fabric",
+            "instance_path": "D:/Games/.minecraft/versions/1.21.9-Fabric",
+            "loader": "Fabric",
+            "room_id": 0,
+            "save": "ççµåºå°",
+            "seconds": 5400,
+            "start": 1795522200,
+            "synced": false,
+            "version": "1.21.9"
+        },
+        {
+            "end": 1795353000,
+            "id": "demo-3-3600",
+            "instance_name": "1.20.1-Forge",
+            "instance_path": "D:/Games/.minecraft/versions/1.20.1-Forge",
+            "loader": "Forge",
+            "room_id": 12882,
+            "save": "",
+            "seconds": 3600,
+            "start": 1795349400,
+            "synced": false,
+            "version": "1.20.1"
+        },
+        {
+            "end": 1795273800,
+            "id": "demo-4-10800",
+            "instance_name": "1.20.1-Forge",
+            "instance_path": "D:/Games/.minecraft/versions/1.20.1-Forge",
+            "loader": "Forge",
+            "room_id": 0,
+            "save": "æçä¸ççå­",
+            "seconds": 10800,
+            "start": 1795263000,
+            "synced": false,
+            "version": "1.20.1"
+        },
+        {
+            "end": 1795092900,
+            "id": "demo-6-2700",
+            "instance_name": "1.21.9-Fabric",
+            "instance_path": "D:/Games/.minecraft/versions/1.21.9-Fabric",
+            "loader": "Fabric",
+            "room_id": 0,
+            "save": "åé é£è¡è¯éªåº",
+            "seconds": 2700,
+            "start": 1795090200,
+            "synced": false,
+            "version": "1.21.9"
+        },
+        {
+            "end": 1794840000,
+            "id": "demo-9-9000",
+            "instance_name": "1.21.9-Fabric",
+            "instance_path": "D:/Games/.minecraft/versions/1.21.9-Fabric",
+            "loader": "Fabric",
+            "room_id": 0,
+            "save": "ç©ºå²ææ",
+            "seconds": 9000,
+            "start": 1794831000,
+            "synced": false,
+            "version": "1.21.9"
+        }
+    ],
+    "version": 1,
+    "years": {
+        "2025": {
+            "day_sessions": {
+                "2025-01-12": 2,
+                "2025-02-12": 2,
+                "2025-03-12": 2,
+                "2025-04-12": 2,
+                "2025-05-12": 1,
+                "2025-06-12": 2,
+                "2025-07-12": 2,
+                "2025-08-12": 2,
+                "2025-09-12": 2,
+                "2025-10-12": 1,
+                "2025-11-12": 2,
+                "2025-12-12": 2
+            },
+            "days": {
+                "2025-01-12": 7200,
+                "2025-02-12": 10800,
+                "2025-03-12": 14400,
+                "2025-04-12": 18000,
+                "2025-05-12": 3600,
+                "2025-06-12": 7200,
+                "2025-07-12": 10800,
+                "2025-08-12": 14400,
+                "2025-09-12": 18000,
+                "2025-10-12": 3600,
+                "2025-11-12": 7200,
+                "2025-12-12": 10800
+            },
+            "first": "2025-01-12",
+            "hours": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                8400,
+                21000,
+                42000,
+                21000,
+                8400
+            ],
+            "instance_sessions": {
+                "1.20.1-Forge": 1
+            },
+            "instances": {
+                "1.20.1-Forge": 84000
+            },
+            "last": "2025-12-12",
+            "launches": 12,
+            "longest": {
+                "day": "2025-12-12",
+                "instance": "1.20.1-Forge",
+                "seconds": 12600
+            },
+            "seconds": 126000,
+            "sessions": 12,
+            "weekdays": [
+                12600,
+                15750,
+                18000,
+                21000,
+                25200,
+                31500,
+                14000
+            ]
+        },
+        "2026": {
+            "day_sessions": {
+                "2026-11-12": 2,
+                "2026-11-13": 2,
+                "2026-11-14": 2,
+                "2026-11-15": 1,
+                "2026-11-17": 2,
+                "2026-11-18": 2,
+                "2026-11-20": 2,
+                "2026-11-21": 2,
+                "2026-11-23": 1,
+                "2026-11-24": 2
+            },
+            "days": {
+                "2026-11-12": 5400,
+                "2026-11-13": 6600,
+                "2026-11-14": 8100,
+                "2026-11-15": 3000,
+                "2026-11-17": 9000,
+                "2026-11-18": 6300,
+                "2026-11-20": 4500,
+                "2026-11-21": 10800,
+                "2026-11-23": 3600,
+                "2026-11-24": 7200
+            },
+            "first": "2026-11-12",
+            "hours": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                4300,
+                10750,
+                21500,
+                10750,
+                4300,
+                0
+            ],
+            "instance_sessions": {
+                "1.20.1-Forge": 1,
+                "1.21.9-Fabric": 9
+            },
+            "instances": {
+                "1.20.1-Forge": 2500,
+                "1.21.9-Fabric": 62000
+            },
+            "last": "2026-11-24",
+            "launches": 10,
+            "longest": {
+                "day": "2026-11-24",
+                "instance": "1.21.9-Fabric",
+                "seconds": 12600
+            },
+            "seconds": 64500,
+            "sessions": 10,
+            "weekdays": [
+                6450,
+                8062,
+                9214,
+                10750,
+                12900,
+                16125,
+                7166
+            ]
+        }
+    }
+}

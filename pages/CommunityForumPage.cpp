@@ -268,6 +268,15 @@ void CommunityForumPage::buildUi()
     connect(m_friendsButton, &QPushButton::clicked, this, &CommunityForumPage::friendsOpenRequested);
     heroBottomRow->addWidget(m_friendsButton);
 
+    // 我的主页：看自己的资料、关注和粉丝名单（登录后显示）
+    m_myProfileButton = new QPushButton(tr("我的主页"), hero);
+    m_myProfileButton->setObjectName(QStringLiteral("communityHeroButton"));
+    m_myProfileButton->setCursor(Qt::PointingHandCursor);
+    m_myProfileButton->setFixedHeight(30);
+    connect(m_myProfileButton, &QPushButton::clicked, this,
+            &CommunityForumPage::myProfileRequested);
+    heroBottomRow->addWidget(m_myProfileButton);
+
     // 通知 / 登录：按登录态显示其中一个
     m_notifyButton = new QPushButton(tr("通知"), hero);
     m_notifyButton->setObjectName(QStringLiteral("communityHeroButton"));
@@ -369,6 +378,30 @@ void CommunityForumPage::buildUi()
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(12);
 
+    auto *eventCard = new QFrame(rightColumn);
+    eventCard->setObjectName(QStringLiteral("communityEventCard"));
+    auto *eventLayout = new QVBoxLayout(eventCard);
+    eventLayout->setContentsMargins(16, 14, 16, 14);
+    eventLayout->setSpacing(6);
+    eventLayout->addWidget(makeSectionTitle(tr("社区活动"), eventCard));
+    auto *eventName = new QLabel(tr("社区创作激励季"), eventCard);
+    eventName->setObjectName(QStringLiteral("communityEventName"));
+    eventLayout->addWidget(eventName);
+    eventLayout->addWidget(makeMutedLabel(tr("11 月 22 日 — 12 月 6 日"), eventCard));
+    auto *eventPoints = new QLabel(
+        tr("发帖 / 问答 +100 方块，资源 / 教程 / 导航 +500；浏览 +5、下载 +20。"), eventCard);
+    eventPoints->setObjectName(QStringLiteral("communityEventPoints"));
+    eventPoints->setWordWrap(true);
+    eventLayout->addWidget(eventPoints);
+    auto *eventButton = new QPushButton(tr("查看活动详情 →"), eventCard);
+    eventButton->setObjectName(QStringLiteral("communityLobbyLink"));
+    eventButton->setCursor(Qt::PointingHandCursor);
+    eventButton->setFlat(true);
+    eventButton->setFixedHeight(26);
+    connect(eventButton, &QPushButton::clicked, this, [this]() { openUrl(QStringLiteral("/activity.html")); });
+    eventLayout->addWidget(eventButton, 0, Qt::AlignLeft);
+    rightLayout->addWidget(eventCard);
+
     auto *summaryCard = makeCard(rightColumn);
     auto *summaryLayout = new QVBoxLayout(summaryCard);
     summaryLayout->setContentsMargins(16, 14, 16, 14);
@@ -432,6 +465,8 @@ void CommunityForumPage::updateHeroButtons()
     const bool loggedIn = ForumAccountService::instance()->isLoggedIn();
     if (m_friendsButton)
         m_friendsButton->setVisible(loggedIn);
+    if (m_myProfileButton)
+        m_myProfileButton->setVisible(loggedIn);
     if (m_notifyButton)
         m_notifyButton->setVisible(loggedIn);
     if (m_loginButton)
@@ -879,9 +914,13 @@ void CommunityForumPage::showLobbyPage()
         m_lobbyPage->refresh();
 }
 
-void CommunityForumPage::hideLobbyPage()
+void CommunityForumPage::openLobby()
 {
-    if (!m_lobbyOverlay)
+    showLobbyPage();
+}
+
+void CommunityForumPage::hideLobbyPage()
+{    if (!m_lobbyOverlay)
         return;
 
     // 子页面里还开着房间详情时一起收起来，下次进大厅不会停在旧详情上

@@ -36,6 +36,7 @@ enum class TaskType
     ContentDownload,   ///< 实例资源下载（模组 / 资源包 / 光影 / 存档等）
     JavaDownload,      ///< Java 运行时下载
     LanTransfer,       ///< 局域网传输
+    ChatP2P,           ///< 聊天文件直传（好友私聊 P2P）
     AiModel,           ///< AI 模型下载
     SystemTool,        ///< 系统组件下载
     RuntimeDependency  ///< 运行依赖安装

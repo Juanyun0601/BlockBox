@@ -11,6 +11,7 @@
 #include <QColor>
 #include <QFile>
 #include <QFileInfo>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
@@ -19,15 +20,20 @@
 #include <QPair>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QVector>
 #include <QFileDialog>
 #include "components/NotificationManager.h"
 #include "components/ForumKit.h"
+#include "components/ForumCarouselEditor.h"
+#include "components/ForumTagEditor.h"
+#include "components/MasonryContentCard.h"
 #include "components/PublishKit.h"
 #include "components/QuizDialog.h"
 #include "components/CommunityAgreementDialog.h"
@@ -47,12 +53,34 @@ constexpr int kContentLimit = 20000;
 constexpr qint64 kMaxPluginBytes = 20 * 1024 * 1024;
 /** 与服务端 maxSchematicBytes 一致；投影文件比插件包大得多，放宽到 50 MB */
 constexpr qint64 kMaxSchematicBytes = 50 * 1024 * 1024;
+/** 与服务端 MAX_SCHEMATIC_FILES 一致：一帖最多挂几份投影（主世界 / 下界…） */
+constexpr int kMaxSchematicFiles = 8;
+/** 与服务端 MAX_SCHEMATIC_LABEL 一致：版本名最长多少字 */
+constexpr int kMaxSchematicLabel = 20;
+/** 只用改后缀挡不住手滑：本地也认这几种投影扩展名 */
+const QStringList kSchematicExtensions = {
+    QStringLiteral("litematic"), QStringLiteral("schem"), QStringLiteral("schematic"),
+    QStringLiteral("nbt"),
+};
 /** 插件分享板块：资源→插件 的帖子发到这里，「插件与开发」只留讨论 */
 constexpr auto kPluginShareBoardSlug = "plugin-share";
 /** 投影分享板块：资源→投影 的帖子发到这里，普通帖子里也不提供 */
 constexpr auto kSchematicShareBoardSlug = "schematic-share";
 /** 教程分享板块：教程帖固定发到这里，与网页版同一口径 */
 constexpr auto kTutorialShareBoardSlug = "tutorial-share";
+/** 有奖问答板块：问答帖固定发到这里，普通发帖的下拉里不提供 */
+constexpr auto kQuestionBoardSlug = "qa";
+/** 网站导航板块：导航→网站 的帖子固定发到这里，普通发帖的下拉里不提供 */
+constexpr auto kWebsiteNavBoardSlug = "website-nav";
+/** 服务器导航板块：导航→服务器 的帖子固定发到这里，普通发帖的下拉里不提供 */
+constexpr auto kServerNavBoardSlug = "server-nav";
+/** 与服务端一致：导航帖的网址最多 500 字 */
+constexpr int kMaxNavigationUrlLength = 500;
+/** 有奖问答固定的赏金范围（与服务端 BOUNTY_MIN / BOUNTY_MAX 一致） */
+constexpr int kMinBounty = 1;
+constexpr int kMaxBounty = 500;
+/** 默认悬赏 10 方块，和「10 个方块」的常见玩法对齐 */
+constexpr int kDefaultBounty = 10;
 /** 与服务端 maxFileBytes 一致：教程资料附件单个上限 50 MB */
 constexpr qint64 kMaxAttachmentBytes = 50 * 1024 * 1024;
 /** 与服务端一致：一帖最多 10 个资料附件 */
@@ -64,12 +92,17 @@ const QStringList kAttachmentExtensions = {
     QStringLiteral("json"), QStringLiteral("csv"), QStringLiteral("log"),
     QStringLiteral("mp3"), QStringLiteral("wav"), QStringLiteral("ogg"),
 };
+
+/** 论坛热门标签缓存：发布页反复打开时只拉一次，失败也不反复打扰论坛 */
+QVector<QPair<QString, int>> s_popularTags;
+bool s_popularTagsRequested = false;
 } // namespace
 
 ForumComposerPage::ForumComposerPage(QWidget *parent)
     : QWidget(parent)
 {
     buildUi();
+    loadTagSuggestions();
 
     connect(ForumAccountService::instance(), &ForumAccountService::userChanged, this,
             &ForumComposerPage::updateState);
@@ -167,12 +200,32 @@ void ForumComposerPage::buildUi()
     m_tutorialModeButton->setToolTip(tr("写教程：固定发到「教程分享」，正文自动生成目录，可挂资料附件"));
     modeLayout->addWidget(m_tutorialModeButton, 1);
 
+    m_questionModeButton = new QPushButton(tr("问答"), m_modeBar);
+    m_questionModeButton->setObjectName(QStringLiteral("composerSegBtn"));
+    m_questionModeButton->setCheckable(true);
+    m_questionModeButton->setAutoExclusive(true);
+    m_questionModeButton->setCursor(Qt::PointingHandCursor);
+    m_questionModeButton->setToolTip(tr("有奖问答：先支付方块赏金，回答盖楼后你采纳哪一层，赏金就发给谁"));
+    modeLayout->addWidget(m_questionModeButton, 1);
+
+    m_navigationModeButton = new QPushButton(tr("导航"), m_modeBar);
+    m_navigationModeButton->setObjectName(QStringLiteral("composerSegBtn"));
+    m_navigationModeButton->setCheckable(true);
+    m_navigationModeButton->setAutoExclusive(true);
+    m_navigationModeButton->setCursor(Qt::PointingHandCursor);
+    m_navigationModeButton->setToolTip(tr("发导航：分享一个好网站或服务器地址，点开就能一键直达"));
+    modeLayout->addWidget(m_navigationModeButton, 1);
+
     connect(m_postModeButton, &QPushButton::clicked, this,
             [this]() { setMode(Mode::Post); });
     connect(m_resourceModeButton, &QPushButton::clicked, this,
             [this]() { setMode(Mode::Resource); });
     connect(m_tutorialModeButton, &QPushButton::clicked, this,
             [this]() { setMode(Mode::Tutorial); });
+    connect(m_questionModeButton, &QPushButton::clicked, this,
+            [this]() { setMode(Mode::Question); });
+    connect(m_navigationModeButton, &QPushButton::clicked, this,
+            [this]() { setMode(Mode::Navigation); });
     formLayout->addWidget(m_modeBar);
 
     auto *formCard = ForumKit::makeCard(m_formHost);
@@ -242,6 +295,150 @@ void ForumComposerPage::buildUi()
     kindRowLayout->addWidget(kindHint);
     cardLayout->addWidget(m_kindRow);
 
+    // ── 导航行（导航模式）：选类型（网站 / 服务器），再填要分享的网址 ──
+    m_navRow = new QWidget(formCard);
+    m_navRow->setAttribute(Qt::WA_StyledBackground, false);
+    auto *navRowLayout = new QVBoxLayout(m_navRow);
+    navRowLayout->setContentsMargins(0, 0, 0, 0);
+    navRowLayout->setSpacing(6);
+    navRowLayout->addWidget(ForumKit::makeMuted(m_navRow, tr("导航类型")));
+
+    auto *navTypeChipsHost = new QWidget(m_navRow);
+    navTypeChipsHost->setAttribute(Qt::WA_StyledBackground, false);
+    auto *navTypeChipsLayout = new QHBoxLayout(navTypeChipsHost);
+    navTypeChipsLayout->setContentsMargins(0, 0, 0, 0);
+    navTypeChipsLayout->setSpacing(8);
+
+    // 类型清单：以后加新导航类型，往这里补一条即可（slug 与服务端 thread_navigations.kind 对齐）
+    const QVector<QPair<QString, QString>> navigationKinds = {
+        { QStringLiteral("website"), tr("网站") },
+        { QStringLiteral("server"), tr("服务器") },
+    };
+    for (const auto &kind : navigationKinds)
+    {
+        auto *chip = new QPushButton(kind.second, navTypeChipsHost);
+        chip->setObjectName(QStringLiteral("forumSortButton"));
+        chip->setCheckable(true);
+        chip->setAutoExclusive(true);
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setFixedHeight(26);
+        chip->setProperty("kindSlug", kind.first);
+        connect(chip, &QPushButton::clicked, this, [this, slug = kind.first]() {
+            m_navKind = slug;
+            applyMode();
+        });
+        navTypeChipsLayout->addWidget(chip);
+        m_navTypeButtons.append(chip);
+    }
+    navTypeChipsLayout->addStretch(1);
+    navRowLayout->addWidget(navTypeChipsHost);
+
+    m_navUrlEdit = new QLineEdit(m_navRow);
+    m_navUrlEdit->setObjectName(QStringLiteral("forumField"));
+    m_navUrlEdit->setClearButtonEnabled(true);
+    navRowLayout->addWidget(m_navUrlEdit);
+
+    auto *navHint = new QLabel(
+        tr("网站帖发到「网站导航」板块、服务器帖发到「服务器导航」板块：填好网址、标题和介绍就能发布，详情页支持一键打开与复制地址"),
+        m_navRow);
+    navHint->setObjectName(QStringLiteral("forumMuted"));
+    navHint->setWordWrap(true);
+    navRowLayout->addWidget(navHint);
+    cardLayout->addWidget(m_navRow);
+
+    // ── 赏金卡（问答模式）：发布时先从余额里托管，采纳后发给回答者 ──
+    auto *bountyPanel = new QFrame(formCard);
+    bountyPanel->setObjectName(QStringLiteral("forumBountyPanel"));
+    m_bountyRow = bountyPanel;
+    auto *bountyRowLayout = new QVBoxLayout(bountyPanel);
+    bountyRowLayout->setContentsMargins(16, 14, 16, 14);
+    bountyRowLayout->setSpacing(9);
+
+    // 标题行：左边「🎁 悬赏方块」，右边当前余额小胶囊
+    auto *bountyTitleRow = new QHBoxLayout();
+    bountyTitleRow->setContentsMargins(0, 0, 0, 0);
+    bountyTitleRow->setSpacing(8);
+    auto *bountyTitle = new QLabel(tr("🎁 悬赏方块"), bountyPanel);
+    bountyTitle->setObjectName(QStringLiteral("forumBountyTitle"));
+    bountyTitleRow->addWidget(bountyTitle);
+    bountyTitleRow->addStretch(1);
+    m_bountyBalanceLabel = new QLabel(bountyPanel);
+    m_bountyBalanceLabel->setObjectName(QStringLiteral("forumBountyBalance"));
+    m_bountyBalanceLabel->setFixedHeight(22);
+    m_bountyBalanceLabel->setAlignment(Qt::AlignCenter);
+    bountyTitleRow->addWidget(m_bountyBalanceLabel);
+    bountyRowLayout->addLayout(bountyTitleRow);
+
+    auto *bountyInputRow = new QHBoxLayout();
+    bountyInputRow->setContentsMargins(0, 0, 0, 0);
+    bountyInputRow->setSpacing(10);
+    m_bountySpin = new QSpinBox(bountyPanel);
+    m_bountySpin->setObjectName(QStringLiteral("forumBountySpin"));
+    m_bountySpin->setRange(kMinBounty, kMaxBounty);
+    m_bountySpin->setValue(kDefaultBounty);
+    m_bountySpin->setSingleStep(5);
+    m_bountySpin->setSuffix(tr(" 方块"));
+    // 数字输入不做上下箭头：右边那排快捷金额更好点，也不用挤两个小方块
+    m_bountySpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    m_bountySpin->setFixedHeight(40);
+    m_bountySpin->setFixedWidth(160);
+    m_bountySpin->setToolTip(tr("悬赏 %1~%2 个方块").arg(kMinBounty).arg(kMaxBounty));
+    bountyInputRow->addWidget(m_bountySpin);
+
+    auto *bountyInlineHint = new QLabel(tr("发布时从余额托管，采纳后当场发给回答者"), bountyPanel);
+    bountyInlineHint->setObjectName(QStringLiteral("forumMuted"));
+    bountyInlineHint->setWordWrap(true);
+    bountyInputRow->addWidget(bountyInlineHint, 1);
+    bountyRowLayout->addLayout(bountyInputRow);
+
+    // 快捷金额：和网页版发帖页同一排 5 / 10 / 20 / 50
+    auto *bountyChipsRow = new QHBoxLayout();
+    bountyChipsRow->setContentsMargins(0, 0, 0, 0);
+    bountyChipsRow->setSpacing(8);
+    auto *chipsLabel = new QLabel(tr("快捷"), bountyPanel);
+    chipsLabel->setObjectName(QStringLiteral("forumMuted"));
+    bountyChipsRow->addWidget(chipsLabel);
+    for (int amount : { 5, 10, 20, 50 })
+    {
+        auto *chip = new QPushButton(QString::number(amount), bountyPanel);
+        chip->setObjectName(QStringLiteral("forumBountyChip"));
+        chip->setCheckable(true);
+        chip->setAutoExclusive(true);
+        chip->setCursor(Qt::PointingHandCursor);
+        chip->setFixedHeight(26);
+        chip->setProperty("amount", amount);
+        connect(chip, &QPushButton::clicked, this, [this, amount]() {
+            if (m_bountySpin)
+                m_bountySpin->setValue(amount);
+        });
+        bountyChipsRow->addWidget(chip);
+        m_bountyChips.append(chip);
+    }
+    bountyChipsRow->addStretch(1);
+    bountyRowLayout->addLayout(bountyChipsRow);
+
+    // 默认 10 方块对应的快捷按钮先高亮
+    for (QPushButton *chip : m_bountyChips)
+        chip->setChecked(chip->property("amount").toInt() == kDefaultBounty);
+
+    m_bountyHintLabel = new QLabel(
+        tr("30 天内没采纳，赏金自动发给点赞最多的回答；一层回答都没有则原路退回你的账户"),
+        bountyPanel);
+    m_bountyHintLabel->setObjectName(QStringLiteral("forumMuted"));
+    m_bountyHintLabel->setWordWrap(true);
+    bountyRowLayout->addWidget(m_bountyHintLabel);
+    cardLayout->addWidget(m_bountyRow);
+
+    connect(m_bountySpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        for (QPushButton *chip : m_bountyChips)
+        {
+            if (chip)
+                chip->setChecked(chip->property("amount").toInt() == value);
+        }
+        if (m_mode == Mode::Question && m_submitButton)
+            m_submitButton->setText(tr("发布问答（托管 %1 方块）").arg(value));
+    });
+
     // ── 插件附件卡片（资源模式的「插件」分类才显示） ──
     m_pluginCard = ForumKit::makeCard(formCard);
     auto *pluginLayout = new QHBoxLayout(m_pluginCard);
@@ -285,44 +482,31 @@ void ForumComposerPage::buildUi()
     cardLayout->addWidget(m_pluginCard);
 
     // ── 投影附件卡片（资源模式的「投影」分类才显示） ──
+    // 同一个建筑常要分维度发：主世界一份、下界一份，还能各自起名。
     m_schematicCard = ForumKit::makeCard(formCard);
-    auto *schematicLayout = new QHBoxLayout(m_schematicCard);
+    auto *schematicLayout = new QVBoxLayout(m_schematicCard);
     schematicLayout->setContentsMargins(12, 10, 12, 10);
-    schematicLayout->setSpacing(10);
-    m_schematicIconLabel = new QLabel(m_schematicCard);
-    m_schematicIconLabel->setFixedSize(40, 40);
-    m_schematicIconLabel->setAlignment(Qt::AlignCenter);
-    m_schematicIconLabel->setStyleSheet(QStringLiteral(
-        "background:@BG_MUTED@;border:1px solid @BORDER@;border-radius:8px;"));
-    schematicLayout->addWidget(m_schematicIconLabel);
-    auto *schematicTextLayout = new QVBoxLayout();
-    schematicTextLayout->setSpacing(2);
-    m_schematicNameLabel = new QLabel(m_schematicCard);
-    m_schematicNameLabel->setObjectName(QStringLiteral("forumStatus"));
-    m_schematicNameLabel->setWordWrap(true);
-    schematicTextLayout->addWidget(m_schematicNameLabel);
-    m_schematicMetaLabel = new QLabel(m_schematicCard);
-    m_schematicMetaLabel->setObjectName(QStringLiteral("forumStatus"));
-    m_schematicMetaLabel->setWordWrap(true);
-    schematicTextLayout->addWidget(m_schematicMetaLabel);
+    schematicLayout->setSpacing(8);
+    m_schematicRowsLayout = new QVBoxLayout();
+    m_schematicRowsLayout->setContentsMargins(0, 0, 0, 0);
+    m_schematicRowsLayout->setSpacing(8);
+    schematicLayout->addLayout(m_schematicRowsLayout);
+    auto *schematicButtonRow = new QHBoxLayout();
+    schematicButtonRow->setContentsMargins(0, 0, 0, 0);
     m_schematicHintLabel = new QLabel(m_schematicCard);
     m_schematicHintLabel->setObjectName(QStringLiteral("forumStatus"));
     m_schematicHintLabel->setWordWrap(true);
-    schematicTextLayout->addWidget(m_schematicHintLabel);
-    schematicLayout->addLayout(schematicTextLayout, 1);
-    m_schematicRemoveButton = new QPushButton(tr("移除"), m_schematicCard);
-    m_schematicRemoveButton->setObjectName(QStringLiteral("forumGhostButton"));
-    m_schematicRemoveButton->setCursor(Qt::PointingHandCursor);
-    m_schematicRemoveButton->setFixedHeight(26);
-    connect(m_schematicRemoveButton, &QPushButton::clicked, this,
-            &ForumComposerPage::clearSchematicAttachment);
-    schematicLayout->addWidget(m_schematicRemoveButton);
+    schematicButtonRow->addWidget(m_schematicHintLabel, 1);
     m_schematicAddButton = new QPushButton(tr("添加投影文件…"), m_schematicCard);
     m_schematicAddButton->setObjectName(QStringLiteral("forumGhostButton"));
     m_schematicAddButton->setCursor(Qt::PointingHandCursor);
     m_schematicAddButton->setFixedHeight(26);
-    connect(m_schematicAddButton, &QPushButton::clicked, this, &ForumComposerPage::pickSchematicFile);
-    schematicLayout->addWidget(m_schematicAddButton);
+    m_schematicAddButton->setToolTip(
+        tr("可一次选多份：主世界、下界等各选一个，每份都能自己起名，最多 %1 份").arg(kMaxSchematicFiles));
+    connect(m_schematicAddButton, &QPushButton::clicked, this,
+            &ForumComposerPage::pickSchematicFiles);
+    schematicButtonRow->addWidget(m_schematicAddButton);
+    schematicLayout->addLayout(schematicButtonRow);
     m_schematicCard->setVisible(false);
     cardLayout->addWidget(m_schematicCard);
 
@@ -365,6 +549,118 @@ void ForumComposerPage::buildUi()
     linksLayout->addWidget(m_linksEditor);
     cardLayout->addWidget(m_linksRow);
 
+    // ── 作品来源行（资源模式才显示）：原创 / 转载二选一，转载要交代出处 ──
+    m_sourceRow = new QWidget(formCard);
+    m_sourceRow->setAttribute(Qt::WA_StyledBackground, false);
+    auto *sourceLayout = new QVBoxLayout(m_sourceRow);
+    sourceLayout->setContentsMargins(0, 0, 0, 0);
+    sourceLayout->setSpacing(6);
+    sourceLayout->addWidget(ForumKit::makeMuted(m_sourceRow, tr("作品来源")));
+
+    auto *sourceChipsRow = new QWidget(m_sourceRow);
+    sourceChipsRow->setAttribute(Qt::WA_StyledBackground, false);
+    auto *sourceChipsLayout = new QHBoxLayout(sourceChipsRow);
+    sourceChipsLayout->setContentsMargins(0, 0, 0, 0);
+    sourceChipsLayout->setSpacing(8);
+    m_originalSourceButton = new QPushButton(tr("原创"), sourceChipsRow);
+    m_originalSourceButton->setObjectName(QStringLiteral("forumSortButton"));
+    m_originalSourceButton->setCheckable(true);
+    m_originalSourceButton->setAutoExclusive(true);
+    m_originalSourceButton->setChecked(true);
+    m_originalSourceButton->setCursor(Qt::PointingHandCursor);
+    m_originalSourceButton->setFixedHeight(26);
+    m_originalSourceButton->setToolTip(tr("自己制作的作品"));
+    connect(m_originalSourceButton, &QPushButton::clicked, this,
+            &ForumComposerPage::updateRepostFields);
+    sourceChipsLayout->addWidget(m_originalSourceButton);
+    m_repostSourceButton = new QPushButton(tr("转载"), sourceChipsRow);
+    m_repostSourceButton->setObjectName(QStringLiteral("forumSortButton"));
+    m_repostSourceButton->setCheckable(true);
+    m_repostSourceButton->setAutoExclusive(true);
+    m_repostSourceButton->setCursor(Qt::PointingHandCursor);
+    m_repostSourceButton->setFixedHeight(26);
+    m_repostSourceButton->setToolTip(tr("分享别人做的作品：要填原作品链接和转载说明"));
+    connect(m_repostSourceButton, &QPushButton::clicked, this,
+            &ForumComposerPage::updateRepostFields);
+    sourceChipsLayout->addWidget(m_repostSourceButton);
+    sourceChipsLayout->addStretch(1);
+    sourceLayout->addWidget(sourceChipsRow);
+
+    // 转载的两栏：默认收起，点「转载」才展开
+    m_repostFields = new QWidget(m_sourceRow);
+    m_repostFields->setAttribute(Qt::WA_StyledBackground, false);
+    auto *repostLayout = new QVBoxLayout(m_repostFields);
+    repostLayout->setContentsMargins(0, 0, 0, 0);
+    repostLayout->setSpacing(6);
+    m_repostUrlEdit = new QLineEdit(m_repostFields);
+    m_repostUrlEdit->setObjectName(QStringLiteral("forumField"));
+    m_repostUrlEdit->setMaxLength(500);
+    m_repostUrlEdit->setPlaceholderText(tr("原作品链接（http:// 或 https:// 开头，必填）"));
+    repostLayout->addWidget(m_repostUrlEdit);
+    m_repostNoteEdit = new QLineEdit(m_repostFields);
+    m_repostNoteEdit->setObjectName(QStringLiteral("forumField"));
+    m_repostNoteEdit->setMaxLength(300);
+    m_repostNoteEdit->setPlaceholderText(tr("转载说明：原作者、来源或授权情况（必填）"));
+    repostLayout->addWidget(m_repostNoteEdit);
+    m_repostFields->setVisible(false);
+    sourceLayout->addWidget(m_repostFields);
+    cardLayout->addWidget(m_sourceRow);
+
+    // ── 轮播图卡片（资源 / 导航模式才显示）：图片或 B 站视频，展示在帖子顶部 ──
+    m_carouselCard = ForumKit::makeCard(formCard);
+    auto *carouselLayout = new QVBoxLayout(m_carouselCard);
+    carouselLayout->setContentsMargins(12, 10, 12, 10);
+    carouselLayout->setSpacing(6);
+    carouselLayout->addWidget(ForumKit::makeMuted(m_carouselCard, tr("轮播图")));
+    m_carouselEditor = new ForumCarouselEditor(m_carouselCard);
+    carouselLayout->addWidget(m_carouselEditor);
+    cardLayout->addWidget(m_carouselCard);
+
+    // ── 封面卡片（教程 / 资源 / 导航模式才显示）：板块瀑布流里的展示图 ──
+    // 只上传一张小图，板块列表按封面排瀑布流；配了 CDN 时列表直接向 CDN 取图
+    m_coverCard = ForumKit::makeCard(formCard);
+    auto *coverLayout = new QVBoxLayout(m_coverCard);
+    coverLayout->setContentsMargins(12, 10, 12, 10);
+    coverLayout->setSpacing(8);
+    coverLayout->addWidget(ForumKit::makeMuted(m_coverCard, tr("封面（板块瀑布流里展示的图）")));
+
+    auto *coverBody = new QHBoxLayout();
+    coverBody->setContentsMargins(0, 0, 0, 0);
+    coverBody->setSpacing(12);
+
+    m_coverPreviewLabel = new QLabel(m_coverCard);
+    m_coverPreviewLabel->setObjectName(QStringLiteral("forumCoverPreview"));
+    m_coverPreviewLabel->setFixedSize(192, 108);
+    m_coverPreviewLabel->setAlignment(Qt::AlignCenter);
+    m_coverPreviewLabel->setText(tr("还没选封面"));
+    m_coverPreviewLabel->setStyleSheet(StyleKit::resolve(QStringLiteral(
+        "QLabel#forumCoverPreview{background:@BG_MUTED@;border:1px solid @BORDER@;"
+        "border-radius:10px;color:@TEXT_MUTED@;font-size:12px;}")));
+    coverBody->addWidget(m_coverPreviewLabel, 0, Qt::AlignTop);
+
+    auto *coverSide = new QVBoxLayout();
+    coverSide->setContentsMargins(0, 0, 0, 0);
+    coverSide->setSpacing(6);
+    m_coverPickButton = new QPushButton(tr("选择图片…"), m_coverCard);
+    m_coverPickButton->setObjectName(QStringLiteral("forumGhostButton"));
+    m_coverPickButton->setCursor(Qt::PointingHandCursor);
+    m_coverPickButton->setFixedHeight(28);
+    connect(m_coverPickButton, &QPushButton::clicked, this, &ForumComposerPage::pickCoverImage);
+    coverSide->addWidget(m_coverPickButton, 0, Qt::AlignLeft);
+    m_coverClearButton = new QPushButton(tr("移除封面"), m_coverCard);
+    m_coverClearButton->setObjectName(QStringLiteral("forumGhostButton"));
+    m_coverClearButton->setCursor(Qt::PointingHandCursor);
+    m_coverClearButton->setFixedHeight(28);
+    m_coverClearButton->setVisible(false);
+    connect(m_coverClearButton, &QPushButton::clicked, this, &ForumComposerPage::clearCover);
+    coverSide->addWidget(m_coverClearButton, 0, Qt::AlignLeft);
+    m_coverHintLabel = ForumKit::makeMuted(
+        m_coverCard, tr("建议 16:9 横图。会自动压成小图走 CDN，不占服务器流量；不选就显示类型渐变封面。"));
+    coverSide->addWidget(m_coverHintLabel, 1);
+    coverBody->addLayout(coverSide, 1);
+    coverLayout->addLayout(coverBody);
+    cardLayout->addWidget(m_coverCard);
+
     // 标题
     cardLayout->addWidget(ForumKit::makeMuted(formCard, tr("标题（2–80 字，写清现象更容易被解答）")));
     m_titleEdit = new QLineEdit(formCard);
@@ -373,12 +669,11 @@ void ForumComposerPage::buildUi()
     m_titleEdit->setPlaceholderText(tr("例如：1.20.4 启动报 Java 找不到"));
     cardLayout->addWidget(m_titleEdit);
 
-    // 标签
-    cardLayout->addWidget(ForumKit::makeMuted(formCard, tr("标签（用逗号分隔，最多 4 个，每个最长 12 字）")));
-    m_tagsEdit = new QLineEdit(formCard);
-    m_tagsEdit->setObjectName(QStringLiteral("forumField"));
-    m_tagsEdit->setPlaceholderText(tr("例如：1.20.4, 优化"));
-    cardLayout->addWidget(m_tagsEdit);
+    // 标签：胶囊式输入，支持推荐标签和常用标签一键添加
+    m_tagsEditor = new ForumTagEditor(formCard);
+    m_tagsEditor->setMaxTags(kMaxTags);
+    m_tagsEditor->setMaxTagLength(kMaxTagLength);
+    cardLayout->addWidget(m_tagsEditor);
 
     // 正文（编辑框先建出来，工具栏的格式按钮都作用在它上面）
     cardLayout->addWidget(ForumKit::makeMuted(formCard, tr("正文（支持 Markdown，可粘贴图片链接）")));
@@ -536,6 +831,10 @@ void ForumComposerPage::updateState()
     // 避免从发布中心直接进来（未登录 → 登录返回）时板块下拉框为空
     if (quizPassed && !m_boardsLoaded && m_mode == Mode::Post)
         loadBoards();
+
+    // refreshProfile 回来时顺手把赏金卡上的余额刷成最新值
+    if (m_mode == Mode::Question && m_bountyBalanceLabel && loggedIn)
+        m_bountyBalanceLabel->setText(tr("余额 %1 方块").arg(account->user().points));
 }
 
 void ForumComposerPage::openQuizDialog()
@@ -590,12 +889,83 @@ void ForumComposerPage::startNewTutorial()
         m_titleEdit->setFocus();
 }
 
+void ForumComposerPage::startNewQuestion()
+{
+    m_preselectSlug.clear();
+    m_mode = Mode::Question;
+    resetForm();
+    applyMode();
+    updateState();
+
+    // 余额以服务端为准：发过赏金之后本地缓存的余额会偏大，先拉一次最新的
+    ForumAccountService::instance()->refreshProfile();
+
+    if (m_formHost->isVisible())
+        m_titleEdit->setFocus();
+}
+
+void ForumComposerPage::startNewNavigation()
+{
+    m_preselectSlug.clear();
+    m_mode = Mode::Navigation;
+    resetForm();
+    applyMode();
+    updateState();
+
+    if (m_formHost->isVisible())
+    {
+        // 网址是导航帖的主角，进来先落到网址输入框上
+        if (m_navUrlEdit)
+            m_navUrlEdit->setFocus();
+        else if (m_titleEdit)
+            m_titleEdit->setFocus();
+    }
+}
+
+void ForumComposerPage::startNewNavigation(const QString &kindSlug, const QString &url,
+                                           const QString &title, const QString &content,
+                                           const QStringList &tags)
+{
+    // 先切到导航模式（resetForm 会把类型复位成网站），再按调用方给的预填
+    startNewNavigation();
+
+    m_navKind = (kindSlug == QLatin1String("website")) ? QStringLiteral("website")
+                                                       : QStringLiteral("server");
+    // 类型胶囊的选中态与网址提示跟着类型走
+    for (QPushButton *chip : m_navTypeButtons)
+    {
+        if (chip)
+            chip->setChecked(chip->property("kindSlug").toString() == m_navKind);
+    }
+    if (m_navUrlEdit)
+    {
+        m_navUrlEdit->setText(url);
+        m_navUrlEdit->setPlaceholderText(
+            m_navKind == QLatin1String("server")
+                ? tr("填别人能连上的地址，如 play.example.com:25565 或 1.2.3.4:25565")
+                : tr("https://example.com"));
+    }
+    if (m_titleEdit && !title.isEmpty())
+        m_titleEdit->setText(title);
+    if (m_contentEdit && !content.isEmpty())
+        m_contentEdit->setPlainText(content);
+    if (m_tagsEditor && !tags.isEmpty())
+        m_tagsEditor->setTags(tags);
+
+    // 预填好之后把焦点落到提交按钮上，用户看一眼就能发
+    if (m_formHost->isVisible() && m_submitButton)
+        m_submitButton->setFocus();
+}
+
 void ForumComposerPage::setMode(Mode mode)
 {
     m_mode = mode;
-    // 从资源切回帖子时才需要板块列表；资源 / 教程模式不看板块
+    // 从资源切回帖子时才需要板块列表；资源 / 教程 / 问答 / 导航模式不看板块
     if (m_mode == Mode::Post && !m_boardsLoaded)
         loadBoards();
+    // 进问答模式顺手刷新一次账户资料，赏金卡上显示的余额才不会是上次登录时的旧数
+    if (m_mode == Mode::Question)
+        ForumAccountService::instance()->refreshProfile();
     applyMode();
 }
 
@@ -603,6 +973,10 @@ void ForumComposerPage::applyMode()
 {
     const bool resourceMode = (m_mode == Mode::Resource);
     const bool tutorialMode = (m_mode == Mode::Tutorial);
+    const bool questionMode = (m_mode == Mode::Question);
+    const bool navigationMode = (m_mode == Mode::Navigation);
+
+    applyTagRecommendations();
 
     if (m_postModeButton)
         m_postModeButton->setChecked(m_mode == Mode::Post);
@@ -610,15 +984,37 @@ void ForumComposerPage::applyMode()
         m_resourceModeButton->setChecked(resourceMode);
     if (m_tutorialModeButton)
         m_tutorialModeButton->setChecked(tutorialMode);
+    if (m_questionModeButton)
+        m_questionModeButton->setChecked(questionMode);
+    if (m_navigationModeButton)
+        m_navigationModeButton->setChecked(navigationMode);
 
     if (m_boardRow)
-        m_boardRow->setVisible(!resourceMode && !tutorialMode);
+        m_boardRow->setVisible(!resourceMode && !tutorialMode && !questionMode && !navigationMode);
     if (m_kindRow)
         m_kindRow->setVisible(resourceMode);
+    if (m_sourceRow)
+        m_sourceRow->setVisible(resourceMode);
+    if (m_navRow)
+        m_navRow->setVisible(navigationMode);
     for (QPushButton *chip : m_kindButtons)
     {
         if (chip)
             chip->setChecked(chip->property("kindSlug").toString() == m_kindSlug);
+    }
+    for (QPushButton *chip : m_navTypeButtons)
+    {
+        if (chip)
+            chip->setChecked(chip->property("kindSlug").toString() == m_navKind);
+    }
+
+    // 网址输入框的占位提示按类型换：网站补协议，服务器填地址就行
+    if (m_navUrlEdit)
+    {
+        m_navUrlEdit->setPlaceholderText(
+            m_navKind == QLatin1String("server")
+                ? tr("服务器地址，例如 mc.example.com 或 123.45.67.89:25565")
+                : tr("网址，例如 https://www.example.com"));
     }
 
     const bool pluginKind = m_kindSlug == QLatin1String("plugin");
@@ -631,22 +1027,45 @@ void ForumComposerPage::applyMode()
         m_attachmentCard->setVisible(tutorialMode);
     if (m_linksRow)
         m_linksRow->setVisible(resourceMode);
+    if (m_carouselCard)
+        m_carouselCard->setVisible(resourceMode || navigationMode);
+    // 封面：教程 / 资源 / 导航这三类内容才有瀑布流封面
+    if (m_coverCard)
+        m_coverCard->setVisible(tutorialMode || resourceMode || navigationMode);
+    if (m_bountyRow)
+        m_bountyRow->setVisible(questionMode);
+
+    // 赏金卡里的余额：问答模式才刷新，省得每次切 Tab 都查一次
+    if (questionMode && m_bountyBalanceLabel)
+    {
+        const int balance = ForumAccountService::instance()->user().points;
+        m_bountyBalanceLabel->setText(tr("余额 %1 方块").arg(balance));
+    }
 
     if (m_formTitleLabel)
     {
-        m_formTitleLabel->setText(tutorialMode ? tr("发布教程")
-                                               : (resourceMode ? tr("发布资源") : tr("发表新主题")));
+        m_formTitleLabel->setText(questionMode ? tr("发布有奖问答")
+                                   : tutorialMode ? tr("发布教程")
+                                   : navigationMode ? tr("发布导航")
+                                   : (resourceMode ? tr("发布资源") : tr("发表新主题")));
     }
     if (m_submitButton)
     {
-        m_submitButton->setText(tutorialMode ? tr("发布教程")
-                                             : (resourceMode ? (pluginKind ? tr("发布插件") : tr("发布投影"))
-                                                             : tr("发布主题")));
+        m_submitButton->setText(questionMode
+                                    ? tr("发布问答（托管 %1 方块）").arg(m_bountySpin ? m_bountySpin->value() : kDefaultBounty)
+                                : tutorialMode ? tr("发布教程")
+                                : navigationMode ? tr("发布导航")
+                                : (resourceMode ? (pluginKind ? tr("发布插件") : tr("发布投影"))
+                                                : tr("发布主题")));
     }
     if (m_titleEdit)
     {
         m_titleEdit->setPlaceholderText(
-            tutorialMode ? tr("例如：低配电脑流畅跑 1.20 的完整设置教程")
+            questionMode ? tr("例如：1.20.4 启动报 Java 找不到，怎么解决？")
+            : tutorialMode ? tr("例如：低配电脑流畅跑 1.20 的完整设置教程")
+            : navigationMode ? (m_navKind == QLatin1String("server")
+                                    ? tr("例如：XYZ 生存服，肝了一天值得推荐")
+                                    : tr("例如：一个查合成表的好用网站"))
             : resourceMode ? (pluginKind ? tr("例如：自动整理模组的辅助插件")
                                          : tr("例如：中世纪风格的小镇投影"))
                            : tr("例如：1.20.4 启动报 Java 找不到"));
@@ -658,11 +1077,13 @@ void ForumComposerPage::applyMode()
     {
         m_pluginHintLabel->setText(tr("发布插件必须带一个插件包（.BlockBox，最大 20 MB）"));
     }
-    // 投影文件同理
-    if (m_schematicHintLabel && resourceMode && !m_schematicUploading && !m_schematicUpload.isValid()
+    // 投影同理：还没添加文件时先把要求写在卡片上
+    if (m_schematicHintLabel && resourceMode && m_schematics.isEmpty()
         && m_schematicHintLabel->text().isEmpty())
     {
-        m_schematicHintLabel->setText(tr("发布投影必须带一个投影文件（.litematic / .schem 等，最大 50 MB）"));
+        m_schematicHintLabel->setText(
+            tr("发布投影必须至少带一份投影文件（.litematic / .schem 等，单份最大 50 MB）；"
+               "主世界、下界等可以一次挂多份，各自命名"));
     }
     // 教程模式下提示附件容量口径（附件可选，不强制）
     if (m_attachmentHintLabel && tutorialMode && m_attachmentHintLabel->text().isEmpty())
@@ -672,10 +1093,26 @@ void ForumComposerPage::applyMode()
     }
 }
 
+/** 按当前来源胶囊展开或收起转载两栏：选「转载」才需要填原链接和说明 */
+void ForumComposerPage::updateRepostFields()
+{
+    if (!m_repostFields)
+        return;
+    const bool repost = m_repostSourceButton && m_repostSourceButton->isChecked();
+    m_repostFields->setVisible(repost);
+    if (repost)
+    {
+        if (m_repostUrlEdit->text().trimmed().isEmpty())
+            m_repostUrlEdit->setFocus();
+        else
+            m_repostNoteEdit->setFocus();
+    }
+}
+
 void ForumComposerPage::resetForm()
 {
     m_titleEdit->clear();
-    m_tagsEdit->clear();
+    m_tagsEditor->clear();
     m_contentEdit->clear();
     m_previewBrowser->setPostMarkdown(QString());
     if (m_previewModeButton->isChecked())
@@ -690,6 +1127,26 @@ void ForumComposerPage::resetForm()
         m_attachmentHintLabel->clear();
     if (m_linksEditor)
         m_linksEditor->setLinks({});
+    if (m_carouselEditor)
+        m_carouselEditor->clear();
+    clearCover();
+    // 来源回到默认「原创」，转载两栏清空收起
+    if (m_originalSourceButton)
+        m_originalSourceButton->setChecked(true);
+    if (m_repostUrlEdit)
+        m_repostUrlEdit->clear();
+    if (m_repostNoteEdit)
+        m_repostNoteEdit->clear();
+    if (m_repostFields)
+        m_repostFields->setVisible(false);
+    // 导航回到默认「网站」类型，网址清空
+    m_navKind = QStringLiteral("website");
+    if (m_navUrlEdit)
+        m_navUrlEdit->clear();
+    if (m_bountySpin)
+        m_bountySpin->setValue(kDefaultBounty);
+    if (m_bountyBalanceLabel)
+        m_bountyBalanceLabel->clear();
 }
 
 void ForumComposerPage::loadBoards()
@@ -704,11 +1161,15 @@ void ForumComposerPage::loadBoards()
             int selectIndex = -1;
             for (const ForumBoard &board : boards)
             {
-                // 「插件分享」「投影分享」是资源→插件/投影专用板块，「教程分享」是教程模式
-                // 专用板块：帖子里都不提供（发帖只做讨论）
+                // 「插件分享」「投影分享」是资源→插件/投影专用板块，「教程分享」是教程模式、
+                // 「有奖问答」是问答模式、「网站导航 / 服务器导航」是导航模式的专用板块：
+                // 帖子里都不提供（发帖只做讨论）
                 if (board.slug == QLatin1String(kPluginShareBoardSlug)
                     || board.slug == QLatin1String(kSchematicShareBoardSlug)
-                    || board.slug == QLatin1String(kTutorialShareBoardSlug))
+                    || board.slug == QLatin1String(kTutorialShareBoardSlug)
+                    || board.slug == QLatin1String(kQuestionBoardSlug)
+                    || board.slug == QLatin1String(kWebsiteNavBoardSlug)
+                    || board.slug == QLatin1String(kServerNavBoardSlug))
                     continue;
                 m_boardCombo->addItem(
                     QStringLiteral("%1 %2").arg(board.icon.isEmpty() ? QStringLiteral("💬")
@@ -730,6 +1191,75 @@ void ForumComposerPage::loadBoards()
             m_statusLabel->setText(message);
             m_statusLabel->setStyleSheet(StyleKit::resolve(QStringLiteral("color: @WARNING_TEXT@;")));
         });
+}
+
+void ForumComposerPage::loadTagSuggestions()
+{
+    // 已经拉过就直接用缓存；正在拉 / 拉失败也不重复请求
+    if (s_popularTagsRequested)
+    {
+        if (m_tagsEditor)
+            m_tagsEditor->setPopularTags(s_popularTags);
+        return;
+    }
+    s_popularTagsRequested = true;
+
+    const QPointer<ForumComposerPage> self(this);
+    ForumContentService::instance()->fetchTags(
+        [self](const QVector<ForumTagInfo> &tags) {
+            s_popularTags.clear();
+            for (const ForumTagInfo &info : tags)
+                s_popularTags.append(qMakePair(info.tag, info.count));
+            if (self && self->m_tagsEditor)
+                self->m_tagsEditor->setPopularTags(s_popularTags);
+        },
+        [](const QString &, int) {
+            // 热门标签只是锦上添花：失败时不缓存「已拉过」，下次打开发布页再试
+            s_popularTagsRequested = false;
+        });
+}
+
+void ForumComposerPage::applyTagRecommendations()
+{
+    if (!m_tagsEditor)
+        return;
+
+    // 标签是论坛里的数据，不跟界面语言翻译，避免同一种标签被拆成多份
+    QStringList recommended;
+    if (m_mode == Mode::Tutorial)
+    {
+        recommended = { QStringLiteral("教程"), QStringLiteral("新手"), QStringLiteral("图文"),
+                        QStringLiteral("整合包") };
+    }
+    else if (m_mode == Mode::Resource)
+    {
+        if (m_kindSlug == QLatin1String("schematic"))
+            recommended = { QStringLiteral("投影"), QStringLiteral("建筑"),
+                            QStringLiteral("生存"), QStringLiteral("地图") };
+        else
+            recommended = { QStringLiteral("插件"), QStringLiteral("辅助"),
+                            QStringLiteral("工具"), QStringLiteral("优化") };
+    }
+    else if (m_mode == Mode::Question)
+    {
+        recommended = { QStringLiteral("求助"), QStringLiteral("悬赏"),
+                        QStringLiteral("报错"), QStringLiteral("整合包") };
+    }
+    else if (m_mode == Mode::Navigation)
+    {
+        if (m_navKind == QLatin1String("server"))
+            recommended = { QStringLiteral("服务器"), QStringLiteral("联机"),
+                            QStringLiteral("生存"), QStringLiteral("推荐") };
+        else
+            recommended = { QStringLiteral("网站"), QStringLiteral("工具"),
+                            QStringLiteral("资源"), QStringLiteral("推荐") };
+    }
+    else
+    {
+        recommended = { QStringLiteral("求助"), QStringLiteral("联机"),
+                        QStringLiteral("整合包"), QStringLiteral("客户端") };
+    }
+    m_tagsEditor->setRecommendedTags(recommended);
 }
 
 void ForumComposerPage::showPresetMenu()
@@ -846,6 +1376,92 @@ void ForumComposerPage::pickImageToUpload()
         });
 }
 
+void ForumComposerPage::pickCoverImage()
+{
+    if (m_coverUploading)
+        return;
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("选择封面"), QString(), tr("图片 (*.png *.jpg *.jpeg *.webp *.gif)"));
+    if (path.isEmpty())
+        return;
+    if (QFileInfo(path).size() > 4 * 1024 * 1024)
+    {
+        NotificationManager::showInfo(this, tr("封面超过 4 MB，先压缩一下再传"));
+        return;
+    }
+
+    m_coverUploading = true;
+    if (m_coverPickButton)
+        m_coverPickButton->setEnabled(false);
+    // 先拿本机图片顶上做预览，传好之后再换成图床地址
+    const QPixmap local(path);
+    if (!local.isNull() && m_coverPreviewLabel)
+    {
+        m_coverPreviewLabel->setText(QString());
+        m_coverPreviewLabel->setPixmap(MasonryContentCard::makeCoverPixmap(local, 190, 106));
+    }
+    if (m_coverHintLabel)
+        m_coverHintLabel->setText(tr("封面上传中…"));
+
+    ForumLobbyService::instance()->uploadImageFull(
+        path, [this](const ForumImageUpload &upload, const QString &message) {
+            m_coverUploading = false;
+            if (m_coverPickButton)
+                m_coverPickButton->setEnabled(true);
+            if (!upload.isValid())
+            {
+                NotificationManager::showInfo(
+                    this, message.isEmpty() ? tr("封面没传上去，稍后再试一次") : message);
+                if (m_coverHintLabel)
+                    m_coverHintLabel->setText(
+                        tr("建议 16:9 横图。会自动压成小图走 CDN，不占服务器流量；不选就显示类型渐变封面。"));
+                refreshCoverPreview();
+                return;
+            }
+            m_coverUpload = upload;
+            if (m_coverHintLabel)
+                m_coverHintLabel->setText(tr("封面已就绪：瀑布流只加载这张小图"));
+            refreshCoverPreview();
+        });
+}
+
+void ForumComposerPage::clearCover()
+{
+    m_coverUpload = ForumImageUpload();
+    m_coverUploading = false;
+    if (m_coverPickButton)
+        m_coverPickButton->setEnabled(true);
+    if (m_coverHintLabel)
+        m_coverHintLabel->setText(
+            tr("建议 16:9 横图。会自动压成小图走 CDN，不占服务器流量；不选就显示类型渐变封面。"));
+    refreshCoverPreview();
+}
+
+void ForumComposerPage::refreshCoverPreview()
+{
+    if (!m_coverPreviewLabel)
+        return;
+    if (!m_coverUpload.isValid())
+    {
+        m_coverPreviewLabel->setPixmap(QPixmap());
+        m_coverPreviewLabel->setText(tr("还没选封面"));
+        if (m_coverClearButton)
+            m_coverClearButton->setVisible(false);
+        return;
+    }
+    if (m_coverClearButton)
+        m_coverClearButton->setVisible(true);
+    const QString path = m_coverUpload.thumb.isEmpty() ? m_coverUpload.url : m_coverUpload.thumb;
+    const QString url = ForumAccountService::instance()->absoluteUrl(path);
+    QPointer<QLabel> guard(m_coverPreviewLabel);
+    ForumImageStore::instance()->requestImage(url, [guard](const QImage &image) {
+        if (guard.isNull() || image.isNull())
+            return;
+        guard->setText(QString());
+        guard->setPixmap(MasonryContentCard::makeCoverPixmap(QPixmap::fromImage(image), 190, 106));
+    });
+}
+
 void ForumComposerPage::clearPluginAttachment()
 {
     m_pluginFilePath.clear();
@@ -940,95 +1556,286 @@ void ForumComposerPage::pickPluginFile()
 
 void ForumComposerPage::clearSchematicAttachment()
 {
-    m_schematicFilePath.clear();
-    m_schematicUpload = ForumSchematicUpload();
-    m_schematicUploading = false;
-    m_schematicIconLabel->setPixmap(QPixmap());
-    m_schematicIconLabel->setText(QString());
-    m_schematicNameLabel->clear();
-    m_schematicMetaLabel->clear();
-    m_schematicHintLabel->clear();
-    m_schematicAddButton->setEnabled(true);
-    applyMode();
+    m_schematics.clear();
+    m_schematicMetaLabels.clear();
+    refreshSchematicRows();
 }
 
-void ForumComposerPage::pickSchematicFile()
+bool ForumComposerPage::anySchematicUploading() const
 {
-    if (m_schematicUploading)
-        return;
-    const QString path = QFileDialog::getOpenFileName(
-        this, tr("选择投影文件"), QString(),
-        QStringLiteral("投影文件 (*.litematic *.nbt *.schematic *.schem)"));
-    if (path.isEmpty())
+    for (const SchematicEntry &entry : m_schematics)
+    {
+        if (entry.uploading)
+            return true;
+    }
+    return false;
+}
+
+void ForumComposerPage::refreshSchematicRows()
+{
+    if (!m_schematicRowsLayout)
         return;
 
-    const QFileInfo info(path);
-    if (info.size() > kMaxSchematicBytes)
+    // 行是按顺序铺的，重建一次的成本很小（最多 8 份）
+    while (QLayoutItem *item = m_schematicRowsLayout->takeAt(0))
     {
-        NotificationManager::showInfo(
-            this, tr("投影文件超过 50 MB，服务器不收这么大，先删减一下"));
-        return;
+        if (QWidget *widget = item->widget())
+            widget->deleteLater();
+        delete item;
+    }
+    m_schematicMetaLabels.clear();
+
+    for (int index = 0; index < m_schematics.size(); ++index)
+    {
+        SchematicEntry &entry = m_schematics[index];
+
+        auto *row = new QWidget(m_schematicCard);
+        row->setAttribute(Qt::WA_StyledBackground, false);
+        auto *rowLayout = new QVBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(3);
+
+        auto *topRow = new QHBoxLayout();
+        topRow->setContentsMargins(0, 0, 0, 0);
+        topRow->setSpacing(8);
+        auto *labelEdit = new QLineEdit(row);
+        labelEdit->setObjectName(QStringLiteral("forumField"));
+        labelEdit->setPlaceholderText(tr("给这份投影起个名字，如 主世界 / 下界"));
+        labelEdit->setMaxLength(kMaxSchematicLabel);
+        labelEdit->setText(entry.label);
+        const int key = entry.key;
+        connect(labelEdit, &QLineEdit::textEdited, this, [this, key](const QString &text) {
+            for (SchematicEntry &item : m_schematics)
+            {
+                if (item.key == key)
+                {
+                    item.label = text.trimmed();
+                    break;
+                }
+            }
+        });
+        topRow->addWidget(labelEdit, 1);
+
+        auto *removeButton = new QPushButton(tr("移除"), row);
+        removeButton->setObjectName(QStringLiteral("forumGhostButton"));
+        removeButton->setCursor(Qt::PointingHandCursor);
+        removeButton->setFixedHeight(24);
+        connect(removeButton, &QPushButton::clicked, this, [this, key]() {
+            removeSchematicEntry(key);
+        });
+        topRow->addWidget(removeButton);
+        rowLayout->addLayout(topRow);
+
+        auto *meta = new QLabel(row);
+        meta->setObjectName(QStringLiteral("forumStatus"));
+        meta->setWordWrap(true);
+        const QFileInfo info(entry.filePath);
+        QString metaText = QStringLiteral("%1 · %2")
+                               .arg(info.fileName(), ForumKit::humanFileSize(info.size()));
+        if (entry.uploading)
+            metaText = tr("%1 · 正在上传…").arg(info.fileName());
+        else if (!entry.upload.isValid())
+            metaText = tr("%1 · 还没传上去").arg(info.fileName());
+        meta->setText(metaText);
+        rowLayout->addWidget(meta);
+        m_schematicMetaLabels.insert(entry.key, meta);
+
+        m_schematicRowsLayout->addWidget(row);
     }
 
-    clearSchematicAttachment();
-    m_schematicFilePath = path;
-    m_schematicUploading = true;
-    m_schematicIconLabel->setPixmap(PublishKit::makeGradientIconPixmap(
-        QColor(QStringLiteral("#3B82F6")), QColor(QStringLiteral("#1D4ED8")),
-        QStringLiteral(":/Images/Icons/list.svg"), 40));
-
-    // .litematic 能本地解出名称与包围盒，先亮出来（其他格式就用文件名）
-    QString displayName = info.fileName();
-    QString metaText = ForumKit::humanFileSize(info.size());
-    if (path.endsWith(QLatin1String(".litematic"), Qt::CaseInsensitive))
+    if (m_schematicHintLabel)
     {
-        const auto parsed = LitematicReader::readFile(path);
-        if (parsed && !parsed->name.isEmpty())
-            displayName = parsed->name;
-        if (parsed && parsed->enclosingSizeX != 0)
+        if (m_schematics.isEmpty())
         {
-            metaText = tr("%1 · %2×%3×%4")
-                           .arg(ForumKit::humanFileSize(info.size()))
-                           .arg(qAbs(parsed->enclosingSizeX))
-                           .arg(qAbs(parsed->enclosingSizeY))
-                           .arg(qAbs(parsed->enclosingSizeZ));
+            m_schematicHintLabel->setText(
+                tr("发布投影必须至少带一份投影文件（.litematic / .schem 等，单份最大 50 MB）；"
+                   "主世界、下界等可以一次挂多份，各自命名"));
+        }
+        else
+        {
+            m_schematicHintLabel->setText(tr("已添加 %1/%2 份 · 下载时读者可以自己挑要哪一份")
+                                              .arg(m_schematics.size())
+                                              .arg(kMaxSchematicFiles));
         }
     }
-    m_schematicNameLabel->setText(tr("%1（正在上传…）").arg(displayName));
-    m_schematicMetaLabel->setText(metaText);
-    m_schematicHintLabel->setText(tr("上传完成后才能发布"));
-    m_schematicAddButton->setEnabled(false);
+    if (m_schematicAddButton)
+        m_schematicAddButton->setEnabled(m_schematics.size() < kMaxSchematicFiles);
+}
+
+void ForumComposerPage::pickSchematicFiles()
+{
+    const int remaining = kMaxSchematicFiles - m_schematics.size();
+    if (remaining <= 0)
+    {
+        NotificationManager::showInfo(
+            this, tr("一条帖子最多挂 %1 份投影").arg(kMaxSchematicFiles));
+        return;
+    }
+
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, tr("选择投影文件"), QString(),
+        QStringLiteral("投影文件 (*.litematic *.nbt *.schematic *.schem)"));
+    if (paths.isEmpty())
+        return;
+
+    int added = 0;
+    for (const QString &path : paths)
+    {
+        if (added >= remaining)
+            break;
+        if (path.trimmed().isEmpty())
+            continue;
+
+        // 同一个文件重复选进来没有意义（服务端也会当成一份）
+        bool duplicated = false;
+        for (const SchematicEntry &entry : m_schematics)
+        {
+            if (entry.filePath == path)
+            {
+                duplicated = true;
+                break;
+            }
+        }
+        if (duplicated)
+            continue;
+
+        const QFileInfo info(path);
+        if (!kSchematicExtensions.contains(info.suffix().toLower()))
+        {
+            NotificationManager::showInfo(
+                this, tr("%1 不是投影文件，支持的格式：.litematic / .schem / .schematic / .nbt")
+                          .arg(info.fileName()));
+            continue;
+        }
+        if (info.size() > kMaxSchematicBytes)
+        {
+            NotificationManager::showInfo(
+                this, tr("%1 超过 50 MB，服务器不收这么大").arg(info.fileName()));
+            continue;
+        }
+
+        // 版本名默认取投影自带的名字（.litematic 能解出来），没有就用文件名
+        QString label = info.completeBaseName();
+        if (path.endsWith(QLatin1String(".litematic"), Qt::CaseInsensitive))
+        {
+            const auto parsed = LitematicReader::readFile(path);
+            if (parsed && !parsed->name.trimmed().isEmpty())
+                label = parsed->name.trimmed();
+        }
+        label = label.left(kMaxSchematicLabel);
+
+        SchematicEntry entry;
+        entry.key = ++m_schematicKeySeed;
+        entry.filePath = path;
+        entry.label = label;
+        m_schematics.append(entry);
+        ++added;
+    }
+
+    if (added == 0)
+        return;
+    if (paths.size() > remaining)
+    {
+        NotificationManager::showInfo(
+            this, tr("一条帖子最多挂 %1 份投影，多选的文件没有加进来").arg(kMaxSchematicFiles));
+    }
+
+    refreshSchematicRows();
+    // 结构变了之后按 key 逐个开传（同时上传多份，进度各自显示）
+    for (const QString &path : paths)
+    {
+        for (const SchematicEntry &entry : m_schematics)
+        {
+            if (entry.filePath == path && !entry.uploading && !entry.upload.isValid())
+            {
+                uploadSchematicEntry(entry.key);
+                break;
+            }
+        }
+    }
+}
+
+void ForumComposerPage::uploadSchematicEntry(int key)
+{
+    int index = -1;
+    for (int i = 0; i < m_schematics.size(); ++i)
+    {
+        if (m_schematics[i].key == key)
+        {
+            index = i;
+            break;
+        }
+    }
+    if (index < 0)
+        return;
+
+    SchematicEntry &entry = m_schematics[index];
+    entry.uploading = true;
+    const QString path = entry.filePath;
+    if (QLabel *meta = m_schematicMetaLabels.value(key, nullptr))
+    {
+        meta->setText(tr("%1 · 正在上传…").arg(QFileInfo(path).fileName()));
+    }
 
     ForumContentService::instance()->uploadSchematicFile(
         path,
-        [this](int percent) {
-            m_schematicMetaLabel->setText(tr("正在上传 %1%").arg(percent));
-        },
-        [this](const ForumSchematicUpload &upload) {
-            m_schematicUploading = false;
-            m_schematicUpload = upload;
-            m_schematicAddButton->setEnabled(true);
-            m_schematicNameLabel->setText(upload.name.isEmpty() ? upload.fileName : upload.name);
-            m_schematicMetaLabel->setText(ForumKit::humanFileSize(upload.fileSize));
-            m_schematicHintLabel->setText(tr("我将随主题一起发布这个投影"));
-        },
-        [this](const QString &message, int httpStatus) {
-            m_schematicUploading = false;
-            m_schematicAddButton->setEnabled(true);
-            const bool wasSessionProblem =
-                ForumAccountService::instance()->needsHumanCheck() ||
-                (httpStatus == 401);
-            if (wasSessionProblem)
+        [this, key, path](int percent) {
+            if (QLabel *meta = m_schematicMetaLabels.value(key, nullptr))
             {
-                // 登录态 / 人机验证问题：让上层先把账号状态弄好，附件保留等再传
-                m_schematicHintLabel->setText(tr("上传被拦下，处理好账号状态后点「添加投影文件…」重试"));
-                NotificationManager::showInfo(this, message);
-                return;
+                meta->setText(tr("%1 · 正在上传 %2%")
+                                  .arg(QFileInfo(path).fileName())
+                                  .arg(percent));
             }
-            m_schematicFilePath.clear();
-            m_schematicHintLabel->clear();
+        },
+        [this, key](const ForumSchematicUpload &upload) {
+            for (SchematicEntry &item : m_schematics)
+            {
+                if (item.key != key)
+                    continue;
+                item.uploading = false;
+                item.upload = upload;
+                // 用户起的名字优先；还没改过就用投影自带的名字，再不行用文件名
+                if (item.label.trimmed().isEmpty())
+                {
+                    const QString fallback = upload.name.isEmpty() ? upload.fileName : upload.name;
+                    item.label = QFileInfo(fallback).completeBaseName().left(kMaxSchematicLabel);
+                }
+                break;
+            }
+            refreshSchematicRows();
+        },
+        [this, key](const QString &message, int httpStatus) {
+            const bool wasSessionProblem =
+                ForumAccountService::instance()->needsHumanCheck() || (httpStatus == 401);
+            // 传不上去的这一行撤掉，用户重新点「添加投影文件…」就能重试（同一个文件不会重复占位）
+            for (int i = 0; i < m_schematics.size(); ++i)
+            {
+                if (m_schematics[i].key != key)
+                    continue;
+                m_schematics.removeAt(i);
+                break;
+            }
+            refreshSchematicRows();
+            if (wasSessionProblem && m_schematicHintLabel)
+            {
+                m_schematicHintLabel->setText(
+                    tr("上传被拦下，处理好账号状态后点「添加投影文件…」重试"));
+            }
             NotificationManager::showInfo(this, message);
         });
+}
+
+void ForumComposerPage::removeSchematicEntry(int key)
+{
+    for (int i = 0; i < m_schematics.size(); ++i)
+    {
+        if (m_schematics[i].key == key)
+        {
+            m_schematics.removeAt(i);
+            break;
+        }
+    }
+    refreshSchematicRows();
 }
 
 void ForumComposerPage::pickTutorialAttachments()
@@ -1167,39 +1974,101 @@ void ForumComposerPage::submit()
         return;
     }
 
-    QStringList tags;
-    for (const QString &part : m_tagsEdit->text().split(QLatin1Char(',')))
-    {
-        const QString tag = part.trimmed();
-        if (tag.isEmpty())
-            continue;
-        if (tag.size() > kMaxTagLength)
-        {
-            NotificationManager::showInfo(this, tr("标签「%1」超过 12 个字").arg(tag));
-            return;
-        }
-        tags.append(tag);
-        if (tags.size() >= kMaxTags)
-            break;
-    }
-    if (m_tagsEdit->text().split(QLatin1Char(',')).count() > kMaxTags)
-    {
-        NotificationManager::showInfo(this, tr("标签最多 4 个"));
-        return;
-    }
+    // 输入框里还没按回车的文字也算标签，别让用户以为已经加上了
+    m_tagsEditor->commitPending();
+    const QStringList tags = m_tagsEditor->tags();
 
     // 资源模式：插件固定发到插件分享板块、投影固定发到投影分享板块；
-    // 教程模式：固定发到教程分享板块；帖子模式：发到板选里的板块，只是一篇普通讨论帖
+    // 教程模式：固定发到教程分享板块；问答模式：固定发到有奖问答板块；
+    // 导航模式：按类型固定发到网站导航 / 服务器导航板块；
+    // 帖子模式：发到板选里的板块，只是一篇普通讨论帖
     const bool resourceMode = (m_mode == Mode::Resource);
     const bool tutorialMode = (m_mode == Mode::Tutorial);
+    const bool questionMode = (m_mode == Mode::Question);
+    const bool navigationMode = (m_mode == Mode::Navigation);
     const bool pluginKind = m_kindSlug == QLatin1String("plugin");
     const bool schematicKind = m_kindSlug == QLatin1String("schematic");
+
+    // 导航模式：网址是必填项；网站类型没有协议前缀时自动补 https://，服务器地址原样填
+    QString navigationUrl;
+    if (navigationMode)
+    {
+        navigationUrl = m_navUrlEdit ? m_navUrlEdit->text().trimmed() : QString();
+        if (navigationUrl.isEmpty())
+        {
+            NotificationManager::showInfo(this, tr("请先填写要分享的网址"));
+            if (m_navUrlEdit)
+                m_navUrlEdit->setFocus();
+            return;
+        }
+        if (m_navKind == QLatin1String("website")
+            && !navigationUrl.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive)
+            && !navigationUrl.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive))
+        {
+            navigationUrl.prepend(QStringLiteral("https://"));
+        }
+        if (navigationUrl.size() > kMaxNavigationUrlLength)
+        {
+            NotificationManager::showInfo(
+                this, tr("网址太长了，最多 %1 字").arg(kMaxNavigationUrlLength));
+            if (m_navUrlEdit)
+                m_navUrlEdit->setFocus();
+            return;
+        }
+    }
+
+    // 问答模式：赏金必须是有余额支撑的整数，发出去之后就托管在服务端
+    int bounty = 0;
+    if (questionMode)
+    {
+        bounty = m_bountySpin ? m_bountySpin->value() : kDefaultBounty;
+        if (bounty < kMinBounty || bounty > kMaxBounty)
+        {
+            NotificationManager::showInfo(
+                this, tr("悬赏要填 %1~%2 个方块").arg(kMinBounty).arg(kMaxBounty));
+            return;
+        }
+        const int balance = ForumAccountService::instance()->user().points;
+        if (bounty > balance)
+        {
+            NotificationManager::showInfo(
+                this, tr("方块不够：你现在有 %1 个，悬赏要 %2 个").arg(balance).arg(bounty));
+            return;
+        }
+    }
+
+    QVector<ForumSchematicBinding> schematicBindings;
+    // 作品来源：默认原创；选了「转载」就必须交代出处
+    ForumWorkSource workSource;
     if (resourceMode)
     {
         if (!pluginKind && !schematicKind)
         {
             NotificationManager::showInfo(this, tr("请先选择资源分类"));
             return;
+        }
+        if (m_repostSourceButton && m_repostSourceButton->isChecked())
+        {
+            const QString sourceUrl = m_repostUrlEdit->text().trimmed();
+            const QString sourceNote = m_repostNoteEdit->text().trimmed();
+            if (sourceUrl.isEmpty()
+                || !(sourceUrl.startsWith(QStringLiteral("http://"), Qt::CaseInsensitive)
+                     || sourceUrl.startsWith(QStringLiteral("https://"), Qt::CaseInsensitive)))
+            {
+                NotificationManager::showInfo(
+                    this, tr("转载要填原作品链接（以 http:// 或 https:// 开头）"));
+                m_repostUrlEdit->setFocus();
+                return;
+            }
+            if (sourceNote.isEmpty())
+            {
+                NotificationManager::showInfo(this, tr("转载要填转载说明，交代原作者或来源"));
+                m_repostNoteEdit->setFocus();
+                return;
+            }
+            workSource.type = QStringLiteral("repost");
+            workSource.url = sourceUrl;
+            workSource.note = sourceNote;
         }
         if (pluginKind)
         {
@@ -1216,18 +2085,61 @@ void ForumComposerPage::submit()
         }
         else
         {
-            if (m_schematicUploading)
+            if (anySchematicUploading())
             {
                 NotificationManager::showInfo(this, tr("投影文件还没传完，等一下再发布"));
                 return;
             }
-            if (!m_schematicUpload.isValid())
+            QStringList usedLabels;
+            for (const SchematicEntry &entry : m_schematics)
             {
-                NotificationManager::showInfo(this, tr("发布投影需要先添加一个投影文件"));
+                if (!entry.upload.isValid())
+                    continue;
+                const QString label = entry.label.trimmed();
+                if (!label.isEmpty())
+                {
+                    if (usedLabels.contains(label))
+                    {
+                        NotificationManager::showInfo(
+                            this, tr("两份投影都叫「%1」，换个名字更容易分清").arg(label));
+                        return;
+                    }
+                    usedLabels.append(label);
+                }
+                ForumSchematicBinding binding;
+                binding.uploadId = entry.upload.uploadId;
+                binding.label = label;
+                schematicBindings.append(binding);
+            }
+            if (schematicBindings.isEmpty())
+            {
+                NotificationManager::showInfo(
+                    this, tr("发布投影需要先添加至少一份投影文件"));
                 return;
             }
         }
     }
+
+    // 轮播图（资源 / 导航模式选填）：有图片还在上传就先拦一下，
+    // 就绪的条目按当前顺序随帖提交
+    QVector<ForumCarouselItem> carouselItems;
+    if ((resourceMode || navigationMode) && m_carouselEditor)
+    {
+        if (m_carouselEditor->hasPendingUploads())
+        {
+            NotificationManager::showInfo(this, tr("轮播图片还没传完，等一下再发布"));
+            return;
+        }
+        carouselItems = m_carouselEditor->items();
+    }
+
+    // 封面（教程 / 资源 / 导航选填）：正在上传就先拦一下，传好的一起随帖提交
+    if ((tutorialMode || resourceMode || navigationMode) && m_coverUploading)
+    {
+        NotificationManager::showInfo(this, tr("封面还在上传，等一下再发布"));
+        return;
+    }
+    const int coverUploadId = m_coverUpload.isValid() ? m_coverUpload.id : 0;
 
     const QString boardSlug = tutorialMode
                                   ? QString::fromLatin1(kTutorialShareBoardSlug)
@@ -1235,7 +2147,6 @@ void ForumComposerPage::submit()
                                         ? QString::fromLatin1(pluginKind ? kPluginShareBoardSlug
                                                                          : kSchematicShareBoardSlug)
                                         : m_boardCombo->currentData().toString();
-
     m_submitButton->setEnabled(false);
     m_statusLabel->setText(tr("正在发布…"));
     m_statusLabel->setStyleSheet(QString());
@@ -1249,6 +2160,36 @@ void ForumComposerPage::submit()
         m_statusLabel->setText(message);
         m_statusLabel->setStyleSheet(StyleKit::resolve(QStringLiteral("color: @WARNING_TEXT@;")));
     };
+    // 三种发布类型共用：成功后先记住这次用的标签，下次发同类内容可以直接点选
+    const auto onCreated = [this, finish](int threadId) {
+        finish();
+        if (threadId <= 0)
+            return;
+        m_tagsEditor->rememberTags();
+        emit threadCreated(threadId);
+    };
+
+    if (questionMode)
+    {
+        // 有奖问答：赏金随帖子上传，服务端在同一个事务里托管，余额不够整帖都不会发出
+        ForumContentService::instance()->createQuestionThread(
+            title, content, tags, bounty, onCreated,
+            [this, fail](const QString &message, int) {
+                fail(message);
+            });
+        return;
+    }
+
+    if (navigationMode)
+    {
+        // 导航帖：网址随帖子一起提交，板块由服务端按类型固定指定
+        ForumContentService::instance()->createNavigationThread(
+            m_navKind, navigationUrl, title, content, tags, carouselItems, coverUploadId, onCreated,
+            [this, fail](const QString &message, int) {
+                fail(message);
+            });
+        return;
+    }
 
     if (tutorialMode)
     {
@@ -1257,12 +2198,7 @@ void ForumComposerPage::submit()
         for (const ForumAttachmentUpload &upload : m_attachments)
             attachmentIds.append(upload.uploadId);
         ForumContentService::instance()->createTutorialThread(
-            title, content, tags, attachmentIds,
-            [this, finish](int threadId) {
-                finish();
-                if (threadId > 0)
-                    emit threadCreated(threadId);
-            },
+            title, content, tags, attachmentIds, coverUploadId, onCreated,
             [this, fail](const QString &message, int) {
                 fail(message);
             });
@@ -1277,12 +2213,8 @@ void ForumComposerPage::submit()
         if (pluginKind)
         {
             ForumContentService::instance()->createPluginThread(
-                boardSlug, title, content, tags, m_pluginUpload.uploadId, links,
-                [this, finish](int threadId) {
-                    finish();
-                    if (threadId > 0)
-                        emit threadCreated(threadId);
-                },
+                boardSlug, title, content, tags, m_pluginUpload.uploadId, links, workSource,
+                carouselItems, coverUploadId, onCreated,
                 [this, fail](const QString &message, int) {
                     fail(message);
                 });
@@ -1290,12 +2222,8 @@ void ForumComposerPage::submit()
         else
         {
             ForumContentService::instance()->createSchematicThread(
-                boardSlug, title, content, tags, m_schematicUpload.uploadId, links,
-                [this, finish](int threadId) {
-                    finish();
-                    if (threadId > 0)
-                        emit threadCreated(threadId);
-                },
+                boardSlug, title, content, tags, schematicBindings, links, workSource,
+                carouselItems, coverUploadId, onCreated,
                 [this, fail](const QString &message, int) {
                     fail(message);
                 });
@@ -1304,12 +2232,7 @@ void ForumComposerPage::submit()
     }
 
     ForumContentService::instance()->createThread(
-        boardSlug, title, content, tags,
-        [this, finish](int threadId) {
-            finish();
-            if (threadId > 0)
-                emit threadCreated(threadId);
-        },
+        boardSlug, title, content, tags, onCreated,
         [this, fail](const QString &message, int) {
             fail(message);
         });

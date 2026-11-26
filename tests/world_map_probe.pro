@@ -11,6 +11,7 @@ HEADERS  += ../utils/WorldMap/WorldMapRenderer.h \
             ../utils/Schematic/NbtCodec.h
 SOURCES  += world_map_probe.cpp \
             ../utils/WorldMap/WorldMapRenderer.cpp \
+            ../utils/MapBlockPalette.cpp \
             ../utils/WorldMap/SeedTerrainRenderer.cpp \
             ../utils/WorldMap/TreePredictor.cpp \
             ../utils/WorldMap/TreeGen.cpp \

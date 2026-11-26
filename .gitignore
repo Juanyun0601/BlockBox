@@ -21,6 +21,7 @@ ui_*.h
 # 测试/探针构建输出
 tests/debug/
 tests/release/
+probe_out/
 tests/update_install_probe/build/
 tests/update_install_probe/work/
 tests/update_install_probe/setupwork/
@@ -30,6 +31,11 @@ tests/update_install_probe/negwork/
 .tmp_mp_join_probe/
 .tmp_lobby_bg/
 .tmp_sel_scroll/
+.tmp_forum_nav_probe/
+.tmp_ia_selftest/
+.tmp_server_probe/
+# 红石渲染探针使用的临时实例 jar / 样例（体积大，不入库）
+.tmp_redstone/
 *.log
 
 # 备份文件

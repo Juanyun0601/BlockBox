@@ -36,20 +36,16 @@ SubNavPanel::SubNavPanel(QWidget *parent)
     setAttribute(Qt::WA_StyledBackground);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
-    // 选中图标初始取当前主题主色
-    QColor themeColor(ThemeManager::instance()->currentThemeColor());
-    if (themeColor.isValid())
-        m_iconSelectedColor = themeColor;
+    // 选中图标初始取当前主题主色（深色主题下自动提亮，保证深底上看得清）
+    m_iconSelectedColor = ThemeManager::instance()->accentTextColor();
 
     // 未选中 SVG 图标默认灰度随明暗主题
     m_iconNormalColor = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme)
                             ? QColor(QStringLiteral("#9CA3AF"))
                             : QColor(QStringLiteral("#666666"));
 
-    connect(ThemeManager::instance(), &ThemeManager::themeColorChanged, this, [this](const QString &color) {
-        QColor c(color);
-        if (c.isValid())
-            m_iconSelectedColor = c;
+    connect(ThemeManager::instance(), &ThemeManager::themeColorChanged, this, [this](const QString &) {
+        m_iconSelectedColor = ThemeManager::instance()->accentTextColor();
         updateSearchChrome();
         if (isVisible())
             setSelectedChild(m_currentChildIndex);
@@ -57,9 +53,11 @@ SubNavPanel::SubNavPanel(QWidget *parent)
 
     // 明暗主题切换：搜索框图标、未选中导航 SVG 与占位提示的灰度都要重新取
     connect(ThemeManager::instance(), &ThemeManager::themeChanged, this, [this](ThemeManager::ThemeType) {
-        m_iconNormalColor = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme)
+        ThemeManager *tm = ThemeManager::instance();
+        m_iconNormalColor = (tm->currentTheme() == ThemeManager::DarkTheme)
                                 ? QColor(QStringLiteral("#9CA3AF"))
                                 : QColor(QStringLiteral("#666666"));
+        m_iconSelectedColor = tm->accentTextColor();
         updateSearchChrome();
         if (isVisible())
             setSelectedChild(m_currentChildIndex);

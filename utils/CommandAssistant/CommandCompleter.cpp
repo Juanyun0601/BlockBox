@@ -95,6 +95,9 @@ QList<CompletionCandidate> CommandCompleter::complete(const QString &input, cons
         return result;
     }
 
+    // 行尾空格表示「正在输入下一个参数」，要在 trim 前判断
+    const bool endsWithSpace = input.endsWith(QLatin1Char(' '));
+
     // 按空格分词
     const QStringList parts = trimmed.split(QStringLiteral(" "), Qt::SkipEmptyParts);
 
@@ -134,13 +137,13 @@ QList<CompletionCandidate> CommandCompleter::complete(const QString &input, cons
     }
 
     const CommandInfo &cmd = matched.value();
-    const QString currentWord = parts.last();
+    // 行尾带空格 = 正在输入下一个参数，当前词为空
+    const QString currentWord = endsWithSpace ? QString() : parts.last();
 
     // 计算当前参数索引（命令名后第几个参数）
     // 注意：pos 类型参数占 3 个位置（x y z），需要特殊处理
-    // 已输入的参数个数 = parts.size() - 1（去掉命令名）；但 currentWord 是正在输入的，
-    // 已确认的参数个数 = parts.size() - 2
-    const int confirmedParamCount = parts.size() - 2;
+    // 已确认的参数个数 = 去掉命令名后的词数；行尾空格时这些词都算已确认
+    const int confirmedParamCount = endsWithSpace ? parts.size() - 1 : parts.size() - 2;
     int paramIndex = -1;
     int consumedSlots = 0;
     for (int i = 0; i < cmd.params.size(); ++i)

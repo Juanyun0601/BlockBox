@@ -7,11 +7,16 @@
  * 版本号规则：
  *   正式版：X.Y.Z           （如 1.0.0、2.15.3）
  *   测试版：X.Y.Z-betaN     （如 1.0.0-beta1、1.11.16-beta15）
- *   当前处于初始公测阶段，版本号为 beta9。
+ *   当前处于初始公测阶段，版本号为 beta10。
  *
  * 每次发布新版本时，只需修改 current() 返回的字符串；
  * 更新检查（UpdateChecker）会拿它与 GitHub Releases 的最新版本做比较，
  * 因此发布 Release 时 tag（或 Release 名称）需与本字符串保持一致。
+ *
+ * 例外：官方打包脚本（软件发布/一键打包.bat）会通过 qmake 传 APP_VERSION=<版本>
+ * 把版本号写死进二进制（宏 BLOCKBOX_BUILD_VERSION），这样打出来的包自报版本
+ * 一定和安装包文件名、官网公示清单里的版本号一致，不会出现「装的是 beta9.1、
+ * 程序里显示 beta9」这种错位；本地开发不传该参数时仍用下面的默认值。
  */
 #ifndef APPVERSION_H
 #define APPVERSION_H
@@ -20,10 +25,14 @@
 
 namespace AppVersion {
 
-/** 启动器当前版本号（发布新版本时改这里） */
+/** 启动器当前版本号（发布新版本时改这里；官方打包会用 APP_VERSION 覆盖） */
 inline QString current()
 {
-    return QStringLiteral("beta9");
+#ifdef BLOCKBOX_BUILD_VERSION
+    return QStringLiteral(BLOCKBOX_BUILD_VERSION);
+#else
+    return QStringLiteral("beta10");
+#endif
 }
 
 /** GitHub 仓库所有者 */

@@ -13,6 +13,7 @@
 #include "components/LocalCategoryDialog.h"
 #include "components/FavoriteFolderDialog.h"
 #include "components/ModRelationDialog.h"
+#include "components/CompatibilityCheckDialog.h"
 #include "../layouts/FlowLayout.h"
 #include "../layouts/MasonryLayout.h"
 #include "utils/IconHelper.h"
@@ -68,6 +69,7 @@ InstanceModsPage::InstanceModsPage(QWidget *parent)
     , m_downloadSearchBtn(nullptr)
     , m_bottomBar(nullptr)
     , m_bottomCheckUpdateBtn(nullptr)
+    , m_healthCheckBtn(nullptr)
     , m_selectAllBtn(nullptr)
     , m_copyModBtn(nullptr)
     , m_toggleSelectedBtn(nullptr)
@@ -274,6 +276,15 @@ void InstanceModsPage::initUI()
         ThemeManager::instance()->currentThemeColor(), 18));
     m_bottomCheckUpdateBtn->setIconSize(QSize(18, 18));
 
+    m_healthCheckBtn = new QPushButton(tr("体检"));
+    m_healthCheckBtn->setObjectName("bottomActionBtn");
+    m_healthCheckBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/sparkles.svg",
+        ThemeManager::instance()->currentThemeColor(), 18));
+    m_healthCheckBtn->setIconSize(QSize(18, 18));
+    m_healthCheckBtn->setCursor(Qt::PointingHandCursor);
+    m_healthCheckBtn->setToolTip(tr("检查实例的兼容性问题，并给出这个整合包建议停在哪一个版本"));
+
     m_selectAllBtn = new QPushButton(tr("全选"));
     m_selectAllBtn->setObjectName("bottomActionBtn");
 
@@ -330,6 +341,7 @@ void InstanceModsPage::initUI()
     m_installNewBtn->setToolTip(tr("前往模组下载页，自动筛选至当前实例"));
 
     bottomLayout->addWidget(m_bottomCheckUpdateBtn);
+    bottomLayout->addWidget(m_healthCheckBtn);
     bottomLayout->addWidget(m_selectAllBtn);
     bottomLayout->addWidget(m_copyModBtn);
     bottomLayout->addWidget(m_toggleSelectedBtn);
@@ -380,6 +392,11 @@ void InstanceModsPage::setupConnections()
     connect(m_viewSwitch, &ContentViewSwitch::viewModeChanged,
             this, &InstanceModsPage::onViewModeChanged);
     connect(m_bottomCheckUpdateBtn, &QPushButton::clicked, this, &InstanceModsPage::onCheckUpdatesClicked);
+    connect(m_healthCheckBtn, &QPushButton::clicked, this, [this]() {
+        // 体检要用真实的版本/加载器：先按实例目录重新探测一次
+        detectInstanceMeta();
+        CompatibilityCheckDialog::runCheck(this, m_instancePath, m_gameVersion, m_loaderType);
+    });
     connect(m_selectAllBtn, &QPushButton::clicked, this, &InstanceModsPage::onSelectAllClicked);
     connect(m_openFolderBtn, &QPushButton::clicked, this, &InstanceModsPage::onOpenFolderClicked);
     connect(m_relationBtn, &QPushButton::clicked, this, &InstanceModsPage::onRelationClicked);

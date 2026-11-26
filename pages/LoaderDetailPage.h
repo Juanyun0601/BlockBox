@@ -48,6 +48,8 @@ public slots:
     void exitModifyMode();
 
     bool modifyMode() const { return m_modifyMode; }
+    /** 修改实例模式下的修改前版本（进入修改模式时记录） */
+    QString modifyOldVersion() const { return m_modifyInstanceVersion; }
 
 signals:
     void backToInstallPageRequested();

@@ -10,6 +10,7 @@
 #include <QColor>
 #include <QList>
 #include <QMap>
+#include <QRectF>
 #include <QSet>
 #include <QString>
 
@@ -20,6 +21,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
+class QAction;
 class QStackedWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -29,9 +31,10 @@ class QPushButton;
 /**
  * @brief 关系图自绘控件：前置依赖（左）→ 当前模组（中）→ 被依赖模组（右）三列布局
  *
- * 节点为圆角卡片，连线带箭头；未安装的前置用虚线框灰显。
+ * 节点为圆角卡片并带状态圆点，连线带箭头；未安装的前置用虚线红/橙框标出。
+ * 三列标题带数量胶囊、贴在自己那一列上方，底部有图例与操作提示。
  * 鼠标悬停显示提示，点击已安装节点可切换当前查看的模组。
- * 颜色取自控件调色板（自适应深浅主题）+ 主题色。
+ * 颜色取自主题令牌（自适应深浅主题）。
  */
 class ModRelationGraphWidget : public QWidget
 {
@@ -44,6 +47,7 @@ public:
         QString subtitle;    // 副标题（版本 / 未安装 等）
         bool installed = true;   // 是否本地已安装
         bool required = true;    // 是否必需前置（建议依赖灰显）
+        bool center = false;     // 是否是中列的「当前模组」
         int modIndex = -1;       // 本地模组索引（未安装为 -1）
         QRectF rect;             // 布局时回填，用于命中测试
     };
@@ -54,6 +58,9 @@ public:
     void setGraph(const QList<GraphNode> &deps,
                   const GraphNode &center,
                   const QList<GraphNode> &dependents);
+
+    /** 某列第 index 个节点的矩形（0=前置 1=当前 2=被依赖），供探针/自动化定位使用 */
+    QRectF nodeRect(int column, int index) const;
 
     QSize minimumSizeHint() const override;
 
@@ -74,12 +81,17 @@ private:
     int hitNode(const QPointF &pos, int *indexInColumn = nullptr) const;
     void drawNode(QPainter &p, const GraphNode &node, bool highlighted) const;
     void drawEdge(QPainter &p, const QPointF &from, const QPointF &to,
-                  bool highlighted, bool dashed) const;
+                  bool highlighted, bool dashed, const QColor &color) const;
+    void drawColumnHeader(QPainter &p, const QRectF &columnRect, const QString &text,
+                          int count, bool showCount) const;
+    void drawEmptyColumn(QPainter &p, const QRectF &slot, const QString &text) const;
+    void drawLegend(QPainter &p, qreal bottomY) const;
 
     QList<GraphNode> m_deps;        // 左列：前置依赖
     GraphNode m_center;             // 中列：当前模组
     QList<GraphNode> m_dependents;  // 右列：被依赖模组
     bool m_hasCenter = false;
+    qreal m_headerTop = 0;          // 布局时回填：三列标题行的顶边
     int m_hoverCol = -1;            // 悬停所在列
     int m_hoverIdx = -1;            // 悬停节点在列内的下标
     int m_pressedCol = -1;          // 按下时的列（点击判定用）
@@ -113,6 +125,8 @@ private:
     void rebuildTree();
     void rebuildGraph();
     void updateSummary();
+    /** 按当前主题色重绘标题图标与搜索框图标 */
+    void updateStaticIcons();
     /** modId / 文件名（去 .jar）→ 本地模组索引；未收录返回 -1 */
     int findLocalIndex(const QString &depName) const;
     QString modDisplayKey(const ModInfo &info) const;
@@ -125,7 +139,9 @@ private:
     QSet<QString> m_treeVisited;      // 依赖树当前展开路径（防环）
 
     // 左侧模组列表
+    QLabel *m_headerIcon;
     QLineEdit *m_searchEdit;
+    QAction *m_searchAction = nullptr;
     QListWidget *m_modListWidget;
 
     // 模式切换与右侧内容
@@ -135,7 +151,13 @@ private:
     QTreeWidget *m_treeWidget;
     ModRelationGraphWidget *m_graphWidget;
 
+    // 底部统计行：左侧概览文字 + 右侧数量胶囊
     QLabel *m_summaryLabel;
+    QLabel *m_currentLabel;
+    QLabel *m_statPrimLabel;
+    QLabel *m_statMissingLabel;
+    QLabel *m_statSuggestedLabel;
+    QLabel *m_statUsedLabel;
 };
 
 #endif // MODRELATIONDIALOG_H

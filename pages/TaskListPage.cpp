@@ -28,12 +28,6 @@ TaskListPage::TaskListPage(QWidget *parent)
     , m_completedLayout(nullptr)
     , m_completedCount(nullptr)
     , m_emptyWidget(nullptr)
-    , m_launchStatus(LaunchTaskCard::Idle)
-    , m_launchProgress(0)
-    , m_hasLaunchTask(false)
-    , m_launchCardWidget(nullptr)
-    , m_launchStatusLabel(nullptr)
-    , m_launchProgressLabel(nullptr)
 {
     initUI();
 
@@ -91,21 +85,7 @@ void TaskListPage::initUI()
     emptyLayout->addWidget(emptyText);
     m_contentLayout->addWidget(m_emptyWidget);
 
-    m_launchCardWidget = new QWidget();
-    m_launchCardWidget->setObjectName("launchCardInList");
-    m_launchCardWidget->setFixedHeight(50);
-    m_launchCardWidget->setVisible(false);
-    QHBoxLayout *launchLayout = new QHBoxLayout(m_launchCardWidget);
-    launchLayout->setContentsMargins(12, 8, 12, 8);
-    m_launchStatusLabel = new QLabel();
-    QFont lf = m_launchStatusLabel->font();
-    lf.setPointSize(10);
-    lf.setBold(true);
-    m_launchStatusLabel->setFont(lf);
-    launchLayout->addWidget(m_launchStatusLabel, 1);
-    m_launchProgressLabel = new QLabel();
-    launchLayout->addWidget(m_launchProgressLabel);
-    m_contentLayout->addWidget(m_launchCardWidget);
+    // 启动任务条目按需创建（多实例并行启动，一个实例一行），不预建固定控件
 
     m_activeGroup = createGroupSection(tr("进行中"), m_activeCount, m_activeLayout);
     m_activeGroup->setVisible(false);
@@ -230,7 +210,8 @@ void TaskListPage::rebuildList()
     m_activeGroup->setVisible(activeCount > 0);
     m_failedGroup->setVisible(failedCount > 0);
     m_completedGroup->setVisible(completedCount > 0);
-    m_emptyWidget->setVisible(activeCount == 0 && failedCount == 0 && completedCount == 0);
+    m_emptyWidget->setVisible(activeCount == 0 && failedCount == 0 && completedCount == 0
+                              && m_launchEntries.isEmpty());
 
     m_activeCount->setText(QString::number(activeCount));
     m_failedCount->setText(QString::number(failedCount));
@@ -248,52 +229,83 @@ void TaskListPage::updateGroupCounts()
     m_activeGroup->setVisible(active > 0);
     m_failedGroup->setVisible(failed > 0);
     m_completedGroup->setVisible(completed > 0);
-    m_emptyWidget->setVisible(active == 0 && failed == 0 && completed == 0);
+    m_emptyWidget->setVisible(active == 0 && failed == 0 && completed == 0
+                              && m_launchEntries.isEmpty());
 }
 
 void TaskListPage::setLaunchTaskInfo(const QString &name, LaunchTaskCard::LaunchStatus status, int progress, const QString &message)
 {
-    m_launchName = name;
-    m_launchStatus = status;
-    m_launchProgress = progress;
-    m_launchMessage = message;
-    m_hasLaunchTask = (status != LaunchTaskCard::Idle);
+    if (name.isEmpty())
+        return;
+
+    if (status == LaunchTaskCard::Idle) {
+        // 任务收尾：移除该实例的启动条目
+        if (LaunchEntry entry = m_launchEntries.take(name); entry.row) {
+            entry.row->setVisible(false);
+            m_contentLayout->removeWidget(entry.row);
+            entry.row->deleteLater();
+        }
+        updateLaunchDisplay();
+        return;
+    }
+
+    LaunchEntry &entry = m_launchEntries[name];
+    entry.status = status;
+    entry.progress = progress;
+    entry.message = message;
+    if (!entry.row) {
+        entry.row = new QWidget();
+        entry.row->setObjectName("launchCardInList");
+        entry.row->setFixedHeight(50);
+        QHBoxLayout *launchLayout = new QHBoxLayout(entry.row);
+        launchLayout->setContentsMargins(12, 8, 12, 8);
+        entry.statusLabel = new QLabel(entry.row);
+        QFont lf = entry.statusLabel->font();
+        lf.setPointSize(10);
+        lf.setBold(true);
+        entry.statusLabel->setFont(lf);
+        launchLayout->addWidget(entry.statusLabel, 1);
+        entry.progressLabel = new QLabel(entry.row);
+        launchLayout->addWidget(entry.progressLabel);
+        m_contentLayout->addWidget(entry.row);
+    }
     updateLaunchDisplay();
 }
 
 void TaskListPage::updateLaunchDisplay()
 {
-    if (!m_hasLaunchTask) {
-        m_launchCardWidget->setVisible(false);
-        rebuildList();
-        return;
-    }
+    for (auto it = m_launchEntries.begin(); it != m_launchEntries.end(); ++it) {
+        const LaunchEntry &entry = it.value();
+        if (!entry.row)
+            continue;
 
-    QString statusText;
-    switch (m_launchStatus) {
-    case LaunchTaskCard::Launching:
-        statusText = tr("启动游戏 - %1").arg(m_launchName);
-        break;
-    case LaunchTaskCard::Running:
-        statusText = tr("游戏运行中 - %1").arg(m_launchName);
-        break;
-    case LaunchTaskCard::Failed:
-        statusText = tr("启动失败 - %1").arg(m_launchName);
-        break;
-    case LaunchTaskCard::Stopped:
-        statusText = tr("游戏已停止 - %1").arg(m_launchName);
-        break;
-    default:
-        statusText = m_launchName;
-        break;
-    }
-    if (!m_launchMessage.isEmpty()) {
-        statusText += " (" + m_launchMessage + ")";
-    }
+        const QString &name = it.key();
+        QString statusText;
+        switch (entry.status) {
+        case LaunchTaskCard::Launching:
+            statusText = tr("启动游戏 - %1").arg(name);
+            break;
+        case LaunchTaskCard::Running:
+            statusText = tr("游戏运行中 - %1").arg(name);
+            break;
+        case LaunchTaskCard::Failed:
+            statusText = tr("启动失败 - %1").arg(name);
+            break;
+        case LaunchTaskCard::Stopped:
+            statusText = tr("游戏已停止 - %1").arg(name);
+            break;
+        default:
+            statusText = name;
+            break;
+        }
+        if (!entry.message.isEmpty()) {
+            statusText += " (" + entry.message + ")";
+        }
 
-    m_launchStatusLabel->setText(statusText);
-    m_launchProgressLabel->setText(QString("%1%").arg(m_launchProgress));
-    m_launchCardWidget->setVisible(true);
+        entry.statusLabel->setText(statusText);
+        entry.progressLabel->setText(QString("%1%").arg(entry.progress));
+        entry.row->setVisible(true);
+    }
     rebuildList();
 }
 

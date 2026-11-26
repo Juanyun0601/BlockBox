@@ -255,10 +255,18 @@ void ForumLobbyService::publishRoom(const ForumLobbyRoom &room, RoomHandler onOk
 
 void ForumLobbyService::uploadImage(const QString &filePath, UploadHandler onDone)
 {
+    uploadImageFull(filePath, [onDone](const ForumImageUpload &upload, const QString &message) {
+        if (onDone)
+            onDone(upload.isValid() ? upload.url : QString(), message);
+    });
+}
+
+void ForumLobbyService::uploadImageFull(const QString &filePath, UploadFullHandler onDone)
+{
     if (!ForumAccountService::instance()->isLoggedIn())
     {
         if (onDone)
-            onDone(QString(), tr("需要先登录论坛账号才能上传图片"));
+            onDone(ForumImageUpload(), tr("需要先登录论坛账号才能上传图片"));
         return;
     }
 
@@ -266,7 +274,7 @@ void ForumLobbyService::uploadImage(const QString &filePath, UploadHandler onDon
     if (!info.exists() || !info.isFile() || info.size() <= 0)
     {
         if (onDone)
-            onDone(QString(), tr("打不开这张图片，换个文件试试"));
+            onDone(ForumImageUpload(), tr("打不开这张图片，换个文件试试"));
         return;
     }
 
@@ -275,7 +283,7 @@ void ForumLobbyService::uploadImage(const QString &filePath, UploadHandler onDon
     if (!file.open(QIODevice::ReadOnly))
     {
         if (onDone)
-            onDone(QString(), tr("打不开这张图片，换个文件试试"));
+            onDone(ForumImageUpload(), tr("打不开这张图片，换个文件试试"));
         return;
     }
     QByteArray data = file.readAll();
@@ -334,7 +342,7 @@ void ForumLobbyService::uploadImage(const QString &filePath, UploadHandler onDon
     if (data.isEmpty() || data.size() > kLimit)
     {
         if (onDone)
-            onDone(QString(), tr("这张图片压不进 4 MB 的图床限制，换一张试试"));
+            onDone(ForumImageUpload(), tr("这张图片压不进 4 MB 的图床限制，换一张试试"));
         return;
     }
     if (mime.isEmpty())
@@ -365,18 +373,21 @@ void ForumLobbyService::uploadImage(const QString &filePath, UploadHandler onDon
                     if (message.isEmpty())
                         message = tr("图片上传失败，请稍后再试");
                     if (onDone)
-                        onDone(QString(), message);
+                        onDone(ForumImageUpload(), message);
                     return;
                 }
-                const QString url = doc.object().value(QStringLiteral("url")).toString();
-                if (url.isEmpty())
+                ForumImageUpload upload;
+                upload.id = doc.object().value(QStringLiteral("id")).toInt();
+                upload.url = doc.object().value(QStringLiteral("url")).toString();
+                upload.thumb = doc.object().value(QStringLiteral("thumb")).toString();
+                if (!upload.isValid())
                 {
                     if (onDone)
-                        onDone(QString(), tr("图片上传失败，请稍后再试"));
+                        onDone(ForumImageUpload(), tr("图片上传失败，请稍后再试"));
                     return;
                 }
                 if (onDone)
-                    onDone(url, QString());
+                    onDone(upload, QString());
             });
 }
 

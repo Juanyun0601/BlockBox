@@ -199,6 +199,14 @@ public:
     QList<PresetColor> presetColors() const;
 
     /**
+     * @brief 当前主题下适合作为文字/图标颜色的主色
+     *
+     * 浅色主题下就是主色本身；深色/自定义主题下会自动提亮，
+     * 保证深色底上的绿色文字和图标不会糊成一片。
+     */
+    QColor accentTextColor() const;
+
+    /**
      * @brief 获取主题色 hover 变体（用于按钮hover状态）
      * @return QString hover颜色
      */

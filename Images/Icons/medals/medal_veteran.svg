@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="vt-outer" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5EEAD4"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+  </defs>
+  <path d="M34 62 L26 90 L38 83 L45 92 L49 64 Z" fill="#115E59"/>
+  <path d="M62 62 L70 90 L58 83 L51 92 L47 64 Z" fill="#134E4A"/>
+  <circle cx="48" cy="43" r="31" fill="url(#vt-outer)" stroke="#134E4A" stroke-width="3"/>
+  <circle cx="48" cy="43" r="23" fill="#F0FDFA"/>
+  <rect x="32" y="47" width="32" height="17" rx="4" fill="#FDE68A" stroke="#92400E" stroke-width="2"/>
+  <path d="M32 53 H64" stroke="#F472B6" stroke-width="5"/>
+  <path d="M32 60 H64" stroke="#A5F3FC" stroke-width="4"/>
+  <rect x="45.5" y="34" width="5" height="13" rx="2" fill="#F472B6" stroke="#9D174D" stroke-width="1.2"/>
+  <path d="M48 34 C45.4 34 43.6 31.9 43.6 29.6 C43.6 27.3 45.2 25.4 48 25.4 C50.8 25.4 52.4 27.3 52.4 29.6 C52.4 31.9 50.6 34 48 34 Z" fill="#FBBF24" stroke="#B45309" stroke-width="1.2"/>
+  <path d="M25 36 L29 33 M71 36 L67 33 M25 51 L30 51 M71 51 L66 51" stroke="#99F6E4" stroke-width="2" stroke-linecap="round"/>
+</svg>

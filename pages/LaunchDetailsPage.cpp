@@ -14,6 +14,7 @@
 #include <QScrollBar>
 #include <QStyle>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTextOption>
 #include <QTextStream>
 
@@ -77,22 +78,14 @@ void LaunchDetailsPage::initUI()
     QFont logFont("Consolas", 11);
     logFont.setStyleHint(QFont::Monospace);
     m_detailsTextEdit->setFont(logFont);
-    m_detailsTextEdit->document()->setDefaultStyleSheet(
-        "body { font-family: Consolas, 'Courier New', monospace; font-size: 11pt; }"
-        ".error { color: #D32F2F; font-weight: bold; }"
-        ".warn { color: #E65100; }"
-        ".info { color: #388E3C; }"
-        ".debug { color: #78909C; }"
-        ".system { color: " + ThemeManager::instance()->getInfoColorHover() + "; }"
-        ".timestamp { color: #B0BEC5; }"
-        ".highlight { color: #7B1FA2; }"
-    );
+    applyLogStyleSheet(m_detailsTextEdit->document());
 
     m_mainLayout->addLayout(m_headerLayout);
     m_mainLayout->addWidget(m_detailsTextEdit, 1);
 
     connect(m_cancelBtn, &QPushButton::clicked, this, [this]() {
-        GameLauncher::instance()->stopGame();
+        // 取消动作由主窗口路由到当前聚焦的启动会话（多实例时可能是并行会话）
+        emit cancelLaunchRequested();
         addDetail("[INFO] " + tr("用户取消了启动"));
     });
     connect(m_clearBtn, &QPushButton::clicked, this, &LaunchDetailsPage::clearDetails);
@@ -111,6 +104,22 @@ void LaunchDetailsPage::setLaunchStatus(const QString &status, bool isRunning)
         m_statusDot->setToolTip(tr("空闲"));
     }
     m_statusDot->style()->polish(m_statusDot);
+}
+
+void LaunchDetailsPage::applyLogStyleSheet(QTextDocument *document)
+{
+    if (!document)
+        return;
+    document->setDefaultStyleSheet(
+        "body { font-family: Consolas, 'Courier New', monospace; font-size: 11pt; }"
+        ".error { color: #D32F2F; font-weight: bold; }"
+        ".warn { color: #E65100; }"
+        ".info { color: #388E3C; }"
+        ".debug { color: #78909C; }"
+        ".system { color: " + ThemeManager::instance()->getInfoColorHover() + "; }"
+        ".timestamp { color: #B0BEC5; }"
+        ".highlight { color: #7B1FA2; }"
+    );
 }
 
 QString LaunchDetailsPage::formatLogMessage(const QString &message)

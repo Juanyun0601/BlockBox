@@ -320,6 +320,9 @@ void AppDialogBase::showEvent(QShowEvent *event)
 {
     QDialog::showEvent(event);
 
+    // 记录显示时刻，供 mousePressEvent 过滤「显示瞬间的误触」
+    m_shownAt.start();
+
     // 显示前已在构造函数/exec 中预定位过；这里再同步校准一次，
     // 并用事件循环延迟重新定位：在 Windows 上首次映射窗口时，
     // showEvent 期间直接 setGeometry 可能被显示流程覆盖，
@@ -381,8 +384,11 @@ void AppDialogBase::resizeEvent(QResizeEvent *event)
 
 void AppDialogBase::mousePressEvent(QMouseEvent *event)
 {
-    // 点击居中卡片以外的遮罩区域即关闭弹窗
-    if (event->button() == Qt::LeftButton) {
+    // 点击居中卡片以外的遮罩区域即关闭弹窗。
+    // 但刚弹出的一瞬间不算：安卓上点图标启动的那一下触摸会被投递到这里，
+    // 直接关掉弹窗会让「必须同意协议」的弹窗瞬间被拒，进而让整个软件退出。
+    if (event->button() == Qt::LeftButton && m_shownAt.isValid()
+        && m_shownAt.elapsed() > 700) {
         if (QWidget *card = findCardWidget()) {
             if (!card->geometry().contains(event->pos())) {
                 reject();

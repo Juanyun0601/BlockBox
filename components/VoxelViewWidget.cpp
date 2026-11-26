@@ -9,6 +9,8 @@
 
 #include "components/GlslCompat.h"
 
+#include "utils/Schematic/EntityModelLoader.h"
+
 #include <QCursor>
 #include <QDebug>
 #include <QElapsedTimer>
@@ -98,6 +100,101 @@ QColor tintColorFor(const QString &blockName)
     if (blockName.contains(QLatin1String("water")) || blockName.contains(QLatin1String("bubble")))
         return QColor(0x3F, 0x76, 0xE4);
     return QColor(0x91, 0xBD, 0x59);      // 草/蕨/苔藓等植被
+}
+
+// 液体种类：原版的水 / 岩浆没有方块模型，由专用渲染器按液面高度画，
+// 贴图也另取名（water_still / lava_still），按普通方块「名字 → 贴图」是查不到的
+enum FluidKind
+{
+    FluidNone = 0,
+    FluidWater = 1,
+    FluidLava = 2
+};
+
+FluidKind fluidKindOf(const QString &blockName)
+{
+    QString n = blockName;
+    const int colon = n.indexOf(QLatin1Char(':'));
+    if (colon >= 0)
+        n = n.mid(colon + 1);
+    if (n == QLatin1String("water") || n == QLatin1String("flowing_water"))
+        return FluidWater;
+    if (n == QLatin1String("lava") || n == QLatin1String("flowing_lava"))
+        return FluidLava;
+    return FluidNone;
+}
+
+// 液面高度：level=0 是水源，原版可见液面在 14/16 处；level 1..7 是流动水，
+// 每级再往下降 1/9 格；level>=8 表示正往下淌，按满高度处理，瀑布才不会一格一格断开
+float fluidSurfaceHeight(const SchematicBlockState &state)
+{
+    bool ok = false;
+    const int level = state.properties.value(QStringLiteral("level")).toInt(&ok);
+    if (!ok || level <= 0 || level >= 8)
+        return 0.875f;
+    return float(8 - level) / 9.0f;
+}
+
+// ----------------------------------------------------------------- 红石线（红石粉）
+//
+// 红石线不是一块普通立方体：贴图是灰度的，颜色由信号强度决定；形状也不是固定模型，
+// 而是按四周连接方向拼出「点 / 直线 / 拐角 / 爬坡」。直接按普通方块渲染时，纯色模式
+// 会变成一整块红砖，材质模式又会因为 tintindex 被当成植物染成绿色。下面这几个小工具
+// 负责把信号强度和连接关系翻译成实际要画的一层薄粉尘。
+
+/** 去掉命名空间前缀、统一小写后的方块名 */
+QString bareBlockName(const QString &blockName)
+{
+    QString n = blockName.trimmed();
+    const int colon = n.indexOf(QLatin1Char(':'));
+    if (colon >= 0)
+        n = n.mid(colon + 1);
+    return n.toLower();
+}
+
+/** 是否是红石线（1.13+ 叫 redstone_wire，更老的映射会直接写 redstone） */
+bool isRedstoneWireName(const QString &blockName)
+{
+    const QString n = bareBlockName(blockName);
+    return n == QLatin1String("redstone_wire") || n == QLatin1String("redstone");
+}
+
+/**
+ * @brief 原版 RedstoneWireBlock 的信号强度配色（0 → 暗红，15 → 亮橙红）
+ *
+ * 公式与游戏源码一致，投影里哪段线有电、哪段没电一眼就能看出来。
+ */
+QColor redstoneColorForPower(int power)
+{
+    const float p = float(qBound(0, power, 15)) / 15.0f;
+    const float r = p * 0.6f + (p > 0.0f ? 0.4f : 0.3f);
+    const float g = p * p * 0.7f - 0.5f;
+    const float b = p * p * 0.6f - 0.7f;
+    return QColor::fromRgbF(qBound(0.0f, r, 1.0f),
+                            qBound(0.0f, g, 1.0f),
+                            qBound(0.0f, b, 1.0f));
+}
+
+/** 红石线会连过去的方块：红石类元件 + 中继器 / 比较器 / 拉杆 / 按钮 / 压板等 */
+bool isRedstoneConnector(const QString &blockName)
+{
+    const QString n = bareBlockName(blockName);
+    if (n.isEmpty())
+        return false;
+    if (n == QLatin1String("redstone_wire") || n == QLatin1String("redstone")
+        || (n.contains(QLatin1String("redstone")) && n.contains(QLatin1String("torch")))
+        || n == QLatin1String("redstone_block"))
+        return true;
+    // 老格式里中继器 / 比较器带 powered_ 前缀，用后缀匹配把它们一起收进来
+    if (n.endsWith(QLatin1String("repeater")) || n.endsWith(QLatin1String("comparator")))
+        return true;
+    if (n == QLatin1String("lever") || n == QLatin1String("observer")
+        || n == QLatin1String("target") || n.contains(QLatin1String("daylight_detector"))
+        || n == QLatin1String("tripwire_hook") || n == QLatin1String("detector_rail")
+        || n == QLatin1String("lightning_rod"))
+        return true;
+    return n.endsWith(QLatin1String("_button"))
+        || n.endsWith(QLatin1String("_pressure_plate"));
 }
 
 // 射线-轴对齐盒（区间法）；命中返回 true
@@ -223,6 +320,14 @@ void VoxelViewWidget::setLayerView(int layer, LayerMode mode)
     rebuild();
 }
 
+void VoxelViewWidget::setLayerAxis(LayerAxis axis)
+{
+    if (m_layerAxis == axis)
+        return;
+    m_layerAxis = axis;
+    rebuild();
+}
+
 void VoxelViewWidget::setHover(int x, int y, int z)
 {
     if (m_hoverX == x && m_hoverY == y && m_hoverZ == z)
@@ -272,6 +377,7 @@ void VoxelViewWidget::rebuild()
     // 纯 CPU：重建方块几何 + 顶点数据，随后随 update() 在 paintGL 上传。
     // 绝不在控件显示前调用 GL（可安全于 loadProjection 阶段调用，避免闪退）。
     buildGeometry();
+    buildEntityGeometry();
     rebuildSelectionGeometry();
     rebuildHoverGeometry();
     rebuildHighlightGeometry();
@@ -360,16 +466,40 @@ void VoxelViewWidget::focusAll()
     const float sy = float(m_doc->sizeY());
     const float sz = float(m_doc->sizeZ());
     QVector3D center(sx * 0.5f, sy * 0.5f, sz * 0.5f);
-    // 取景距离按“水平方向 XZ 对角线、竖直方向高度”分别算，再按视口宽高比取大的那个。
-    // 早先直接用整个模型的对角线，扁平的建筑（村庄、遗迹）会被推得很远、小得看不清。
+
+    // 取景距离：把包围盒八个角按当前朝向投到画面的「横 / 竖」两轴上，逐个求
+    // 「这个角刚好落进画面」需要的距离，取最大的那个。
+    // 早先只拿 XZ 对角线当横向、拿高度当竖向，斜俯视一栋矮而宽的建筑时，
+    // 屋顶在画面上占的高度远大于它的实际高度，四个角就被切掉了。
+    const QVector3D forward = lookForward();
+    QVector3D right = QVector3D::crossProduct(forward, QVector3D(0.0f, 1.0f, 0.0f));
+    if (right.lengthSquared() < 1e-6f)   // 正上方俯视：forward 与世界上方平行
+        right = QVector3D(1.0f, 0.0f, 0.0f);
+    right.normalize();
+    const QVector3D up =
+        QVector3D::crossProduct(right, forward).normalized();
+
     const float aspect = float(qMax(1, width())) / float(qMax(1, height()));
     const float tanV = qTan(qDegreesToRadians(22.5f)); // 与 perspective(45) 对应
-    const float halfH = 0.5f * qSqrt(sx * sx + sz * sz);
-    const float halfV = 0.5f * qMax(sy, 1.0f);
-    const float distH = halfH / qMax(0.05f, tanV * aspect);
-    const float distV = halfV / tanV;
-    m_viewDist = qBound(3.0f, qMax(distH, distV) * 1.35f, 6000.0f);
-    m_eyePos = center - lookForward() * m_viewDist;
+    const float tanH = qMax(0.05f, tanV * aspect);
+
+    const float halfX = sx * 0.5f;
+    const float halfY = qMax(sy, 1.0f) * 0.5f;
+    const float halfZ = sz * 0.5f;
+    float needDist = 3.0f;
+    for (int i = 0; i < 8; ++i)
+    {
+        const QVector3D corner((i & 1) ? halfX : -halfX,
+                               (i & 2) ? halfY : -halfY,
+                               (i & 4) ? halfZ : -halfZ);
+        const float depthOffset = QVector3D::dotProduct(corner, forward);
+        // 横向 / 竖向都按「该角自身的深度」算，透视近大远小才不会把近处的角切掉
+        const float byWidth = depthOffset + qAbs(QVector3D::dotProduct(corner, right)) / tanH;
+        const float byHeight = depthOffset + qAbs(QVector3D::dotProduct(corner, up)) / tanV;
+        needDist = qMax(needDist, qMax(byWidth, byHeight));
+    }
+    m_viewDist = qBound(3.0f, needDist * 1.08f, 6000.0f);
+    m_eyePos = center - forward * m_viewDist;
     m_eyeValid = true;
     update();
 }
@@ -390,6 +520,21 @@ void VoxelViewWidget::applyViewPreset(ViewPreset preset)
     }
     m_eyePos = center - lookForward() * m_viewDist;
     m_eyeValid = true;
+    update();
+}
+
+void VoxelViewWidget::orbitYaw(float degrees)
+{
+    if (!m_eyeValid)
+    {
+        // 还没取过景：只改朝向，下一步 resetView 再按尺寸摆好视点
+        m_yaw += qDegreesToRadians(degrees);
+        update();
+        return;
+    }
+    const QVector3D center = m_eyePos + lookForward() * m_viewDist;
+    m_yaw += qDegreesToRadians(degrees);
+    m_eyePos = center - lookForward() * m_viewDist;
     update();
 }
 
@@ -580,8 +725,8 @@ QColor VoxelViewWidget::colorForName(const QString &blockName)
     static const Rule kRules[] = {
         // 液体与半透明
         { "nether_portal", 120, 60, 190, 200 },
-        { "lava", 230, 110, 30, 255 },
-        { "water", 38, 96, 200, 235 },
+        { "lava", 240, 120, 38, 255 },
+        { "water", 63, 118, 228, 235 },
         { "glass", 206, 233, 247, 225 },
         // 冰雪与晶体
         { "blue_ice", 120, 165, 240, 235 },
@@ -809,12 +954,15 @@ void VoxelViewWidget::ensurePaletteCache()
     }
 
     const int ps = m_doc->paletteSize();
-    // 调色板只会追加（setBlock 追加新状态），已解析过的条目可长期复用
+    // 调色板只会追加（setBlock 追加新状态），已解析过的条目可长期复用；
+    // 但换材质 / 换形状加载器时必须把缓存整体作废重算——否则旧条目还带着
+    // 「用贴图」的标记，纯色块模式下会拿着已经卸掉的图集（1×1 白图）把整份模型
+    // 渲染成白色，切到纯色块反而比材质模式还白。
     if (m_paletteCacheValid && m_paletteCache.size() == ps)
         return;
 
     const bool texAvail = m_loader && m_loader->isValid();
-    const int from = qMin(m_paletteCache.size(), ps);
+    const int from = m_paletteCacheValid ? qMin(m_paletteCache.size(), ps) : 0;
     m_paletteCache.resize(ps);
 
     for (int p = from; p < ps; ++p)
@@ -823,6 +971,15 @@ void VoxelViewWidget::ensurePaletteCache()
         PaletteRender pr;
         pr.isAir = st.isAir();
         pr.color = colorForName(st.name);
+        // 红石线：颜色只看信号强度（贴图本身是灰度的），形状和连接单独处理
+        const bool redstoneWire = !pr.isAir && isRedstoneWireName(st.name);
+        if (redstoneWire)
+        {
+            pr.redstoneWire = true;
+            pr.redstonePower = qBound(0,
+                st.properties.value(QStringLiteral("power")).toInt(), 15);
+            pr.color = redstoneColorForPower(pr.redstonePower);
+        }
 
         if (pr.isAir)
         {
@@ -839,23 +996,51 @@ void VoxelViewWidget::ensurePaletteCache()
             continue;
         }
 
-        // 真实形状盒（含属性状态字符串）；无形状时回退为整格立方体
+        // 真实形状盒（含属性状态字符串）；无形状时回退为整格立方体。
+        // 红石线也先尝试原版模型（保留贴图细节），没有模型时再自己拼粉尘。
+        // 注意：fromModel 只表示「调色板里真有这个方块的模型」，补出来的整格保底盒
+        // 不算模型——水 / 岩浆（专用渲染器画）和红石线都靠这一点区分「有模型 / 没模型」。
         QVector<ShapeBox> shapes;
-        const BlockShapes *bs = shapesFor(st.toString());
-        if (bs && !bs->boxes.isEmpty())
-            shapes = bs->boxes;
-        const bool fromModel = !shapes.isEmpty();
-        if (shapes.isEmpty())
-            shapes.append(ShapeBox{});      // 默认全格
-        // 液体没有模型（原版用专用渲染器画）：按 14/16 的液面高度显示，
-        // 否则水面会顶到整格高，和岸边/水下的方块拼起来像一堵蓝墙
-        if (!fromModel
-            && (st.name.contains(QLatin1String("water")) || st.name.contains(QLatin1String("lava"))))
-            shapes[0].to[1] = 0.875f;
+        bool fromModel = false;
+        {
+            const BlockShapes *bs = shapesFor(st.toString());
+            if (bs && !bs->boxes.isEmpty())
+            {
+                shapes = bs->boxes;
+                fromModel = true;
+            }
+            if (shapes.isEmpty() && !redstoneWire)
+                shapes.append(ShapeBox{});      // 默认全格
+        }
+        // 水 / 岩浆没有模型（原版用专用渲染器画）：这里按满格建盒，
+        // 真正的液面高度留到生成几何时逐格决定——一整片水要按「上面还连着水」拉满整格，
+        // 只有最上面那层才收口到 14/16，否则每层之间会露出一条缝，层层叠起来像一摞蓝玻璃箱。
+        const FluidKind fluid = fromModel ? FluidNone : fluidKindOf(st.name);
+        if (fluid != FluidNone)
+        {
+            pr.fluid = true;
+            pr.fluidLava = (fluid == FluidLava);
+            pr.fluidTop = fluidSurfaceHeight(st);
+        }
 
         int fallbackTile = -1;
         if (texAvail)
-            m_loader->textureFor(st.name, fallbackTile);
+        {
+            if (fluid != FluidNone)
+            {
+                // 液体贴图叫 water_still / lava_still，直接按方块名查 water / lava 查不到，
+                // 整片水就会退回纯色，看着像一块塑料蓝板
+                const QString texKey = (fluid == FluidLava)
+                    ? QStringLiteral("block/lava_still")
+                    : QStringLiteral("block/water_still");
+                if (!m_loader->tileForKey(texKey, fallbackTile))
+                    fallbackTile = -1;
+            }
+            else
+            {
+                m_loader->textureFor(st.name, fallbackTile);
+            }
+        }
 
         bool allFull = true;
         for (const ShapeBox &sb : shapes)
@@ -907,10 +1092,29 @@ void VoxelViewWidget::ensurePaletteCache()
                     rf.noAo = !sface->aoOn;           // 十字模型关掉角落阴影
                     if (sface->tintIndex >= 0)        // 草/树叶/水按种类着色
                     {
-                        const QColor tc = tintColorFor(st.name);
+                        // 红石线的贴图也是灰度的，但颜色由信号强度决定；不单独乘色的话
+                        // 会落到植被的默认绿色，预览里就成了「绿线」
+                        const QColor tc = redstoneWire
+                            ? redstoneColorForPower(pr.redstonePower)
+                            : tintColorFor(st.name);
                         rf.tint[0] = uchar(tc.red());
                         rf.tint[1] = uchar(tc.green());
                         rf.tint[2] = uchar(tc.blue());
+                    }
+                }
+                // 液体贴图乘色：水的贴图是灰度的，不乘群系色就是一片惨白；
+                // 岩浆贴图本身有色，乘白即可（原版岩浆的橙黄是画在贴图里的）
+                if (fluid != FluidNone)
+                {
+                    if (fluid == FluidLava)
+                    {
+                        rf.tint[0] = rf.tint[1] = rf.tint[2] = 255;
+                    }
+                    else
+                    {
+                        rf.tint[0] = 63;
+                        rf.tint[1] = 118;
+                        rf.tint[2] = 228;
                     }
                 }
                 int tile = -1;
@@ -949,6 +1153,18 @@ void VoxelViewWidget::ensurePaletteCache()
 
         pr.fullCube = allFull && pr.boxes.size() == 1;
         pr.opaque = !pr.isAir && pr.color.alpha() >= 250;
+        if (fluid != FluidNone)
+        {
+            // 液体只填 14/16（流动时更低），不能当整格方块：否则邻居会以为被整块挡住，
+            // 把紧挨液面的那圈面剔除，液面那一小截就会透出背景
+            pr.fullCube = false;
+            if (fluid == FluidWater)
+            {
+                // 水要能透出水下的结构：按半透明画（原版的水也是能看穿的）
+                pr.color.setAlpha(150);
+                pr.opaque = false;
+            }
+        }
         // 实心占比：台阶/楼梯/栅栏这类「不完整方块」虽然挡住视线，但只占一部分体积，
         // 用它给邻居打柔和的接触阴影（整块=1，台阶=0.5，十字植物/铁轨=0 不留阴影）
         {
@@ -964,6 +1180,29 @@ void VoxelViewWidget::ensurePaletteCache()
                     solid += dx * dy * dz;
             }
             pr.solidity = qMin(1.0f, solid);
+        }
+        // 液体不留接触阴影：水面 / 岩浆面边上压一圈阴影会显得脏
+        if (fluid != FluidNone)
+            pr.solidity = 0.0f;
+        if (redstoneWire)
+        {
+            // 有原版模型时沿用模型（贴图细节保留）；没有模型（纯色块模式、缺材质、
+            // 或状态里只写了名字没有连接属性）时按连接关系自己拼一层粉尘
+            pr.redstoneProcedural = !fromModel;
+            if (pr.redstoneProcedural)
+            {
+                // 占位盒只用于拾取 / 悬停描边（原版红石线的选取框就是 1/16 高），
+                // 真正画出来的粉尘由 buildGeometry 按邻居逐格生成
+                RenderBox ph;
+                ph.from[1] = 0.0f;
+                ph.to[1] = 0.0625f;
+                ph.fullCube = false;
+                pr.boxes.append(ph);
+            }
+            pr.fullCube = false;      // 不能挡住邻居的面，也不能当整格 AO 遮挡体
+            pr.solidity = 0.0f;
+            pr.opaque = true;         // 粉尘本身不透明，放到第一遍画
+            pr.tinted = true;         // 颜色按信号强度统一，不叠加逐格亮度扰动
         }
         // 玻璃/树叶/冰/水这类「能透出来」的方块不做遮挡体：
         // 否则邻居的面会被剔除，透过它们就会看到空洞
@@ -1012,15 +1251,25 @@ void VoxelViewWidget::buildOccupancy()
 
     const LayerMode mode = m_layerMode;
     const int filter = m_layerFilter;
+    const LayerAxis axis = m_layerAxis;
+    const int sx = m_doc->sizeX();
     const bool showAir = m_showAir;
     const bool allowAll = (mode == LayerMode::All) || (filter < 0);
 
     for (int i = 0; i < vol; ++i)
     {
+        // 剖切轴决定「第几层」取哪个坐标：Y 是水平层，X / Z 是竖向剖开
         const int y = i / layer;
+        int axisCoord = y;
+        if (axis != LayerAxis::Y)
+        {
+            const int rem = i - y * layer;
+            axisCoord = (axis == LayerAxis::X) ? (rem % sx) : (rem / sx);
+        }
         bool visible = true;
         if (!allowAll)
-            visible = (mode == LayerMode::Single) ? (y == filter) : (y <= filter);
+            visible = (mode == LayerMode::Single) ? (axisCoord == filter)
+                                                  : (axisCoord <= filter);
         if (!visible)
             continue;
 
@@ -1103,6 +1352,7 @@ void VoxelViewWidget::buildGeometry()
 
     const LayerMode mode = m_layerMode;
     const int filter = m_layerFilter;
+    const LayerAxis axis = m_layerAxis;
     const bool allowAll = (mode == LayerMode::All) || (filter < 0);
     const bool showAir = m_showAir;
 
@@ -1138,6 +1388,234 @@ void VoxelViewWidget::buildGeometry()
         return 0.0f;
     };
 
+    // 相邻格的「有效液面高度」（局部 0..1）：不是同类液体返回 -1。
+    // 上面还连着同类液体的格子按满格算（整片水连成一体）；只认本轮真正画出来的格子，
+    // 被层数条切掉的那一层不能参与连片，否则切面上会缺一层水面，看着是个洞。
+    auto fluidTopAt = [&](int x, int y, int z, bool lava) -> float {
+        if (!occ || x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz)
+            return -1.0f;
+        const int ni = y * layer + z * sx + x;
+        if (!(occ[ni] & 1))
+            return -1.0f;
+        const int np = m_doc->paletteIndexAt(ni);
+        if (np < 0 || np >= m_paletteCache.size())
+            return -1.0f;
+        const PaletteRender &npr = m_paletteCache.at(np);
+        if (!npr.fluid || npr.fluidLava != lava)
+            return -1.0f;
+        // 这一格上面还有同类液体 → 它被上面的水/岩浆填满，液面就是格子顶
+        if (y + 1 < sy)
+        {
+            const int ai = (y + 1) * layer + z * sx + x;
+            if (occ[ai] & 1)
+            {
+                const int ap = m_doc->paletteIndexAt(ai);
+                if (ap >= 0 && ap < m_paletteCache.size())
+                {
+                    const PaletteRender &apr = m_paletteCache.at(ap);
+                    if (apr.fluid && apr.fluidLava == lava)
+                        return 1.0f;
+                }
+            }
+        }
+        return npr.fluidTop;
+    };
+
+    // ---- 红石线粉尘：没有可用模型时自己拼（纯色块模式 / 缺材质 / 状态里没有连接属性）----
+    // 原版红石线是贴在方块顶上的一层薄片：从中心向连接方向各伸一条线，孤立时是一个小点，
+    // 拐角处补一点；遇到高一格的相邻线路还会沿侧面爬上去。不这么做的话，纯色模式下
+    // 每格红石线都会画成一整块红砖，把整片电路糊成红色方块。
+    auto emitRedstoneDust = [&](int x, int y, int z, const SchematicBlockState &st,
+                                int power, uchar dimByte) -> bool {
+        const float dustH = 0.25f / 16.0f;     // 1/64：与原版粉尘模型同高
+        const float lineHalf = 0.0625f;        // 线宽 2/16 的一半
+        const QColor color = redstoneColorForPower(power);
+        const uchar cr = toByte(color.redF());
+        const uchar cg = toByte(color.greenF());
+        const uchar cb = toByte(color.blueF());
+
+        auto emitQuad = [&](const float p0[3], const float p1[3],
+                            const float p2[3], const float p3[3], float light) -> bool {
+            if (!grow(6))
+                return false;
+            const float *corners[4] = { p0, p1, p2, p3 };
+            Vtx q[4];
+            for (int c = 0; c < 4; ++c)
+            {
+                Vtx &v = q[c];
+                v.x = float(x) + corners[c][0];
+                v.y = float(y) + corners[c][1];
+                v.z = float(z) + corners[c][2];
+                v.r = cr; v.g = cg; v.b = cb; v.a = 255;
+                v.u = 0; v.v = 0;
+                v.light = toByte(light);
+                v.tex = 0;
+                v.dim = dimByte;
+                v.pad = 0;
+                v.tr = 255; v.tg = 255; v.tb = 255;
+                v.tinted = 1;
+            }
+            Vtx *dst = out + usedVerts;
+            dst[0] = q[0]; dst[1] = q[1]; dst[2] = q[2];
+            dst[3] = q[0]; dst[4] = q[2]; dst[5] = q[3];
+            usedVerts += 6;
+            return true;
+        };
+
+        // 顶面横片（原版粉尘就是一层几乎贴地的薄片）
+        auto emitTop = [&](float x0, float z0, float x1, float z1) -> bool {
+            const float a[3] = { x0, dustH, z1 };
+            const float c0[3] = { x1, dustH, z1 };
+            const float c1[3] = { x1, dustH, z0 };
+            const float c2[3] = { x0, dustH, z0 };
+            return emitQuad(a, c0, c1, c2, kFaceLight[2]);
+        };
+
+        // 方向顺序：北 / 东 / 南 / 西（-Z, +X, +Z, -X）
+        static const int dxs[4] = { 0, 1, 0, -1 };
+        static const int dzs[4] = { -1, 0, 1, 0 };
+        static const char *const dirKeys[4] = { "north", "east", "south", "west" };
+        bool side[4] = { false, false, false, false };
+        bool up[4] = { false, false, false, false };
+        bool hasProp = false;
+        for (int d = 0; d < 4; ++d)
+            if (st.properties.contains(QLatin1String(dirKeys[d])))
+                hasProp = true;
+
+        if (hasProp)
+        {
+            // 投影里保存了连接属性（Litematica 等格式）：直接照抄，最忠实
+            for (int d = 0; d < 4; ++d)
+            {
+                const QString v = st.properties.value(QLatin1String(dirKeys[d]));
+                side[d] = (v == QLatin1String("side") || v == QLatin1String("up"));
+                up[d] = (v == QLatin1String("up"));
+            }
+        }
+        else
+        {
+            // 只有方块名（旧格式转换过来的投影）：按四周邻居推断该怎么连
+            for (int d = 0; d < 4; ++d)
+            {
+                const int nx = x + dxs[d];
+                const int nz = z + dzs[d];
+                if (nx < 0 || nz < 0 || nx >= sx || nz >= sz || !occ)
+                    continue;
+                const int ni = y * layer + nz * sx + nx;
+                if ((occ[ni] & 1))
+                {
+                    const int np = m_doc->paletteIndexAt(ni);
+                    if (np < 0 || np >= m_paletteCache.size())
+                        continue;
+                    if (isRedstoneConnector(m_doc->paletteEntry(np).name))
+                        side[d] = true;
+                    // 高一格：邻格是整块不透明方块、它上面还有红石线 → 沿它侧面爬上去
+                    if (!side[d] && (occ[ni] & 4) && y + 1 < sy)
+                    {
+                        const int ai = (y + 1) * layer + nz * sx + nx;
+                        if ((occ[ai] & 1))
+                        {
+                            const int ap = m_doc->paletteIndexAt(ai);
+                            if (ap >= 0 && ap < m_paletteCache.size()
+                                && isRedstoneWireName(m_doc->paletteEntry(ap).name))
+                            {
+                                side[d] = true;
+                                up[d] = true;
+                            }
+                        }
+                    }
+                }
+                else if (!(occ[ni] & 4) && y > 0)
+                {
+                    // 原版还有一条「斜下方」规则：本格旁边是空的、下面一格是红石线时也连一条线，
+                    // 上坡爬到方块顶以后才接得上
+                    const int di = (y - 1) * layer + nz * sx + nx;
+                    if ((occ[di] & 1))
+                    {
+                        const int dp = m_doc->paletteIndexAt(di);
+                        if (dp >= 0 && dp < m_paletteCache.size()
+                            && isRedstoneConnector(m_doc->paletteEntry(dp).name))
+                            side[d] = true;
+                    }
+                }
+            }
+        }
+
+        const bool n = side[0], e = side[1], s = side[2], w = side[3];
+        const bool any = n || e || s || w;
+        if (!any)
+        {
+            // 孤立一格：画个小点（原版是一个小圆斑）
+            if (!emitTop(0.5f - 0.125f, 0.5f - 0.125f, 0.5f + 0.125f, 0.5f + 0.125f))
+                return false;
+        }
+        else
+        {
+            if (n && !emitTop(0.5f - lineHalf, 0.0f, 0.5f + lineHalf, 0.5f))
+                return false;
+            if (s && !emitTop(0.5f - lineHalf, 0.5f, 0.5f + lineHalf, 1.0f))
+                return false;
+            if (e && !emitTop(0.5f, 0.5f - lineHalf, 1.0f, 0.5f + lineHalf))
+                return false;
+            if (w && !emitTop(0.0f, 0.5f - lineHalf, 0.5f, 0.5f + lineHalf))
+                return false;
+            // 拐角 / 四向交汇时中心补一点（与原版 dot 模型的出现条件一致）
+            if ((e && n) || (e && s) || (s && w) || (n && w))
+            {
+                if (!emitTop(0.5f - 0.125f, 0.5f - 0.125f,
+                             0.5f + 0.125f, 0.5f + 0.125f))
+                    return false;
+            }
+        }
+
+        // 爬坡：沿相邻整块方块的侧面竖一条薄线（原版 up 模型）
+        for (int d = 0; d < 4; ++d)
+        {
+            if (!up[d])
+                continue;
+            const float xz0 = 0.5f - lineHalf;
+            const float xz1 = 0.5f + lineHalf;
+            const float edge = dustH;
+            if (d == 0)        // 北：贴在 z=0 内侧，面朝 +Z
+            {
+                const float a[3] = { xz0, 0.0f, edge };
+                const float b[3] = { xz1, 0.0f, edge };
+                const float c[3] = { xz1, 1.0f, edge };
+                const float e2[3] = { xz0, 1.0f, edge };
+                if (!emitQuad(a, b, c, e2, kFaceLight[4]))
+                    return false;
+            }
+            else if (d == 1)   // 东：贴在 x=1 内侧，面朝 -X
+            {
+                const float a[3] = { 1.0f - edge, 0.0f, xz0 };
+                const float b[3] = { 1.0f - edge, 0.0f, xz1 };
+                const float c[3] = { 1.0f - edge, 1.0f, xz1 };
+                const float e2[3] = { 1.0f - edge, 1.0f, xz0 };
+                if (!emitQuad(a, b, c, e2, kFaceLight[1]))
+                    return false;
+            }
+            else if (d == 2)   // 南：贴在 z=1 内侧，面朝 -Z
+            {
+                const float a[3] = { xz0, 0.0f, 1.0f - edge };
+                const float b[3] = { xz0, 1.0f, 1.0f - edge };
+                const float c[3] = { xz1, 1.0f, 1.0f - edge };
+                const float e2[3] = { xz1, 0.0f, 1.0f - edge };
+                if (!emitQuad(a, b, c, e2, kFaceLight[5]))
+                    return false;
+            }
+            else               // 西：贴在 x=0 内侧，面朝 +X
+            {
+                const float a[3] = { edge, 0.0f, xz1 };
+                const float b[3] = { edge, 0.0f, xz0 };
+                const float c[3] = { edge, 1.0f, xz0 };
+                const float e2[3] = { edge, 1.0f, xz1 };
+                if (!emitQuad(a, b, c, e2, kFaceLight[0]))
+                    return false;
+            }
+        }
+        return true;
+    };
+
     // 两遍生成：第一遍只写不透明方块，第二遍写半透明方块（玻璃/水/树叶/空气轮廓）。
     // 绘制时前段正常写深度、后段关掉深度写入，透过玻璃就不会把后面画的方块「挖空」。
     for (int pass = 0; pass < 2; ++pass)
@@ -1148,20 +1626,24 @@ void VoxelViewWidget::buildGeometry()
 
     for (int y = 0; y < sy; ++y)
     {
-        if (!allowAll)
-        {
-            if (mode == LayerMode::Single && y != filter)
-                continue;
-            if (mode == LayerMode::Below && y > filter)
-                continue;
-        }
-        const uchar dimByte = (mode == LayerMode::Below && y < filter) ? 255 : 0;
-
         for (int z = 0; z < sz; ++z)
         {
             for (int x = 0; x < sx; ++x)
             {
                 const int i = y * layer + z * sx + x;
+                // 剖切轴坐标（Y 水平 / X 左右 / Z 前后）
+                const int axisCoord = (axis == LayerAxis::Y) ? y
+                                     : (axis == LayerAxis::X) ? x
+                                                              : z;
+                if (!allowAll)
+                {
+                    if (mode == LayerMode::Single && axisCoord != filter)
+                        continue;
+                    if (mode == LayerMode::Below && axisCoord > filter)
+                        continue;
+                }
+                const uchar dimByte =
+                    (mode == LayerMode::Below && axisCoord < filter) ? 255 : 0;
                 const int p = m_doc->paletteIndexAt(i);
                 if (p < 0 || p >= m_paletteCache.size())
                     continue;
@@ -1171,6 +1653,16 @@ void VoxelViewWidget::buildGeometry()
                 // 半透明方块放到第二遍：否则它先画出来会挡住后面才画的实心方块
                 if ((!pr.opaque) != wantTranslucent)
                     continue;
+
+                // 液体：上面还连着同类液体就把这一格拉满整格（一整片水连成一体），
+                // 只有最上面那层才收口到液面高度；被同类液体挡住的内部面在下面一律不画
+                bool lavaCell = false;
+                float fluidTop = 1.0f;
+                if (pr.fluid)
+                {
+                    lavaCell = pr.fluidLava;
+                    fluidTop = (fluidTopAt(x, y + 1, z, lavaCell) >= 0.0f) ? 1.0f : pr.fluidTop;
+                }
 
                 // 逐格微小明度扰动：让纯色（无材质）渲染也有方块质感，避免大面积塑料感。
                 // 用坐标哈希保证同一格子每次重建结果一致，不会闪烁。
@@ -1182,7 +1674,9 @@ void VoxelViewWidget::buildGeometry()
                 uchar cg = toByte(pr.color.greenF());
                 uchar cb = toByte(pr.color.blueF());
                 const uchar ca = uchar(pr.color.alpha());
-                if (!pr.tinted)
+                // 液体不参与逐格扰动：水面 / 岩浆面是一整片，格子之间有色差就会
+                // 浮出一格一格的补丁和横条，看着像贴了瓷砖
+                if (!pr.tinted && !pr.fluid)
                 {
                     // 注意：必须先在浮点域夹到 0..255 再转 uchar，
                     // 否则像雪块(246) 乘 1.05 得 258 会溢出回卷成 2，渲染出怪色薄片
@@ -1191,12 +1685,25 @@ void VoxelViewWidget::buildGeometry()
                     cb = uchar(qBound(0.0f, float(cb) * jitter, 255.0f));
                 }
 
+                // 红石线：没有可用模型时自己拼一层薄粉尘（有模型时继续走普通模型路径）
+                if (pr.redstoneWire && pr.redstoneProcedural)
+                {
+                    if (!emitRedstoneDust(x, y, z, m_doc->paletteEntry(p),
+                                          pr.redstonePower, dimByte))
+                    {
+                        overflow = true;
+                        break;
+                    }
+                    continue;
+                }
+
                 for (const RenderBox &box : pr.boxes)
                 {
+                    // 液面高度逐格计算（其余方块仍用形状盒自己的高度）
+                    const float boxTop = pr.fluid ? fluidTop : box.to[1];
                     // 零厚度元素的退化面（灯笼顶部十字贴片、链子、平面植物）没有面积，
                     // 画出来只是白占顶点，这里按面积提前丢掉
                     const float ex = box.to[0] - box.from[0];
-                    const float ey = box.to[1] - box.from[1];
                     const float ez = box.to[2] - box.from[2];
                     for (int f = 0; f < 6; ++f)
                     {
@@ -1207,6 +1714,27 @@ void VoxelViewWidget::buildGeometry()
                         // 模型没声明这一面就整个不画（原版也只渲染 elements 里列出的面）
                         if (!rf.present)
                             continue;
+
+                        // ---- 液体面：同类液体之间是内部面，画出来只会在水里留下一格一格的隔墙；
+                        // 邻居液面更低时只补画露出来的那一截「台阶」，水面上才不会留下一条透光的缝 ----
+                        float faceY0 = box.from[1];
+                        float faceY1 = boxTop;
+                        if (pr.fluid)
+                        {
+                            int fx = x, fy = y, fz = z;
+                            if (axis == 0) fx += sign;
+                            else if (axis == 1) fy += sign;
+                            else fz += sign;
+                            const float nTop = fluidTopAt(fx, fy, fz, lavaCell);
+                            if (nTop >= 0.0f)
+                            {
+                                if (axis == 1 || nTop >= fluidTop - 1e-3f)
+                                    continue;       // 被同类液体整个盖住
+                                faceY0 = nTop;      // 邻居液面更低：只画上面那一截
+                            }
+                        }
+
+                        const float ey = faceY1 - faceY0;
                         const float faceArea = (axis == 0) ? ey * ez : (axis == 1 ? ex * ez : ex * ey);
                         if (faceArea < 1e-6f)
                             continue;
@@ -1237,6 +1765,8 @@ void VoxelViewWidget::buildGeometry()
                         }
 
                         float faceLight = rf.shadeOff ? 1.0f : kFaceLight[f];
+                        if (lavaCell)
+                            faceLight = 1.0f;   // 岩浆自发光：六面都是满亮，不吃方向光
                         const float *uvr = rf.uv;
                         const int ta = kFaceTangent[f][0];
                         const int tb = kFaceTangent[f][1];
@@ -1247,7 +1777,7 @@ void VoxelViewWidget::buildGeometry()
                         {
                             const float *corner = kFaceCorner[f][c];
                             float lx = box.from[0] + (box.to[0] - box.from[0]) * corner[0];
-                            float ly = box.from[1] + (box.to[1] - box.from[1]) * corner[1];
+                            float ly = faceY0 + (faceY1 - faceY0) * corner[1];
                             float lz = box.from[2] + (box.to[2] - box.from[2]) * corner[2];
                             if (box.rotated)
                                 rotatePoint3(lx, ly, lz,
@@ -1289,7 +1819,7 @@ void VoxelViewWidget::buildGeometry()
                             }
                             // 1.0 → 0.82 → 0.62 → 0.46：整块相邻时与旧观感一致，
                             // 台阶/栅栏这类只占半格的邻居给出 0.9 左右的柔和接触阴影
-                            const float aoF = 1.0f - 0.18f * aoSum;
+                            const float aoF = lavaCell ? 1.0f : (1.0f - 0.18f * aoSum);
                             ao[c] = aoF;
                             v.light = toByte(faceLight * aoF);
                             v.r = cr; v.g = cg; v.b = cb; v.a = ca;
@@ -1330,7 +1860,7 @@ void VoxelViewWidget::buildGeometry()
                         // 模型声明 shade:false 的面（十字花草、树叶、铁轨、藤蔓…）原版按
                         // 满亮渲染；这里按旋转后的实际法线补一点点方向光，交叉贴片和斜置
                         // 平面才不会糊成一块平板，同时不破坏"该亮的地方仍然亮"的观感
-                        if (rf.shadeOff)
+                        if (rf.shadeOff && !lavaCell)
                         {
                             const float ax = q[1].x - q[0].x, ay = q[1].y - q[0].y, az = q[1].z - q[0].z;
                             const float bx = q[3].x - q[0].x, by = q[3].y - q[0].y, bz = q[3].z - q[0].z;
@@ -1394,10 +1924,180 @@ void VoxelViewWidget::buildGeometry()
     emit geometryRebuilt(m_quadCount, int(timer.elapsed()));
 }
 
+// ----------------------------------------------------------------- 生物 / 实体
+
+void VoxelViewWidget::setEntityTextures(InstanceEntityTextures *textures)
+{
+    if (m_entityTextures == textures)
+        return;
+    m_entityTextures = textures;
+    m_entAtlasDirty = true;
+    rebuild();   // 实体三角面按新图集的 UV 重算（纯 CPU）
+}
+
+void VoxelViewWidget::setShowEntities(bool show)
+{
+    if (m_showEntities == show)
+        return;
+    m_showEntities = show;
+    rebuild();
+}
+
+/**
+ * @brief 把投影里的生物展开成三角面
+ *
+ * 与方块共用同一套顶点格式与着色器，只是换一张「实体图集」贴图；
+ * 实体按脚底坐标摆放，朝向按原版 yaw（0 = 南 / +Z）绕 Y 旋转。
+ * 层数过滤同样生效：只看某一层时，本层以外的生物一并隐藏/变暗。
+ */
+void VoxelViewWidget::buildEntityGeometry()
+{
+    m_entityData.clear();
+    m_entityVertexCount = 0;
+    m_drawnEntities = 0;
+    m_entityUploadDirty = true;
+
+    if (!m_showEntities || m_doc == nullptr || !m_doc->isLoaded()
+        || m_entityTextures == nullptr || !m_entityTextures->isValid()
+        || m_doc->entities().isEmpty())
+    {
+        return;
+    }
+    const float atlasSide = float(m_entityTextures->atlasSize());
+    if (atlasSide <= 0.0f)
+        return;
+
+    const LayerMode mode = m_layerMode;
+    const int filter = m_layerFilter;
+    const LayerAxis axis = m_layerAxis;
+    const bool allowAll = (mode == LayerMode::All) || (filter < 0);
+
+    // 同一类实体只展开一次模型（一份猪的三角面可以给满场的猪复用）
+    QHash<QString, QVector<EntityMeshTriangle>> meshCache;
+    QHash<QString, QPair<QRect, QSize>> rectCache;
+
+    // 光源方向（略偏上前方，与方块的面向光观感对齐）
+    const QVector3D lightDir = QVector3D(0.32f, 0.86f, 0.38f).normalized();
+
+    const auto pushVertex = [this](float x, float y, float z, float u, float v,
+                                   float light, uchar dim) {
+        Vtx vtx;
+        vtx.x = x;
+        vtx.y = y;
+        vtx.z = z;
+        vtx.r = 255;
+        vtx.g = 255;
+        vtx.b = 255;
+        vtx.a = 255;
+        vtx.u = static_cast<ushort>(qBound(0.0f, u, 1.0f) * 65535.0f);
+        vtx.v = static_cast<ushort>(qBound(0.0f, v, 1.0f) * 65535.0f);
+        vtx.light = toByte(light);
+        vtx.tex = 255;
+        vtx.dim = dim;
+        vtx.pad = 0;
+        vtx.tr = 255;
+        vtx.tg = 255;
+        vtx.tb = 255;
+        vtx.tinted = 1;
+        m_entityData.append(reinterpret_cast<const char *>(&vtx), int(sizeof(Vtx)));
+        ++m_entityVertexCount;
+    };
+
+    for (const SchematicEntity &entity : m_doc->entities())
+    {
+        EntityModel model;
+        if (!EntityModelLoader::instance()->modelFor(entity.id, model))
+            continue;
+
+        auto rectIt = rectCache.constFind(model.textureKey);
+        if (rectIt == rectCache.constEnd())
+        {
+            QRect rect;
+            QSize sourceSize;
+            if (!m_entityTextures->rectForKey(model.textureKey, rect, &sourceSize)
+                || rect.isEmpty())
+            {
+                rect = QRect();   // 实例里没这张贴图：这个实体跳过（不画成黑块）
+                sourceSize = QSize();
+            }
+            rectIt = rectCache.insert(model.textureKey, QPair<QRect, QSize>(rect, sourceSize));
+        }
+        const QRect rect = rectIt.value().first;
+        const QSize sourceSize = rectIt.value().second;
+        if (rect.isEmpty() || sourceSize.isEmpty())
+            continue;
+
+        // 模型贴图布局和实例贴图对不上（羊、蝙蝠这类）就不画，免得贴图错位糊成一片
+        if (model.uvLimitU > float(sourceSize.width()) + 2.0f
+            || model.uvLimitV > float(sourceSize.height()) + 2.0f)
+        {
+            continue;
+        }
+
+        // 层过滤：按实体脚底所在的格判断（与方块的剖切同步，掀屋顶时生物一起消失）
+        const int cellX = int(qFloor(entity.x));
+        const int cellY = int(qFloor(entity.y));
+        const int cellZ = int(qFloor(entity.z));
+        const int axisCoord = (axis == LayerAxis::Y) ? cellY
+                             : (axis == LayerAxis::X) ? cellX
+                                                      : cellZ;
+        if (!allowAll)
+        {
+            if (mode == LayerMode::Single && axisCoord != filter)
+                continue;
+            if (mode == LayerMode::Below && axisCoord > filter)
+                continue;
+        }
+        const uchar dim = (mode == LayerMode::Below && axisCoord < filter) ? 255 : 0;
+
+        auto meshIt = meshCache.constFind(model.id);
+        if (meshIt == meshCache.constEnd())
+            meshIt = meshCache.insert(model.id, buildEntityMesh(model));
+        const QVector<EntityMeshTriangle> &mesh = meshIt.value();
+        if (mesh.isEmpty())
+            continue;
+
+        // 模型面朝 -Z，原版 yaw 0 面朝 +Z，所以绕 Y 转 180 - yaw
+        const float yawRad = qDegreesToRadians(180.0f - entity.yaw);
+        const float cy = qCos(yawRad), sy = qSin(yawRad);
+
+        const float uScale = 1.0f / atlasSide;
+        // 模型 uv 是「像素」，按贴图在图集里的实际尺寸换算（贴图可能被等比缩过）
+        const float texelU = float(rect.width()) / float(sourceSize.width()) * uScale;
+        const float texelV = float(rect.height()) / float(sourceSize.height()) * uScale;
+        const float rectU = float(rect.x()) * uScale;
+        const float rectV = float(rect.y()) * uScale;
+
+        for (const EntityMeshTriangle &tri : mesh)
+        {
+            // 法线跟着绕 Y 转，再做面向光
+            const float nx = tri.normal.x() * cy + tri.normal.z() * sy;
+            const float nz = -tri.normal.x() * sy + tri.normal.z() * cy;
+            const float nd = qAbs(nx * lightDir.x() + tri.normal.y() * lightDir.y()
+                                  + nz * lightDir.z());
+            const float light = 0.56f + 0.44f * qBound(0.0f, nd, 1.0f);
+
+            for (int k = 0; k < 3; ++k)
+            {
+                const QVector3D &p = tri.pos[k];
+                const float px = p.x() * cy + p.z() * sy;
+                const float pz = -p.x() * sy + p.z() * cy;
+                const QVector2D &uv = tri.uv[k];
+                pushVertex(float(entity.x) + px,
+                           float(entity.y) + p.y(),
+                           float(entity.z) + pz,
+                           rectU + uv.x() * texelU,
+                           rectV + uv.y() * texelV,
+                           light, dim);
+            }
+        }
+        ++m_drawnEntities;
+    }
+}
+
 // ----------------------------------------------------------------- GL 初始化
 
-void VoxelViewWidget::initializeGL()
-{
+void VoxelViewWidget::initializeGL(){
     initializeOpenGLFunctions();
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);          // 几何按「面外 CCW」生成，背面无需绘制
@@ -1538,11 +2238,17 @@ void main() {
     m_hiVbo.create();
     m_hiVbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
 
+    m_entVao.create();
+    m_entVbo.create();
+    m_entVbo.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+
     m_glReady = true;
     m_uploadDirty = true;
     m_selUploadDirty = true;
     m_hoverUploadDirty = true;
     m_hiUploadDirty = true;
+    m_entityUploadDirty = true;
+    m_entAtlasDirty = true;
     m_atlasDirty = true;
 }
 
@@ -1635,6 +2341,74 @@ void VoxelViewWidget::uploadAtlasTexture()
     m_atlasTex->setMinificationFilter(QOpenGLTexture::Nearest);
     m_atlasTex->setMagnificationFilter(QOpenGLTexture::Nearest);
     m_atlasTex->setWrapMode(QOpenGLTexture::ClampToEdge);
+}
+
+void VoxelViewWidget::uploadEntityGeometry()
+{
+    m_entityUploadDirty = false;
+    if (!m_glReady)
+        return;
+    if (m_entityData.isEmpty() || m_entityVertexCount <= 0 || !m_entVao.isCreated()
+        || !m_entVbo.isCreated())
+    {
+        m_entityVertexCount = 0;
+        return;
+    }
+
+    const int stride = int(sizeof(Vtx));
+    m_entVbo.bind();
+    m_entVbo.allocate(m_entityData.constData(), int(m_entityData.size()));
+    if (m_entVbo.size() < m_entityData.size())
+    {
+        m_entityVertexCount = 0;   // 显存不足：宁可不画
+        return;
+    }
+
+    m_entVao.bind();
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void *>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void *>(12));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_UNSIGNED_SHORT, GL_TRUE, stride, reinterpret_cast<void *>(16));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 1, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void *>(20));
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 1, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void *>(21));
+    glEnableVertexAttribArray(5);
+    glVertexAttribPointer(5, 1, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void *>(22));
+    glEnableVertexAttribArray(6);
+    glVertexAttribPointer(6, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void *>(24));
+    m_entVao.release();
+}
+
+void VoxelViewWidget::uploadEntityAtlasTexture()
+{
+    m_entAtlasDirty = false;
+    if (!m_glReady)
+        return;
+
+    if (m_entityTextures == nullptr || !m_entityTextures->isValid())
+    {
+        if (m_entAtlasTex)
+        {
+            delete m_entAtlasTex;
+            m_entAtlasTex = nullptr;
+        }
+        return;
+    }
+
+    const QImage atlas = m_entityTextures->atlasImage();
+    if (atlas.isNull())
+        return;
+
+    if (!m_entAtlasTex)
+        m_entAtlasTex = new QOpenGLTexture(atlas, QOpenGLTexture::DontGenerateMipMaps);
+    else
+        m_entAtlasTex->setData(atlas, QOpenGLTexture::DontGenerateMipMaps);
+    m_entAtlasTex->setMinificationFilter(QOpenGLTexture::Nearest);
+    m_entAtlasTex->setMagnificationFilter(QOpenGLTexture::Nearest);
+    m_entAtlasTex->setWrapMode(QOpenGLTexture::ClampToEdge);
 }
 
 // ----------------------------------------------------------------- 叠加通道
@@ -1925,8 +2699,10 @@ void VoxelViewWidget::rebuildHighlightGeometry()
 
     const int vol = m_doc->volume();
     const int layer = m_doc->layerSize();
+    const int sx = m_doc->sizeX();
     const LayerMode mode = m_layerMode;
     const int filter = m_layerFilter;
+    const LayerAxis axis = m_layerAxis;
     const bool allowAll = (mode == LayerMode::All) || (filter < 0);
 
     // 只看某一层 / 此层以下时，高亮跟着同样的可见范围走：
@@ -1937,7 +2713,14 @@ void VoxelViewWidget::rebuildHighlightGeometry()
         if (allowAll)
             return true;
         const int y = cell / layer;
-        return mode == LayerMode::Single ? (y == filter) : (y <= filter);
+        int axisCoord = y;
+        if (axis != LayerAxis::Y)
+        {
+            const int rem = cell - y * layer;
+            axisCoord = (axis == LayerAxis::X) ? (rem % sx) : (rem / sx);
+        }
+        return mode == LayerMode::Single ? (axisCoord == filter)
+                                         : (axisCoord <= filter);
     };
 
     const int kMaxHighlightCells = 8192;
@@ -2135,6 +2918,39 @@ void VoxelViewWidget::paintGL()
         m_vao.release();
         m_atlasTex->release(0);
         m_program.release();
+    }
+
+    // ---- 生物 / 实体：同一套着色器，换成实体贴图图集 ----
+    if (m_showEntities && m_entityVertexCount > 0 && m_program.isLinked())
+    {
+        if (m_entityUploadDirty)
+            uploadEntityGeometry();
+        if (m_entAtlasDirty || !m_entAtlasTex)
+            uploadEntityAtlasTexture();
+
+        if (m_entityVertexCount > 0 && m_entAtlasTex)
+        {
+            m_program.bind();
+            m_entAtlasTex->bind(0);
+            m_program.setUniformValue("uAtlas", 0);
+            m_program.setUniformValue("uProj", proj);
+            m_program.setUniformValue("uView", view);
+            const float fogEnd = qMax(64.0f, m_viewDist * 2.2f);
+            m_program.setUniformValue("uFogColor", QVector3D(0.06f, 0.07f, 0.10f));
+            m_program.setUniformValue("uFogStart", fogEnd * 0.35f);
+            m_program.setUniformValue("uFogEnd", fogEnd);
+
+            m_entVao.bind();
+            glDepthFunc(GL_LEQUAL);
+            // 实体模型是展开的盒子，正反两面都要能看见（贴图是单面的，不做剔除）
+            glDisable(GL_CULL_FACE);
+            glDrawArrays(GL_TRIANGLES, 0, m_entityVertexCount);
+            glEnable(GL_CULL_FACE);
+            glDepthFunc(GL_LESS);
+            m_entVao.release();
+            m_entAtlasTex->release(0);
+            m_program.release();
+        }
     }
 
     // ---- 叠加通道 ----
@@ -2615,6 +3431,8 @@ void VoxelViewWidget::mouseReleaseEvent(QMouseEvent *e)
         int x, y, z;
         if (pickRay(e->pos(), x, y, z, /*skipAir=*/true))
             emit selectRequested(x, y, z);
+        else
+            emit selectRequested(INT_MIN, INT_MIN, INT_MIN);   // 点到空白/天空：交给编辑器取消选取
         return;
     }
     if (pendingEdit == EditBreak)
@@ -2736,6 +3554,17 @@ void VoxelViewWidget::destroyGL()
         m_bgProgram.removeAllShaders();
     if (m_bgVao.isCreated())
         m_bgVao.destroy();
+    if (m_entVbo.isCreated())
+        m_entVbo.destroy();
+    if (m_entVao.isCreated())
+        m_entVao.destroy();
+    if (m_entAtlasTex)
+    {
+        delete m_entAtlasTex;
+        m_entAtlasTex = nullptr;
+    }
+    m_entityVertexCount = 0;
+    m_drawnEntities = 0;
     m_selVertexCount = 0;
     m_hoverTriVerts = 0;
     m_hoverLineVerts = 0;

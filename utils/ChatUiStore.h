@@ -44,6 +44,10 @@ public:
     bool isMuted(const QString &key) const { return m_muted.contains(key); }
     /** 草稿（没有草稿时是空串） */
     QString draft(const QString &key) const { return m_drafts.value(key); }
+    /** 会话备注：只在本机显示的名字（没有备注时是空串） */
+    QString remark(const QString &key) const { return m_remarks.value(key); }
+    /** 会话列表里是否不显示最后一条消息的内容 */
+    bool hidesPreview(const QString &key) const { return m_hidePreview.contains(key); }
 
     /** 置顶 / 取消置顶（官方会话也能置顶，只是它本来就在最前） */
     void setPinned(const QString &key, bool pinned);
@@ -51,6 +55,10 @@ public:
     void setMuted(const QString &key, bool muted);
     /** 保存草稿；空串（或只有空白）表示删除这条草稿 */
     void setDraft(const QString &key, const QString &text);
+    /** 设置会话备注；空串（或只有空白）表示恢复显示原来的昵称 */
+    void setRemark(const QString &key, const QString &remark);
+    /** 隐藏 / 显示会话列表里的消息预览 */
+    void setHidesPreview(const QString &key, bool hide);
 
     /** 是否还有任何草稿（页面切换时用来决定要不要提示） */
     bool hasDraft(const QString &key) const { return !m_drafts.value(key).isEmpty(); }
@@ -70,4 +78,6 @@ private:
     QSet<QString> m_pinned;
     QSet<QString> m_muted;
     QHash<QString, QString> m_drafts;
+    QHash<QString, QString> m_remarks;
+    QSet<QString> m_hidePreview;
 };

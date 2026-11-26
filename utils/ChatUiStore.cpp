@@ -48,6 +48,8 @@ void ChatUiStore::setAccount(int userId)
     m_pinned.clear();
     m_muted.clear();
     m_drafts.clear();
+    m_remarks.clear();
+    m_hidePreview.clear();
     if (m_accountId > 0)
         load();
     emit changed();
@@ -78,6 +80,18 @@ void ChatUiStore::load()
         if (!it.key().isEmpty() && !it.value().toString().isEmpty())
             m_drafts.insert(it.key(), it.value().toString());
     }
+    const QJsonObject remarks = root.value(QStringLiteral("remarks")).toObject();
+    for (auto it = remarks.constBegin(); it != remarks.constEnd(); ++it)
+    {
+        if (!it.key().isEmpty() && !it.value().toString().isEmpty())
+            m_remarks.insert(it.key(), it.value().toString());
+    }
+    for (const QJsonValue &value : root.value(QStringLiteral("hidePreview")).toArray())
+    {
+        const QString key = value.toString();
+        if (!key.isEmpty())
+            m_hidePreview.insert(key);
+    }
 }
 
 void ChatUiStore::save()
@@ -98,9 +112,20 @@ void ChatUiStore::save()
         if (!it.value().isEmpty())
             drafts.insert(it.key(), it.value());
     }
+    QJsonObject remarks;
+    for (auto it = m_remarks.constBegin(); it != m_remarks.constEnd(); ++it)
+    {
+        if (!it.value().isEmpty())
+            remarks.insert(it.key(), it.value());
+    }
+    QJsonArray hidePreview;
+    for (const QString &key : m_hidePreview)
+        hidePreview.append(key);
     root.insert(QStringLiteral("pinned"), pinned);
     root.insert(QStringLiteral("muted"), muted);
     root.insert(QStringLiteral("drafts"), drafts);
+    root.insert(QStringLiteral("remarks"), remarks);
+    root.insert(QStringLiteral("hidePreview"), hidePreview);
 
     QDir().mkpath(QFileInfo(filePath()).absolutePath());
     QSaveFile file(filePath());
@@ -153,6 +178,33 @@ void ChatUiStore::setDraft(const QString &key, const QString &text)
             return;
         m_drafts.insert(key, text);
     }
+    save();
+    emit changed();
+}
+
+void ChatUiStore::setRemark(const QString &key, const QString &remark)
+{
+    if (key.isEmpty())
+        return;
+    const QString trimmed = remark.trimmed();
+    if (m_remarks.value(key) == trimmed)
+        return;
+    if (trimmed.isEmpty())
+        m_remarks.remove(key);
+    else
+        m_remarks.insert(key, trimmed);
+    save();
+    emit changed();
+}
+
+void ChatUiStore::setHidesPreview(const QString &key, bool hide)
+{
+    if (key.isEmpty() || m_hidePreview.contains(key) == hide)
+        return;
+    if (hide)
+        m_hidePreview.insert(key);
+    else
+        m_hidePreview.remove(key);
     save();
     emit changed();
 }

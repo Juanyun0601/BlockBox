@@ -170,6 +170,7 @@ private:
     // Bottom action bar
     QWidget *m_bottomBar;
     QPushButton *m_bottomCheckUpdateBtn;
+    QPushButton *m_healthCheckBtn;     // 底部「体检」入口：兼容矩阵 / 实例体检
     QPushButton *m_selectAllBtn;
     QPushButton *m_copyModBtn;
     QPushButton *m_toggleSelectedBtn;

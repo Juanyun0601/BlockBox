@@ -36,8 +36,9 @@ const char *const kFeedEndpoints[] = {
 };
 constexpr int kEndpointCount = int(sizeof(kFeedEndpoints) / sizeof(kFeedEndpoints[0]));
 
-/// 首页最多展示条数（缓存里也按此上限截断，避免文件无限长）
-constexpr int kMaxEntries = 10;
+/// 一次最多保留的新闻条数：官方接口当前约 100 条，全部保留并在列表页分屏加载；
+/// 上限只用于兜底，避免接口异常时缓存/列表无限膨胀
+constexpr int kMaxEntries = 200;
 /// 数据新鲜期：30 分钟内重复进入首页不再请求
 constexpr int kRefreshIntervalSecs = 30 * 60;
 /// 失败后的最短重试间隔，避免断网时反复打接口

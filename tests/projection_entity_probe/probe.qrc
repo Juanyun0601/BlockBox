@@ -1,0 +1,6 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <file alias="resources/projection_entity_models.json">../../resources/projection_entity_models.json</file>
+    </qresource>
+</RCC>

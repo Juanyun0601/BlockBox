@@ -16,6 +16,7 @@
 #include <QIcon>
 #include <QPixmap>
 #include <QProcess>
+#include <QProgressBar>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QToolButton>
@@ -34,7 +35,9 @@
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
 #include "utils/HomeCarouselStore.h"
+#include "utils/HomePresetCovers.h"
 #include "utils/LanguageManager.h"
+#include "utils/PanoramaThemeManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
 
@@ -366,8 +369,37 @@ void SettingsPage::initInterfaceSettings()
     }
 
     QHBoxLayout *sceneRow = appendSettingRow(rotatingLayout,
-        tr("全景场景"), tr("选择内置的旋转全景场景；选择「自定义图片」时使用下方路径指定的图片，未指定图片时自动使用「主世界」场景。"), QString());
+        tr("全景场景"), tr("选择旋转背景使用的全景主题。首次选择某个主题时会自动下载它的六张全景图，下载完成后立即应用；选「自定义图片」则使用下方路径的图片。"), QString());
     sceneRow->addWidget(m_sceneCombo);
+
+    // 下载状态行：选中未下载的主题时显示进度，失败时可直接重试
+    QFrame *sceneDownloadRow = new QFrame();
+    sceneDownloadRow->setObjectName("settingRow");
+    sceneDownloadRow->setAttribute(Qt::WA_StyledBackground, true);
+    QHBoxLayout *sceneDownloadLayout = new QHBoxLayout(sceneDownloadRow);
+    sceneDownloadLayout->setContentsMargins(24, 12, 24, 12);
+    sceneDownloadLayout->setSpacing(12);
+
+    m_sceneStatusLabel = new QLabel(sceneDownloadRow);
+    m_sceneStatusLabel->setObjectName("settingDesc");
+    m_sceneStatusLabel->setWordWrap(true);
+    m_sceneStatusLabel->setTextFormat(Qt::PlainText);
+    sceneDownloadLayout->addWidget(m_sceneStatusLabel, 1);
+
+    m_sceneProgressBar = new QProgressBar(sceneDownloadRow);
+    m_sceneProgressBar->setObjectName("sceneDownloadBar");
+    m_sceneProgressBar->setTextVisible(false);
+    m_sceneProgressBar->setFixedWidth(140);
+    m_sceneProgressBar->setVisible(false);
+    sceneDownloadLayout->addWidget(m_sceneProgressBar);
+
+    m_sceneRetryBtn = new QPushButton(tr("重试"), sceneDownloadRow);
+    m_sceneRetryBtn->setObjectName("browseBtn");
+    m_sceneRetryBtn->setCursor(Qt::PointingHandCursor);
+    m_sceneRetryBtn->setVisible(false);
+    sceneDownloadLayout->addWidget(m_sceneRetryBtn);
+
+    rotatingLayout->addWidget(sceneDownloadRow);
 
     // 自转速度：0%~400%，100% 为默认速度
     QSlider *speedSlider = new QSlider(Qt::Horizontal);
@@ -629,17 +661,137 @@ void SettingsPage::initInterfaceSettings()
         m_imageSection->setVisible(idx == BackgroundManager::Image || customScene);
         m_blurSection->setVisible(idx == BackgroundManager::Image || rotating);
         m_bingSection->setVisible(idx == BackgroundManager::Bing);
+        updatePanoramaDownloadStatus();
     };
     updateBackgroundSections();
 
+    // 当前在用的主题素材缺失（新安装、清理过缓存或从旧版本升级）时自动补下载
+    auto ensureCurrentScene = [this]() {
+        if (m_backgroundModeCombo->currentIndex() != BackgroundManager::Rotating)
+            return;
+        QString currentScene = BackgroundManager::instance()->panoramaScene();
+        if (currentScene.isEmpty()) {
+            // 选「自定义图片」但没指定可用图片：和背景层一样回退到「主世界」兜底
+            const QString imagePath = BackgroundManager::instance()->imagePath();
+            if (!imagePath.isEmpty() && QFileInfo::exists(imagePath))
+                return;
+            currentScene = PanoramaThemeManager::defaultThemeId();
+        }
+        PanoramaThemeManager *themes = PanoramaThemeManager::instance();
+        if (!themes->isThemeReady(currentScene) && !themes->isDownloading(currentScene))
+            themes->ensureTheme(currentScene);
+        updatePanoramaDownloadStatus();
+    };
+    ensureCurrentScene();
+
+    // 全景主题下载状态实时同步到设置页
+    PanoramaThemeManager *panoramaThemes = PanoramaThemeManager::instance();
+    connect(panoramaThemes, &PanoramaThemeManager::themeProgress, this,
+            [this](const QString &id, int completed, int total, qint64, int percent) {
+        const QString currentId = m_sceneCombo->currentData().toString();
+        if (currentId != id) {
+            // 「自定义图片」没选图时会兜底下载默认主题，也让它显示进度
+            if (currentId.isEmpty()
+                && id == PanoramaThemeManager::defaultThemeId()) {
+                m_sceneProgressBar->setVisible(true);
+                m_sceneProgressBar->setRange(0, qMax(1, total) * 100);
+                m_sceneProgressBar->setValue(completed * 100 + qBound(0, percent, 100));
+                m_sceneStatusLabel->setText(
+                    tr("未指定自定义图片，正在下载「主世界」全景图（%1/%2）…")
+                        .arg(completed)
+                        .arg(total));
+            }
+            return;
+        }
+        m_sceneDownloadError.clear();
+        m_sceneProgressBar->setVisible(true);
+        m_sceneProgressBar->setRange(0, qMax(1, total) * 100);
+        m_sceneProgressBar->setValue(completed * 100 + qBound(0, percent, 100));
+        m_sceneStatusLabel->setText(tr("正在下载「%1」的全景图（%2/%3）…")
+                                        .arg(m_sceneCombo->currentText())
+                                        .arg(completed)
+                                        .arg(total));
+    });
+    connect(panoramaThemes, &PanoramaThemeManager::themeReady, this,
+            [this](const QString &id) {
+        if (m_sceneCombo->currentData().toString() != id) {
+            if (m_sceneCombo->currentData().toString().isEmpty()
+                && id == PanoramaThemeManager::defaultThemeId()) {
+                updatePanoramaDownloadStatus();
+            }
+            return;
+        }
+        m_sceneDownloadError.clear();
+        // 用户选了这个主题但还没应用：六张图下载完再切换，避免中途黑屏
+        if (m_pendingPanoramaScene == id) {
+            m_pendingPanoramaScene.clear();
+            BackgroundManager::instance()->setPanoramaScene(id);
+        }
+        updatePanoramaDownloadStatus();
+    });
+    connect(panoramaThemes, &PanoramaThemeManager::themeFailed, this,
+            [this](const QString &id, const QString &reason) {
+        if (m_sceneCombo->currentData().toString() != id) {
+            if (m_sceneCombo->currentData().toString().isEmpty()
+                && id == PanoramaThemeManager::defaultThemeId()) {
+                updatePanoramaDownloadStatus();
+            }
+            return;
+        }
+        m_sceneDownloadError = reason;
+        updatePanoramaDownloadStatus();
+    });
+
+    connect(m_sceneRetryBtn, &QPushButton::clicked, this, [this]() {
+        const QString id = m_sceneCombo->currentData().toString();
+        if (id.isEmpty())
+            return;
+        m_pendingPanoramaScene = id;
+        m_sceneDownloadError.clear();
+        PanoramaThemeManager::instance()->ensureTheme(id, true);
+        updatePanoramaDownloadStatus();
+    });
+
     // Toggle visibility on mode change
     connect(m_backgroundModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, updateBackgroundSections](int) { updateBackgroundSections(); });
+            this, [this, updateBackgroundSections, ensureCurrentScene](int) {
+        updateBackgroundSections();
+        ensureCurrentScene();
+    });
 
     connect(m_sceneCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this, updateBackgroundSections](int) {
-        BackgroundManager::instance()->setPanoramaScene(m_sceneCombo->currentData().toString());
         updateBackgroundSections();
+
+        const QString id = m_sceneCombo->currentData().toString();
+        if (id.isEmpty()) {
+            // 切回自定义图片时，之前为某个主题发起的下载没必要继续
+            if (!m_pendingPanoramaScene.isEmpty()) {
+                PanoramaThemeManager::instance()->cancelTheme(m_pendingPanoramaScene);
+                m_pendingPanoramaScene.clear();
+            }
+            m_sceneDownloadError.clear();
+            BackgroundManager::instance()->setPanoramaScene(QString());
+            updatePanoramaDownloadStatus();
+            return;
+        }
+
+        PanoramaThemeManager *themes = PanoramaThemeManager::instance();
+        if (themes->isThemeReady(id)) {
+            // 已经下载过：立即应用；之前没下完的别的主题就不用继续了
+            if (!themes->activeTheme().isEmpty()) {
+                themes->cancelTheme(themes->activeTheme());
+            }
+            m_pendingPanoramaScene.clear();
+            m_sceneDownloadError.clear();
+            BackgroundManager::instance()->setPanoramaScene(id);
+        } else {
+            // 尚未下载：先下这个主题的六张图，完成后再应用
+            m_pendingPanoramaScene = id;
+            m_sceneDownloadError.clear();
+            themes->ensureTheme(id, true);
+        }
+        updatePanoramaDownloadStatus();
     });
 
     connect(m_browseImageBtn, &QPushButton::clicked, [this]() {
@@ -690,7 +842,8 @@ void SettingsPage::initInterfaceSettings()
     });
 
     QHBoxLayout *carouselRow = appendSettingRow(carouselCard,
-        tr("轮播图片"), tr("不添加自定义图片时，首页展示内置的默认风景图。"), QString(), true);
+        tr("轮播图片"), tr("预设封面图不随安装包内置，需要先在首页下载；这里添加的图片会排在预设图前面。"),
+        QString(), true);
     auto *carouselBtnRow = new QHBoxLayout();
     carouselBtnRow->setContentsMargins(0, 0, 0, 0);
     carouselBtnRow->setSpacing(8);
@@ -706,32 +859,68 @@ void SettingsPage::initInterfaceSettings()
     // ========================================================================
     // 语言设置
     // ========================================================================
+    // 简体中文和英文随安装包内置；繁體中文 / Español / 日本語 / Русский 的翻译
+    // 作为语言包放在官网，选中时才联网下载，下好后一直可用（断网也能切）。
     QVBoxLayout *languageCard = createSettingsCard(layout, tr("语言设置"));
 
-    QComboBox *languageCombo = new QComboBox();
-    // 顺序必须与 LanguageManager::Language 枚举一致，下拉框索引即枚举值
-    languageCombo->addItems({tr("简体中文"), tr("繁體中文"), tr("English"), tr("Español"),
-                             tr("日本語"), tr("Русский")});
-    disableWheelEffect(languageCombo);
+    m_languageCombo = new QComboBox();
+    disableWheelEffect(m_languageCombo);
+    refreshLanguageComboLabels();
 
     LanguageManager::Language currentLang = LanguageManager::instance()->currentLanguage();
     int langIndex = static_cast<int>(currentLang);
-    if (langIndex < 0 || langIndex >= languageCombo->count())
+    if (langIndex < 0 || langIndex >= m_languageCombo->count())
         langIndex = 0;
     {
-        const QSignalBlocker blocker(languageCombo);
-        languageCombo->setCurrentIndex(langIndex);
+        const QSignalBlocker blocker(m_languageCombo);
+        m_languageCombo->setCurrentIndex(langIndex);
     }
 
-    connect(languageCombo, &QComboBox::currentIndexChanged, [=](int index) {
+    // 下载状态行：选中未下载的语言时显示进度，失败时可直接重试
+    QFrame *languagePackRow = new QFrame();
+    languagePackRow->setObjectName("settingRow");
+    languagePackRow->setAttribute(Qt::WA_StyledBackground, true);
+    languagePackRow->setProperty("lastRow", true);
+    m_languagePackRow = languagePackRow;
+    QHBoxLayout *languagePackLayout = new QHBoxLayout(languagePackRow);
+    languagePackLayout->setContentsMargins(24, 12, 24, 12);
+    languagePackLayout->setSpacing(12);
+
+    m_languagePackStatusLabel = new QLabel(languagePackRow);
+    m_languagePackStatusLabel->setObjectName("settingDesc");
+    m_languagePackStatusLabel->setWordWrap(true);
+    m_languagePackStatusLabel->setTextFormat(Qt::PlainText);
+    languagePackLayout->addWidget(m_languagePackStatusLabel, 1);
+
+    m_languagePackProgressBar = new QProgressBar(languagePackRow);
+    m_languagePackProgressBar->setObjectName("cardProgressBar");
+    m_languagePackProgressBar->setTextVisible(false);
+    m_languagePackProgressBar->setFixedWidth(140);
+    m_languagePackProgressBar->setVisible(false);
+    languagePackLayout->addWidget(m_languagePackProgressBar);
+
+    m_languagePackActionBtn = new QPushButton(tr("下载语言包"), languagePackRow);
+    m_languagePackActionBtn->setObjectName("browseBtn");
+    m_languagePackActionBtn->setCursor(Qt::PointingHandCursor);
+    m_languagePackActionBtn->setVisible(false);
+    languagePackLayout->addWidget(m_languagePackActionBtn);
+
+    connect(m_languageCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int index) {
         LanguageManager *langManager = LanguageManager::instance();
-        LanguageManager::Language lang = static_cast<LanguageManager::Language>(index);
+        const LanguageManager::Language lang = static_cast<LanguageManager::Language>(index);
 
         if (lang == langManager->currentLanguage())
             return;
 
+        // 不随安装包内置的语言：先下好语言包，下完再问是否重启
+        if (!LanguageManager::isInstalled(lang)) {
+            startLanguagePackDownload(index);
+            return;
+        }
+
         // 界面文字在各页面创建时就已经翻译好，运行时只换翻译器并不能重译已建好的
-        // 控件，会出现「一半新语言、一半旧语言」的界面。这里与新手引导保持一致：
+        // 控件，会出现「一半新语言、一半旧语言的界面」。这里与新手引导保持一致：
         // 只写入偏好，然后重启进程，由启动时的 loadLanguageSync() 干净加载。
         langManager->setLanguagePreference(lang);
         const AppMessageBox::StandardButton restartReply = AppMessageBox::question(
@@ -744,9 +933,76 @@ void SettingsPage::initInterfaceSettings()
         }
     });
 
+    connect(m_languagePackActionBtn, &QPushButton::clicked, this, [this]() {
+        const int index = m_languagePackTarget >= 0 ? m_languagePackTarget
+                                                    : m_languageCombo->currentIndex();
+        startLanguagePackDownload(index);
+    });
+
+    LanguageManager *languagePacks = LanguageManager::instance();
+    connect(languagePacks, &LanguageManager::languagePackDownloadProgress, this,
+            [this](LanguageManager::Language lang, qint64 received, qint64 total) {
+        if (static_cast<int>(lang) != m_languagePackTarget)
+            return;
+        m_languagePackError.clear();
+        m_languagePackProgressBar->setVisible(true);
+        if (total > 0) {
+            m_languagePackProgressBar->setRange(0, 100);
+            m_languagePackProgressBar->setValue(
+                qBound(0, static_cast<int>(received * 100 / total), 100));
+        } else {
+            m_languagePackProgressBar->setRange(0, 0);   // 大小未知：走滚动条
+        }
+        m_languagePackStatusLabel->setText(tr("正在下载「%1」语言包…")
+                                               .arg(LanguageManager::nativeName(lang)));
+        m_languagePackActionBtn->setVisible(false);
+    });
+    connect(languagePacks, &LanguageManager::languagePackDownloadFinished, this,
+            [this](LanguageManager::Language lang) {
+        if (static_cast<int>(lang) != m_languagePackTarget)
+            return;
+        m_languagePackError.clear();
+        m_languagePackProgressBar->setVisible(false);
+        m_languageCombo->setEnabled(true);
+        refreshLanguageComboLabels();
+        updateLanguagePackStatus();
+
+        // 语言包已就位：写入偏好并询问是否立即重启生效
+        LanguageManager *langManager = LanguageManager::instance();
+        langManager->setLanguagePreference(lang);
+        const AppMessageBox::StandardButton restartReply = AppMessageBox::question(
+            this, tr("语言包已下载"),
+            tr("「%1」语言包已下载完成，重启方块盒子后即可切换。是否立即重启？")
+                .arg(LanguageManager::nativeName(lang)),
+            AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::Yes);
+        if (restartReply == AppMessageBox::Yes) {
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), QStringList());
+            QCoreApplication::quit();
+        }
+    });
+    connect(languagePacks, &LanguageManager::languagePackDownloadFailed, this,
+            [this](LanguageManager::Language lang, const QString &error) {
+        if (static_cast<int>(lang) != m_languagePackTarget)
+            return;
+        m_languagePackError = error;
+        m_languagePackProgressBar->setVisible(false);
+        m_languageCombo->setEnabled(true);
+        refreshLanguageComboLabels();
+        updateLanguagePackStatus();
+    });
+
     QHBoxLayout *languageRow = appendSettingRow(languageCard,
-        tr("语言"), tr("选择应用界面的显示语言。"), QString(), true);
-    languageRow->addWidget(languageCombo);
+        tr("语言"), tr("选择应用界面的显示语言。简体中文和 English 自带，其他语言的翻译体积较大，选中后会先下载语言包。"),
+        QString());
+    languageRow->addWidget(m_languageCombo);
+
+    // 状态行排在下拉框下面；没有待下载的语言时整行隐藏
+    languageCard->addWidget(languagePackRow);
+
+    // 上次选的是需要下载的语言、但本机没有语言包（新装 / 清理过数据 / 从旧版本升级）
+    if (LanguageManager::instance()->hasPendingLanguagePack())
+        m_languagePackTarget = static_cast<int>(LanguageManager::instance()->pendingLanguagePack());
+    updateLanguagePackStatus();
 
     // ========================================================================
     // 隐藏导航栏按钮
@@ -789,6 +1045,59 @@ void SettingsPage::initInterfaceSettings()
     layout->addStretch();
 }
 
+void SettingsPage::updatePanoramaDownloadStatus()
+{
+    if (!m_sceneCombo || !m_sceneStatusLabel || !m_sceneProgressBar || !m_sceneRetryBtn)
+        return;
+
+    const QString id = m_sceneCombo->currentData().toString();
+    const QString name = m_sceneCombo->currentText();
+    PanoramaThemeManager *themes = PanoramaThemeManager::instance();
+
+    m_sceneProgressBar->setVisible(false);
+    m_sceneRetryBtn->setVisible(false);
+
+    if (id.isEmpty()) {
+        const QString imagePath = BackgroundManager::instance()->imagePath();
+        if (!imagePath.isEmpty() && QFileInfo::exists(imagePath)) {
+            m_sceneStatusLabel->setText(tr("使用自定义图片，无需下载。"));
+        } else if (PanoramaThemeManager::isThemeReady(PanoramaThemeManager::defaultThemeId())) {
+            m_sceneStatusLabel->setText(tr("未指定自定义图片，正在使用「主世界」全景场景。"));
+        } else {
+            m_sceneStatusLabel->setText(tr("未指定自定义图片，将自动使用「主世界」全景场景。"));
+        }
+        return;
+    }
+
+    if (themes->isDownloading(id)) {
+        const int total = PanoramaThemeManager::fileCount();
+        m_sceneProgressBar->setVisible(true);
+        m_sceneProgressBar->setRange(0, qMax(1, total) * 100);
+        m_sceneProgressBar->setValue(themes->completedFiles() * 100);
+        m_sceneStatusLabel->setText(tr("正在下载「%1」的全景图（%2/%3）…")
+                                        .arg(name)
+                                        .arg(themes->completedFiles())
+                                        .arg(total));
+        return;
+    }
+
+    if (PanoramaThemeManager::isThemeReady(id)) {
+        const bool applied = BackgroundManager::instance()->panoramaScene() == id;
+        m_sceneStatusLabel->setText(applied
+            ? tr("「%1」已下载并在使用中。").arg(name)
+            : tr("「%1」已下载，选中后会立即应用。").arg(name));
+        return;
+    }
+
+    if (!m_sceneDownloadError.isEmpty()) {
+        m_sceneStatusLabel->setText(tr("「%1」下载失败：%2").arg(name, m_sceneDownloadError));
+        m_sceneRetryBtn->setVisible(true);
+        return;
+    }
+
+    m_sceneStatusLabel->setText(tr("「%1」尚未下载，选择后会自动下载。").arg(name));
+}
+
 void SettingsPage::refreshHomeCarouselRows()
 {
     if (!m_homeCarouselStripLayout || !m_homeCarouselStrip || !m_homeCarouselStatusLabel)
@@ -805,7 +1114,11 @@ void SettingsPage::refreshHomeCarouselRows()
     const QStringList images = HomeCarouselStore::existingImages(HomeCarouselStore::savedImages());
     if (images.isEmpty())
     {
-        m_homeCarouselStatusLabel->setText(tr("当前使用内置风景图。"));
+        // 自定义图清空后回落到已下载的预设封面；一张都没下过时首页会显示下载入口
+        m_homeCarouselStatusLabel->setText(
+            HomePresetCovers::isDownloaded()
+                ? tr("当前使用下载好的预设封面图。")
+                : tr("还没有封面图：回首页点「下载预设图」，或在这里添加自己的图片。"));
         m_homeCarouselStrip->hide();
         return;
     }
@@ -904,7 +1217,7 @@ void SettingsPage::clearHomeCarouselImages()
     const AppMessageBox::StandardButton reply = AppMessageBox::question(
         this, tr("恢复默认轮播图"),
         tr("将移除已添加的 %1 张图片（只删除方块盒子内的副本，不影响原图），"
-           "首页恢复显示内置风景图。是否继续？").arg(images.size()),
+           "首页改回显示下载好的预设封面图。是否继续？").arg(images.size()),
         AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
     if (reply != AppMessageBox::Yes)
         return;
@@ -912,4 +1225,135 @@ void SettingsPage::clearHomeCarouselImages()
     HomeCarouselStore::clearCustom();
     refreshHomeCarouselRows();
     emit carouselImagesChanged();
+}
+
+// 首页下载完预设封面 / 导入了自己的风景图后同步这页的轮播图卡片
+void SettingsPage::refreshCarouselEditor()
+{
+    refreshHomeCarouselRows();
+}
+
+/* ============================================================
+ * 语言包（不随安装包内置的语言）
+ * ============================================================ */
+
+// 下拉框项目：索引必须与 LanguageManager::Language 枚举一致；
+// 本机还没有语言包的语言在名字后面标一句「需下载」。
+void SettingsPage::refreshLanguageComboLabels()
+{
+    if (!m_languageCombo)
+        return;
+
+    const int count = static_cast<int>(LanguageManager::Russian) + 1;
+    {
+        const QSignalBlocker blocker(m_languageCombo);
+        if (m_languageCombo->count() != count) {
+            m_languageCombo->clear();
+            for (int i = 0; i < count; ++i)
+                m_languageCombo->addItem(QString());
+        }
+        for (int i = 0; i < count; ++i) {
+            const auto lang = static_cast<LanguageManager::Language>(i);
+            QString name;
+            switch (lang) {
+            case LanguageManager::Chinese:            name = tr("简体中文"); break;
+            case LanguageManager::ChineseTraditional: name = tr("繁體中文"); break;
+            case LanguageManager::English:            name = tr("English"); break;
+            case LanguageManager::Spanish:            name = tr("Español"); break;
+            case LanguageManager::Japanese:           name = tr("日本語"); break;
+            case LanguageManager::Russian:            name = tr("Русский"); break;
+            }
+            if (!LanguageManager::isInstalled(lang))
+                name += tr("（需下载）");
+            m_languageCombo->setItemText(i, name);
+        }
+    }
+}
+
+// 下载状态行：显示进度 / 失败原因 / 重启提示，不需要时整行隐藏
+void SettingsPage::updateLanguagePackStatus()
+{
+    if (!m_languagePackStatusLabel || !m_languagePackProgressBar || !m_languagePackActionBtn)
+        return;
+
+    LanguageManager *langManager = LanguageManager::instance();
+    const int target = m_languagePackTarget;
+
+    if (m_languagePackRow)
+        m_languagePackRow->setVisible(target >= 0);
+
+    if (target < 0) {
+        m_languagePackStatusLabel->setVisible(false);
+        m_languagePackProgressBar->setVisible(false);
+        m_languagePackActionBtn->setVisible(false);
+        return;
+    }
+
+    const auto lang = static_cast<LanguageManager::Language>(target);
+    const QString name = LanguageManager::nativeName(lang);
+
+    if (langManager->isDownloadingLanguagePack()
+        && static_cast<int>(langManager->downloadingLanguage()) == target) {
+        m_languagePackStatusLabel->setVisible(true);
+        m_languagePackProgressBar->setVisible(true);
+        m_languagePackActionBtn->setVisible(false);
+        m_languagePackStatusLabel->setText(tr("正在下载「%1」语言包…").arg(name));
+        return;
+    }
+
+    m_languagePackProgressBar->setVisible(false);
+    m_languagePackStatusLabel->setVisible(true);
+
+    // 语言包已经在，只是还没重启（上一步询问重启时选了「稍后」）
+    if (LanguageManager::isInstalled(lang)) {
+        m_languagePackStatusLabel->setText(
+            tr("「%1」语言包已下载完成，重启方块盒子后即可切换。").arg(name));
+        m_languagePackActionBtn->setVisible(false);
+        return;
+    }
+
+    if (!m_languagePackError.isEmpty()) {
+        m_languagePackStatusLabel->setText(
+            tr("「%1」语言包下载失败：%2").arg(name, m_languagePackError));
+        m_languagePackActionBtn->setText(tr("重试"));
+    } else {
+        m_languagePackStatusLabel->setText(
+            tr("「%1」的界面翻译不随安装包附带，需要联网下载语言包后才能使用。").arg(name));
+        m_languagePackActionBtn->setText(tr("下载语言包"));
+    }
+    m_languagePackActionBtn->setVisible(true);
+}
+
+// 选中需要下载的语言 / 点「下载语言包」「重试」都走这里
+void SettingsPage::startLanguagePackDownload(int langIndex)
+{
+    if (!m_languageCombo || langIndex < 0 || langIndex >= m_languageCombo->count())
+        return;
+
+    const auto lang = static_cast<LanguageManager::Language>(langIndex);
+    LanguageManager *langManager = LanguageManager::instance();
+    m_languagePackTarget = langIndex;
+    m_languagePackError.clear();
+
+    // 语言包已经在（例如上次下载完没重启）：直接走切换流程
+    if (LanguageManager::isInstalled(lang)) {
+        langManager->setLanguagePreference(lang);
+        const AppMessageBox::StandardButton restartReply = AppMessageBox::question(
+            this, tr("切换语言"),
+            tr("语言已保存，需要重启方块盒子后才会完全生效。是否立即重启？"),
+            AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::Yes);
+        if (restartReply == AppMessageBox::Yes) {
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), QStringList());
+            QCoreApplication::quit();
+        }
+        updateLanguagePackStatus();
+        return;
+    }
+
+    if (!langManager->isDownloadingLanguagePack()) {
+        // 下载期间先禁掉下拉框，避免同时开两个语言的下载
+        m_languageCombo->setEnabled(false);
+        langManager->downloadLanguagePack(lang);
+    }
+    updateLanguagePackStatus();
 }

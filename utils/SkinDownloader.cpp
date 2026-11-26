@@ -92,6 +92,131 @@ bool SkinDownloader::loadOfflineSkin(const QString& username, QImage& image)
   return true;
 }
 
+QString SkinDownloader::offlineCapesDir()
+{
+  // 与离线皮肤同层放在应用目录下，方便用户自己往里面放图
+  return QApplication::applicationDirPath() + "/Images/Capes";
+}
+
+QString SkinDownloader::getOfflineCapePath(const QString& username)
+{
+  return offlineCapesDir() + "/" + username + ".png";
+}
+
+bool SkinDownloader::loadOfflineCape(const QString& username, QImage& image)
+{
+  if (username.isEmpty()) return false;
+  const QString path = getOfflineCapePath(username);
+  if (!QFile::exists(path)) return false;
+  QImage loaded(path);
+  if (loaded.isNull()) return false;
+  image = loaded;
+  return true;
+}
+
+QImage SkinDownloader::normalizeSkinTexture(const QImage& image)
+{
+  if (image.isNull()) return QImage();
+
+  // 皮肤图至少得有 64 宽、32 高，否则不可能是标准皮肤
+  if (image.width() < 64 || image.height() < 32) return QImage();
+
+  QImage tex = image;
+  if (tex.width() == 64 && (tex.height() == 32 || tex.height() == 64))
+    return tex;
+
+  // 整数倍放大的皮肤（128×64、128×128、256×128……）按倍数缩回标准尺寸
+  if (tex.width() % 64 == 0)
+  {
+    const int factor = tex.width() / 64;
+    const int height = tex.height() / factor;
+    if ((height == 32 || height == 64) && tex.height() % factor == 0)
+    {
+      tex = tex.scaled(64, height, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+      if (tex.width() == 64 && (tex.height() == 32 || tex.height() == 64))
+        return tex;
+    }
+  }
+
+  // 其他尺寸：按宽度等比缩到 64，缩完高度不是 32 / 64 就不认
+  tex = tex.scaledToWidth(64, Qt::FastTransformation);
+  if (tex.height() == 32 || tex.height() == 64)
+    return tex;
+
+  return QImage();
+}
+
+QImage SkinDownloader::normalizeCapeTexture(const QImage& image)
+{
+  if (image.isNull()) return QImage();
+
+  // 披风纹理是 64×32（也有 128×64 这类整数倍版本）
+  if (image.width() < 64 || image.height() < 32) return QImage();
+
+  QImage tex = image;
+  if (tex.width() % 64 == 0)
+  {
+    const int factor = tex.width() / 64;
+    const int height = tex.height() / factor;
+    if (height >= 32 && tex.height() % factor == 0)
+      tex = tex.scaled(64, height, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+  }
+  if (tex.width() != 64)
+    tex = tex.scaledToWidth(64, Qt::FastTransformation);
+  if (tex.height() < 32) return QImage();
+  if (tex.height() > 32)
+    tex = tex.copy(0, 0, 64, 32);
+
+  // 标准披风的 Box UV 只用到左上角 22×17 的一块，
+  // 这块全是透明的话说明选错了图（比如传了张皮肤），直接拒绝
+  const QImage argb = tex.convertToFormat(QImage::Format_ARGB32);
+  bool hasContent = false;
+  for (int y = 0; y < 17 && !hasContent; ++y)
+  {
+    for (int x = 0; x < 22; ++x)
+    {
+      if (qAlpha(argb.pixel(x, y)) > 8)
+      {
+        hasContent = true;
+        break;
+      }
+    }
+  }
+  if (!hasContent) return QImage();
+
+  return tex;
+}
+
+bool SkinDownloader::saveOfflineSkin(const QString& username, const QImage& image)
+{
+  if (username.isEmpty() || image.isNull()) return false;
+  QDir().mkpath(offlineSkinsDir());
+  return image.save(getOfflineSkinPath(username), "PNG");
+}
+
+bool SkinDownloader::removeOfflineSkin(const QString& username)
+{
+  if (username.isEmpty()) return false;
+  const QString path = getOfflineSkinPath(username);
+  if (!QFile::exists(path)) return true;
+  return QFile::remove(path);
+}
+
+bool SkinDownloader::saveOfflineCape(const QString& username, const QImage& image)
+{
+  if (username.isEmpty() || image.isNull()) return false;
+  QDir().mkpath(offlineCapesDir());
+  return image.save(getOfflineCapePath(username), "PNG");
+}
+
+bool SkinDownloader::removeOfflineCape(const QString& username)
+{
+  if (username.isEmpty()) return false;
+  const QString path = getOfflineCapePath(username);
+  if (!QFile::exists(path)) return true;
+  return QFile::remove(path);
+}
+
 QString SkinDownloader::normalizeUuid(const QString& uuid)
 {
   QString result = uuid;

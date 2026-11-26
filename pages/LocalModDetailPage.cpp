@@ -16,6 +16,7 @@
 #include <QTimer>
 #include <QUrl>
 #include "utils/ThemeManager.h"
+#include "utils/links/LinkRouter.h"
 
 namespace {
 bool localModDark()
@@ -248,8 +249,8 @@ void LocalModDetailPage::rebuildLinksSection(const ModInfo &info)
         btn->setObjectName("modDetailLinkBtn");
         btn->setFixedWidth(100);
         btn->setCursor(Qt::PointingHandCursor);
-        connect(btn, &QPushButton::clicked, this, [url]() {
-            QDesktopServices::openUrl(QUrl(url));
+        connect(btn, &QPushButton::clicked, this, [this, url]() {
+            LinkRouter::instance()->open(QUrl(url), this);
         });
         linksRowLayout->addWidget(btn);
     };

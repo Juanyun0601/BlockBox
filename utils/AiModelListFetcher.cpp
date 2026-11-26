@@ -7,6 +7,8 @@
 
 #include "utils/AiModelListFetcher.h"
 
+#include <algorithm>
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -14,10 +16,14 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSettings>
 #include <QUrl>
 #include <QUrlQuery>
 
 namespace {
+
+constexpr char kModelListCacheKey[] = "ai/modelListCache";
+constexpr int  kModelListCacheMaxEntries = 80;
 
 /// 去掉末尾的斜杠
 QString trimmedBase(QString url)
@@ -25,6 +31,31 @@ QString trimmedBase(QString url)
     while (url.endsWith(QLatin1Char('/')))
         url.chop(1);
     return url;
+}
+
+/// 接口根地址：补协议、去尾斜杠、去掉对话/补全端点后缀
+QString normalizedBase(const QString &apiUrl)
+{
+    QString base = trimmedBase(apiUrl.trimmed());
+    if (base.isEmpty())
+        return QString();
+
+    // 用户可能只填了域名：默认按 https 处理
+    if (!base.contains(QStringLiteral("://")))
+        base.prepend(QStringLiteral("https://"));
+
+    static const QStringList kEndpointSuffixes = {
+        QStringLiteral("/chat/completions"), QStringLiteral("/completions"),
+        QStringLiteral("/responses"),        QStringLiteral("/messages"),
+        QStringLiteral("/embeddings")
+    };
+    for (const QString &suffix : kEndpointSuffixes) {
+        if (base.endsWith(suffix, Qt::CaseInsensitive)) {
+            base = trimmedBase(base.left(base.size() - suffix.size()));
+            break;
+        }
+    }
+    return base;
 }
 
 /// 末段是否为 v1 / v2 / v1beta / v3alpha 这类版本段
@@ -83,26 +114,7 @@ AiModelListFetcher::~AiModelListFetcher()
 
 QStringList AiModelListFetcher::endpointsFor(const QString &apiUrl)
 {
-    QString base = trimmedBase(apiUrl.trimmed());
-    if (base.isEmpty())
-        return QStringList();
-
-    // 用户可能只填了域名：默认按 https 处理
-    if (!base.contains(QStringLiteral("://")))
-        base.prepend(QStringLiteral("https://"));
-
-    // 去掉对话/补全端点后缀，回到接口根
-    static const QStringList kEndpointSuffixes = {
-        QStringLiteral("/chat/completions"), QStringLiteral("/completions"),
-        QStringLiteral("/responses"),        QStringLiteral("/messages"),
-        QStringLiteral("/embeddings")
-    };
-    for (const QString &suffix : kEndpointSuffixes) {
-        if (base.endsWith(suffix, Qt::CaseInsensitive)) {
-            base = trimmedBase(base.left(base.size() - suffix.size()));
-            break;
-        }
-    }
+    const QString base = normalizedBase(apiUrl);
     if (base.isEmpty())
         return QStringList();
 
@@ -159,6 +171,153 @@ QStringList AiModelListFetcher::parseModelIds(const QByteArray &payload)
 
     ids.sort(Qt::CaseInsensitive);
     return ids;
+}
+
+// ============================================================================
+// 模型列表缓存
+// ============================================================================
+
+namespace {
+
+QJsonObject readCacheRoot()
+{
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+    const QString json = settings.value(QLatin1String(kModelListCacheKey)).toString();
+    if (json.isEmpty())
+        return QJsonObject();
+
+    QJsonParseError pe;
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject())
+        return QJsonObject();
+    return doc.object();
+}
+
+void writeCacheRoot(const QJsonObject &root)
+{
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+    settings.setValue(QLatin1String(kModelListCacheKey),
+                      QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+}
+
+/// 条目数超过上限时按缓存时间淘汰最旧的一批，避免设置库无限膨胀
+void trimCacheRoot(QJsonObject &root)
+{
+    if (root.size() <= kModelListCacheMaxEntries)
+        return;
+
+    QStringList keys = root.keys();
+    std::sort(keys.begin(), keys.end(), [&root](const QString &a, const QString &b) {
+        return root.value(a).toObject().value(QStringLiteral("at")).toVariant().toLongLong()
+             < root.value(b).toObject().value(QStringLiteral("at")).toVariant().toLongLong();
+    });
+    while (keys.size() > kModelListCacheMaxEntries && !keys.isEmpty())
+        root.remove(keys.takeFirst());
+}
+
+} // namespace
+
+QString AiModelListFetcher::cacheKeyFor(const QString &apiUrl)
+{
+    const QString base = normalizedBase(apiUrl);
+    if (base.isEmpty())
+        return QString();
+
+    const QUrl url(base);
+    if (!url.isValid() || url.host().isEmpty())
+        return base.toLower();
+
+    QString path = url.path();
+    while (path.endsWith(QLatin1Char('/')))
+        path.chop(1);
+
+    QString port;
+    if (url.port() > 0)
+        port = QStringLiteral(":%1").arg(url.port());
+
+    return url.scheme().toLower() + QStringLiteral("://") + url.host().toLower() + port + path;
+}
+
+QStringList AiModelListFetcher::cachedIds(const QString &apiUrl)
+{
+    const QString key = cacheKeyFor(apiUrl);
+    if (key.isEmpty())
+        return QStringList();
+
+    const QJsonObject entry = readCacheRoot().value(key).toObject();
+    QStringList ids;
+    for (const QJsonValue &v : entry.value(QStringLiteral("ids")).toArray()) {
+        const QString id = v.toString().trimmed();
+        if (!id.isEmpty() && !ids.contains(id))
+            ids.append(id);
+    }
+    return ids;
+}
+
+qint64 AiModelListFetcher::cachedAt(const QString &apiUrl)
+{
+    const QString key = cacheKeyFor(apiUrl);
+    if (key.isEmpty())
+        return 0;
+    return readCacheRoot().value(key).toObject()
+        .value(QStringLiteral("at")).toVariant().toLongLong();
+}
+
+bool AiModelListFetcher::storeCache(const QString &apiUrl, const QStringList &ids)
+{
+    const QString key = cacheKeyFor(apiUrl);
+    if (key.isEmpty())
+        return false;
+
+    QStringList clean;
+    for (const QString &raw : ids) {
+        const QString id = raw.trimmed();
+        if (!id.isEmpty() && !clean.contains(id))
+            clean.append(id);
+    }
+    if (clean.isEmpty())
+        return false;
+
+    QJsonObject root = readCacheRoot();
+    QJsonObject entry;
+    entry.insert(QStringLiteral("ids"), QJsonArray::fromStringList(clean));
+    entry.insert(QStringLiteral("at"), static_cast<double>(QDateTime::currentSecsSinceEpoch()));
+    root.insert(key, entry);
+    trimCacheRoot(root);
+    writeCacheRoot(root);
+    return true;
+}
+
+bool AiModelListFetcher::removeFromCache(const QString &apiUrl, const QString &id)
+{
+    const QString key = cacheKeyFor(apiUrl);
+    if (key.isEmpty() || id.isEmpty())
+        return false;
+
+    QJsonObject root = readCacheRoot();
+    if (!root.contains(key))
+        return false;
+
+    QJsonObject entry = root.value(key).toObject();
+    QJsonArray kept;
+    for (const QJsonValue &v : entry.value(QStringLiteral("ids")).toArray()) {
+        if (v.toString() != id)
+            kept.append(v);
+    }
+    if (kept.isEmpty()) {
+        root.remove(key);
+    } else {
+        entry.insert(QStringLiteral("ids"), kept);
+        root.insert(key, entry);
+    }
+    writeCacheRoot(root);
+    return true;
+}
+
+void AiModelListFetcher::clearCache()
+{
+    QSettings settings(QStringLiteral("BlockBox"), QStringLiteral("BlockBox"));
+    settings.remove(QLatin1String(kModelListCacheKey));
 }
 
 void AiModelListFetcher::fetch(const QString &apiUrl, const QString &apiKey)

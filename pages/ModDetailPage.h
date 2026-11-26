@@ -23,6 +23,7 @@
 #include "../utils/mod/ModData.h"
 #include "../utils/content/ContentData.h"
 #include "../utils/translation/TranslationService.h"
+#include "../utils/translation/ContentTranslationService.h"
 
 class QParallelAnimationGroup;
 class SourceSwitchBar;
@@ -46,6 +47,9 @@ public:
     QString instanceGameVersion() const { return m_instanceGameVersion; }
     QString instanceLoaderType() const { return m_instanceLoaderType; }
 
+    /** 翻译已在编辑页提交成功：按钮换成「完善翻译」（本会话内不再等服务器确认） */
+    void notifyTranslationSubmitted();
+
 public slots:
     void receiveDetail(const ModInfo &detail);
     void setMcmodUrl(const QString &url);
@@ -65,6 +69,8 @@ signals:
     void askAiRequested(const ResourceReference &ref);
     /** 点击左侧「前置模组」里的条目：请求跳转到该前置资源自己的详情页 */
     void contentClicked(const ModInfo &modInfo);
+    /** 点击「创建翻译 / 完善翻译」：请求进入翻译编辑页 */
+    void translationComposeRequested(const ModInfo &modInfo);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -238,6 +244,12 @@ private:
     void setTranslateBusy(bool busy);
     void resetTranslation();
 
+    // ── 社区翻译（方块盒子服务器上其他用户的翻译，审核通过后自动覆盖显示）──
+    void fetchCommunityTranslation();
+    void applyCommunityTranslation();
+    QString translationComposeButtonLabel() const;
+    void updateTranslationComposeButtonLabel();
+
     /// 翻译任务种类：简介与详细描述可能只翻其中一处
     enum TranslateChunkKind {
         TranslateSummary = 0,          // 只翻译顶部简介
@@ -256,6 +268,13 @@ private:
     QString m_origDetailHtml;
     QString m_zhSummary;
     QString m_zhDetailHtml;
+
+    QPushButton *m_translationComposeBtn = nullptr; ///< 「创建翻译 / 完善翻译」动作按钮
+    bool m_hasCommunityTranslation = false;
+    bool m_hasMyTranslation = false;
+    QString m_communitySummary;
+    QString m_communityDetailHtml;
+    QString m_translationFetchContext; ///< 发起拉取时的资源标识，回包时比对防串页
 };
 
 #endif

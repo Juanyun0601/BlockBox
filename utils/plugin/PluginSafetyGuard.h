@@ -7,7 +7,7 @@
  * 为插件执行提供统一安全风控，核心是「你信任该插件吗？」确认弹窗：
  *   - 展示插件元数据（名称/作者/版本）与请求的能力权限列表
  *     （manifest.permissions：file:read / file:write / registry /
- *      network / admin / system）；
+ *      network / admin / system / ui:style / ai:tool）；
  *   - 扫描脚本危险模式（Remove-Item / shutdown / Format-Volume /
  *     hosts 修改 / 注册表操作等），结果展示在弹窗中；
  *   - 越权检测：脚本执行了敏感操作但插件未声明对应权限时，

@@ -392,7 +392,12 @@ void OnboardingWizard::buildStep0()
         name->setAlignment(Qt::AlignHCenter);
         clay->addWidget(name);
 
-        QLabel *meta = new QLabel(def.meta, card);
+        // 不随安装包内置的语言标一句「需下载」，选中后先取语言包再重启
+        QLabel *meta = new QLabel(def.meta
+                                      + (LanguageManager::isInstalled(def.lang)
+                                             ? QString()
+                                             : QStringLiteral(" \u00B7 ") + tr("需下载")),
+                                  card);
         meta->setObjectName(QStringLiteral("obwMethodDesc"));
         meta->setAlignment(Qt::AlignHCenter);
         meta->setWordWrap(true);
@@ -405,6 +410,46 @@ void OnboardingWizard::buildStep0()
     }
 
     connect(group, &QButtonGroup::idClicked, this, &OnboardingWizard::onPickLanguage);
+
+    // 语言包下载进度 / 结果：下好之后直接重启应用，重启即完成切换
+    LanguageManager *langManager = LanguageManager::instance();
+    connect(langManager, &LanguageManager::languagePackDownloadProgress, this,
+            [this](LanguageManager::Language lang, qint64 received, qint64 total) {
+        if (!m_languagePackDownloading || static_cast<int>(lang) != m_languagePackLangIndex)
+            return;
+        const QString name = LanguageManager::nativeName(lang);
+        if (total > 0)
+            m_footerHint->setText(tr("\u6B63\u5728\u4E0B\u8F7D\u300C%1\u300D\u8BED\u8A00\u5305\u2026 %2%")
+                                      .arg(name)
+                                      .arg(qBound(0, static_cast<int>(received * 100 / total), 100)));
+        else
+            m_footerHint->setText(tr("\u6B63\u5728\u4E0B\u8F7D\u300C%1\u300D\u8BED\u8A00\u5305\u2026").arg(name));
+    });
+    connect(langManager, &LanguageManager::languagePackDownloadFinished, this,
+            [this](LanguageManager::Language lang) {
+        if (!m_languagePackDownloading || static_cast<int>(lang) != m_languagePackLangIndex)
+            return;
+        const int langIndex = m_languagePackLangIndex;
+        m_languagePackDownloading = false;
+        m_languagePackLangIndex = -1;
+        m_nextBtn->setEnabled(true);
+        m_prevBtn->setEnabled(true);
+        m_skipBtn->setEnabled(true);
+        requestLanguageRestart(langIndex);
+    });
+    connect(langManager, &LanguageManager::languagePackDownloadFailed, this,
+            [this](LanguageManager::Language lang, const QString &error) {
+        if (!m_languagePackDownloading || static_cast<int>(lang) != m_languagePackLangIndex)
+            return;
+        m_languagePackDownloading = false;
+        m_languagePackLangIndex = -1;
+        m_nextBtn->setEnabled(true);
+        m_prevBtn->setEnabled(true);
+        m_skipBtn->setEnabled(true);
+        m_footerHint->setText(
+            tr("\u8BED\u8A00\u5305\u4E0B\u8F7D\u5931\u8D25\uFF1A%1\uFF0C\u53EF\u4EE5\u91CD\u65B0\u70B9\u4E00\u6B21\u8BE5\u8BED\u8A00\u91CD\u8BD5\u3002")
+                .arg(error));
+    });
     lay->addLayout(cards);
 
     QLabel *tip = new QLabel(
@@ -2118,6 +2163,8 @@ void OnboardingWizard::onPickLanguage(int index)
 {
     if (index < 0 || index >= m_languageCards.size())
         return;
+    if (m_languagePackDownloading)
+        return;   // 上一次的语言包还在下载，等它结束再换
     const LanguageManager::Language selected = static_cast<LanguageManager::Language>(index);
     // 非中文（English / Español / 日本語 / Русский）用户默认使用官方下载源；
     // 繁體中文由新增的「下载源选择」步骤由用户自行决定。
@@ -2128,7 +2175,31 @@ void OnboardingWizard::onPickLanguage(int index)
         m_footerHint->setText(tr("\u8BED\u8A00\u672A\u53D8\u66F4\uFF0C\u70B9\u51FB\u300C\u4E0B\u4E00\u6B65\u300D\u7EE7\u7EED\u3002"));
         return;
     }
+    // 不随安装包内置的语言：先把语言包下好，下完再重启切换
+    if (!LanguageManager::isInstalled(selected)) {
+        startLanguagePackDownload(index);
+        return;
+    }
     requestLanguageRestart(index);
+}
+
+void OnboardingWizard::startLanguagePackDownload(int langIndex)
+{
+    if (m_languagePackDownloading)
+        return;
+    if (langIndex < 0 || langIndex >= m_languageCards.size())
+        return;
+
+    LanguageManager *langManager = LanguageManager::instance();
+    m_languagePackDownloading = true;
+    m_languagePackLangIndex = langIndex;
+    m_nextBtn->setEnabled(false);
+    m_prevBtn->setEnabled(false);
+    m_skipBtn->setEnabled(false);
+    m_footerHint->setText(tr("\u6B63\u5728\u4E0B\u8F7D\u300C%1\u300D\u8BED\u8A00\u5305\u2026")
+                              .arg(LanguageManager::nativeName(
+                                  static_cast<LanguageManager::Language>(langIndex))));
+    langManager->downloadLanguagePack(static_cast<LanguageManager::Language>(langIndex));
 }
 
 void OnboardingWizard::setAllDownloadSourcesOfficial()

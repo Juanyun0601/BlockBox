@@ -1,14 +1,12 @@
 #include "BlurLoadingOverlay.h"
 
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QStyle>
 #include <QTimer>
 #include <QPointer>
 
+#include "NetworkCheckDialog.h"
 #include "utils/ThemeManager.h"
 #include "utils/TriviaBank.h"
 
@@ -23,7 +21,6 @@ BlurLoadingOverlay::BlurLoadingOverlay(QWidget *parent)
     , m_triviaLabel(nullptr)
     , m_diagnoseBtn(nullptr)
     , m_progressArea(nullptr)
-    , m_diagnosisNAM(new QNetworkAccessManager(this))
     , m_triviaTimer(new QTimer(this))
     , m_currentPercent(0)
     , m_hasError(false)
@@ -140,16 +137,17 @@ void BlurLoadingOverlay::initUI()
 void BlurLoadingOverlay::initStyle()
 {
     ThemeManager *tm = ThemeManager::instance();
-    const QString themeColor = tm->currentThemeColor();
-    const QString themeHover = tm->getThemeColorHover();
 
     const bool isLight = (tm->currentTheme() == ThemeManager::LightTheme);
+    // 深色主题下原始主色太深，百分比数字和进度条起点要用提亮后的主色
+    const QColor accentQ = tm->accentTextColor();
+    const QString accentColor = accentQ.name();
+    const QString accentEnd   = isLight ? tm->getThemeColorHover() : accentQ.lighter(110).name();
     const QString cardBg      = isLight ? "rgba(255, 255, 255, 240)" : "rgba(50, 50, 50, 240)";
     const QString cardBorder  = isLight ? "rgba(200, 200, 200, 200)" : "rgba(80, 80, 80, 200)";
     const QString barBg       = isLight ? "#e8e8e8" : "#3d3d3d";
     const QString processColor = isLight ? "#333333" : "#eeeeee";
-    const QString triviaColor  = isLight ? "#777777" : "#999999";
-    const QString percentColor = themeColor;
+    const QString triviaColor  = isLight ? "#777777" : "#b3b3b3";
 
     QString style = QString(
         "QWidget#blurLoadingCenterWidget {"
@@ -221,7 +219,7 @@ void BlurLoadingOverlay::initStyle()
         "        stop:0 %1, stop:1 %2);"
         "    border-radius: 4px;"
         "}"
-    ).arg(themeColor, themeHover, cardBg, cardBorder, barBg, processColor, triviaColor);
+    ).arg(accentColor, accentEnd, cardBg, cardBorder, barBg, processColor, triviaColor);
 
     setStyleSheet(style);
 }
@@ -405,17 +403,6 @@ void BlurLoadingOverlay::showError(const QString &errorMessage)
     updateLayoutState();
 }
 
-void BlurLoadingOverlay::showDiagnosisResult(const QString &result)
-{
-    if (m_errorLabel) {
-        m_errorLabel->setText(result);
-        m_errorLabel->setVisible(true);
-    }
-    if (m_diagnoseBtn) {
-        m_diagnoseBtn->setVisible(false);
-    }
-}
-
 void BlurLoadingOverlay::clearError()
 {
     m_hasError = false;
@@ -443,26 +430,18 @@ void BlurLoadingOverlay::performDiagnosis()
         m_diagnoseBtn->setText(tr("诊断中..."));
         m_diagnoseBtn->setEnabled(false);
     }
-    if (m_errorLabel) {
-        m_errorLabel->setText(tr("正在检测网络连接..."));
+    // 弹出完整的网络自检对话框，逐项检测各服务的连通性；
+    // 对话框关闭后恢复按钮与原来的错误提示
+    const QString lastError = m_errorLabel ? m_errorLabel->text() : QString();
+    NetworkCheckDialog::runCheck(this);
+    if (m_diagnoseBtn) {
+        m_diagnoseBtn->setText(tr("诊断网络"));
+        m_diagnoseBtn->setEnabled(true);
     }
-
-    QNetworkRequest req(QUrl(QStringLiteral("https://www.baidu.com")));
-    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-    req.setTransferTimeout(8000);
-    QNetworkReply *reply = m_diagnosisNAM->head(req);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        reply->deleteLater();
-        if (m_diagnoseBtn) {
-            m_diagnoseBtn->setText(tr("诊断网络"));
-            m_diagnoseBtn->setEnabled(true);
-        }
-        if (reply->error() == QNetworkReply::NoError) {
-            showDiagnosisResult(tr("✓ 网络连接正常"));
-        } else {
-            showDiagnosisResult(tr("✗ 网络无法连接\n请检查网络设置或防火墙"));
-        }
-    });
+    if (m_errorLabel) {
+        m_errorLabel->setText(lastError);
+        m_errorLabel->setVisible(!lastError.isEmpty());
+    }
 }
 
 void BlurLoadingOverlay::updateLayoutState()

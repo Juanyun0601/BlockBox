@@ -91,6 +91,11 @@ QString InstanceTextureLoader::normalizeName(const QString &blockName)
 
 bool InstanceTextureLoader::findClientJar(const QString &instancePath, QString &jarPath) const
 {
+    return clientJarPath(instancePath, jarPath);
+}
+
+bool InstanceTextureLoader::clientJarPath(const QString &instancePath, QString &jarPath)
+{
     QDir dir(instancePath);
     if (!dir.exists())
         return false;

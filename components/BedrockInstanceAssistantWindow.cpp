@@ -365,6 +365,9 @@ void BedrockInstanceAssistantWindow::buildAiChatPage(QWidget *page)
 
     m_aiChatPage = new AiChatPage(page);
     m_aiChatPage->setCompactMode(true);
+    // 与 Java 版实例助手保持一致：AI 页只保留聊天模式，并支持截图游戏画面发给 AI
+    m_aiChatPage->setChatOnlyMode(true);
+    m_aiChatPage->setGameScreenshotEnabled(true);
     layout->addWidget(m_aiChatPage, 1);
 }
 

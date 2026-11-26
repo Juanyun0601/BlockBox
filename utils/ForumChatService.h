@@ -23,6 +23,7 @@
 
 #include <functional>
 
+#include "ChatP2P.h"
 #include "ForumAccountService.h"
 
 /** 好友 / 搜索到的用户（网页版 peerOut 同款字段） */
@@ -115,10 +116,15 @@ struct ForumChatMessage
     int senderId = 0;      ///< 发送者 id（群消息才有，私信可以不看）
     QString senderName;    ///< 发送者昵称（群消息在气泡上方显示）
     QString senderAvatar;  ///< 发送者头像（群消息用）
+    ChatP2POffer p2p;      ///< P2P 直传信息（kind=p2p 时有效，从 body 里解出来）
 
     bool isImage() const { return kind == QStringLiteral("image") && !image.isEmpty(); }
     bool isFile() const { return kind == QStringLiteral("file") && !fileUrl.isEmpty(); }
     bool isWithdrawn() const { return kind == QStringLiteral("withdrawn"); }
+    /** 一份可用的 P2P 直传邀约（kind=p2p 且 body 解析成功） */
+    bool isP2POffer() const { return kind == QStringLiteral("p2p") && p2p.isOffer(); }
+    /** P2P 控制消息（如「请对方改用普通发送」），不是邀约本体 */
+    bool isP2PControl() const { return kind == QStringLiteral("p2p") && p2p.isControl(); }
 
     /**
      * 图片/文件的取回地址：群消息优先用服务端给的 dl_url（配了 CDN 即 CDN 域名，
@@ -331,6 +337,19 @@ public:
      * 返回空串表示通过，否则是可直接展示给用户的错误说明。
      */
     static QString checkChatFile(const QString &filePath);
+
+    /**
+     * 发一份 P2P 直传邀约（kind:p2p）：文件名/大小/本机直连地址随消息 body 传给对方，
+     * 对方点了「接收」会按邀约直连过来拉文件。需要服务端放行 p2p 类型。
+     */
+    void sendP2POffer(int userId, const ChatP2POffer &offer, int replyTo,
+                      std::function<void(const ForumChatMessage &)> onOk,
+                      FailHandler onFail = nullptr);
+
+    /** 发一条 P2P 控制消息（act=retry-normal：请对方改用普通方式重发文件） */
+    void sendP2PControl(int userId, const QString &tid, const QString &act,
+                        std::function<void(const ForumChatMessage &)> onOk,
+                        FailHandler onFail = nullptr);
 
     /** 撤回自己 10 分钟内发出的消息（服务端会变成「已撤回」占位） */
     void withdrawMessage(int messageId,

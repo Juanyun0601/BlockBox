@@ -16,12 +16,14 @@
 #include "../fabric/FabricInstaller.h"
 #include "../NeoForgeInstaller.h"
 #include "../Safety.h"
+#include "../mod/CurseForgeAPI.h"
 
 #include <QByteArray>
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -626,6 +628,8 @@ void ModpackImporter::installMods()
   m_modsFailed = 0;
   m_serialModIndices.clear();
   m_serialPos = 0;
+  m_cfResolvePending.clear();
+  m_cfResolvePos = 0;
 
   if (m_totalMods == 0)
   {
@@ -635,6 +639,218 @@ void ModpackImporter::installMods()
     return;
   }
 
+  // CurseForge 清单里每个条目只有项目/文件 ID，既没有下载地址也没有文件名。
+  // 旧实现按 ID 拼一个下载接口地址去要文件，服务器现在已经不放行（403），
+  // 于是先批量向 CurseForge（或镜像）换取真实地址与文件名。
+  for (int i = 0; i < m_info.mods.size(); ++i)
+  {
+    const ModInfo& mod = m_info.mods.at(i);
+    if (buildModCandidates(mod).isEmpty()
+        && !mod.projectId.isEmpty() && !mod.fileId.isEmpty())
+      m_cfResolvePending.append(i);
+  }
+
+  if (!m_cfResolvePending.isEmpty())
+  {
+    emitProgress(62, tr("正在获取模组下载地址..."));
+    sendNextCurseForgeBatch();
+    return;
+  }
+
+  startModDownloads();
+}
+
+QString ModpackImporter::curseForgeApiBase() const
+{
+  if (!m_cfForceOfficial)
+  {
+    const QVariant useMirror = SettingsManager::instance()->property("use_mcim");
+    if (!useMirror.isValid() || useMirror.toBool())
+      return QStringLiteral("https://mod.mcimirror.top/curseforge");
+  }
+  return QStringLiteral("https://api.curseforge.com");
+}
+
+QString ModpackImporter::curseForgeApiKey() const
+{
+  const QString configured =
+    SettingsManager::instance()->property("curseforge_api_key").toString().trimmed();
+  if (!configured.isEmpty())
+    return configured;
+  // 没有配置时用本地密钥文件里的兜底 key
+  return CurseForgeAPI::localApiKey();
+}
+
+void ModpackImporter::sendNextCurseForgeBatch()
+{
+  if (m_abortRequested)
+  {
+    failInstall(tr("已取消"));
+    return;
+  }
+
+  if (m_cfResolvePos >= m_cfResolvePending.size())
+  {
+    finishCurseForgeResolve();
+    return;
+  }
+
+  const QString base = curseForgeApiBase();
+  const bool usingMirror = base.contains(QStringLiteral("mcimirror"), Qt::CaseInsensitive);
+  const QString apiKey = curseForgeApiKey();
+
+  // 官方接口必须要 key；镜像和 key 都没有时连地址都换不出来，
+  // 与其发一堆必被拒绝的请求，不如说明原因后收尾（模组按旧路径尝试）
+  if (!usingMirror && apiKey.isEmpty())
+  {
+    emitStage(tr("未配置 CurseForge API Key，跳过下载地址解析"));
+    finishCurseForgeResolve();
+    return;
+  }
+
+  const int batchStart = m_cfResolvePos;
+  const int batchEnd = qMin(batchStart + 100, m_cfResolvePending.size());
+
+  QJsonArray fileIds;
+  for (int i = batchStart; i < batchEnd; ++i)
+  {
+    const ModInfo& mod = m_info.mods.at(m_cfResolvePending.at(i));
+    bool ok = false;
+    const qint64 fileId = mod.fileId.toLongLong(&ok);
+    if (ok && fileId > 0)
+      fileIds.append(fileId);
+  }
+  m_cfResolvePos = batchEnd;
+
+  if (fileIds.isEmpty())
+  {
+    // 这批 ID 都不合法：直接处理下一批
+    sendNextCurseForgeBatch();
+    return;
+  }
+
+  QNetworkRequest request{QUrl(base + QStringLiteral("/v1/mods/files"))};
+  request.setHeader(QNetworkRequest::ContentTypeHeader,
+                    QStringLiteral("application/json"));
+  request.setRawHeader("Accept", "application/json");
+  // 接口卡住时别让整个安装停在"正在获取模组下载地址"上
+  request.setTransferTimeout(20000);
+  if (!apiKey.isEmpty())
+    request.setRawHeader("X-API-KEY", apiKey.toUtf8());
+
+  QJsonObject body;
+  body.insert(QStringLiteral("fileIds"), fileIds);
+
+  m_cfResolveReply = m_networkManager->post(
+    request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+
+  connect(m_cfResolveReply, &QNetworkReply::finished, this,
+          [this, batchStart, batchEnd, usingMirror, apiKey]()
+  {
+    QNetworkReply* reply = m_cfResolveReply;
+    m_cfResolveReply = nullptr;
+    if (!reply)
+      return;
+    reply->deleteLater();
+
+    if (m_abortRequested)
+    {
+      failInstall(tr("已取消"));
+      return;
+    }
+
+    if (reply->error() != QNetworkReply::NoError)
+    {
+      // 镜像接口异常时换成官方接口把这一批重试一次（有 key 才有意义）
+      if (usingMirror && !apiKey.isEmpty())
+      {
+        m_cfForceOfficial = true;
+        m_cfResolvePos = batchStart;
+        sendNextCurseForgeBatch();
+        return;
+      }
+      emitStage(tr("获取模组下载地址失败，改用备用下载方式"));
+      finishCurseForgeResolve();
+      return;
+    }
+
+    const QJsonArray files = QJsonDocument::fromJson(reply->readAll())
+                               .object().value(QStringLiteral("data")).toArray();
+
+    for (int i = batchStart; i < batchEnd; ++i)
+    {
+      ModInfo& mod = m_info.mods[m_cfResolvePending.at(i)];
+      for (const QJsonValue& value : files)
+      {
+        const QJsonObject obj = value.toObject();
+        if (QString::number(obj.value(QStringLiteral("id")).toVariant().toLongLong())
+            != mod.fileId)
+          continue;
+
+        const QString url = obj.value(QStringLiteral("downloadUrl")).toString();
+        const QString fileName = obj.value(QStringLiteral("fileName")).toString();
+        if (!url.isEmpty())
+        {
+          mod.downloadUrl = url;
+          mod.downloadUrls = QStringList{url};
+        }
+        // CF 清单没给文件名，只能靠接口返回；下载落盘与后续判断都靠它
+        if (!fileName.isEmpty())
+          mod.name = fileName;
+
+        if (mod.sha1.isEmpty())
+        {
+          const QJsonArray hashes = obj.value(QStringLiteral("hashes")).toArray();
+          for (const QJsonValue& hashValue : hashes)
+          {
+            const QJsonObject hash = hashValue.toObject();
+            if (hash.value(QStringLiteral("algo")).toInt() == 1)
+            {
+              mod.sha1 = hash.value(QStringLiteral("value")).toString();
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    sendNextCurseForgeBatch();
+  });
+}
+
+void ModpackImporter::finishCurseForgeResolve()
+{
+  if (m_abortRequested)
+  {
+    failInstall(tr("已取消"));
+    return;
+  }
+
+  // 一个地址都没换到时继续往下走，只会得到一堆下载失败、最后装出一个
+  // 没有模组的空实例，看着像成功了其实不能用——这里直接说明原因让用户重试
+  if (!m_cfResolvePending.isEmpty())
+  {
+    int unresolved = 0;
+    for (int index : m_cfResolvePending)
+    {
+      if (buildModCandidates(m_info.mods.at(index)).isEmpty())
+        ++unresolved;
+    }
+    if (unresolved == m_cfResolvePending.size())
+    {
+      failInstall(tr("无法获取 CurseForge 模组下载地址（网络不通或未配置 API Key），请检查网络后重试"));
+      return;
+    }
+  }
+
+  // 部分没换到地址的条目会在 startModDownloads 里进串行队列，
+  // 仍按旧路径再试一次，不至于整包直接失败
+  startModDownloads();
+}
+
+void ModpackImporter::startModDownloads()
+{
   QString modsDir = m_instancePath + "/mods";
   QDir dir;
   dir.mkpath(modsDir);
@@ -885,7 +1101,9 @@ QString ModpackImporter::modFileName(const ModInfo& mod, const QStringList& cand
   }
 
   fileName = Safety::safeFileName(fileName, QStringLiteral("mod.jar"));
-  if (!fileName.endsWith(".jar", Qt::CaseInsensitive))
+  // 清单里绝大多数是 .jar，但也有素材包之类的 .zip；只有完全没有扩展名时才补
+  // .jar，免得把 "xxx.zip" 改成 "xxx.zip.jar" 落到 mods/ 里
+  if (QFileInfo(fileName).suffix().isEmpty())
     fileName += ".jar";
   return fileName;
 }
@@ -959,6 +1177,12 @@ void ModpackImporter::extractOverrides()
     }
     break;
 
+  // 服务端整合包：清单在 zip 根，实际内容全在 overrides/ 下（剥掉该前缀铺到实例目录）
+  case ModpackType::Server:
+    prefixToExtract = "overrides/";
+    prefixToStrip = "overrides/";
+    break;
+
   // BlockBox / Generic：文件按原始相对路径打在 zip 根，整包即覆盖内容
   default:
     break;
@@ -976,7 +1200,7 @@ void ModpackImporter::extractOverrides()
     // Skip metadata / index files
     if (entry.fileName == "modrinth.index.json" || entry.fileName == "pack.mrpack"
         || entry.fileName == "blockbox.pack.json" || entry.fileName == "mcbbs.packmeta"
-        || entry.fileName == "instance.json")
+        || entry.fileName == "server-manifest.json" || entry.fileName == "instance.json")
       continue;
 
     QString relativePath = entry.fileName;
@@ -1090,6 +1314,8 @@ bool ModpackImporter::abort()
     m_modJob->abort();
   if (m_currentModReply)
     m_currentModReply->abort();
+  if (m_cfResolveReply)
+    m_cfResolveReply->abort();
 
   // 版本下载阶段：该下载由本次导入发起，随之取消
   VersionDownloader* vd = VersionDownloader::instance();

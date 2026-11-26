@@ -18,6 +18,7 @@
 #include "pages/CreationWorkDetailPage.h"
 #include "utils/ForumContentService.h"
 
+class QFrame;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -66,6 +67,9 @@ private:
     void loadAllWorks();
     void fetchPage(int userId, int page);
     void finishLoad();
+    /** 别人认领我转载作品的待处理请求（作品转移的入口） */
+    void loadClaims();
+    void renderClaims(const QVector<ForumClaimInfo> &claims);
     void setFilter(WorkFilter filter);
     void applyFilter();
     void renderCurrentPage();
@@ -83,6 +87,7 @@ private:
     int m_page = 1;
     int m_totalPages = 1;
     bool m_loading = false;
+    bool m_claimsLoading = false;
     bool m_partial = false;   ///< 作品超出自动拉取上限 / 中途有页失败，只显示已加载的部分
 
     /** 本地每页条数（和服务端分页大小一致）与进入时最多自动连拉的页数 */
@@ -100,6 +105,11 @@ private:
     QLabel *m_statViews = nullptr;
     QLabel *m_statReplies = nullptr;
     QLabel *m_statDownloads = nullptr;
+    /** 认领请求卡：有别人认领我转载的作品时显示 */
+    QFrame *m_claimsCard = nullptr;
+    QLabel *m_claimsTitle = nullptr;
+    QVBoxLayout *m_claimsLayout = nullptr;
+    QVector<ForumClaimInfo> m_claims;
     QLineEdit *m_searchEdit = nullptr;
     QWidget *m_filterRow = nullptr;          ///< 类型筛选胶囊行（未登录时隐藏）
     QPushButton *m_filterChips[4] = {nullptr, nullptr, nullptr, nullptr};

@@ -1,0 +1,8 @@
+<!DOCTYPE RCC>
+<!-- 「模组所属关系」探针：标题图标与搜索框图标 -->
+<RCC version="1.0">
+  <qresource prefix="/">
+    <file alias="Images/Icons/search.svg">../Images/Icons/search.svg</file>
+    <file alias="Images/Icons/link.svg">../Images/Icons/link.svg</file>
+  </qresource>
+</RCC>

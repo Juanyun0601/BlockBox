@@ -3,14 +3,18 @@
 
 #include <QComboBox>
 #include <QEasingCurve>
+#include <QHash>
 #include <QHBoxLayout>
+#include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPointer>
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QRect>
 #include <QScrollArea>
+#include <QSet>
 #include <QSize>
 #include <QStackedWidget>
 #include <QTimer>
@@ -30,11 +34,14 @@ class QKeyEvent;
 class QMoveEvent;
 class QMouseEvent;
 class QPaintEvent;
+class QParallelAnimationGroup;
 
 class AiChatPage;
+class GameAchievementWatcher;
 class InstanceHomePage;
 class InstanceJavaDownloadPage;
 class InstanceJavaPage;
+class InstanceServerPage;
 class MultiplayerPage;
 class InstanceResourcesPage;
 
@@ -77,6 +84,19 @@ signals:
     void resourceDetailForReplaceRequested(const ModInfo &info, const QString &instancePath, const ModInfo &localMod);
     /** 发布到联机大厅前需要登录论坛账号 */
     void forumLoginRequested();
+    /**
+     * @brief 「开服」页请求用这个窗口所属实例直接进本地服
+     *
+     * 由主窗口带着 --server/--port 启动该实例，进游戏就是连这台服务器。
+     */
+    void launchLocalServerGameRequested(const QString &address, int port);
+    /**
+     * @brief 「开服」页请求把服务器发布到社区「服务器导航」
+     *
+     * 地址已经换成隧道地址（联机页建立了隧道时），没有隧道就是本机地址。
+     */
+    void publishServerAdRequested(const QString &title, const QString &content,
+                                  const QStringList &tags, const QString &address);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -161,6 +181,14 @@ private:
      */
     void buildMultiplayerPage(QWidget *page);
     /**
+     * @brief 构建本地开服页面（index 4），复用 InstanceServerPage 组件
+     * @param page 已由 initUI 创建的空白 QWidget
+     *
+     * 一键把当前实例开成本地服务端（自动下核心、写配置、启停、看日志），
+     * 本机客户端直接连 127.0.0.1，朋友可以用联机页的隧道指过来。
+     */
+    void buildServerPage(QWidget *page);
+    /**
      * @brief 构建资源管理页面（index 4），复用 InstanceResourcesPage 组件
      * @param page 已由 initUI 创建的空白 QWidget
      *
@@ -194,6 +222,17 @@ private:
      * 避免在 UI 线程同步启动 PowerShell 或解析游戏 JAR 造成窗口卡顿。
      */
     void runContextDetectionInBackground();
+    // ---- 游戏成就同步（生存模式 + 未开作弊） ----
+    /** @brief 创建监听器、恢复未同步队列，并在登录状态变化时自动补传 */
+    void setupGameAchievementSync();
+    /** @brief 监听器发现一条新成就：入队、提示，并在登录后用账号同步 */
+    void onGameAdvancementEarned(const QString &id, const QString &world, qint64 earnedAt);
+    /** @brief 把队列里的游戏成就发给论坛，成功后弹「已获得勋章」 */
+    void flushGameAchievementQueue();
+    void loadPendingGameAchievements();
+    void savePendingGameAchievements();
+    /** @brief 成就显示名：优先用游戏语言文件里的标题 */
+    QString gameAdvancementTitle(const QString &id) const;
     /** @brief 防抖刷新：输入停顿后统一执行补全 + 翻译（合并高频击键） */
     void flushDebouncedInput();
     /** @brief 复制按钮点击 */
@@ -230,6 +269,7 @@ private:
     QStackedWidget *m_stackedWidget;
     QList<QPushButton *> m_navButtons;
     QPropertyAnimation *m_highlightAnim;
+    QPointer<QParallelAnimationGroup> m_pageFadeGroup; ///< 当前正在跑的切页淡入淡出组
 
     int m_currentIndex;
     int m_highlightPos;
@@ -286,6 +326,7 @@ private:
     QLineEdit *m_commandInput;       ///< 中文输入框
     QListWidget *m_completionList;   ///< 候选列表
     QLineEdit *m_englishOutput;      ///< 英文输出框（只读）
+    QLabel *m_outputHint;            ///< 输出框下方的警告/错误提示行
     QPushButton *m_copyBtn;          ///< 复制按钮
     QPushButton *m_injectBtn;        ///< 一键注入按钮
     QPushButton *m_historyBtn;       ///< 历史记录按钮（点击弹出对话框）
@@ -300,6 +341,14 @@ private:
     CommandContext m_commandContext; ///< 当前上下文
     QString m_instancePath;          ///< 当前实例根目录
 
+    // ---- 游戏成就同步 ----
+    GameAchievementWatcher *m_gameAchievementWatcher = nullptr;
+    QHash<QString, QString> m_advancementTitles;        ///< 成就 id → 游戏内标题
+    QHash<QString, QString> m_advancementDescriptions;  ///< 成就 id → 描述
+    QJsonArray m_pendingGameAchievements;               ///< 等待同步到论坛的成就
+    QSet<QString> m_queuedGameAchievements;             ///< 已入队的成就 id
+    bool m_gameAchievementSyncing = false;
+
     // ---- AI 助手页面 ----
     AiChatPage *m_aiChatPage;        ///< 复用的 AI 聊天页面组件
 
@@ -308,6 +357,9 @@ private:
 
     // ---- 联机页面 ----
     MultiplayerPage *m_multiplayerPage; ///< 复用的联机页面组件
+
+    // ---- 本地开服页面 ----
+    InstanceServerPage *m_serverPage;   ///< 一键本地开服页面组件
 
     // ---- 资源管理页面 ----
     InstanceResourcesPage *m_resourcesPage; ///< 复用的资源管理页面组件

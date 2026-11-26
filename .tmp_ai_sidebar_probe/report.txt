@@ -1,0 +1,29 @@
+=== 实例助手 AI 页对话侧栏极限时序探针 ===
+
+[A] 切页后 0ms 就点 ☰
+[A+400ms] pageEffect=none panelVisible=1 panel=10,10 200x596 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+[A+1600ms] pageEffect=none panelVisible=1 panel=10,10 200x596 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+
+[B] 切页后 90ms 点 ☰
+[B+900ms] pageEffect=none panelVisible=1 panel=10,10 200x596 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+
+[C] 快速连点 ☰
+[C+900ms] pageEffect=none panelVisible=0 panel=10,10 0x596 panelEffect=none expanded=0 animRunning=0 convBtns=5
+[C-final] pageEffect=none panelVisible=1 panel=10,10 200x596 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+
+[D] 展开状态下反复缩放窗口
+[D-resized] pageEffect=none panelVisible=1 panel=10,10 200x452 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+
+[E] 展开状态下拖动窗口
+[E-moved] pageEffect=none panelVisible=1 panel=10,10 200x452 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+
+[F] 收起再展开窗口
+[F-restored] pageEffect=none panelVisible=1 panel=10,10 200x452 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+
+[G] 展开状态下切一次置顶（重建原生窗口）
+[G-pinned] pageEffect=none panelVisible=1 panel=10,10 200x452 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+[G-unpinned] pageEffect=none panelVisible=1 panel=10,10 200x452 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+
+[H] 隐藏窗口再显示
+[H-reshown] pageEffect=none panelVisible=1 panel=10,10 200x452 panelEffect=QGraphicsDropShadowEffect expanded=1 animRunning=0 convBtns=5
+done

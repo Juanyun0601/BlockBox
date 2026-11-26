@@ -86,8 +86,8 @@ protected:
   void hideEvent(QHideEvent *event) override;
 
 signals:
-  /** 空态轮播卡片被点击：请求跳到「设置 → 界面设置」添加图片 */
-  void customizeCarouselRequested();
+  /** 首页封面图被改动（下载完预设图 / 导入了自己的风景图）：设置页据此刷新轮播图卡片 */
+  void carouselImagesChanged();
   // Quick link signals (Section 2)
   void installNewInstanceClicked();
   void downloadModpackClicked();
@@ -179,10 +179,12 @@ private:
   /** 依据账户列表切换皮肤模型 / 「添加首个账户」空态，并同步加载当前皮肤 */
   void refreshSkinPanel();
   CarouselView *m_carouselView;     // 自绘轮播视图（圆角+描边，双层滑动切换）
-  QLabel *m_carouselPlaceholder;
+  QWidget *m_carouselEmpty;         // 一张封面图都没有时的空态（下载预设图 / 导入风景图）
+  QLabel *m_carouselEmptyProgress;  // 空态里的下载进度文字
+  QPushButton *m_carouselEmptyDownloadBtn;  // 空态里的「下载预设图」按钮
   QVector<QPushButton*> m_carouselDots;
   QTimer *m_carouselTimer;
-  QStringList m_carouselPaths;      // 当前实际展示的图片（自定义优先，缺省为内置风景图）
+  QStringList m_carouselPaths;      // 当前实际展示的图片（自定义优先，其次已下载的预设封面）
   int m_currentCarouselIndex;
   void updateCarousel();
   void setCarouselIndex(int index);
@@ -191,6 +193,9 @@ private:
   void rebuildCarouselSection();      // 只重建左侧轮播，右侧皮肤面板/公告栏保持不动
   void clearCarouselWidget();         // 拆掉旧的轮播视图、指示点与定时器
   void buildCarouselWidget();         // 按当前 m_carouselPaths 生成轮播视图
+  void buildCarouselEmptyState();     // 没有封面图时的引导卡：下载预设图 / 导入风景图
+  void updateCarouselEmptyProgress(int done, int total);  // 刷新空态里的下载进度
+  void importCarouselImages();        // 空态里「导入风景图」：选图导入并立即播放
   QWidget *m_carouselHost = nullptr;          // 轮播区的独立容器（放在皮肤面板左侧）
   QVBoxLayout *m_carouselHostLayout = nullptr;
   // 公告栏（封面图 + 皮肤模型下方，内容来自官网 announcement.json）
@@ -238,9 +243,11 @@ private:
   void reloadRecentPlaysIfChanged();   // 重新扫描数据，仅在内容变化时强制重建
   QWidget* buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *parent, int cardWidth);
   int calculateRecentPlayCardWidth() const;
+  /** 一行能摆几张最近游玩卡片（与好友 / 热门帖同一套列宽规则） */
+  int calculateRecentPlayColumnCount() const;
   QVector<RecentPlayEntry> m_recentPlays;
   QWidget *m_recentPlaysContainer;  // 最近游玩区域的容器，用于刷新时替换内容
-  FlowLayout *m_recentPlaysLayout;  // 最近游玩区域的布局（横排卡片，一行四个）
+  FlowLayout *m_recentPlaysLayout;  // 最近游玩区域的布局（横排卡片，一行按宽度摆满）
   bool m_recentPlaysResizing = false;  // 防止 resize 时递归重建
   bool m_recentPlaysRebuildPending = false;  // 已有延迟重建排队（合并连续 resize）
   bool m_recentPlaysRefreshPending = false;  // 已有延迟数据刷新排队

@@ -1,0 +1,39 @@
+{
+  "name": "dsh-blockbox-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "方块盒子桥接：自动发现本机方块盒子的本地 MCP 服务，把实例、模组、日志、崩溃、存档、服务器、结构等能力接入 DeepSeek Harness。",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md"
+  ],
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "dsh-bundle",
+    "blockbox",
+    "minecraft",
+    "mcp"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -14,6 +14,7 @@
 #include <QSize>
 #include <QWidget>
 #include <QGuiApplication>
+#include <QtGlobal>
 
 namespace UiMetrics {
 
@@ -37,6 +38,41 @@ static constexpr int kCardWidth = 260;
 static constexpr int kStatCardSize = 124;
 /** 自适应卡片（首页最近游玩等）的最小宽度 */
 static constexpr int kCardMinWidth = 220;
+
+/* ---- 首页横排卡片流（最近游玩 / 好友 / 论坛热门帖共用） ---- */
+/** 每张卡片的理想宽度：容器够宽时一排多摆几张，窄窗口自动减列 */
+static constexpr int kHomeStripCardWidth = 240;
+/** 卡片之间 / 行之间的间距 */
+static constexpr int kHomeStripSpacing = 12;
+/** 一行最多摆几张（窗口再宽也不超过） */
+static constexpr int kHomeStripMaxColumns = 6;
+/** 卡片宽度下限（极窄窗口兜底，避免卡片被压得放不下内容） */
+static constexpr int kHomeStripMinCardWidth = 160;
+
+/**
+ * @brief 按容器可用宽度算出一行能摆几张卡片
+ *
+ * 三个栏目统一调用本函数，保证同一首页上卡片宽度一致：
+ * 一行摆几张就只显示几张，不换到第二行。
+ */
+inline int homeStripColumns(int availableWidth)
+{
+    if (availableWidth <= 0)
+        return 1;
+    const int cols = (availableWidth + kHomeStripSpacing)
+                     / (kHomeStripCardWidth + kHomeStripSpacing);
+    return qBound(1, cols, kHomeStripMaxColumns);
+}
+
+/** @brief 按容器可用宽度算出每张卡片的宽度（与 homeStripColumns 同源） */
+inline int homeStripCardWidth(int availableWidth)
+{
+    if (availableWidth <= 0)
+        return kHomeStripCardWidth;
+    const int cols = homeStripColumns(availableWidth);
+    return qMax((availableWidth - (cols - 1) * kHomeStripSpacing) / cols,
+                kHomeStripMinCardWidth);
+}
 
 /* ---- 悬浮气泡 ---- */
 /** 悬浮气泡面板统一宽度（子导航气泡与各页内气泡同源） */

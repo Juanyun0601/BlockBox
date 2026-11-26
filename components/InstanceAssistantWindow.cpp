@@ -18,6 +18,9 @@
 #include <QFileInfo>
 #include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -39,6 +42,9 @@
 #include "utils/SettingsManager.h"
 #include "utils/StyleKit.h"
 #include "utils/ThemeManager.h"
+#include "utils/ForumAccountService.h"
+#include "utils/GameAchievementWatcher.h"
+#include "components/NotificationManager.h"
 #include "utils/CommandAssistant/CommandPack.h"
 #include "utils/CommandAssistant/GameDetector.h"
 #include "utils/CommandAssistant/GameRegistry.h"
@@ -48,6 +54,7 @@
 #include "pages/InstanceJavaDownloadPage.h"
 #include "pages/InstanceJavaPage.h"
 #include "pages/InstanceResourcesPage.h"
+#include "pages/InstanceServerPage.h"
 #include "pages/MultiplayerPage.h"
 
 // ============================================================================
@@ -217,6 +224,7 @@ InstanceAssistantWindow::InstanceAssistantWindow(QWidget *parent)
     , m_selectionHighlight(nullptr)
     , m_stackedWidget(nullptr)
     , m_highlightAnim(nullptr)
+    , m_pageFadeGroup(nullptr)
     , m_currentIndex(0)
     , m_highlightPos(0)
     , m_prevIndex(0)
@@ -239,6 +247,7 @@ InstanceAssistantWindow::InstanceAssistantWindow(QWidget *parent)
     , m_commandInput(nullptr)
     , m_completionList(nullptr)
     , m_englishOutput(nullptr)
+    , m_outputHint(nullptr)
     , m_copyBtn(nullptr)
     , m_injectBtn(nullptr)
     , m_historyBtn(nullptr)
@@ -251,6 +260,7 @@ InstanceAssistantWindow::InstanceAssistantWindow(QWidget *parent)
     , m_aiChatPage(nullptr)
     , m_homePage(nullptr)
     , m_multiplayerPage(nullptr)
+    , m_serverPage(nullptr)
     , m_resourcesPage(nullptr)
     , m_javaStack(nullptr)
     , m_javaPage(nullptr)
@@ -367,7 +377,23 @@ void InstanceAssistantWindow::initUI()
     m_navLayout->setContentsMargins(4, 0, 4, 0);
     m_navLayout->setSpacing(2);
 
-    QStringList navItems = {tr("首页"), tr("AI助手"), tr("快捷指令"), tr("联机"), tr("资源管理"), tr("Java管理")};
+    // 本地开服要在电脑上跑 Java 服务端，手机端 / 鸿蒙没有这条件，页签直接不给
+#if defined(Q_OS_ANDROID) || defined(HARMONY_OS)
+    constexpr bool kLocalServerSupported = false;
+#else
+    constexpr bool kLocalServerSupported = true;
+#endif
+
+    QStringList navItems = {tr("首页"), tr("AI助手"), tr("快捷指令"), tr("联机")};
+    if (kLocalServerSupported)
+        navItems << tr("开服");
+    navItems << tr("资源管理") << tr("Java管理");
+
+    // 页序 → 页面构建分支（手机端少了「开服」，后面的页签整体前移）
+    const int serverTab = kLocalServerSupported ? 4 : -1;
+    const int resourcesTab = kLocalServerSupported ? 5 : 4;
+    const int javaTab = kLocalServerSupported ? 6 : 5;
+
     for (int i = 0; i < navItems.size(); ++i) {
         QPushButton *btn = createNavButton(navItems[i], i);
         m_navButtons.append(btn);
@@ -409,12 +435,16 @@ void InstanceAssistantWindow::initUI()
         if (i == 3) {
             buildMultiplayerPage(page);
         }
-        // index 4 为"资源管理"页面，复用 InstanceResourcesPage 组件
-        if (i == 4) {
+        // index 4 为"开服"页面：一键把当前实例开成本地服务端
+        if (i == serverTab) {
+            buildServerPage(page);
+        }
+        // 资源管理页面，复用 InstanceResourcesPage 组件
+        if (i == resourcesTab) {
             buildResourcesPage(page);
         }
-        // index 5 为"Java管理"页面，内部用 QStackedWidget 切换管理/下载两个子页
-        if (i == 5) {
+        // Java管理页面，内部用 QStackedWidget 切换管理/下载两个子页
+        if (i == javaTab) {
             buildJavaPage(page);
         }
     }
@@ -527,6 +557,11 @@ void InstanceAssistantWindow::applyThemeStyles()
 
     for (auto *btn : m_navButtons) {
         btn->setStyleSheet(btnStyle);
+    }
+
+    // 提示行的颜色来自主题令牌；换主题后重新取色，避免深色下留着浅色提示
+    if (m_outputHint && m_outputHint->isVisible()) {
+        refreshTranslation();
     }
 
     update();
@@ -645,7 +680,27 @@ void InstanceAssistantWindow::animatePageFade(int from, int to)
     QWidget *toWidget = m_stackedWidget->widget(to);
 
     if (!fromWidget || !toWidget)
+    {
+        m_stackedWidget->setCurrentIndex(to);
         return;
+    }
+
+    // 上一次淡入淡出还没跑完就切页：先停掉它并清掉残留特效。
+    // 否则新一次 setGraphicsEffect 会删掉旧动画正在用的 effect，
+    // Qt 只会打「animation without target」警告，过渡直接失效。
+    if (m_pageFadeGroup)
+    {
+        m_pageFadeGroup->stop();
+        m_pageFadeGroup->deleteLater();
+        m_pageFadeGroup = nullptr;
+    }
+    for (int i = 0; i < m_stackedWidget->count(); ++i)
+    {
+        if (QWidget *page = m_stackedWidget->widget(i))
+        {
+            page->setGraphicsEffect(nullptr);
+        }
+    }
 
     auto *fromEffect = new QGraphicsOpacityEffect(fromWidget);
     fromEffect->setOpacity(1.0);
@@ -657,27 +712,38 @@ void InstanceAssistantWindow::animatePageFade(int from, int to)
 
     m_stackedWidget->setCurrentWidget(toWidget);
 
-    auto *fromAnim = new QPropertyAnimation(fromEffect, "opacity", this);
+    auto *group = new QParallelAnimationGroup(this);
+
+    auto *fromAnim = new QPropertyAnimation(fromEffect, "opacity", group);
     fromAnim->setDuration(200);
     fromAnim->setStartValue(1.0);
     fromAnim->setEndValue(0.0);
     fromAnim->setEasingCurve(QEasingCurve::OutCubic);
 
-    auto *toAnim = new QPropertyAnimation(toEffect, "opacity", this);
+    auto *toAnim = new QPropertyAnimation(toEffect, "opacity", group);
     toAnim->setDuration(200);
     toAnim->setStartValue(0.0);
     toAnim->setEndValue(1.0);
     toAnim->setEasingCurve(QEasingCurve::OutCubic);
 
-    auto *group = new QParallelAnimationGroup(this);
     group->addAnimation(fromAnim);
     group->addAnimation(toAnim);
 
-    connect(group, &QParallelAnimationGroup::finished, this, [fromWidget]() {
-        fromWidget->setGraphicsEffect(nullptr);
-    });
+    // 结束后两页都把特效摘掉：QGraphicsOpacityEffect 会让整页一直走离屏渲染，
+    // AI 流式输出时每帧都要重新合成整页，白白掉帧。
+    connect(group, &QParallelAnimationGroup::finished, this,
+            [this, fromWidget, toWidget, group]() {
+                fromWidget->setGraphicsEffect(nullptr);
+                toWidget->setGraphicsEffect(nullptr);
+                if (m_pageFadeGroup == group)
+                {
+                    m_pageFadeGroup = nullptr;
+                }
+                group->deleteLater();
+            });
 
-    group->start(QAbstractAnimation::DeleteWhenStopped);
+    m_pageFadeGroup = group;
+    group->start();
 }
 
 void InstanceAssistantWindow::setOverlayMode(bool enabled)
@@ -1225,6 +1291,8 @@ void InstanceAssistantWindow::moveEvent(QMoveEvent *event)
 
 void InstanceAssistantWindow::hideEvent(QHideEvent *event)
 {
+    if (m_gameAchievementWatcher)
+        m_gameAchievementWatcher->stop();
     if (m_floating) {
         // 收起状态下隐藏：先还原成完整窗口再记录几何，下次打开仍是完整形态
         if (m_collapsed) {
@@ -1343,6 +1411,10 @@ void InstanceAssistantWindow::saveWindowGeometry()
 void InstanceAssistantWindow::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    // 实例助手打开后开始盯存档：只看打开之后、生存模式且未开作弊时新拿到的成就
+    if (m_gameAchievementWatcher)
+        m_gameAchievementWatcher->start();
+    flushGameAchievementQueue();
     if (m_overlayMode) {
         applyOverlayGeometry();
     } else if (m_floating) {
@@ -1411,6 +1483,11 @@ void InstanceAssistantWindow::buildAiChatPage(QWidget *page)
     // - 欢迎页/消息区/输入区内边距收紧
     // - 通过 QSS 动态属性 compactMode 触发字号、按钮宽度等覆盖
     m_aiChatPage->setCompactMode(true);
+    // 实例助手里的 AI 只做聊天：工作模式那套文件读写 / 工具调用不适合浮在游戏上的小窗，
+    // 因此把「聊天 / 工作」切换整条藏掉
+    m_aiChatPage->setChatOnlyMode(true);
+    // 聊天时可以直接把当前游戏画面截图发给 AI（需要支持图片输入的模型）
+    m_aiChatPage->setGameScreenshotEnabled(true);
     layout->addWidget(m_aiChatPage, 1);
 }
 
@@ -1432,6 +1509,49 @@ void InstanceAssistantWindow::buildMultiplayerPage(QWidget *page)
     // 发布到联机大厅前未登录 → 打开账户页
     connect(m_multiplayerPage, &MultiplayerPage::forumLoginRequested,
             this, &InstanceAssistantWindow::forumLoginRequested);
+}
+
+// ============================
+// 本地开服页面实现（复用 InstanceServerPage）
+// ============================
+
+void InstanceAssistantWindow::buildServerPage(QWidget *page)
+{
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    // 一键本地开服：自动下载对应版本的服务端、写好配置、启动并盯日志。
+    // 页面自己持有服务端进程，助手窗口隐藏（点关闭）时服务器继续跑，
+    // 只有关掉软件才会跟着收掉。
+    m_serverPage = new InstanceServerPage(page);
+    layout->addWidget(m_serverPage, 1);
+
+    // 开服后「用这个实例进游戏」：交给主窗口带 --server/--port 启动本实例
+    connect(m_serverPage, &InstanceServerPage::launchGameRequested, this,
+            &InstanceAssistantWindow::launchLocalServerGameRequested);
+
+    // 「让朋友远程加入」：切到联机页做隧道，端口用页面上开好的那个
+    connect(m_serverPage, &InstanceServerPage::multiplayerTabRequested, this, [this]() {
+        const int multiplayerTab = 3;
+        if (multiplayerTab < m_navButtons.size())
+            switchToTab(multiplayerTab);
+    });
+
+    // 「发布到社区服务器导航」：地址优先用联机页已经建好的隧道地址，
+    // 不然发出去的 127.0.0.1 别人连不上；随后收起助手窗口，把发布页让出来
+    connect(m_serverPage, &InstanceServerPage::publishToServerNavigationRequested, this,
+            [this](const QString &title, const QString &content, const QStringList &tags,
+                   const QString &localAddress) {
+        QString address = localAddress;
+        if (m_multiplayerPage) {
+            const QString tunnel = m_multiplayerPage->currentTunnelAddress();
+            if (!tunnel.isEmpty())
+                address = tunnel;
+        }
+        emit publishServerAdRequested(title, content, tags, address);
+        hide();
+    });
 }
 
 // ============================
@@ -1580,7 +1700,7 @@ void InstanceAssistantWindow::buildCommandAssistantPage(QWidget *page)
 
     layout->addWidget(m_completionList, 1);
 
-    // 4. 英文输出框 + 复制按钮 + 历史记录按钮
+    // 4. 英文输出框 + 复制 / 注入（工具类按钮另起一行，避免把输出框挤没）
     auto *outputBar = new QHBoxLayout();
     outputBar->setSpacing(6);
 
@@ -1588,6 +1708,7 @@ void InstanceAssistantWindow::buildCommandAssistantPage(QWidget *page)
     m_englishOutput->setObjectName(QStringLiteral("englishOutput"));
     m_englishOutput->setReadOnly(true);
     m_englishOutput->setPlaceholderText(tr("英文指令输出"));
+    m_englishOutput->setMinimumWidth(150);
 
     m_copyBtn = new QPushButton(tr("复制"), page);
     m_copyBtn->setObjectName(QStringLiteral("copyBtn"));
@@ -1617,11 +1738,24 @@ void InstanceAssistantWindow::buildCommandAssistantPage(QWidget *page)
     outputBar->addWidget(m_englishOutput, 1);
     outputBar->addWidget(m_copyBtn);
     outputBar->addWidget(m_injectBtn);
-    outputBar->addWidget(m_presetBtn);
-    outputBar->addWidget(m_historyBtn);
-    outputBar->addWidget(m_packBtn);
 
     layout->addLayout(outputBar);
+
+    // 5. 工具按钮行：预设 / 历史 / 指令包
+    auto *toolBar = new QHBoxLayout();
+    toolBar->setSpacing(6);
+    toolBar->addWidget(m_presetBtn);
+    toolBar->addWidget(m_historyBtn);
+    toolBar->addWidget(m_packBtn);
+    toolBar->addStretch(1);
+    layout->addLayout(toolBar);
+
+    // 6. 输出框下方的警告 / 错误提示行（默认隐藏）
+    m_outputHint = new QLabel(page);
+    m_outputHint->setObjectName(QStringLiteral("outputHint"));
+    m_outputHint->setWordWrap(true);
+    m_outputHint->setVisible(false);
+    layout->addWidget(m_outputHint);
 
     // ---- 信号连接 ----
     // 每次击键只重启防抖定时器，停顿 60ms 后统一执行补全 + 翻译，
@@ -1760,22 +1894,33 @@ void InstanceAssistantWindow::refreshTranslation()
         if (m_injectBtn) {
             m_injectBtn->setEnabled(false);
         }
+        if (m_outputHint) {
+            m_outputHint->clear();
+            m_outputHint->setVisible(false);
+        }
         return;
     }
 
     TranslateResult result = m_translator->translate(input, m_commandContext);
+    const bool hasProblem = !result.success
+                            || !result.warnings.isEmpty()
+                            || !result.unavailableReason.isEmpty();
 
     if (result.success) {
         m_englishOutput->setText(result.englishCommand);
-        m_englishOutput->setStyleSheet(QString());
+        m_englishOutput->setStyleSheet(result.unavailableReason.isEmpty()
+                                           ? QString()
+                                           : QStringLiteral("color: #d32f2f;"));
         if (m_copyBtn) {
             m_copyBtn->setEnabled(true);
         }
+        // 带警告 / 不可用的指令在游戏里多半会报错，不允许直接一键注入
         if (m_injectBtn) {
-            m_injectBtn->setEnabled(true);
+            m_injectBtn->setEnabled(!hasProblem);
         }
     } else {
         m_englishOutput->clear();
+        m_englishOutput->setStyleSheet(QString());
         if (m_copyBtn) {
             m_copyBtn->setEnabled(false);
         }
@@ -1784,13 +1929,32 @@ void InstanceAssistantWindow::refreshTranslation()
         }
     }
 
-    // 警告/不可用原因通过 tooltip 提示
+    // 可视提示：警告不再只藏在 tooltip 里，输入框下方直接显示一行
+    QStringList hintParts;
+    if (!result.unavailableReason.isEmpty()) {
+        hintParts << tr("当前不可用：%1").arg(result.unavailableReason);
+    }
+    if (!result.warnings.isEmpty()) {
+        hintParts << result.warnings.join(QStringLiteral("；"));
+    }
+    if (!result.success && result.warnings.isEmpty()) {
+        hintParts << tr("没看懂这条指令，试试「给予 @s 钻石剑 1」这样的写法。");
+    }
+    if (m_outputHint) {
+        m_outputHint->setText(hintParts.join(QStringLiteral("；")));
+        const QString hintColor = StyleKit::resolve(!result.success
+                                                       ? QStringLiteral("@DANGER_TEXT@")
+                                                       : QStringLiteral("@WARNING_TEXT@"));
+        m_outputHint->setStyleSheet(
+            QStringLiteral("color: %1; font-size: 11px; background: transparent;")
+                .arg(hintColor));
+        m_outputHint->setVisible(!hintParts.isEmpty());
+    }
+
+    // 警告/不可用原因同时保留在 tooltip 里
     QStringList tipParts;
     if (!result.unavailableReason.isEmpty()) {
         tipParts << tr("不可用: %1").arg(result.unavailableReason);
-        m_englishOutput->setStyleSheet(QStringLiteral("color: #d32f2f;"));
-    } else {
-        m_englishOutput->setStyleSheet(QString());
     }
     if (!result.warnings.isEmpty()) {
         tipParts << tr("警告: %1").arg(result.warnings.join(QStringLiteral("; ")));
@@ -1806,9 +1970,12 @@ void InstanceAssistantWindow::updateContextDisplay()
 
     QString version = m_commandContext.version.isEmpty() ? tr("未知") : m_commandContext.version;
     QString mode = m_commandContext.isServer ? tr("服务端") : tr("单机");
-    QString text = tr("版本: %1 | %2 | OP: %3")
-                       .arg(version, mode, QString::number(m_commandContext.opLevel));
-    m_contextLabel->setText(text);
+    const QString opLevel = QString::number(m_commandContext.opLevel);
+    // 窄窗口下「版本: x | 单机 | OP: n」会被裁掉，压缩成更短的一行，
+    // 完整信息放进悬浮提示。
+    m_contextLabel->setText(QStringLiteral("%1 · %2 · OP %3").arg(version, mode, opLevel));
+    m_contextLabel->setToolTip(
+        tr("版本: %1 | %2 | OP 等级: %3").arg(version, mode, opLevel));
 }
 
 void InstanceAssistantWindow::detectContextFromLevelDat()
@@ -1914,11 +2081,19 @@ void InstanceAssistantWindow::setInstanceContext(const QString &path, const QStr
 {
     m_instancePath = path;
     m_commandContext.version = version;
+    if (m_gameAchievementWatcher)
+        m_gameAchievementWatcher->setContext(m_instancePath, m_commandContext.version);
 
     // 联机页发布到联机大厅时要带上当前实例的版本 / 加载器 / 模组
     if (m_multiplayerPage)
     {
         m_multiplayerPage->setInstanceContext(path, version, loader);
+    }
+
+    // 本地开服页要按实例版本挑服务端核心、按实例目录放服务端文件
+    if (m_serverPage)
+    {
+        m_serverPage->setInstanceContext(path, version, loader);
     }
 
     // 后台执行耗时检测（进程检测 / JAR 解析 / level.dat 扫描），完成后回主线程应用。
@@ -1966,6 +2141,15 @@ void InstanceAssistantWindow::runContextDetectionInBackground()
                 {
                     m_commandContext.version = result.detectedVersion;
                 }
+
+                // 成就标题：从游戏 JAR / 模组 lang 里提取，同步游戏成就时用来显示中文名
+                if (!result.gameRegistry.advancementTitles().isEmpty())
+                    m_advancementTitles = result.gameRegistry.advancementTitles();
+                if (!result.gameRegistry.advancementDescriptions().isEmpty())
+                    m_advancementDescriptions = result.gameRegistry.advancementDescriptions();
+
+                if (m_gameAchievementWatcher)
+                    m_gameAchievementWatcher->setContext(m_instancePath, m_commandContext.version);
 
                 // 方块注册表：合并 GameRegistry 提取的方块（lang 数据，含模组）
                 if (m_blockRegistry)
@@ -2053,6 +2237,187 @@ void InstanceAssistantWindow::detectRunningGame()
 {
     // 同步检测已废弃：耗时操作统一走后台线程，此处委托以保持接口兼容
     runContextDetectionInBackground();
+}
+
+// ============================
+// 游戏成就同步
+// ============================
+
+namespace {
+const QString kPendingGameAchievementsKey =
+    QStringLiteral("medals/pendingGameAchievements");
+constexpr int kMaxPendingGameAchievements = 200;
+} // namespace
+
+void InstanceAssistantWindow::setupGameAchievementSync()
+{
+    m_gameAchievementWatcher = new GameAchievementWatcher(this);
+    connect(m_gameAchievementWatcher, &GameAchievementWatcher::advancementEarned, this,
+            [this](const GameAdvancement &advancement) {
+                onGameAdvancementEarned(advancement.id, advancement.world, advancement.earnedAt);
+            });
+
+    loadPendingGameAchievements();
+
+    // 登录成功后把离线时攒下的成就补传上去
+    connect(ForumAccountService::instance(), &ForumAccountService::userChanged, this,
+            [this](const ForumUser &) { flushGameAchievementQueue(); });
+}
+
+QString InstanceAssistantWindow::gameAdvancementTitle(const QString &id) const
+{
+    const QString localized = m_advancementTitles.value(id);
+    if (!localized.isEmpty())
+        return localized;
+
+    // 没读到游戏语言文件时，用 advancement id 的最后一段兜底：mine_stone → Mine stone
+    QString path = id;
+    const int colon = path.indexOf(QLatin1Char(':'));
+    if (colon >= 0)
+        path = path.mid(colon + 1);
+    const QStringList parts = path.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    QString title = parts.isEmpty() ? path : parts.last();
+    title.replace(QLatin1Char('_'), QLatin1Char(' '));
+    if (!title.isEmpty())
+        title[0] = title[0].toUpper();
+    return title.isEmpty() ? tr("游戏成就") : title;
+}
+
+void InstanceAssistantWindow::onGameAdvancementEarned(const QString &id, const QString &world,
+                                                      qint64 earnedAt)
+{
+    if (id.isEmpty() || m_queuedGameAchievements.contains(id))
+        return;
+
+    const QString title = gameAdvancementTitle(id);
+    QJsonObject item;
+    item.insert(QStringLiteral("id"), id);
+    item.insert(QStringLiteral("title"), title);
+    item.insert(QStringLiteral("world"), world.left(60));
+    item.insert(QStringLiteral("earned_at"), static_cast<double>(earnedAt / 1000));
+
+    m_queuedGameAchievements.insert(id);
+    m_pendingGameAchievements.append(item);
+    while (m_pendingGameAchievements.size() > kMaxPendingGameAchievements)
+    {
+        const QString dropped =
+            m_pendingGameAchievements.first().toObject().value(QStringLiteral("id")).toString();
+        m_queuedGameAchievements.remove(dropped);
+        m_pendingGameAchievements.removeAt(0);
+    }
+    savePendingGameAchievements();
+
+    if (!ForumAccountService::instance()->isLoggedIn())
+    {
+        NotificationManager::showInfo(
+            this,
+            tr("获得游戏成就：%1（登录方块盒子账号后会同步到勋章墙）").arg(title));
+        return;
+    }
+
+    // 先让玩家在实例助手里看到「已获得勋章」，再后台同步到账号；
+    // 网络失败时成就会留在本地队列，联网后自动重试。
+    NotificationManager::showSuccess(this, tr("已获得勋章：%1").arg(title));
+    flushGameAchievementQueue();
+}
+
+void InstanceAssistantWindow::flushGameAchievementQueue()
+{
+    if (m_gameAchievementSyncing || m_pendingGameAchievements.isEmpty())
+        return;
+
+    ForumAccountService *service = ForumAccountService::instance();
+    if (!service->isLoggedIn())
+        return;
+
+    QJsonArray batch;
+    for (const QJsonValue &value : m_pendingGameAchievements)
+    {
+        QJsonObject item = value.toObject();
+        const QString id = item.value(QStringLiteral("id")).toString();
+        if (id.isEmpty())
+            continue;
+        // 检测结果可能晚于成就到达，发之前补上游戏里的正式标题
+        const QString localized = m_advancementTitles.value(id);
+        if (!localized.isEmpty())
+            item.insert(QStringLiteral("title"), localized);
+        batch.append(item);
+    }
+    if (batch.isEmpty())
+        return;
+
+    m_gameAchievementSyncing = true;
+    QJsonObject body;
+    body.insert(QStringLiteral("achievements"), batch);
+    service->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/medals/game"), body,
+        [this, batch](const QJsonObject &root) {
+            m_gameAchievementSyncing = false;
+            Q_UNUSED(root);
+            QSet<QString> sent;
+            for (const QJsonValue &value : batch)
+                sent.insert(value.toObject().value(QStringLiteral("id")).toString());
+
+            QJsonArray rest;
+            for (const QJsonValue &value : m_pendingGameAchievements)
+            {
+                const QString id =
+                    value.toObject().value(QStringLiteral("id")).toString();
+                if (!sent.contains(id))
+                    rest.append(value);
+            }
+            m_pendingGameAchievements = rest;
+            for (const QString &id : sent)
+                m_queuedGameAchievements.remove(id);
+            savePendingGameAchievements();
+
+            // 请求期间又拿到了新成就，接着发
+            if (!m_pendingGameAchievements.isEmpty()
+                && ForumAccountService::instance()->isLoggedIn())
+            {
+                QTimer::singleShot(1000, this, [this]() { flushGameAchievementQueue(); });
+            }
+        },
+        [this](const QString &, int) {
+            m_gameAchievementSyncing = false;
+            QTimer::singleShot(15000, this, [this]() { flushGameAchievementQueue(); });
+        });
+}
+
+void InstanceAssistantWindow::loadPendingGameAchievements()
+{
+    const QByteArray raw =
+        SettingsManager::instance()->getProperty(kPendingGameAchievementsKey).toByteArray();
+    if (raw.isEmpty())
+        return;
+
+    const QJsonDocument doc = QJsonDocument::fromJson(raw);
+    if (!doc.isArray())
+        return;
+
+    for (const QJsonValue &value : doc.array())
+    {
+        const QJsonObject item = value.toObject();
+        const QString id = item.value(QStringLiteral("id")).toString();
+        if (id.isEmpty() || m_queuedGameAchievements.contains(id))
+            continue;
+        m_queuedGameAchievements.insert(id);
+        m_pendingGameAchievements.append(item);
+    }
+    while (m_pendingGameAchievements.size() > kMaxPendingGameAchievements)
+    {
+        const QString dropped =
+            m_pendingGameAchievements.first().toObject().value(QStringLiteral("id")).toString();
+        m_queuedGameAchievements.remove(dropped);
+        m_pendingGameAchievements.removeAt(0);
+    }
+}
+
+void InstanceAssistantWindow::savePendingGameAchievements()
+{
+    SettingsManager::instance()->setProperty(
+        kPendingGameAchievementsKey,
+        QJsonDocument(m_pendingGameAchievements).toJson(QJsonDocument::Compact));
 }
 
 void InstanceAssistantWindow::onCopyClicked()
@@ -2444,6 +2809,10 @@ void InstanceAssistantWindow::applyPreset(const CommandPreset &preset)
     }
     if (m_injectBtn) {
         m_injectBtn->setEnabled(true);
+    }
+    if (m_outputHint) {
+        m_outputHint->clear();
+        m_outputHint->setVisible(false);
     }
 
     m_commandInput->setFocus();

@@ -8,6 +8,7 @@
 #include "components/LocalCategoryDialog.h"
 #include "components/FavoriteFolderDialog.h"
 #include "components/ProjectionBlockEditorDialog.h"
+#include "components/ProjectionBuildGuideDialog.h"
 #include <QFileDialog>
 #include "components/ContentViewSwitch.h"
 #include "components/MasonryContentCard.h"
@@ -84,6 +85,14 @@ void ProjectionManagePage::setInstancePath(const QString &path)
             placeCards();
         }
     }
+}
+
+void ProjectionManagePage::refresh()
+{
+    if (m_instancePath.isEmpty())
+        return;
+    loadProjections();
+    placeCards();
 }
 
 void ProjectionManagePage::initUI()
@@ -596,6 +605,13 @@ QWidget *ProjectionManagePage::createMasonryCard(const QFileInfo &fi)
     });
     btnLayout->addWidget(blockBtn);
 
+    QPushButton *buildBtn = createBtn(":/Images/Icons/grid.svg", tr("学习搭建"));
+    buildBtn->setToolTip(tr("学习搭建：先看最下面一层，按材料一步步搭，四边有格子刻度"));
+    connect(buildBtn, &QPushButton::clicked, this, [this, fi]() {
+        ProjectionBuildGuideDialog::open(this, fi.absoluteFilePath(), m_instancePath);
+    });
+    btnLayout->addWidget(buildBtn);
+
     QPushButton *folderBtn = createBtn(":/Images/Icons/folder.svg", tr("打开文件位置"));
     connect(folderBtn, &QPushButton::clicked, this, [filePath]() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(filePath).absolutePath()));
@@ -766,6 +782,13 @@ QWidget *ProjectionManagePage::createListCard(const QFileInfo &fi, int row)
         }
     });
     btnLayout->addWidget(blockBtn);
+
+    QPushButton *buildBtn = createBtn(":/Images/Icons/grid.svg", tr("学习搭建"));
+    buildBtn->setToolTip(tr("学习搭建：先看最下面一层，按材料一步步搭，四边有格子刻度"));
+    connect(buildBtn, &QPushButton::clicked, this, [this, fi]() {
+        ProjectionBuildGuideDialog::open(this, fi.absoluteFilePath(), m_instancePath);
+    });
+    btnLayout->addWidget(buildBtn);
 
     QPushButton *folderBtn = createBtn(":/Images/Icons/folder.svg", tr("打开文件位置"));
     connect(folderBtn, &QPushButton::clicked, this, [fi]() {

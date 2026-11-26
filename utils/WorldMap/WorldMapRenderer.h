@@ -245,6 +245,8 @@ QVector<BlockHit> scanChunkBlocks(const QString &savePath, Dimension dim,
  * @param prior       上一张画布（可选）：bpp 一致时重叠 region 直接搬像素，跳过重渲
  * @param withHeight  是否同时产出地表高度图（heightImage / sink 的高度图块）。
  *                    立体视图要用；只画俯视图时可传 false 省内存
+ * @param maxImageSide 主图边长上限（像素，≥512 有效）：世界跨度超过它时按 2 的幂
+ *                     降采样。默认 4096；高清导出可放宽到 8192 换一倍细节
  */
 RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     const std::function<bool()> &cancelled,
@@ -254,7 +256,8 @@ RenderResult render(const QString &savePath, Dimension dim, ShadeMode mode,
                     int maxSurfaceY = -1,
                     const SeedPreview &seed = SeedPreview(),
                     const PriorCanvas &prior = PriorCanvas(),
-                    bool withHeight = true);
+                    bool withHeight = true,
+                    int maxImageSide = 4096);
 
 /** 方块 ID（含或不含 minecraft: 前缀）→ 地表颜色 */
 QColor blockColor(const QString &blockName);

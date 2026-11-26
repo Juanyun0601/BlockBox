@@ -83,7 +83,7 @@ public:
     /** 圆角半径（只有顶部两角），默认与卡片一致 */
     void setRadius(int radius);
 
-    /** 设置封面（站内路径）；空字符串表示没有封面，画渐变占位 */
+    /** 设置封面（站内路径）；空字符串表示没有封面，画渐变占位。有本机缓存就直接画，不再下载 */
     void setCover(const QString &coverPath);
 
     /** 当前封面路径 */

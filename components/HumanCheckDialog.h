@@ -41,6 +41,14 @@ public:
      */
     static bool verify(QWidget *parent);
 
+    /**
+     * @brief 当前是否已经有一道验证弹窗开着（跨页面 / 跨窗口统一去重）
+     *
+     * 主窗口的社区请求和 AI 助手工作模式的提前验证可能同时想弹滑块，
+     * 两边都先看这里，避免叠出第二个窗口。
+     */
+    static bool isChecking();
+
 private slots:
     void onChallengeReady(const QJsonObject &challenge);
     void onCheckPassed();

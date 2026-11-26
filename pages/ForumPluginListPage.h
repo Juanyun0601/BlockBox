@@ -51,12 +51,22 @@ private:
     void clearList();
     void renderLoaded();
     void installPlugin(const ForumPluginInfo &plugin);
+    /** 筛选按钮：按安装状态筛选当前页的插件 */
+    void onFilterClicked();
+    /** 根据当前生效的筛选刷新按钮文字 / 高亮 */
+    void updateFilterButton();
+    /** 刷新底部分页栏（本页筛空时也保留，方便翻页继续找） */
+    void updatePager();
+    /** 插件是否已经装在本地（按清单 id 判断） */
+    bool isPluginInstalled(const ForumPluginInfo &plugin) const;
 
     QScrollArea *m_scroll = nullptr;
     QWidget *m_listHost = nullptr;
     QVBoxLayout *m_listLayout = nullptr;
     QLabel *m_statusLabel = nullptr;
     QLineEdit *m_searchEdit = nullptr;
+    QComboBox *m_sortCombo = nullptr;
+    QPushButton *m_filterBtn = nullptr;
     QWidget *m_paginationBar = nullptr;
     QPushButton *m_firstButton = nullptr;
     QPushButton *m_prevButton = nullptr;
@@ -67,6 +77,9 @@ private:
     int m_page = 1;
     int m_totalPages = 1;
     QString m_keyword;   ///< 客户端过滤关键字（本地已拉取的列表里搜）
+    QString m_sort = QStringLiteral("latest");   ///< 服务端排序：latest / hot / downloads
+    QString m_status;    ///< 客户端安装状态筛选：空 / installed / uninstalled
+    bool m_loaded = false;   ///< 当前页数据是否已经拉回来（决定搜索是否本地重渲染）
     QVector<ForumPluginInfo> m_plugins;   ///< 当前页原始数据
     QHash<int, int> m_threadIdByPlugin;   ///< plugin 行 id -> 所属主题 id
 };

@@ -77,11 +77,25 @@ void PublishPage::buildUi()
     tutorialsCard->onClick = [this]() { emit tutorialsRequested(); };
     flow->addWidget(tutorialsCard);
 
+    auto *questionsCard = PublishKit::makeChoiceCard(
+        cardsRow, tr("问答"), tr("悬赏方块提问：先托管赏金，采纳回答后发给对方"),
+        QColor(QStringLiteral("#F59E0B")), QColor(QStringLiteral("#B45309")),
+        QStringLiteral(":/Images/Icons/nav_forum.svg"), 340, 126);
+    questionsCard->onClick = [this]() { emit questionsRequested(); };
+    flow->addWidget(questionsCard);
+
+    auto *navigationCard = PublishKit::makeChoiceCard(
+        cardsRow, tr("导航"), tr("分享好玩的网站或服务器地址，点开就能一键直达"),
+        QColor(QStringLiteral("#8B5CF6")), QColor(QStringLiteral("#6D28D9")),
+        QStringLiteral(":/Images/Icons/globe.svg"), 340, 126);
+    navigationCard->onClick = [this]() { emit navigationRequested(); };
+    flow->addWidget(navigationCard);
+
     layout->addWidget(cardsRow);
     layout->addStretch(1);
 
     auto *hint = new QLabel(
-        tr("模组、资源包等会跳转到 CurseForge / Modrinth 发布；插件（方块盒子插件）、帖子和教程可以直接在方块盒子社区发布——插件发到「插件分享」板块，帖子只做交流讨论，教程发到「教程分享」板块。"),
+        tr("模组、资源包等会跳转到 CurseForge / Modrinth 发布；插件（方块盒子插件）、帖子、教程、有奖问答和导航可以直接在方块盒子社区发布——插件发到「插件分享」板块，帖子只做交流讨论，教程发到「教程分享」板块，有奖问答发到「有奖问答」板块，导航按类型发到「网站导航」或「服务器导航」板块。"),
         content);
     hint->setObjectName(QStringLiteral("forumMuted"));
     hint->setWordWrap(true);

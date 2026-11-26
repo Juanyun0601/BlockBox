@@ -69,6 +69,9 @@ struct ModInfo {
     // 由下载源解析结果时按 CurseForge classId、Modrinth project_type 填入；
     // 全局搜索要把两类来源混在一个列表里，靠它区分「模组 / 整合包 / 光影包…」
     QString contentKind;
+    // 下载源的项目状态（Modrinth：approved / archived / rejected / draft…），
+    // 兼容矩阵用它判断「已停更」；未知来源为空
+    QString projectStatus;
     QDateTime dateModified;
     QDateTime datePublished;
     qint64 downloadCount = 0;

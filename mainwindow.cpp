@@ -43,6 +43,7 @@
 #include <QDesktopServices>
 #include <QInputMethod>
 #include <QUrl>
+#include <QUuid>
 
 #include "components/BackgroundWidget.h"
 #include "components/AppDialogBase.h"
@@ -52,20 +53,30 @@
 #include "components/TaskBar.h"
 #include "components/InstanceAssistantWindow.h"
 #include "components/GameFloatingIcon.h"
+#include "components/TouchControlOverlay.h"
 #include "components/TopBar.h"
 #include "components/UpdateProgressButton.h"
 #include "components/FileDropOverlay.h"
 #include "components/HumanCheckDialog.h"
+#include "components/SystemTray.h"
 #include "components/LobbyJoinPrepDialog.h"
+#include "components/ResourceSyncListWindow.h"
+#include "utils/ResourceVersionSyncer.h"
+#include "utils/Schematic/SchematicDownloadTarget.h"
+#include "utils/mcp/McpServer.h"
+#include "utils/AiService.h"
 #include "utils/Lobby/LobbyInstanceMatcher.h"
 #include "utils/Lobby/LobbyShareLink.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
+#include "utils/PanoramaThemeManager.h"
 #include "utils/ThemeManager.h"
 #include "pages/CreationCenterPage.h"
 #include "pages/ForumAccountPage.h"
+#include "pages/ForumThreadDetailPage.h"
 #include "pages/AddAccountPage.h"
 #include "pages/ForgeVersionListPage.h"
+#include "pages/GameLaunchPage.h"
 #include "pages/HomePage.h"
 #include "pages/InstallInstancePage.h"
 #include "pages/InstanceSelectPage.h"
@@ -97,7 +108,9 @@
 #include "pages/AiChatPage.h"
 #include "pages/FavoritesPage.h"
 #include "pages/SkinEditorPage.h"
+#include "pages/CommunitySkinDetailPage.h"
 #include "pages/PluginPage.h"
+#include "pages/ForumSchematicListPage.h"
 #include "pages/CommunityForumPage.h"
 #include "utils/ForumAccountService.h"
 #include "utils/ForumImageStore.h"
@@ -106,6 +119,9 @@
 #include "utils/plugin/PluginSafetyGuard.h"
 #include "components/FavoriteFolderDialog.h"
 #include "utils/GameLauncher.h"
+#include "utils/GameAchievementService.h"
+#include "utils/PlaytimeStats.h"
+#include "utils/WorldBackupManager.h"
 #include "utils/LanguageManager.h"
 #include "utils/PerformanceMonitor.h"
 #include "platform.h"
@@ -118,13 +134,19 @@
 #include "utils/net/ChecksumValidator.h"
 #include "utils/net/NetworkAccess.h"
 #include "utils/content/ContentDownloader.h"
+#include "utils/modpack/ModpackDetector.h"
+#include "utils/modpack/ModpackImporter.h"
+#include "components/ProgressDialog.h"
 #include "utils/ClipboardMonitor.h"
+#include "utils/links/LinkRouter.h"
 #include "utils/PageTransitionAnimator.h"
 #include "utils/ContentAnimator.h"
 #include "utils/UpdateChecker.h"
+#include "utils/trust/BuildChannel.h"
 #include "utils/Terracotta/TerracottaClient.h"
 
 #include <QPainter>
+#include <QCloseEvent>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDragLeaveEvent>
@@ -161,6 +183,30 @@ void startResourceDownload(QObject *context, const QStringList &candidateUrls,
             onDone(job->wasSuccessful());
     }, Qt::SingleShotConnection);
     job->start();
+}
+
+/**
+ * @brief 为在线整合包挑一个没被占用的实例名
+ *
+ * 实例列表只认 <游戏根>/versions/<实例名>/<实例名>.json，重名会直接装不进去，
+ * 所以重名时依次追加 (2)、(3)…，让同一个整合包装多份也能成功。
+ */
+QString uniqueInstanceName(const QString &gameRoot, const QString &preferred)
+{
+    QString base = Safety::safeFileName(preferred.trimmed(), QString());
+    if (base.isEmpty())
+        base = QStringLiteral("整合包");
+
+    const QString versionsDir = gameRoot + QStringLiteral("/versions");
+    QString candidate = base;
+    int suffix = 2;
+    while (QFile::exists(versionsDir + QLatin1Char('/') + candidate
+                         + QLatin1Char('/') + candidate + QStringLiteral(".json"))) {
+        candidate = QStringLiteral("%1 (%2)").arg(base).arg(suffix++);
+        if (suffix > 999)
+            break;
+    }
+    return candidate;
 }
 
 // 联机大厅地址（host:port / http(s)://host:port）→ host + 端口，默认 25565
@@ -204,7 +250,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , m_instanceSelectPage(nullptr)
-    , m_instanceAssistantWindow(nullptr)
+    , m_overlayAssistantWindow(nullptr)
     , m_launchDetailsPage(nullptr)
     , m_installInstancePage(nullptr)
     , m_loaderDetailPage(nullptr)
@@ -278,6 +324,8 @@ MainWindow::MainWindow(QWidget *parent)
     // Connect scroll to top and refresh signals
     connect(m_topBar, &TopBar::scrollToTopClicked, this, &MainWindow::onScrollToTop);
     connect(m_topBar, &TopBar::refreshClicked, this, &MainWindow::onRefreshClicked);
+    // 顶栏「文档」：打开软件内置的方块图书馆（QTextBrowser 渲染，不调外部浏览器）
+    connect(m_topBar, &TopBar::docsClicked, this, &MainWindow::showLibraryPage);
     // Connect instance select signal
     connect(m_topBar, &TopBar::instanceSelectClicked, this, &MainWindow::onInstanceSelectClicked);
     // Connect instance settings signal
@@ -289,6 +337,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_topBar, &TopBar::accountManageClicked, this, &MainWindow::onAccountManageClicked);
     connect(m_topBar, &TopBar::launchGameClicked, this, qOverload<>(&MainWindow::onLaunchGameClicked));
     connect(m_topBar, &TopBar::searchClicked, this, &MainWindow::onSearchClicked);
+    // 手机端「扫描」：打开扫码登录电脑端的整页扫码界面（桌面端顶栏没有这枚按钮）
+    connect(m_topBar, &TopBar::scanQrClicked, this, &MainWindow::showQrScanPage);
     // 顶栏「系统消息 / 聊天」快捷卡：社区为常驻功能，始终显示
     m_topBar->setForumCardVisible(true);
     connect(m_topBar, &TopBar::forumNotificationsClicked, this, &MainWindow::onForumNotificationsClicked);
@@ -315,6 +365,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_taskBar, &TaskBar::showTaskListPageRequested, this, &MainWindow::onShowTaskListPageRequested);
     connect(m_taskBar, &TaskBar::taskDetailRequested, this, &MainWindow::onTaskDetailRequested);
+
+    // 桌面端系统托盘：关窗收进托盘、托盘里也能打开设置或彻底退出
+    setupSystemTray();
 
     connect(LanguageManager::instance(), &LanguageManager::languageChanged, this, [this]() {
         ui->retranslateUi(this);
@@ -344,6 +397,25 @@ MainWindow::MainWindow(QWidget *parent)
             });
 
     updateBackgroundWidget();
+
+    // 旋转背景素材按需下载：当前主题六张图下完后立刻换成实景
+    connect(PanoramaThemeManager::instance(), &PanoramaThemeManager::themeReady, this,
+            [this](const QString &themeId) {
+        BackgroundManager *bg = BackgroundManager::instance();
+        if (!m_backgroundWidget || bg->currentMode() != BackgroundManager::Rotating
+            || effectiveRotatingScene() != themeId) {
+            return;
+        }
+        m_backgroundWidget->setPanoramaSource(themeId, PanoramaThemeManager::themeDir(themeId));
+    });
+    connect(PanoramaThemeManager::instance(), &PanoramaThemeManager::themeFailed, this,
+            [this](const QString &themeId, const QString &reason) {
+        BackgroundManager *bg = BackgroundManager::instance();
+        if (bg->currentMode() == BackgroundManager::Rotating
+            && effectiveRotatingScene() == themeId) {
+            NotificationManager::showErrorWithNetworkCheck(this, tr("旋转背景下载失败：%1").arg(reason));
+        }
+    });
 
     // 方块盒子账户 ⇄ 顶栏账户卡片：登录后顶栏展示社区账户的头像与昵称
     auto *forumAccount = ForumAccountService::instance();
@@ -377,18 +449,294 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_clipboardMonitor, &ClipboardMonitor::linkDetected,
             this, &MainWindow::onClipboardLinkDetected);
 
+    // 详情页里点到方块盒子能解析的链接（帖子、一键加入、CF / Modrinth 资源页）
+    // 都在软件内打开：具体跳哪个页面由这里统一登记
+    setupLinkRouter();
+
 // 初始化快捷键
     reloadShortcuts();
+
+    // ── 本地 MCP 服务器（外部 AI 客户端接入）──
+    // 默认关闭；设置页打开后才监听。工具复用 AI 助手页的 AiService，
+    // 这样下载 / 改版本这类靠信号驱动的工具也能正常工作。
+    m_mcpServer = new McpServer(this);
+    m_mcpServer->setAiServiceProvider([this]() -> AiService * {
+        ensurePageInitialized(PageIndex::AiChatPage);
+        return m_aiChatPage ? m_aiChatPage->aiService() : nullptr;
+    });
+    connect(m_mcpServer, &McpServer::statusChanged, this,
+            [this](bool running, quint16 port, const QString &detail) {
+        m_mcpRunning = running;
+        m_mcpRunningPort = running ? port : 0;
+        m_mcpStatusDetail = detail;
+        syncMcpStatusToSettingsPage();
+    });
+    applyMcpServerSettings();
+
+    // 非官方构建：主窗口真正显示后提示一次风险（非阻塞，同一个进程只提示一次）。
+    // 主窗口是在异步初始化结束后才 show() 的，固定延时可能早于显示，
+    // 所以用短间隔定时器等 isVisible() 变真就停，提示条才会落在主窗口上。
+    if (!BuildChannel::isOfficialBuild())
+    {
+        auto *noticeTimer = new QTimer(this);
+        noticeTimer->setInterval(500);
+        connect(noticeTimer, &QTimer::timeout, this, [this, noticeTimer]() {
+            static bool shown = false; // 同一进程只弹一次
+            if (shown || !isVisible())
+                return;
+            shown = true;
+            noticeTimer->stop();
+            noticeTimer->deleteLater();
+            NotificationManager::showInfo(this, BuildChannel::riskNoticeText(), 12000);
+        });
+        noticeTimer->start();
+    }
+
+    // 语言包按需下载：上次选的是不随安装包内置的语言、本机又还没下好语言包时，
+    // 启动后先在后台补一次，下好提示重启即可切回；失败只提示一句，不打断使用。
+    // 软件升级后同一套逻辑也会把旧版本的语言包换成新版（缺的新文案才不会退回中文）。
+    LanguageManager *languagePacks = LanguageManager::instance();
+    LanguageManager::Language packToFetch = LanguageManager::Chinese;
+    bool needPackFetch = false;
+    bool isPackRefresh = false;
+    if (languagePacks->hasPendingLanguagePack()) {
+        packToFetch = languagePacks->pendingLanguagePack();
+        needPackFetch = true;
+    } else {
+        const LanguageManager::Language current = languagePacks->currentLanguage();
+        if (LanguageManager::needsLanguagePackRefresh(current)) {
+            packToFetch = current;
+            needPackFetch = true;
+            isPackRefresh = true;
+        }
+    }
+    if (needPackFetch)
+    {
+        const QString packName = LanguageManager::nativeName(packToFetch);
+
+        connect(languagePacks, &LanguageManager::languagePackDownloadFinished, this,
+                [this, packToFetch, packName](LanguageManager::Language lang) {
+            if (lang != packToFetch)
+                return;
+            NotificationManager::showSuccess(this,
+                tr("「%1」语言包已下载完成，重启方块盒子后即可切换。").arg(packName), 10000);
+        });
+        connect(languagePacks, &LanguageManager::languagePackDownloadFailed, this,
+                [this, packToFetch](LanguageManager::Language lang, const QString &error) {
+            if (lang != packToFetch)
+                return;
+            NotificationManager::showInfo(this,
+                tr("语言包下载失败：%1，可在「设置 → 界面设置 → 语言」里重试。").arg(error), 10000);
+        });
+        languagePacks->downloadLanguagePack(packToFetch, isPackRefresh);
+    }
+}
+
+void MainWindow::setupSystemTray()
+{
+    // 手机 / 平板没有系统托盘；个别精简 Linux 桌面也没有托盘服务，
+    // 这两种情况不建托盘，关窗行为保持「直接退出」
+    if (Platform::isMobile() || !SystemTray::isAvailable())
+        return;
+
+    m_systemTray = new SystemTray(this);
+    connect(m_systemTray, &SystemTray::showWindowRequested, this, &MainWindow::showFromTray);
+    connect(m_systemTray, &SystemTray::openSettingsRequested, this, &MainWindow::openSettingsFromTray);
+    connect(m_systemTray, &SystemTray::quitRequested, this, &MainWindow::quitFromTray);
+
+    // 托盘菜单是系统级菜单，不会收到 QWidget 的 LanguageChange，语言切换后单独刷一次文案
+    connect(LanguageManager::instance(), &LanguageManager::languageChanged,
+            m_systemTray, &SystemTray::retranslateUi);
+
+    m_systemTray->show();
+}
+
+void MainWindow::showFromTray()
+{
+    // 最小化状态和「已经收进托盘」都要照顾到：先还原窗口状态，再提到前台
+    if (isMinimized())
+        setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+
+    show();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::hideToTray()
+{
+    if (!m_systemTray)
+        return;
+
+    // 第一次收进托盘时说明一下，免得用户以为软件已经关掉、又去点图标开第二个
+    SettingsManager *settings = SettingsManager::instance();
+    if (!settings->getProperty(QStringLiteral("tray/hintShown"), false).toBool())
+    {
+        settings->setProperty(QStringLiteral("tray/hintShown"), true);
+        m_systemTray->showBalloon(
+            tr("方块盒子已最小化到系统托盘"),
+            tr("软件仍在后台运行，点托盘图标可以重新打开窗口；右键托盘图标选「退出方块盒子」才是彻底退出。"),
+            6000);
+    }
+
+    // 主窗口的弹窗 / 覆盖层都挂在它下面，跟着一起收起来
+    hide();
+}
+
+void MainWindow::openSettingsFromTray()
+{
+    showFromTray();
+
+    // 与点击侧边栏「设置」一致：恢复侧边栏与顶栏后切到设置页（默认落在「常规设置」，
+    // 托盘开关就在这一页的「启动行为」里）
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    setSideBarVisible(true);
+    onSideBarItemClicked(2);
+}
+
+void MainWindow::quitFromTray()
+{
+    // 用户明确要退出：先撤托盘图标（避免进程结束后托盘里留个点不动的残影）
+    m_quitConfirmed = true;
+    if (m_systemTray)
+        m_systemTray->hide();
+
+    // 走正常关窗路径；窗口正收在托盘里时个别平台不会派发关闭事件，
+    // 再用 quit() 兜底结束事件循环（析构清理照常执行）
+    close();
+    QTimer::singleShot(0, qApp, []() { QCoreApplication::quit(); });
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    // 桌面端「关闭」只是把窗口收进托盘：进程继续在后台跑，真正退出走托盘菜单。
+    // 用户明确点了退出、系统没有托盘，或者设置里关掉了这个行为时，按老规矩关窗退出。
+    const bool closeToTray = !m_quitConfirmed
+        && m_systemTray && m_systemTray->isVisible()
+        && SettingsManager::instance()->isCloseToTrayEnabled();
+
+    if (!closeToTray)
+    {
+        event->accept();
+        return;
+    }
+
+    event->ignore();
+    hideToTray();
+}
+
+void MainWindow::applyMcpServerSettings()
+{
+    if (!m_mcpServer)
+    {
+        return;
+    }
+
+    SettingsManager *settings = SettingsManager::instance();
+    const bool enabled = settings->getProperty(QStringLiteral("mcp/enabled"), false).toBool();
+    const int portValue = settings->getProperty(QStringLiteral("mcp/port"), 17890).toInt();
+    const bool allowWrite = settings->getProperty(QStringLiteral("mcp/allowWrite"), false).toBool();
+
+    QString token = settings->getProperty(QStringLiteral("mcp/token"), QString()).toString().trimmed();
+    if (token.isEmpty())
+    {
+        token = QUuid::createUuid().toString(QUuid::WithoutBraces).remove('-');
+        settings->setProperty(QStringLiteral("mcp/token"), token);
+    }
+
+    if (!enabled)
+    {
+        m_mcpServer->stop();
+        m_mcpRunning = false;
+        m_mcpRunningPort = 0;
+        m_mcpStatusDetail.clear();
+        syncMcpStatusToSettingsPage();
+        return;
+    }
+
+    const quint16 port = static_cast<quint16>(qBound(1024, portValue, 65535));
+    if (m_mcpServer->isRunning() && m_mcpServer->port() == port)
+    {
+        // 只改了令牌 / 写权限：原地生效，不用断开已连接的客户端
+        m_mcpServer->setToken(token);
+        m_mcpServer->setAllowWrite(allowWrite);
+        m_mcpRunning = true;
+        m_mcpRunningPort = port;
+        m_mcpStatusDetail.clear();
+        syncMcpStatusToSettingsPage();
+        return;
+    }
+
+    QString error;
+    if (!m_mcpServer->start(port, token, allowWrite, &error))
+    {
+        m_mcpRunning = false;
+        m_mcpRunningPort = 0;
+        m_mcpStatusDetail = error;
+        syncMcpStatusToSettingsPage();
+    }
+}
+
+void MainWindow::syncMcpStatusToSettingsPage()
+{
+    if (!m_stackedWidget)
+    {
+        return;
+    }
+    QScrollArea *area = qobject_cast<QScrollArea *>(
+        m_stackedWidget->widget(static_cast<int>(PageIndex::SettingsPage)));
+    if (!area)
+    {
+        return;
+    }
+    SettingsPage *page = qobject_cast<SettingsPage *>(area->widget());
+    if (page)
+    {
+        page->setMcpServerStatus(m_mcpRunning, m_mcpRunningPort, m_mcpStatusDetail);
+    }
+}
+
+void MainWindow::setupLinkRouter()
+{
+    LinkRouter::Handlers handlers;
+    handlers.openForumThread = [this](int threadId) {
+        if (threadId > 0)
+            showForumThread(threadId);
+    };
+    handlers.openForumBoard = [this](const QString &slug, const QString &boardName) {
+        if (!slug.isEmpty())
+            showForumBoard(slug, boardName);
+    };
+    handlers.handleJoinLink = [this](const QString &url) { handleExternalJoinUrl(url); };
+    handlers.openContentDetail = [this](const ModInfo &info, ContentType type) {
+        if (type == ContentType::Mod)
+            showModDetailPage(info, m_currentInstanceVersion, m_currentInstanceLoader);
+        else
+            showContentDetailPage(info, type);
+    };
+    LinkRouter::instance()->setHandlers(handlers);
 }
 
 MainWindow::~MainWindow()
 {
+    // 本地 MCP 服务器：先停掉再断开状态信号，避免子对象析构时回调到已析构的成员
+    if (m_mcpServer)
+    {
+        m_mcpServer->disconnect(this);
+        m_mcpServer->stop();
+    }
+
     // 关软件时把「正在游玩」的记录撤掉（尽力而为，断网时服务端 2 分钟后自动清）
     stopLobbyPlayReport();
 
-    // 实例助手是独立顶层窗口，不挂在主窗口下，退出时这里手动释放
-    delete m_instanceAssistantWindow;
-    m_instanceAssistantWindow = nullptr;
+    // 关软件时如果游戏还在跑，也把这段游玩时长结算掉（下次启动不会少算）
+    PlaytimeStatsService::instance()->endSession();
+
+    // 实例助手是独立顶层窗口，不挂在主窗口下，退出时这里手动释放（多开：逐个释放）
+    qDeleteAll(m_assistantWindows);
+    m_assistantWindows.clear();
+    delete m_overlayAssistantWindow;
+    m_overlayAssistantWindow = nullptr;
     delete m_bedrockInstanceAssistantWindow;
     m_bedrockInstanceAssistantWindow = nullptr;
     delete ui;
@@ -401,6 +749,11 @@ void MainWindow::initUI()
 
     // Set window properties
     setWindowTitle(tr(""));
+    // 非官方构建（打包脚本没传 BLOCKBOX_OFFICIAL_BUILD）：标题追加显式水印，
+    // 任务栏 / Alt-Tab 里也能一眼看出这不是官方发布。官方构建标题保持不变
+    // （自绘标题栏原本就是空标题，这里不额外加应用名）。
+    if (!BuildChannel::isOfficialBuild())
+        setWindowTitle(tr("方块盒子") + BuildChannel::windowTitleSuffix());
 #if defined(Q_OS_ANDROID) || defined(HARMONY_OS)
     if (Platform::isMobile()) {
         // 移动端：不限制最小尺寸——任何最小高度都可能比屏幕高，把底部内容挤出屏幕。
@@ -511,6 +864,11 @@ void MainWindow::initUI()
             {
                 m_skinEditorPage->refreshSkin3DPreview();
             }
+            // 皮肤库作品详情页同样带 3D 预览：动画结束后重绘一次
+            if (current == m_communitySkinDetailPage && m_communitySkinDetailPage)
+            {
+                m_communitySkinDetailPage->refreshPreviewAfterTransition();
+            }
         }
     });
 
@@ -524,7 +882,30 @@ void MainWindow::initUI()
     m_taskBar->updateFloatGeometry();
 
 #ifdef Q_OS_ANDROID
-    // 安卓版：游戏内悬浮的方块盒子图标，点击弹出/收起实例助手侧栏
+    // 安卓版：游戏内触屏键位悬浮层（布局取「操作设置」保存的触屏布局）
+    m_touchControlOverlay = new TouchControlOverlay(this);
+    m_touchControlOverlay->hide();
+    connect(m_touchControlOverlay, &TouchControlOverlay::moveVectorChanged, this,
+            [this](qreal x, qreal y) { onTouchControlInput(QStringLiteral("move"), x, y, true); });
+    connect(m_touchControlOverlay, &TouchControlOverlay::lookDelta, this,
+            [this](int dx, int dy) { onTouchControlInput(QStringLiteral("look"), dx, dy, true); });
+    connect(m_touchControlOverlay, &TouchControlOverlay::actionPressed, this,
+            [this](const QString &action) { onTouchControlInput(action, 0, 0, true); });
+    connect(m_touchControlOverlay, &TouchControlOverlay::actionReleased, this,
+            [this](const QString &action) { onTouchControlInput(action, 0, 0, false); });
+    connect(m_touchControlOverlay, &TouchControlOverlay::keysPressed, this,
+            [this](const QStringList &keys) {
+                if (m_gameLauncher)
+                    m_gameLauncher->sendTouchInputKeys(keys, true);
+            });
+    connect(m_touchControlOverlay, &TouchControlOverlay::keysReleased, this,
+            [this](const QStringList &keys) {
+                if (m_gameLauncher)
+                    m_gameLauncher->sendTouchInputKeys(keys, false);
+            });
+
+    // 安卓版：游戏内悬浮的方块盒子图标，点击弹出/收起实例助手侧栏；
+    // 图标 showEvent 里会自动 raise，盖在键位悬浮层之上
     m_gameFloatingIcon = new GameFloatingIcon(this);
     const bool floatingIconDark = (ThemeManager::instance()->currentTheme() == ThemeManager::DarkTheme);
     m_gameFloatingIcon->setIconPixmap(QPixmap(floatingIconDark
@@ -813,6 +1194,8 @@ void MainWindow::onParentNavClicked(int parentIndex)
         }
     } else if (parentIndex == PublishNavIndex) { // 发布中心（资源 / 帖子）
         showPublishPage();
+    } else if (parentIndex == MoreNavIndex) { // 更多（联机大厅 / 皮肤站 / 图书馆 / 任务 / 年报 / 账户 / 引导）
+        showMorePage();
     } else if (parentIndex == FeedbackNavIndex) { // 反馈（侧边栏底部入口）
         showFeedbackPage();
     }
@@ -898,15 +1281,21 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
         } else if (childIndex == 7) {
             showContentDownloadPage(ContentType::World);
         } else if (childIndex == 8) {
+            // 方块皮肤站皮肤库（资源页「皮肤」子项）
+            showCommunitySkinPage();
+        } else if (childIndex == 9) {
+            // 论坛投影分享列表（资源页「投影」子项）
+            showForumSchematicListPage();
+        } else if (childIndex == 10) {
             // 论坛插件列表（资源页「插件」子项）
             showForumPluginListPage();
-        } else if (childIndex == 9) {
+        } else if (childIndex == 11) {
             // 新建收藏夹
             onCreateFavoriteFolderRequested();
         } else {
-            // childIndex >= 10: 收藏夹列表
+            // childIndex >= 12: 收藏夹列表
             QList<FavoriteFolder> folders = FavoritesManager::instance()->folders();
-            int folderIdx = childIndex - 10;
+            int folderIdx = childIndex - 12;
             if (folderIdx >= 0 && folderIdx < folders.size())
             {
                 showFavoritesPage(folders[folderIdx].id);
@@ -917,8 +1306,8 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
                 QStringList resourceTitles = {
                     tr("资源>安装新实例"), tr("资源>下载整合包"), tr("资源>导入整合包"),
                     tr("资源>模组"), tr("资源>数据包"), tr("资源>资源包"),
-                    tr("资源>光影包"), tr("资源>世界"),
-                    tr("资源>插件"), tr("资源>新建收藏夹")
+                    tr("资源>光影包"), tr("资源>世界"), tr("资源>皮肤"),
+                    tr("资源>投影"), tr("资源>插件"), tr("资源>新建收藏夹")
                 };
                 if (childIndex >= 0 && childIndex < resourceTitles.size()) {
                     m_topBar->setTitle(resourceTitles[childIndex]);
@@ -928,26 +1317,20 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
     } else if (parentIndex == 2) { // Settings child
         // 设置页为按需创建，切到设置子项前先确保已初始化
         ensurePageInitialized(PageIndex::SettingsPage);
+        SettingsPage *settingsPage = nullptr;
         QScrollArea *scrollArea = qobject_cast<QScrollArea*>(m_stackedWidget->widget(2));
-        if (scrollArea) {
-            SettingsPage *settingsPage = qobject_cast<SettingsPage*>(scrollArea->widget());
-            if (settingsPage) {
-                settingsPage->setCurrentSettingsTab(childIndex);
-            }
-        }
-        switch (childIndex) {
-        case 0: m_topBar->setTitle(tr("设置>常规设置")); break;
-        case 1: m_topBar->setTitle(tr("设置>界面设置")); break;
-        case 2: m_topBar->setTitle(tr("设置>全局游戏设置")); break;
-        case 3: m_topBar->setTitle(tr("设置>实例设置")); break;
-        case 4: m_topBar->setTitle(tr("设置>Java管理")); break;
-        case 5: m_topBar->setTitle(tr("设置>高级设置")); break;
-        case 6: m_topBar->setTitle(tr("设置>按键绑定")); break;
-        case 7: m_topBar->setTitle(tr("设置>系统信息")); break;
-        case 8: m_topBar->setTitle(tr("设置>AI 助手")); break;
-        case 9: m_topBar->setTitle(tr("设置>关于")); break;
-        case 10: m_topBar->setTitle(tr("设置>投影编辑器")); break;
-        default: m_topBar->setSettingsTitle(); break;
+        if (scrollArea)
+            settingsPage = qobject_cast<SettingsPage*>(scrollArea->widget());
+        if (settingsPage) {
+            settingsPage->setCurrentSettingsTab(childIndex);
+            // 标题由设置页按实际子页给出：Java / 基岩版与移动端多出的子页不会错位
+            const QString title = settingsPage->tabTitle(childIndex);
+            if (!title.isEmpty())
+                m_topBar->setTitle(title);
+            else
+                m_topBar->setSettingsTitle();
+        } else {
+            m_topBar->setSettingsTitle();
         }
     } else if (parentIndex == 4) { // Instance Manage child
         // "修改"子项已改为直接前往安装新实例页进入修改模式，不再对应本页标签
@@ -985,6 +1368,7 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
             tr("实例管理>模组"),
             tr("实例管理>资源包"),
             tr("实例管理>光影包"),
+            tr("实例管理>数据包"),
             tr("实例管理>日志")
         };
         if (childIndex >= 0 && childIndex < instanceTitles.size()) {
@@ -1019,6 +1403,8 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
         } else if (childIndex == importIdx) {
             onImportPluginRequested();
         }
+    } else if (parentIndex == MoreNavIndex) { // 更多分类（子导航 / 落地页卡片共用）
+        openMoreFeature(childIndex);
     }
 }
 
@@ -1092,11 +1478,22 @@ void MainWindow::onCreatePluginRequested()
 {
     ensurePageInitialized(PageIndex::PluginPage);
     CreatePluginDialog dialog(this);
+
+    // 弹窗里的「开发文档」：记下来，关掉弹窗后跳到内置图书馆的插件开发卷
+    bool docsRequested = false;
+    connect(&dialog, &CreatePluginDialog::openDocsRequested, this, [&dialog, &docsRequested]() {
+        docsRequested = true;
+        dialog.reject();
+    });
+
     dialog.exec();
 
     // 生成模板或打包后，插件列表可能已变化
     refreshPluginNav();
     if (m_pluginPage) m_pluginPage->showOverview();
+
+    if (docsRequested)
+        openLibraryDoc(QStringLiteral("plugin"), QStringLiteral("plugin-manifest"));
 }
 
 void MainWindow::onRemovePluginRequested(const QString &id)
@@ -1152,30 +1549,20 @@ void MainWindow::onSettingsNavItemClicked(int index)
     ensurePageInitialized(PageIndex::SettingsPage);
 
     // Get the scroll area containing the settings page
+    SettingsPage *settingsPage = nullptr;
     QScrollArea *scrollArea = qobject_cast<QScrollArea*>(m_stackedWidget->widget(2));
-    if (scrollArea) {
-        // Get the settings page from the scroll area
-        SettingsPage *settingsPage = qobject_cast<SettingsPage*>(scrollArea->widget());
-        if (settingsPage) {
-            // Switch to the selected settings tab
-            settingsPage->setCurrentSettingsTab(index);
-        }
-    }
-
-    // Update top bar title based on settings tab
-    switch (index) {
-    case 0: m_topBar->setTitle(tr("设置>常规设置")); break;
-    case 1: m_topBar->setTitle(tr("设置>界面设置")); break;
-    case 2: m_topBar->setTitle(tr("设置>全局游戏设置")); break;
-    case 3: m_topBar->setTitle(tr("设置>实例设置")); break;
-    case 4: m_topBar->setTitle(tr("设置>Java管理")); break;
-    case 5: m_topBar->setTitle(tr("设置>高级设置")); break;
-    case 6: m_topBar->setTitle(tr("设置>按键绑定")); break;
-    case 7: m_topBar->setTitle(tr("设置>系统信息")); break;
-    case 8: m_topBar->setTitle(tr("设置>AI 助手")); break;
-    case 9: m_topBar->setTitle(tr("设置>关于")); break;
-    case 10: m_topBar->setTitle(tr("设置>投影编辑器")); break;
-    default: m_topBar->setSettingsTitle(); break;
+    if (scrollArea)
+        settingsPage = qobject_cast<SettingsPage*>(scrollArea->widget());
+    if (settingsPage) {
+        // Switch to the selected settings tab
+        settingsPage->setCurrentSettingsTab(index);
+        const QString title = settingsPage->tabTitle(index);
+        if (!title.isEmpty())
+            m_topBar->setTitle(title);
+        else
+            m_topBar->setSettingsTitle();
+    } else {
+        m_topBar->setSettingsTitle();
     }
 }
 
@@ -1221,9 +1608,11 @@ void MainWindow::onResourcesNavItemClicked(int index)
             tr("资源>资源包"),         // 5
             tr("资源>光影包"),         // 6
             tr("资源>世界"),           // 7
-            tr("资源>新建收藏夹"),     // 8
-            tr("资源>默认收藏夹"),     // 9
-            tr("资源>示例收藏夹")      // 10
+            tr("资源>投影"),           // 8
+            tr("资源>插件"),           // 9
+            tr("资源>新建收藏夹"),     // 10
+            tr("资源>默认收藏夹"),     // 11
+            tr("资源>示例收藏夹")      // 12
         };
         if (index >= 0 && index < resourceTitles.size()) {
             m_topBar->setTitle(resourceTitles[index]);
@@ -1274,6 +1663,27 @@ void MainWindow::onBackToMain()
     animatedSwitchToPage(PageIndex::HomePage);
 }
 
+void MainWindow::onGameLaunchPageBackRequested()
+{
+    if (!m_gameLaunchPage)
+        return;
+
+    // 启动中离开 = 取消启动：先弹确认，防止误触把启动悄悄杀掉
+    if (m_gameLauncher && m_gameLauncher->status() == GameLauncher::Launching) {
+        const AppMessageBox::StandardButton answer = AppMessageBox::question(
+            this, tr("取消启动"),
+            tr("游戏正在启动，确定要取消本次启动吗？"),
+            AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No);
+        if (answer != AppMessageBox::Yes)
+            return;
+        m_gameLauncher->stopGame();
+    }
+
+    // 清掉"来路页面"记录，避免回主页后按返回键又跳回启动页来路
+    m_hasPreviousPage = false;
+    onBackToMain();
+}
+
 void MainWindow::onInstanceSelectClicked()
 {
     m_topBar->setAccountSelected(false);
@@ -1308,22 +1718,87 @@ void MainWindow::openInstanceAssistant()
         return;
     }
 
-    if (!m_instanceAssistantWindow) {
-        m_instanceAssistantWindow = new InstanceAssistantWindow(this);
-        // 转发资源管理页的存档快捷启动信号到主窗口处理
-        connect(m_instanceAssistantWindow, &InstanceAssistantWindow::quickLaunchSaveRequested,
-                this, &MainWindow::onQuickLaunchSaveClicked);
-        connect(m_instanceAssistantWindow, &InstanceAssistantWindow::forumLoginRequested,
-                this, &MainWindow::openForumAccountLogin);
+    // Java 版：打开当前实例的助手窗口（多开：每个实例一个独立窗口）
+    openInstanceAssistantFor(m_currentInstancePath);
+}
+
+void MainWindow::openInstanceAssistantFor(const QString &instancePath)
+{
+    if (instancePath.isEmpty()) {
+        NotificationManager::showInfo(this, tr("还没有选择实例，请先在「实例」页选择或安装一个实例。"));
+        showInstanceSelectPage();
+        return;
     }
-    // 注入当前实例上下文（路径、版本、loader）
-    m_instanceAssistantWindow->setInstanceContext(
-        m_currentInstancePath,
-        m_currentInstanceVersion,
-        m_currentInstanceLoader);
-    m_instanceAssistantWindow->show();
-    m_instanceAssistantWindow->raise();
-    m_instanceAssistantWindow->activateWindow();
+
+    InstanceAssistantWindow *window = m_assistantWindows.value(instancePath, nullptr);
+    if (!window) {
+        window = new InstanceAssistantWindow(this);
+        // 助手窗口的快捷进存档启动的是「这个窗口所属实例」，
+        // 多开时各窗口互不干扰；论坛登录是全局入口，共用即可
+        connect(window, &InstanceAssistantWindow::quickLaunchSaveRequested,
+                this, [this, instancePath](const QString &saveName) {
+                    onQuickLaunchSaveClickedFor(instancePath, saveName);
+                });
+        connect(window, &InstanceAssistantWindow::forumLoginRequested,
+                this, &MainWindow::openForumAccountLogin);
+        // 「开服」页的「用这个实例进游戏」：带 --server/--port 启动该实例，进游戏直接连本地服
+        connect(window, &InstanceAssistantWindow::launchLocalServerGameRequested,
+                this, [this, instancePath](const QString &address, int port) {
+                    onQuickLaunchServerClickedFor(instancePath, address,
+                                                  static_cast<quint16>(qBound(1, port, 65535)));
+                });
+        // 「开服」页的「发布到社区服务器导航」：打开发帖页并预填好，地址优先用隧道地址
+        connect(window, &InstanceAssistantWindow::publishServerAdRequested, this,
+                [this](const QString &title, const QString &content, const QStringList &tags,
+                       const QString &address) {
+                    // 本机 / 局域网地址别人连不上，提醒一句免得白发一帖
+                    const auto localOnlyAddress = [](const QString &value) {
+                        const QString host =
+                            value.section(QLatin1Char(':'), 0, 0).trimmed().toLower();
+                        if (host.isEmpty() || host == QStringLiteral("localhost")
+                            || host == QStringLiteral("0.0.0.0"))
+                            return true;
+                        if (host.startsWith(QStringLiteral("127."))
+                            || host.startsWith(QStringLiteral("192.168."))
+                            || host.startsWith(QStringLiteral("10.")))
+                            return true;
+                        if (host.startsWith(QStringLiteral("172."))) {
+                            const int second = host.section(QLatin1Char('.'), 1, 1).toInt();
+                            return second >= 16 && second <= 31;
+                        }
+                        return false;
+                    };
+
+                    if (!ForumAccountService::instance()->isLoggedIn()) {
+                        NotificationManager::showInfo(
+                            this, tr("发布到社区服务器导航要先登录方块盒子账号。"));
+                        openForumAccountLogin();
+                    } else {
+                        // 没过入站答题也没关系：发帖页自己会显示答题入口
+                        showPublishServerNavigationCompose(title, content, tags, address);
+                        if (localOnlyAddress(address)) {
+                            NotificationManager::showInfo(
+                                this, tr("这地址是本机/局域网的，别人连不上：先在「联机」页做隧道，"
+                                         "或把地址改成公网 IP / 域名再发布。"));
+                        }
+                    }
+                    if (isMinimized())
+                        showNormal();
+                    else if (!isVisible())
+                        show();   // 缩到托盘时也要把主窗口叫回来，不然发布页看不到
+                    raise();
+                    activateWindow();
+                });
+        m_assistantWindows.insert(instancePath, window);
+    }
+    // 注入该实例上下文（路径、版本、loader）
+    window->setInstanceContext(instancePath,
+                               instanceVersionOf(instancePath),
+                               instanceLoaderOf(instancePath));
+    window->setWindowTitle(tr("实例助手 · %1").arg(instanceDisplayName(instancePath)));
+    window->show();
+    window->raise();
+    window->activateWindow();
 }
 
 void MainWindow::syncInstanceManagePageContext()
@@ -1484,6 +1959,16 @@ void MainWindow::applyInstanceContext(const QString &instancePath)
         m_resourcesPage->setInstancePath(m_currentInstancePath);
     }
 
+    // 资源页「投影」子页：下载落点跟着当前实例走
+    if (m_forumSchematicListPage) {
+        m_forumSchematicListPage->setInstancePath(m_currentInstancePath);
+    }
+
+    // 投影帖详情页的「投影预览」也按当前实例取材质
+    if (m_forumThreadDetailPage) {
+        m_forumThreadDetailPage->setInstancePath(m_currentInstancePath);
+    }
+
     // 同步实例上下文到主侧边栏 AI 页（若已初始化），保持资源引用功能可用
     if (m_aiChatPage) {
         m_aiChatPage->setInstanceContext(m_currentInstancePath,
@@ -1515,8 +2000,11 @@ QString MainWindow::findFirstVersionInGameRoot(const QString &gameRootPath) cons
     return QString();
 }
 
-void MainWindow::onShowDetailsPage()
+void MainWindow::onShowDetailsPage(const QString &instancePath)
 {
+    // 启动卡片点击：详情页聚焦到该卡片所属实例的启动会话
+    if (!instancePath.isEmpty())
+        m_focusedLaunchSession = instancePath;
     showLaunchDetailsPage();
 }
 
@@ -1601,7 +2089,12 @@ void MainWindow::updateBackgroundWidget()
     m_backgroundWidget->setMode(static_cast<BackgroundWidget::Mode>(bg->currentMode()));
     m_backgroundWidget->setBlurRadius(bg->blurRadius());
     m_backgroundWidget->setRotatingSpeed(bg->rotatingSpeed());
-    m_backgroundWidget->setPanoramaScene(bg->panoramaScene());
+    if (bg->currentMode() == BackgroundManager::Rotating) {
+        applyRotatingPanorama(effectiveRotatingScene());
+    } else {
+        // 非旋转模式只记住场景名；切回旋转模式时会重新解析本地目录
+        m_backgroundWidget->setPanoramaScene(bg->panoramaScene());
+    }
     if (bg->currentMode() == BackgroundManager::SolidColor) {
         m_backgroundWidget->setSolidColor(QColor(bg->solidColor()));
     } else if (bg->currentMode() == BackgroundManager::Image
@@ -1612,6 +2105,38 @@ void MainWindow::updateBackgroundWidget()
         m_backgroundWidget->setImage(bg->bingImagePath());
         BingWallpaperManager::instance()->ensureLoaded();
     }
+}
+
+void MainWindow::applyRotatingPanorama(const QString &scene)
+{
+    if (!m_backgroundWidget)
+        return;
+
+    if (scene.isEmpty()) {
+        m_backgroundWidget->setPanoramaSource(QString(), QString());
+        return;
+    }
+
+    PanoramaThemeManager *themes = PanoramaThemeManager::instance();
+    if (PanoramaThemeManager::isThemeReady(scene)) {
+        m_backgroundWidget->setPanoramaSource(scene, PanoramaThemeManager::themeDir(scene));
+    } else {
+        // 素材尚未下载：先不切换画面（深色/自定义图兜底），下载完成后由 themeReady 换上
+        m_backgroundWidget->setPanoramaSource(scene, QString());
+        themes->ensureTheme(scene);
+    }
+}
+
+QString MainWindow::effectiveRotatingScene() const
+{
+    BackgroundManager *bg = BackgroundManager::instance();
+    QString scene = bg->panoramaScene();
+    if (scene.isEmpty()
+        && (bg->imagePath().isEmpty() || !QFileInfo::exists(bg->imagePath()))) {
+        // 选「自定义图片」但没指定可用图片：沿用旧版的「主世界」兜底，避免整屏黑底
+        scene = PanoramaThemeManager::defaultThemeId();
+    }
+    return scene;
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
@@ -1852,6 +2377,14 @@ void MainWindow::onAccountManagePageOpened()
 
 void MainWindow::onTopBarBackClicked()
 {
+    // 安卓整页启动界面：返回键/顶栏返回走启动页自己的逻辑（启动中先确认是否取消）
+    if (m_stackedWidget && m_gameLaunchPage &&
+        m_stackedWidget->currentWidget() == m_gameLaunchPage)
+    {
+        onGameLaunchPageBackRequested();
+        return;
+    }
+
     // 创作中心内部的作品详情子页：返回先退回作品列表，不离开创作中心
     if (m_creationCenterPage && m_accountUiStack && m_stackedWidget &&
         m_accountUiStack->currentWidget() == m_creationCenterPage &&
@@ -1890,6 +2423,32 @@ void MainWindow::onTopBarBackClicked()
         return;
     }
 
+    // 皮肤库作品详情页：返回先回皮肤库列表，不离开资源页
+    if (m_stackedWidget &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::CommunitySkinDetailPage))
+    {
+        returnToCommunitySkinList();
+        return;
+    }
+
+    // 我的 MC 年度报告页：返回先回账户管理页的「游玩」页签
+    if (m_stackedWidget &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::AnnualReportPage))
+    {
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openPlaytimeTab();
+        return;
+    }
+
+    // 皮肤站整页：返回先回账户管理页，不离开软件
+    if (m_stackedWidget &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::SkinStationPage))
+    {
+        showAccountManagePage();
+        return;
+    }
+
     if (m_hasPreviousPage) {
         PageIndex target = m_previousPage;
         m_hasPreviousPage = false;
@@ -1918,9 +2477,9 @@ bool MainWindow::handleAndroidBack()
         return true;
     }
 
-    // 2. 游戏内实例助手侧栏
-    if (m_instanceAssistantWindow && m_instanceAssistantWindow->isVisible()) {
-        m_instanceAssistantWindow->hide();
+    // 2. 游戏内实例助手侧栏（安卓 overlay 模式专用窗口）
+    if (m_overlayAssistantWindow && m_overlayAssistantWindow->isVisible()) {
+        m_overlayAssistantWindow->hide();
         return true;
     }
 
@@ -1937,13 +2496,17 @@ bool MainWindow::handleAndroidBack()
         return true;
     }
 
-    // 5. 有可返回的页面层级（历史上一页 / 论坛账户登录注册子视图 / 创作中心 / 添加角色页）
+    // 5. 有可返回的页面层级（历史上一页 / 论坛账户登录注册子视图 / 创作中心 / 添加角色页 / 皮肤站整页）
     const bool forumSubviewOpen = m_forumAccountPage && m_accountUiStack && m_stackedWidget &&
         m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::AccountManagePage) &&
         (m_accountUiStack->currentWidget() == m_forumAccountPage ||
          m_accountUiStack->currentWidget() == m_creationCenterPage ||
          m_accountUiStack->currentWidget() == m_addAccountPage);
-    if (m_hasPreviousPage || forumSubviewOpen) {
+    const bool skinStationOpen = m_stackedWidget &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::SkinStationPage);
+    const bool skinDetailOpen = m_stackedWidget &&
+        m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::CommunitySkinDetailPage);
+    if (m_hasPreviousPage || forumSubviewOpen || skinStationOpen || skinDetailOpen) {
         onTopBarBackClicked();
         return true;
     }
@@ -2141,8 +2704,9 @@ bool MainWindow::ensureHumanCheck(bool force)
     if (!force && service->humanCheckSatisfied())
         return true;
 
-    // 已经在弹了就别叠第二个（页面刷新时会并发好几个请求，每个都会触发一次）
-    if (m_humanCheckRunning)
+    // 已经在弹了就别叠第二个（页面刷新时会并发好几个请求，每个都会触发一次；
+    // AI 助手工作模式也可能提前弹了一道，同样按「已在验证」处理）
+    if (m_humanCheckRunning || HumanCheckDialog::isChecking())
         return false;
 
     m_humanCheckRunning = true;
@@ -2154,7 +2718,8 @@ bool MainWindow::ensureHumanCheck(bool force)
 void MainWindow::onHumanCheckRequired()
 {
     // 服务端不认令牌时才会走到这里：本地那份已经被服务当作废了
-    if (m_humanCheckRunning)
+    // AI 助手工作模式可能已经提前弹着验证框，这时直接等它验完，别叠窗也别放掉排队请求
+    if (m_humanCheckRunning || HumanCheckDialog::isChecking())
         return;
 
     if (!ensureHumanCheck(true))
@@ -2250,18 +2815,91 @@ void MainWindow::initGameLauncher()
 {
     // Initialize game launcher
     m_gameLauncher = GameLauncher::instance();
-    
-    // Connect launcher signals
-    connect(m_gameLauncher, &GameLauncher::launchStatusChanged, this, &MainWindow::onLaunchStatusChanged);
-    connect(m_gameLauncher, &GameLauncher::gameStarted, this, &MainWindow::onGameStarted);
-    connect(m_gameLauncher, &GameLauncher::gameStopped, this, &MainWindow::onGameStopped);
-    connect(m_gameLauncher, &GameLauncher::gameCrashed, this, &MainWindow::onGameCrashed);
-    connect(m_gameLauncher, &GameLauncher::launchProgressChanged, this, &MainWindow::onLaunchProgressChanged);
-    connect(m_gameLauncher, &GameLauncher::launchDetailAdded, this, &MainWindow::onLaunchDetailAdded);
-    connect(m_gameLauncher, &GameLauncher::errorReportGenerated, this, &MainWindow::onErrorReportGenerated);
-    connect(m_gameLauncher, &GameLauncher::fileCompletionProgress, this, &MainWindow::onFileCompletionProgress);
-    connect(m_gameLauncher, &GameLauncher::fileCompletionFinished, this, &MainWindow::onFileCompletionFinished);
-    
+
+    // 主单例作为「第一个启动会话」复用：单例会被反复用于不同实例的启动，
+    // 路径不能在连接时捕获死，改为信号触发时从会话自身解析当前实例路径。
+    // 并行启动的额外会话（GameLauncher::createSession）由 connectSessionSignals
+    // 按固定路径逐个接线。
+    connect(m_gameLauncher, &GameLauncher::launchStatusChanged, this, [this](GameLauncher::LaunchStatus status) {
+        onSessionLaunchStatusChanged(m_gameLauncher->currentInstancePath(), status);
+    });
+    connect(m_gameLauncher, &GameLauncher::gameStarted, this, [this]() {
+        onSessionGameStarted(m_gameLauncher->currentInstancePath());
+    });
+    connect(m_gameLauncher, &GameLauncher::gameStopped, this, [this](int exitCode) {
+        onSessionGameStopped(m_gameLauncher->currentInstancePath(), exitCode);
+    });
+    connect(m_gameLauncher, &GameLauncher::gameCrashed, this, [this](const QString &error) {
+        onSessionGameCrashed(m_gameLauncher->currentInstancePath(), error);
+    });
+    connect(m_gameLauncher, &GameLauncher::launchProgressChanged, this, [this](int progress, const QString &message) {
+        onSessionLaunchProgressChanged(m_gameLauncher->currentInstancePath(), progress, message);
+    });
+    connect(m_gameLauncher, &GameLauncher::launchDetailAdded, this, [this](const QString &detail) {
+        onSessionLaunchDetailAdded(m_gameLauncher->currentInstancePath(), detail);
+    });
+    connect(m_gameLauncher, &GameLauncher::errorReportGenerated, this, [this](const QString &report) {
+        onSessionErrorReportGenerated(m_gameLauncher->currentInstancePath(), report);
+    });
+    connect(m_gameLauncher, &GameLauncher::fileCompletionProgress, this, [this](int completed, int total, const QString &currentFile) {
+        onSessionFileCompletionProgress(m_gameLauncher->currentInstancePath(), completed, total, currentFile);
+    });
+    connect(m_gameLauncher, &GameLauncher::fileCompletionFinished, this, [this](bool success) {
+        onSessionFileCompletionFinished(m_gameLauncher->currentInstancePath(), success);
+    });
+    // 第三方账户注入 authlib-injector 失败：只提示，不打断启动
+    connect(m_gameLauncher, &GameLauncher::thirdPartyInjectWarning, this,
+            [this](const QString &message) { NotificationManager::showInfo(this, message, 9000); });
+
+    // 启动前自动备份存档：备份期间把进度显示在对应实例的启动任务卡 / 安卓启动页上，
+    // 备份结束（含未启用、无需备份）后才真正启动游戏。
+    // 备份管理器是全局单例，同一时间只有一份备份在进行，按 m_backupPendingPath 路由。
+    connect(WorldBackupManager::instance(), &WorldBackupManager::backupProgress, this,
+            [this](int percent, const QString &message) {
+                const QString path = m_backupPendingPath;
+                if (path.isEmpty())
+                    return;
+                if (m_taskBar) {
+                    if (percent >= 0)
+                        m_taskBar->updateLaunchCardProgress(path, qBound(0, percent, 100));
+                    if (!message.isEmpty())
+                        m_taskBar->updateLaunchCardMessage(path, message);
+                }
+                if (m_taskListPage) {
+                    m_taskListPage->setLaunchTaskInfo(instanceDisplayName(path), LaunchTaskCard::Launching,
+                                                      qMax(0, percent), message);
+                }
+                if (m_gameLaunchPage) {
+                    m_gameLaunchPage->appendLog(message);
+                    m_gameLaunchPage->setProgress(qMax(0, percent), message);
+                }
+            });
+    connect(WorldBackupManager::instance(), &WorldBackupManager::autoBackupBatchFinished, this,
+            [this](int backed, int failed) {
+                const QString path = m_backupPendingPath;
+                m_backupPendingPath.clear();
+                if (path.isEmpty())
+                    return;
+                LaunchSessionUiState *state = sessionState(path);
+                if (!state)
+                    return;
+                state->backupPending = false;
+                std::function<void()> action = std::move(state->launchAfterBackup);
+                state->launchAfterBackup = nullptr;
+                // 备份失败不拦启动：玩家进游戏比留备份更重要
+                if (failed > 0) {
+                    NotificationManager::showError(
+                        this, tr("自动备份存档失败 %1 份，本次直接启动游戏（不影响游玩）").arg(failed));
+                } else if (backed > 0) {
+                    NotificationManager::showInfo(this, tr("已自动备份 %1 个存档").arg(backed));
+                }
+                if (action)
+                    action();
+            });
+
+    // 游戏成就同步：不依赖实例助手，游戏启动后一直在后台跑
+    m_gameAchievements = new GameAchievementService(this, this);
+
     // Connect launch task card signals via task bar
     if (m_taskBar) {
         connect(m_taskBar, &TaskBar::launchTaskCardClicked, this, &MainWindow::onShowDetailsPage);
@@ -2311,32 +2949,42 @@ void MainWindow::stopLobbyPlayReport()
         ForumLobbyService::instance()->clearPresence(roomId, nullptr, nullptr);
 }
 
-void MainWindow::onLaunchStatusChanged(int status)
+void MainWindow::onSessionLaunchStatusChanged(const QString &instancePath, GameLauncher::LaunchStatus status)
 {
-    // Update UI based on launch status if needed
-    qDebug() << "[MainWindow]" << "启动状态已变更：" << status;
+    qDebug() << "[MainWindow]" << "启动状态已变更：" << instancePath << int(status);
 
     // 启动就没起来：这次大厅房间其实没进去，别把人算进「正在游玩」
-    if (static_cast<GameLauncher::LaunchStatus>(status) == GameLauncher::Failed) {
-        m_pendingLobbyRoomId = 0;
-        stopLobbyPlayReport();
-    }
-    
-    LaunchTaskCard::LaunchStatus ls = LaunchTaskCard::Idle;
-    if (m_taskBar) {
-        switch (static_cast<GameLauncher::LaunchStatus>(status)) {
-        case GameLauncher::Idle:     ls = LaunchTaskCard::Idle; m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Idle); break;
-        case GameLauncher::Launching: ls = LaunchTaskCard::Launching; m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Launching); break;
-        case GameLauncher::Running:  ls = LaunchTaskCard::Running; m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Running); break;
-        case GameLauncher::Failed:   ls = LaunchTaskCard::Failed; m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Failed); break;
-        case GameLauncher::Stopped:  ls = LaunchTaskCard::Stopped; m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Stopped); break;
+    if (status == GameLauncher::Failed) {
+        if (LaunchSessionUiState *state = sessionState(instancePath)) {
+            if (state->lobbyRoomId > 0) {
+                state->lobbyRoomId = 0;
+                stopLobbyPlayReport();
+            }
+            state->pendingLobbyRoomId = 0;
         }
     }
-    if (m_taskListPage) {
-        m_taskListPage->setLaunchTaskInfo(tr("游戏"), ls, 0);
+
+    // 安卓整页启动界面同步状态（桌面端 m_gameLaunchPage 恒为空）
+    if (m_gameLaunchPage) {
+        m_gameLaunchPage->setLaunchStatus(status);
     }
-    if (m_launchDetailsPage) {
-        switch (static_cast<GameLauncher::LaunchStatus>(status)) {
+
+    LaunchTaskCard::LaunchStatus ls = LaunchTaskCard::Idle;
+    switch (status) {
+    case GameLauncher::Idle:     ls = LaunchTaskCard::Idle; break;
+    case GameLauncher::Launching: ls = LaunchTaskCard::Launching; break;
+    case GameLauncher::Running:  ls = LaunchTaskCard::Running; break;
+    case GameLauncher::Failed:   ls = LaunchTaskCard::Failed; break;
+    case GameLauncher::Stopped:  ls = LaunchTaskCard::Stopped; break;
+    }
+    if (m_taskBar) {
+        m_taskBar->updateLaunchCardStatus(instancePath, ls);
+    }
+    if (m_taskListPage) {
+        m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath), ls, 0);
+    }
+    if (m_launchDetailsPage && instancePath == m_focusedLaunchSession) {
+        switch (status) {
         case GameLauncher::Idle:
             m_launchDetailsPage->setLaunchStatus("启动日志", false);
             break;
@@ -2356,80 +3004,109 @@ void MainWindow::onLaunchStatusChanged(int status)
     }
 }
 
-void MainWindow::onLaunchProgressChanged(int progress, const QString& message)
+void MainWindow::onSessionLaunchProgressChanged(const QString &instancePath, int progress, const QString& message)
 {
+    // 安卓整页启动界面同步进度（桌面端 m_gameLaunchPage 恒为空；安卓单会话）
+    if (m_gameLaunchPage) {
+        m_gameLaunchPage->setProgress(progress, message);
+    }
     if (m_taskBar) {
-        m_taskBar->updateLaunchTaskProgress(progress);
-        m_taskBar->updateLaunchTaskMessage(message);
+        m_taskBar->updateLaunchCardProgress(instancePath, progress);
+        m_taskBar->updateLaunchCardMessage(instancePath, message);
     }
     if (m_taskListPage) {
-        m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Launching, progress, message);
+        m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath), LaunchTaskCard::Launching, progress, message);
     }
 }
 
-void MainWindow::onLaunchDetailAdded(const QString& detail)
+void MainWindow::onSessionLaunchDetailAdded(const QString &instancePath, const QString& detail)
 {
-    if (m_taskBar) {
-        m_taskBar->addLaunchTaskDetail(detail);
+    // 安卓整页启动界面缓存日志（供「查看日志」弹窗展示）
+    if (m_gameLaunchPage) {
+        m_gameLaunchPage->appendLog(detail);
     }
-    if (m_launchDetailsPage) {
+    if (m_taskBar) {
+        m_taskBar->addLaunchCardDetail(instancePath, detail);
+    }
+    // 详情页只显示当前聚焦会话（点哪张启动卡片就看谁的日志）
+    if (m_launchDetailsPage && instancePath == m_focusedLaunchSession) {
         m_launchDetailsPage->addDetail(detail);
     }
-    if (m_instanceManagePage && m_instanceManagePage->instanceLogPage()) {
+    // 实例日志页跟随当前实例
+    if (m_instanceManagePage && instancePath == m_currentInstancePath
+        && m_instanceManagePage->instanceLogPage()) {
         m_instanceManagePage->instanceLogPage()->addLauncherLog(detail);
+    }
+    // 成就日志解析跟随最新启动的会话，多开时不把两个游戏的日志混在一起
+    if (m_gameAchievements && instancePath == m_focusedLaunchSession) {
+        m_gameAchievements->onGameLogLine(detail);
     }
 }
 
-void MainWindow::onFileCompletionProgress(int completed, int total, const QString &currentFile)
+void MainWindow::onSessionFileCompletionProgress(const QString &instancePath, int completed, int total, const QString &currentFile)
 {
-    // 文件补全进度统一显示在启动任务卡片上（35%~50% 区间）
+    // 文件补全进度统一显示在该实例的启动任务卡片上（35%~50% 区间）
     if (m_taskBar) {
         if (total > 0) {
             // 将文件补全进度映射到启动整体进度的 35%~50% 区间
             int filePercent = qBound(0, completed * 100 / total, 100);
             int overall = 35 + filePercent * 15 / 100;
-            m_taskBar->updateLaunchTaskProgress(overall);
+            m_taskBar->updateLaunchCardProgress(instancePath, overall);
         }
         if (!currentFile.isEmpty()) {
-            m_taskBar->updateLaunchTaskMessage(tr("补全文件: %1").arg(currentFile));
+            m_taskBar->updateLaunchCardMessage(instancePath, tr("补全文件: %1").arg(currentFile));
         }
     }
     if (m_taskListPage && total > 0) {
         int filePercent = qBound(0, completed * 100 / total, 100);
         int overall = 35 + filePercent * 15 / 100;
         QString msg = currentFile.isEmpty() ? tr("补全文件中...") : tr("补全文件: %1").arg(currentFile);
-        m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Launching, overall, msg);
+        m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath), LaunchTaskCard::Launching, overall, msg);
+    }
+    // 安卓整页启动界面：同样映射到 35%~50% 区间
+    if (m_gameLaunchPage && total > 0) {
+        int filePercent = qBound(0, completed * 100 / total, 100);
+        int overall = 35 + filePercent * 15 / 100;
+        QString msg = currentFile.isEmpty() ? tr("补全文件中...") : tr("补全文件: %1").arg(currentFile);
+        m_gameLaunchPage->setProgress(overall, msg);
     }
 }
 
-void MainWindow::onFileCompletionFinished(bool success)
+void MainWindow::onSessionFileCompletionFinished(const QString &instancePath, bool success)
 {
     // 文件补全只是启动流程的一个中间步骤，仅更新启动卡片消息
-    // 任务由后续 onGameStarted/onGameCrashed 统一收尾
+    // 任务由后续 onSessionGameStarted/onSessionGameCrashed 统一收尾
+    if (m_gameLaunchPage) {
+        if (success) {
+            m_gameLaunchPage->setProgress(50, tr("文件补全完成，继续启动游戏..."));
+        } else {
+            m_gameLaunchPage->setProgress(50, tr("文件补全失败"));
+        }
+    }
     if (m_taskBar) {
         if (success) {
-            m_taskBar->updateLaunchTaskMessage(tr("文件补全完成，继续启动游戏..."));
+            m_taskBar->updateLaunchCardMessage(instancePath, tr("文件补全完成，继续启动游戏..."));
         } else {
-            m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Failed);
-            m_taskBar->updateLaunchTaskMessage(tr("文件补全失败"));
+            m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Failed);
+            m_taskBar->updateLaunchCardMessage(instancePath, tr("文件补全失败"));
         }
     }
     if (m_taskListPage) {
         if (success) {
-            m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Launching, 50, tr("文件补全完成，继续启动游戏..."));
+            m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath), LaunchTaskCard::Launching, 50, tr("文件补全完成，继续启动游戏..."));
         } else {
-            m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Failed, 50, tr("文件补全失败"));
+            m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath), LaunchTaskCard::Failed, 50, tr("文件补全失败"));
         }
     }
 }
 
-void MainWindow::onErrorReportGenerated(const QString& report)
+void MainWindow::onSessionErrorReportGenerated(const QString &instancePath, const QString& report)
 {
     qDebug() << "[MainWindow]" << "已生成错误报告：" << report;
     // Show error report in a message box or add to launch details
     if (m_taskBar) {
-        m_taskBar->addLaunchTaskDetail("错误分析鎶ュ憡:");
-        m_taskBar->addLaunchTaskDetail(report);
+        m_taskBar->addLaunchCardDetail(instancePath, tr("错误分析报告:"));
+        m_taskBar->addLaunchCardDetail(instancePath, report);
     }
     // Optionally show a message box with the error report
     AppMessageBox::information(this, tr("错误分析"), report);
@@ -2438,150 +3115,254 @@ void MainWindow::onErrorReportGenerated(const QString& report)
 #ifdef Q_OS_ANDROID
 void MainWindow::toggleGameAssistantOverlay()
 {
-    if (!m_instanceAssistantWindow) {
-        m_instanceAssistantWindow = new InstanceAssistantWindow(this);
+    // 安卓游戏内侧栏助手是独立于桌面多开助手窗口的单例窗口
+    if (!m_overlayAssistantWindow) {
+        m_overlayAssistantWindow = new InstanceAssistantWindow(this);
         // 安卓游戏内使用侧栏形态：贴屏幕右侧四分之一、半透明
-        m_instanceAssistantWindow->setOverlayMode(true);
+        m_overlayAssistantWindow->setOverlayMode(true);
         // 转发资源管理页的存档快捷启动信号到主窗口处理
-        connect(m_instanceAssistantWindow, &InstanceAssistantWindow::quickLaunchSaveRequested,
+        connect(m_overlayAssistantWindow, &InstanceAssistantWindow::quickLaunchSaveRequested,
                 this, &MainWindow::onQuickLaunchSaveClicked);
-        connect(m_instanceAssistantWindow, &InstanceAssistantWindow::forumLoginRequested,
+        connect(m_overlayAssistantWindow, &InstanceAssistantWindow::forumLoginRequested,
                 this, &MainWindow::openForumAccountLogin);
     }
     // 再次点击悬浮图标收起侧栏
-    if (m_instanceAssistantWindow->isVisible()) {
-        m_instanceAssistantWindow->hide();
+    if (m_overlayAssistantWindow->isVisible()) {
+        m_overlayAssistantWindow->hide();
         return;
     }
 
     // 注入当前实例上下文（路径、版本、loader）
-    m_instanceAssistantWindow->setInstanceContext(
+    m_overlayAssistantWindow->setInstanceContext(
         m_currentInstancePath,
         m_currentInstanceVersion,
         m_currentInstanceLoader);
-    m_instanceAssistantWindow->show();
-    m_instanceAssistantWindow->raise();
-    m_instanceAssistantWindow->activateWindow();
+    m_overlayAssistantWindow->show();
+    m_overlayAssistantWindow->raise();
+    m_overlayAssistantWindow->activateWindow();
 }
 #endif
 
-void MainWindow::onGameStarted()
+void MainWindow::onTouchControlInput(const QString &action, qreal x, qreal y, bool pressed)
 {
-    qDebug() << "[MainWindow]" << "游戏已成功启动";
+    // 游戏内触屏键位 → 游戏输入桥：统一走 GameLauncher 写进游戏进程 stdin，
+    // 没开游戏时 GameLauncher 内部直接忽略，无需在这里判状态
+    if (m_gameLauncher)
+        m_gameLauncher->sendTouchInput(action, x, y, pressed);
+}
+
+void MainWindow::onSessionGameStarted(const QString &instancePath)
+{
+    qDebug() << "[MainWindow]" << "游戏已成功启动：" << instancePath;
+
+    GameLauncher *session = m_launchSessions.value(instancePath, m_gameLauncher);
+    const bool secondarySession = session && session != m_gameLauncher;
+    LaunchSessionUiState *state = sessionState(instancePath);
 
     // 从联机大厅「一键加入」进来的：游戏真跑起来了，开始在大厅里显示「正在游玩」
-    if (m_pendingLobbyRoomId > 0) {
-        startLobbyPlayReport(m_pendingLobbyRoomId);
-        m_pendingLobbyRoomId = 0;
+    const bool fromLobby = (state && (state->pendingLobbyRoomId > 0 || state->lobbyRoomId > 0))
+        || m_lobbyPlayRoomId > 0
+        || (m_gameAchievements && m_gameAchievements->hasLobbyContext());
+    if (state && state->pendingLobbyRoomId > 0) {
+        startLobbyPlayReport(state->pendingLobbyRoomId);
+        state->lobbyRoomId = state->pendingLobbyRoomId;
+        state->pendingLobbyRoomId = 0;
+    }
+
+    // 游戏成就同步：单机读存档；方块盒子联机读游戏日志（房间上下文在加入时已记下）。
+    // 多开时成就跟随最新启动的会话，日志路由（onSessionLaunchDetailAdded）会按
+    // m_focusedLaunchSession 过滤，不会把两个游戏的日志混在一起
+    if (m_gameAchievements) {
+        if (!fromLobby)
+            m_gameAchievements->setLobbyContext(0, QString());
+        QString playerName = m_gameAccountName;
+        if (playerName.isEmpty())
+            playerName = SettingsManager::instance()->getDefaultAccount().username;
+        m_gameAchievements->setSessionContext(instancePath, instanceVersionOf(instancePath),
+                                             playerName);
+        m_gameAchievements->startSession();
+    }
+
+    // 游玩时长统计：服务只支持一次记一个会话，由第一个跑起来的游戏「认领」；
+    // 认领的游戏退出时结算，其余并行游戏的时长统计到下一次认领为止
+    if (m_playtimeSessionPath.isEmpty()) {
+        PlaytimeStatsService::instance()->beginSession(
+            instancePath, QFileInfo(instancePath).fileName(),
+            instanceVersionOf(instancePath), instanceLoaderOf(instancePath),
+            (state && state->lobbyRoomId > 0) ? state->lobbyRoomId : m_lobbyPlayRoomId);
+        m_playtimeSessionPath = instancePath;
     }
 #ifdef Q_OS_ANDROID
-    // 游戏启动成功：显示游戏内悬浮图标（实例助手入口）
+    Q_UNUSED(secondarySession);
+    // 游戏启动成功：先铺触屏键位悬浮层（读「操作设置」布局），再亮出
+    // 方块盒子悬浮图标（showEvent 自动 raise，保持在键位层之上）
+    if (m_touchControlOverlay) {
+        m_touchControlOverlay->show();
+    }
     if (m_gameFloatingIcon) {
         m_gameFloatingIcon->show();
     }
+    // 整页启动界面同步为运行状态（随后 onBackToMain 切回主页，启动页随之消失，
+    // 游戏画面 + 键位 + 悬浮图标成为用户看到的内容）
+    if (m_gameLaunchPage) {
+        m_gameLaunchPage->setLaunchStatus(GameLauncher::Running);
+        // 清掉启动页记录的"来路页面"，避免回主页后返回键行为错乱
+        m_hasPreviousPage = false;
+    }
 #endif
-    // 游戏窗口已出现，启动任务卡片切换为"运行中"状态
+    // 游戏窗口已出现，该实例的启动任务卡片切换为"运行中"状态
     if (m_taskBar) {
-        m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Running);
-        m_taskBar->updateLaunchTaskProgress(100);
-        m_taskBar->updateLaunchTaskMessage(tr("游戏运行中"));
+        m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Running);
+        m_taskBar->updateLaunchCardProgress(instancePath, 100);
+        m_taskBar->updateLaunchCardMessage(instancePath, tr("游戏运行中"));
     }
     if (m_taskListPage) {
-        m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Running, 100, tr("游戏运行中"));
+        m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath), LaunchTaskCard::Running, 100, tr("游戏运行中"));
     }
-    if (m_launchDetailsPage) {
+    if (m_launchDetailsPage && instancePath == m_focusedLaunchSession) {
         m_launchDetailsPage->setLaunchStatus("游戏运行中", true);
+    }
+
+    // 并行启动的会话：提示一声即可，不打断用户当前所在的页面
+    if (secondarySession) {
+        NotificationManager::showSuccess(this,
+            tr("%1 已成功启动").arg(instanceDisplayName(instancePath)));
+        return;
     }
 
     onBackToMain();
 }
 
-void MainWindow::onGameStopped(int exitCode)
+void MainWindow::onSessionGameStopped(const QString &instancePath, int exitCode)
 {
-    qDebug() << "[MainWindow]" << "游戏已停止，退出码：" << exitCode;
+    qDebug() << "[MainWindow]" << "游戏已停止，退出码：" << exitCode << instancePath;
+
+    GameLauncher *session = m_launchSessions.value(instancePath, m_gameLauncher);
+    const bool secondarySession = session && session != m_gameLauncher;
+    LaunchSessionUiState *state = sessionState(instancePath);
+    const QString instanceName = instanceDisplayName(instancePath);
+
+    // 成就：还有别的游戏在跑就继续同步（跟随最新启动的会话），全停了才结束
+    if (m_gameAchievements && !GameLauncher::anySessionBusy())
+        m_gameAchievements->stopSession();
+
+    // 游玩时长统计：认领本会话统计的游戏退出时结算
+    if (m_playtimeSessionPath == instancePath) {
+        PlaytimeStatsService::instance()->endSession();
+        m_playtimeSessionPath.clear();
+    }
 
     // 游戏退出 = 不在这个房间里玩了：大厅里的头像马上撤掉
-    m_pendingLobbyRoomId = 0;
-    stopLobbyPlayReport();
+    if (state) {
+        state->pendingLobbyRoomId = 0;
+        if (state->lobbyRoomId > 0) {
+            state->lobbyRoomId = 0;
+            stopLobbyPlayReport();
+        }
+    }
 
 #ifdef Q_OS_ANDROID
-    // 游戏退出：隐藏游戏内悬浮图标与实例助手侧栏
+    // 游戏退出：隐藏游戏内触屏键位、悬浮图标与实例助手侧栏
+    if (m_touchControlOverlay) {
+        m_touchControlOverlay->hide();
+    }
     if (m_gameFloatingIcon) {
         m_gameFloatingIcon->hide();
     }
-    if (m_instanceAssistantWindow && m_instanceAssistantWindow->isVisible()) {
-        m_instanceAssistantWindow->hide();
+    if (m_overlayAssistantWindow && m_overlayAssistantWindow->isVisible()) {
+        m_overlayAssistantWindow->hide();
     }
 #endif
 
     // 用户手动取消启动: 不显示错误信息，直接清除启动任务卡片
-    if (m_gameLauncher->wasUserCancelled()) {
+    if (session && session->wasUserCancelled()) {
         if (m_taskBar) {
-            m_taskBar->showLaunchTaskCard(false);
+            m_taskBar->removeLaunchCard(instancePath);
         }
         if (m_taskListPage) {
-            m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Idle, 0);
+            m_taskListPage->setLaunchTaskInfo(instanceName, LaunchTaskCard::Idle, 0);
         }
-        if (m_launchDetailsPage) {
+        if (m_launchDetailsPage && instancePath == m_focusedLaunchSession) {
             m_launchDetailsPage->setLaunchStatus(tr("启动日志"), false);
         }
+        finishLaunchSession(instancePath);
         return;
     }
 
     // 游戏正常退出（exitCode == 0）: 显示"游戏已正常退出"提示，并删除当前启动任务
     if (exitCode == 0) {
-        NotificationManager::showSuccess(this, tr("游戏已正常退出"));
+        NotificationManager::showSuccess(this, secondarySession
+            ? tr("%1 已正常退出").arg(instanceName) : tr("游戏已正常退出"));
         if (m_taskBar) {
-            m_taskBar->showLaunchTaskCard(false);
+            m_taskBar->removeLaunchCard(instancePath);
         }
         if (m_taskListPage) {
-            m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Idle, 0);
+            m_taskListPage->setLaunchTaskInfo(instanceName, LaunchTaskCard::Idle, 0);
         }
-        if (m_launchDetailsPage) {
+        if (m_launchDetailsPage && instancePath == m_focusedLaunchSession) {
             m_launchDetailsPage->setLaunchStatus(tr("游戏已停止"), false);
         }
         // 刷新首页最近游玩区域（游戏退出后 level.dat 的 LastPlayed 已更新）
         if (m_homePage) {
             m_homePage->refreshRecentPlays();
         }
+        finishLaunchSession(instancePath);
         return;
     }
 
     // 游戏异常退出（exitCode != 0 且非用户取消）: 保留任务卡片显示异常退出信息
     if (m_taskBar) {
-        m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Stopped);
-        m_taskBar->updateLaunchTaskMessage(tr("游戏异常退出: %1").arg(exitCode));
+        m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Stopped);
+        m_taskBar->updateLaunchCardMessage(instancePath, tr("游戏异常退出: %1").arg(exitCode));
     }
     if (m_taskListPage) {
-        m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Stopped, 100, tr("游戏异常退出: %1").arg(exitCode));
+        m_taskListPage->setLaunchTaskInfo(instanceName, LaunchTaskCard::Stopped, 100, tr("游戏异常退出: %1").arg(exitCode));
     }
-    if (m_launchDetailsPage) {
+    if (m_launchDetailsPage && instancePath == m_focusedLaunchSession) {
         m_launchDetailsPage->setLaunchStatus(tr("游戏已停止"), false);
     }
+    if (secondarySession) {
+        NotificationManager::showError(this,
+            tr("%1 异常退出（代码 %2）").arg(instanceName).arg(exitCode));
+    }
+    finishLaunchSession(instancePath);
 }
 
-void MainWindow::onGameCrashed(const QString &error)
+void MainWindow::onSessionGameCrashed(const QString &instancePath, const QString &error)
 {
-    qDebug() << "[MainWindow]" << "游戏崩溃：" << error;
+    qDebug() << "[MainWindow]" << "游戏崩溃：" << error << instancePath;
+
+    GameLauncher *session = m_launchSessions.value(instancePath, m_gameLauncher);
+    LaunchSessionUiState *state = sessionState(instancePath);
+    const QString instanceName = instanceDisplayName(instancePath);
 
     // 崩溃也算这次进房结束：先把「正在游玩」撤掉；启动期崩溃会自动重启，起来后接着报
-    const int crashedLobbyRoomId = m_pendingLobbyRoomId > 0 ? m_pendingLobbyRoomId : m_lobbyPlayRoomId;
-    m_pendingLobbyRoomId = 0;
-    stopLobbyPlayReport();
+    int crashedLobbyRoomId = 0;
+    if (state) {
+        crashedLobbyRoomId = state->pendingLobbyRoomId > 0 ? state->pendingLobbyRoomId
+                                                           : state->lobbyRoomId;
+        state->pendingLobbyRoomId = 0;
+        state->lobbyRoomId = 0;
+        if (crashedLobbyRoomId > 0)
+            stopLobbyPlayReport();
+    }
 
 #ifdef Q_OS_ANDROID
-    // 游戏崩溃：隐藏游戏内悬浮图标与实例助手侧栏
+    // 游戏崩溃：隐藏游戏内触屏键位、悬浮图标与实例助手侧栏
+    if (m_touchControlOverlay) {
+        m_touchControlOverlay->hide();
+    }
     if (m_gameFloatingIcon) {
         m_gameFloatingIcon->hide();
     }
-    if (m_instanceAssistantWindow && m_instanceAssistantWindow->isVisible()) {
-        m_instanceAssistantWindow->hide();
+    if (m_overlayAssistantWindow && m_overlayAssistantWindow->isVisible()) {
+        m_overlayAssistantWindow->hide();
     }
 #endif
 
     // 重试已调度但尚未执行时，忽略重复的 gameCrashed 信号
     // （QProcess 崩溃时 onProcessError 和 onProcessFinished 都会触发 gameCrashed）
-    if (m_launchRetryPending) {
+    if (state && state->retryPending) {
         qDebug() << "[MainWindow]" << "重试已在等待中，忽略重复的 gameCrashed 信号";
         return;
     }
@@ -2589,28 +3370,27 @@ void MainWindow::onGameCrashed(const QString &error)
     // 仅在"启动期崩溃"（游戏窗口尚未出现）且尚未重试时，自动检查文件完整性并重新启动
     // 运行期崩溃（游戏已成功运行后崩溃）不触发自动重试，交由错误分析器处理；
     // Java 缺失自救失败也不触发——自救已经查找并尝试过安装，补文件没有意义
-    if (!m_launchRetryAttempted && !m_gameLauncher->wasGameStartedSuccessfully()
-        && !m_gameLauncher->wasJavaRescueAttempted()) {
-        m_launchRetryAttempted = true;
-        m_launchRetryPending = true;
+    if (session && state && !state->retryAttempted && !session->wasGameStartedSuccessfully()
+        && !session->wasJavaRescueAttempted()) {
+        state->retryAttempted = true;
+        state->retryPending = true;
         qDebug() << "[MainWindow]" << "检测到启动期崩溃，正在补全文件并重试...";
 
         NotificationManager::showInfo(this, tr("游戏启动失败，正在检查文件完整性并重新启动..."));
 
         // 延迟到下一个事件循环执行重试，确保当前 onProcessFinished/onProcessError
         // 中的 cleanup() 已执行完毕，避免与新启动的进程冲突
-        QTimer::singleShot(0, this, [this, error, crashedLobbyRoomId]() {
-            m_launchRetryPending = false;
+        QTimer::singleShot(0, this, [this, instancePath, error, crashedLobbyRoomId, session]() {
+            LaunchSessionUiState *st = sessionState(instancePath);
+            if (!st)
+                return;
+            st->retryPending = false;
             // 上次是从联机大厅「一键加入」进来的：重启的进程起来后接着在大厅里显示「正在游玩」
             if (crashedLobbyRoomId > 0)
-                m_pendingLobbyRoomId = crashedLobbyRoomId;
-
-            if (m_currentInstancePath.isEmpty()) {
-                return;
-            }
+                st->pendingLobbyRoomId = crashedLobbyRoomId;
 
             GameLauncher::LaunchConfig config;
-            config.instancePath = m_currentInstancePath;
+            config.instancePath = instancePath;
             config.accountName = m_gameAccountName.isEmpty() ? "Player" : m_gameAccountName;
 
             SettingsManager *settings = SettingsManager::instance();
@@ -2618,30 +3398,30 @@ void MainWindow::onGameCrashed(const QString &error)
             config.maxMemory = SettingsManager::DEFAULT_MAX_MEMORY_MB;
             config.minMemory = SettingsManager::DEFAULT_MIN_MEMORY_MB;
 
-            // 重试进度显示在启动任务卡片上，不创建下载任务
+            // 重试进度显示在该实例的启动任务卡片上，不创建下载任务
             if (m_taskBar) {
-                m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Launching);
-                m_taskBar->updateLaunchTaskProgress(35);
-                m_taskBar->updateLaunchTaskMessage(tr("检查并补全文件..."));
+                m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Launching);
+                m_taskBar->updateLaunchCardProgress(instancePath, 35);
+                m_taskBar->updateLaunchCardMessage(instancePath, tr("检查并补全文件..."));
             }
             if (m_taskListPage) {
-                m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Launching, 35, tr("检查并补全文件..."));
+                m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath), LaunchTaskCard::Launching, 35, tr("检查并补全文件..."));
             }
 
             // 重试: skipFileCompletion=false，执行文件完整性检查并补全缺失文件
-            if (!m_gameLauncher->launchGame(config, false)) {
-                QString failMsg = m_gameLauncher->errorMessage().isEmpty()
-                    ? tr("重新启动失败") : m_gameLauncher->errorMessage();
+            if (!session->launchGame(config, false)) {
+                QString failMsg = session->errorMessage().isEmpty()
+                    ? tr("重新启动失败") : session->errorMessage();
                 if (m_taskBar) {
-                    m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Failed);
-                    m_taskBar->updateLaunchTaskMessage(failMsg);
+                    m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Failed);
+                    m_taskBar->updateLaunchCardMessage(instancePath, failMsg);
                 }
                 if (m_taskListPage) {
-                    m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Failed, 0, failMsg);
+                    m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath), LaunchTaskCard::Failed, 0, failMsg);
                 }
                 NotificationManager::showError(this,
                     tr("重新启动失败: ") +
-                    (m_gameLauncher->errorMessage().isEmpty() ? error : m_gameLauncher->errorMessage()));
+                    (session->errorMessage().isEmpty() ? error : session->errorMessage()));
             }
         });
         return;
@@ -2650,11 +3430,17 @@ void MainWindow::onGameCrashed(const QString &error)
     // 非启动期崩溃，或已重试过: 更新启动任务卡片为失败状态（错误分析由 ErrorAnalyzer 处理）
     QString failMsg = error.isEmpty() ? tr("游戏崩溃") : error;
     if (m_taskBar) {
-        m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Failed);
-        m_taskBar->updateLaunchTaskMessage(failMsg);
+        m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Failed);
+        m_taskBar->updateLaunchCardMessage(instancePath, failMsg);
     }
     if (m_taskListPage) {
-        m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Failed, 0, failMsg);
+        m_taskListPage->setLaunchTaskInfo(instanceName, LaunchTaskCard::Failed, 0, failMsg);
+    }
+    GameLauncher *crashedSession = m_launchSessions.value(instancePath, nullptr);
+    if (crashedSession && crashedSession != m_gameLauncher) {
+        NotificationManager::showError(this,
+            tr("%1 启动失败：%2").arg(instanceName, failMsg));
+        finishLaunchSession(instancePath);
     }
 }
 
@@ -2685,68 +3471,232 @@ void MainWindow::onLaunchGameClicked()
         return;
     }
 
-    if (m_gameLauncher->status() == GameLauncher::Running ||
-        m_gameLauncher->status() == GameLauncher::Launching) {
-        return;
-    }
+    // 普通启动：清掉上一次可能残留的大厅房间上下文，单机成就走存档监听
+    if (m_gameAchievements)
+        m_gameAchievements->setLobbyContext(0, QString());
 
-    if (!ensureLaunchPrerequisites())
-        return;
-
-    // 每次用户主动点击启动都视为"首次启动": 重置重试标记
-    // 首次启动跳过文件完整性检查与补全，若启动失败再自动重试时启用补全
-    m_launchRetryAttempted = false;
-    m_launchRetryPending = false;
-
-    if (m_taskBar) {
-        m_taskBar->showLaunchTaskCard(true);
-        m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Idle);
-        m_taskBar->updateLaunchTaskProgress(0);
-        m_taskBar->updateLaunchTaskMessage("准备启动游戏...");
-    }
-    if (m_taskListPage) {
-        m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Idle, 0);
-    }
-
-    GameLauncher::LaunchConfig config;
-    config.instancePath = m_currentInstancePath;
-    config.accountName = m_gameAccountName.isEmpty() ? "Player" : m_gameAccountName;
-
-    SettingsManager *settings = SettingsManager::instance();
-    // 统计该实例的启动次数（概览页「启动次数」卡片展示）
-    const QString launchCountKey = "instance/" + m_currentInstancePath + "/launchCount";
-    settings->setProperty(launchCountKey,
-                          settings->getProperty(launchCountKey, 0).toInt() + 1);
-    config.javaPath = settings->getJavaPath();
-    config.maxMemory = SettingsManager::DEFAULT_MAX_MEMORY_MB;
-    config.minMemory = SettingsManager::DEFAULT_MIN_MEMORY_MB;
-
-    // 启动进度统一通过启动任务卡片显示，不创建下载任务
-    // 首次启动: skipFileCompletion=true，跳过文件完整性检查与补全
-    if (!m_gameLauncher->launchGame(config, true)) {
-        if (m_taskBar) {
-            m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Failed);
-            m_taskBar->updateLaunchTaskMessage(
-                m_gameLauncher->errorMessage().isEmpty() ? tr("启动失败") : m_gameLauncher->errorMessage());
-        }
-        if (m_taskListPage) {
-            m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Failed, 0,
-                m_gameLauncher->errorMessage().isEmpty() ? tr("启动失败") : m_gameLauncher->errorMessage());
-        }
-        if (!m_gameLauncher->errorMessage().isEmpty()) {
-            NotificationManager::showError(this, m_gameLauncher->errorMessage());
-        }
-    }
+    startInstanceLaunch(m_currentInstancePath);
 }
 
 void MainWindow::onLaunchGameClicked(const QString &instancePath)
 {
     // 来自 InstanceSelectPage 的启动请求：使用指定的实例路径
-    // 先更新当前实例，再复用无参重载的启动流程
+    // 先更新当前实例，再复用统一启动入口
     if (!instancePath.isEmpty()) {
         updateCurrentInstance(instancePath);
     }
     onLaunchGameClicked();
+}
+
+QString MainWindow::instanceDisplayName(const QString &instancePath)
+{
+    const QString name = QFileInfo(instancePath).fileName();
+    return name.isEmpty() ? QObject::tr("游戏") : name;
+}
+
+QString MainWindow::instanceVersionOf(const QString &instancePath)
+{
+    // 与 applyInstanceContext 的版本解析规则一致：优先版本 JSON 里声明的
+    // inheritsFrom / clientVersion / id，读不到就用目录名兜底
+    const QString instanceName = QFileInfo(instancePath).fileName();
+    QFile versionJsonFile(instancePath + "/" + instanceName + ".json");
+    if (versionJsonFile.open(QIODevice::ReadOnly)) {
+        const QJsonObject rootObj = QJsonDocument::fromJson(versionJsonFile.readAll()).object();
+        for (const QString &key : { QStringLiteral("inheritsFrom"),
+                                    QStringLiteral("clientVersion"),
+                                    QStringLiteral("id") }) {
+            const QString v = rootObj.value(key).toString();
+            if (!v.isEmpty())
+                return v;
+        }
+    }
+    return instanceName;
+}
+
+QString MainWindow::instanceLoaderOf(const QString &instancePath)
+{
+    // 与 applyInstanceContext 的加载器检测规则一致：扫版本 JSON 的键值文本
+    const QString instanceName = QFileInfo(instancePath).fileName();
+    QFile versionJsonFile(instancePath + "/" + instanceName + ".json");
+    if (versionJsonFile.open(QIODevice::ReadOnly)) {
+        const QString text = QString::fromUtf8(versionJsonFile.readAll()).toLower();
+        if (text.contains("neoforge")) return QStringLiteral("NeoForge");
+        if (text.contains("quilt"))    return QStringLiteral("Quilt");
+        if (text.contains("fabric"))   return QStringLiteral("Fabric");
+        if (text.contains("forge"))    return QStringLiteral("Forge");
+    }
+    return QString();
+}
+
+bool MainWindow::startInstanceLaunch(const QString &instancePath, const QStringList &extraGameArgs)
+{
+    if (instancePath.isEmpty()) {
+        showInstanceSelectPage();
+        return false;
+    }
+
+#ifdef Q_OS_ANDROID
+    // 安卓：整页启动界面与触屏键位/悬浮图标都按单游戏设计，保持一次只启动一个
+    if (GameLauncher::anySessionBusy()) {
+        NotificationManager::showError(this, tr("游戏已经在运行或正在启动中"));
+        return false;
+    }
+#else
+    // 同一实例不允许并行开两个（存档/配置会互相踩）；不同实例桌面端可以多开
+    if (GameLauncher::sessionForInstance(instancePath)) {
+        NotificationManager::showError(this,
+            tr("%1 已经在运行或正在启动中").arg(instanceDisplayName(instancePath)));
+        return false;
+    }
+#endif
+
+    if (!ensureLaunchPrerequisites())
+        return false;
+
+    // 选会话对象：主单例空闲则复用（既有信号接线与行为保持不变），
+    // 否则为并行启动新造一个会话对象，按实例路径接线
+    GameLauncher *session = nullptr;
+    const bool reusePrimary = m_gameLauncher
+        && m_gameLauncher->status() != GameLauncher::Running
+        && m_gameLauncher->status() != GameLauncher::Launching;
+    if (reusePrimary) {
+        session = m_gameLauncher;
+    } else {
+        session = GameLauncher::createSession();
+        connectSessionSignals(session, instancePath);
+    }
+
+    // 该实例旧的已结束会话对象：直接回收，避免反复启动堆积
+    if (GameLauncher *stale = m_launchSessions.value(instancePath, nullptr)) {
+        if (stale != m_gameLauncher && stale != session
+            && stale->status() != GameLauncher::Running
+            && stale->status() != GameLauncher::Launching) {
+            m_launchSessions.remove(instancePath);
+            stale->deleteLater();
+        }
+    }
+    m_launchSessions.insert(instancePath, session);
+
+    // 重置该实例本次启动的会话状态（重试/备份/大厅待上报）
+    m_launchSessionStates.insert(instancePath, LaunchSessionUiState());
+    // 大厅/好友房间「一键加入」：房间号跟着这次启动走进会话状态
+    if (LaunchSessionUiState *st = sessionState(instancePath); st && m_nextLaunchLobbyRoomId > 0) {
+        st->pendingLobbyRoomId = m_nextLaunchLobbyRoomId;
+        m_nextLaunchLobbyRoomId = 0;
+    }
+    // 启动详情页/成就日志跟随最新启动的会话
+    m_focusedLaunchSession = instancePath;
+
+    SettingsManager *settings = SettingsManager::instance();
+    // 统计该实例的启动次数（概览页「启动次数」卡片展示）
+    const QString launchCountKey = "instance/" + instancePath + "/launchCount";
+    settings->setProperty(launchCountKey,
+                          settings->getProperty(launchCountKey, 0).toInt() + 1);
+
+    GameLauncher::LaunchConfig config;
+    config.instancePath = instancePath;
+    config.accountName = m_gameAccountName.isEmpty() ? "Player" : m_gameAccountName;
+    config.javaPath = settings->getJavaPath();
+    config.maxMemory = SettingsManager::DEFAULT_MAX_MEMORY_MB;
+    config.minMemory = SettingsManager::DEFAULT_MIN_MEMORY_MB;
+    if (!extraGameArgs.isEmpty())
+        config.gameArgs = extraGameArgs;
+
+    const QString instanceName = instanceDisplayName(instancePath);
+
+#ifdef Q_OS_ANDROID
+    // 安卓：不用底部任务卡形式，进入整页启动界面展示进度
+    showGameLaunchPage();
+    if (m_gameLaunchPage)
+        m_gameLaunchPage->beginLaunch();
+#else
+    // 启动进度统一通过该实例自己的启动任务卡片显示，不创建下载任务
+    if (m_taskBar) {
+        m_taskBar->ensureLaunchCard(instancePath, instanceName);
+        m_taskBar->showLaunchCard(instancePath, true);
+        m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Idle);
+        m_taskBar->updateLaunchCardProgress(instancePath, 0);
+        m_taskBar->updateLaunchCardMessage(instancePath, tr("准备启动游戏..."));
+    }
+    if (m_taskListPage) {
+        m_taskListPage->setLaunchTaskInfo(instanceName, LaunchTaskCard::Idle, 0);
+    }
+#endif
+
+    // 首次启动: skipFileCompletion=true，跳过文件完整性检查与补全，
+    // 若启动崩溃再自动重试时启用补全（见 onSessionGameCrashed）
+    // 开了「启动前自动备份」时先等备份跑完再启动（备份失败也照常启动）
+    launchWithAutoBackup(instancePath, [this, session, config, instancePath]() {
+        if (!session->launchGame(config, true)) {
+            const QString failMsg = session->errorMessage().isEmpty()
+                ? tr("启动失败") : session->errorMessage();
+            if (m_taskBar) {
+                m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Failed);
+                m_taskBar->updateLaunchCardMessage(instancePath, failMsg);
+            }
+            if (m_taskListPage) {
+                m_taskListPage->setLaunchTaskInfo(instanceDisplayName(instancePath),
+                    LaunchTaskCard::Failed, 0, failMsg);
+            }
+            if (!session->errorMessage().isEmpty()) {
+                NotificationManager::showError(this, session->errorMessage());
+            }
+        }
+    });
+    return true;
+}
+
+void MainWindow::connectSessionSignals(GameLauncher *session, const QString &instancePath)
+{
+    // 并行启动会话的信号接线：捕获会话所属实例路径，路由到会话感知处理器。
+    // 主单例的接线在 initGameLauncher 里（路径在信号触发时动态解析），不走这里
+    connect(session, &GameLauncher::launchStatusChanged, this, [this, instancePath](GameLauncher::LaunchStatus status) {
+        onSessionLaunchStatusChanged(instancePath, status);
+    });
+    connect(session, &GameLauncher::gameStarted, this, [this, instancePath]() {
+        onSessionGameStarted(instancePath);
+    });
+    connect(session, &GameLauncher::gameStopped, this, [this, instancePath](int exitCode) {
+        onSessionGameStopped(instancePath, exitCode);
+    });
+    connect(session, &GameLauncher::gameCrashed, this, [this, instancePath](const QString &error) {
+        onSessionGameCrashed(instancePath, error);
+    });
+    connect(session, &GameLauncher::launchProgressChanged, this, [this, instancePath](int progress, const QString &message) {
+        onSessionLaunchProgressChanged(instancePath, progress, message);
+    });
+    connect(session, &GameLauncher::launchDetailAdded, this, [this, instancePath](const QString &detail) {
+        onSessionLaunchDetailAdded(instancePath, detail);
+    });
+    connect(session, &GameLauncher::errorReportGenerated, this, [this, instancePath](const QString &report) {
+        onSessionErrorReportGenerated(instancePath, report);
+    });
+    connect(session, &GameLauncher::fileCompletionProgress, this, [this, instancePath](int completed, int total, const QString &currentFile) {
+        onSessionFileCompletionProgress(instancePath, completed, total, currentFile);
+    });
+    connect(session, &GameLauncher::fileCompletionFinished, this, [this, instancePath](bool success) {
+        onSessionFileCompletionFinished(instancePath, success);
+    });
+    connect(session, &GameLauncher::thirdPartyInjectWarning, this, [this](const QString &message) {
+        NotificationManager::showInfo(this, message, 9000);
+    });
+}
+
+void MainWindow::finishLaunchSession(const QString &instancePath)
+{
+    // 会话结束：移出会话表；主单例是长期复用的对象不销毁，
+    // 并行会话对象此时游戏进程已退出，安全回收
+    GameLauncher *session = m_launchSessions.take(instancePath);
+    if (session && session != m_gameLauncher)
+        session->deleteLater();
+    m_launchSessionStates.remove(instancePath);
+}
+
+MainWindow::LaunchSessionUiState *MainWindow::sessionState(const QString &instancePath)
+{
+    if (instancePath.isEmpty())
+        return nullptr;
+    return &m_launchSessionStates[instancePath];
 }
 
 void MainWindow::launchGameWithExtraArgs(const QStringList &extraGameArgs)
@@ -2755,82 +3705,114 @@ void MainWindow::launchGameWithExtraArgs(const QStringList &extraGameArgs)
         showInstanceSelectPage();
         return;
     }
+    // 快捷启动（存档 / 服务器 / 大厅）走统一启动入口
+    startInstanceLaunch(m_currentInstancePath, extraGameArgs);
+}
 
-    if (m_gameLauncher->status() == GameLauncher::Running ||
-        m_gameLauncher->status() == GameLauncher::Launching) {
+void MainWindow::launchWithAutoBackup(const QString &instancePath, const std::function<void()> &launchAction)
+{
+    if (!launchAction)
+        return;
+
+    LaunchSessionUiState *state = sessionState(instancePath);
+    if (!state)
+        return;
+
+    // 该实例上一轮自动备份还没结束（连点启动）：忽略新的请求
+    if (state->backupPending)
+        return;
+
+    // 另一个实例的启动前备份还在跑：备份管理器一次只处理一份，请稍后再启动
+    if (!m_backupPendingPath.isEmpty() && m_backupPendingPath != instancePath) {
+        NotificationManager::showInfo(this, tr("另一个实例的启动前备份还在进行，请稍后再启动"));
         return;
     }
 
-    if (!ensureLaunchPrerequisites())
+    // 没开自动备份：零延迟直接启动，不打断原来的启动节奏
+    if (!WorldBackupManager::autoBackupEnabled()) {
+        launchAction();
         return;
+    }
 
-    m_launchRetryAttempted = false;
-    m_launchRetryPending = false;
+    state->backupPending = true;
+    state->launchAfterBackup = launchAction;
+    m_backupPendingPath = instancePath;
 
+    // 备份期间先把该实例的启动任务卡切成「启动中」，告诉玩家为什么还没进游戏
+    const QString instanceName = instanceDisplayName(instancePath);
     if (m_taskBar) {
-        m_taskBar->showLaunchTaskCard(true);
-        m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Idle);
-        m_taskBar->updateLaunchTaskProgress(0);
-        m_taskBar->updateLaunchTaskMessage("准备启动游戏...");
+        m_taskBar->ensureLaunchCard(instancePath, instanceName);
+        m_taskBar->showLaunchCard(instancePath, true);
+        m_taskBar->updateLaunchCardStatus(instancePath, LaunchTaskCard::Launching);
+        m_taskBar->updateLaunchCardProgress(instancePath, 0);
+        m_taskBar->updateLaunchCardMessage(instancePath, tr("正在自动备份存档..."));
     }
     if (m_taskListPage) {
-        m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Idle, 0);
+        m_taskListPage->setLaunchTaskInfo(instanceName, LaunchTaskCard::Launching, 0,
+                                          tr("正在自动备份存档..."));
+    }
+    if (m_gameLaunchPage) {
+        m_gameLaunchPage->appendLog(tr("正在自动备份存档..."));
+        m_gameLaunchPage->setProgress(0, tr("正在自动备份存档..."));
     }
 
-    GameLauncher::LaunchConfig config;
-    config.instancePath = m_currentInstancePath;
-    config.accountName = m_gameAccountName.isEmpty() ? "Player" : m_gameAccountName;
-
-    SettingsManager *settings = SettingsManager::instance();
-    // 统计该实例的启动次数（概览页「启动次数」卡片展示）
-    const QString launchCountKey = "instance/" + m_currentInstancePath + "/launchCount";
-    settings->setProperty(launchCountKey,
-                          settings->getProperty(launchCountKey, 0).toInt() + 1);
-    config.javaPath = settings->getJavaPath();
-    config.maxMemory = SettingsManager::DEFAULT_MAX_MEMORY_MB;
-    config.minMemory = SettingsManager::DEFAULT_MIN_MEMORY_MB;
-    config.gameArgs = extraGameArgs;
-
-    if (!m_gameLauncher->launchGame(config, true)) {
-        if (m_taskBar) {
-            m_taskBar->updateLaunchTaskStatus(LaunchTaskCard::Failed);
-            m_taskBar->updateLaunchTaskMessage(
-                m_gameLauncher->errorMessage().isEmpty() ? tr("启动失败") : m_gameLauncher->errorMessage());
-        }
-        if (m_taskListPage) {
-            m_taskListPage->setLaunchTaskInfo(tr("游戏"), LaunchTaskCard::Failed, 0,
-                m_gameLauncher->errorMessage().isEmpty() ? tr("启动失败") : m_gameLauncher->errorMessage());
-        }
-        if (!m_gameLauncher->errorMessage().isEmpty()) {
-            NotificationManager::showError(this, m_gameLauncher->errorMessage());
-        }
-    }
+    WorldBackupManager::instance()->startAutoBackupBeforeLaunch(instancePath);
 }
 
 void MainWindow::onQuickLaunchSaveClicked(const QString &saveName)
 {
+    // 实例助手（当前实例）触发的快捷进存档
+    onQuickLaunchSaveClickedFor(m_currentInstancePath, saveName);
+}
+
+void MainWindow::onQuickLaunchSaveClickedFor(const QString &instancePath, const QString &saveName)
+{
+    if (instancePath.isEmpty()) {
+        showInstanceSelectPage();
+        return;
+    }
     // 使用 --quickPlaySingleplayer 直接进入指定存档（Minecraft 1.21+ 支持）
     // 旧版本会忽略此参数，游戏正常启动后由用户在菜单选择存档
     QStringList extraArgs;
     if (!saveName.isEmpty()) {
         extraArgs << "--quickPlaySingleplayer" << saveName;
     }
-    launchGameWithExtraArgs(extraArgs);
+    startInstanceLaunch(instancePath, extraArgs);
 }
 
 void MainWindow::onQuickLaunchServerClicked(const QString &address, quint16 port)
 {
-    // 游戏已经在跑时明确提示，避免「一键启动 / 一键加入」点了没反应
-    if (m_gameLauncher->status() == GameLauncher::Running
-        || m_gameLauncher->status() == GameLauncher::Launching) {
-        NotificationManager::showError(this, tr("游戏已经在运行了，先关掉游戏再加入服务器。"));
+    // 目标实例已经在跑时明确提示，避免「一键启动 / 一键加入」点了没反应；
+    // 其他实例在运行不影响本次加入（多实例并行启动）
+    if (GameLauncher::sessionForInstance(m_currentInstancePath)) {
+        NotificationManager::showError(this,
+            tr("%1 已经在运行了，先关掉它再加入服务器。").arg(instanceDisplayName(m_currentInstancePath)));
         return;
     }
 
     // 使用 --server 和 --port 启动游戏并自动连接到服务器
     QStringList extraArgs;
     extraArgs << "--server" << address << "--port" << QString::number(port);
-    launchGameWithExtraArgs(extraArgs);
+    startInstanceLaunch(m_currentInstancePath, extraArgs);
+}
+
+void MainWindow::onQuickLaunchServerClickedFor(const QString &instancePath, const QString &address,
+                                               quint16 port)
+{
+    // 实例助手「开服」页用：窗口可能属于非当前实例，按窗口所属实例启动
+    if (instancePath.isEmpty()) {
+        showInstanceSelectPage();
+        return;
+    }
+    if (GameLauncher::sessionForInstance(instancePath)) {
+        NotificationManager::showError(
+            this, tr("%1 已经在运行了，先关掉它再加入服务器。").arg(instanceDisplayName(instancePath)));
+        return;
+    }
+
+    QStringList extraArgs;
+    extraArgs << "--server" << address << "--port" << QString::number(port);
+    startInstanceLaunch(instancePath, extraArgs);
 }
 
 void MainWindow::onLobbyJoinRequested(const ForumLobbyRoom &room, const QString &address,
@@ -2896,8 +3878,20 @@ void MainWindow::onLobbyJoinRequested(const ForumLobbyRoom &room, const QString 
         tip += tr("（还有 %1 个文件没装上，进房后可能和房主不完全一样）").arg(failedFetches);
     NotificationManager::showSuccess(this, tip);
 
-    // 记下这次进的是哪个大厅房间：游戏真正跑起来（onGameStarted）才开始上报「正在游玩」
-    m_pendingLobbyRoomId = room.id > 0 ? room.id : 0;
+    // 记下这次进的是哪个大厅房间：游戏真正跑起来（onSessionGameStarted）才开始上报「正在游玩」；
+    // 房间号由统一启动入口 startInstanceLaunch 消费进对应会话的状态
+    m_nextLaunchLobbyRoomId = room.id > 0 ? room.id : 0;
+    if (m_gameAchievements)
+    {
+        // 分享链接进来的房间可能没有 id，用标题 + 地址生成一个稳定的房间标识
+        int achievementRoomId = room.id;
+        if (achievementRoomId <= 0)
+        {
+            achievementRoomId =
+                static_cast<int>(qHash(room.title + QLatin1Char('|') + address) & 0x7fffffff) | 1;
+        }
+        m_gameAchievements->setLobbyContext(achievementRoomId, room.title);
+    }
     onQuickLaunchServerClicked(address, port);
 }
 
@@ -3234,7 +4228,12 @@ void MainWindow::onInstanceModified(const QString &instancePath)
 {
     if (instancePath.isEmpty())
         return;
+    // 修改前的版本：LoaderDetailPage 进入修改模式时记录的版本（此处尚未退出修改模式）
+    const QString oldVersion = m_loaderDetailPage && m_loaderDetailPage->modifyMode()
+        ? m_loaderDetailPage->modifyOldVersion() : m_currentInstanceVersion;
+
     updateCurrentInstance(instancePath);
+    const QString newVersion = m_currentInstanceVersion;
     NotificationManager::showSuccess(this, tr("实例修改成功！"));
 
     if (m_installInstancePage) {
@@ -3255,6 +4254,167 @@ void MainWindow::onInstanceModified(const QString &instancePath)
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
     animatedSwitchToPage(PageIndex::InstanceSelectPage);
+
+    // 版本有变化：自动把模组 / 资源包 / 光影包同步到新版本
+    if (!newVersion.isEmpty() && (oldVersion.isEmpty() || oldVersion != newVersion))
+        startResourceVersionSync(instancePath, oldVersion, newVersion);
+}
+
+void MainWindow::startResourceVersionSync(const QString &instancePath,
+                                          const QString &oldVersion, const QString &newVersion)
+{
+    if (!m_resourceVersionSyncer)
+    {
+        m_resourceVersionSyncer = new ResourceVersionSyncer(this);
+        connect(m_resourceVersionSyncer, &ResourceVersionSyncer::finished,
+                this, &MainWindow::onResourceSyncFinished);
+        connect(m_resourceVersionSyncer, &ResourceVersionSyncer::checkFailed,
+                this, &MainWindow::onResourceSyncCheckFailed);
+    }
+    if (m_resourceVersionSyncer->isRunning())
+        return;
+
+    m_syncOldVersion = oldVersion;
+    m_syncNewVersion = newVersion;
+    NotificationManager::showInfo(this,
+        tr("正在自动同步模组、资源包与光影包到 %1，完成后会提示处理结果").arg(newVersion));
+    m_resourceVersionSyncer->start(instancePath, oldVersion, newVersion);
+}
+
+void MainWindow::onResourceSyncFinished(const QList<ResourceSyncItem> &converted,
+                                        const QList<ResourceSyncItem> &pending)
+{
+    if (!converted.isEmpty())
+    {
+        NotificationManager::showSuccess(this,
+            tr("已把 %1 个资源的版本同步到 %2").arg(converted.size()).arg(m_syncNewVersion));
+    }
+    if (!pending.isEmpty())
+        showResourceSyncPendingDialog(pending);
+}
+
+void MainWindow::onResourceSyncCheckFailed(const QString &error)
+{
+    NotificationManager::showError(this,
+        tr("检查资源版本失败，所有资源保持原样：%1").arg(error));
+}
+
+void MainWindow::showResourceSyncPendingDialog(const QList<ResourceSyncItem> &pending)
+{
+    if (pending.isEmpty())
+        return;
+
+    // 弹窗正文只点名前几个资源，完整清单交给悬浮窗展示
+    QStringList names;
+    for (const ResourceSyncItem &item : pending)
+        names << item.displayName;
+    constexpr int kPreviewCount = 6;
+    QString preview = names.mid(0, kPreviewCount).join(QStringLiteral("、"));
+    if (names.size() > kPreviewCount)
+        preview += tr(" 等 %1 个资源").arg(names.size());
+
+    AppMessageBox box(this);
+    box.setWindowTitle(tr("部分资源未适配新版本"));
+    box.setText(tr("以下 %1 个资源在资源站上没有支持 %2 的版本：")
+                    .arg(pending.size()).arg(m_syncNewVersion));
+    box.setInformativeText(preview);
+    QPushButton *deleteBtn = box.addButton(tr("删除这些资源"), AppMessageBox::DestructiveRole);
+    QPushButton *keepBtn = box.addButton(tr("保留"), AppMessageBox::AcceptRole);
+    QPushButton *aiBtn = box.addButton(tr("让 AI 找替代"), AppMessageBox::ActionRole);
+    QPushButton *listBtn = box.addButton(tr("悬浮窗查看清单"), AppMessageBox::ActionRole);
+    box.setDefaultButton(keepBtn);
+    box.exec();
+
+    if (box.clickedButton() == deleteBtn)
+    {
+        // 删除属不可逆操作，与本地资源页一致再做一次确认
+        if (AppMessageBox::question(this, tr("批量删除"),
+                tr("确定要删除这 %1 个未适配新版本的资源吗？此操作不可撤销。")
+                    .arg(pending.size()),
+                AppMessageBox::Yes | AppMessageBox::No, AppMessageBox::No) == AppMessageBox::Yes)
+        {
+            for (const ResourceSyncItem &item : pending)
+                QFile::remove(item.filePath);
+            NotificationManager::showInfo(this,
+                tr("已删除 %1 个未适配新版本的资源").arg(pending.size()));
+        }
+        else
+        {
+            // 用户临时反悔：别丢掉清单，转到悬浮窗继续处理
+            showResourceSyncListWindow(pending);
+        }
+    }
+    else if (box.clickedButton() == aiBtn)
+    {
+        openAiFindReplacement(pending);
+    }
+    else if (box.clickedButton() == listBtn)
+    {
+        showResourceSyncListWindow(pending);
+    }
+    // 保留 / 关闭：什么都不动
+}
+
+void MainWindow::showResourceSyncListWindow(const QList<ResourceSyncItem> &items)
+{
+    if (items.isEmpty())
+        return;
+    if (!m_resourceSyncListWindow)
+    {
+        m_resourceSyncListWindow = new ResourceSyncListWindow(this);
+        connect(m_resourceSyncListWindow, &ResourceSyncListWindow::findReplacementRequested,
+                this, [this](const QList<ResourceSyncItem> &items)
+        {
+            openAiFindReplacement(items);
+        });
+    }
+    m_resourceSyncListWindow->setItems(items, m_syncNewVersion);
+    m_resourceSyncListWindow->show();
+    m_resourceSyncListWindow->raise();
+    m_resourceSyncListWindow->activateWindow();
+}
+
+void MainWindow::openAiFindReplacement(const QList<ResourceSyncItem> &items)
+{
+    if (items.isEmpty())
+        return;
+    ensurePageInitialized(PageIndex::AiChatPage);
+
+    // 每个未适配资源一条引用，AI 能看到文件本身与它原来支持的版本
+    QList<ResourceReference> refs;
+    for (const ResourceSyncItem &item : items)
+    {
+        ResourceReference ref;
+        ref.category = ContentTypeConfig::getConfig(item.type).displayName;
+        ref.name = item.displayName;
+        ref.path = item.filePath;
+        ref.size = QFileInfo(item.filePath).size();
+        QStringList gv = item.gameVersions;
+        if (gv.size() > 6)
+        {
+            gv = gv.mid(0, 6);
+            gv << QStringLiteral("...");
+        }
+        ref.extra = tr("当前版本: %1；支持的游戏版本: %2")
+            .arg(item.installedVersion.isEmpty() ? tr("未知") : item.installedVersion,
+                 gv.isEmpty() ? tr("未知") : gv.join(QStringLiteral(", ")));
+        refs.append(ref);
+    }
+
+    const QString prompt = tr(
+        "我的实例刚从 %1 升级到 %2，附上的 %3 个资源都没有支持 %2 的版本。"
+        "请逐个了解它们的用途，推荐功能相近、支持 %2 的替代资源（给出来源），"
+        "我确认后再帮我下载替换。")
+        .arg(m_syncOldVersion.isEmpty() ? tr("旧版本") : m_syncOldVersion,
+             m_syncNewVersion, QString::number(items.size()));
+
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("AI 助手"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    if (m_aiChatPage)
+        m_aiChatPage->addExternalPrompt(refs, prompt);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::AiChatPage));
 }
 
 void MainWindow::onVersionSelected(const QString &versionId, const QString &versionType)
@@ -3432,7 +4592,7 @@ void MainWindow::onModDownloadRequested(const ModInfo &modInfo, const ModVersion
             } else {
                 DownloadTaskManager::instance()->updateTaskStatus(
                     taskId, DownloadTaskStatus::Failed, tr("下载失败"));
-                NotificationManager::showError(this, tr("模组 \"%1\" 下载失败").arg(modInfo.name));
+                NotificationManager::showErrorWithNetworkCheck(this, tr("模组 \"%1\" 下载失败").arg(modInfo.name));
             }
         },
         [this, taskId, fileName](qint64 received, qint64 total) {
@@ -3548,7 +4708,7 @@ void MainWindow::initContentListPage(ContentType type)
     m_pageInitialized[PageIndex::ContentListPage] = true;
 }
 
-/** 资源分组子项索引：0安装新实例/1下载整合包/2导入整合包/3模组/4数据包/5资源包/6光影包/7世界/8新建收藏夹/9+收藏夹 */
+/** 资源分组子项索引：0安装新实例/1下载整合包/2导入整合包/3模组/4数据包/5资源包/6光影包/7世界/8投影/9插件/10新建收藏夹/11+收藏夹 */
 static int resourcesChildIndexForContentType(ContentType type)
 {
     switch (type)
@@ -3897,6 +5057,32 @@ void MainWindow::showContentDetailPage(const ModInfo &info, ContentType type,
     connect(m_contentDetailPage, &ContentDetailPage::askAiRequested,
             this, &MainWindow::openAiChatWithReference);
 
+    // 点击「创建翻译 / 完善翻译」：带原文进翻译编辑页，返回落点仍是本详情页
+    connect(m_contentDetailPage, &ContentDetailPage::translationComposeRequested,
+            this, [this, type](const ModInfo &info) {
+        if (!m_contentDetailPage)
+            return;
+        m_translationComposeInfo = info;
+        // 预填原文用资源本身的简介/正文（详情回包后 m_modInfo 已合并完整原文）
+        m_translationSourceSummary = info.description;
+        m_translationSourceDetailHtml = info.detailedDescription.isEmpty()
+            ? info.description : info.detailedDescription;
+        showTranslationComposePage([this, type]() {
+            // 返回内容详情页：页面实例还在栈里，直接切回去（不重新拉详情）
+            if (!m_contentDetailPage)
+                return;
+            setSideBarVisible(false);
+            const ContentTypeConfig config = ContentTypeConfig::getConfig(type);
+            m_topBar->setTitle(tr("资源>%1>%2").arg(config.displayName,
+                                                    m_translationComposeInfo.name));
+            disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+            connect(m_topBar, &TopBar::backClicked, this, [this, type]() {
+                showContentDownloadPage(type);
+            });
+            m_pageAnimator->animateToIndex(m_stackedWidget->indexOf(m_contentDetailPage));
+        });
+    });
+
     // 用户在详情页点击“新建收藏夹...”时，弹出对话框并直接将当前资源收藏到新分组
     connect(m_contentDetailPage, &ContentDetailPage::addToFavoritesRequested,
             this, [this](const ModInfo &modInfo, ContentType type, const QString &source)
@@ -4152,8 +5338,171 @@ void MainWindow::onFavoritesChanged()
     }
 }
 
+void MainWindow::installOnlineModpack(const ModInfo &modInfo, const ModVersionFile &versionFile)
+{
+    if (versionFile.downloadUrl.isEmpty())
+    {
+        NotificationManager::showError(this,
+            tr("%1 这个版本没有可用的下载地址，装不了").arg(modInfo.name));
+        return;
+    }
+
+    // 在线整合包装的是"新实例"，与当前选中的实例无关
+    const QString gameRoot = SettingsManager::instance()->getDefaultInstancePath();
+
+    // 压缩包文件名：服务器给的最准（.zip / .mrpack），没有再按 URL / 名称拼
+    QString fileName = versionFile.fileName.trimmed();
+    if (fileName.isEmpty())
+        fileName = QUrl(versionFile.downloadUrl).fileName();
+    if (fileName.isEmpty() || fileName.contains(QLatin1Char('?')))
+    {
+        const QString ver = versionFile.version.isEmpty() ? modInfo.latestVersion : versionFile.version;
+        fileName = Safety::safeFileName(modInfo.name, QStringLiteral("modpack"));
+        if (!ver.isEmpty())
+            fileName += QStringLiteral("-") + Safety::safeFileName(ver, QStringLiteral("version"));
+        fileName += QStringLiteral(".zip");
+    }
+    fileName = Safety::safeFileName(fileName, QStringLiteral("modpack.zip"));
+    if (!fileName.endsWith(QLatin1String(".zip"), Qt::CaseInsensitive)
+        && !fileName.endsWith(QLatin1String(".mrpack"), Qt::CaseInsensitive))
+    {
+        fileName += QStringLiteral(".zip");
+    }
+
+    // 临时落在游戏根目录下的隐藏文件夹：安装完就删，系统临时盘不够时也能下
+    const QString tempDir = QDir(gameRoot).filePath(QStringLiteral(".blockbox-temp/modpacks"));
+    QDir().mkpath(tempDir);
+    const QString zipPath = QDir(tempDir).filePath(fileName);
+    if (QFile::exists(zipPath))
+        QFile::remove(zipPath);
+
+    auto *taskManager = DownloadTaskManager::instance();
+    const QString taskId = taskManager->addTaskWithType(
+        modInfo.name, QString(), QString(), QStringList(), TaskType::ContentDownload);
+    taskManager->updateTaskStatus(taskId, DownloadTaskStatus::Downloading,
+                                  tr("下载整合包: ") + modInfo.name);
+    taskManager->updateTaskCurrentFile(taskId, fileName);
+    taskManager->updateTaskStage(taskId, DownloadStage::ClientJar, 0);
+
+    // 镜像优先、官方兜底（大文件镜像能明显提速，镜像坏了自动回官方）
+    QStringList candidates;
+    const QString mirrored = McimHelper::rewriteFileUrl(versionFile.downloadUrl);
+    if (!mirrored.isEmpty() && mirrored != versionFile.downloadUrl)
+        candidates << mirrored;
+    candidates << versionFile.downloadUrl;
+
+    startResourceDownload(this, candidates, zipPath, versionFile.sha1,
+        [this, taskId, zipPath, fileName, modInfo, gameRoot](bool success)
+        {
+            auto *manager = DownloadTaskManager::instance();
+
+            if (!success)
+            {
+                manager->updateTaskStatus(taskId, DownloadTaskStatus::Failed,
+                                          tr("整合包下载失败"));
+                NotificationManager::showError(this,
+                    tr("整合包 \"%1\" 下载失败，请检查网络后重试").arg(modInfo.name));
+                QFile::remove(zipPath);
+                return;
+            }
+
+            manager->updateTaskFileProgress(taskId, fileName, 1, 1);
+            manager->updateTaskProgressPercent(taskId, 100);
+
+            // 下载回来的是压缩包，先认格式并读出游戏版本 / 加载器 / 模组清单
+            const modpack::ModpackInfo info = modpack::ModpackDetector::parse(zipPath);
+            if (info.gameVersion.trimmed().isEmpty())
+            {
+                manager->updateTaskStatus(taskId, DownloadTaskStatus::Failed,
+                                          tr("无法识别整合包"));
+                NotificationManager::showError(this,
+                    tr("下载回来的文件不是可识别的整合包（缺少游戏版本等信息），无法安装"));
+                QFile::remove(zipPath);
+                return;
+            }
+
+            const QString preferredName = modInfo.name.trimmed().isEmpty() ? info.name
+                                                                           : modInfo.name;
+            const QString instanceName = uniqueInstanceName(gameRoot, preferredName);
+
+            auto *importer = new modpack::ModpackImporter(this);
+            importer->setModpackInfo(info);
+            importer->setZipFilePath(zipPath);
+            importer->setInstanceName(instanceName);
+
+            manager->updateTaskStatus(taskId, DownloadTaskStatus::Downloading,
+                                      tr("正在安装整合包: ") + instanceName);
+
+            // 安装各阶段（下载版本 / 装加载器 / 下模组 / 解压）同步到任务栏。
+            // 只同步阶段文案：安装进度由弹出的进度窗按 0~100 展示，
+            // 若也写回任务进度条，会把已经走完的下载进度拉回 0。
+            connect(importer, &modpack::ModpackImporter::installProgressChanged, this,
+                    [taskId](int percent, const QString &message)
+            {
+                Q_UNUSED(percent);
+                if (!message.isEmpty())
+                    DownloadTaskManager::instance()->updateTaskStep(taskId, message);
+            });
+
+            connect(importer, &Task::finished, this,
+                    [this, importer, taskId, zipPath, instanceName]()
+            {
+                auto *tasks = DownloadTaskManager::instance();
+                if (importer->wasSuccessful())
+                {
+                    tasks->updateTaskStage(taskId, DownloadStage::Completed, 100);
+                    tasks->updateTaskProgressPercent(taskId, 100);
+                    tasks->updateTaskStatus(taskId, DownloadTaskStatus::Completed,
+                                            tr("安装完成"));
+                    NotificationManager::showSuccess(this,
+                        tr("整合包已装成新实例「%1」，去实例列表就能启动").arg(instanceName));
+                    // 实例列表已初始化时立即刷新，新实例马上出现
+                    if (m_instanceSelectPage)
+                        m_instanceSelectPage->loadInstances();
+                }
+                else if (importer->wasAborted())
+                {
+                    tasks->updateTaskStatus(taskId, DownloadTaskStatus::Cancelled, tr("已取消"));
+                    NotificationManager::showInfo(this, tr("整合包安装已取消"));
+                }
+                else
+                {
+                    const QString reason = importer->failReason();
+                    tasks->updateTaskStatus(taskId, DownloadTaskStatus::Failed, reason);
+                    AppMessageBox::warning(this, tr("安装失败"),
+                        reason.isEmpty() ? tr("整合包安装失败，请检查日志。") : reason);
+                }
+
+                QFile::remove(zipPath);
+                importer->deleteLater();
+            });
+
+            auto *progressDlg = new ProgressDialog(this);
+            progressDlg->setAttribute(Qt::WA_DeleteOnClose);
+            progressDlg->setSkipButton(true, tr("取消"));
+            progressDlg->showWithTask(importer);
+        },
+        [taskId, fileName](qint64 received, qint64 total)
+        {
+            auto *manager = DownloadTaskManager::instance();
+            manager->updateTaskFileProgress(taskId, fileName, received, total);
+            if (total > 0)
+            {
+                const int percent = qBound(0, static_cast<int>(received * 100 / total), 100);
+                manager->updateTaskProgressPercent(taskId, percent);
+            }
+        });
+}
+
 void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVersionFile &versionFile, ContentType contentType)
 {
+    // 整合包要装成新实例，不是往当前实例里塞文件
+    if (contentType == ContentType::Modpack)
+    {
+        installOnlineModpack(modInfo, versionFile);
+        return;
+    }
+
     QString instancePath = m_currentInstancePath;
     if (instancePath.isEmpty())
     {
@@ -4233,7 +5582,7 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
             {
                 DownloadTaskManager::instance()->updateTaskStatus(
                     taskId, DownloadTaskStatus::Failed, error);
-                NotificationManager::showError(this, tr("世界 \"%1\" 下载失败: %2").arg(modInfo.name, error));
+                NotificationManager::showErrorWithNetworkCheck(this, tr("世界 \"%1\" 下载失败: %2").arg(modInfo.name, error));
                 downloader->deleteLater();
             });
         downloader->downloadToInstance(versionFile.downloadUrl, fileName, instancePath, contentType);
@@ -4255,7 +5604,7 @@ void MainWindow::onContentDownloadRequested(const ModInfo &modInfo, const ModVer
             {
                 DownloadTaskManager::instance()->updateTaskStatus(
                     taskId, DownloadTaskStatus::Failed, tr("下载失败"));
-                NotificationManager::showError(this, tr("%1 \"%2\" 下载失败").arg(config.displayName, modInfo.name));
+                NotificationManager::showErrorWithNetworkCheck(this, tr("%1 \"%2\" 下载失败").arg(config.displayName, modInfo.name));
             }
         },
         [this, taskId, fileName](qint64 received, qint64 total)
@@ -4465,6 +5814,7 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
     // 根节点：重置已访问集合，开启一次全新的"一键安装"流程
     QString targetGameVersion = gameVersion;
     QString targetLoader = loader;
+    const bool isModpack = (contentType == ContentType::Modpack);
     if (depth == 0)
     {
         m_cardDownloadVisited.clear();
@@ -4474,12 +5824,20 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
             targetGameVersion = m_currentInstanceVersion;
         if (targetLoader.isEmpty())
             targetLoader = m_currentInstanceLoader;
+        // 整合包自带版本与加载器、装出来是独立新实例：实例的版本/加载器不该参与筛选，
+        // 否则会挑成"和当前实例同版本"的旧包，而不是最新版
+        if (isModpack)
+        {
+            targetGameVersion.clear();
+            targetLoader.clear();
+        }
     }
 
     if (depth > kMaxCardDownloadDepth)
         return;
 
-    if (m_currentInstancePath.isEmpty())
+    // 整合包装成新实例，不需要先选下载实例
+    if (!isModpack && m_currentInstancePath.isEmpty())
     {
         NotificationManager::showError(this,
             tr("请先选择下载实例：用顶部实例按钮或资源页的「下载实例」下拉选择"));
@@ -4619,8 +5977,12 @@ void MainWindow::onCardDownloadRequested(const ModInfo &modInfo, ContentType con
             for (const ModDependency &d : latest.dependencies)
                 if (d.isRequired) ++depCount;
         }
-        NotificationManager::showInfo(this,
-            tr("开始安装 %1 %2（含 %3 个必备前置）").arg(modInfo.name, latest.version).arg(depCount));
+        if (isModpack)
+            NotificationManager::showInfo(this,
+                tr("开始安装整合包 %1 %2，装好后会是一个新实例").arg(modInfo.name, latest.version));
+        else
+            NotificationManager::showInfo(this,
+                tr("开始安装 %1 %2（含 %3 个必备前置）").arg(modInfo.name, latest.version).arg(depCount));
         if (fallbackNonRelease)
             NotificationManager::showInfo(this,
                 tr("%1 暂无正式版，已按最新测试版 %2 安装").arg(modInfo.name, latest.version));
@@ -4669,18 +6031,28 @@ QString loaderFacetName(const QString &loader)
 
 void MainWindow::onQuickInstallModRequested(const QString &modKey)
 {
+    installQuickMod(modKey, false);
+}
+
+void MainWindow::installQuickMod(const QString &modKey, bool quiet)
+{
     if (m_currentInstancePath.isEmpty())
     {
-        NotificationManager::showError(this, tr("请先选择一个实例，再安装模组"));
+        if (!quiet)
+            NotificationManager::showError(this, tr("请先选择一个实例，再安装模组"));
         return;
     }
 
     const QString loader = loaderFacetName(m_currentInstanceLoader);
     if (loader.isEmpty())
     {
-        NotificationManager::showError(this,
-            tr("当前实例是原版（未安装模组加载器），无法加载模组。"
-               "请先给实例安装 Fabric / Forge / NeoForge 再使用该功能"));
+        if (quiet)
+            NotificationManager::showInfo(this,
+                tr("当前实例是原版（未安装模组加载器），模组没法自动安装"));
+        else
+            NotificationManager::showError(this,
+                tr("当前实例是原版（未安装模组加载器），无法加载模组。"
+                   "请先给实例安装 Fabric / Forge / NeoForge 再使用该功能"));
         return;
     }
 
@@ -4723,7 +6095,7 @@ void MainWindow::onQuickInstallModRequested(const QString &modKey)
     const QString fallbackKeyword = displayName;
 
     connect(api, &ModrinthAPI::modDetailReceived, this,
-        [this, api, loader, gameVersion, loaderLabel, displayName, fallbackKeyword](const ModInfo &detail)
+        [this, api, loader, gameVersion, loaderLabel, displayName, fallbackKeyword, quiet](const ModInfo &detail)
     {
         api->deleteLater();
 
@@ -4739,6 +6111,13 @@ void MainWindow::onQuickInstallModRequested(const QString &modKey)
         }
         if (!compatible)
         {
+            if (quiet)
+            {
+                NotificationManager::showInfo(this,
+                    tr("%1 暂无适配当前实例（%2 · %3）的版本，已跳过自动安装")
+                        .arg(displayName, gameVersion, loaderLabel));
+                return;
+            }
             NotificationManager::showInfo(this,
                 tr("%1 暂无适配当前实例（%2 · %3）的版本，已打开下载页，可挑选其它同类模组")
                     .arg(displayName, gameVersion, loaderLabel));
@@ -4756,14 +6135,42 @@ void MainWindow::onQuickInstallModRequested(const QString &modKey)
     });
 
     connect(api, &ModrinthAPI::modDetailFailed, this,
-        [this, api, displayName](const QString &error)
+        [this, api, displayName, quiet](const QString &error)
     {
         api->deleteLater();
-        NotificationManager::showError(this,
-            tr("获取 %1 信息失败：%2").arg(displayName, error));
+        if (quiet)
+            NotificationManager::showInfo(this,
+                tr("自动安装 %1 失败：%2").arg(displayName, error));
+        else
+            NotificationManager::showError(this,
+                tr("获取 %1 信息失败：%2").arg(displayName, error));
     });
 
     api->fetchModDetail(slug);
+}
+
+void MainWindow::ensureProjectionModForDownload()
+{
+    if (m_currentInstancePath.isEmpty())
+        return;
+    // 实例里已经有投影模组（哪怕目录被手动删了）就不重复装
+    if (SchematicDownloadTarget::hasProjectionMod(m_currentInstancePath))
+        return;
+    // 原版实例装不了模组：说明一声就好，别白跑一次安装
+    if (loaderFacetName(m_currentInstanceLoader).isEmpty())
+    {
+        NotificationManager::showInfo(this,
+            tr("当前实例是原版，投影模组装不上；投影文件仍会存进 schematics 文件夹，"
+               "装好模组加载器后就能用"));
+        return;
+    }
+    // 同一实例只自动尝试一次；装不上时手动入口还在「实例管理 → 投影」页
+    if (m_projectionModAutoTried.contains(m_currentInstancePath))
+        return;
+    m_projectionModAutoTried.insert(m_currentInstancePath);
+    NotificationManager::showInfo(this,
+        tr("实例里还没有投影目录，正在自动安装投影模组（Litematica）…"));
+    installQuickMod(QStringLiteral("projection"), true);
 }
 
 void MainWindow::onClipboardLinkDetected(const ClipboardLinkInfo &info)

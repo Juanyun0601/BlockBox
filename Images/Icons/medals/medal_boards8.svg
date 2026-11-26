@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="bd8-outer" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7DD3FC"/>
+      <stop offset="1" stop-color="#0369A1"/>
+    </linearGradient>
+  </defs>
+  <path d="M34 62 L26 90 L38 83 L45 92 L49 64 Z" fill="#075985"/>
+  <path d="M62 62 L70 90 L58 83 L51 92 L47 64 Z" fill="#0C4A6E"/>
+  <circle cx="48" cy="43" r="31" fill="url(#bd8-outer)" stroke="#082F49" stroke-width="3"/>
+  <circle cx="48" cy="43" r="23" fill="#F0F9FF"/>
+  <circle cx="48" cy="43" r="16" fill="#FFFFFF" stroke="#0369A1" stroke-width="2.5"/>
+  <path d="M48 26 L52 39 L65 43 L52 47 L48 60 L44 47 L31 43 L44 39 Z" fill="#0EA5E9" stroke="#075985" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M48 26 L48 60 M31 43 L65 43" stroke="#BAE6FD" stroke-width="1"/>
+  <path d="M48 26 L52 39 L48 43 Z" fill="#F97316"/>
+  <path d="M48 60 L44 47 L48 43 Z" fill="#FB923C"/>
+  <path d="M33 33 L36 36 M63 33 L60 36 M33 53 L36 50 M63 53 L60 50" stroke="#7DD3FC" stroke-width="2" stroke-linecap="round"/>
+</svg>

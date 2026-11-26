@@ -91,6 +91,7 @@ InstanceFilePage::InstanceFilePage(FileType type, QWidget *parent)
     , m_checkUpdateBtn(nullptr)
     , m_copyBtn(nullptr)
     , m_openFolderBtn(nullptr)
+    , m_backupCenterBtn(nullptr)
     , m_detailBtn(nullptr)
     , m_deleteBtn(nullptr)
     , m_pasteBtn(nullptr)
@@ -117,6 +118,7 @@ QString InstanceFilePage::subDirName() const
     case ShaderPack:   return QStringLiteral("shaderpacks");
     case Save:         return QStringLiteral("saves");
     case Screenshot:   return QStringLiteral("screenshots");
+    case DataPack:     return QStringLiteral("datapacks");
     }
     return QString();
 }
@@ -129,8 +131,15 @@ QString InstanceFilePage::typeDisplayName() const
     case ShaderPack:   return tr("光影包");
     case Save:         return tr("存档");
     case Screenshot:   return tr("截图");
+    case DataPack:     return tr("数据包");
     }
     return QString();
+}
+
+bool InstanceFilePage::supportsUpdateCheck() const
+{
+    return m_fileType == ResourcePack || m_fileType == ShaderPack
+        || m_fileType == DataPack;
 }
 
 void InstanceFilePage::setInstancePath(const QString &path)
@@ -360,6 +369,19 @@ void InstanceFilePage::initUI()
         ":/Images/Icons/folder.svg", themeColor, 18));
     m_openFolderBtn->setIconSize(QSize(18, 18));
 
+    // 存档页专用：实例级「存档备份」总览（存档被误删后还能从这里恢复备份）
+    m_backupCenterBtn = new QPushButton(tr("备份管理"));
+    m_backupCenterBtn->setObjectName("bottomActionBtn");
+    m_backupCenterBtn->setIcon(IconHelper::loadColoredIcon(
+        ":/Images/Icons/restore_prev.svg", themeColor, 18));
+    m_backupCenterBtn->setIconSize(QSize(18, 18));
+    m_backupCenterBtn->setCursor(Qt::PointingHandCursor);
+    m_backupCenterBtn->setToolTip(tr("查看这个实例下所有存档的备份，存档误删了也能在这里恢复"));
+    m_backupCenterBtn->setVisible(m_fileType == Save);
+    connect(m_backupCenterBtn, &QPushButton::clicked, this, [this]() {
+        emit backupCenterRequested();
+    });
+
     m_detailBtn = new QPushButton(tr("详情"));
     m_detailBtn->setObjectName("bottomActionBtn");
     m_detailBtn->setIcon(IconHelper::loadColoredIcon(
@@ -404,6 +426,7 @@ void InstanceFilePage::initUI()
     bottomLayout->addWidget(m_selectAllBtn);
     bottomLayout->addWidget(m_copyBtn);
     bottomLayout->addWidget(m_openFolderBtn);
+    bottomLayout->addWidget(m_backupCenterBtn);
     bottomLayout->addWidget(m_detailBtn);
     bottomLayout->addWidget(m_deleteBtn);
     bottomLayout->addWidget(m_pasteBtn);
@@ -550,6 +573,12 @@ void InstanceFilePage::scanFiles()
         entries = dir.entryInfoList(QStringList() << "*.zip" << "*.zip.disabled",
                                     QDir::Files, QDir::Name);
         break;
+    case DataPack:
+        // 数据包是 .zip / .jar 文件（含 .disabled 禁用文件）
+        entries = dir.entryInfoList(QStringList() << "*.zip" << "*.zip.disabled"
+                                                  << "*.jar" << "*.jar.disabled",
+                                    QDir::Files, QDir::Name);
+        break;
     case Screenshot:
         // 截图是图片文件
         entries = dir.entryInfoList(
@@ -672,6 +701,7 @@ QWidget *InstanceFilePage::createFileCard(const QString &filePath, const QString
             {
             case ResourcePack:
             case ShaderPack:
+            case DataPack:
                 icon = ResourcesPage::extractResourcePackIcon(filePath);
                 break;
             case Save:
@@ -696,6 +726,7 @@ QWidget *InstanceFilePage::createFileCard(const QString &filePath, const QString
             {
             case ResourcePack: fallbackIcon = ":/Images/Icons/nav_resourcepacks.svg"; break;
             case ShaderPack:   fallbackIcon = ":/Images/Icons/nav_shaders.svg"; break;
+            case DataPack:     fallbackIcon = ":/Images/Icons/nav_datapacks.svg"; break;
             case Save:         fallbackIcon = ":/Images/Icons/nav_worlds.svg"; break;
             case Screenshot:   fallbackIcon = ":/Images/Icons/screenshot.svg"; break;
             }
@@ -759,8 +790,8 @@ QWidget *InstanceFilePage::createFileCard(const QString &filePath, const QString
         chipsLayout->addWidget(disabledChip);
     }
 
-    // 更新提示芯片（仅资源包/光影包显示）
-    if (m_fileType == ResourcePack || m_fileType == ShaderPack)
+    // 更新提示芯片（仅可在线检查更新的类型显示）
+    if (supportsUpdateCheck())
     {
         QLabel *updateChip = new QLabel(tr("可更新"));
         updateChip->setObjectName("fileUpdateChip");
@@ -853,6 +884,20 @@ QWidget *InstanceFilePage::createFileCard(const QString &filePath, const QString
             emit saveConvertRequested(capturedName);
         });
         btnLayout->addWidget(convertBtn);
+
+        // 备份按钮：打开该存档的备份与恢复弹窗
+        QPushButton *backupBtn = createBtn(":/Images/Icons/restore_prev.svg", tr("备份与恢复"));
+        connect(backupBtn, &QPushButton::clicked, this, [this, capturedName]() {
+            emit saveBackupRequested(capturedName);
+        });
+        btnLayout->addWidget(backupBtn);
+
+        // 数据包按钮：打开该存档的本地数据包管理弹窗
+        QPushButton *datapackBtn = createBtn(":/Images/Icons/nav_datapacks.svg", tr("数据包"));
+        connect(datapackBtn, &QPushButton::clicked, this, [this, capturedName]() {
+            emit saveDatapacksRequested(capturedName);
+        });
+        btnLayout->addWidget(datapackBtn);
     }
 
     // 光影设置按钮（仅光影包类型显示）：可视化编辑光影包选项
@@ -889,6 +934,7 @@ QWidget *InstanceFilePage::createFileCard(const QString &filePath, const QString
             switch (fileType) {
             case ResourcePack: category = tr("本地资源包"); break;
             case ShaderPack: category = tr("本地光影包"); break;
+            case DataPack: category = tr("本地数据包"); break;
             case Save: category = tr("本地存档"); break;
             case Screenshot: category = tr("文件"); break;
             default: category = tr("本地文件"); break;
@@ -1026,6 +1072,7 @@ QWidget *InstanceFilePage::createMasonryCard(const FileEntry &entry)
             {
             case ResourcePack:
             case ShaderPack:
+            case DataPack:
                 icon = ResourcesPage::extractResourcePackIcon(entry.filePath);
                 break;
             case Save:
@@ -1149,7 +1196,7 @@ QWidget *InstanceFilePage::createMasonryCard(const FileEntry &entry)
         addChip(entry.lastModified.toString("yyyy-MM-dd"));
     if (!entry.enabled)
         addChip(tr("已禁用"));
-    if (m_fileType == ResourcePack || m_fileType == ShaderPack)
+    if (supportsUpdateCheck())
     {
         QLabel *updateChip = new QLabel(tr("可更新"), chipsWidget);
         updateChip->setObjectName("fileUpdateChip");   // markCardHasUpdate 经 findChild 定位
@@ -1220,6 +1267,10 @@ QWidget *InstanceFilePage::createMasonryCard(const FileEntry &entry)
                 this, [this, capturedName]() { emit saveMapRequested(capturedName); });
         connect(createBtn(":/Images/Icons/convert.svg", tr("版本转化")), &QPushButton::clicked,
                 this, [this, capturedName]() { emit saveConvertRequested(capturedName); });
+        connect(createBtn(":/Images/Icons/restore_prev.svg", tr("备份与恢复")), &QPushButton::clicked,
+                this, [this, capturedName]() { emit saveBackupRequested(capturedName); });
+        connect(createBtn(":/Images/Icons/nav_datapacks.svg", tr("数据包")), &QPushButton::clicked,
+                this, [this, capturedName]() { emit saveDatapacksRequested(capturedName); });
     }
 
     // 光影设置（仅光影包类型显示）
@@ -1253,6 +1304,7 @@ QWidget *InstanceFilePage::createMasonryCard(const FileEntry &entry)
                     switch (fileType) {
                     case ResourcePack: category = tr("本地资源包"); break;
                     case ShaderPack: category = tr("本地光影包"); break;
+                    case DataPack: category = tr("本地数据包"); break;
                     case Save: category = tr("本地存档"); break;
                     case Screenshot: category = tr("文件"); break;
                     default: category = tr("本地文件"); break;
@@ -1473,6 +1525,9 @@ void InstanceFilePage::onPasteFileClicked()
     case ResourcePack:
     case ShaderPack:
         validSuffixes = { ".zip" };
+        break;
+    case DataPack:
+        validSuffixes = { ".zip", ".jar" };
         break;
     case Screenshot:
         validSuffixes = { ".png", ".jpg", ".jpeg", ".webp" };
@@ -1922,7 +1977,7 @@ void InstanceFilePage::applyEmptyState(const QString &text, bool show, bool allo
 
 void InstanceFilePage::updateBottomBarState()
 {
-    bool isPackType = (m_fileType == ResourcePack || m_fileType == ShaderPack);
+    bool isPackType = supportsUpdateCheck();
     m_checkUpdateBtn->setVisible(isPackType);
 
     bool hasSelection = !m_selectedIndices.isEmpty();
@@ -2196,7 +2251,7 @@ QString InstanceFilePage::computeFileSha1(const QString &filePath)
 
 void InstanceFilePage::onCheckUpdatesClicked()
 {
-    if (m_fileType != ResourcePack && m_fileType != ShaderPack)
+    if (!supportsUpdateCheck())
         return;
     if (m_fileList.isEmpty())
         return;
@@ -2401,14 +2456,18 @@ void InstanceFilePage::processNextModUpdate()
         return;
     }
 
-    // 目标文件名需为 .zip，否则回退到下载 URL 文件名或本地文件名
+    // 目标文件名需为 .zip（数据包也可是 .jar），否则回退到下载 URL 文件名或本地文件名
     QString fileName = target.fileName;
-    if (fileName.isEmpty() || !fileName.endsWith(".zip", Qt::CaseInsensitive))
+    auto suffixOk = [this](const QString &name) {
+        if (name.endsWith(".zip", Qt::CaseInsensitive))
+            return true;
+        return m_fileType == DataPack && name.endsWith(".jar", Qt::CaseInsensitive);
+    };
+    if (fileName.isEmpty() || !suffixOk(fileName))
     {
         QUrl url(target.downloadUrl);
         fileName = url.fileName();
-        if (fileName.isEmpty() || fileName.contains('?')
-            || !fileName.endsWith(".zip", Qt::CaseInsensitive))
+        if (fileName.isEmpty() || fileName.contains('?') || !suffixOk(fileName))
         {
             fileName = entry.fileName;
         }
@@ -2462,7 +2521,8 @@ void InstanceFilePage::processNextModUpdate()
         });
 
     ContentType ct = (m_fileType == ResourcePack)
-        ? ContentType::ResourcePack : ContentType::ShaderPack;
+        ? ContentType::ResourcePack
+        : (m_fileType == DataPack ? ContentType::DataPack : ContentType::ShaderPack);
     downloader->downloadToInstance(target.downloadUrl, fileName, m_instancePath, ct);
 }
 
@@ -2573,6 +2633,9 @@ void InstanceFilePage::handleDroppedFiles(const QList<QUrl> &urls)
     case ResourcePack:
     case ShaderPack:
         validSuffixes = { ".zip" };
+        break;
+    case DataPack:
+        validSuffixes = { ".zip", ".jar" };
         break;
     case Screenshot:
         validSuffixes = { ".png", ".jpg", ".jpeg", ".webp" };
@@ -2722,7 +2785,7 @@ void InstanceFilePage::reloadCategoryCombo()
     m_categoryCombo->addItem(tr("全部"), QString());
 
     // 智能筛选：由文件属性直接判定，无需手动归类
-    if (m_fileType == ResourcePack || m_fileType == ShaderPack)
+    if (supportsUpdateCheck())
         m_categoryCombo->addItem(tr("可更新"), QStringLiteral("__updatable__"));
     m_categoryCombo->addItem(tr("最近修改"), QStringLiteral("__recent__"));
     m_categoryCombo->addItem(tr("大文件"), QStringLiteral("__large__"));
@@ -2762,7 +2825,7 @@ void InstanceFilePage::onCategoryFilterChanged(int index)
     // 智能筛选「可更新」依赖 SHA-1 → 更新缓存：未算过哈希时先懒计算
     //（计算结果进 m_sha1Cache，后续检查更新可复用）
     if (m_currentCategoryId == QStringLiteral("__updatable__")
-        && (m_fileType == ResourcePack || m_fileType == ShaderPack)
+        && supportsUpdateCheck()
         && !m_fileList.isEmpty())
     {
         bool needHash = false;

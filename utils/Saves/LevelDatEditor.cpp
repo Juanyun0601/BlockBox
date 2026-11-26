@@ -1339,3 +1339,139 @@ bool LevelDatEditor::renameWorld(const QString &folderPath,
         *newPathOut = newPath;
     return true;
 }
+
+// ============================================================================
+// 数据包启停列表（Data.DataPacks）
+// ============================================================================
+
+std::optional<DataPackLists> LevelDatEditor::readDataPacks(const QString &folderPath)
+{
+    QString levelDatPath = folderPath + QStringLiteral("/level.dat");
+    if (!QFileInfo::exists(levelDatPath))
+    {
+        const QString backup = folderPath + QStringLiteral("/level.dat_old");
+        if (!QFileInfo::exists(backup))
+            return std::nullopt;
+        levelDatPath = backup;
+    }
+
+    QFile file(levelDatPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return std::nullopt;
+    const QByteArray compressed = file.readAll();
+    file.close();
+
+    QByteArray raw;
+    if (!decompressGzip(compressed, raw) || raw.isEmpty())
+        return std::nullopt;
+
+    NbtReader reader(raw);
+    NbtTag root;
+    if (!reader.readTag(root) || root.type != NbtType::Compound)
+        return std::nullopt;
+
+    const NbtTag *dataTag = findChild(root, QStringLiteral("Data"));
+    if (!dataTag)
+        return std::nullopt;
+
+    DataPackLists lists;
+    const NbtTag *packsTag = findChild(*dataTag, QStringLiteral("DataPacks"));
+    if (!packsTag || packsTag->type != NbtType::Compound)
+        return lists; // 新世界（1.13 之前）或尚未写入过数据包，返回空列表
+
+    lists.hasDataPacks = true;
+
+    // List 的元素本身不带 type，用 listElementType 判断元素类型即可
+    auto readStringList = [](const NbtTag *list, QStringList &out) {
+        if (!list || list->type != NbtType::List)
+            return;
+        if (list->listElementType != NbtType::String)
+            return;
+        out.reserve(list->children.size());
+        for (const NbtTag &child : list->children)
+            out.append(child.stringValue);
+    };
+    readStringList(findChild(*packsTag, QStringLiteral("Enabled")), lists.enabled);
+    readStringList(findChild(*packsTag, QStringLiteral("Disabled")), lists.disabled);
+
+    return lists;
+}
+
+bool LevelDatEditor::writeDataPacks(const QString &folderPath,
+                                    const QStringList &enabled,
+                                    const QStringList &disabled,
+                                    QString *errorOut)
+{
+    auto fail = [errorOut](const QString &msg) {
+        qWarning() << "[LevelDatEditor]" << msg;
+        if (errorOut)
+            *errorOut = msg;
+        return false;
+    };
+
+    QString levelDatPath = folderPath + QStringLiteral("/level.dat");
+    if (!QFileInfo::exists(levelDatPath))
+    {
+        const QString backup = folderPath + QStringLiteral("/level.dat_old");
+        if (!QFileInfo::exists(backup))
+            return fail(QStringLiteral("存档缺少 level.dat 文件"));
+        levelDatPath = backup;
+    }
+
+    QFile file(levelDatPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return fail(QStringLiteral("无法打开 level.dat：") + file.errorString());
+
+    const QByteArray compressed = file.readAll();
+    file.close();
+
+    QByteArray raw;
+    if (!decompressGzip(compressed, raw) || raw.isEmpty())
+        return fail(QStringLiteral("level.dat 解压失败"));
+
+    NbtReader reader(raw);
+    NbtTag root;
+    if (!reader.readTag(root) || root.type != NbtType::Compound)
+        return fail(QStringLiteral("level.dat NBT 解析失败"));
+
+    NbtTag *dataTag = findChild(root, QStringLiteral("Data"));
+    if (!dataTag)
+        return fail(QStringLiteral("level.dat 缺少 Data 标签"));
+
+    // 老存档可能没有 DataPacks 复合标签，按需创建
+    NbtTag *packsTag = findChild(*dataTag, QStringLiteral("DataPacks"));
+    if (!packsTag || packsTag->type != NbtType::Compound)
+    {
+        NbtTag tag;
+        tag.name = QStringLiteral("DataPacks");
+        tag.type = NbtType::Compound;
+        dataTag->children.append(std::move(tag));
+        packsTag = &dataTag->children.last();
+    }
+
+    auto writeStringList = [](NbtTag &compound, const QString &name,
+                              const QStringList &values) {
+        upsertTag(compound, name, [&values](NbtTag &tag) {
+            tag.type = NbtType::List;
+            tag.listElementType = NbtType::String;
+            tag.children.clear();
+            tag.children.reserve(values.size());
+            for (const QString &value : values)
+            {
+                NbtTag elem;
+                elem.type = NbtType::String;
+                elem.stringValue = value;
+                tag.children.append(std::move(elem));
+            }
+        });
+    };
+    writeStringList(*packsTag, QStringLiteral("Enabled"), enabled);
+    writeStringList(*packsTag, QStringLiteral("Disabled"), disabled);
+
+    NbtWriter writer;
+    writer.writeRoot(root);
+    if (!writeLevelDatAtomically(levelDatPath, writer.data()))
+        return fail(QStringLiteral("level.dat 写入失败"));
+
+    return true;
+}

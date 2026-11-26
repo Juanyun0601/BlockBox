@@ -4,9 +4,9 @@
  * @author BlockBox Team
  * @date   2026-11-01
  *
- * 左栏三个页签：好友（好友与群聊混排的会话列表，带未读角标与最后一条消息）/
- * 申请（同意·拒绝·撤回）/ 添加好友（按用户名或昵称搜索）；
- * 右栏是当前会话的聊天面板（私聊或群聊）。
+ * 左栏只有「聊天」标题、搜索框、会话列表和一张菜单（创建群聊 / 添加好友 / 聊天收藏 / 刷新）；
+ * 好友和群聊混排成一份会话列表，最上面固定一条「系统通知」。
+ * 系统通知复用站内通知（和通知页、网页版同一份数据），好友申请在右栏面板里直接同意 / 拒绝。
  * 页面可见时每 4 秒轮询一次 /api/messages/poll，刷新会话列表与聊天新消息。
  */
 #pragma once
@@ -18,6 +18,7 @@
 #include <QWidget>
 
 #include "utils/ForumChatService.h"
+#include "utils/ForumContentService.h"
 
 class QFrame;
 class QLabel;
@@ -47,28 +48,31 @@ signals:
     /** 点击对方头像 / 主页按钮：打开TA的论坛主页 */
     void userOpenRequested(int userId);
 
+    /** 系统通知里点开帖子类通知：在启动器内打开帖子详情 */
+    void threadOpenRequested(int threadId);
+
 protected:
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    enum Tab
-    {
-        FriendsTab,
-        RequestsTab,
-        AddTab,
-    };
-
     void buildUi();
     void reload();
     void pollOnce();
-    void setTab(Tab tab);
 
     void renderSide();
     void renderFriendRows();
-    void renderRequestRows();
-    void renderAddTab();
+
+    /** 右栏切到「系统通知」面板：拉一页站内通知并渲染（好友申请可以直接处理） */
+    void openNotificationPane();
+    void renderNotificationPane();
+    /** 重新拉一次未读通知数，顺带刷新左栏「系统通知」行 */
+    void refreshNoticeBadge();
+    /** 把通知全部标为已读，再刷新面板与角标 */
+    void markAllNotificationsRead();
+    /** 「添加好友」弹窗：按用户名 / 昵称搜索并加好友 */
+    void openAddFriendDialog();
 
     void openConversation(const ForumFriendInfo &peer);
     void openGroupConversation(const ForumGroupInfo &group);
@@ -80,7 +84,6 @@ private:
     void closeConversation();
     void sendCurrentMessage();
     void loadOlderMessages();
-    void detachSearchEdit();
     void refreshInputSize();
     QWidget *makeDateChip(qint64 seconds);
 
@@ -106,9 +109,30 @@ private:
     void buildEmojiPopup();
     QString messagePreview(const ForumChatMessage &message) const;
 
+    // ── P2P 直传 ──
+    /** 私聊发文件先试直传：起本机监听并把邀约发给对方；返回 false 表示没发出去（回落普通上传） */
+    bool trySendFileP2P(const QString &filePath);
+    /** 走原来的服务器上传通道发文件（sendFileFromPath 的老逻辑，直传兜底也用它） */
+    void uploadFileViaServer(const QString &filePath);
+    /** 清掉进行中的直传状态；stopShare 为真时连本机监听一起停 */
+    void resetP2pSendState(bool stopShare);
+    /** 直传状态收尾后把发送相关按钮恢复可用 */
+    void restoreComposerAfterSend();
+    /** 点直传邀约卡片上的「接收」：选保存位置后连对方拉文件 */
+    void receiveP2PFile(int messageId);
+    /** 收到一条 p2p 消息的钩子（对方发来的控制消息在这里处理） */
+    void handleP2PMessage(const ForumChatMessage &message);
+    /** 撤回自己发出去的直传邀约消息（回落普通上传时清掉聊天里的邀约卡片） */
+    void withdrawP2POfferMessage();
+    void onP2pFallbackTimeout();
+    void onP2pShareProgress(const QString &tid, double percent, qint64 bytesSent,
+                            qint64 bytesTotal, qint64 speed);
+    void onP2pShareFinished(const QString &tid, bool success, const QString &message);
+    void onP2pReceiveFinished(const QString &requestId, bool success, const QString &savePath,
+                              const QString &message);
+
     void setStatus(const QString &text, bool error = false);
     QString peerStatusText(const ForumFriendInfo &peer) const;
-    void runSearch(const QString &keyword);
 
     // ── 会话整理：置顶 / 免打扰 / 草稿 / 搜索 ──
     /** 会话行右键菜单：置顶 / 免打扰（好友与群聊共用） */
@@ -123,6 +147,12 @@ private:
     void scheduleDraftSave();
     /** 会话搜索词变化后延迟刷新左栏 */
     void updateConversationFilter();
+    /** 打开「聊天设置」居中弹窗（当前会话置顶 / 免打扰 + 发送方式 / 字号） */
+    void openChatSettings();
+    /** 会话在界面上的名字：有本机备注就用备注，否则用昵称 / 群名 */
+    QString conversationTitle(bool group, int id, const QString &fallback) const;
+    /** 按偏好刷新输入框占位文字与发送按钮提示（Enter 发送 / Ctrl+Enter 发送） */
+    void updateSendHint();
 
     // ── 转发 / 收藏 / 图片 / 引用定位 ──
     /** 打开聊天收藏列表（左栏顶部星标按钮） */
@@ -146,20 +176,14 @@ private:
     /** 在当前会话消息里找一条消息的发送者昵称（群聊引用条用；找不到返回空） */
     QString findMessageSenderName(int messageId) const;
 
-    // ── 左栏（近似子导航面板：头部 + 胶囊页签 + 分组标题 + 条目列表）──
+    // ── 左栏（近似子导航面板：头部菜单 + 搜索框 + 系统通知 + 会话列表）──
     QLabel *m_statusLabel = nullptr;
-    QLabel *m_sideGroupTitle = nullptr;   ///< 分组标题（会话 · N / 申请 · N / 添加好友）
-    QPushButton *m_refreshButton = nullptr;
-    QPushButton *m_createGroupButton = nullptr;  ///< 「＋发起群聊」
-    QPushButton *m_bookmarkButton = nullptr;     ///< 「聊天收藏」
-    QPushButton *m_friendsTabButton = nullptr;
-    QPushButton *m_requestsTabButton = nullptr;
-    QPushButton *m_addTabButton = nullptr;
+    QLabel *m_sideGroupTitle = nullptr;   ///< 分组标题（会话 · N）
+    QPushButton *m_menuButton = nullptr;  ///< ☰ 菜单：创建群聊 / 添加好友 / 聊天收藏 / 刷新
     QScrollArea *m_sideScroll = nullptr;
     QWidget *m_sideContainer = nullptr;
     QVBoxLayout *m_sideListLayout = nullptr;
-    QLineEdit *m_searchEdit = nullptr;
-    QWidget *m_convSearchRow = nullptr;    ///< 会话搜索框所在行（只在「好友」页签显示）
+    QWidget *m_convSearchRow = nullptr;    ///< 会话搜索框所在行
     QLineEdit *m_convSearchEdit = nullptr; ///< 按昵称 / 最后一条消息过滤会话列表
 
     // ── 右栏（聊天面板）──
@@ -171,6 +195,7 @@ private:
     QLabel *m_chatStatus = nullptr;
     QPushButton *m_chatProfileButton = nullptr;  ///< 私聊：看对方主页
     QPushButton *m_chatGroupButton = nullptr;    ///< 私聊：一键拉群（带上对方建新群）
+    QPushButton *m_chatSettingsButton = nullptr; ///< 聊天设置（居中弹窗）
     QPushButton *m_chatRemoveButton = nullptr;   ///< 私聊：删除好友
     QPushButton *m_chatMembersButton = nullptr;  ///< 群聊：查看成员
     QPushButton *m_chatInviteButton = nullptr;   ///< 群聊：邀请好友进群（官方群没有）
@@ -184,8 +209,18 @@ private:
     QLabel *m_charCounter = nullptr;       ///< 字数统计（接近上限时出现）
     QPushButton *m_sendButton = nullptr;
 
+    // ── 右栏（系统通知面板，复用站内通知）──
+    QWidget *m_noticeCard = nullptr;
+    QLabel *m_noticeHint = nullptr;        ///< 未读数说明
+    QPushButton *m_noticeMarkAllButton = nullptr;
+    QScrollArea *m_noticeScroll = nullptr;
+    QWidget *m_noticeContainer = nullptr;
+    QVBoxLayout *m_noticeListLayout = nullptr;
+    QVector<ForumNotificationItem> m_notifications;
+    int m_noticeUnread = 0;                ///< 未读通知数（左栏「系统通知」角标）
+    bool m_notificationsLoaded = false;
+
     // ── 状态 ──
-    Tab m_tab = FriendsTab;
     ForumFriendSnapshot m_snapshot;
     ForumFriendInfo m_peer;              ///< 当前私聊会话的好友（与 m_group 二选一）
     ForumGroupInfo m_group;              ///< 当前群聊会话（isValid 时代表群聊已打开）
@@ -198,7 +233,6 @@ private:
     bool m_sending = false;
     bool m_pollBusy = false;
     QTimer m_pollTimer;
-    QTimer m_searchTimer;
     QTimer m_convFilterTimer;               ///< 会话搜索防抖
     QTimer m_draftTimer;                    ///< 草稿保存防抖
     QString m_activeKey;                    ///< 当前会话的 ChatUiStore key（f12 / g3）
@@ -210,6 +244,18 @@ private:
     QPushButton *m_imageButton = nullptr;
     QPushButton *m_fileButton = nullptr;
     QSet<int> m_fileDownloads;           ///< 正在提取/下载中的文件消息 id（防重复点击）
+    QHash<int, QPushButton *> m_p2pSendButtons; ///< 自己邀约卡片上的状态按钮（进度刷新用）
+    QHash<int, QPushButton *> m_p2pRecvButtons; ///< 对方邀约卡片上的「接收」按钮
+    QHash<QString, int> m_p2pRecvMessageIds;    ///< 直传请求 id（tid）→ 邀约消息 id
+    QSet<int> m_p2pSentMessages;         ///< 已完成直传的邀约消息 id（渲染「已发送」）
+    QSet<int> m_p2pSavedMessages;        ///< 已保存完成的对方邀约消息 id（渲染「已保存」）
+    ChatP2POffer m_p2pOffer;             ///< 进行中的直传邀约（tid 非空 = 有直传在等对方）
+    QString m_p2pFilePath;               ///< 正在直传的本地文件
+    qint64 m_p2pFileSize = 0;
+    int m_p2pMessageId = 0;              ///< 邀约消息 id（完成后标「已发送」用）
+    int m_p2pLastPercent = 0;            ///< 直传最近一次进度（重渲染卡片时显示）
+    bool m_p2pFallback = false;          ///< ≤5MB 的邀约等 25 秒没建立连接就自动改走服务器
+    QTimer m_p2pFallbackTimer;
     QWidget *m_replyBar = nullptr;
     QLabel *m_replyLabel = nullptr;
     QPushButton *m_replyCancelButton = nullptr;

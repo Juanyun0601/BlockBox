@@ -13,10 +13,12 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSplitter>
 #include <QTextEdit>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -55,6 +57,15 @@ class AiChatPage : public QWidget
 public:
     explicit AiChatPage(QWidget *parent = nullptr);
     ~AiChatPage();
+
+    /**
+     * @brief 聊天页持有的 AI 服务实例
+     * @return AiService 指针；聊天页尚未初始化时为空
+     *
+     * 本地 MCP 服务器复用它执行外部工具调用。使用这个实例（而不是另建一个）是因为
+     * 下载 / 改版本等工具通过信号驱动主界面，需要用同一套已接线的信号连接。
+     */
+    AiService *aiService() const { return m_aiService; }
 
     /** 悬浮气泡参数 */
     static constexpr int kBubbleWidth = 240;   // 气泡固定宽度（与 SubNavPanel 一致）
@@ -107,6 +118,34 @@ public:
      */
     void addExternalReference(const ResourceReference &ref);
 
+    /**
+     * @brief 从外部注入一批资源引用和一段待发送提示词
+     * @param refs   资源引用列表（去重合并到待发送引用）
+     * @param prompt 预填到输入框的提示词
+     *
+     * 资源版本同步的「让 AI 找替代」入口：主窗口把未适配新版本的资源
+     * 引用与找替代的提示词一并注入，用户确认或直接补几句话后发送。
+     */
+    void addExternalPrompt(const QList<ResourceReference> &refs, const QString &prompt);
+
+    /**
+     * @brief 仅聊天模式（实例助手内使用）
+     * @param chatOnly true=隐藏「聊天 / 工作」切换，固定使用聊天模式
+     *
+     * 实例助手浮在游戏画面之上，工作模式那套文件读写与工具调用不适合在这里用，
+     * 所以实例助手里的 AI 页只保留聊天。
+     */
+    void setChatOnlyMode(bool chatOnly);
+
+    /**
+     * @brief 启用「截图游戏画面发给 AI」（实例助手内使用）
+     * @param enabled 是否在输入栏显示截图按钮
+     *
+     * 点击后截取当前游戏画面（截的瞬间实例助手会短暂隐藏），以缩略图形式
+     * 挂在下一条消息上一起发送，需要支持图片输入的模型（GPT-4o / Gemini / Claude 等）。
+     */
+    void setGameScreenshotEnabled(bool enabled);
+
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
@@ -123,6 +162,7 @@ private slots:
     void onStopStreaming(); ///< 用户点击停止按钮，终止当前流式请求
     void onModelSelectClicked();
     void onReferenceClicked(); ///< 点击「引用」按钮，弹出资源选择对话框
+    void onScreenshotClicked(); ///< 点击「截图」按钮，截取游戏画面附加到下一条消息
     void onPromptOptimizeClicked(); ///< 点击「提示词优化」按钮，AI 改写输入框草稿
     void onPromptOptimized(const QString &optimized); ///< 提示词优化完成，写回输入框
     void onStreamContent(const QString &delta);
@@ -133,6 +173,7 @@ private slots:
     void onThinkingEffortChanged(int index); ///< 思考强度切换
     void onPermissionChanged(int index); ///< 操作权限切换（完全访问需居中确认）
     void onWebSearchResultsCollected(const QList<WebSearchResult> &results); ///< 累积搜索结果到「搜索」过程行
+    void onForumSearchResultsCollected(const QList<ForumSearchHit> &hits); ///< 把论坛搜索结果铺成可点击的帖子链接
     void onAgentToolCallStarted(const QString &name, const QString &arguments); ///< Agent 工具调用开始
     void onAgentToolCallFinished(const QString &name, const QString &resultSummary,
                                  qint64 durationMs, bool success); ///< Agent 工具调用结束
@@ -174,9 +215,9 @@ private:
     /**
      * @brief 按 m_compactMode 重建输入框内工具行布局
      *
-     * 普通模式：左侧三个选择框与右侧五个图标同一行；紧凑模式（实例助手窄窗口）
+     * 普通模式：左侧选择框与右侧图标同一行；紧凑模式（实例助手窄窗口）
      * 拆为两行（选择框一行、图标一行），避免 450px 宽度溢出。
-     * 首次在 initUI 中调用，setCompactMode 切换时重新调用。
+     * 首次在 initUI 中调用，setCompactMode / 截图按钮显隐时重新调用。
      */
     void rebuildToolsRows();
 
@@ -200,8 +241,30 @@ private:
     QList<int> filteredConvIndices() const;    ///< 当前模式下可见对话在 m_conversations 中的索引
     void switchToMode(int mode);               ///< 切换聊天/工作模式
 
+    /**
+     * @brief 工作模式发送前确认社区人机验证
+     *
+     * 论坛开了滑块验证而本机还没验过时，先把验证框弹出来（滑完才继续），
+     * 拿到免验令牌再发消息，免得 AI 干到一半调社区工具时才被验证打断。
+     * 已验过、论坛没开验证、或这次已经取消过的，直接放行。
+     */
+    void ensureForumHumanCheckBeforeSend();
+
+    /// 后台查一次 /api/human/status，记下论坛是否开启人机验证（进工作模式时调用）
+    void refreshForumHumanCheckStatus();
+
     // 对话列表悬浮气泡：重新计算几何（宿主尺寸变化时调用）
     void updateConvBubbleGeometry();
+
+    /**
+     * @brief 开关对话气泡的外投影特效
+     * @param enabled true 挂上投影；false 摘掉
+     *
+     * 投影会把面板整块转成离屏渲染，而展开动画期间面板宽度是连续变化的，
+     * 离屏缓存不跟着失效就会画出一片空白（侧栏「展开了却没内容」）。
+     * 所以动画期间关掉，落位后再挂上。
+     */
+    void setConvPanelShadowEnabled(bool enabled);
 
     /**
      * @brief 展开/收起左侧对话列表气泡
@@ -227,7 +290,8 @@ private:
     void showWelcome(bool visible);     ///< 欢迎区已移除：仅清空消息布局并隐藏欢迎控件
     void addMessageBubble(const ChatMessage &msg);
     QWidget* createMessageWidget(const QString &text, bool isUser,
-                                 const QList<ResourceReference> &refs = {});
+                                 const QList<ResourceReference> &refs = {},
+                                 const QList<ChatImage> &images = {});
     QWidget* createThinkingWidget(const QString &text, bool running = false);
     QWidget* createTypingIndicator();
 
@@ -388,6 +452,31 @@ private:
      */
     QWidget* buildReadOnlyRefChips(const QList<ResourceReference> &refs);
     /**
+     * @brief 重建输入框上方的待发送截图缩略图条
+     *
+     * 有截图或状态提示时显示，否则隐藏；缩略图点开可看大图，右上角 × 移除。
+     */
+    void rebuildImageStrip();
+    void removePendingImage(int index);  ///< 移除指定待发送截图
+    void clearPendingImages();           ///< 消息发出后清空待发送截图
+    /** 清理已不被任何对话引用的截图缓存文件（删对话 / 清空对话后调用） */
+    void sweepImageCache();
+    /**
+     * @brief 在缩略图条里显示一句状态提示（约 4 秒后自动消失）
+     * @param text  提示文字（空=清除）
+     * @param error true=红色错误样式
+     */
+    void showImageHint(const QString &text, bool error = false);
+    /**
+     * @brief 构造气泡内的截图展示区（已发送/接收的消息里回显截图）
+     * @param images 截图列表
+     * @param isUser 是否用户消息（决定缩略图尺寸）
+     * @return 含点击看大图的缩略图容器
+     */
+    QWidget* buildMessageImages(const QList<ChatImage> &images, bool isUser);
+    /** 取一张截图的缩略图（优先用缓存文件，缺失时解码 dataUrl） */
+    static QPixmap chatImagePixmap(const ChatImage &image, int side);
+    /**
      * @brief 将待发送引用列表格式化为附加到用户消息的文本描述
      * @return 格式化的引用描述文本（无引用时返回空字符串）
      *
@@ -500,6 +589,16 @@ private:
     QPushButton *m_promptOptimizeBtn; ///< 提示词优化按钮（AI 改写输入框草稿）
     bool m_promptOptimizeBusy;        ///< 提示词优化请求是否正在飞行（防并发、锁定按钮）
     QStringList m_selectedPromptIds; ///< 当前选中的系统提示词 ID
+    QPushButton *m_screenshotBtn;    ///< 截图游戏画面按钮（实例助手内启用）
+
+    // 待发送的游戏截图（实例助手内聊天时把画面发给 AI）
+    QWidget *m_imageStrip;           ///< 输入框上方的截图区（提示文字 + 缩略图两行）
+    QVBoxLayout *m_imageStripLayout; ///< 截图区纵向布局
+    QWidget *m_imageRow;             ///< 缩略图行容器（无截图时整行隐藏）
+    QHBoxLayout *m_imageRowLayout;   ///< 缩略图行布局
+    QLabel *m_imageStripHint;        ///< 截图状态提示（已截取 / 失败原因）
+    QTimer *m_imageHintTimer;        ///< 提示自动消失
+    QList<ChatImage> m_pendingImages; ///< 待随下一条消息发送的截图
 
     // 手机端底部输入栏（Android / 鸿蒙）
     bool m_mobileMode;                  ///< 是否手机端（输入卡片默认收进居中弹窗）
@@ -531,5 +630,13 @@ private:
     QWidget *m_welcomeQuickBtns;    ///< 工作模式快捷按钮容器
     QGridLayout *m_welcomeQuickLayout; ///< 快捷按钮网格布局（便于切换列数）
     int m_currentMode;              ///< 当前模式：0=聊天，1=工作
+    // 工作模式的社区人机验证（发送前先做掉，别等 AI 调论坛工具时再弹）
+    bool m_forumHumanStatusKnown;   ///< 是否已经查过论坛要不要人机验证
+    bool m_forumHumanEnabled;       ///< 论坛是否开启了人机验证
+    bool m_forumHumanPrompted;      ///< 本次进入工作模式后是否已经弹过（取消后不再追问）
+    bool m_forumHumanStatusPending; ///< /api/human/status 查询是否在途
     bool m_compactMode;             ///< 紧凑模式（实例助手窄窗口场景）
+    QWidget *m_modeBar;             ///< 「聊天 / 工作」切换容器（只聊天模式下隐藏）
+    bool m_chatOnlyMode;            ///< 仅聊天模式（实例助手内固定聊天模式）
+    bool m_gameScreenshotEnabled;   ///< 是否启用「截图游戏画面发给 AI」
 };

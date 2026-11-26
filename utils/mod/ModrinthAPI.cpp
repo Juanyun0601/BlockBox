@@ -184,6 +184,9 @@ void ModrinthAPI::onSearchReplyFinished()
         info.source = "modrinth";
         // 真实项目类型：不带 project_type facet 的搜索要靠它区分卡片类型
         info.contentKind = obj["project_type"].toString();
+        // Java 服务器是独立项目类型：项目页挂在 /server/ 下，抓取时按它拼地址
+        if (info.contentKind == QStringLiteral("minecraft_java_server"))
+            info.pageUrl = QString("https://modrinth.com/server/%1").arg(obj["slug"].toString());
         info.downloadCount = obj["downloads"].toInt();
         info.followers = obj["follows"].toInt();
         info.latestVersion = obj["latest_version"].toString();
@@ -287,6 +290,9 @@ void ModrinthAPI::parseProjectObject(const QJsonObject &obj, ModInfo &info)
     info.pageUrl = QString("https://modrinth.com/mod/%1").arg(obj["slug"].toString());
     info.source = "modrinth";
     info.contentKind = obj["project_type"].toString();
+    info.projectStatus = obj["status"].toString();
+    if (info.contentKind == QStringLiteral("minecraft_java_server"))
+        info.pageUrl = QString("https://modrinth.com/server/%1").arg(obj["slug"].toString());
     info.downloadCount = obj["downloads"].toInt();
     info.followers = obj["followers"].toInt();
 

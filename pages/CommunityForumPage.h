@@ -58,6 +58,9 @@ public:
     /** 大厅里还开着房间详情时先关详情并返回 true（顶栏返回键逐级退回用） */
     bool closeLobbyDetailIfVisible();
 
+    /** 软件其它入口（侧边栏「更多>联机大厅」）直接开大厅子页面 */
+    void openLobby();
+
 signals:
     /** 点击一个主题行：在启动器内打开帖子详情 */
     void threadOpenRequested(int threadId);
@@ -73,6 +76,9 @@ signals:
 
     /** 点击「好友」：打开启动器内的好友与私信页 */
     void friendsOpenRequested();
+
+    /** 点击「我的主页」：打开自己的论坛个人主页（关注 / 粉丝名单也在这里） */
+    void myProfileRequested();
 
     /** 点击「通知」：跳到论坛账户页的通知页签 */
     void notificationsRequested();
@@ -161,6 +167,7 @@ private:
     QPushButton *m_refreshButton = nullptr;
     QPushButton *m_composeButton = nullptr;   ///< 「发帖」：进启动器内的发帖页
     QPushButton *m_friendsButton = nullptr;   ///< 「好友」：进启动器内的好友与私信页（已登录时显示）
+    QPushButton *m_myProfileButton = nullptr; ///< 「我的主页」：看自己的关注 / 粉丝名单（已登录时显示）
     QPushButton *m_notifyButton = nullptr;    ///< 「通知」：跳账户页通知页签（已登录时显示）
     QPushButton *m_loginButton = nullptr;     ///< 「登录」：跳账户页（未登录时显示）
 

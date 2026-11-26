@@ -19,18 +19,21 @@
 #include "utils/ContentAnimator.h"
 #include "components/BackgroundWidget.h"
 #include "components/InstanceAssistantWindow.h"
+#include "components/NetworkCheckDialog.h"
 #include "components/NotificationManager.h"
 #include "components/SideBar.h"
 #include "components/SubNavPanel.h"
 #include "components/TaskBar.h"
 #include "components/TopBar.h"
 #include "utils/GameLauncher.h"
+#include "utils/ForumAccountService.h"
 #include "pages/AiChatPage.h"
 #include "pages/JavaDownloadPage.h"
 #include "pages/AddAccountPage.h"
 #include "pages/CreationCenterPage.h"
 #include "pages/ForumAccountPage.h"
 #include "pages/ForgeVersionListPage.h"
+#include "pages/GameLaunchPage.h"
 #include "pages/HomePage.h"
 #include "pages/InstallInstancePage.h"
 #include "pages/InstanceManagePage.h"
@@ -42,10 +45,19 @@
 #include "pages/SettingsPage.h"
 #include "pages/TaskDetailPage.h"
 #include "pages/ModDetailPage.h"
+#include "pages/ContentDetailPage.h"
 #include "pages/LocalModDetailPage.h"
 #include "pages/ModDownloadPage.h"
 #include "pages/ContentDownloadPage.h"
 #include "pages/ForumPluginListPage.h"
+#include "pages/ForumSchematicListPage.h"
+#include "pages/CommunitySkinPage.h"
+#include "pages/CommunitySkinDetailPage.h"
+#include "pages/SkinStationPage.h"
+#include "pages/LibraryPage.h"
+#include "pages/MorePage.h"
+#include "pages/AnnualReportPage.h"
+#include "pages/QrScanPage.h"
 #include "pages/PluginPage.h"
 #include "pages/ModpackImportPage.h"
 #include "pages/ModpackExportPage.h"
@@ -60,6 +72,8 @@
 #include "pages/ForumUserProfilePage.h"
 #include "pages/FeedbackPage.h"
 #include "pages/FeedbackComposePage.h"
+#include "pages/FeedbackDetailPage.h"
+#include "pages/TranslationComposePage.h"
 #include "pages/ForumReportPage.h"
 #include "pages/ForumFriendsPage.h"
 #include "pages/MultiplayerLobbyPage.h"
@@ -100,9 +114,6 @@ void MainWindow::initEssentialPages()
     m_stackedWidget->addWidget(scrollArea1);
 
     // 连接最近游玩信号
-    // 首页空态轮播卡片：点击后跳到「设置 → 界面设置」添加自己的图片
-    connect(homePage, &HomePage::customizeCarouselRequested,
-            this, &MainWindow::openInterfaceSettings);
     connect(homePage, &HomePage::recentPlayLaunchClicked, this, [this](const QString &gameRootPath) {
         // 根据游戏根路径查找第一个版本并启动
         QString versionPath = findFirstVersionInGameRoot(gameRootPath);
@@ -466,6 +477,50 @@ void MainWindow::initEssentialPages()
     QWidget *placeholderForumReport = new QWidget(this);
     m_stackedWidget->addWidget(placeholderForumReport);
 
+    // 资源页「投影」列表页占位（论坛投影分享板块，按需创建）
+    QWidget *placeholderForumSchematicList = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderForumSchematicList);
+
+    // 安卓端整页启动界面占位（点「启动游戏」进入；桌面端不会切到这一页）
+    QWidget *placeholderGameLaunch = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderGameLaunch);
+
+    // 反馈详情页占位（反馈列表点卡片进入：正文 / 管理员回复 / 评论区）
+    QWidget *placeholderFeedbackDetail = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderFeedbackDetail);
+
+    // 创建 / 完善翻译页占位（在线详情页「创建翻译」进入）
+    QWidget *placeholderTranslationCompose = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderTranslationCompose);
+
+    // 资源页「皮肤」列表页占位（方块皮肤站皮肤库，按需创建）
+    QWidget *placeholderCommunitySkin = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderCommunitySkin);
+
+    // 皮肤站整页占位（账户管理页「皮肤站」入口：衣柜 / 皮肤库 / 3D 预览都在软件内）
+    QWidget *placeholderSkinStation = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderSkinStation);
+
+    // 我的 MC 年度报告页占位（账户管理页「游玩」里的年度报告卡片进入）
+    QWidget *placeholderAnnualReport = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderAnnualReport);
+
+    // 皮肤库作品详情页占位（资源>皮肤点卡片进入，保持 PageIndex 枚举与 stackedWidget 索引对齐）
+    QWidget *placeholderCommunitySkinDetail = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderCommunitySkinDetail);
+
+    // 扫码登录页占位（手机端顶栏「扫描」进入，按需创建；桌面端不显示入口）
+    QWidget *placeholderQrScan = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderQrScan);
+
+    // 方块图书馆占位（顶栏「文档」/ 设置-关于进入，软件内阅读四卷文档）
+    QWidget *placeholderLibrary = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderLibrary);
+
+    // 更多功能页占位（侧边栏「更多」分类的落地页，按需创建）
+    QWidget *placeholderMore = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderMore);
+
     // 手机端：把启动时就存在的各页面内容滚动区统一开启手指拖动滚动
     // （懒加载页面在切换到时由页面切换钩子补挂，见 mainwindow.cpp）
     for (int i = 0; i < m_stackedWidget->count(); ++i)
@@ -563,11 +618,41 @@ void MainWindow::ensurePageInitialized(PageIndex pageIndex)
     case PageIndex::FeedbackComposePage:
         initFeedbackComposePage();
         break;
+    case PageIndex::FeedbackDetailPage:
+        initFeedbackDetailPage();
+        break;
+    case PageIndex::TranslationComposePage:
+        initTranslationComposePage();
+        break;
     case PageIndex::ForumFriendsPage:
         initForumFriendsPage();
         break;
     case PageIndex::ForumPluginListPage:
         initForumPluginListPage();
+        break;
+    case PageIndex::ForumSchematicListPage:
+        initForumSchematicListPage();
+        break;
+    case PageIndex::CommunitySkinPage:
+        initCommunitySkinPage();
+        break;
+    case PageIndex::CommunitySkinDetailPage:
+        initCommunitySkinDetailPage();
+        break;
+    case PageIndex::LibraryPageIndex:
+        initLibraryPage();
+        break;
+    case PageIndex::MorePageIndex:
+        initMorePage();
+        break;
+    case PageIndex::QrScanPage:
+        initQrScanPage();
+        break;
+    case PageIndex::SkinStationPage:
+        initSkinStationPage();
+        break;
+    case PageIndex::AnnualReportPage:
+        initAnnualReportPage();
         break;
     case PageIndex::PublishPage:
         initPublishPage();
@@ -586,6 +671,9 @@ void MainWindow::ensurePageInitialized(PageIndex pageIndex)
         break;
     case PageIndex::ForumReportPage:
         initForumReportPage();
+        break;
+    case PageIndex::GameLaunchPage:
+        initGameLaunchPage();
         break;
     case PageIndex::SettingsPage:
         initSettingsPage();
@@ -634,6 +722,8 @@ void MainWindow::initInstanceSelectPage()
     connect(m_instanceSelectPage, &InstanceSelectPage::instanceSelected, this, &MainWindow::onInstanceSelected);
     connect(m_instanceSelectPage, &InstanceSelectPage::launchGameRequested,
             this, qOverload<const QString&>(&MainWindow::onLaunchGameClicked));
+    connect(m_instanceSelectPage, &InstanceSelectPage::openAssistantRequested,
+            this, &MainWindow::openInstanceAssistantFor);
     connect(m_instanceSelectPage, &InstanceSelectPage::installNewInstanceRequested, this, [this]() {
         ensurePageInitialized(PageIndex::InstallInstancePage);
         // 从实例页进入"安装新实例"时同样需要恢复资源子导航
@@ -698,6 +788,9 @@ void MainWindow::buildForumAccountManagePage()
     m_accountUiStack->addWidget(m_forumAccountPage);
 
     connect(m_forumAccountPage, &ForumAccountPage::backToMainRequested, this, &MainWindow::onBackToMain);
+    // 「游玩」页签里的年度报告卡片：打开整页报告，返回落点仍是账户管理页的「游玩」
+    connect(m_forumAccountPage, &ForumAccountPage::annualReportRequested, this,
+            &MainWindow::showAnnualReportPage);
     connect(m_forumAccountPage, &ForumAccountPage::accountManagePageOpened,
             this, &MainWindow::onAccountManagePageOpened);
 
@@ -822,6 +915,10 @@ void MainWindow::buildForumAccountManagePage()
         connect(m_creationCenterPage, &CreationCenterPage::publishRequested, this,
                 [this]() { showPublishPage(); });
     }
+
+    // 「皮肤站」：软件内整页打开（不再弹独立窗口），返回键回账户管理页
+    connect(m_forumAccountPage, &ForumAccountPage::skinStationRequested, this,
+            &MainWindow::showSkinStationPage);
 }
 
 void MainWindow::initLaunchDetailsPage()
@@ -831,11 +928,31 @@ void MainWindow::initLaunchDetailsPage()
     PerformanceMonitor::instance()->startMeasurement("启动详情页初始化");
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::LaunchDetailsPage));
     m_launchDetailsPage = new LaunchDetailsPage(this);
+    // 「取消启动」：路由到详情页当前聚焦的启动会话（多实例并行时可能是并行会话）
+    connect(m_launchDetailsPage, &LaunchDetailsPage::cancelLaunchRequested, this, [this]() {
+        GameLauncher *session = m_launchSessions.value(m_focusedLaunchSession, nullptr);
+        if (!session)
+            session = m_gameLauncher;
+        if (session)
+            session->stopGame();
+    });
     m_stackedWidget->removeWidget(placeholder);
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::LaunchDetailsPage), m_launchDetailsPage);
     delete placeholder;
     m_pageInitialized[PageIndex::LaunchDetailsPage] = true;
     PerformanceMonitor::instance()->endMeasurement("启动详情页初始化");
+}
+
+void MainWindow::initGameLaunchPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::GameLaunchPage]) { return; }
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::GameLaunchPage));
+    m_gameLaunchPage = new GameLaunchPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::GameLaunchPage), m_gameLaunchPage);
+    delete placeholder;
+    m_pageInitialized[PageIndex::GameLaunchPage] = true;
 }
 
 void MainWindow::initInstallInstancePage()
@@ -1028,6 +1145,29 @@ void MainWindow::initModDetailPage()
         showModDetailPage(depInfo, m_modDetailPage->instanceGameVersion(),
                           m_modDetailPage->instanceLoaderType());
     });
+    // 点击「创建翻译 / 完善翻译」：带原文进翻译编辑页，返回落点仍是本详情页
+    connect(m_modDetailPage, &ModDetailPage::translationComposeRequested,
+            this, [this](const ModInfo &info) {
+        if (!m_modDetailPage)
+            return;
+        m_translationComposeInfo = info;
+        // 预填原文用资源本身的简介/正文（详情回包后 m_modInfo 已合并完整原文）
+        m_translationSourceSummary = info.description;
+        m_translationSourceDetailHtml = info.detailedDescription.isEmpty()
+            ? info.description : info.detailedDescription;
+        showTranslationComposePage([this]() {
+            // 返回模组详情页：不重新拉详情，保持页面状态（含已切到「中」的译文）
+            if (!m_modDetailPage)
+                return;
+            setSideBarVisible(false);
+            const ModInfo cur = m_modDetailPage->currentModInfo();
+            const QString name = cur.chineseName.isEmpty() ? cur.name : cur.chineseName;
+            m_topBar->setTitle(tr("资源>模组>%1").arg(name));
+            disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+            connect(m_topBar, &TopBar::backClicked, this, [this]() { showModDownloadPage(); });
+            m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::ModDetailPage));
+        });
+    });
     m_pageInitialized[PageIndex::ModDetailPage] = true;
     PerformanceMonitor::instance()->endMeasurement("模组详情页初始化");
 }
@@ -1182,11 +1322,22 @@ void MainWindow::showLaunchDetailsPage()
     setSideBarVisible(false);
     m_topBar->setLaunchDetailsTitle();
     m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::LaunchDetailsPage));
-    if (m_taskBar && m_taskBar->launchTaskCard()) {
-        m_launchDetailsPage->setDetails(m_taskBar->launchTaskCard()->details());
+    // 多实例并行启动：详情页展示当前聚焦会话（点击哪张启动卡片就看谁的日志）
+    const QString focusedPath = m_focusedLaunchSession;
+    LaunchTaskCard *focusedCard = m_taskBar ? m_taskBar->launchCard(focusedPath) : nullptr;
+    if (m_taskBar && focusedCard) {
+        m_launchDetailsPage->setDetails(focusedCard->details());
     }
-    // 根据当前游戏状态更新详情页状态
-    auto status = GameLauncher::instance()->status();
+    // 根据该会话卡片记录的游戏状态更新详情页状态；
+    // 卡片已不存在（会话已结束收起）则按主单例状态兜底
+    GameLauncher::LaunchStatus status = GameLauncher::Idle;
+    if (focusedCard) {
+        status = static_cast<GameLauncher::LaunchStatus>(focusedCard->status());
+    } else if (GameLauncher *session = GameLauncher::sessionForInstance(focusedPath)) {
+        status = session->status();
+    } else if (m_gameLauncher) {
+        status = m_gameLauncher->status();
+    }
     switch (status) {
     case GameLauncher::Idle:
         m_launchDetailsPage->setLaunchStatus("启动日志", false);
@@ -1204,6 +1355,19 @@ void MainWindow::showLaunchDetailsPage()
         m_launchDetailsPage->setLaunchStatus("游戏已停止", false);
         break;
     }
+}
+
+void MainWindow::showGameLaunchPage()
+{
+    ensurePageInitialized(PageIndex::GameLaunchPage);
+    if (!m_gameLaunchPage)
+        return;
+    int currentIdx = m_stackedWidget->currentIndex();
+    m_previousPage = static_cast<PageIndex>(currentIdx);
+    m_hasPreviousPage = true;
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("启动游戏"));
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::GameLaunchPage));
 }
 
 void MainWindow::showTaskListPage()
@@ -1381,6 +1545,11 @@ void MainWindow::initJavaDownloadPage()
     PerformanceMonitor::instance()->endMeasurement("Java 下载页初始化");
 }
 
+void MainWindow::showNetworkCheckDialog()
+{
+    NetworkCheckDialog::runCheck(this);
+}
+
 void MainWindow::showJavaDownloadPage()
 {
     ensurePageInitialized(PageIndex::JavaDownloadPage);
@@ -1459,6 +1628,10 @@ void MainWindow::initPluginPage()
             this, &MainWindow::onImportPluginRequested);
     connect(m_pluginPage, &PluginPage::createPluginRequested,
             this, &MainWindow::onCreatePluginRequested);
+    // 插件页「开发文档」：跳到内置图书馆的插件开发卷（快速开始）
+    connect(m_pluginPage, &PluginPage::openDocsRequested, this, [this]() {
+        openLibraryDoc(QStringLiteral("plugin"), QStringLiteral("intro"));
+    });
     connect(m_pluginPage, &PluginPage::removePluginRequested,
             this, &MainWindow::onRemovePluginRequested);
     connect(m_pluginPage, &PluginPage::openPluginsDirRequested,
@@ -1512,19 +1685,39 @@ void MainWindow::initSettingsPage()
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::SettingsPage), scrollArea);
     delete placeholder;
     connect(settingsPage, &SettingsPage::downloadJavaRequested, this, &MainWindow::showJavaDownloadPage);
+    // 常规设置里点了「网络连通性自检」：弹出网络自检对话框
+    connect(settingsPage, &SettingsPage::networkCheckRequested, this, &MainWindow::showNetworkCheckDialog);
     // 关于页点了「意见反馈」：跳到软件内反馈页
     connect(settingsPage, &SettingsPage::openFeedbackRequested, this, &MainWindow::showFeedbackPage);
+    // 关于页「文档中心」：打开软件内置的方块图书馆
+    connect(settingsPage, &SettingsPage::openLibraryRequested, this, &MainWindow::showLibraryPage);
+    // AI 助手设置里的「接入文档」：直接跳到 MCP 接入卷
+    connect(settingsPage, &SettingsPage::openLibraryDocRequested, this,
+            [this](const QString &volume, const QString &chapter) {
+                openLibraryDoc(volume, chapter);
+            });
     // 通用设置里点了「打开新手引导」：跳到新手引导页（独立整页，不是弹窗）
     connect(settingsPage, &SettingsPage::openOnboardingRequested, this,
             [this]() { showOnboardingPage(false); });
+    // AI 助手设置里改了本地 MCP 服务器（开关 / 端口 / 令牌 / 写权限）：立即生效
+    connect(settingsPage, &SettingsPage::mcpServerSettingsChanged,
+            this, &MainWindow::applyMcpServerSettings);
     // 界面设置里改了首页轮播图：立即刷新首页轮播（无需重启）
     connect(settingsPage, &SettingsPage::carouselImagesChanged, this, [this]() {
         if (m_homePage) {
             m_homePage->reloadCarouselImages();
         }
     });
+    // 首页里下载完预设封面 / 导入了自己的风景图：同步「界面设置」的轮播图卡片
+    if (m_homePage) {
+        connect(m_homePage, &HomePage::carouselImagesChanged,
+                settingsPage, &SettingsPage::refreshCarouselEditor);
+    }
     m_pageInitialized[PageIndex::SettingsPage] = true;
     PerformanceMonitor::instance()->endMeasurement("设置页初始化");
+
+    // 设置页是懒创建的：把 MCP 服务器当前状态补显示到新卡片上
+    syncMcpStatusToSettingsPage();
 }
 
 void MainWindow::initCommunityPage()
@@ -1561,6 +1754,13 @@ void MainWindow::initCommunityPage()
         m_forumReturnAction = [this]() { returnToCommunityPage(); };
         showForumFriends();
     });
+    connect(m_communityPage, &CommunityForumPage::myProfileRequested, this, [this]() {
+        const int userId = ForumAccountService::instance()->user().id;
+        if (userId <= 0)
+            return;
+        m_forumReturnAction = [this]() { returnToCommunityPage(); };
+        showForumUserProfile(userId);
+    });
     connect(m_communityPage, &CommunityForumPage::notificationsRequested, this, [this]() {
         m_forumReturnAction = [this]() { returnToCommunityPage(); };
         showAccountManagePage();
@@ -1594,6 +1794,8 @@ void MainWindow::initForumThreadDetailPage()
 
     QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ForumThreadDetailPage));
     m_forumThreadDetailPage = new ForumThreadDetailPage(this);
+    // 投影帖「投影预览」按当前实例取方块材质
+    m_forumThreadDetailPage->setInstancePath(m_currentInstancePath);
     m_stackedWidget->removeWidget(placeholder);
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ForumThreadDetailPage),
                                   m_forumThreadDetailPage);
@@ -1627,6 +1829,14 @@ void MainWindow::initForumThreadDetailPage()
     connect(m_forumThreadDetailPage, &ForumThreadDetailPage::pluginInstalled, this, [this]() {
         // 帖子里装好了插件，侧边栏「插件」分组跟着亮出来
         refreshPluginNav();
+    });
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::projectionModMissing, this,
+            &MainWindow::ensureProjectionModForDownload);
+    connect(m_forumThreadDetailPage, &ForumThreadDetailPage::projectionSaved, this, [this]() {
+        // 投影存进了当前实例，实例的投影列表跟着刷新，切过去就能看到
+        if (m_instanceManagePage
+            && m_instanceManagePage->currentInstancePath() == m_currentInstancePath)
+            m_instanceManagePage->refreshProjectionPage();
     });
     connect(m_forumThreadDetailPage, &ForumThreadDetailPage::backRequested, this, [this]() {
         returnToCommunityPage();
@@ -1730,6 +1940,11 @@ void MainWindow::initForumUserProfilePage()
                 m_forumReturnAction = [this]() { presentForumUserProfile(); };
                 showForumThread(threadId);
             });
+    connect(m_forumUserProfilePage, &ForumUserProfilePage::userOpenRequested, this,
+            [this](int userId) {
+                m_forumReturnAction = [this]() { presentForumUserProfile(); };
+                showForumUserProfile(userId);
+            });
     connect(m_forumUserProfilePage, &ForumUserProfilePage::chatOpenRequested, this,
             [this](int userId) {
                 m_forumReturnAction = [this]() { presentForumUserProfile(); };
@@ -1759,15 +1974,34 @@ void MainWindow::initFeedbackPage()
     connect(m_feedbackPage, &FeedbackPage::composeRequested, this,
             &MainWindow::showFeedbackComposePage);
 
-    // 评论区点了「登录 / 注册」：跳账户页弹登录表单，回来刷新反馈列表
-    connect(m_feedbackPage, &FeedbackPage::loginRequested, this, [this]() {
-        m_forumReturnAction = [this]() { returnToFeedbackList(); };
+    // 点了反馈卡片：进这条反馈的独立详情页，返回落点是反馈列表
+    connect(m_feedbackPage, &FeedbackPage::feedbackOpenRequested, this,
+            [this](const PublicFeedbackItem &item) { showFeedbackDetail(item); });
+
+    m_pageInitialized[PageIndex::FeedbackPage] = true;
+}
+
+void MainWindow::initFeedbackDetailPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::FeedbackDetailPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::FeedbackDetailPage));
+    m_feedbackDetailPage = new FeedbackDetailPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::FeedbackDetailPage),
+                                  m_feedbackDetailPage);
+    delete placeholder;
+
+    // 评论区点了「登录 / 注册」：先记下返回落点是当前这条反馈的详情页，再去登录
+    connect(m_feedbackDetailPage, &FeedbackDetailPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { presentFeedbackDetailPage(); };
         showAccountManagePage();
         if (m_forumAccountPage)
             m_forumAccountPage->openLoginForm();
     });
 
-    m_pageInitialized[PageIndex::FeedbackPage] = true;
+    m_pageInitialized[PageIndex::FeedbackDetailPage] = true;
 }
 
 void MainWindow::initFeedbackComposePage()
@@ -1789,9 +2023,12 @@ void MainWindow::initFeedbackComposePage()
         if (m_forumAccountPage)
             m_forumAccountPage->openLoginForm();
     });
-    // 提交成功：回到反馈列表页刷新
-    connect(m_feedbackComposePage, &FeedbackComposePage::submitted, this,
-            &MainWindow::showFeedbackPage);
+    // 提交成功：回到反馈列表第一页刷新，刚提交的反馈就在最上面
+    connect(m_feedbackComposePage, &FeedbackComposePage::submitted, this, [this]() {
+        if (m_feedbackPage)
+            m_feedbackPage->resetPaging();
+        showFeedbackPage();
+    });
 
     m_pageInitialized[PageIndex::FeedbackComposePage] = true;
 }
@@ -1823,6 +2060,48 @@ void MainWindow::initForumReportPage()
     m_pageInitialized[PageIndex::ForumReportPage] = true;
 }
 
+void MainWindow::initTranslationComposePage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::TranslationComposePage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::TranslationComposePage));
+    m_translationComposePage = new TranslationComposePage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::TranslationComposePage),
+                                  m_translationComposePage);
+    delete placeholder;
+
+    // 未登录点了「去登录」：先记下返回动作再跳账户页弹登录表单
+    connect(m_translationComposePage, &TranslationComposePage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { presentTranslationComposePage(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+    // 提交成功：回到详情页，并把「创建翻译」按钮换成「完善翻译」
+    connect(m_translationComposePage, &TranslationComposePage::submitted, this, [this]() {
+        if (m_modDetailPage)
+            m_modDetailPage->notifyTranslationSubmitted();
+        if (m_contentDetailPage)
+            m_contentDetailPage->notifyTranslationSubmitted();
+        onForumPageBack();  // 走进入时记下的返回动作回详情页
+    });
+
+    m_pageInitialized[PageIndex::TranslationComposePage] = true;
+}
+
+void MainWindow::showTranslationComposePage(std::function<void()> returnToDetail)
+{
+    ensurePageInitialized(PageIndex::TranslationComposePage);
+    // 返回落点由进入入口决定（模组详情页 / 整合包等内容详情页），提交成功后也走它回详情页
+    m_forumReturnAction = std::move(returnToDetail);
+    presentTranslationComposePage();
+    if (m_translationComposePage)
+        m_translationComposePage->open(m_translationComposeInfo, m_translationSourceSummary,
+                                       m_translationSourceDetailHtml);
+}
+
 void MainWindow::initForumFriendsPage()
 {
     QMutexLocker locker(&m_initMutex);
@@ -1844,6 +2123,11 @@ void MainWindow::initForumFriendsPage()
     connect(m_forumFriendsPage, &ForumFriendsPage::userOpenRequested, this, [this](int userId) {
         m_forumReturnAction = [this]() { presentForumFriends(); };
         showForumUserProfile(userId);
+    });
+    // 系统通知里点开帖子类通知：在启动器内打开帖子详情，返回回到聊天页
+    connect(m_forumFriendsPage, &ForumFriendsPage::threadOpenRequested, this, [this](int threadId) {
+        m_forumReturnAction = [this]() { presentForumFriends(); };
+        showForumThread(threadId);
     });
 
     m_pageInitialized[PageIndex::ForumFriendsPage] = true;
@@ -1887,13 +2171,334 @@ void MainWindow::showForumPluginListPage()
     ensurePageInitialized(PageIndex::ForumPluginListPage);
     // 恢复"资源>插件"的侧边栏与子导航：从插件原帖详情或登录页返回时，
     // 侧边栏会整条隐藏且子导航此前不会自动回来
-    restoreSideBarWithSubNav(1, 8);
+    restoreSideBarWithSubNav(1, 10);
     m_topBar->setTitle(tr("资源>插件"));
     disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
     connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
     animatedSwitchToPage(PageIndex::ForumPluginListPage);
     if (m_forumPluginListPage)
         m_forumPluginListPage->openPage();
+}
+
+void MainWindow::initForumSchematicListPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::ForumSchematicListPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::ForumSchematicListPage));
+    m_forumSchematicListPage = new ForumSchematicListPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ForumSchematicListPage),
+                                  m_forumSchematicListPage);
+    delete placeholder;
+
+    m_forumSchematicListPage->setInstancePath(m_currentInstancePath);
+
+    // 点投影卡跳到原帖（返回键回到投影列表）
+    connect(m_forumSchematicListPage, &ForumSchematicListPage::threadOpenRequested, this,
+            [this](int threadId) {
+                m_forumReturnAction = [this]() { showForumSchematicListPage(); };
+                showForumThread(threadId);
+            });
+    // 「去发布」：直接进投影发布页
+    connect(m_forumSchematicListPage, &ForumSchematicListPage::composeRequested, this,
+            &MainWindow::showPublishSchematicCompose);
+    // 未登录拉列表 401：跳账户页登录
+    connect(m_forumSchematicListPage, &ForumSchematicListPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { showForumSchematicListPage(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+    // 投影存进了当前实例：实例管理里的投影列表跟着刷新
+    connect(m_forumSchematicListPage, &ForumSchematicListPage::projectionSaved, this, [this]() {
+        if (m_instanceManagePage
+            && m_instanceManagePage->currentInstancePath() == m_currentInstancePath)
+            m_instanceManagePage->refreshProjectionPage();
+    });
+    // 实例还没有投影目录：自动装投影模组（Litematica）
+    connect(m_forumSchematicListPage, &ForumSchematicListPage::projectionModMissing, this,
+            &MainWindow::ensureProjectionModForDownload);
+
+    m_pageInitialized[PageIndex::ForumSchematicListPage] = true;
+}
+
+void MainWindow::showForumSchematicListPage()
+{
+    ensurePageInitialized(PageIndex::ForumSchematicListPage);
+    // 与「资源>插件」一致：恢复侧边栏与子导航选中，返回键回主页
+    restoreSideBarWithSubNav(1, 9);
+    m_topBar->setTitle(tr("资源>投影"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    animatedSwitchToPage(PageIndex::ForumSchematicListPage);
+    if (m_forumSchematicListPage)
+    {
+        m_forumSchematicListPage->setInstancePath(m_currentInstancePath);
+        m_forumSchematicListPage->openPage();
+    }
+}
+
+void MainWindow::initCommunitySkinPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::CommunitySkinPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::CommunitySkinPage));
+    m_communitySkinPage = new CommunitySkinPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::CommunitySkinPage),
+                                  m_communitySkinPage);
+    delete placeholder;
+
+    // 未登录拉皮肤库 401：跳账户页登录，登录完回到皮肤列表
+    connect(m_communitySkinPage, &CommunitySkinPage::loginRequested, this, [this]() {
+        m_forumReturnAction = [this]() { showCommunitySkinPage(); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+    // 点作品卡：打开整页的作品详情（不再弹小窗）
+    connect(m_communitySkinPage, &CommunitySkinPage::skinDetailRequested, this,
+            &MainWindow::showCommunitySkinDetail);
+
+    m_pageInitialized[PageIndex::CommunitySkinPage] = true;
+}
+
+void MainWindow::initCommunitySkinDetailPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::CommunitySkinDetailPage]) { return; }
+
+    QWidget *placeholder =
+        m_stackedWidget->widget(static_cast<int>(PageIndex::CommunitySkinDetailPage));
+    m_communitySkinDetailPage = new CommunitySkinDetailPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::CommunitySkinDetailPage),
+                                  m_communitySkinDetailPage);
+    delete placeholder;
+
+    // 详情页里要登录才能穿上：跳到账户页登录，登录完回到这件作品的详情
+    connect(m_communitySkinDetailPage, &CommunitySkinDetailPage::loginRequested, this, [this]() {
+        const SkinLibraryItem item =
+            m_communitySkinDetailPage ? m_communitySkinDetailPage->item() : SkinLibraryItem();
+        m_forumReturnAction = [this, item]() { showCommunitySkinDetail(item); };
+        showAccountManagePage();
+        if (m_forumAccountPage)
+            m_forumAccountPage->openLoginForm();
+    });
+
+    m_pageInitialized[PageIndex::CommunitySkinDetailPage] = true;
+}
+
+void MainWindow::showCommunitySkinPage()
+{
+    ensurePageInitialized(PageIndex::CommunitySkinPage);
+    // 与「资源>投影」一致：恢复侧边栏与子导航选中（皮肤在社区资源组第 6 项），返回键回主页
+    restoreSideBarWithSubNav(1, 8);
+    m_topBar->setTitle(tr("资源>皮肤"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    animatedSwitchToPage(PageIndex::CommunitySkinPage);
+    if (m_communitySkinPage)
+        m_communitySkinPage->openPage();
+}
+
+void MainWindow::showCommunitySkinDetail(const SkinLibraryItem &item)
+{
+    ensurePageInitialized(PageIndex::CommunitySkinDetailPage);
+    // 详情页属于「资源>皮肤」列表的内层页：侧边栏与子导航选中保持不动，
+    // 顶栏返回键回皮肤库列表（不重新拉列表，翻到第几页就还在第几页）
+    restoreSideBarWithSubNav(1, 8);
+    m_topBar->setTitle(tr("资源>皮肤>作品详情"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onTopBarBackClicked);
+    animatedSwitchToPage(PageIndex::CommunitySkinDetailPage);
+    if (m_communitySkinDetailPage)
+        m_communitySkinDetailPage->openItem(item);
+}
+
+void MainWindow::returnToCommunitySkinList()
+{
+    ensurePageInitialized(PageIndex::CommunitySkinPage);
+    restoreSideBarWithSubNav(1, 8);
+    m_topBar->setTitle(tr("资源>皮肤"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+    animatedSwitchToPage(PageIndex::CommunitySkinPage);
+}
+
+void MainWindow::initSkinStationPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::SkinStationPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::SkinStationPage));
+    m_skinStationPage = new SkinStationPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::SkinStationPage), m_skinStationPage);
+    delete placeholder;
+
+    m_pageInitialized[PageIndex::SkinStationPage] = true;
+}
+
+void MainWindow::initLibraryPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::LibraryPageIndex]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::LibraryPageIndex));
+    m_libraryPage = new LibraryPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::LibraryPageIndex), m_libraryPage);
+    delete placeholder;
+
+    m_pageInitialized[PageIndex::LibraryPageIndex] = true;
+}
+
+void MainWindow::showLibraryPage()
+{
+    ensurePageInitialized(PageIndex::LibraryPageIndex);
+
+    // 图书馆不是左侧导航的一级页：沿用「皮肤站 / 反馈」这类整页的打开方式，
+    // 隐藏侧边栏、顶栏标题写「方块图书馆」，返回键回主界面
+    setSideBarVisible(false);
+    m_subNavPanel->hidePanel();
+    m_topBar->setTitle(tr("方块图书馆"));
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::LibraryPageIndex));
+
+    if (m_libraryPage)
+        m_libraryPage->open();
+}
+
+void MainWindow::openLibraryDoc(const QString &volume, const QString &chapter, const QString &anchor)
+{
+    // 先按常规方式把整页打开（初始化、顶栏标题、返回键），再定位到指定章节
+    showLibraryPage();
+    if (m_libraryPage)
+        m_libraryPage->openAt(volume, chapter, anchor);
+}
+
+void MainWindow::initAnnualReportPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::AnnualReportPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::AnnualReportPage));
+    m_annualReportPage = new AnnualReportPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::AnnualReportPage), m_annualReportPage);
+    delete placeholder;
+
+    // 报告页里「绑定账户」同样走账户页登录，回来还能继续看年度报告
+    connect(m_annualReportPage, &AnnualReportPage::loginRequested,
+            this, &MainWindow::openForumAccountLogin);
+
+    m_pageInitialized[PageIndex::AnnualReportPage] = true;
+}
+
+void MainWindow::showAnnualReportPage(int year)
+{
+    ensurePageInitialized(PageIndex::AnnualReportPage);
+
+    // 年度报告是账户管理页「游玩」页签的内层页：收起侧边栏，
+    // 顶栏返回由 onTopBarBackClicked 回账户管理页并停在「游玩」页签
+    setSideBarVisible(false);
+    m_subNavPanel->hidePanel();
+    m_topBar->setTitle(tr("账户管理 > 年度报告"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onTopBarBackClicked);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::AnnualReportPage));
+
+    if (m_annualReportPage)
+        m_annualReportPage->openPage(year);
+}
+
+void MainWindow::initQrScanPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::QrScanPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::QrScanPage));
+    m_qrScanPage = new QrScanPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::QrScanPage), m_qrScanPage);
+    delete placeholder;
+
+    // 手机上确认 / 取消后页面会自己发返回请求，交回主窗口统一的返回逻辑
+    connect(m_qrScanPage, &QrScanPage::backRequested,
+            this, &MainWindow::onQrScanPageBackRequested);
+
+    m_pageInitialized[PageIndex::QrScanPage] = true;
+}
+
+void MainWindow::showQrScanPage()
+{
+    ensurePageInitialized(PageIndex::QrScanPage);
+    if (!m_qrScanPage)
+        return;
+
+    // 已经停在扫码页（连点顶栏图标）：不覆盖来路页面，只让页面重新开始扫
+    if (m_stackedWidget
+        && m_stackedWidget->currentIndex() == static_cast<int>(PageIndex::QrScanPage))
+    {
+        m_qrScanPage->startScanning();
+        return;
+    }
+
+    // 与安卓整页启动界面同一套来路记录：返回时回到进入前的页面
+    const int currentIdx = m_stackedWidget->currentIndex();
+    m_previousPage = static_cast<PageIndex>(currentIdx);
+    m_hasPreviousPage = true;
+
+    setSideBarVisible(false);
+    if (m_subNavPanel)
+        m_subNavPanel->hidePanel();
+    m_topBar->setTitle(tr("扫描"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onTopBarBackClicked);
+
+    animatedSwitchToPage(PageIndex::QrScanPage);
+}
+
+void MainWindow::onQrScanPageBackRequested()
+{
+    // 只在仍停在扫码页时响应：自动返回的定时器可能在用户已经手动离开后才触发
+    if (!m_stackedWidget
+        || m_stackedWidget->currentIndex() != static_cast<int>(PageIndex::QrScanPage))
+    {
+        return;
+    }
+    onTopBarBackClicked();
+}
+
+void MainWindow::showSkinStationPage()
+{
+    ensurePageInitialized(PageIndex::SkinStationPage);
+    // 皮肤站从账户管理页进来：账户页不显示侧边栏，这里保持一致；返回键回账户管理页
+    setSideBarVisible(false);
+    // setTitle 会自己加「方块盒子>」前缀，这里只给层级本身，避免出现两个「方块盒子>」
+    m_topBar->setTitle(tr("账户管理>皮肤站"));
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onTopBarBackClicked);
+    animatedSwitchToPage(PageIndex::SkinStationPage);
+    if (m_skinStationPage)
+        m_skinStationPage->openPage();
 }
 
 // ── 发布中心：入口 → 资源类型 / 帖子板块 → 平台跳转 / 发帖详情 ──────────────
@@ -1915,6 +2520,10 @@ void MainWindow::initPublishPage()
             this, &MainWindow::showPublishBoardPage);
     connect(m_publishPage, &PublishPage::tutorialsRequested,
             this, &MainWindow::showPublishTutorialCompose);
+    connect(m_publishPage, &PublishPage::questionsRequested,
+            this, &MainWindow::showPublishQuestionCompose);
+    connect(m_publishPage, &PublishPage::navigationRequested,
+            this, &MainWindow::showPublishNavigationCompose);
 
     m_pageInitialized[PageIndex::PublishPage] = true;
 }
@@ -2018,6 +2627,108 @@ void MainWindow::showPublishPage()
     connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
 
     animatedSwitchToPage(PageIndex::PublishPage);
+}
+
+// ── 更多：入口页 + 分类跳转（联机大厅 / 皮肤站 / 图书馆 / 任务 / 年报 / 账户 / 引导） ──
+
+void MainWindow::initMorePage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::MorePageIndex]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::MorePageIndex));
+    m_morePage = new MorePage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::MorePageIndex), m_morePage);
+    delete placeholder;
+
+    connect(m_morePage, &MorePage::lobbyRequested, this, [this]() { openMoreFeature(0); });
+    connect(m_morePage, &MorePage::skinStationRequested, this, [this]() { openMoreFeature(1); });
+    connect(m_morePage, &MorePage::libraryRequested, this, [this]() { openMoreFeature(2); });
+    connect(m_morePage, &MorePage::taskCenterRequested, this, [this]() { openMoreFeature(3); });
+    connect(m_morePage, &MorePage::annualReportRequested, this, [this]() { openMoreFeature(4); });
+    connect(m_morePage, &MorePage::accountRequested, this, [this]() { openMoreFeature(5); });
+    connect(m_morePage, &MorePage::onboardingRequested, this, [this]() { openMoreFeature(6); });
+
+    m_pageInitialized[PageIndex::MorePageIndex] = true;
+}
+
+void MainWindow::showMorePage()
+{
+    ensurePageInitialized(PageIndex::MorePageIndex);
+
+    setSideBarVisible(true);
+    if (m_sideBar)
+    {
+        m_sideBar->setSelectedIndex(MoreNavIndex);
+        m_sideBar->setExpandButtonVisible(false);
+    }
+    // 「更多」和其它一级入口一样带分类子导航：展开后右侧就是更多分类列表
+    if (m_subNavPanel)
+        m_subNavPanel->showForParent(MoreNavIndex, false);
+    m_lastSidebarIndex = MoreNavIndex;
+
+    m_topBar->setTitle(tr("更多"));
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    animatedSwitchToPage(PageIndex::MorePageIndex);
+}
+
+void MainWindow::openMoreFeature(int childIndex)
+{
+    // 子导航 / 落地页卡片共用这套索引，顺序与 SideBar「更多」的 children 一致
+    switch (childIndex)
+    {
+    case 0: // 联机大厅：社区页内的整页子页面，先进社区页再切到大厅
+        ensurePageInitialized(PageIndex::CommunityPage);
+        setSideBarVisible(true);
+        if (m_sideBar)
+        {
+            m_sideBar->setSelectedIndex(MoreNavIndex);
+            m_sideBar->setExpandButtonVisible(false);
+        }
+        if (m_subNavPanel)
+            m_subNavPanel->hidePanel();
+        m_lastSidebarIndex = MoreNavIndex;
+        m_topBar->setTitle(tr("更多>联机大厅"));
+        m_topBar->setAccountCardVisible(true);
+        m_topBar->setWindowControlCardVisible(true);
+        m_topBar->setAccountSelected(false);
+        m_topBar->setInstanceSelectSelected(false);
+        m_topBar->setInstanceSettingsSelected(false);
+        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+        animatedSwitchToPage(PageIndex::CommunityPage);
+        if (m_communityPage)
+            m_communityPage->openLobby();
+        break;
+    case 1: // 皮肤站
+        showSkinStationPage();
+        break;
+    case 2: // 方块图书馆
+        showLibraryPage();
+        break;
+    case 3: // 任务中心
+        showTaskListPage();
+        break;
+    case 4: // 年度报告（0 = 当前年份）
+        showAnnualReportPage(0);
+        break;
+    case 5: // 账户管理
+        showAccountManagePage();
+        break;
+    case 6: // 新手引导
+        showOnboardingPage(false);
+        break;
+    default:
+        break;
+    }
 }
 
 void MainWindow::showPublishResourcePage()
@@ -2143,6 +2854,45 @@ void MainWindow::showPublishTutorialCompose()
 }
 
 
+void MainWindow::showPublishQuestionCompose()
+{
+    // 发布中心→问答：发布详情页切到「问答」模式，固定发到有奖问答板块，返回落点是发布中心
+    m_forumReturnAction = [this]() { showPublishPage(); };
+    m_forumComposerTopTitle = tr("发布>问答");
+    ensurePageInitialized(PageIndex::ForumComposerPage);
+    presentForumComposer();
+    if (m_forumComposerPage)
+        m_forumComposerPage->startNewQuestion();
+}
+
+void MainWindow::showPublishNavigationCompose()
+{
+    // 发布中心→导航：发布详情页切到「导航」模式，按类型固定发到网站/服务器导航板块，返回落点是发布中心
+    m_forumReturnAction = [this]() { showPublishPage(); };
+    m_forumComposerTopTitle = tr("发布>导航");
+    ensurePageInitialized(PageIndex::ForumComposerPage);
+    presentForumComposer();
+    if (m_forumComposerPage)
+        m_forumComposerPage->startNewNavigation();
+}
+
+void MainWindow::showPublishServerNavigationCompose(const QString &title, const QString &content,
+                                                    const QStringList &tags, const QString &address)
+{
+    // 实例助手「开服」页→发布到服务器导航：内容已经按服务器信息预填好，
+    // 用户确认地址后再发；返回落到「服务器导航」板块，能立刻看到刚发的帖
+    m_forumReturnAction = [this]() {
+        showForumBoard(QStringLiteral("server-nav"), tr("服务器导航"));
+    };
+    m_forumComposerTopTitle = tr("社区>服务器导航");
+    ensurePageInitialized(PageIndex::ForumComposerPage);
+    presentForumComposer();
+    if (m_forumComposerPage)
+        m_forumComposerPage->startNewNavigation(QStringLiteral("server"), address, title, content,
+                                                tags);
+}
+
+
 void MainWindow::showForumThread(int threadId)
 {
     ensurePageInitialized(PageIndex::ForumThreadDetailPage);
@@ -2205,6 +2955,16 @@ void MainWindow::showFeedbackComposePage()
     presentFeedbackComposePage();
     if (m_feedbackComposePage)
         m_feedbackComposePage->open();
+}
+
+void MainWindow::showFeedbackDetail(const PublicFeedbackItem &item)
+{
+    ensurePageInitialized(PageIndex::FeedbackDetailPage);
+    // 反馈详情页的返回落点是反馈列表页
+    m_forumReturnAction = [this]() { returnToFeedbackList(); };
+    presentFeedbackDetailPage();
+    if (m_feedbackDetailPage)
+        m_feedbackDetailPage->open(item);
 }
 
 void MainWindow::showForumFriends(int userId)
@@ -2298,6 +3058,31 @@ void MainWindow::presentFeedbackComposePage()
     m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::FeedbackComposePage));
 }
 
+void MainWindow::presentTranslationComposePage()
+{
+    setSideBarVisible(false);
+    const ModInfo info = m_translationComposeInfo;
+    m_topBar->setTitle(tr("创建翻译 > %1").arg(info.chineseName.isEmpty() ? info.name : info.chineseName));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onForumPageBack);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::TranslationComposePage));
+}
+
+void MainWindow::presentFeedbackDetailPage()
+{
+    setSideBarVisible(false);
+    m_topBar->setTitle(tr("反馈 > 详情"));
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onForumPageBack);
+    m_pageAnimator->animateToIndex(static_cast<int>(PageIndex::FeedbackDetailPage));
+}
+
 void MainWindow::showForumReportPage(int postId, int floor, const QString &authorName,
                                      const QString &excerpt)
 {
@@ -2360,8 +3145,22 @@ void MainWindow::returnToSettingsAbout()
     ensurePageInitialized(PageIndex::SettingsPage);
     animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, 2);
     m_lastSidebarIndex = 2;
-    onChildNavClicked(2, 9);
-    m_subNavPanel->setSelectedChild(9);
+
+    // 「关于」的子页序号随版本模式与移动端新增项变化，按页面定位而不是写死 9
+    int aboutIndex = settingsTabIndexForAbout();
+    if (aboutIndex < 0)
+        aboutIndex = 0;
+    onChildNavClicked(2, aboutIndex);
+    m_subNavPanel->setSelectedChild(aboutIndex);
+}
+
+int MainWindow::settingsTabIndexForAbout() const
+{
+    QScrollArea *scrollArea = qobject_cast<QScrollArea *>(m_stackedWidget->widget(2));
+    if (!scrollArea)
+        return -1;
+    SettingsPage *settingsPage = qobject_cast<SettingsPage *>(scrollArea->widget());
+    return settingsPage ? settingsPage->tabIndex(SettingsPage::AboutTab) : -1;
 }
 
 void MainWindow::returnToFeedbackList()

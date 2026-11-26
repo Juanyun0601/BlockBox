@@ -354,6 +354,7 @@ QString ModpackInfo::typeName() const
   case ModpackType::MCBBS:      return QStringLiteral("MCBBS");
   case ModpackType::HMCL:       return QStringLiteral("HMCL");
   case ModpackType::BlockBox:   return QStringLiteral("方块盒子");
+  case ModpackType::Server:     return QStringLiteral("服务端整合包");
   case ModpackType::Generic:    return QStringLiteral("通用整合包");
   default:                      return QStringLiteral("未知");
   }
@@ -801,6 +802,74 @@ static ModpackInfo parseBlockBox(ZipReader& zip, const QString& zipFilePath)
   return info;
 }
 
+// 自安装服务器包（HMCL 服务端整合包）：zip 根 server-manifest.json + overrides/
+// manifest 里 files 只用于下载校验，实际内容已全部打进 overrides/，故 mods 留空
+static ModpackInfo parseServer(ZipReader& zip, const QString& zipFilePath)
+{
+  ModpackInfo info;
+  info.type = ModpackType::Server;
+
+  QByteArray data = zip.extractFile("server-manifest.json");
+  if (data.isEmpty())
+  {
+    QFileInfo fi(zipFilePath);
+    info.name = fi.completeBaseName();
+    info.overridesPath = QStringLiteral("overrides");
+    return info;
+  }
+
+  QJsonDocument doc = QJsonDocument::fromJson(data);
+  QJsonObject root = doc.object();
+
+  info.name = root.value("name").toString();
+  info.version = root.value("version").toString();
+  info.author = root.value("author").toString();
+  info.description = root.value("description").toString();
+
+  // addons：id == "game" 给原版版本号，其余是加载器；只认四个主流加载器，
+  // 其余（optifine/liteloader 等）本家没有安装器，忽略即可，不影响解压内容
+  static const QStringList knownLoaders = {QStringLiteral("forge"), QStringLiteral("neoforge"),
+                                           QStringLiteral("fabric"), QStringLiteral("quilt")};
+  const QJsonArray addons = root.value("addons").toArray();
+  for (const auto& addonVal : addons)
+  {
+    const QJsonObject addon = addonVal.toObject();
+    const QString id = addon.value("id").toString().toLower();
+    const QString ver = addon.value("version").toString();
+
+    if (id == QLatin1String("game"))
+    {
+      info.gameVersion = ver;
+      continue;
+    }
+    // 加载器可能给多个，取第一个受支持的
+    if (info.loaderType.isEmpty() && knownLoaders.contains(id))
+    {
+      info.loaderType = id;
+      info.loaderVersion = ver;
+    }
+  }
+
+  // 缺游戏版本时不判失败：导入页会把版本输入框放开让用户手填，
+  // 这里只往描述里补一句提示，让用户知道为什么还要填版本
+  if (info.gameVersion.trimmed().isEmpty())
+  {
+    const QString hint = QStringLiteral("清单缺少游戏版本，请在下方填写后再安装");
+    info.description = info.description.isEmpty() ? hint
+                                                  : info.description + QLatin1Char('\n') + hint;
+  }
+
+  if (info.name.isEmpty())
+  {
+    QFileInfo fi(zipFilePath);
+    info.name = fi.completeBaseName();
+  }
+
+  // 覆盖文件挂在 overrides/ 下，安装时剥掉该前缀铺到实例目录
+  info.overridesPath = QStringLiteral("overrides");
+  return info;
+}
+
 static ModpackInfo parseGeneric(ZipReader& zip, const QString& zipFilePath){
   ModpackInfo info;
   info.type = ModpackType::Generic;
@@ -842,6 +911,15 @@ ModpackType ModpackDetector::detect(const QString& zipFilePath)
     return ModpackType::Unknown;
 
   // Check in priority order - most specific format markers first
+
+  // 自安装服务器包：只认 zip 根目录的 server-manifest.json。
+  // 必须排最前——这种包里只有 overrides/mods/，落到后面会被 Generic 抢走；
+  // 也不能用 hasFile（它额外登记了纯文件名映射，嵌套目录里的同名文件会误命中）
+  for (const auto& entry : zip.entries())
+  {
+    if (entry.fileName == QLatin1String("server-manifest.json"))
+      return ModpackType::Server;
+  }
 
   if (zip.hasFile("blockbox.pack.json"))
     return ModpackType::BlockBox;
@@ -926,6 +1004,8 @@ ModpackInfo ModpackDetector::parse(const QString& zipFilePath)
     return parseHMCL(zip);
   case ModpackType::BlockBox:
     return parseBlockBox(zip, zipFilePath);
+  case ModpackType::Server:
+    return parseServer(zip, zipFilePath);
   case ModpackType::Generic:
     return parseGeneric(zip, zipFilePath);
   default:

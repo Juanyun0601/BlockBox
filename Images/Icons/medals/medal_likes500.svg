@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <linearGradient id="lk500-outer" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FCA5A5"/>
+      <stop offset="1" stop-color="#B91C1C"/>
+    </linearGradient>
+  </defs>
+  <path d="M34 62 L26 90 L38 83 L45 92 L49 64 Z" fill="#7F1D1D"/>
+  <path d="M62 62 L70 90 L58 83 L51 92 L47 64 Z" fill="#671515"/>
+  <circle cx="48" cy="43" r="31" fill="url(#lk500-outer)" stroke="#671515" stroke-width="3"/>
+  <circle cx="48" cy="43" r="23" fill="#FEF2F2"/>
+  <path d="M48 57 C48 57 34 49 34 41 C34 36.5 37.5 34 41 34 C44 34 48 37.5 48 37.5 C48 37.5 52 34 55 34 C58.5 34 62 36.5 62 41 C62 49 48 57 48 57 Z" fill="#EF4444" stroke="#991B1B" stroke-width="2"/>
+  <path d="M28 38 C25 41 25 45 28 48 M68 38 C71 41 71 45 68 48" fill="none" stroke="#FCA5A5" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M23 34 C19 39 19 47 23 52 M73 34 C77 39 77 47 73 52" fill="none" stroke="#FECACA" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M65 26 L66.5 30 L70.5 31.5 L66.5 33 L65 37 L63.5 33 L59.5 31.5 L63.5 30 Z" fill="#FFFFFF" stroke="#B91C1C" stroke-width="1"/>
+  <circle cx="31" cy="29" r="1.8" fill="#FFFFFF"/>
+</svg>

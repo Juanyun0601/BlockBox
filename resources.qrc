@@ -18,6 +18,32 @@
         <file>Images/Icons/pose_attack.svg</file>
         <file>Images/Icons/pose_dance.svg</file>
         <file>Images/Icons/pose_cheer.svg</file>
+        <file>Images/Icons/medals/medal_newcomer.svg</file>
+        <file>Images/Icons/medals/medal_quiz.svg</file>
+        <file>Images/Icons/medals/medal_first_thread.svg</file>
+        <file>Images/Icons/medals/medal_helper.svg</file>
+        <file>Images/Icons/medals/medal_checkin7.svg</file>
+        <file>Images/Icons/medals/medal_creator.svg</file>
+        <file>Images/Icons/medals/medal_rich.svg</file>
+        <file>Images/Icons/medals/medal_popular.svg</file>
+        <file>Images/Icons/medals/medal_bug_hunter.svg</file>
+        <file>Images/Icons/medals/medal_veteran.svg</file>
+        <file>Images/Icons/medals/medal_quiz100.svg</file>
+        <file>Images/Icons/medals/medal_fixer10.svg</file>
+        <file>Images/Icons/medals/medal_boards8.svg</file>
+        <file>Images/Icons/medals/medal_streak30.svg</file>
+        <file>Images/Icons/medals/medal_creator5.svg</file>
+        <file>Images/Icons/medals/medal_followers100.svg</file>
+        <file>Images/Icons/medals/medal_answers10.svg</file>
+        <file>Images/Icons/medals/medal_likes500.svg</file>
+        <file>Images/Icons/medals/medal_downloads10000.svg</file>
+        <file>Images/Icons/medals/medal_rich10000.svg</file>
+        <file>Images/Icons/medals/game/game_story.svg</file>
+        <file>Images/Icons/medals/game/game_nether.svg</file>
+        <file>Images/Icons/medals/game/game_end.svg</file>
+        <file>Images/Icons/medals/game/game_adventure.svg</file>
+        <file>Images/Icons/medals/game/game_husbandry.svg</file>
+        <file>Images/Icons/medals/game/game_generic.svg</file>
         <file>Images/Icons/instance_select.svg</file>
         <file>Images/Icons/instance_settings.svg</file>
         <file>Images/Icons/instance_assistant.svg</file>
@@ -33,6 +59,7 @@
         <file>Images/Icons/side_back.svg</file>
         <file>Images/Icons/restore_prev.svg</file>
         <file>Images/Icons/refresh.svg</file>
+        <file>Images/Icons/scan.svg</file>
         <file>Images/Icons/back_to_top.svg</file>
         <file>Images/Icons/nav_resources.svg</file>
         <file>Images/Icons/nav_settings.svg</file>
@@ -45,6 +72,7 @@
         <file>Images/Icons/nav_shaders.svg</file>
         <file>Images/Icons/nav_log.svg</file>
         <file>Images/Icons/nav_worlds.svg</file>
+        <file>Images/Icons/nav_skins.svg</file>
         <file>Images/Icons/nav_textures.svg</file>
         <file>Images/Icons/nav_scripts.svg</file>
         <file>Images/Icons/size.svg</file>
@@ -54,11 +82,13 @@
         <file>Images/Icons/nav_general.svg</file>
         <file>Images/Icons/nav_appearance.svg</file>
         <file>Images/Icons/nav_game.svg</file>
+        <file>Images/Icons/nav_control.svg</file>
         <file>Images/Icons/nav_instance.svg</file>
         <file>Images/Icons/nav_java.svg</file>
         <file>Images/Icons/nav_advanced.svg</file>
         <file>Images/Icons/nav_system.svg</file>
         <file>Images/Icons/nav_about.svg</file>
+        <file>Images/Icons/nav_library.svg</file>
         <!-- Card action button icons -->
         <file>Images/Icons/play.svg</file>
         <file>Images/Icons/quick_launch.svg</file>
@@ -97,6 +127,7 @@
         <file>Images/Icons/chevron_left.svg</file>
         <file>Images/Icons/chevron_right.svg</file>
         <file>Images/Icons/chevron_down.svg</file>
+        <file>Images/Icons/chevron_up.svg</file>
         <file>Images/Icons/arrow_down_triangle.svg</file>
         <file>Images/Icons/expand.svg</file>
         <file>Images/Icons/close.svg</file>
@@ -122,6 +153,8 @@
         <file>Images/Icons/feedback.svg</file>
         <!-- 发布（侧边栏入口）图标 -->
         <file>Images/Icons/nav_publish.svg</file>
+        <!-- 投影（资源页投影分享入口）图标 -->
+        <file>Images/Icons/nav_projection.svg</file>
         <!-- Plugin icons -->
         <file>Images/Icons/nav_plugin.svg</file>
         <file>Images/Icons/plugin.svg</file>
@@ -156,21 +189,14 @@
         <file>Images/Skins/Zuri.png</file>
         <file>Images/icon.ico</file>
         <file>Images/logo.png</file>
-        <file>Images/blockbox_icon_dark.png</file>
         <file>Images/blockbox_cube.png</file>
+        <file>Images/blockbox_icon_dark.png</file>
         <!-- 版本类型图标（安装新实例卡片） -->
         <file>Images/Block/Grass_Block.png</file>
         <file>Images/Block/Command_Block.png</file>
         <file>Images/Block/Egg_enchanted.png</file>
         <file>Images/Block/Stone.png</file>
-        <!-- Pictures for homepage carousel -->
-        <file>Images/Pictures/pic1.jpg</file>
-        <file>Images/Pictures/pic2.jpg</file>
-        <file>Images/Pictures/pic3.jpg</file>
-        <file>Images/Pictures/pic4.jpg</file>
-        <file>Images/Pictures/pic5.jpg</file>
-        <file>Images/Pictures/pic6.jpg</file>
-        <file>Images/Pictures/pic7.jpg</file>
-        <file>Images/Pictures/pic8.jpg</file>
+        <!-- 首页轮播的 8 张预设风景封面图不内置：改为首次在首页点「下载预设图」时
+             从官网 assets/img/home/ 下载到应用数据目录（见 HomePresetCovers） -->
     </qresource>
 </RCC>

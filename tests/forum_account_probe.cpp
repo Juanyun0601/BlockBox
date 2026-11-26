@@ -638,6 +638,55 @@ int main(int argc, char **argv)
                                         ? QStringLiteral("登录方块盒子论坛")
                                         : QStringLiteral("注册方块盒子论坛");
         expect("登录卡标题正确", title && title->text() == expectTitle);
+
+        // 密码强度：注册时跟着密码实时变化，登录时整块收起
+        auto *viewStack =
+            window.page()->findChild<QStackedWidget *>(QStringLiteral("fbViewStack"));
+        QWidget *authPage = viewStack ? viewStack->widget(1) : nullptr;
+        QLabel *pwLevel = authPage
+                              ? authPage->findChild<QLabel *>(QStringLiteral("fbPwStrengthLabel"))
+                              : nullptr;
+        QLineEdit *pwEdit = nullptr;
+        if (authPage)
+        {
+            for (QLineEdit *edit : authPage->findChildren<QLineEdit *>())
+            {
+                // 第一个密码框是「密码」，后面那个是「确认密码」
+                if (edit->echoMode() == QLineEdit::Password)
+                {
+                    pwEdit = edit;
+                    break;
+                }
+            }
+        }
+
+        if (mode == QStringLiteral("register"))
+        {
+            expect("注册卡显示密码强度", pwLevel && pwLevel->isVisible());
+            if (pwEdit && pwLevel)
+            {
+                pwEdit->setText(QStringLiteral("123456"));
+                QApplication::processEvents();
+                expect("「123456」判为弱", pwLevel->text() == QStringLiteral("弱"));
+
+                pwEdit->setText(QStringLiteral("BlockBox#2026x"));
+                QApplication::processEvents();
+                expect("长且混合的密码判为很强", pwLevel->text() == QStringLiteral("很强"));
+
+                int lit = 0;
+                for (QWidget *seg : authPage->findChildren<QWidget *>(QStringLiteral("fbPwSeg")))
+                {
+                    if (seg->property("on").toBool())
+                        ++lit;
+                }
+                expect("四段强度条全亮", lit == 4);
+                grab(window, QStringLiteral("register_strength"));
+            }
+        }
+        else
+        {
+            expect("登录卡不显示密码强度", pwLevel && !pwLevel->isVisible());
+        }
     }
     else if (mode == QStringLiteral("member"))
     {

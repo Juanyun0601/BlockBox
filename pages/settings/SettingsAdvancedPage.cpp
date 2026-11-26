@@ -176,6 +176,23 @@ void SettingsPage::initAdvancedSettings()
         tr("启动前检查相关进程"), tr("游戏启动前检测并提示可能冲突的进程。"), QString(), true);
     processCheckRow->addWidget(processCheckCheck);
 
+    // ── 第三方登录（外置登录注入）──
+    QVBoxLayout *authlibCard = createSettingsCard(layout, tr("第三方登录"));
+
+    CustomCheckBox *authlibCheck = new CustomCheckBox();
+    authlibCheck->setChecked(SettingsManager::instance()->isAuthlibInjectorEnabled());
+
+    QHBoxLayout *authlibRow = appendSettingRow(authlibCard,
+        tr("游戏内自动注入外置登录"),
+        tr("用皮肤站等第三方账户启动游戏时自动加载外置登录组件，游戏内能正确识别身份、显示皮肤。"),
+        tr("首次启动会自动下载约 300KB 的组件。关闭后第三方账户按离线身份进入游戏，认证服务器可能拒绝登录。"),
+        true);
+    authlibRow->addWidget(authlibCheck);
+
+    connect(authlibCheck, &CustomCheckBox::toggled, [](bool checked) {
+        SettingsManager::instance()->setAuthlibInjectorEnabled(checked);
+    });
+
     // ── 实验性内容 ──
     QVBoxLayout *experimentalCard = createSettingsCard(layout, tr("实验性内容"));
 

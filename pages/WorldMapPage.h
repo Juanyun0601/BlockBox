@@ -29,6 +29,7 @@
 #include <limits>
 #include <memory>
 
+#include "components/MapExportDialog.h"
 #include "utils/WorldMap/BiomeName.h"
 #include "utils/WorldMap/OreFinder.h"
 #include "utils/WorldMap/WorldMapRenderer.h"
@@ -58,14 +59,14 @@ public:
     ~WorldMapPage() override;
 
     /** 载入指定存档（路径指向存档目录）并开始渲染 */
-    void setCurrentSave(const QString &saveFolderPath, const QString &saveName);
+    Q_INVOKABLE void setCurrentSave(const QString &saveFolderPath, const QString &saveName);
     /**
      * 设置当前实例（versions/<id> 目录）：从它的客户端 JAR 读群系中文名，
      * 供底部「当前群系」显示使用。实例切换时调用（可在 setCurrentSave 前后）。
      */
-    void setInstancePath(const QString &instancePath);
+    Q_INVOKABLE void setInstancePath(const QString &instancePath);
     /** 清空（切换实例时调用，避免残留上一个存档的地图） */
-    void reset();
+    Q_INVOKABLE void reset();
 
     /** 顶栏刷新按钮 / F5 / R：重新渲染当前维度 */
     Q_INVOKABLE void refresh();
@@ -272,6 +273,28 @@ private slots:
     void onZoomToOneOne();
     void onGotoClicked();
     void onExportClicked();
+    /** 「高级导出…」：弹选项窗 → 后台合成并写盘（结果由 drainExportJob 收） */
+    void onAdvancedExportClicked();
+    /** 「框选导出区域…」：进入地图框选模式，框完带出高级导出弹窗 */
+    void onExportRectSelectClicked();
+    /** 框选完成：把方块矩形钳进画布范围，带出自定义范围的高级导出弹窗 */
+    void onExportRectSelected(const QRect &blockRect);
+    /** 框选取消（Esc / 右键 / 框太小）：退出模式，恢复状态栏 */
+    void cancelExportRectSelect();
+    /** 收起框选模式（换存档 / 重渲 / 切立体模式时强制退出） */
+    void abortExportRectSelect();
+    /**
+     * 打开高级导出弹窗并按结果发起导出。
+     * @param initial 上一次弹窗的选项（「重新框选」重开时原样带回）
+     * @param initialCustomRect 已框选好的自定义区域（无效 = 没有预设）
+     * @return 是否真正发起了导出（false = 取消 / 转入框选）
+     */
+    bool runAdvancedExportDialog(const MapExportDialog::Options &initial,
+                                 const QRect &initialCustomRect);
+    /** 按弹窗给出的选项组装后台导出任务（自定义范围已在钳制后写入 opt） */
+    void beginExportWithOptions(const MapExportDialog::Options &opt);
+    /** 收取已完成的导出任务，刷新状态栏与导出按钮 */
+    void drainExportJob();
     void onPollProgress();
     /** 视口去抖到期：挑选需要补的 1:1 细节 region */
     void scheduleTiles();    /** 队列还有就接着渲，空了就补下一批（由中心向四周扩散） */
@@ -319,6 +342,47 @@ private:
         std::atomic<bool> cancel{ false };
         std::atomic<int> done{ 0 };
         std::atomic<int> total{ 0 };
+    };
+
+    /**
+     * 高级导出任务：worker 负责高清底图渲染（可选）+ 合成标注 + 写盘，
+     * UI 轮询收取结果。所有参数都是值拷贝，worker 不碰页面成员。
+     */
+    struct ExportJob
+    {
+        std::atomic<bool> cancel{ false };
+        std::atomic<bool> done{ false };
+        std::atomic<int> doneCount{ 0 };
+        std::atomic<int> totalCount{ 0 };
+        bool hiRes = false;      ///< true = 从存档重新高清渲染底图
+        bool wholeMap = false;   ///< true = 整张地图；false = 当前视野
+        bool png = true;
+        QString path;
+        QString savePath;
+        WorldMapRenderer::Dimension dim = WorldMapRenderer::Dimension::Overworld;
+        WorldMapRenderer::ShadeMode mode = WorldMapRenderer::ShadeMode::BlockColor;
+        int maxSurfaceY = -1;
+        WorldMapRenderer::SeedPreview seed;
+        // 当前画布快照（普通模式从这里裁底图）
+        QImage canvas;
+        qint64 canvasMinBlockX = 0;
+        qint64 canvasMinBlockZ = 0;
+        int canvasBpp = 1;
+        QRect cropRect;          ///< 视野 · 普通模式：画布上的像素裁剪框
+        QRect regionRange;       ///< 视野 · 高清模式：要拼 1:1 瓦片的 region 范围
+        QPoint centerRegion;     ///< 视野 · 高清模式：拼块顺序按到它的距离
+        QRect exportBlockRange;  ///< 导出方块范围（结构查询按它算，含 16384 跨度上限）
+        // 结构标记查询参数（与画布同源；worker 里跑 StructureFinder::find）
+        bool hasStructSource = false;
+        quint64 structSeed = 0;
+        int structMc = 0;
+        int structCdim = 0;
+        QVector<bool> structEnabled;
+        QSet<QString> structDoneKeys;
+        // 合成输入：worker 填 base / minBlock / bpp 后调 compose
+        MapExportComposeInput compose;
+        bool ok = false;
+        QString error;
     };
 
     /** 结构查询任务：worker 写入结果后置 done，UI 轮询收取（无悬空风险） */
@@ -410,6 +474,13 @@ private:
     void drainPendingTiles();
     /** 把上一张同 bpp 画布的重叠 region 搬进新 live 画布（种子重定心用） */
     void primeLiveFromPrior();
+    // ── 高级导出（导出菜单 →「高级导出…」） ──
+    /** 收集导出标注快照：图标 / 矿物色 / 图钉预取成像素图，供工作线程合成 */
+    MapExportAnnotations collectExportAnnotations() const;
+    /** 「当前视野」在画布上的像素裁剪框（视野 ∩ 画布） */
+    QRect exportCropRect() const;
+    /** 任意方块矩形 → 画布上的像素裁剪框（自定义导出范围用） */
+    QRect exportRectToCanvasPx(const QRect &blockRect) const;
     void setBusy(bool busy);
     void updateZoomLabel();
     /** 把当前画布（颜色 + 高度）交给立体视图；keepView=false 时重新取景 */
@@ -694,6 +765,12 @@ private:
     QString m_detailText;   ///< 状态栏"细节 N"片段
     /** 渐进渲染上下文：渲染线程推图块，定时器在 UI 线程 drain 贴图 */
     WorldMapRenderer::ProgressiveSinkPtr m_sink;
+    /** 在途的高级导出任务（同一时刻只跑一个；结果由 drainExportJob 收） */
+    std::shared_ptr<ExportJob> m_exportJob;
+    /** 正在地图上框选导出范围（框选完成 / 取消前不再进入） */
+    bool m_exportRectSelecting = false;
+    /** 「重新框选」要带回弹窗的上一轮选项 */
+    MapExportDialog::Options m_exportCarried;
     /** 渐进渲染画布，WorldMapView 直接引用它（不拷贝，避免逐块贴图时整图 detach） */
     QImage m_liveImage;
     /** 当前画布的布局指纹（宽x高:起点区块:bpp），同布局的重渲染保留旧画面 */
