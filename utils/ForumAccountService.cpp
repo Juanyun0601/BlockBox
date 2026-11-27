@@ -1596,6 +1596,18 @@ ForumUser ForumAccountService::parseUser(const QJsonObject &object)
     user.threadCount = object.value(QStringLiteral("thread_count")).toInt();
     user.postCount = object.value(QStringLiteral("post_count")).toInt();
     user.points = object.value(QStringLiteral("points")).toInt();
+    // 会员身份：老版本论坛没有这个字段，缺省就是「没有会员」
+    const QJsonObject member = object.value(QStringLiteral("member")).toObject();
+    if (member.value(QStringLiteral("active")).toBool())
+    {
+        user.memberTier = member.value(QStringLiteral("tier")).toString();
+        user.memberBadge = member.value(QStringLiteral("badge")).toString();
+        if (user.memberBadge.isEmpty())
+            user.memberBadge = member.value(QStringLiteral("name")).toString();
+        user.memberColor = member.value(QStringLiteral("color")).toString();
+        user.memberUntil = static_cast<qint64>(member.value(QStringLiteral("until")).toDouble());
+        user.memberPermanent = member.value(QStringLiteral("permanent")).toBool();
+    }
     user.quizPassed = object.value(QStringLiteral("quiz_passed")).toBool();
     user.createdAt = static_cast<qint64>(object.value(QStringLiteral("created_at")).toDouble());
     user.email = object.value(QStringLiteral("email")).toString();
@@ -1622,6 +1634,16 @@ void ForumAccountService::setUser(const ForumUser &user, bool cache)
             {QStringLiteral("thread_count"), m_user.threadCount},
             {QStringLiteral("post_count"), m_user.postCount},
             {QStringLiteral("points"), m_user.points},
+            {QStringLiteral("member"),
+             m_user.memberTier.isEmpty()
+                 ? QJsonObject()
+                 : QJsonObject{{QStringLiteral("active"), true},
+                               {QStringLiteral("tier"), m_user.memberTier},
+                               {QStringLiteral("name"), m_user.memberBadge},
+                               {QStringLiteral("badge"), m_user.memberBadge},
+                               {QStringLiteral("color"), m_user.memberColor},
+                               {QStringLiteral("until"), static_cast<double>(m_user.memberUntil)},
+                               {QStringLiteral("permanent"), m_user.memberPermanent}}},
             {QStringLiteral("quiz_passed"), m_user.quizPassed},
             {QStringLiteral("created_at"), static_cast<double>(m_user.createdAt)},
             {QStringLiteral("email"), m_user.email},

@@ -44,6 +44,7 @@
 #include "pages/LaunchDetailsPage.h"
 #include "pages/LoaderDetailPage.h"
 #include "pages/OnboardingWizard.h"
+#include "components/MigrationWizardDialog.h"
 #include "pages/ResourcesPage.h"
 #include "pages/SettingsPage.h"
 #include "pages/TaskDetailPage.h"
@@ -63,6 +64,7 @@
 #include "pages/ProjectionEditPage.h"
 #include "pages/LanTransferPage.h"
 #include "pages/MemoryOptimizePage.h"
+#include "pages/MultiThreadDownloadPage.h"
 #include "pages/AnnualReportPage.h"
 #include "pages/QrScanPage.h"
 #include "pages/PluginPage.h"
@@ -551,6 +553,10 @@ void MainWindow::initEssentialPages()
     QWidget *placeholderMemoryOptimize = new QWidget(this);
     m_stackedWidget->addWidget(placeholderMemoryOptimize);
 
+    // 多线程下载整页占位（更多>多线程下载：直链分段并发下载）
+    QWidget *placeholderMultiThreadDownload = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderMultiThreadDownload);
+
     // 手机端：把启动时就存在的各页面内容滚动区统一开启手指拖动滚动
     // （懒加载页面在切换到时由页面切换钩子补挂，见 mainwindow.cpp）
     for (int i = 0; i < m_stackedWidget->count(); ++i)
@@ -686,6 +692,9 @@ void MainWindow::ensurePageInitialized(PageIndex pageIndex)
         break;
     case PageIndex::MemoryOptimizePageIndex:
         initMemoryOptimizePage();
+        break;
+    case PageIndex::MultiThreadDownloadPageIndex:
+        initMultiThreadDownloadPage();
         break;
     case PageIndex::QrScanPage:
         initQrScanPage();
@@ -1741,6 +1750,14 @@ void MainWindow::initSettingsPage()
     // 通用设置里点了「打开新手引导」：跳到新手引导页（独立整页，不是弹窗）
     connect(settingsPage, &SettingsPage::openOnboardingRequested, this,
             [this]() { showOnboardingPage(false); });
+    // 通用设置里的「迁移向导」：关闭后刷新实例列表，用户点「查看实例列表」时直接跳过去
+    connect(settingsPage, &SettingsPage::migrationFinished, this,
+            [this](bool openInstances) {
+                if (m_instanceSelectPage)
+                    m_instanceSelectPage->reloadFolders();
+                if (openInstances)
+                    showInstanceSelectPage();
+            });
     // AI 助手设置里改了本地 MCP 服务器（开关 / 端口 / 令牌 / 写权限）：立即生效
     connect(settingsPage, &SettingsPage::mcpServerSettingsChanged,
             this, &MainWindow::applyMcpServerSettings);
@@ -2671,7 +2688,7 @@ void MainWindow::showPublishPage()
     animatedSwitchToPage(PageIndex::PublishPage);
 }
 
-// ── 更多：入口页 + 分类跳转（图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 插件管理 / 新手引导） ──
+// ── 更多：入口页 + 分类跳转（图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 多线程下载 / 内存优化 / 迁移向导 / 新手引导） ──
 
 void MainWindow::initMorePage()
 {
@@ -2689,9 +2706,16 @@ void MainWindow::initMorePage()
     connect(m_morePage, &MorePage::seedMapRequested, this, [this]() { openMoreFeature(2); });
     connect(m_morePage, &MorePage::projectionEditorRequested, this, [this]() { openMoreFeature(3); });
     connect(m_morePage, &MorePage::transferRequested, this, [this]() { openMoreFeature(4); });
-    connect(m_morePage, &MorePage::memoryOptimizeRequested, this, [this]() { openMoreFeature(5); });
-    connect(m_morePage, &MorePage::pluginManageRequested, this, [this]() { openMoreFeature(6); });
-    connect(m_morePage, &MorePage::onboardingRequested, this, [this]() { openMoreFeature(7); });
+    connect(m_morePage, &MorePage::multiThreadDownloadRequested, this,
+            [this]() { openMoreFeature(5); });
+    connect(m_morePage, &MorePage::memoryOptimizeRequested, this, [this]() { openMoreFeature(6); });
+    connect(m_morePage, &MorePage::migrationFinished, this, [this](bool openInstances) {
+        if (m_instanceSelectPage)
+            m_instanceSelectPage->reloadFolders();
+        if (openInstances)
+            showInstanceSelectPage();
+    });
+    connect(m_morePage, &MorePage::onboardingRequested, this, [this]() { openMoreFeature(8); });
 
     // 插件入口卡片：按插件ID + 入口ID 定位后交给插件页执行（url / script）
     connect(m_morePage, &MorePage::pluginEntryRequested, this,
@@ -2750,6 +2774,50 @@ void MainWindow::showMorePage()
     connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
 
     animatedSwitchToPage(PageIndex::MorePageIndex);
+}
+
+void MainWindow::showPluginManagePage(int settingsChildIndex)
+{
+    ensurePageInitialized(PageIndex::PluginPage);
+
+    // 「插件管理」在设置子导航里排最后：序号等于设置内容页数量
+    int pluginChildIndex = settingsChildIndex;
+    if (pluginChildIndex < 0)
+    {
+        ensurePageInitialized(PageIndex::SettingsPage);
+        if (QScrollArea *scrollArea = qobject_cast<QScrollArea *>(m_stackedWidget->widget(2)))
+            if (SettingsPage *settingsPage = qobject_cast<SettingsPage *>(scrollArea->widget()))
+                pluginChildIndex = settingsPage->pluginManageTabIndex();
+    }
+
+    setSideBarVisible(true);
+    if (m_sideBar)
+    {
+        m_sideBar->setSelectedIndex(2);
+        m_sideBar->setExpandButtonVisible(false);
+    }
+    // 插件页挂在「设置」下：设置子导航保持展开并高亮「插件管理」
+    if (m_subNavPanel)
+    {
+        if (m_subNavPanel->currentParentIndex() != 2)
+            m_subNavPanel->showForParent(2, false);
+        if (pluginChildIndex >= 0)
+            m_subNavPanel->setSelectedChild(pluginChildIndex);
+    }
+    m_lastSidebarIndex = 2;
+
+    m_topBar->setTitle(tr("设置>插件管理"));
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    animatedSwitchToPage(PageIndex::PluginPage);
+    if (m_pluginPage)
+        m_pluginPage->showOverview();
 }
 
 bool MainWindow::syncMorePluginEntries(bool rescan)
@@ -2826,35 +2894,23 @@ void MainWindow::openMoreFeature(int childIndex)
     case 4: // 文件传输（局域网直传 / 远程组网互传）
         showLanTransferPage();
         break;
-    case 5: // 内存优化（内存概况 + 一键优化）
+    case 5: // 多线程下载（直链分段并发下载，可暂停继续）
+        showMultiThreadDownloadPage();
+        break;
+    case 6: // 内存优化（内存概况 + 一键优化）
         showMemoryOptimizePage();
         break;
-    case 6: // 插件管理
+    case 7: // 迁移向导（弹窗：扫描 / 选择 / 登记或复制）
     {
-        ensurePageInitialized(PageIndex::PluginPage);
-        setSideBarVisible(true);
-        if (m_sideBar)
-        {
-            m_sideBar->setSelectedIndex(MoreNavIndex);
-            m_sideBar->setExpandButtonVisible(false);
-        }
-        if (m_subNavPanel)
-            m_subNavPanel->hidePanel();
-        m_lastSidebarIndex = MoreNavIndex;
-        m_topBar->setTitle(tr("更多>插件管理"));
-        m_topBar->setAccountCardVisible(true);
-        m_topBar->setWindowControlCardVisible(true);
-        m_topBar->setAccountSelected(false);
-        m_topBar->setInstanceSelectSelected(false);
-        m_topBar->setInstanceSettingsSelected(false);
-        disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
-        connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
-        animatedSwitchToPage(PageIndex::PluginPage);
-        if (m_pluginPage)
-            m_pluginPage->showOverview();
+        MigrationWizardDialog dialog(this);
+        dialog.exec();
+        if (m_instanceSelectPage)
+            m_instanceSelectPage->reloadFolders();
+        if (dialog.wantsOpenInstances())
+            showInstanceSelectPage();
         break;
     }
-    case 7: // 新手引导
+    case 8: // 新手引导
         showOnboardingPage(false);
         break;
     default:
@@ -3061,6 +3117,53 @@ void MainWindow::showMemoryOptimizePage()
     // 每次进来都重新采一次数字（内存一直变），顺带同步设置页改过的「启动前优化」开关
     if (m_memoryOptimizePage)
         m_memoryOptimizePage->refresh();
+}
+
+// ── 多线程下载：一个独立整页，贴直链分段并发下载，可暂停 / 继续 ──
+
+void MainWindow::initMultiThreadDownloadPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::MultiThreadDownloadPageIndex]) { return; }
+
+    QWidget *placeholder =
+        m_stackedWidget->widget(static_cast<int>(PageIndex::MultiThreadDownloadPageIndex));
+    m_multiThreadDownloadPage = new MultiThreadDownloadPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::MultiThreadDownloadPageIndex),
+                                  m_multiThreadDownloadPage);
+    delete placeholder;
+
+    m_pageInitialized[PageIndex::MultiThreadDownloadPageIndex] = true;
+}
+
+void MainWindow::showMultiThreadDownloadPage()
+{
+    ensurePageInitialized(PageIndex::MultiThreadDownloadPageIndex);
+
+    setSideBarVisible(true);
+    if (m_sideBar)
+    {
+        m_sideBar->setSelectedIndex(MoreNavIndex);
+        m_sideBar->setExpandButtonVisible(false);
+    }
+    if (m_subNavPanel)
+        m_subNavPanel->hidePanel();
+    m_lastSidebarIndex = MoreNavIndex;
+
+    m_topBar->setTitle(tr("更多>多线程下载"));
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    animatedSwitchToPage(PageIndex::MultiThreadDownloadPageIndex);
+    // 保存目录可能被用户在系统里改过，每次进来按当前设置回填一次
+    if (m_multiThreadDownloadPage)
+        m_multiThreadDownloadPage->refresh();
 }
 
 void MainWindow::showPublishResourcePage()

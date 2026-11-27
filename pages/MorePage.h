@@ -6,10 +6,10 @@
  *
  * 侧边栏一级入口放得下的功能有限，剩下这些好用但不好塞进一列的入口收在这里，
  * 和子导航里的分类一一对应（顺序一致）：
- *   方块图书馆 / 方块皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 内存优化 / 插件管理 / 新手引导
+ *   方块图书馆 / 方块皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 多线程下载 / 内存优化 / 迁移向导 / 新手引导
  *
  * 插件也能往这里挂入口（manifest.ui.moreEntries，需声明 ui:page 权限）：
- * 宿主把插件入口排在上面八个内置入口之后，卡片区单独成一块「插件入口」，
+ * 宿主把插件入口排在上面九个内置入口之后，卡片区单独成一块「插件入口」，
  * 与左侧「更多」子导航里追加的项保持同一顺序。
  */
 #pragma once
@@ -28,9 +28,9 @@ class MorePage : public QWidget
 public:
     explicit MorePage(QWidget *parent = nullptr);
 
-    /** 内置入口数量（图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 内存优化 / 插件管理 / 新手引导）；
+    /** 内置入口数量（图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 多线程下载 / 内存优化 / 迁移向导 / 新手引导）；
      *  插件入口索引从这里往后排，与左侧「更多」子导航一致 */
-    static int builtinEntryCount() { return 8; }
+    static int builtinEntryCount() { return 9; }
 
     /**
      * @brief 刷新「插件入口」区
@@ -51,10 +51,12 @@ signals:
     void projectionEditorRequested();
     /** 点了「文件传输」卡片 */
     void transferRequested();
+    /** 点了「多线程下载」卡片 */
+    void multiThreadDownloadRequested();
     /** 点了「内存优化」卡片 */
     void memoryOptimizeRequested();
-    /** 点了「插件管理」卡片 */
-    void pluginManageRequested();
+    /** 迁移向导已关闭（openInstances=true 表示用户点了「查看实例列表」） */
+    void migrationFinished(bool openInstances);
     /** 点了「新手引导」卡片 */
     void onboardingRequested();
     /** 点了插件提供的入口（pluginId 为插件 ID，entryId 为入口 ID） */

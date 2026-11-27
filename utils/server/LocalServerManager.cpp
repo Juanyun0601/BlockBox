@@ -37,6 +37,9 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#else
+// 共享 mods 目录用的 ::symlink() 在 unistd.h 里；Linux / 鸿蒙都不带这个头就编不过
+#include <unistd.h>
 #endif
 
 namespace {

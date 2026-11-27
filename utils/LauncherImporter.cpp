@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
 #include <QPair>
 #include <QRegularExpression>
 #include <QSet>
@@ -253,6 +254,34 @@ QStringList versionsIn(const QString &minecraftDir)
     return result;
 }
 
+/** 目录下第一层文件数（mods 之类的扁平仓库用；目录不存在返回 0） */
+int countTopLevelFiles(const QString &dir)
+{
+    if (dir.isEmpty())
+        return 0;
+    return QDir(dir).entryList(QDir::Files | QDir::NoDotAndDotDot).size();
+}
+
+/** 目录下第一层子目录数（saves 之类的容器用；目录不存在返回 0） */
+int countSubDirs(const QString &dir)
+{
+    if (dir.isEmpty())
+        return 0;
+    return QDir(dir).entryList(QDir::Dirs | QDir::NoDotAndDotDot).size();
+}
+
+/** 账户预览：名字 + 类型，只用于迁移向导里给用户看，不参与导入 */
+QString accountPreviewName(const AccountInfo &acc)
+{
+    if (acc.username.isEmpty())
+        return QString();
+    if (acc.type.compare(QStringLiteral("microsoft"), Qt::CaseInsensitive) == 0)
+        return trImp("%1（微软）").arg(acc.username);
+    if (!acc.serverUrl.isEmpty())
+        return trImp("%1（外置登录）").arg(acc.username);
+    return trImp("%1（离线）").arg(acc.username);
+}
+
 /** 系统目录：扫描游戏目录时跳过，避免浪费时间 */
 bool isSystemDirName(const QString &name)
 {
@@ -288,6 +317,9 @@ QStringList scannedMinecraftDirs()
 {
     static QStringList cache;
     static QElapsedTimer stamp;
+    // 迁移向导会并行探测多个启动器：磁盘扫描只做一次，其余线程等它算完读缓存
+    static QMutex cacheMutex;
+    QMutexLocker locker(&cacheMutex);
 
     QStringList dirs;
     addGameDir(dirs, roamingAppData() + QStringLiteral("/.minecraft"));
@@ -302,6 +334,13 @@ QStringList scannedMinecraftDirs()
     if (stamp.isValid() && stamp.elapsed() < 30000) {
         for (const QString &d : cache)
             addGameDir(dirs, d);
+        return dirs;
+    }
+
+    // 自动化探针可跳过全盘扫描（只保留固定候选目录），避免把真实磁盘上的目录带进测试
+    if (!qgetenv("BLOCKBOX_SKIP_DISK_SCAN").isEmpty()) {
+        cache = dirs;
+        stamp.start();
         return dirs;
     }
 
@@ -1430,13 +1469,24 @@ LauncherDetect LauncherImporter::detectOne(const QString &key)
 
     QStringList versions;
     for (const QString &gameDir : probe.gameDirs) {
-        for (const QString &name : versionsIn(gameDir)) {
+        LauncherGameDirInfo info;
+        info.path = gameDir;
+        info.versions = versionsIn(gameDir);
+        info.modCount = countTopLevelFiles(gameDir + QStringLiteral("/mods"));
+        info.saveCount = countSubDirs(gameDir + QStringLiteral("/saves"));
+        d.gameDirInfos.append(info);
+        for (const QString &name : info.versions) {
             if (!versions.contains(name))
                 versions.append(name);
         }
     }
     d.versionNames = versions;
     d.versionCount = versions.size();
+    for (const AccountInfo &acc : std::as_const(probe.accounts)) {
+        const QString preview = accountPreviewName(acc);
+        if (!preview.isEmpty())
+            d.accountNames.append(preview);
+    }
     d.detail = composeDetectDetail(probe, d.versionCount);
     return d;
 }
@@ -1459,6 +1509,7 @@ LauncherImportResult LauncherImporter::importFrom(const QString &key)
     r.instanceDirs = probe.gameDirs;
     r.minecraftDir = probe.gameDirs.value(0);
     r.accountCount = probe.accounts.size();
+    r.accounts = probe.accounts;
     r.javaPath = probe.javaPath;
     r.javaPaths = probe.javaPaths;
     r.authServers = probe.authServers;

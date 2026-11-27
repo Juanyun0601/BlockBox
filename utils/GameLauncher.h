@@ -249,6 +249,7 @@ private:
     QString m_processOutput;
     QNetworkAccessManager* m_networkManager;
     QTimer* m_windowCheckTimer;
+    QTimer* m_completionRetryTimer = nullptr; // 补全队列被镜像冷却挡住时的唤醒定时器
     int m_windowWaitElapsedMs = 0;         // 已等待游戏窗口/启动确认的累计毫秒数（每次启动重置）
     bool m_gameStartedSuccessfully = false; // 标记游戏窗口是否已成功出现（用于区分启动期崩溃）
     bool m_userCancelled = false;          // 标记本次进程结束是否由用户手动取消触发（区分"用户取消"与"游戏自然退出"）

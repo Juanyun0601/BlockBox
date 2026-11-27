@@ -11732,8 +11732,8 @@ QWidget#agentToolStepCard {
 QPushButton#agentToolStepHeaderRow {
     background-color: transparent;
     border: none;
-    border-radius: 6px;
-    padding: 1px 2px;
+    border-radius: 8px;
+    padding: 2px 4px;
     text-align: left;
 }
 
@@ -11751,7 +11751,7 @@ QLabel#agentToolStepName {
 /* 过程行左侧状态图标：运行中为旋转点阵，结束定格 ✓ / ✗（观感参考 opencode） */
 QLabel#agentStepGlyph {
     font-family: "Segoe UI Symbol", "Segoe UI", Consolas, sans-serif;
-    font-size: 12px;
+    font-size: 13px;
     background-color: transparent;
     color: @TEXT_TERTIARY@;
 }
@@ -11795,12 +11795,28 @@ QLabel#agentToolStepDiffDel {
     background-color: transparent;
 }
 
-/* 展开详情：左侧竖线缩进，与思考内容块保持同一种观感 */
+/* 展开详情：浅底面板，左侧强调色随成功 / 失败变化 */
 QWidget#agentToolStepDetails {
-    background-color: transparent;
-    border: none;
-    border-left: 2px solid @BORDER@;
-    padding: 2px 0 2px 16px;
+    background-color: @BG_TAB@;
+    border: 1px solid @BORDER@;
+    border-left: 2px solid @BORDER_STRONG@;
+    border-radius: 8px;
+    margin: 2px 0 4px 0;
+}
+
+QWidget#agentToolStepDetails[status="success"] {
+    border-left-color: @SUCCESS@;
+}
+
+QWidget#agentToolStepDetails[status="danger"] {
+    border-left-color: @DANGER_TEXT@;
+}
+
+QLabel#agentToolStepCaption {
+    font-size: 11px;
+    font-weight: 600;
+    color: @TEXT_TERTIARY@;
+    background: transparent;
 }
 
 QLabel#agentToolStepArgs {
@@ -11821,38 +11837,156 @@ QLabel#agentToolStepResult {
 }
 
 QLabel#agentToolStepResult[status="danger"] {
-    color: @DANGER@;
+    color: @DANGER_TEXT@;
 }
 
 QWidget#taskListCard {
     background-color: @BG_CARD@;
     border: 1px solid @BORDER@;
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 10px 12px;
 }
 
-QProgressBar#taskListProgressBar {
-    background-color: @BG_MUTED@;
+QLabel#taskListTitle {
+    font-size: 13px;
+    font-weight: 600;
+    color: @TEXT_PRIMARY@;
+    background: transparent;
+}
+
+QLabel#taskListBadge {
+    font-size: 11px;
+    font-weight: 600;
+    color: @ACCENT_TEXT@;
+    background: @PRIMARY_BG@;
     border: none;
-    border-radius: 999px;
+    border-radius: 9px;
+    padding: 1px 8px;
+}
+
+QFrame#taskListSeparator {
+    background-color: @BORDER_LIGHT@;
+    border: none;
+}
+
+QProgressBar#taskListProgressBar {
+    background-color: @BG_TRACK@;
+    border: none;
+    border-radius: 2px;
     min-height: 4px;
     max-height: 4px;
 }
 
 QProgressBar#taskListProgressBar::chunk {
-    border-radius: 999px;
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 @PRIMARY@, stop:1 @PRIMARY_DARK@);
+    border-radius: 2px;
+    background-color: @PRIMARY@;
 }
 
 QWidget#taskListRow {
     background-color: transparent;
-    min-height: 36px;
-    max-height: 36px;
-    padding: 0 8px;
+    min-height: 34px;
+    border-radius: 6px;
 }
 
 QWidget#taskListRow:hover {
     background-color: @BG_HOVER@;
+}
+
+QWidget#taskListRow[status="in_progress"] {
+    background-color: @INFO_BG@;
+}
+
+QLabel#taskListStatusIcon {
+    font-size: 13px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#taskListStatusIcon[status="completed"] {
+    color: @SUCCESS@;
+}
+
+QLabel#taskListStatusIcon[status="in_progress"] {
+    color: @INFO@;
+}
+
+QLabel#taskListStatusIcon[status="pending"] {
+    color: @TEXT_TERTIARY@;
+}
+
+QLabel#taskListContent {
+    font-size: 13px;
+    background: transparent;
+}
+
+QLabel#taskListContent[status="completed"] {
+    color: @TEXT_TERTIARY@;
+}
+
+QLabel#taskListContent[status="in_progress"] {
+    color: @TEXT_PRIMARY@;
+    font-weight: 600;
+}
+
+QLabel#taskListContent[status="pending"] {
+    color: @TEXT_SECONDARY@;
+}
+
+QLabel#taskPriorityChip {
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 10px;
+    padding: 1px 8px;
+}
+
+QLabel#taskPriorityChip[level="high"] {
+    color: @DANGER_TEXT@;
+    background: @DANGER_BG@;
+}
+
+QLabel#taskPriorityChip[level="medium"] {
+    color: @WARNING_TEXT@;
+    background: @WARNING_BG@;
+}
+
+QLabel#taskPriorityChip[level="low"] {
+    color: @TEXT_SECONDARY@;
+    background: @BG_MUTED@;
+}
+
+/* AI 提问弹窗：问题文字与选项按钮跟随主题 */
+QLabel#aiQuestionText {
+    font-size: 14px;
+    color: @TEXT_PRIMARY@;
+    background: transparent;
+}
+
+QPushButton#aiQuestionOptionBtn {
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    background: @BG_CARD@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#aiQuestionOptionBtn:hover {
+    background: @BG_HOVER@;
+    border-color: @PRIMARY@;
+}
+
+QPushButton#aiQuestionUseInputBtn {
+    padding: 8px 12px;
+    text-align: center;
+    border: 1px solid @PRIMARY@;
+    border-radius: 8px;
+    background: @PRIMARY_BG@;
+    color: @ACCENT_TEXT@;
+    font-weight: 600;
+}
+
+QPushButton#aiQuestionUseInputBtn:hover {
+    background: @BG_HOVER@;
 }
 
 /* ============================================================
@@ -12197,7 +12331,7 @@ QPushButton#bindFolderBtn:hover {
 
 QWidget#thinkingContentWidget {
     background-color: transparent;
-    padding-left: 16px;
+    padding: 2px 0 2px 16px;
     border-left: 2px solid @PRIMARY@;
 }
 
@@ -18497,6 +18631,96 @@ QProgressBar#serverProgress {
 QProgressBar#serverProgress::chunk {
     background-color: @PRIMARY@;
     border-radius: 3px;
+}
+
+/* ── 管理卡：三个页签的分段按钮 ── */
+QWidget#serverSegBar {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+}
+
+QPushButton#serverSegBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 6px 8px;
+    color: @TEXT_TERTIARY@;
+    font-size: 12.5px;
+}
+
+QPushButton#serverSegBtn:hover {
+    background-color: @BG_HOVER@;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton#serverSegBtn:checked {
+    background-color: @BG_CARD@;
+    color: @ACCENT_TEXT@;
+    font-weight: 700;
+}
+
+QPushButton#serverSegBtn:checked:hover {
+    background-color: @BG_CARD@;
+    color: @ACCENT_TEXT@;
+}
+
+QPushButton#serverSegBtn:disabled {
+    color: @TEXT_DISABLED@;
+}
+
+/* ── 管理卡：玩家名单（白名单 / 管理员共用） ── */
+QWidget#serverAdminPages {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#serverAdminScroll {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#serverAdminScroll > QWidget {
+    background: transparent;
+}
+
+QWidget#serverAdminListHost {
+    background: transparent;
+}
+
+QFrame#serverPlayerRow {
+    background-color: @BG_MUTED@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+}
+
+QLabel#serverPlayerName {
+    background: transparent;
+    color: @TEXT_PRIMARY@;
+    font-size: 12.5px;
+    font-weight: 600;
+    border: none;
+}
+
+QLabel#serverPlayerMeta {
+    background: transparent;
+    color: @TEXT_TERTIARY@;
+    font-size: 11px;
+    border: none;
+}
+
+QPushButton#serverRowBtn {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 2px 7px;
+    color: @TEXT_TERTIARY@;
+    font-size: 11.5px;
+}
+
+QPushButton#serverRowBtn:hover {
+    background-color: @DANGER_BG@;
+    color: @DANGER_TEXT@;
 }
 
 /* ── 控制台：等宽小字，深一点的底色 ── */

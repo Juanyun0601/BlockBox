@@ -30,7 +30,7 @@ const char kAppVersionKey[] = "legal/appAgreementVersion";
 const char kForumVersionKey[] = "legal/forumAgreementVersion";
 
 /// 条款有实质修改时把版本号 +1，用户下次启动 / 登录会重新看到确认弹窗
-constexpr int kCurrentAgreementVersion = 1;
+constexpr int kCurrentAgreementVersion = 2;
 
 } // namespace
 
@@ -411,7 +411,7 @@ QString UserAgreementDialog::termsHtml()
 QString UserAgreementDialog::privacyHtml()
 {
     QString body;
-    body += tr("<p style='color:%1'>更新日期：2026 年 11 月 20 日</p>")
+    body += tr("<p style='color:%1'>更新日期：2026 年 11 月 27 日</p>")
                 .arg(ThemeManager::instance()->currentThemeColor());
 
     body += tr("<h3>一、我们收集哪些信息</h3>"
@@ -426,7 +426,13 @@ QString UserAgreementDialog::privacyHtml()
                "仅在你主动发送时传输给你配置的模型服务商；你填写的 API Key 只保存在"
                "本机。</p>"
                "<p>5. 本地数据：实例、存档、模组、设置、缓存和运行日志保存在你的设备上，"
-               "不会自动上传。</p>");
+               "不会自动上传。</p>"
+               "<p>6. 诊断与统计（默认关闭，可随时在「设置 → 高级设置 → 诊断与统计」"
+               "里关闭）：开启匿名使用统计后，会上报启动次数、会话时长、启动器版本、"
+               "系统与平台类型、各页面的访问次数；崩溃报告只在你明确同意后上传，"
+               "包含崩溃原因、调用栈和出事前最后一段运行日志，上传前会自动隐藏用户名、"
+               "用户目录、邮箱、IP 和登录令牌。这两类信息都不包含账号、实例名、存档、"
+               "聊天或任何文件内容。</p>");
 
     body += tr("<h3>二、我们如何使用这些信息</h3>"
                "<p>用于提供登录、发帖、下载、联机、AI 助手等功能；保障账号与软件安全；"

@@ -48,6 +48,14 @@ struct LauncherAuthServer {
     QString name; ///< 显示名（能读到启动器里的服务器名就用它，否则取域名）
 };
 
+/** 单个游戏目录的摘要（迁移向导用来让用户按目录挑选） */
+struct LauncherGameDirInfo {
+    QString path;            ///< 游戏目录（.minecraft）
+    QStringList versions;    ///< 识别到的版本名
+    int modCount = 0;        ///< mods 目录里的文件数（只看一层）
+    int saveCount = 0;       ///< saves 目录里的存档数
+};
+
 /** 单个启动器的检测结果 */
 struct LauncherDetect {
     QString key;              ///< "pcl" / "hmcl" / "multimc" / "baka" / "official"
@@ -69,6 +77,8 @@ struct LauncherDetect {
     int javaMaxMemoryMb = -1; ///< 启动器配置的最大内存（MB，-1 未配置）
     int javaMinMemoryMb = -1; ///< 启动器配置的最小内存（MB，-1 未配置）
     QString detail;           ///< 状态详情文案（中文，直接显示在卡片上）
+    QStringList accountNames; ///< 账户预览（名字 + 类型，不用于导入）
+    QList<LauncherGameDirInfo> gameDirInfos; ///< 每个游戏目录的版本 / mods / 存档摘要
 };
 
 /** 一次导入的结果 */
@@ -89,6 +99,7 @@ struct LauncherImportResult {
     int javaMinMemoryMb = -1;  ///< 启动器配置的最小内存（MB，-1 未配置）
     QStringList instanceDirs;  ///< 需要注册成实例文件夹的游戏目录
     QString detail;            ///< 结果详情（中文）
+    QList<AccountInfo> accounts; ///< 解析到的可导入账户（已做令牌降级）
 };
 
 class LauncherImporter

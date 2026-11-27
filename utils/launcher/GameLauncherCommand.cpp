@@ -697,6 +697,71 @@ QStringList GameLauncher::buildClasspath(const QString& instancePath, const QJso
     return classpath;
 }
 
+namespace {
+
+/**
+ * @brief 把一整行启动参数拆成参数表（认双引号）
+ *
+ * 1.13 之前的版本把参数写在 minecraftArguments 一整行里，里面直接替换的是
+ * 真实路径。路径带空格（Program Files、中文文件夹名）时按空格裸拆会把一个
+ * 路径拆成两段，游戏拿到半截目录后存档列表是空的、还可能直接退出。
+ */
+QStringList splitLegacyArgumentLine(const QString& line)
+{
+    QStringList out;
+    QString current;
+    bool inQuotes = false;
+    bool hasToken = false;
+    for (int i = 0; i < line.size(); ++i)
+    {
+        const QChar ch = line.at(i);
+        if (ch == QLatin1Char('\\') && inQuotes && i + 1 < line.size())
+        {
+            current += line.at(++i);
+            hasToken = true;
+        }
+        else if (ch == QLatin1Char('"'))
+        {
+            inQuotes = !inQuotes;
+            hasToken = true; // 允许 "" 这样的空参数
+        }
+        else if (!inQuotes && ch.isSpace())
+        {
+            if (hasToken)
+            {
+                out << current;
+                current.clear();
+                hasToken = false;
+            }
+        }
+        else
+        {
+            current += ch;
+            hasToken = true;
+        }
+    }
+    if (hasToken)
+    {
+        out << current;
+    }
+    return out;
+}
+
+/// 值里有空格就先套引号，配合 splitLegacyArgumentLine 保住整段
+QString quoteLegacyValue(const QString& value)
+{
+    if (!value.contains(QLatin1Char(' ')) && !value.contains(QLatin1Char('\t')))
+    {
+        return value;
+    }
+    QString escaped = value;
+    escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return QStringLiteral("\"%1\"").arg(escaped);
+}
+
+} // namespace
+
 QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
 {
     QStringList args;
@@ -1137,15 +1202,16 @@ QStringList GameLauncher::buildLaunchCommand(const LaunchConfig& config)
         // legacy (< 1.13)
         QString minecraftArgs = mergedJson["minecraftArguments"].toString();
         minecraftArgs.replace("${version_name}", versionName);
-        minecraftArgs.replace("${game_directory}", basePath);
-        minecraftArgs.replace("${assets_root}", assetsPath);
-        minecraftArgs.replace("${assets_index_name}", assetIndex);
-        minecraftArgs.replace("${auth_player_name}", authPlayerName);
+        minecraftArgs.replace("${game_directory}", quoteLegacyValue(basePath));
+        minecraftArgs.replace("${assets_root}", quoteLegacyValue(assetsPath));
+        minecraftArgs.replace("${assets_index_name}", quoteLegacyValue(assetIndex));
+        minecraftArgs.replace("${auth_player_name}", quoteLegacyValue(authPlayerName));
         minecraftArgs.replace("${auth_uuid}", authUuid);
         minecraftArgs.replace("${auth_access_token}", authToken);
         minecraftArgs.replace("${user_type}", userType);
+        minecraftArgs.replace("${user_properties}", QStringLiteral("{}"));
         minecraftArgs.replace("${version_type}", "release");
-        args << minecraftArgs.split(" ", Qt::SkipEmptyParts);
+        args << splitLegacyArgumentLine(minecraftArgs);
     } else {
         // fallback
         args << "--username" << authPlayerName;

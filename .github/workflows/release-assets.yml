@@ -1,0 +1,58 @@
+# 把已经在官网（论坛「版本发布」）上线的安装包镜像到 GitHub Release。
+#
+# 为什么走 Actions 而不是本机直接传：本机在国内，GitHub 的资产上传域名
+# （uploads.github.com）连不上，只能通过 gh-proxy 访问 api.github.com；
+# 由 runner 直接下载官网直链再上传，等于借 GitHub 自己的网络把包搬过去。
+#
+# 用法：先在论坛后台/发布流程里把版本和安装包发布到官网，拿到带下载令牌的直链，
+# 然后在本仓库 Actions 里手动运行本工作流，传入版本号与文件清单。
+name: 上传安装包到 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release 标签（必须与版本号完全一致，例如 beta11）'
+        required: true
+        default: 'beta11'
+      files:
+        description: 'JSON 数组：[{"name":"文件名","url":"官网带令牌直链"}]'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upload-release-assets
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 下载安装包
+        env:
+          FILES: ${{ inputs.files }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          cd assets
+          echo "$FILES" | jq -r '.[] | "\(.url)\t\(.name)"' | while IFS=$'\t' read -r url name; do
+            echo "→ 下载 $name"
+            curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "$name" "$url"
+            ls -l "$name"
+          done
+
+      - name: 上传到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          for f in assets/*; do
+            echo "→ 上传 $(basename "$f")"
+            gh release upload "$TAG" "$f" --clobber
+          done
+          echo "完成，当前 Release 资产："
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) 字节"'

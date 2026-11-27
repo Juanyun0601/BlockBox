@@ -17,6 +17,8 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QSvgRenderer>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -853,6 +855,53 @@ private:
     QColor m_lineColor = QColor(0xe4, 0xec, 0xe3);
 };
 
+/**
+ * 支付方式图标：微信 / 支付宝 / 余额，用内联 SVG 现画成图标，
+ * 不额外带图片资源，配色和网页版一致。
+ */
+QIcon payMethodIcon(const QString &key)
+{
+    static const QString kWechat = QStringLiteral(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'>"
+        "<rect width='48' height='48' rx='12' fill='#07C160'/>"
+        "<ellipse cx='19.5' cy='19' rx='10.4' ry='8.4' fill='#ffffff'/>"
+        "<path d='M10.4 24.4 8.6 29.8l5.8-2.4z' fill='#ffffff'/>"
+        "<ellipse cx='31.2' cy='28' rx='8.4' ry='6.9' fill='#ffffff'/>"
+        "<path d='M37.6 32.2 39.4 36.8l-5-2z' fill='#ffffff'/>"
+        "<circle cx='16.4' cy='18' r='1.8' fill='#07C160'/>"
+        "<circle cx='22.6' cy='18' r='1.8' fill='#07C160'/>"
+        "<circle cx='28.6' cy='27' r='1.5' fill='#07C160'/>"
+        "<circle cx='33.6' cy='27' r='1.5' fill='#07C160'/></svg>");
+    static const QString kAlipay = QStringLiteral(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'>"
+        "<rect width='48' height='48' rx='12' fill='#1677FF'/>"
+        "<path d='M15 18.5h18M24 13.5v11' stroke='#ffffff' stroke-width='3.4' "
+        "stroke-linecap='round' fill='none'/>"
+        "<path d='M15.5 24.5h17c-1.1 6.6-6.3 10.4-12.8 11.2' stroke='#ffffff' stroke-width='3.2' "
+        "stroke-linecap='round' fill='none'/>"
+        "<path d='M19 29.6c3.6 2.7 8.4 4.2 13.4 4.4' stroke='#ffffff' stroke-width='3.2' "
+        "stroke-linecap='round' fill='none'/></svg>");
+    static const QString kBalance = QStringLiteral(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'>"
+        "<rect width='48' height='48' rx='12' fill='#3B82F6' opacity='0.16'/>"
+        "<rect x='9' y='15' width='30' height='20' rx='5' fill='none' stroke='#3B82F6' "
+        "stroke-width='3'/>"
+        "<path d='M9 22h30' stroke='#3B82F6' stroke-width='3'/>"
+        "<circle cx='32' cy='28.5' r='2.2' fill='#3B82F6'/></svg>");
+
+    const QString &svg = key == QStringLiteral("wechat")   ? kWechat
+                         : key == QStringLiteral("alipay") ? kAlipay
+                                                           : kBalance;
+    QSvgRenderer renderer(svg.toUtf8());
+    QPixmap pixmap(40, 40);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    renderer.render(&painter);
+    painter.end();
+    return QIcon(pixmap);
+}
+
 } // namespace
 
 // ════════════════════════════════════════════════════════════════ 生命周期
@@ -906,6 +955,14 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
             m_myFeedbacksLoaded = false;
             m_pointsLoaded = false;
             m_pointsShopLoaded = false;
+            // 会员 / 余额 / 账单是按账号来的：换账号必须一起作废，
+            // 否则会显示上一个账号的会员身份和余额
+            m_memberLoaded = false;
+            m_memberPlans = QJsonObject();
+            m_walletLoaded = false;
+            m_walletState = QJsonObject();
+            m_billsLoaded = false;
+            m_billsState = QJsonObject();
             m_myFeedbacks.clear();
             m_contentFavorites.clear();
             m_contentFavoritesLoaded = false;
@@ -923,9 +980,18 @@ ForumAccountPage::ForumAccountPage(QWidget *parent) : QWidget(parent)
         m_myFeedbacksLoaded = false;
         m_pointsLoaded = false;
         m_pointsShopLoaded = false;
+        // 掉线后余额、会员身份、账单都属于上一个会话，清掉避免下次登录看到别人的数据
+        m_memberLoaded = false;
+        m_memberPlans = QJsonObject();
+        m_walletLoaded = false;
+        m_walletState = QJsonObject();
+        m_billsLoaded = false;
+        m_billsState = QJsonObject();
         stopPayPolling();
         if (m_pointsShop)
             m_pointsShop->hide();
+        if (m_pointsMember)
+            m_pointsMember->hide();
         m_myFeedbacks.clear();
         m_threadTotal = m_replyTotal = m_bookmarkTotal = 0;
         m_contentFavorites.clear();
@@ -1248,6 +1314,12 @@ QWidget *ForumAccountPage::buildProfileCard(QWidget *parent)
     m_roleChip->setObjectName(QStringLiteral("fbChip"));
     m_roleChip->hide();
     nameRow->addWidget(m_roleChip);
+
+    // 会员标识：支持者 / 体验会员 / 标准会员，配色跟着档位走
+    m_memberChip = new QLabel(body);
+    m_memberChip->setObjectName(QStringLiteral("fbMemberChip"));
+    m_memberChip->hide();
+    nameRow->addWidget(m_memberChip);
     nameRow->addStretch();
     infoColumn->addLayout(nameRow);
 
@@ -1400,7 +1472,8 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
 
     const QStringList tabLabels = {tr("角色"), tr("我的主题"), tr("我的回复"), tr("我的收藏"),
                                    tr("通知"), tr("我的反馈"), tr("积分"), tr("勋章"),
-                                   tr("游玩"), tr("账号设置")};
+                                   tr("游玩"), tr("会员"), tr("余额"), tr("账单"),
+                                   tr("账号设置")};
     for (int i = 0; i < tabLabels.size(); ++i)
     {
         auto *tab = new QPushButton(tabLabels.at(i), tabsTrack);
@@ -1440,6 +1513,9 @@ QWidget *ForumAccountPage::buildTabsCard(QWidget *parent)
     m_contentPages.append(buildPointsContent(m_contentHost));                       // PointsContent
     m_contentPages.append(buildMedalsContent(m_contentHost));                       // MedalsContent
     m_contentPages.append(buildPlaytimeContent(m_contentHost));                     // PlaytimeContent
+    m_contentPages.append(buildMemberContent(m_contentHost));                       // MemberContent
+    m_contentPages.append(buildWalletContent(m_contentHost));                       // WalletContent
+    m_contentPages.append(buildBillsContent(m_contentHost));                        // BillsContent
     m_contentPages.append(buildSettingsContent(m_contentHost));                     // SettingsContent
     m_contentPages.append(buildLoggedOutContent(m_contentHost));                    // LoggedOutContent
     for (QWidget *page : m_contentPages)
@@ -2379,7 +2455,10 @@ void ForumAccountPage::applyTheme()
 {
     const Palette p = currentPalette();
 
-    QString qss = QStringLiteral(R"QSS(
+    // QSS 太长（约 17KB）：MSVC 单个字符串字面量上限是 16380 字节，写成整段会报 C2026，
+    // 这里拆成三段再拼起来，GCC / Clang / MSVC 都能正常编译，渲染结果不变。
+    static const char *const kFbQssParts[] = {
+        R"QSS(
 QWidget#fbRoot, QWidget#fbContent, QWidget#fbViewStack { background: transparent; }
 QWidget#fbContentStack { background: transparent; }
 
@@ -2570,6 +2649,8 @@ QPushButton#fbAuthTab {
     font-weight: 700;
 }
 QPushButton#fbAuthTab:checked { background: %CARD%; color: %BRAND%; border-color: %LINE2%; }
+)QSS",
+        R"QSS(
 
 /* ── 注册卡的密码强度：四段小条 + 右侧等级文字 ── */
 QFrame#fbPwSeg {
@@ -2752,6 +2833,8 @@ QPushButton#fbPointsCheckin {
 QPushButton#fbPointsCheckin:hover { background: %BRAND_HOVER%; }
 QPushButton#fbPointsCheckin:disabled { background: %LINE2%; color: %INK3%; }
 QFrame#fbPointsGiftCard {
+)QSS",
+        R"QSS(
     background: %CARD%;
     border: 1px dashed %BRAND_LINE%;
     border-radius: 12px;
@@ -2793,6 +2876,49 @@ QFrame#fbPointsHistoryRow {
 QFrame#fbPointsHistoryRow:hover { background: %BG_TINT%; border-color: %LINE%; }
 QLabel#fbPointsHistoryDay { color: %INK%; font-size: 13px; font-weight: 700; }
 QLabel#fbPointsHistoryAmount { color: %BRAND%; font-size: 13px; font-weight: 800; }
+
+/* ── 积分页 · 会员 ── */
+QFrame#fbPointsMember {
+    background: %BG_TINT%;
+    border: 1px solid %LINE%;
+    border-radius: 14px;
+}
+QFrame#fbMemberCard {
+    background: %CARD%;
+    border: 1px solid %LINE%;
+    border-radius: 12px;
+}
+QFrame#fbMemberCard[current="true"] {
+    border-color: %BRAND%;
+    background: %BRAND_SOFT%;
+}
+QLabel#fbMemberName { font-size: 13.5px; font-weight: 900; }
+QLabel#fbMemberTag {
+    color: %BRAND%;
+    font-size: 10.5px;
+    font-weight: 800;
+    border: 1px solid %BRAND_LINE%;
+    border-radius: 8px;
+    padding: 0 6px;
+}
+QLabel#fbMemberPrice { color: %INK%; font-size: 15px; font-weight: 800; }
+QLabel#fbMemberPerk { color: %INK3%; font-size: 11.5px; }
+QLabel#fbMemberChip { color: %BRAND%; font-size: 11px; font-weight: 800; }
+QPushButton#fbChipButton {
+    background: %CARD%;
+    color: %INK2%;
+    border: 1px solid %LINE%;
+    border-radius: 14px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 700;
+}
+QPushButton#fbChipButton:hover { border-color: %BRAND_LINE%; }
+QPushButton#fbChipButton:checked {
+    background: %BRAND%;
+    color: %ON_BRAND%;
+    border-color: transparent;
+}
 
 /* ── 积分页 · 购买方块 ── */
 QFrame#fbPointsShop {
@@ -2892,7 +3018,11 @@ QPushButton#fbTourNext {
     font-weight: 800;
 }
 QPushButton#fbTourNext:hover { background: %BRAND_HOVER%; }
-)QSS");
+)QSS",
+    };
+    QString qss;
+    for (const char *part : kFbQssParts)
+        qss += QString::fromUtf8(part);
 
     auto put = [&qss](const char *token, const QString &value) {
         qss.replace(QString::fromLatin1(token), value);
@@ -3690,6 +3820,9 @@ void ForumAccountPage::refreshAccount()
     m_pointsState = QJsonObject();
     // 充值档位也跟着重拉一次（换了账号或重登后档位可能变了）
     m_pointsShopLoaded = false;
+    m_memberLoaded = false;
+    m_walletLoaded = false;
+    m_billsLoaded = false;
     stopPayPolling();
     if (m_pointsShopPayPanel)
         m_pointsShopPayPanel->hide();
@@ -3760,6 +3893,35 @@ void ForumAccountPage::renderProfile()
         m_roleChip->setText(roleText);
         m_roleChip->show();
 
+        // 会员标识：有会员才显示，颜色跟着档位（支持者蓝 / 体验绿 / 标准金）
+        if (m_memberChip)
+        {
+            if (!user.memberTier.isEmpty())
+            {
+                m_memberChip->setText(user.memberBadge.isEmpty() ? tr("会员") : user.memberBadge);
+                const QString color = user.memberColor.isEmpty()
+                                          ? currentPalette().brand
+                                          : user.memberColor;
+                m_memberChip->setStyleSheet(
+                    QStringLiteral("QLabel#fbMemberChip{color:%1;border:1px solid %1;"
+                                   "background:transparent;border-radius:9px;padding:1px 8px;"
+                                   "font-size:11px;font-weight:800;}")
+                        .arg(color));
+                m_memberChip->setToolTip(
+                    user.memberPermanent
+                        ? tr("%1（永久）").arg(user.memberBadge)
+                        : tr("%1（%2 到期）")
+                              .arg(user.memberBadge)
+                              .arg(QDateTime::fromSecsSinceEpoch(user.memberUntil)
+                                       .toString(QStringLiteral("yyyy-MM-dd"))));
+                m_memberChip->show();
+            }
+            else
+            {
+                m_memberChip->hide();
+            }
+        }
+
         m_statThreads->setText(QString::number(user.threadCount));
         m_statPosts->setText(QString::number(user.postCount));
         m_statPoints->setText(QString::number(user.points));
@@ -3783,6 +3945,8 @@ void ForumAccountPage::renderProfile()
         m_usernameLabel->setText(tr("登录方块盒子论坛账号，发帖、回复、收藏都会同步到这里"));
         m_bioBrowser->hide();
         m_roleChip->hide();
+        if (m_memberChip)
+            m_memberChip->hide();
 
         m_statThreads->setText(QStringLiteral("0"));
         m_statPosts->setText(QStringLiteral("0"));
@@ -5335,6 +5499,9 @@ void ForumAccountPage::renderContentArea()
     case PointsTab:
         showContentPage(PointsContent);
         setTabHint(tr("签到或充值都能拿方块"));
+        // 积分页的会员入口/购买弹窗也要用余额，先拉一次
+        if (!m_walletLoaded)
+            loadWallet(false);
         renderPoints();
         break;
     case PlaytimeTab:
@@ -5344,6 +5511,27 @@ void ForumAccountPage::renderContentArea()
         showContentPage(MedalsContent);
         setTabHint(tr("论坛勋章和游戏成就都在这里"));
         renderMedals();
+        break;
+    case MemberTab:
+        showContentPage(MemberContent);
+        setTabHint(tr("按月 / 按季 / 按年都能开"));
+        loadMemberPlans(false);
+        // 顺带把余额拉一次：会员页点购买时要用余额判断能不能走「余额支付」
+        if (!m_walletLoaded)
+            loadWallet(false);
+        renderMemberPlans();
+        break;
+    case WalletTab:
+        showContentPage(WalletContent);
+        setTabHint(tr("余额可以直接买会员和方块"));
+        loadWallet(false);
+        renderWallet();
+        break;
+    case BillsTab:
+        showContentPage(BillsContent);
+        setTabHint(tr("充值、消费和创作分成"));
+        loadBills(false);
+        renderBills();
         break;
     case SettingsTab:
         showContentPage(SettingsContent);
@@ -5927,6 +6115,42 @@ QWidget *ForumAccountPage::buildPointsContent(QWidget *parent)
 
     heroLayout->addWidget(gift, 0, Qt::AlignVCenter);
     layout->addWidget(hero);
+
+    // ── 会员（支持者 / 体验会员 / 标准会员，档位同样由论坛下发） ──
+    auto *member = new QFrame(m_pointsPage);
+    member->setObjectName(QStringLiteral("fbPointsMember"));
+    m_pointsMember = member;
+    auto *memberLayout = new QVBoxLayout(member);
+    memberLayout->setContentsMargins(16, 14, 16, 14);
+    memberLayout->setSpacing(10);
+
+    auto *memberHead = new QHBoxLayout();
+    memberHead->setContentsMargins(0, 0, 0, 0);
+    memberHead->setSpacing(8);
+    auto *memberTitle = new QLabel(tr("会员"), member);
+    memberTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    memberHead->addWidget(memberTitle);
+    memberHead->addStretch();
+    m_pointsMemberHint = new QLabel(tr("正在读取会员档位…"), member);
+    m_pointsMemberHint->setObjectName(QStringLiteral("fbNote"));
+    m_pointsMemberHint->setWordWrap(true);
+    memberHead->addWidget(m_pointsMemberHint);
+    memberLayout->addLayout(memberHead);
+
+    auto *memberGridHost = new QWidget(member);
+    m_pointsMemberGrid = new QHBoxLayout(memberGridHost);
+    m_pointsMemberGrid->setContentsMargins(0, 0, 0, 0);
+    m_pointsMemberGrid->setSpacing(8);
+    memberLayout->addWidget(memberGridHost);
+
+    auto *memberRule = new QLabel(
+        tr("会员到期后不会自动续费；再买同一档会在原到期时间上顺延，买更高档直接升级。"), member);
+    memberRule->setObjectName(QStringLiteral("fbNote"));
+    memberRule->setWordWrap(true);
+    memberLayout->addWidget(memberRule);
+
+    member->hide();
+    layout->addWidget(member);
 
     // ── 购买方块（档位由论坛下发，充值通道没开通时整块隐藏） ──
     auto *shop = new QFrame(m_pointsPage);
@@ -7435,7 +7659,12 @@ void ForumAccountPage::renderPointsShop(const QJsonObject &shop)
         buy->setObjectName(QStringLiteral("fbShopBuy"));
         buy->setCursor(Qt::PointingHandCursor);
         buy->setFixedHeight(28);
-        connect(buy, &QPushButton::clicked, this, [this, id, buy]() { buyPointsPackage(id, buy); });
+        const QString pkgName = pkg.value(QStringLiteral("name")).toString();
+        const int pkgPoints = pkg.value(QStringLiteral("points")).toInt();
+        const int pkgCents = qRound(pkg.value(QStringLiteral("price")).toString().toDouble() * 100);
+        connect(buy, &QPushButton::clicked, this, [this, id, pkgName, pkgPoints, pkgCents]() {
+            startCheckout(id, tr("%1 %2 方块").arg(pkgName).arg(pkgPoints), pkgCents);
+        });
         cardLayout->addWidget(buy);
 
         m_pointsShopGrid->addWidget(card, 1);
@@ -7444,6 +7673,66 @@ void ForumAccountPage::renderPointsShop(const QJsonObject &shop)
     m_pointsShopGrid->addStretch(0);
 
     m_pointsShop->show();
+
+    // 会员档位和方块档位一起渲染（同一份 shop 数据）
+    renderPointsMembers(shop);
+}
+
+/** 积分页「会员」：支持者 / 体验会员 / 标准会员，当前生效的那档标出来 */
+void ForumAccountPage::renderPointsMembers(const QJsonObject &shop)
+{
+    if (!m_pointsMember || !m_pointsMemberGrid)
+        return;
+
+    while (QLayoutItem *item = m_pointsMemberGrid->takeAt(0))
+    {
+        if (QWidget *widget = item->widget())
+            widget->deleteLater();
+        delete item;
+    }
+
+    const bool enabled = shop.value(QStringLiteral("enabled")).toBool();
+    const QJsonArray members = shop.value(QStringLiteral("members")).toArray();
+    if (!enabled || members.isEmpty())
+    {
+        m_pointsMember->hide();
+        return;
+    }
+
+    // 积分页只放一个入口：完整档位在独立的「会员」页签里，避免两处维护同一份价格
+    const QJsonObject current = shop.value(QStringLiteral("member")).toObject();
+    const bool active = current.value(QStringLiteral("active")).toBool();
+    if (m_pointsMemberHint)
+        m_pointsMemberHint->setText(active ? tr("当前身份：%1").arg(current.value(QStringLiteral("name")).toString())
+                                           : tr("支持者 ¥3 起，按月 / 按季 / 按年都有"));
+
+    auto *card = new QFrame(m_pointsMemberGrid->parentWidget());
+    card->setObjectName(QStringLiteral("fbMemberCard"));
+    auto *cardLayout = new QHBoxLayout(card);
+    cardLayout->setContentsMargins(12, 11, 12, 11);
+    cardLayout->setSpacing(10);
+
+    auto *info = new QVBoxLayout();
+    info->setContentsMargins(0, 0, 0, 0);
+    info->setSpacing(3);
+    auto *title = new QLabel(tr("会员权益：专属勋章 · 赠送方块 · 补签卡 · 快速通道"), card);
+    title->setObjectName(QStringLiteral("fbMemberName"));
+    info->addWidget(title);
+    auto *desc = new QLabel(tr("会员收入的三分之一会进入创作者流量池，按作品比例分给所有创作者。"), card);
+    desc->setObjectName(QStringLiteral("fbNote"));
+    desc->setWordWrap(true);
+    info->addWidget(desc);
+    cardLayout->addLayout(info, 1);
+
+    auto *go = new QPushButton(tr("查看会员档位"), card);
+    go->setObjectName(QStringLiteral("fbShopBuy"));
+    go->setCursor(Qt::PointingHandCursor);
+    go->setFixedHeight(30);
+    connect(go, &QPushButton::clicked, this, [this]() { setActiveTab(MemberTab); });
+    cardLayout->addWidget(go);
+
+    m_pointsMemberGrid->addWidget(card, 1);
+    m_pointsMember->show();
 }
 
 void ForumAccountPage::buyPointsPackage(const QString &packageId, QPushButton *button)
@@ -7587,9 +7876,24 @@ void ForumAccountPage::checkPayOrder(bool manual)
                     m_pointsShopPayPanel->hide();
                 if (m_statPoints)
                     m_statPoints->setText(QString::number(points));
+                // 余额充值和开通会员的订单本身不带方块，硬写「+0 方块」会让人以为没到账
                 NotificationManager::showSuccess(
-                    this, tr("支付成功：+%1 方块已到账").arg(gained));
+                    this, gained > 0 ? tr("支付成功：+%1 方块已到账").arg(gained)
+                                     : tr("支付成功，已到账"));
+                // 会员 / 余额 / 账单也一起重拉：微信、支付宝充完值或开通会员后，
+                // 这几页原来会一直显示付款前的旧数据
+                m_pointsLoaded = false;
+                m_pointsShopLoaded = false;
+                m_memberLoaded = false;
+                m_walletLoaded = false;
+                m_billsLoaded = false;
                 loadPoints(true);
+                if (m_walletPage)
+                    loadWallet(true);
+                if (m_billsPage)
+                    loadBills(true);
+                if (m_memberPage)
+                    loadMemberPlans(true);
                 m_service->refreshProfile();
                 return;
             }
@@ -7613,6 +7917,769 @@ void ForumAccountPage::checkPayOrder(bool manual)
                 m_pointsShopPayCheck->setEnabled(true);
             if (manual)
                 NotificationManager::showError(this, message);
+        });
+}
+
+// ════════════════════════════════════════════════════════════════ 会员 / 余额 / 账单
+
+/** 会员页：当前身份 + 周期切换 + 三档价格卡 */
+QWidget *ForumAccountPage::buildMemberContent(QWidget *parent)
+{
+    auto *page = new QWidget(parent);
+    m_memberPage = page;
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 16, 18, 18);
+    layout->setSpacing(14);
+
+    auto *hero = new QFrame(page);
+    hero->setObjectName(QStringLiteral("fbPointsHero"));
+    auto *heroLayout = new QVBoxLayout(hero);
+    heroLayout->setContentsMargins(20, 16, 20, 16);
+    heroLayout->setSpacing(4);
+    auto *eyebrow = new QLabel(tr("方块盒子会员"), hero);
+    eyebrow->setObjectName(QStringLiteral("fbPointsEyebrow"));
+    heroLayout->addWidget(eyebrow);
+    m_memberStatus = new QLabel(tr("正在读取会员身份…"), hero);
+    m_memberStatus->setObjectName(QStringLiteral("fbPointsBalance"));
+    m_memberStatus->setWordWrap(true);
+    heroLayout->addWidget(m_memberStatus);
+    auto *statusHint = new QLabel(tr("会员带专属勋章、赠送方块和补签卡；标准会员还有联机快速通道资格。"),
+                                  hero);
+    statusHint->setObjectName(QStringLiteral("fbNote"));
+    statusHint->setWordWrap(true);
+    heroLayout->addWidget(statusHint);
+    layout->addWidget(hero);
+
+    auto *head = new QHBoxLayout();
+    head->setContentsMargins(2, 0, 2, 0);
+    head->setSpacing(8);
+    auto *title = new QLabel(tr("选择档位"), page);
+    title->setObjectName(QStringLiteral("fbSectionTitle"));
+    head->addWidget(title);
+    head->addStretch();
+    const QStringList cycles = {tr("按月"), tr("按季"), tr("按年")};
+    const QStringList cycleIds = {QStringLiteral("month"), QStringLiteral("quarter"),
+                                  QStringLiteral("year")};
+    for (int i = 0; i < cycles.size(); ++i)
+    {
+        auto *btn = new QPushButton(cycles.at(i), page);
+        btn->setObjectName(QStringLiteral("fbChipButton"));
+        btn->setCheckable(true);
+        btn->setAutoExclusive(true);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setFixedHeight(28);
+        btn->setChecked(cycleIds.at(i) == m_memberCycle);
+        const QString cycleId = cycleIds.at(i);
+        connect(btn, &QPushButton::clicked, this, [this, cycleId]() {
+            m_memberCycle = cycleId;
+            renderMemberPlans();
+        });
+        head->addWidget(btn);
+        m_memberCycleButtons.append(btn);
+    }
+    layout->addLayout(head);
+
+    auto *plansHost = new QWidget(page);
+    m_memberPlansHost = plansHost;
+    m_memberPlansLayout = new QHBoxLayout(plansHost);
+    m_memberPlansLayout->setContentsMargins(0, 0, 0, 0);
+    m_memberPlansLayout->setSpacing(8);
+    layout->addWidget(plansHost);
+
+    auto *rule = new QLabel(
+        tr("会员到期后不会自动续费；同一档再买会在原到期时间上顺延，买更高档直接升级。"
+           "会员收入的三分之一会进入创作者流量池，按作品比例分给所有创作者。"),
+        page);
+    rule->setObjectName(QStringLiteral("fbNote"));
+    rule->setWordWrap(true);
+    layout->addWidget(rule);
+
+    layout->addStretch();
+    return page;
+}
+
+/** 余额页：余额 + 充值档位 + 最近账单 */
+QWidget *ForumAccountPage::buildWalletContent(QWidget *parent)
+{
+    auto *page = new QWidget(parent);
+    m_walletPage = page;
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 16, 18, 18);
+    layout->setSpacing(14);
+
+    auto *hero = new QFrame(page);
+    hero->setObjectName(QStringLiteral("fbPointsHero"));
+    auto *heroLayout = new QVBoxLayout(hero);
+    heroLayout->setContentsMargins(20, 16, 20, 16);
+    heroLayout->setSpacing(4);
+    auto *eyebrow = new QLabel(tr("我的余额"), hero);
+    eyebrow->setObjectName(QStringLiteral("fbPointsEyebrow"));
+    heroLayout->addWidget(eyebrow);
+    m_walletBalance = new QLabel(QStringLiteral("¥0.00"), hero);
+    m_walletBalance->setObjectName(QStringLiteral("fbPointsBalance"));
+    heroLayout->addWidget(m_walletBalance);
+    m_walletHint = new QLabel(tr("充值后可以直接用余额买会员和方块，创作分成也会打进余额。"), hero);
+    m_walletHint->setObjectName(QStringLiteral("fbNote"));
+    m_walletHint->setWordWrap(true);
+    heroLayout->addWidget(m_walletHint);
+    layout->addWidget(hero);
+
+    auto *topupTitle = new QLabel(tr("充值余额"), page);
+    topupTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    layout->addWidget(topupTitle);
+
+    auto *topupHost = new QWidget(page);
+    m_walletTopupLayout = new QHBoxLayout(topupHost);
+    m_walletTopupLayout->setContentsMargins(0, 0, 0, 0);
+    m_walletTopupLayout->setSpacing(8);
+    layout->addWidget(topupHost);
+
+    // 自定义金额：0.10 ~ 20000 元随便填
+    auto *customRow = new QHBoxLayout();
+    customRow->setContentsMargins(0, 0, 0, 0);
+    customRow->setSpacing(8);
+    auto *customLabel = new QLabel(tr("自定义金额"), page);
+    customLabel->setObjectName(QStringLiteral("fbNote"));
+    customRow->addWidget(customLabel);
+    auto *customEdit = new QLineEdit(page);
+    customEdit->setPlaceholderText(QStringLiteral("10.00"));
+    customEdit->setFixedHeight(32);
+    customEdit->setMaximumWidth(150);
+    customRow->addWidget(customEdit);
+    auto *customGo = new QPushButton(tr("去支付"), page);
+    customGo->setObjectName(QStringLiteral("fbShopBuy"));
+    customGo->setCursor(Qt::PointingHandCursor);
+    customGo->setFixedHeight(30);
+    connect(customGo, &QPushButton::clicked, this, [this, customEdit]() {
+        bool ok = false;
+        const double value = customEdit->text().trimmed().toDouble(&ok);
+        if (!ok || value < 0.1 || value > 20000)
+        {
+            NotificationManager::showError(this, tr("金额要在 ¥0.10 ~ ¥20000 之间"));
+            return;
+        }
+        const QString text = QString::number(value, 'f', 2);
+        startCheckout(QString(), tr("余额充值 ¥%1").arg(text), qRound(value * 100), false, text);
+    });
+    customRow->addWidget(customGo);
+    customRow->addStretch();
+    layout->addLayout(customRow);
+
+    auto *recentTitle = new QLabel(tr("最近账单"), page);
+    recentTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    layout->addWidget(recentTitle);
+
+    auto *recentHost = new QWidget(page);
+    m_walletRecentLayout = new QVBoxLayout(recentHost);
+    m_walletRecentLayout->setContentsMargins(0, 0, 0, 0);
+    m_walletRecentLayout->setSpacing(4);
+    layout->addWidget(recentHost);
+
+    layout->addStretch();
+    return page;
+}
+
+/** 账单页：余额汇总 + 创作池说明 + 流水明细 */
+QWidget *ForumAccountPage::buildBillsContent(QWidget *parent)
+{
+    auto *page = new QWidget(parent);
+    m_billsPage = page;
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(18, 16, 18, 18);
+    layout->setSpacing(14);
+
+    auto *hero = new QFrame(page);
+    hero->setObjectName(QStringLiteral("fbPointsHero"));
+    auto *heroLayout = new QHBoxLayout(hero);
+    heroLayout->setContentsMargins(20, 16, 20, 16);
+    heroLayout->setSpacing(24);
+
+    auto *left = new QVBoxLayout();
+    left->setContentsMargins(0, 0, 0, 0);
+    left->setSpacing(3);
+    auto *eyebrow = new QLabel(tr("账单"), hero);
+    eyebrow->setObjectName(QStringLiteral("fbPointsEyebrow"));
+    left->addWidget(eyebrow);
+    m_billsBalance = new QLabel(QStringLiteral("¥0.00"), hero);
+    m_billsBalance->setObjectName(QStringLiteral("fbPointsBalance"));
+    left->addWidget(m_billsBalance);
+    heroLayout->addLayout(left, 1);
+
+    auto addStat = [&](const QString &label, QLabel **out) {
+        auto *col = new QVBoxLayout();
+        col->setContentsMargins(0, 0, 0, 0);
+        col->setSpacing(2);
+        auto *name = new QLabel(label, hero);
+        name->setObjectName(QStringLiteral("fbNote"));
+        col->addWidget(name);
+        auto *value = new QLabel(QStringLiteral("¥0.00"), hero);
+        value->setObjectName(QStringLiteral("fbSectionTitle"));
+        col->addWidget(value);
+        heroLayout->addLayout(col);
+        *out = value;
+    };
+    addStat(tr("累计充值"), &m_billsRecharge);
+    addStat(tr("累计消费"), &m_billsPurchase);
+    addStat(tr("创作分成"), &m_billsPool);
+    layout->addWidget(hero);
+
+    m_billsPoolText = new QLabel(tr("会员收入的三分之一进入创作者流量池，按作品比例分给所有创作者，次日打进余额。"),
+                                 page);
+    m_billsPoolText->setObjectName(QStringLiteral("fbNote"));
+    m_billsPoolText->setWordWrap(true);
+    layout->addWidget(m_billsPoolText);
+
+    auto *listTitle = new QLabel(tr("余额明细"), page);
+    listTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+    layout->addWidget(listTitle);
+
+    auto *listHost = new QWidget(page);
+    m_billsListLayout = new QVBoxLayout(listHost);
+    m_billsListLayout->setContentsMargins(0, 0, 0, 0);
+    m_billsListLayout->setSpacing(4);
+    layout->addWidget(listHost);
+
+    layout->addStretch();
+    return page;
+}
+
+void ForumAccountPage::loadMemberPlans(bool force)
+{
+    if (!m_service->isLoggedIn() || !m_memberPage)
+        return;
+    if (m_memberLoaded && !force)
+        return;
+
+    m_service->getJson(
+        QStringLiteral("/api/member/plans"),
+        [this](const QJsonObject &root) {
+            m_memberPlans = root;
+            m_memberLoaded = true;
+            renderMemberPlans();
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            if (m_memberStatus)
+                m_memberStatus->setText(message);
+        });
+}
+
+void ForumAccountPage::renderMemberPlans()
+{
+    if (!m_memberPlansLayout || !m_memberStatus)
+        return;
+
+    // 档位还没拉回来：先保留「正在读取会员身份…」，别闪一下「还不是会员」
+    if (!m_memberLoaded && m_memberPlans.isEmpty())
+        return;
+
+    while (QLayoutItem *item = m_memberPlansLayout->takeAt(0))
+    {
+        if (QWidget *widget = item->widget())
+            widget->deleteLater();
+        delete item;
+    }
+
+    const QJsonObject member = m_memberPlans.value(QStringLiteral("member")).toObject();
+    if (member.value(QStringLiteral("active")).toBool())
+    {
+        const bool permanent = member.value(QStringLiteral("permanent")).toBool();
+        m_memberStatus->setText(
+            permanent
+                ? tr("当前身份：%1（永久）").arg(member.value(QStringLiteral("name")).toString())
+                : tr("当前身份：%1（%2 到期）")
+                      .arg(member.value(QStringLiteral("name")).toString())
+                      .arg(QDateTime::fromSecsSinceEpoch(
+                               member.value(QStringLiteral("until")).toVariant().toLongLong())
+                               .toString(QStringLiteral("yyyy-MM-dd"))));
+    }
+    else
+    {
+        m_memberStatus->setText(tr("还不是会员，选一档开通吧"));
+    }
+
+    QWidget *host = m_memberPlansHost;
+    const QJsonArray tiers = m_memberPlans.value(QStringLiteral("tiers")).toArray();
+    for (const QJsonValue &value : tiers)
+    {
+        const QJsonObject tier = value.toObject();
+        const bool permanent = tier.value(QStringLiteral("permanent")).toBool();
+
+        // 当前周期对应的价格（支持者只有一种）
+        QJsonObject price;
+        for (const QJsonValue &candidate : tier.value(QStringLiteral("prices")).toArray())
+        {
+            const QJsonObject item = candidate.toObject();
+            if (permanent || item.value(QStringLiteral("cycle")).toString() == m_memberCycle)
+            {
+                price = item;
+                break;
+            }
+        }
+        if (price.isEmpty() && !tier.value(QStringLiteral("prices")).toArray().isEmpty())
+            price = tier.value(QStringLiteral("prices")).toArray().first().toObject();
+
+        const QString productId = price.value(QStringLiteral("product_id"))
+                                      .toString(tier.value(QStringLiteral("id")).toString());
+        const int priceCents = qRound(price.value(QStringLiteral("price")).toString().toDouble() * 100);
+        const bool isCurrent = member.value(QStringLiteral("active")).toBool()
+                               && member.value(QStringLiteral("tier")).toString()
+                                      == tier.value(QStringLiteral("id")).toString();
+
+        auto *card = new QFrame(host);
+        card->setObjectName(QStringLiteral("fbMemberCard"));
+        card->setProperty("current", isCurrent);
+        auto *cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(12, 11, 12, 11);
+        cardLayout->setSpacing(4);
+
+        auto *name = new QLabel(tier.value(QStringLiteral("name")).toString(), card);
+        name->setObjectName(QStringLiteral("fbMemberName"));
+        name->setStyleSheet(
+            QStringLiteral("color:%1;").arg(tier.value(QStringLiteral("color")).toString()));
+        cardLayout->addWidget(name);
+
+        const int days = price.value(QStringLiteral("days")).toInt();
+        auto *priceLabel = new QLabel(
+            days > 0 ? tr("¥%1 · %2 天").arg(price.value(QStringLiteral("price")).toString()).arg(days)
+                     : tr("¥%1 · 永久").arg(price.value(QStringLiteral("price")).toString()),
+            card);
+        priceLabel->setObjectName(QStringLiteral("fbMemberPrice"));
+        cardLayout->addWidget(priceLabel);
+
+        const int points = price.value(QStringLiteral("points")).toInt();
+        const int cards = price.value(QStringLiteral("cards")).toInt();
+        auto *perk = new QLabel(
+            tr("赠 %1 方块 · %2 张补签卡").arg(points).arg(cards), card);
+        perk->setObjectName(QStringLiteral("fbMemberPerk"));
+        perk->setWordWrap(true);
+        cardLayout->addWidget(perk);
+
+        if (tier.value(QStringLiteral("fastlane")).toBool())
+        {
+            auto *fast = new QLabel(tr("联机快速通道资格"), card);
+            fast->setObjectName(QStringLiteral("fbMemberPerk"));
+            cardLayout->addWidget(fast);
+        }
+
+        cardLayout->addStretch();
+
+        auto *buy = new QPushButton(isCurrent ? tr("续费") : tr("购买"), card);
+        buy->setObjectName(QStringLiteral("fbShopBuy"));
+        buy->setCursor(Qt::PointingHandCursor);
+        buy->setFixedHeight(28);
+        const QString title = priceLabel->text().split(QStringLiteral(" · ")).first();
+        connect(buy, &QPushButton::clicked, this, [this, productId, name, title, priceCents]() {
+            QString label = name->text();
+            startCheckout(productId, tr("%1 %2").arg(label, title), priceCents);
+        });
+        cardLayout->addWidget(buy);
+
+        m_memberPlansLayout->addWidget(card, 1);
+    }
+    m_memberPlansLayout->addStretch(0);
+
+    // 升级补差价：只列比当前档更高的商品，点了弹支付方式，服务端按剩余价值折算
+    const QJsonArray upgrades = m_memberPlans.value(QStringLiteral("upgrades")).toArray();
+    if (!upgrades.isEmpty())
+    {
+        QWidget *host2 = m_memberPlansHost;
+        auto *upgradeBox = new QFrame(host2);
+        upgradeBox->setObjectName(QStringLiteral("fbPointsWeek"));
+        auto *upgradeLayout = new QVBoxLayout(upgradeBox);
+        upgradeLayout->setContentsMargins(14, 12, 14, 12);
+        upgradeLayout->setSpacing(8);
+
+        auto *upgradeTitle = new QLabel(tr("升级补差价"), upgradeBox);
+        upgradeTitle->setObjectName(QStringLiteral("fbSectionTitle"));
+        upgradeLayout->addWidget(upgradeTitle);
+        auto *upgradeHint = new QLabel(
+            tr("剩余时长按当前档月价折算成钱抵扣，升级后按目标档从今天重新算。"), upgradeBox);
+        upgradeHint->setObjectName(QStringLiteral("fbNote"));
+        upgradeHint->setWordWrap(true);
+        upgradeLayout->addWidget(upgradeHint);
+
+        for (const QJsonValue &value : upgrades)
+        {
+            const QJsonObject item = value.toObject();
+            auto *row = new QWidget(upgradeBox);
+            auto *rowLayout = new QHBoxLayout(row);
+            rowLayout->setContentsMargins(0, 0, 0, 0);
+            rowLayout->setSpacing(10);
+
+            auto *info = new QVBoxLayout();
+            info->setContentsMargins(0, 0, 0, 0);
+            info->setSpacing(2);
+            auto *name = new QLabel(
+                tr("升级到 %1").arg(item.value(QStringLiteral("to_name")).toString()), row);
+            name->setObjectName(QStringLiteral("fbMemberName"));
+            info->addWidget(name);
+            auto *detail = new QLabel(
+                tr("原价 ¥%1 − 剩余价值 ¥%2（剩 %3 天）")
+                    .arg(QString::number(item.value(QStringLiteral("price_cents")).toInt() / 100.0, 'f', 2))
+                    .arg(QString::number(item.value(QStringLiteral("credit_cents")).toInt() / 100.0, 'f', 2))
+                    .arg(item.value(QStringLiteral("days_left")).toInt()),
+                row);
+            detail->setObjectName(QStringLiteral("fbNote"));
+            info->addWidget(detail);
+            rowLayout->addLayout(info, 1);
+
+            const int payCents = item.value(QStringLiteral("pay_cents")).toInt();
+            auto *go = new QPushButton(tr("补 ¥%1").arg(QString::number(payCents / 100.0, 'f', 2)), row);
+            go->setObjectName(QStringLiteral("fbShopBuy"));
+            go->setCursor(Qt::PointingHandCursor);
+            go->setFixedHeight(30);
+            const QString productId = item.value(QStringLiteral("product_id")).toString();
+            const QString toName = item.value(QStringLiteral("to_name")).toString();
+            connect(go, &QPushButton::clicked, this, [this, productId, toName, payCents]() {
+                startCheckout(productId, tr("升级到 %1").arg(toName), payCents, true);
+            });
+            rowLayout->addWidget(go);
+
+            upgradeLayout->addWidget(row);
+        }
+        m_memberPlansLayout->addWidget(upgradeBox, 0);
+    }
+}
+
+void ForumAccountPage::loadWallet(bool force)
+{
+    if (!m_service->isLoggedIn() || !m_walletPage)
+        return;
+    if (m_walletLoaded && !force)
+        return;
+
+    m_service->getJson(
+        QStringLiteral("/api/wallet"),
+        [this](const QJsonObject &root) {
+            m_walletState = root;
+            m_walletLoaded = true;
+            renderWallet();
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            if (m_walletBalance)
+                m_walletBalance->setText(message);
+        });
+}
+
+void ForumAccountPage::renderWallet()
+{
+    if (!m_walletBalance || !m_walletTopupLayout || !m_walletRecentLayout)
+        return;
+
+    // 钱包还没拉回来：保留占位金额，别先渲染成一个光秃秃的「¥」
+    if (m_walletState.isEmpty())
+    {
+        m_walletBalance->setText(QStringLiteral("¥0.00"));
+        return;
+    }
+
+    m_walletBalance->setText(QStringLiteral("¥%1").arg(m_walletState.value(QStringLiteral("balance")).toString()));
+    if (m_walletHint)
+    {
+        const QJsonObject member = m_walletState.value(QStringLiteral("member")).toObject();
+        m_walletHint->setText(
+            member.value(QStringLiteral("active")).toBool()
+                ? tr("当前身份：%1。充值后可以直接用余额买会员和方块。")
+                      .arg(member.value(QStringLiteral("name")).toString())
+                : tr("充值后可以直接用余额买会员和方块，创作分成也会打进余额。"));
+    }
+
+    while (QLayoutItem *item = m_walletTopupLayout->takeAt(0))
+    {
+        if (QWidget *widget = item->widget())
+            widget->deleteLater();
+        delete item;
+    }
+    QWidget *host = m_walletTopupLayout->parentWidget();
+    for (const QJsonValue &value : m_walletState.value(QStringLiteral("packages")).toArray())
+    {
+        const QJsonObject item = value.toObject();
+        auto *card = new QFrame(host);
+        card->setObjectName(QStringLiteral("fbShopCard"));
+        auto *cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(10, 10, 10, 10);
+        cardLayout->setSpacing(3);
+        auto *amount = new QLabel(QStringLiteral("¥%1").arg(item.value(QStringLiteral("amount")).toString()),
+                                  card);
+        amount->setObjectName(QStringLiteral("fbShopPoints"));
+        amount->setAlignment(Qt::AlignCenter);
+        cardLayout->addWidget(amount);
+        auto *note = new QLabel(tr("充值到余额"), card);
+        note->setObjectName(QStringLiteral("fbShopUnit"));
+        note->setAlignment(Qt::AlignCenter);
+        cardLayout->addWidget(note);
+        auto *buy = new QPushButton(tr("充值"), card);
+        buy->setObjectName(QStringLiteral("fbShopBuy"));
+        buy->setCursor(Qt::PointingHandCursor);
+        buy->setFixedHeight(28);
+        const QString id = item.value(QStringLiteral("id")).toString();
+        const int cents = item.value(QStringLiteral("cents")).toInt();
+        const QString amountText = item.value(QStringLiteral("amount")).toString();
+        connect(buy, &QPushButton::clicked, this, [this, id, cents, amountText]() {
+            startCheckout(id, tr("余额充值 ¥%1").arg(amountText), cents);
+        });
+        cardLayout->addWidget(buy);
+        m_walletTopupLayout->addWidget(card, 1);
+    }
+
+    clearLayout(m_walletRecentLayout);
+    const QJsonArray items = m_walletState.value(QStringLiteral("transactions")).toArray();
+    if (items.isEmpty())
+    {
+        auto *empty = makeMutedLabel(tr("还没有账单记录，先充一笔试试。"), m_walletRecentLayout->parentWidget(),
+                                     "fbEmpty");
+        empty->setAlignment(Qt::AlignCenter);
+        m_walletRecentLayout->addWidget(empty);
+        m_walletRecentLayout->addStretch();
+        return;
+    }
+    for (const QJsonValue &value : items)
+    {
+        const QJsonObject item = value.toObject();
+        auto *row = new QFrame(m_walletRecentLayout->parentWidget());
+        row->setObjectName(QStringLiteral("fbPointsHistoryRow"));
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(12, 8, 12, 8);
+        rowLayout->setSpacing(10);
+        auto *note = new QLabel(item.value(QStringLiteral("note")).toString(), row);
+        note->setObjectName(QStringLiteral("fbNote"));
+        rowLayout->addWidget(note, 1);
+        const int cents = item.value(QStringLiteral("amount_cents")).toInt();
+        auto *amount = new QLabel(
+            tr("%1¥%2").arg(cents >= 0 ? QStringLiteral("+") : QStringLiteral("-"),
+                            item.value(QStringLiteral("amount")).toString()),
+            row);
+        amount->setObjectName(QStringLiteral("fbPointsHistoryAmount"));
+        amount->setStyleSheet(cents >= 0 ? QStringLiteral("color:#22a06b;") : QString());
+        rowLayout->addWidget(amount);
+        m_walletRecentLayout->addWidget(row);
+    }
+    m_walletRecentLayout->addStretch();
+}
+
+void ForumAccountPage::loadBills(bool force)
+{
+    if (!m_service->isLoggedIn() || !m_billsPage)
+        return;
+    if (m_billsLoaded && !force)
+        return;
+
+    m_service->getJson(
+        QStringLiteral("/api/bills"),
+        [this](const QJsonObject &root) {
+            m_billsState = root;
+            m_billsLoaded = true;
+            renderBills();
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            if (m_billsBalance)
+                m_billsBalance->setText(message);
+        });
+}
+
+void ForumAccountPage::renderBills()
+{
+    if (!m_billsListLayout || !m_billsBalance)
+        return;
+
+    // 账单还没拉回来：保留占位金额，别先渲染成四个「¥」
+    if (m_billsState.isEmpty())
+        return;
+
+    m_billsBalance->setText(
+        QStringLiteral("¥%1").arg(m_billsState.value(QStringLiteral("balance")).toString()));
+    if (m_billsRecharge)
+        m_billsRecharge->setText(
+            QStringLiteral("¥%1").arg(m_billsState.value(QStringLiteral("total_recharge")).toString()));
+    if (m_billsPurchase)
+        m_billsPurchase->setText(
+            QStringLiteral("¥%1").arg(m_billsState.value(QStringLiteral("total_purchase")).toString()));
+    if (m_billsPool)
+        m_billsPool->setText(
+            QStringLiteral("¥%1").arg(m_billsState.value(QStringLiteral("total_pool")).toString()));
+
+    if (m_billsPoolText)
+    {
+        const QJsonObject pool = m_billsState.value(QStringLiteral("pool")).toObject();
+        const QJsonObject last = pool.value(QStringLiteral("last")).toObject();
+        m_billsPoolText->setText(
+            last.isEmpty()
+                ? tr("会员收入的三分之一进入创作者流量池，按作品比例分给所有创作者，次日打进余额。")
+                : tr("创作者流量池：最近一次（%1）池子 ¥%2，%3 位作者、%4 份作品参与。")
+                      .arg(last.value(QStringLiteral("day")).toString())
+                      .arg(QString::number(last.value(QStringLiteral("pool_cents")).toInt() / 100.0, 'f', 2))
+                      .arg(last.value(QStringLiteral("creators")).toInt())
+                      .arg(last.value(QStringLiteral("works")).toInt()));
+    }
+
+    clearLayout(m_billsListLayout);
+    const QJsonArray items = m_billsState.value(QStringLiteral("transactions")).toArray();
+    if (items.isEmpty())
+    {
+        auto *empty = makeMutedLabel(tr("还没有余额记录。充值、买会员、收到创作分成都会出现在这里。"),
+                                     m_billsListLayout->parentWidget(), "fbEmpty");
+        empty->setAlignment(Qt::AlignCenter);
+        m_billsListLayout->addWidget(empty);
+        m_billsListLayout->addStretch();
+        return;
+    }
+    for (const QJsonValue &value : items)
+    {
+        const QJsonObject item = value.toObject();
+        auto *row = new QFrame(m_billsListLayout->parentWidget());
+        row->setObjectName(QStringLiteral("fbPointsHistoryRow"));
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(12, 8, 12, 8);
+        rowLayout->setSpacing(10);
+
+        auto *kind = new QLabel(item.value(QStringLiteral("kind_label")).toString(), row);
+        kind->setObjectName(QStringLiteral("fbChip"));
+        rowLayout->addWidget(kind);
+
+        auto *note = new QLabel(item.value(QStringLiteral("note")).toString(), row);
+        note->setObjectName(QStringLiteral("fbNote"));
+        rowLayout->addWidget(note, 1);
+
+        const int cents = item.value(QStringLiteral("amount_cents")).toInt();
+        auto *amount = new QLabel(
+            tr("%1¥%2").arg(cents >= 0 ? QStringLiteral("+") : QStringLiteral("-"),
+                            item.value(QStringLiteral("amount")).toString()),
+            row);
+        amount->setObjectName(QStringLiteral("fbPointsHistoryAmount"));
+        amount->setStyleSheet(cents >= 0 ? QStringLiteral("color:#22a06b;") : QString());
+        rowLayout->addWidget(amount);
+
+        m_billsListLayout->addWidget(row);
+    }
+    m_billsListLayout->addStretch();
+}
+
+/**
+ * 结算：先问支付方式（微信 / 支付宝 / 余额），再下单。
+ * 余额支付当场完成；第三方支付打开浏览器收银台并开始轮询到账。
+ */
+void ForumAccountPage::startCheckout(const QString &productId, const QString &title, int priceCents,
+                                     bool upgrade, const QString &customAmount)
+{
+    if (m_pointsBusy || !m_service->isLoggedIn())
+        return;
+    if (productId.isEmpty() && customAmount.isEmpty())
+        return;
+
+    QString balanceText = m_walletState.value(QStringLiteral("balance")).toString();
+    if (balanceText.isEmpty())
+        balanceText = QStringLiteral("0.00"); // 还没拉到钱包时别显示成「余额不足（¥）」
+    const int balanceCents = qRound(balanceText.toDouble() * 100);
+    const bool balanceEnough = balanceCents >= priceCents && customAmount.isEmpty();
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("选择支付方式"));
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(20, 18, 20, 16);
+    layout->setSpacing(8);
+
+    auto *head = new QLabel(tr("%1 · ¥%2").arg(title, QString::number(priceCents / 100.0, 'f', 2)), &dialog);
+    head->setObjectName(QStringLiteral("fbSectionTitle"));
+    layout->addWidget(head);
+
+    auto *tip = new QLabel(upgrade ? tr("升级会按剩余时长折价抵扣，付完立即生效。")
+                                   : tr("选好方式后继续付款，付完自动到账。"),
+                           &dialog);
+    tip->setObjectName(QStringLiteral("fbNote"));
+    layout->addWidget(tip);
+
+    QString channel;
+    auto addMethod = [&](const QString &text, const QString &value, bool enabled,
+                         const QString &iconKey) {
+        auto *btn = new QPushButton(text, &dialog);
+        btn->setObjectName(value == QStringLiteral("balance") ? QStringLiteral("fbBtnGhost")
+                                                              : QStringLiteral("fbBtnPrimary"));
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setFixedHeight(36);
+        btn->setEnabled(enabled);
+        if (!iconKey.isEmpty())
+        {
+            btn->setIcon(payMethodIcon(iconKey));
+            btn->setIconSize(QSize(20, 20));
+        }
+        const QString captured = value;
+        connect(btn, &QPushButton::clicked, &dialog, [&dialog, &channel, captured]() {
+            channel = captured;
+            dialog.accept();
+        });
+        layout->addWidget(btn);
+    };
+    addMethod(tr("微信支付"), QStringLiteral("wechat"), true, QStringLiteral("wechat"));
+    addMethod(tr("支付宝"), QStringLiteral("alipay"), true, QStringLiteral("alipay"));
+    addMethod(customAmount.isEmpty()
+                  ? (balanceEnough ? tr("余额支付（¥%1）").arg(balanceText)
+                                   : tr("余额不足（¥%1）").arg(balanceText))
+                  : tr("余额支付"),
+              QStringLiteral("balance"), balanceEnough, QStringLiteral("balance"));
+
+    auto *cancel = new QPushButton(tr("取消"), &dialog);
+    cancel->setObjectName(QStringLiteral("fbBtnGhost"));
+    cancel->setCursor(Qt::PointingHandCursor);
+    cancel->setFixedHeight(32);
+    connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+    layout->addWidget(cancel);
+
+    if (dialog.exec() != QDialog::Accepted || channel.isEmpty())
+        return;
+
+    m_pointsBusy = true;
+    QJsonObject body;
+    if (!productId.isEmpty())
+        body.insert(QStringLiteral("package"), productId);
+    if (!customAmount.isEmpty())
+        body.insert(QStringLiteral("amount"), customAmount);
+    if (upgrade)
+        body.insert(QStringLiteral("intent"), QStringLiteral("upgrade"));
+    body.insert(QStringLiteral("channel"), channel);
+
+    m_service->sendJson(
+        QByteArrayLiteral("POST"), QStringLiteral("/api/points/shop/order"), body,
+        [this, title, channel](const QJsonObject &result) {
+            m_pointsBusy = false;
+            const QJsonObject order = result.value(QStringLiteral("order")).toObject();
+            const QString orderNo = order.value(QStringLiteral("out_trade_no")).toString();
+            const QString payUrl = result.value(QStringLiteral("pay_url")).toString();
+            if (result.value(QStringLiteral("paid")).toBool())
+            {
+                NotificationManager::showSuccess(
+                    this, tr("%1 已支付成功，余额 ¥%2").arg(title, result.value(QStringLiteral("balance")).toString()));
+                m_walletLoaded = false;
+                m_billsLoaded = false;
+                m_memberLoaded = false;
+                m_pointsLoaded = false;
+                if (m_pointsPage)
+                    loadPoints(true);
+                if (m_walletPage)
+                    loadWallet(true);
+                if (m_billsPage)
+                    loadBills(true);
+                if (m_memberPage)
+                    loadMemberPlans(true);
+                m_service->refreshProfile();
+                return;
+            }
+            if (orderNo.isEmpty())
+            {
+                NotificationManager::showError(this, tr("下单失败：没有拿到订单号，请再试一次"));
+                return;
+            }
+            startPayPolling(orderNo, order.value(QStringLiteral("points")).toInt(), title, payUrl);
+            if (payUrl.isEmpty() || !QDesktopServices::openUrl(QUrl(payUrl)))
+                NotificationManager::showInfo(this, tr("没能自动打开浏览器，点下面的「打开支付页」继续付款"));
+            Q_UNUSED(channel);
+        },
+        [this](const QString &message, int status) {
+            Q_UNUSED(status);
+            m_pointsBusy = false;
+            NotificationManager::showError(this, message);
         });
 }
 

@@ -42,6 +42,12 @@ struct ForumUser
     int threadCount = 0;
     int postCount = 0;
     int points = 0;          ///< 论坛积分「方块」余额
+    /** 会员身份（支持者永久 / 体验、标准按到期时间）：来自服务端 user.member */
+    QString memberTier;      ///< supporter / trial / standard，空 = 没有会员
+    QString memberBadge;     ///< 展示用的会员名，例如「标准会员」
+    QString memberColor;     ///< 会员标识的配色（#rrggbb）
+    qint64 memberUntil = 0;  ///< 到期时间（秒），支持者为 0
+    bool memberPermanent = false; ///< 支持者这种永久身份
     int followerCount = 0;   ///< 个人主页的粉丝数（关注 / 取关后由接口返回值同步）
     int followingCount = 0;  ///< 个人主页的关注数
     bool following = false;  ///< 当前登录账号是否关注了这个人（只有用户主页接口会带）

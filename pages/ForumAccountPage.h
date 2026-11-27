@@ -142,11 +142,13 @@ private:
     enum ViewIndex { OverviewView = 0, AuthView = 1, DetailView = 2 };
     enum TabIndex { CharactersTab = 0, ThreadsTab = 1, RepliesTab = 2, BookmarksTab = 3,
                     NotificationsTab = 4, FeedbackTab = 5, PointsTab = 6, MedalsTab = 7,
-                    PlaytimeTab = 8, SettingsTab = 9 };
+                    PlaytimeTab = 8, MemberTab = 9, WalletTab = 10, BillsTab = 11,
+                    SettingsTab = 12 };
     enum ContentIndex { CharactersContent = 0, ThreadsContent = 1, RepliesContent = 2,
                         BookmarksContent = 3, NotificationsContent = 4, FeedbackContent = 5,
                         PointsContent = 6, MedalsContent = 7, PlaytimeContent = 8,
-                        SettingsContent = 9, LoggedOutContent = 10 };
+                        MemberContent = 9, WalletContent = 10, BillsContent = 11,
+                        SettingsContent = 12, LoggedOutContent = 13 };
     enum AuthMode { LoginMode = 0, RegisterMode = 1, RecoverMode = 2 };
     /** 「我的收藏」页签内的子页：资源收藏（在线资源同步） / 帖子收藏（论坛主题） / 本地收藏（实例资源） */
     enum BookmarkSubTab { BookmarkResourceTab = 0, BookmarkThreadTab = 1, BookmarkLocalTab = 2 };
@@ -190,6 +192,12 @@ private:
     QWidget *buildFeedbackContent(QWidget *parent);
     /** 「积分」页：方块余额、7 天签到进度与签到按钮 */
     QWidget *buildPointsContent(QWidget *parent);
+    /** 「会员」页：支持者 / 体验会员 / 标准会员 × 月 / 季 / 年 */
+    QWidget *buildMemberContent(QWidget *parent);
+    /** 「余额」页：余额、充值档位、最近账单 */
+    QWidget *buildWalletContent(QWidget *parent);
+    /** 「账单」页：充值 / 消费 / 创作分成明细 */
+    QWidget *buildBillsContent(QWidget *parent);
     /** 「勋章」页：和方块盒子账号绑定的勋章墙（服务端判定，本地只负责展示） */
     QWidget *buildMedalsContent(QWidget *parent);
     /** 「游玩」页：本机游玩时长统计 + 年度报告入口（嵌的是 PlaytimeStatsPage，不带自己的滚动区） */
@@ -335,8 +343,7 @@ private:
     void loadMyFeedbacks(bool force = false);
     void renderMyFeedbacks();
     /** 「积分」：拉取方块余额与签到进度、渲染、签到 */
-    void loadPoints(bool force = false);
-    void renderPoints();
+    void loadPoints(bool force = false);    void renderPoints();
     /** 「勋章」：拉取账号勋章墙，结算新勋章并提示 */
     void loadMedals(bool force = false);
     void renderMedals();
@@ -351,7 +358,23 @@ private:
     /** 「积分」：购买方块（档位列表 / 下单 / 打开支付页 / 轮询到账） */
     void loadPointsShop();
     void renderPointsShop(const QJsonObject &shop);
+    /** 「积分」：会员档位（支持者 / 体验 / 标准），用同一份购买数据渲染 */
+    void renderPointsMembers(const QJsonObject &shop);
     void buyPointsPackage(const QString &packageId, QPushButton *button);
+    /** 「会员 / 余额」：弹支付方式（微信 / 支付宝 / 余额），选定后下单
+     *  @param upgrade      true = 会员升级补差价（服务端按剩余价值折算）
+     *  @param customAmount 自定义充值金额（元），填了就按金额下单 */
+    void startCheckout(const QString &productId, const QString &title, int priceCents,
+                       bool upgrade = false, const QString &customAmount = QString());
+    /** 会员页：拉档位和当前身份 */
+    void loadMemberPlans(bool force = false);
+    void renderMemberPlans();
+    /** 余额页：拉余额、充值档位、最近账单 */
+    void loadWallet(bool force = false);
+    void renderWallet();
+    /** 账单页：拉流水和创作池汇总 */
+    void loadBills(bool force = false);
+    void renderBills();
     void startPayPolling(const QString &outTradeNo, int points, const QString &title,
                          const QString &payUrl);
     void stopPayPolling();
@@ -414,6 +437,8 @@ private:
     /** 个人简介：按 Markdown 渲染（加粗、代码、列表、链接、图片都认） */
     ForumPostBrowser *m_bioBrowser = nullptr;
     QLabel *m_roleChip = nullptr;
+    /** 会员标识（支持者 / 体验会员 / 标准会员），没有会员时隐藏 */
+    QLabel *m_memberChip = nullptr;
     QLabel *m_statThreads = nullptr;
     QLabel *m_statPosts = nullptr;
     QLabel *m_statBookmarks = nullptr;
@@ -484,6 +509,37 @@ private:
     // 勋章页 · 游戏成就（和论坛勋章放在同一个卡片瀑布流里）
     QJsonArray m_gameAchievements;
     int m_gameAchievementTotal = 0;
+    // 积分页 · 会员（支持者 / 体验会员 / 标准会员）
+    QWidget *m_pointsMember = nullptr;
+    QHBoxLayout *m_pointsMemberGrid = nullptr;
+    QLabel *m_pointsMemberHint = nullptr;
+    // 会员页
+    QWidget *m_memberPage = nullptr;
+    QWidget *m_memberPlansHost = nullptr;
+    QHBoxLayout *m_memberPlansLayout = nullptr;
+    QLabel *m_memberStatus = nullptr;
+    QList<QPushButton *> m_memberCycleButtons;
+    QString m_memberCycle = QStringLiteral("month");
+    QJsonObject m_memberPlans;      ///< /api/member/plans 的结果
+    bool m_memberLoaded = false;
+    // 余额页
+    QWidget *m_walletPage = nullptr;
+    QLabel *m_walletBalance = nullptr;
+    QLabel *m_walletHint = nullptr;
+    QHBoxLayout *m_walletTopupLayout = nullptr;
+    QVBoxLayout *m_walletRecentLayout = nullptr;
+    QJsonObject m_walletState;
+    bool m_walletLoaded = false;
+    // 账单页
+    QWidget *m_billsPage = nullptr;
+    QLabel *m_billsBalance = nullptr;
+    QLabel *m_billsRecharge = nullptr;
+    QLabel *m_billsPurchase = nullptr;
+    QLabel *m_billsPool = nullptr;
+    QLabel *m_billsPoolText = nullptr;
+    QVBoxLayout *m_billsListLayout = nullptr;
+    QJsonObject m_billsState;
+    bool m_billsLoaded = false;
     // 积分页 · 购买方块
     QWidget *m_pointsShop = nullptr;
     QHBoxLayout *m_pointsShopGrid = nullptr;

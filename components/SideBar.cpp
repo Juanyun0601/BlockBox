@@ -392,6 +392,13 @@ void SideBar::buildNavStructure()
             settingsItem.children.append(projectionEditor);
         }
 
+        // 插件管理整页挂在设置子导航最后：子项序号正好等于设置内容页数量，
+        // 点击时由主窗口按这个序号转到插件页（设置页本身没有这一页）
+        NavItem pluginManage;
+        pluginManage.text = tr("插件管理");
+        pluginManage.iconPath = ":/Images/Icons/nav_plugin.svg";
+        settingsItem.children.append(pluginManage);
+
         m_parentItems.append(settingsItem);
     }
 
@@ -561,15 +568,20 @@ void SideBar::buildNavStructure()
         fileTransfer.iconPath = ":/Images/Icons/share.svg";
         more.children.append(fileTransfer);
 
+        NavItem multiThreadDownload;
+        multiThreadDownload.text = tr("多线程下载");
+        multiThreadDownload.iconPath = ":/Images/Icons/download.svg";
+        more.children.append(multiThreadDownload);
+
         NavItem memoryOptimize;
         memoryOptimize.text = tr("内存优化");
         memoryOptimize.iconPath = ":/Images/Icons/memory.svg";
         more.children.append(memoryOptimize);
 
-        NavItem pluginManage;
-        pluginManage.text = tr("插件管理");
-        pluginManage.iconPath = ":/Images/Icons/nav_plugin.svg";
-        more.children.append(pluginManage);
+        NavItem migration;
+        migration.text = tr("迁移向导");
+        migration.iconPath = ":/Images/Icons/nav_import.svg";
+        more.children.append(migration);
 
         NavItem onboarding;
         onboarding.text = tr("新手引导");
@@ -577,7 +589,7 @@ void SideBar::buildNavStructure()
         more.children.append(onboarding);
 
         // 插件提供的入口（manifest.ui.moreEntries，需 ui:page 权限）：
-        // 追加在内置八项之后，顺序与更多页「插件入口」卡片一致
+        // 追加在内置项之后，顺序与更多页「插件入口」卡片一致
         PluginManager *pm = PluginManager::instance();
         const QList<PluginPageEntry> pluginEntries = pm->enabledMoreEntries();
         for (const PluginPageEntry &entry : pluginEntries)

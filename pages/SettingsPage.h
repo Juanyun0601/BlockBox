@@ -58,6 +58,8 @@ signals:
     void openLibraryDocRequested(const QString &volume, const QString &chapter);
     /** 通用设置里点了「打开新手引导」：跳到新手引导页（独立整页） */
     void openOnboardingRequested();
+    /** 迁移向导关闭（openInstances=true 表示用户点了「查看实例列表」） */
+    void migrationFinished(bool openInstances);
     /** AI 助手设置里改了本地 MCP 服务器开关 / 端口 / 令牌 / 写权限 */
     void mcpServerSettingsChanged();
 
@@ -101,6 +103,15 @@ public:
     int tabIndex(SettingsTabId id) const;
     /** 页签对应的顶栏标题（随 Java / 基岩版模式自动取对应页面） */
     QString tabTitle(int index) const;
+    /**
+     * @brief 设置子导航里「插件管理」的序号
+     *
+     * 插件管理是独立整页（插件页），不放进本页内容堆栈；在侧边栏里排在所有
+     * 设置子项之后，所以序号正好等于设置内容页数量。
+     */
+    int pluginManageTabIndex() const;
+    /** 该设置子导航序号是否就是「插件管理」 */
+    bool isPluginManageTab(int index) const;
 
     /**
      * 子导航搜索框分发：对当前设置面板做行级过滤（卡片标题/设置行文本匹配）。

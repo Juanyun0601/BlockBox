@@ -7,6 +7,7 @@
 #include "pages/SettingsPage.h"
 
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
@@ -20,10 +21,14 @@
 #include "components/AppMessageBox.h"
 #include "components/CustomCheckBox.h"
 #include "components/FileOpStepsDialog.h"
+#include "components/NotificationManager.h"
 #include "components/OutlinedLabel.h"
+#include "components/UserAgreementDialog.h"
 #include "platform.h"
+#include "utils/CrashReporter.h"
 #include "utils/LauncherLogger.h"
 #include "utils/SettingsManager.h"
+#include "utils/Telemetry.h"
 
 namespace {
 
@@ -165,6 +170,129 @@ void SettingsPage::initAdvancedSettings()
             tr("运行日志已导出到：\n%1").arg(QDir::toNativeSeparators(path)));
     });
     logFileRow->addWidget(exportLogBtn);
+
+    // ── 诊断与统计（崩溃自动上报 / 匿名使用统计）──
+    QVBoxLayout *diagnosticsCard = createSettingsCard(layout, tr("诊断与统计"));
+
+    CustomCheckBox *autoCrashCheck = new CustomCheckBox();
+    autoCrashCheck->setChecked(CrashReporter::autoSendEnabled());
+    QHBoxLayout *autoCrashRow = appendSettingRow(diagnosticsCard,
+        tr("自动发送崩溃报告"),
+        tr("方块盒子意外闪退后，下次启动自动把调用栈和出事前的最后一段日志发给我们，不用每次手动确认。"),
+        tr("报告只包含版本、系统、调用栈和运行日志，上传前会自动隐藏用户名、文件路径、IP 和登录令牌，"
+           "不包含账号、存档、聊天内容。"),
+        true);
+    autoCrashRow->addWidget(autoCrashCheck);
+    connect(autoCrashCheck, &CustomCheckBox::toggled, [](bool checked) {
+        CrashReporter::setAutoSendEnabled(checked);
+        if (checked)
+            CrashReporter::setSendConsent(true);
+    });
+
+    CustomCheckBox *telemetryCheck = new CustomCheckBox();
+    telemetryCheck->setChecked(Telemetry::isEnabled());
+    QHBoxLayout *telemetryRow = appendSettingRow(diagnosticsCard,
+        tr("匿名使用统计"),
+        tr("只上报启动次数、使用时长、版本 / 系统分布和各页面的访问次数，帮我们判断哪些功能值得优先优化。"),
+        tr("默认关闭。开启后也不会上传账号、实例名、存档、聊天或任何文件内容；可以随时关闭，关闭后立即停止并清空本地待发送数据。"),
+        true);
+    telemetryRow->addWidget(telemetryCheck);
+    connect(telemetryCheck, &CustomCheckBox::toggled, [](bool checked) {
+        Telemetry::setEnabled(checked);
+    });
+
+    // 本机匿名标识：只用于把同一次崩溃 / 同一天的统计归到一起，可随时重置
+    QLabel *installIdLabel = new QLabel(CrashReporter::installId(), m_advancedSettings);
+    installIdLabel->setObjectName("diagnosticsInstallIdLabel");
+    installIdLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    installIdLabel->setStyleSheet(QStringLiteral("color: #8a8a92; font-size: 11.5px;"));
+
+    QHBoxLayout *installIdRow = appendSettingRow(diagnosticsCard,
+        tr("本机匿名标识"),
+        tr("一串随机字符，仅用于把同一天的上报归到一起；不关联账号，随时可以换新的。"),
+        QString(), true);
+    installIdRow->addWidget(installIdLabel);
+
+    QPushButton *resetIdBtn = new QPushButton(tr("重置"), m_advancedSettings);
+    resetIdBtn->setObjectName("primaryButton");
+    resetIdBtn->setCursor(Qt::PointingHandCursor);
+    resetIdBtn->setFixedWidth(72);
+    connect(resetIdBtn, &QPushButton::clicked, this, [this, installIdLabel]() {
+        const auto answer = AppMessageBox::question(
+            this, tr("重置匿名标识"),
+            tr("重置后会换一个新的随机标识，之前的统计不会再和这台设备关联。确定重置吗？"));
+        if (answer != AppMessageBox::Yes)
+            return;
+        installIdLabel->setText(CrashReporter::resetInstallId());
+        NotificationManager::showInfo(this, tr("已换用新的匿名标识"));
+    });
+    installIdRow->addWidget(resetIdBtn);
+
+    // 崩溃记录：查看本地留下的报告 / 立即补发 / 打开文件夹
+    QLabel *crashPendingLabel = new QLabel(m_advancedSettings);
+    crashPendingLabel->setObjectName("diagnosticsCrashPendingLabel");
+    crashPendingLabel->setStyleSheet(QStringLiteral("color: #8a8a92; font-size: 11.5px;"));
+    auto refreshCrashPending = [crashPendingLabel]() {
+        const int count = CrashReporter::instance()->pendingCount();
+        crashPendingLabel->setText(count > 0
+            ? QCoreApplication::translate("SettingsPage", "有 %1 份崩溃报告还没发送").arg(count)
+            : QCoreApplication::translate("SettingsPage", "没有待发送的崩溃报告"));
+    };
+    refreshCrashPending();
+
+    QHBoxLayout *crashRecordRow = appendSettingRow(diagnosticsCard,
+        tr("崩溃记录"),
+        tr("本地保存的崩溃报告只在这台电脑上，发送与否由你决定。"),
+        QString(), true);
+    crashRecordRow->addWidget(crashPendingLabel);
+
+    QPushButton *sendCrashBtn = new QPushButton(tr("立即发送"), m_advancedSettings);
+    sendCrashBtn->setObjectName("primaryButton");
+    sendCrashBtn->setCursor(Qt::PointingHandCursor);
+    sendCrashBtn->setFixedWidth(88);
+    connect(sendCrashBtn, &QPushButton::clicked, this, [this, refreshCrashPending]() {
+        if (CrashReporter::instance()->pendingCount() <= 0) {
+            NotificationManager::showInfo(this, tr("没有待发送的崩溃报告"));
+            return;
+        }
+        CrashReporter::setSendConsent(true);
+        CrashReporter::instance()->uploadPendingReports(
+            [this, refreshCrashPending](int okCount, int failedCount) {
+                refreshCrashPending();
+                if (failedCount == 0) {
+                    NotificationManager::showInfo(
+                        this, tr("崩溃报告已发送，感谢反馈（%1 份）").arg(okCount));
+                } else {
+                    NotificationManager::showError(
+                        this, tr("有 %1 份崩溃报告暂时没发出去，已保留在本地").arg(failedCount));
+                }
+            });
+    });
+    crashRecordRow->addWidget(sendCrashBtn);
+
+    QPushButton *openCrashDirBtn = new QPushButton(tr("打开文件夹"), m_advancedSettings);
+    openCrashDirBtn->setObjectName("primaryButton");
+    openCrashDirBtn->setCursor(Qt::PointingHandCursor);
+    openCrashDirBtn->setFixedWidth(96);
+    openCrashDirBtn->setVisible(!Platform::isMobile());
+    connect(openCrashDirBtn, &QPushButton::clicked, this, []() {
+        const QString dir = CrashReporter::instance()->crashDirectory();
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    crashRecordRow->addWidget(openCrashDirBtn);
+
+    connect(CrashReporter::instance(), &CrashReporter::pendingCountChanged,
+            crashPendingLabel, [refreshCrashPending](int) { refreshCrashPending(); });
+
+    QPushButton *privacyBtn = new QPushButton(tr("隐私政策"), m_advancedSettings);
+    privacyBtn->setObjectName("primaryButton");
+    privacyBtn->setCursor(Qt::PointingHandCursor);
+    privacyBtn->setFixedWidth(96);
+    connect(privacyBtn, &QPushButton::clicked, this, [this]() {
+        UserAgreementDialog::showDocument(UserAgreementDialog::PrivacyPolicy, this);
+    });
+    diagnosticsCard->addWidget(privacyBtn, 0, Qt::AlignLeft);
 
     // ── 启动前进程检查 ──
     QVBoxLayout *processCheckCard = createSettingsCard(layout, tr("启动前进程检查"));

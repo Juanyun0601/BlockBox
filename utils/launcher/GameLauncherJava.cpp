@@ -921,8 +921,15 @@ void GameLauncher::startJavaAutoInstall()
     }
     m_rescueInstallAttempted = true;
 
-    // 用户正在手动下载 Java（下载页/设置页）时不能抢用同一个下载器
-    if (JavaDownloader::instance()->status() != JavaDownloadStatus::Idle)
+    // 用户正在手动下载 Java（下载页/设置页）时不能抢用同一个下载器。
+    // 注意只能拦「真正在忙」的状态：Completed / Failed 是上一次下载的收尾状态，
+    // 不会自己回到 Idle，按「不是 Idle 就拒绝」会把上次已结束的下载当成进行中，
+    // 导致以后再也不会自动装 Java。
+    const JavaDownloadStatus downloadStatus = JavaDownloader::instance()->status();
+    if (downloadStatus == JavaDownloadStatus::FetchingVersions
+        || downloadStatus == JavaDownloadStatus::FetchingBinaries
+        || downloadStatus == JavaDownloadStatus::Downloading
+        || downloadStatus == JavaDownloadStatus::Extracting)
     {
         failJavaRescue(QStringLiteral("检测到正在进行的 Java 下载任务，请等待其完成后再启动游戏"));
         return;

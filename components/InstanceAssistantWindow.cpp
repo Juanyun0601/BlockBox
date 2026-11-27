@@ -1,4 +1,5 @@
 #include "InstanceAssistantWindow.h"
+#include "InstancePluginExtPage.h"
 
 #include <QApplication>
 #include <QBrush>
@@ -447,6 +448,13 @@ void InstanceAssistantWindow::initUI()
         // Java管理页面，内部用 QStackedWidget 切换管理/下载两个子页
         if (i == javaTab) {
             buildJavaPage(page);
+        }
+        // 插件扩展页：内容由插件声明的 ui.fields / ui.actions 渲染
+        if (m_hasPluginExtPage && i == navItems.size() - 1) {
+            auto *extLayout = new QVBoxLayout(page);
+            extLayout->setContentsMargins(0, 0, 0, 0);
+            extLayout->setSpacing(0);
+            extLayout->addWidget(new InstancePluginExtPage(page));
         }
     }
 

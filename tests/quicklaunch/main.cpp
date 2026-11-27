@@ -14,6 +14,7 @@
  * 结束后清理桌面文件、注册表键与临时目录。
  */
 #include <QGuiApplication>
+#include <QDataStream>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -29,6 +30,35 @@
 #include <windows.h>
 #include <shellapi.h>
 #endif
+
+/** 从 .blockbox 内嵌 ICO 里取出指定尺寸的图标（验证图标来源用） */
+static QImage embeddedIcoImage(const QString &filePath, int wantSize)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return QImage();
+    const QByteArray data = file.readAll();
+    if (data.size() < 6)
+        return QImage();
+    QDataStream stream(data);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    quint16 reserved = 0, type = 0, count = 0;
+    stream >> reserved >> type >> count;
+    for (int i = 0; i < count; ++i)
+    {
+        quint8 width = 0, height = 0, colors = 0, reserved2 = 0;
+        quint16 planes = 0, bits = 0;
+        quint32 bytes = 0, offset = 0;
+        stream >> width >> height >> colors >> reserved2 >> planes >> bits >> bytes >> offset;
+        const int size = width == 0 ? 256 : width;
+        if (size != wantSize)
+            continue;
+        QImage image;
+        if (image.loadFromData(data.mid(int(offset), int(bytes))))
+            return image;
+    }
+    return QImage();
+}
 
 int main(int argc, char **argv)
 {
@@ -131,7 +161,13 @@ int main(int argc, char **argv)
     check(parsed && parsedPath == QDir::fromNativeSeparators(instancePath),
           QStringLiteral("parseQuickLaunchFile 回读: %1 %2").arg(parsedPath, parseError));
 
-    // ===== 4b. 存档 / 服务器快捷启动载荷 =====
+    // ===== 4b. 存档 / 服务器快捷启动载荷与图标 =====
+    // 给存档造一张红色封面：快捷方式图标应该用它，而不是实例图标（蓝色）
+    QDir(instancePath + QStringLiteral("/saves/我的世界")).mkpath(QStringLiteral("."));
+    QImage saveCover(64, 64, QImage::Format_ARGB32);
+    saveCover.fill(QColor(230, 30, 30));
+    saveCover.save(instancePath + QStringLiteral("/saves/我的世界/icon.png"), "PNG");
+
     QString saveError;
     const QString saveShortcut = desktop + "/blockbox_ql_test_instance - 我的世界.blockbox";
     const bool saveCreated = QuickLaunchManager::createSaveShortcut(
@@ -147,14 +183,26 @@ int main(int argc, char **argv)
           QStringLiteral("存档快捷启动回读: kind=%1 save=%2 %3")
               .arg(int(saveTarget.kind))
               .arg(saveTarget.saveName, parseError));
+    const QImage saveEmbedded = embeddedIcoImage(saveShortcut, 32);
+    check(!saveEmbedded.isNull()
+              && saveEmbedded.pixelColor(16, 16).red() > 180
+              && saveEmbedded.pixelColor(16, 16).green() < 100,
+          QStringLiteral("存档快捷方式使用存档封面图标"));
 
     QString serverError;
     const QString serverShortcut = desktop + "/blockbox_ql_test_instance - 测试服.blockbox";
+    QImage serverFavicon(64, 64, QImage::Format_ARGB32);
+    serverFavicon.fill(QColor(30, 200, 60));
     const bool serverCreated = QuickLaunchManager::createServerShortcut(
         instancePath, QStringLiteral("测试服"), QStringLiteral("mc.example.com"), 25566,
-        &serverError);
+        QPixmap::fromImage(serverFavicon), &serverError);
     check(serverCreated && QFile::exists(serverShortcut),
           QStringLiteral("服务器快捷启动文件已生成: %1").arg(serverError));
+    const QImage serverEmbedded = embeddedIcoImage(serverShortcut, 32);
+    check(!serverEmbedded.isNull()
+              && serverEmbedded.pixelColor(16, 16).green() > 150
+              && serverEmbedded.pixelColor(16, 16).red() < 100,
+          QStringLiteral("服务器快捷方式使用服务器图标"));
     QuickLaunchManager::Target serverTarget;
     const bool serverParsed = QuickLaunchManager::parseQuickLaunchFile(
         serverShortcut, &serverTarget, &parseError);
@@ -195,7 +243,8 @@ int main(int argc, char **argv)
               QStringLiteral("open command = %1").arg(openCommand));
         QSettings iconKey("HKEY_CURRENT_USER\\Software\\Classes\\BlockBox.InstanceFile\\DefaultIcon",
                           QSettings::NativeFormat);
-        check(iconKey.value(".").toString() == QStringLiteral("\"%1\",0"),
+        // 只能写 %1：带 ,0 时资源管理器不替换 %1，文件图标会退化成空白文件
+        check(iconKey.value(".").toString() == QStringLiteral("%1"),
               QStringLiteral("DefaultIcon = %1").arg(iconKey.value(".").toString()));
     }
 

@@ -79,17 +79,74 @@ QString desktopDirectory()
     return desktop;
 }
 
-/** 实例图标：设置中自定义的图标，未设置（或文件丢失）则回退到应用图标 */
-QPixmap instanceIconPixmap(const QString &instancePath)
+/** 实例自己设置过的图标：没设置（或文件丢失）时返回空，由调用方决定回退顺序 */
+QPixmap customInstanceIconPixmap(const QString &instancePath)
 {
     QPixmap pixmap;
     const QString iconPath = SettingsManager::instance()
         ->getProperty("instance/" + instancePath + "/iconPath").toString();
     if (!iconPath.isEmpty() && QFile::exists(iconPath))
         pixmap.load(iconPath);
+
+    // 设置里没记录（例如旧数据、换电脑后设置丢了）时，实例目录里还留着
+    // 「选择图标」复制进来的 instanceIcon.*，用它兜底
+    if (pixmap.isNull())
+    {
+        const QDir instanceDir(instancePath);
+        const QStringList candidates =
+            instanceDir.entryList({QStringLiteral("instanceIcon.*")}, QDir::Files);
+        for (const QString &fileName : candidates)
+        {
+            if (pixmap.load(instanceDir.filePath(fileName)))
+                break;
+        }
+    }
+    return pixmap;
+}
+
+/** 实例图标：自定义图标，未设置（或文件丢失）则回退到应用图标 */
+QPixmap instanceIconPixmap(const QString &instancePath)
+{
+    QPixmap pixmap = customInstanceIconPixmap(instancePath);
     if (pixmap.isNull())
         pixmap.load(":/Images/icon.ico");
     return pixmap;
+}
+
+/** 存档封面：存档目录里的 icon.png（旧版服务端存档可能叫 server-icon.png） */
+QPixmap saveIconPixmap(const QString &instancePath, const QString &saveName)
+{
+    const QDir saveDir(QDir(instancePath).filePath(QStringLiteral("saves/") + saveName));
+    const QStringList candidates = {QStringLiteral("icon.png"),
+                                    QStringLiteral("server-icon.png")};
+    for (const QString &fileName : candidates)
+    {
+        const QString path = saveDir.filePath(fileName);
+        if (!QFile::exists(path))
+            continue;
+        QPixmap pixmap(path);
+        if (!pixmap.isNull())
+            return pixmap;
+    }
+    return QPixmap();
+}
+
+/** 快捷方式最终使用的图标：
+ *  服务器图标（调用方传入）→ 实例自己设置的图标 → 存档封面 → 应用图标 */
+QPixmap iconPixmapForTarget(const QuickLaunchManager::Target &target)
+{
+    if (!target.icon.isNull())
+        return target.icon;
+    const QPixmap customIcon = customInstanceIconPixmap(target.instancePath);
+    if (!customIcon.isNull())
+        return customIcon;
+    if (target.kind == QuickLaunchManager::Kind::Save)
+    {
+        const QPixmap saveIcon = saveIconPixmap(target.instancePath, target.saveName);
+        if (!saveIcon.isNull())
+            return saveIcon;
+    }
+    return instanceIconPixmap(target.instancePath);
 }
 
 /** 把任意图片编码为多尺寸 ICO 数据（PNG 压缩条目，Windows Vista+ 均支持） */
@@ -226,6 +283,7 @@ bool QuickLaunchManager::createSaveShortcut(const QString &instancePath, const Q
 bool QuickLaunchManager::createServerShortcut(const QString &instancePath,
                                               const QString &serverName,
                                               const QString &address, quint16 port,
+                                              const QPixmap &icon,
                                               QString *errorMessage)
 {
     Target target;
@@ -234,6 +292,7 @@ bool QuickLaunchManager::createServerShortcut(const QString &instancePath,
     target.instanceName = instanceDisplayName(instancePath);
     target.serverAddress = address.trimmed();
     target.serverPort = port == 0 ? 25565 : port;
+    target.icon = icon;
     const QString displayName = serverName.trimmed().isEmpty()
         ? serverAddressText(target.serverAddress, target.serverPort)
         : serverName.trimmed();
@@ -261,10 +320,10 @@ bool QuickLaunchManager::createShortcut(const Target &target, QString *errorMess
     if (target.kind == Kind::Server && target.serverAddress.trimmed().isEmpty())
         return fail(QObject::tr("服务器地址为空，无法创建桌面快捷启动"));
 
-    // 1. 图标部分：实例图标 → 多尺寸 ICO
-    const QByteArray icoData = buildIcoData(instanceIconPixmap(instancePath));
+    // 1. 图标部分：存档封面 / 服务器图标 / 实例图标 → 多尺寸 ICO
+    const QByteArray icoData = buildIcoData(iconPixmapForTarget(target));
     if (icoData.isEmpty())
-        return fail(QObject::tr("实例图标编码失败，无法创建桌面快捷启动"));
+        return fail(QObject::tr("图标编码失败，无法创建桌面快捷启动"));
 
     // 2. 载荷部分：记录目标类型与实例/存档/服务器信息
     QJsonObject payload;
@@ -431,8 +490,11 @@ bool QuickLaunchManager::registerFileAssociation(QString *errorMessage)
                         QSettings::NativeFormat);
     progIdKey.setValue(".", QObject::tr("方块盒子文件"));
     progIdKey.setValue("FriendlyTypeName", QObject::tr("方块盒子文件"));
-    // %1 会被替换为被双击文件的路径，即图标取自文件自身内嵌的 ICO 数据
-    progIdKey.setValue("DefaultIcon/.", QStringLiteral("\"%1\",0"));
+    // %1 会被替换为被双击文件的路径，即图标取自文件自身内嵌的 ICO 数据。
+    // 注意这里必须只写 %1：写成 "%1",0 时资源管理器不会替换 %1（它把这个值
+    // 当成普通图标路径），所有 .blockbox 都只显示空白文件图标；%1 本身
+    // 就表示取该文件里的第一个图标，等于默认索引 0。
+    progIdKey.setValue("DefaultIcon/.", QStringLiteral("%1"));
     progIdKey.setValue("shell/open/.", QObject::tr("用方块盒子打开"));
     progIdKey.setValue("shell/open/command/.", openCommand);
 

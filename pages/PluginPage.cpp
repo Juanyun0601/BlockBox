@@ -34,6 +34,7 @@
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpacerItem>
@@ -1402,6 +1403,19 @@ void PluginPage::runScriptDetached(const PluginInfo &info, const QString &script
            << QStringLiteral("Hidden") << QStringLiteral("-File")
            << QDir::toNativeSeparators(scriptPath);
     psArgs << extraArgs;
+
+    // 和 AI 工具路径保持一致：把插件私有变量用 BB_ 前缀交给脚本，
+    // 这样界面按钮里的脚本也能拿到端口/令牌，不必让用户手填。
+    QProcessEnvironment uiEnv = QProcessEnvironment::systemEnvironment();
+    const QMap<QString, QString> uiVars = PluginManager::instance()->resolvedPluginVars(info);
+    uiEnv.insert(QStringLiteral("BB_PLUGIN_ID"), info.id);
+    uiEnv.insert(QStringLiteral("BB_PLUGIN_DIR"), tmpDir);
+    uiEnv.insert(QStringLiteral("BB_PLUGIN_DATA"), uiVars.value(QStringLiteral("data")));
+    uiEnv.insert(QStringLiteral("BB_APP_DIR"), uiVars.value(QStringLiteral("app")));
+    uiEnv.insert(QStringLiteral("BB_PLUGIN_TOKEN"), uiVars.value(QStringLiteral("token")));
+    uiEnv.insert(QStringLiteral("BB_PLUGIN_PORT"), uiVars.value(QStringLiteral("port")));
+    m_uiProc->setProcessEnvironment(uiEnv);
+    m_uiProc->setWorkingDirectory(tmpDir);
 
     m_uiProc->start(QStringLiteral("powershell"), psArgs);
 }

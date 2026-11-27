@@ -46579,6 +46579,10 @@ Note: if the game is running, changes may take effect only after restarting the 
         <translation>Settings &gt; General</translation>
     </message>
     <message>
+        <source>设置&gt;插件管理</source>
+        <translation>Settings &gt; Plugin Management</translation>
+    </message>
+    <message>
         <location filename="../pages/SettingsPage.cpp" line="263"/>
         <source>设置&gt;界面设置</source>
         <translation>Settings &gt; Interface</translation>
@@ -49870,6 +49874,10 @@ They take effect after restarting the game.</translation>
 </context>
 <context>
     <name>SideBar</name>
+    <message>
+        <source>插件管理</source>
+        <translation>Plugin Management</translation>
+    </message>
     <message>
         <location filename="../components/SideBar.cpp" line="158"/>
         <source>首页</source>

@@ -108,6 +108,17 @@ void InstanceSelectPage::showEvent(QShowEvent *event)
     QTimer::singleShot(0, this, [this]() { updateLeftBubbleGeometry(); });
 }
 
+void InstanceSelectPage::reloadFolders()
+{
+    // 迁移向导 / 外部工具刚往设置里加了实例文件夹：左侧按钮和实例卡片都要重建
+    m_instancesLoaded = true;
+    m_folderInstancesMap.clear();
+    m_folderLastModifiedMap.clear();
+    initInstanceFolders();
+    loadInstances();
+    updateInstanceList();
+}
+
 void InstanceSelectPage::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);

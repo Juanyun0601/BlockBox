@@ -1848,6 +1848,23 @@ void GameLauncher::processCompletionQueue()
     }
 
     // 如果所有任务都因主机限制无法下载，且还有未完成的活跃请求，等待即可
+    //
+    // 但如果一个在途请求都没有、队列里却还剩任务，说明它们全被镜像冷却 / 主机上限
+    // 挡住了。补全流程只靠「某个请求完成」来推进，这种情况没有任何事件能把队列叫醒，
+    // 进度会永远停在「补全文件 N/M」。这里补一个定时唤醒，冷却结束后自动续上。
+    if (!m_fileCompletionQueue.isEmpty() && m_activeCompletionReplies.isEmpty()
+        && !m_userCancelled && m_status == Launching)
+    {
+        if (!m_completionRetryTimer)
+        {
+            m_completionRetryTimer = new QTimer(this);
+            m_completionRetryTimer->setSingleShot(true);
+            connect(m_completionRetryTimer, &QTimer::timeout, this,
+                    [this]() { processCompletionQueue(); });
+        }
+        if (!m_completionRetryTimer->isActive())
+            m_completionRetryTimer->start(5000);
+    }
 }
 
 void GameLauncher::startAssetsDownload()

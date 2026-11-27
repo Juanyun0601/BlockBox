@@ -14,6 +14,7 @@
 #include <QVBoxLayout>
 
 #include "components/CustomCheckBox.h"
+#include "components/MigrationWizardDialog.h"
 #include "components/NotificationHistoryDialog.h"
 #include "components/NotificationManager.h"
 #include "components/OutlinedLabel.h"
@@ -377,6 +378,23 @@ void SettingsPage::initGeneralSettings()
     QHBoxLayout *quizRow = appendSettingRow(quizCard,
         tr("入站答题"), tr("从题库随机抽 50 题，每题 2 分，达到 80 分即通过；答错会显示正确答案与解析。答题通过后这个账号才能发帖和评论。"), QString(), true);
     quizRow->addWidget(startQuizBtn);
+
+    // ── 迁移旧启动器 ──
+    QVBoxLayout *migrationCard = createSettingsCard(layout, tr("从旧启动器迁移"));
+    QPushButton *migrationBtn = new QPushButton(tr("打开迁移向导"));
+    migrationBtn->setObjectName("historyBtn");
+    migrationBtn->setCursor(Qt::PointingHandCursor);
+    connect(migrationBtn, &QPushButton::clicked, this, [this]() {
+        MigrationWizardDialog dialog(window());
+        dialog.exec();
+        emit migrationFinished(dialog.wantsOpenInstances());
+    });
+    QHBoxLayout *migrationRow = appendSettingRow(
+        migrationCard, tr("迁移向导"),
+        tr("从 PCL、HMCL、MultiMC、BakaXL 或官方启动器搬实例：可以只挑游戏目录、只带账户 / Java，"
+           "也可以整份复制；原启动器的数据不会被改动。"),
+        QString(), true);
+    migrationRow->addWidget(migrationBtn);
 
     // ── 提示信息 ──
     QVBoxLayout *notificationCard = createSettingsCard(layout, tr("提示信息"));

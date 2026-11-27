@@ -69,6 +69,7 @@
 #include "utils/JavaDownloader.h"
 #include "utils/JavaScanWorker.h"
 #include "utils/LauncherImporter.h"
+#include "components/MigrationWizardDialog.h"
 #include "utils/LanguageManager.h"
 #include "utils/RuntimeDependencyManager.h"
 #include "utils/SettingsManager.h"
@@ -890,6 +891,27 @@ void OnboardingWizard::buildStep2Import()
     tip->setObjectName(QStringLiteral("obwTip"));
     tip->setWordWrap(true);
     lay->addWidget(tip);
+
+    // 一键导入不够细？引导页里也能直接打开高级迁移向导：按目录 / 账户 / Java 挑，或整份复制
+    QHBoxLayout *advancedRow = new QHBoxLayout();
+    advancedRow->setContentsMargins(0, 2, 0, 0);
+    advancedRow->addStretch();
+    QPushButton *advancedBtn = new QPushButton(tr("\u9AD8\u7EA7\u8FC1\u79FB\u5411\u5BFC\uFF08\u6311\u9009\u76EE\u5F55 / \u590D\u5236\uFF09"), page);
+    advancedBtn->setObjectName(QStringLiteral("obwBtnSecondary"));
+    advancedBtn->setCursor(Qt::PointingHandCursor);
+    connect(advancedBtn, &QPushButton::clicked, this, [this]() {
+        MigrationWizardDialog dialog(window());
+        // 引导页本身就在首次启动流程里，没有「实例列表」这个来路，结果页别放会失效的按钮
+        dialog.setOpenInstancesAvailable(false);
+        dialog.exec();
+        // 向导里可能已导入账户 / Java / 文件夹，回来刷新一遍卡片与列表
+        refreshLauncherCards();
+        refreshAccountList();
+        refreshJavaList();
+        refreshFolderList();
+    });
+    advancedRow->addWidget(advancedBtn);
+    lay->addLayout(advancedRow);
 
     m_stack->addWidget(page);
 

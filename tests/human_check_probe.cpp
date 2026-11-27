@@ -87,8 +87,8 @@ int solvePuzzle(const QJsonObject &challenge, double *scoreOut)
         }
     }
 
-    static const double kChannelScale[3] = {0.34, 0.38, 0.46};
-    static const double kChannelBias[3] = {12.0, 18.0, 30.0};
+    static const double kChannelScale[3] = {0.45, 0.46, 0.50};
+    static const double kChannelBias[3] = {4.0, 7.0, 16.0};
 
     int bestX = -1;
     double bestScore = 1e30;

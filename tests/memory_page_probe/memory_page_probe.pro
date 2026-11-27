@@ -1,6 +1,6 @@
 # 内存优化页视觉探针：渲染真实 MemoryOptimizePage + 真实 style.qss
 # 用法：qmake memory_page_probe.pro && mingw32-make && release/memory_page_probe.exe
-QT       += core gui widgets svg
+QT       += core gui widgets svg concurrent
 
 CONFIG   += c++17 console
 CONFIG   -= app_bundle

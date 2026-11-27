@@ -46595,6 +46595,10 @@ Nota: si el juego está en ejecución, es posible que los cambios requieran rein
         <translation>Ajustes&gt;General</translation>
     </message>
     <message>
+        <source>设置&gt;插件管理</source>
+        <translation>Ajustes&gt;Gestión de plugins</translation>
+    </message>
+    <message>
         <location filename="../pages/SettingsPage.cpp" line="263"/>
         <source>设置&gt;界面设置</source>
         <translation>Ajustes&gt;Interfaz</translation>
@@ -49886,6 +49890,10 @@ Se aplicarán al reiniciar el juego.</translation>
 </context>
 <context>
     <name>SideBar</name>
+    <message>
+        <source>插件管理</source>
+        <translation>Gestión de plugins</translation>
+    </message>
     <message>
         <location filename="../components/SideBar.cpp" line="158"/>
         <source>首页</source>

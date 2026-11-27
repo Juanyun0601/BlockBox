@@ -294,6 +294,7 @@ private:
     QLabel *m_titleIcon;         ///< 标题栏左侧的实例助手图标
     QLabel *m_titleLabel;        ///< 标题栏文字
     QWidget *m_statsHost;        ///< 收起态实时数据容器（帧率 / CPU / GPU / 内存）
+    bool m_hasPluginExtPage = false;  ///< 是否有插件声明了实例助手扩展面板
     QLabel *m_statFps;           ///< 帧率
     QLabel *m_statCpu;           ///< CPU 占用
     QLabel *m_statGpu;           ///< GPU 占用

@@ -30,6 +30,8 @@
 #include "utils/SettingsManager.h"
 #include "utils/ServersDatIO.h"
 #include "utils/ThemeManager.h"
+#include "utils/server/ServerAdminStore.h"
+#include "components/CustomCheckBox.h"
 #include "components/ForumTagEditor.h"
 
 // 探针要读页面的私有成员做断言（仓库里其它探针同一做法）
@@ -238,6 +240,94 @@ int main(int argc, char *argv[])
           props.contains(QStringLiteral("difficulty=hard"))
               && props.contains(QStringLiteral("view-distance=4")));
 
+    // ── 4. 管理卡：白名单 / 管理员 / 基础设置 ──
+    check(QStringLiteral("管理卡有三个页签"),
+          page->m_adminTabBtns.size() == 3 && page->m_whitelistPage && page->m_opPage
+              && page->m_rulesPage,
+          QString::number(page->m_adminTabBtns.size()));
+    check(QStringLiteral("默认停在白名单页"),
+          page->m_whitelistPage->isVisible() && !page->m_opPage->isVisible());
+    check(QStringLiteral("白名单开关默认关闭"), !page->m_whitelistToggle->isChecked());
+    check(QStringLiteral("基础设置读到玩家改过的难度"),
+          page->m_difficultyCombo->currentData().toString() == QStringLiteral("hard"),
+          page->m_difficultyCombo->currentData().toString());
+    check(QStringLiteral("基础设置读到玩家改过的视距"), page->m_viewDistanceSpin->value() == 4,
+          QString::number(page->m_viewDistanceSpin->value()));
+
+    // 停服加白名单：按离线 UUID 写进 whitelist.json
+    page->m_whitelistInput->setText(QStringLiteral("Steve"));
+    page->onAddWhitelistClicked();
+    waitMs(180);
+    const QString whitelistJson = readAll(instPath + QStringLiteral("/server/whitelist.json"));
+    check(QStringLiteral("白名单写入玩家"), whitelistJson.contains(QStringLiteral("\"Steve\"")),
+          whitelistJson.left(100));
+    check(QStringLiteral("白名单 UUID 用离线算法"),
+          whitelistJson.contains(ServerAdminStore::offlineUuid(QStringLiteral("Steve"))),
+          ServerAdminStore::offlineUuid(QStringLiteral("Steve")));
+    check(QStringLiteral("白名单列表显示这个玩家"),
+          page->m_whitelistEntries.size() == 1
+              && page->m_whitelistEntries.first().name == QStringLiteral("Steve"),
+          QString::number(page->m_whitelistEntries.size()));
+
+    // 白名单开关写进 server.properties，别的项不受影响
+    page->m_whitelistToggle->setChecked(true);
+    waitMs(150);
+    QString propsNow = readAll(instPath + QStringLiteral("/server/server.properties"));
+    check(QStringLiteral("开启白名单写进配置"), propsNow.contains(QStringLiteral("white-list=true")),
+          propsNow.left(140));
+    check(QStringLiteral("改白名单不冲掉玩家的其它配置"),
+          propsNow.contains(QStringLiteral("difficulty=hard")));
+
+    // 管理员：2 级
+    page->m_opInput->setText(QStringLiteral("Alex"));
+    page->m_opLevelCombo->setCurrentIndex(page->m_opLevelCombo->findData(2));
+    page->onAddOpClicked();
+    waitMs(180);
+    const QString opsJson = readAll(instPath + QStringLiteral("/server/ops.json"));
+    check(QStringLiteral("管理员写进 ops.json"),
+          opsJson.contains(QStringLiteral("\"Alex\""))
+              && opsJson.contains(QStringLiteral("\"level\": 2")),
+          opsJson.left(140));
+    check(QStringLiteral("管理员列表显示等级"),
+          page->m_opEntries.size() == 1 && page->m_opEntries.first().level == 2,
+          QString::number(page->m_opEntries.size()));
+
+    // 基础设置：PVP / 视距
+    page->m_pvpCheck->setChecked(false);
+    page->m_viewDistanceSpin->setValue(6);
+    waitMs(180);
+    propsNow = readAll(instPath + QStringLiteral("/server/server.properties"));
+    check(QStringLiteral("PVP 开关写进配置"), propsNow.contains(QStringLiteral("pvp=false")));
+    check(QStringLiteral("视距写进配置"), propsNow.contains(QStringLiteral("view-distance=6")));
+
+    // 页签切换与截图（先把页面滚到管理卡，截图才看得到）
+    if (auto *outerScroll = page->findChild<QScrollArea *>(QStringLiteral("serverScroll"))) {
+        if (QWidget *adminCard = page->m_whitelistPage->parentWidget()->parentWidget()) {
+            const int top = adminCard->mapTo(outerScroll->widget(), QPoint(0, 0)).y();
+            outerScroll->verticalScrollBar()->setValue(qMax(0, top - 8));
+            waitMs(150);
+        }
+    }
+    page->m_adminTabBtns.at(1)->click();
+    waitMs(120);
+    check(QStringLiteral("点「管理员」切到管理员页"),
+          page->m_opPage->isVisible() && !page->m_whitelistPage->isVisible());
+    shoot(&host, QStringLiteral("03_admin_op"));
+    page->m_adminTabBtns.at(2)->click();
+    waitMs(120);
+    shoot(&host, QStringLiteral("04_admin_rules"));
+    page->m_adminTabBtns.at(0)->click();
+    waitMs(120);
+    shoot(&host, QStringLiteral("05_admin_whitelist"));
+
+    // 移出白名单
+    if (!page->m_whitelistEntries.isEmpty())
+        page->removeWhitelistEntry(page->m_whitelistEntries.first());
+    waitMs(180);
+    check(QStringLiteral("移出白名单后文件里没有这个人"),
+          !readAll(instPath + QStringLiteral("/server/whitelist.json"))
+               .contains(QStringLiteral("\"Steve\"")));
+
     // ── 4. Fabric 的 mods 目录共享 ──
     page->m_manager->prepareModsDir();
     waitMs(150);
@@ -396,6 +486,31 @@ int main(int argc, char *argv[])
     check(QStringLiteral("复制日志到剪贴板"),
           QApplication::clipboard()->text().contains(QStringLiteral("<Player> say 你好")),
           QString::number(QApplication::clipboard()->text().size()));
+
+    // ── 运行中管理名单：交给服务端指令，由它自己写文件 ──
+    page->m_console->clear();
+    page->m_whitelistInput->setText(QStringLiteral("Notch"));
+    page->onAddWhitelistClicked();
+    page->m_adminTabBtns.at(1)->click();
+    page->m_opInput->setText(QStringLiteral("Herobrine"));
+    page->m_opLevelCombo->setCurrentIndex(page->m_opLevelCombo->findData(4));
+    page->onAddOpClicked();
+    waitMs(400);
+    const QString liveConsole = page->m_console->toPlainText();
+    check(QStringLiteral("运行中加白名单走 whitelist add"),
+          liveConsole.contains(QStringLiteral("> whitelist add Notch")), liveConsole.right(160));
+    check(QStringLiteral("运行中加管理员走 op"),
+          liveConsole.contains(QStringLiteral("> op Herobrine")), liveConsole.right(160));
+    // 服务端没写回名单时（假 java 不会写），界面要如实说没加上，而不是假装成功
+    const bool verifyDone = waitUntil([&]() {
+        return page->m_pendingWhitelistAdds.isEmpty() && page->m_pendingOpAdds.isEmpty();
+    }, 3000);
+    check(QStringLiteral("指令发完会核对名单里到底有没有"), verifyDone,
+          page->m_whitelistNotice->text());
+    check(QStringLiteral("没加上时提示名字对不上"),
+          !page->m_whitelistNotice->text().isEmpty()
+              && !page->m_whitelistNotice->text().contains(QStringLiteral("稍等")),
+          page->m_whitelistNotice->text());
 
     // 滚到底部截一张：看控制台指令行和日志排布
     if (auto *scroll = page->findChild<QScrollArea *>(QStringLiteral("serverScroll"))) {

@@ -45950,6 +45950,10 @@ ID правила: %2</translation>
         <translation>Настройки &gt; Общие настройки</translation>
     </message>
     <message>
+        <source>设置&gt;插件管理</source>
+        <translation>Настройки &gt; Управление плагинами</translation>
+    </message>
+    <message>
         <location filename="../pages/SettingsPage.cpp" line="263"/>
         <source>设置&gt;界面设置</source>
         <translation>Настройки &gt; Интерфейс</translation>
@@ -49886,6 +49890,10 @@ ID правила: %2</translation>
 </context>
 <context>
     <name>SideBar</name>
+    <message>
+        <source>插件管理</source>
+        <translation>Управление плагинами</translation>
+    </message>
     <message>
         <location filename="../components/SideBar.cpp" line="101"/>
         <source>展开子导航</source>

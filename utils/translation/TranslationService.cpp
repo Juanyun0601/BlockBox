@@ -9,6 +9,7 @@
 
 #include "utils/AiProviderPresets.h"
 #include "utils/AiEndpointUrl.h"
+#include "utils/AiProviderHeaders.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -299,6 +300,7 @@ void TranslationService::sendAiCandidate()
     if (!candidate.apiKey.isEmpty()) {
         request.setRawHeader("Authorization", ("Bearer " + candidate.apiKey).toUtf8());
     }
+    AiProviderHeaders::apply(request, apiUrl.toString());
 
     const QByteArray body = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);
     m_currentReply = m_networkManager->post(request, body);
@@ -672,6 +674,7 @@ void TranslationService::translateByCustomAPI(const QString &text, const Transla
         request.setRawHeader("Authorization",
             ("Bearer " + config.customApiKey).toUtf8());
     }
+    AiProviderHeaders::apply(request, apiUrl.toString());
 
     QByteArray body = QJsonDocument(requestBody).toJson(QJsonDocument::Compact);
     m_currentReply = m_networkManager->post(request, body);

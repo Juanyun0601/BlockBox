@@ -140,55 +140,72 @@ qint64 SystemTools::currentProcessWorkingSetBytes()
 
 qint64 SystemTools::optimizeMemorySilently()
 {
-    // 图片缓存是启动器里最占内存的一块（首页大图、皮肤预览、资源封面都在里面）：
-    // 先清空，工作集才有机会真正收缩下去
-    QPixmapCache::clear();
+    clearLauncherImageCaches();
+    return optimizeMemoryDetailed(true, true).headlineFreedBytes();
+}
 
-    const qint64 trimmed = emptyWorkingSet();
-    return trimmed > 0 ? trimmed : 0;
+void SystemTools::clearLauncherImageCaches()
+{
+    // 图片缓存是启动器里最占内存的一块（首页大图、皮肤预览、资源封面都在里面）：
+    // 先清空，工作集才有机会真正收缩下去。QPixmapCache 只能在 GUI 线程动。
+    QPixmapCache::clear();
+}
+
+MemoryOptimizeReport SystemTools::optimizeMemoryDetailed(bool trimOtherProcesses,
+                                                         bool purgeSystemCache)
+{
+    return MemoryOptimizer::optimize(trimOtherProcesses, purgeSystemCache);
+}
+
+bool SystemTools::isRunningElevated()
+{
+    return MemoryOptimizer::isElevated();
 }
 
 void SystemTools::optimizeMemory(QWidget* parentWidget)
 {
-    qint64 totalFreed = 0;
+    clearLauncherImageCaches();
+    const MemoryOptimizeReport report = optimizeMemoryDetailed(true, true);
+
+    auto readable = [](qint64 bytes) -> QString {
+        return bytes >= 0 ? formatSize(bytes) : QStringLiteral("读取不到");
+    };
+
     QStringList details;
-
-    // 1. 释放当前进程工作集
-    qint64 freed = emptyWorkingSet();
-    if (freed >= 0)
+    details.append(QString("启动器占用: %1 → %2（收走 %3）")
+                       .arg(readable(report.launcherBeforeBytes),
+                            readable(report.launcherAfterBytes),
+                            formatSize(report.launcherFreedBytes())));
+    if (report.availableBeforeBytes > 0 && report.availableAfterBytes > 0)
     {
-        totalFreed += freed;
-        details.append(QString("当前进程工作集: %1").arg(formatSize(freed)));
+        details.append(QString("系统可用内存: %1 → %2")
+                           .arg(readable(report.availableBeforeBytes),
+                                readable(report.availableAfterBytes)));
     }
-
-    // 2. 尝试清理系统缓存（通过调用 EmptyWorkingSet 对系统进程）
-#ifdef Q_OS_WIN
-    // 清理系统 DLL 缓存
-    QProcess process;
-    process.start("ipconfig", QStringList() << "/flushdns");
-    process.waitForFinished(5000);
-    details.append("DNS 缓存: 已清理");
-#endif
+    if (report.processesTrimmed > 0)
+        details.append(QString("顺手收了 %1 个后台程序的闲置内存").arg(report.processesTrimmed));
+    if (report.systemCachePurged)
+        details.append("系统缓存: 已清理");
+    else if (report.supported && !report.elevated)
+        details.append("系统缓存: 需要管理员权限，这次没清");
 
     QString message;
-    if (totalFreed > 0)
-    {
+    if (!report.supported)
+        message = QString("当前系统不支持内存优化。");
+    else if (report.headlineFreedBytes() > 0)
         message = QString("内存优化完成!\n共释放: %1\n\n%2")
-                      .arg(formatSize(totalFreed))
+                      .arg(formatSize(report.headlineFreedBytes()))
                       .arg(details.join("\n"));
-    }
     else
-    {
         message = QString("内存优化完成!\n\n%1").arg(details.join("\n"));
-    }
 
     AppMessageBox msgBox(parentWidget);
     msgBox.setWindowTitle("内存优化");
     msgBox.setText(message);
-    msgBox.setIcon(AppMessageBox::Information);
+    msgBox.setIcon(report.supported ? AppMessageBox::Information : AppMessageBox::Warning);
     msgBox.exec();
 
-    emit operationFinished(message, true);
+    emit operationFinished(message, report.supported);
 }
 
 // ============================================================================

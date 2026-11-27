@@ -20,8 +20,10 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QTime>
 #include <QVBoxLayout>
+#include <QtConcurrent>
 
 #include "components/CollapsibleSectionCard.h"
 #include "components/CustomCheckBox.h"
@@ -100,6 +102,10 @@ QHBoxLayout *appendRow(QVBoxLayout *cardLayout, const QString &title, const QStr
 MemoryOptimizePage::MemoryOptimizePage(QWidget *parent)
     : QWidget(parent)
 {
+    m_watcher = new QFutureWatcher<MemoryOptimizeReport>(this);
+    connect(m_watcher, &QFutureWatcher<MemoryOptimizeReport>::finished,
+            this, &MemoryOptimizePage::onOptimizeFinished);
+
     buildUi();
     refresh();
 }
@@ -127,7 +133,8 @@ void MemoryOptimizePage::buildUi()
     layout->addWidget(pageTitle);
 
     auto *subtitle = new QLabel(
-        tr("启动器开久了会攥着一堆用不到的闲置内存，点一下就能还给系统，游戏能多分到一些"), content);
+        tr("启动器开久了会攥着一堆用不到的闲置内存，点一下就能还给系统，"
+           "顺便也把后台程序闲置的那部分收回来，游戏能多分到一些"), content);
     subtitle->setObjectName(QStringLiteral("resourcesPageSubtitle"));
     subtitle->setWordWrap(true);
     layout->addWidget(subtitle);
@@ -216,8 +223,17 @@ void MemoryOptimizePage::buildUi()
     btnRow->addWidget(m_resultLabel, 1);
     actionLayout->addLayout(btnRow);
 
+    // 优化明细：收了多少个后台程序、系统缓存清没清，单独一行小字
+    m_detailLabel = new QLabel(actionArea);
+    m_detailLabel->setObjectName(QStringLiteral("settingDesc"));
+    m_detailLabel->setWordWrap(true);
+    m_detailLabel->setVisible(false);
+    actionLayout->addWidget(m_detailLabel);
+
     auto *tipLabel = new QLabel(
-        tr("优化只动启动器自己的闲置内存，不会去关你别的软件，游戏开着的时候点也安全。"), actionArea);
+        tr("只回收闲置内存，不会结束任何程序；正在跑的游戏和当前窗口会自动跳过，"
+           "游戏开着的时候点也安全。以管理员身份运行方块盒子时，还能顺带清掉系统缓存，效果更明显。"),
+        actionArea);
     tipLabel->setObjectName(QStringLiteral("settingDesc"));
     tipLabel->setWordWrap(true);
     actionLayout->addWidget(tipLabel);
@@ -257,7 +273,7 @@ void MemoryOptimizePage::buildUi()
     layout->addStretch(1);
 
     auto *hint = new QLabel(
-        tr("这里不碰系统设置、也不结束后台进程，只是把启动器占着不用的内存还回系统；"
+        tr("这里不碰系统设置、也不结束后台进程，只是把闲置的内存页还给系统；"
            "想让它每次启动都自动做一次，可以在上面打开开关。"),
         content);
     hint->setObjectName(QStringLiteral("forumMuted"));
@@ -305,23 +321,61 @@ void MemoryOptimizePage::updateMemoryStats()
 
 void MemoryOptimizePage::runOptimize()
 {
-    const qint64 beforeBytes = SystemTools::currentProcessWorkingSetBytes();
-    const qint64 freedBytes = SystemTools::optimizeMemorySilently();
-    const qint64 afterBytes = SystemTools::currentProcessWorkingSetBytes();
+    if (m_optimizing || !m_watcher)
+        return;
+
+    m_optimizing = true;
+    m_optimizeBtn->setEnabled(false);
+    m_optimizeBtn->setText(tr("正在优化…"));
+    m_resultLabel->setText(tr("正在整理闲置内存，稍等几秒…"));
+    m_detailLabel->setVisible(false);
+
+    // 图片缓存只能在 GUI 线程清；收工作集那几百毫秒交给后台线程，界面不卡
+    SystemTools::clearLauncherImageCaches();
+    m_watcher->setFuture(QtConcurrent::run([]() {
+        return SystemTools::optimizeMemoryDetailed(true, true);
+    }));
+}
+
+void MemoryOptimizePage::onOptimizeFinished()
+{
+    const MemoryOptimizeReport report = m_watcher ? m_watcher->result() : MemoryOptimizeReport();
+
+    m_optimizing = false;
+    m_optimizeBtn->setEnabled(true);
+    m_optimizeBtn->setText(tr("立即优化内存"));
 
     updateMemoryStats();
 
     QString result;
-    if (freedBytes > 0) {
-        result = tr("刚刚释放了 %1，启动器现在占用 %2")
-                     .arg(formatBytes(freedBytes), formatBytes(afterBytes));
-    } else if (beforeBytes > 0 && afterBytes > 0 && beforeBytes > afterBytes) {
-        result = tr("刚刚释放了 %1，启动器现在占用 %2")
-                     .arg(formatBytes(beforeBytes - afterBytes), formatBytes(afterBytes));
+    if (!report.supported) {
+        result = tr("当前系统不支持这项优化");
+    } else if (report.systemFreedBytes() > 0) {
+        // 系统口径的可用量涨了，说明真的多出一块空闲物理内存
+        result = tr("释放了 %1，系统可用内存现在有 %2")
+                     .arg(formatBytes(report.systemFreedBytes()),
+                          formatBytes(report.availableAfterBytes));
+    } else if (report.launcherFreedBytes() > 0) {
+        result = tr("启动器收回了 %1 闲置内存，现在占用 %2")
+                     .arg(formatBytes(report.launcherFreedBytes()),
+                          formatBytes(report.launcherAfterBytes));
+    } else if (report.processesTrimmed > 0) {
+        result = tr("收了 %1 个后台程序的闲置内存，这次可用内存没有明显变化")
+                     .arg(report.processesTrimmed);
     } else {
         result = tr("内存已经比较干净了，这次没有再能释放的空间");
     }
-
     m_resultLabel->setText(result);
+
+    QStringList details;
+    if (report.processesTrimmed > 0)
+        details << tr("顺手收了 %1 个后台程序的闲置内存").arg(report.processesTrimmed);
+    if (report.systemCachePurged)
+        details << tr("系统缓存已清理");
+    else if (report.supported && !report.elevated)
+        details << tr("系统缓存未清理（需要以管理员身份运行方块盒子）");
+    m_detailLabel->setText(details.join(QStringLiteral(" · ")));
+    m_detailLabel->setVisible(!details.isEmpty());
+
     NotificationManager::showSuccess(this, tr("内存优化完成：%1").arg(result));
 }

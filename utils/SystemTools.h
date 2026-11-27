@@ -13,6 +13,8 @@
 #include <QVector>
 #include <QtGlobal>
 
+#include "MemoryOptimizer.h"
+
 class QNetworkAccessManager;
 class MultiThreadDownloader;
 
@@ -63,13 +65,35 @@ public:
     /**
      * @brief 静默优化内存（不弹任何对话框）
      *
-     * 清掉启动器内部的图片缓存，再释放本进程的工作集，把闲置内存还给系统。
-     * 「更多 > 内存优化」页的优化按钮和「启动游戏前先优化内存」都走这条路径，
-     * 所以内部不能弹窗，也不能阻塞几百毫秒以上。
+     * 清掉启动器内部的图片缓存，再收本进程与后台进程的闲置工作集，把闲置内存还给系统。
+     * 「启动游戏前先优化内存」走这条路径，所以内部不能弹窗。
      *
-     * @return 本次释放的字节数；平台不支持或统计不到时返回 0
+     * 只能在 GUI 线程调用（第一步要清 QPixmapCache）。
+     *
+     * @return 本次释放的字节数（优先按系统可用内存增量算）；平台不支持时返回 0
      */
     static qint64 optimizeMemorySilently();
+
+    /**
+     * @brief 完整执行一次内存优化并返回明细
+     *
+     * 只做内存回收：收本进程与后台进程的闲置工作集、清理系统待机缓存（需要管理员）。
+     * 不结束任何进程。会阻塞几百毫秒，页面要放到后台线程里调。
+     *
+     * 注意：图片缓存不在这里清（QPixmapCache 只能在 GUI 线程动），
+     * 调用方需要先调 clearLauncherImageCaches()。
+     *
+     * @param trimOtherProcesses 是否顺带回收后台进程的闲置工作集
+     * @param purgeSystemCache   是否尝试清理系统待机缓存（非管理员时自动跳过）
+     */
+    static MemoryOptimizeReport optimizeMemoryDetailed(bool trimOtherProcesses = true,
+                                                       bool purgeSystemCache = true);
+
+    /** 清空启动器内部的图片缓存，必须在 GUI 线程调用 */
+    static void clearLauncherImageCaches();
+
+    /** 当前是否以管理员权限运行（非 Windows 恒为 false） */
+    static bool isRunningElevated();
 
     /**
      * @brief 当前进程占用的物理内存（工作集大小）

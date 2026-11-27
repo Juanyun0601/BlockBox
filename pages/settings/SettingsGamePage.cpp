@@ -307,7 +307,7 @@ void SettingsPage::initGlobalGameSettings()
     CustomCheckBox *preLaunchOptimizeCheck = new CustomCheckBox();
     preLaunchOptimizeCheck->setChecked(m_settings->isOptimizeMemoryBeforeLaunchEnabled());
     preLaunchOptimizeCheck->setToolTip(
-        tr("打开后每次启动游戏前都会先优化一次内存，游戏能拿到的空闲内存更多"));
+        tr("打开后每次启动游戏前都会先收一遍整机闲置内存，游戏能拿到的空闲内存更多"));
     connect(preLaunchOptimizeCheck, &CustomCheckBox::toggled, [=](bool checked) {
         SettingsManager::instance()->setOptimizeMemoryBeforeLaunchEnabled(checked);
     });

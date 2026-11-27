@@ -100,6 +100,7 @@ class SeedMapPage;
 class ProjectionEditPage;
 class LanTransferPage;
 class MemoryOptimizePage;
+class MultiThreadDownloadPage;
 class AnnualReportPage;
 class QrScanPage;
 class OnboardingWizard;
@@ -191,7 +192,7 @@ enum class PageIndex {
     QrScanPage = 50,
     /** 方块图书馆整页（顶栏「文档」进入：使用教程 / 插件开发 / 开放平台 API / MCP，软件内阅读） */
     LibraryPageIndex = 51,
-    /** 更多功能页（侧边栏「更多」分类的落地页：图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 插件管理 / 新手引导） */
+    /** 更多功能页（侧边栏「更多」分类的落地页：图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 多线程下载 / 内存优化 / 迁移向导 / 新手引导） */
     MorePageIndex = 52,
     /** 种子地图页（「更多>种子地图」：输入种子即看群系地形，不依赖已有存档） */
     SeedMapPage = 53,
@@ -200,7 +201,9 @@ enum class PageIndex {
     /** 文件传输整页（「更多>文件传输」：局域网直传 / 远程组网互传，不依赖实例） */
     LanTransferPageIndex = 55,
     /** 内存优化整页（「更多>内存优化」：内存概况 + 一键把闲置内存还给系统） */
-    MemoryOptimizePageIndex = 56
+    MemoryOptimizePageIndex = 56,
+    /** 多线程下载整页（「更多>多线程下载」：贴直链分几段同时下，可暂停继续） */
+    MultiThreadDownloadPageIndex = 57
 };
 
 /** 侧边栏导航索引（SideBar::buildNavStructure 的顺序）：0首页 1资源 2设置 3AI助手 4实例管理(隐藏) 5社区 6发布 7更多 8反馈 */
@@ -319,6 +322,9 @@ private slots:
     void animateScrollToTop(QScrollBar *scrollBar);
     void animatedSwitchToPage(PageIndex index);
     void animatedSwitchToPageDirectional(PageIndex index, int fromSidebarIndex, int toSidebarIndex);
+
+    /// 记录页面访问（只记页面标识，供崩溃现场与匿名统计使用）
+    void trackPageForDiagnostics(PageIndex index);
     void animateContentEntrance(QWidget *page);
 
     // ── 多实例并行启动：按实例路径路由的启动会话处理 ──
@@ -582,6 +588,8 @@ private:
     LanTransferPage *m_lanTransferPage = nullptr;
     /** 内存优化页（「更多>内存优化」，按需创建后常驻） */
     MemoryOptimizePage *m_memoryOptimizePage = nullptr;
+    /** 多线程下载页（「更多>多线程下载」，按需创建后常驻） */
+    MultiThreadDownloadPage *m_multiThreadDownloadPage = nullptr;
     /** 新手引导页（独立整页，按需创建后常驻；不随侧边栏导航出现） */
     OnboardingWizard *m_onboardingPage = nullptr;
     /** 本次进入引导页是否为首次启动自动进入（决定走完后是否触发首次启动后续动作） */
@@ -785,6 +793,14 @@ private:
     void showMorePage();
     /** 「更多」子导航 / 卡片选了第 childIndex 个分类：转到对应整页 */
     void openMoreFeature(int childIndex);
+    /**
+     * @brief 打开插件管理整页（「设置」子导航最后一项）
+     * @param settingsChildIndex 设置子导航里「插件管理」的序号；-1 表示按设置页自动定位
+     *
+     * 只切换页面、侧边栏选中「设置」、展开设置子导航并高亮该项，
+     * 设置内容页本身不动（插件页不放进设置内容堆栈）。
+     */
+    void showPluginManagePage(int settingsChildIndex = -1);
     /** 同步「更多」页里插件提供的入口（插件列表 / 启用状态变化后调用），
      *  返回侧边栏与卡片是否真的重建（入口没变时只刷新卡片） */
     bool syncMorePluginEntries(bool rescan);
@@ -806,6 +822,10 @@ private:
     void initMemoryOptimizePage();
     /** 打开内存优化页（「更多>内存优化」：内存概况 + 一键优化） */
     void showMemoryOptimizePage();
+    /** 多线程下载页（按需创建后常驻） */
+    void initMultiThreadDownloadPage();
+    /** 打开多线程下载页（「更多>多线程下载」：直链分段并发下载） */
+    void showMultiThreadDownloadPage();
     /** 新手引导页（首次启动时懒加载创建） */
     void initOnboardingPage();
     /** 引导页走完：回到首页，必要时通知主程序做首次启动后续动作 */

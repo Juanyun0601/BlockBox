@@ -45950,6 +45950,10 @@ https://www.bilibili.com/video/BVxxxxxxxx
         <translation>設定&gt;一般設定</translation>
     </message>
     <message>
+        <source>设置&gt;插件管理</source>
+        <translation>設定&gt;プラグイン管理</translation>
+    </message>
+    <message>
         <location filename="../pages/SettingsPage.cpp" line="263"/>
         <source>设置&gt;界面设置</source>
         <translation>設定&gt;インターフェース設定</translation>
@@ -49886,6 +49890,10 @@ https://www.bilibili.com/video/BVxxxxxxxx
 </context>
 <context>
     <name>SideBar</name>
+    <message>
+        <source>插件管理</source>
+        <translation>プラグイン管理</translation>
+    </message>
     <message>
         <location filename="../components/SideBar.cpp" line="101"/>
         <source>展开子导航</source>

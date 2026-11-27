@@ -58,6 +58,8 @@ public:
     void initUI();
     void loadInstances();
     void updateInstanceList();
+    /** 实例文件夹在外部被改动（例如迁移向导刚导入）后重新拉取左侧文件夹与实例卡片 */
+    void reloadFolders();
     void onViewModeChanged(ContentViewSwitch::ViewMode mode);
     bool eventFilter(QObject *watched, QEvent *event) override;
 

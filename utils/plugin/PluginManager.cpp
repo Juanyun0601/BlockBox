@@ -287,6 +287,22 @@ PluginInfo PluginManager::parsePluginFile(const QString &filePath) const
                     info.ui.actions.append(a);
             }
         }
+        // 展示位置（ui.placements）：默认只在插件卡片；声明 instanceAssistant 可进实例助手「扩展」页
+        const QJsonValue placementsVal = uiObj.value(QStringLiteral("placements"));
+        if (placementsVal.isArray()) {
+            for (const QJsonValue &v : placementsVal.toArray()) {
+                const QString pl = v.toString().trimmed();
+                if (!pl.isEmpty() && !info.ui.placements.contains(pl, Qt::CaseInsensitive))
+                    info.ui.placements.append(pl);
+            }
+        } else if (placementsVal.isString()) {
+            for (const QString &p : placementsVal.toString().split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+                const QString pl = p.trimmed();
+                if (!pl.isEmpty() && !info.ui.placements.contains(pl, Qt::CaseInsensitive))
+                    info.ui.placements.append(pl);
+            }
+        }
+
         // 「更多」页入口（ui.moreEntries）：同插件内 id 去重，需声明 ui:page 权限才生效
         const QJsonArray moreEntriesArr = uiObj.value(QStringLiteral("moreEntries")).toArray();
         for (const QJsonValue &v : moreEntriesArr) {
@@ -716,6 +732,27 @@ bool PluginManager::providesMoreEntries(const PluginInfo &info) const
     if (!info.hasPagePermission())
         return false;
     return info.validMoreEntryCount() > 0;
+}
+
+bool PluginManager::providesInstancePanel(const PluginInfo &info) const
+{
+    if (!info.loaded || !info.ui.isValid())
+        return false;
+    if (!info.permissions.contains(QStringLiteral("ui:page")))
+        return false;
+    return info.ui.hasPlacement(QStringLiteral("instanceAssistant"));
+}
+
+QList<PluginInfo> PluginManager::instancePanels() const
+{
+    QList<PluginInfo> out;
+    for (const PluginInfo &info : m_plugins) {
+        if (!isEnabled(info.id))
+            continue;
+        if (providesInstancePanel(info))
+            out.append(info);
+    }
+    return out;
 }
 
 QList<PluginPageEntry> PluginManager::enabledMoreEntries() const

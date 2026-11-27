@@ -6,6 +6,7 @@
  */
 
 #include "utils/AiModelListFetcher.h"
+#include "utils/AiProviderHeaders.h"
 
 #include <algorithm>
 #include <QDateTime>
@@ -391,6 +392,7 @@ void AiModelListFetcher::requestNext()
     request.setRawHeader("Accept", "application/json");
     if (!m_apiKey.isEmpty() && !queryKeyAuth)
         request.setRawHeader("Authorization", "Bearer " + m_apiKey.toUtf8());
+    AiProviderHeaders::apply(request, displayUrl);
 
     QNetworkReply *reply = m_manager->get(request);
     m_reply = reply;

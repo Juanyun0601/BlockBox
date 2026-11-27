@@ -213,6 +213,19 @@ public:
      */
     QList<PluginPageEntry> enabledMoreEntries() const;
 
+    /**
+     * @brief 该插件是否声明了实例助手扩展面板
+     *
+     * 条件：已加载 + ui 有动作按钮 + 声明权限 "ui:page"
+     * + ui.placements 里包含 "instanceAssistant"。
+     */
+    bool providesInstancePanel(const PluginInfo &info) const;
+
+    /**
+     * @brief 所有可进实例助手「扩展」页的插件（已启用）
+     */
+    QList<PluginInfo> instancePanels() const;
+
     // ==================== AI 工具接口 ====================
 
     /**

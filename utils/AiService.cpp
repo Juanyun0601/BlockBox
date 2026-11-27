@@ -50,6 +50,7 @@
 #include "utils/DownloadTaskManager.h"
 #include "utils/WorldMap/StructureFinder.h"
 #include "utils/AiEndpointUrl.h"
+#include "utils/AiProviderHeaders.h"
 #include "utils/CommandAssistant/LitematicReader.h"
 #include "utils/GameScreenshot.h"
 #include "utils/skill/SkillManager.h"
@@ -63,6 +64,65 @@ namespace {
 QString buildChatCompletionsUrl(QString fullUrl)
 {
     return AiEndpointUrl::buildChatCompletionsUrl(fullUrl);
+}
+
+/// 从服务端返回的错误体里取出人能看懂的那一句（取不到就退回截断的原文）
+QString extractServerErrorMessage(const QString &body)
+{
+    QString trimmed = body.trimmed();
+    if (trimmed.isEmpty())
+    {
+        return {};
+    }
+
+    // 少数服务商把错误塞在 SSE 的 data: 行里
+    if (trimmed.startsWith(QLatin1String("data: ")))
+    {
+        trimmed = trimmed.mid(6).trimmed();
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(trimmed.toUtf8(), &parseError);
+    if (parseError.error == QJsonParseError::NoError && doc.isObject())
+    {
+        const QJsonObject root = doc.object();
+
+        // 主流写法：{"error": {"message": "...", "type": "..."}}
+        const QJsonValue errorValue = root.value(QStringLiteral("error"));
+        if (errorValue.isObject())
+        {
+            const QJsonObject errorObj = errorValue.toObject();
+            const QString message = errorObj.value(QStringLiteral("message")).toString().trimmed();
+            const QString type = errorObj.value(QStringLiteral("type")).toString().trimmed();
+            if (!message.isEmpty())
+            {
+                // 类型名（如 MissingSessionID）本身就是关键信息，一并带上
+                if (!type.isEmpty() && !message.contains(type))
+                {
+                    return QStringLiteral("%1 [%2]").arg(message, type);
+                }
+                return message;
+            }
+            if (!type.isEmpty())
+            {
+                return type;
+            }
+        }
+        else if (errorValue.isString() && !errorValue.toString().trimmed().isEmpty())
+        {
+            return errorValue.toString().trimmed();
+        }
+
+        // 少数服务商直接给顶层 message
+        const QString topMessage = root.value(QStringLiteral("message")).toString().trimmed();
+        if (!topMessage.isEmpty())
+        {
+            return topMessage;
+        }
+    }
+
+    // 不是 JSON（例如网关直接回的纯文本/HTML），截一段原文
+    return trimmed.simplified().left(300);
 }
 
 } // namespace
@@ -421,6 +481,7 @@ void AiService::sendRequestInternal(const QJsonArray &messages, const AiModel &m
 {
     // 重置流式状态
     m_buffer.clear();
+    m_lastErrorBody.clear();
     m_toolCallsAccumulator = QJsonArray();
     m_currentToolCallIndex = -1;
     m_hasToolCalls = false;
@@ -465,6 +526,7 @@ void AiService::sendRequestInternal(const QJsonArray &messages, const AiModel &m
     QNetworkRequest request{QUrl(fullUrl)};
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Authorization", ("Bearer " + model.apiKey).toUtf8());
+    AiProviderHeaders::apply(request, model.apiUrl);
 
     m_currentReply = m_networkManager->post(request, jsonData);
 
@@ -756,25 +818,36 @@ void AiService::onReplyFinished()
         return;
     }
 
-    // 处理缓冲区中可能残留的数据
-    if (!m_buffer.isEmpty())
+    const bool hadError = (reply->error() != QNetworkReply::NoError);
+
+    // 出错时缓冲区与未读内容里留着服务端返回的错误体（一般是一段 JSON），
+    // 真正的原因往往写在这里，收起来交给 buildErrorMessage 组装文案。
+    QString errorBody;
+    if (hadError)
     {
+        errorBody = m_buffer + m_lastErrorBody;
+        const QByteArray rest = reply->readAll();
+        if (!rest.isEmpty())
+            errorBody += QString::fromUtf8(rest);
+        m_lastErrorBody.clear();
+    }
+    else if (!m_buffer.isEmpty())
+    {
+        // 处理缓冲区中可能残留的数据
         QString trimmed = m_buffer.trimmed();
         if (trimmed.startsWith("data: "))
         {
             parseSseData(trimmed.mid(6));
         }
-        m_buffer.clear();
     }
-
-    bool hadError = (reply->error() != QNetworkReply::NoError);
+    m_buffer.clear();
 
     m_currentReply->deleteLater();
     m_currentReply = nullptr;
 
     if (hadError)
     {
-        // 错误由 onErrorOccurred 处理
+        emit errorOccurred(buildErrorMessage(reply, errorBody));
         return;
     }
 
@@ -825,7 +898,34 @@ void AiService::onErrorOccurred(QNetworkReply::NetworkError /*error*/)
         return;
     }
 
-    emit errorOccurred(reply->errorString());
+    // 这里只留存已到达的错误体：文案统一在 onReplyFinished 里组装。
+    // 两个信号谁先到不确定，而且继续在这里 emit 的话，用户会先看到一句
+    // 没有原因的「server replied with status code 400」。
+    const QByteArray pending = reply->readAll();
+    if (!pending.isEmpty())
+    {
+        m_lastErrorBody += QString::fromUtf8(pending);
+    }
+}
+
+QString AiService::buildErrorMessage(QNetworkReply *reply, const QString &body)
+{
+    const QString fallback = reply ? reply->errorString() : tr("请求失败");
+    const int status = reply
+                           ? reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()
+                           : 0;
+
+    const QString detail = extractServerErrorMessage(body);
+    if (detail.isEmpty())
+    {
+        return fallback;
+    }
+
+    if (status > 0)
+    {
+        return tr("服务端返回 %1：%2").arg(status).arg(detail);
+    }
+    return tr("请求失败：%1").arg(detail);
 }
 
 void AiService::parseSseData(const QString& data)
@@ -1300,6 +1400,7 @@ void AiService::generateTitle(const QString& userMessage, const QString& aiReply
     QNetworkRequest request{QUrl(fullUrl)};
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Authorization", ("Bearer " + model.apiKey).toUtf8());
+    AiProviderHeaders::apply(request, model.apiUrl);
 
     m_titleReply = m_networkManager->post(request, jsonData);
     connect(m_titleReply, &QNetworkReply::finished, this, &AiService::onTitleReplyFinished);
@@ -1411,6 +1512,7 @@ void AiService::optimizePrompt(const QString &draft, const AiModel &model)
     QNetworkRequest request{QUrl(fullUrl)};
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Authorization", ("Bearer " + model.apiKey).toUtf8());
+    AiProviderHeaders::apply(request, model.apiUrl);
 
     m_optimizeReply = m_networkManager->post(request, jsonData);
     connect(m_optimizeReply, &QNetworkReply::finished, this, &AiService::onOptimizeReplyFinished);
@@ -1989,6 +2091,7 @@ QList<ChatMessage> AiService::compressContext(const QList<ChatMessage> &history,
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Authorization", ("Bearer " + model.apiKey).toUtf8());
     request.setTransferTimeout(30000); // 摘要请求 30s 超时
+    AiProviderHeaders::apply(request, model.apiUrl);
 
     QNetworkReply *reply = mgr.post(request, jsonData);
 

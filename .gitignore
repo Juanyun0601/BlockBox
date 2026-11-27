@@ -36,6 +36,8 @@ tests/update_install_probe/negwork/
 .tmp_server_probe/
 # 红石渲染探针使用的临时实例 jar / 样例（体积大，不入库）
 .tmp_redstone/
+# 迁移向导探针的临时构建产物（体积大，不入库）
+.tmp_migration_probe/
 *.log
 
 # 备份文件

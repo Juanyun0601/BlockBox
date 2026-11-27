@@ -34,6 +34,7 @@
 #include <QPair>
 #include "components/AppInputDialog.h"
 #include <QJsonDocument>
+#include <QProgressBar>
 #include <QJsonArray>
 #include <QJsonParseError>
 #include <QListWidget>
@@ -80,6 +81,7 @@
 #include "utils/AiProviderPresets.h"
 #include "utils/links/LinkRouter.h"
 #include "utils/AiService.h"
+#include "utils/AiMarkdownStyle.h"
 #include "utils/DownloadTaskManager.h"
 #include "utils/ForumAccountService.h"
 #include "utils/GameScreenshot.h"
@@ -103,6 +105,12 @@ namespace
 
     /// 一条消息最多能带几张截图（再多既费 token 又挤占窗口）
     constexpr int kMaxPendingImages = 3;
+
+    /// 当前是否深色系主题（深色 / 自定义主题都按深色排版回答正文）
+    bool isAiDarkTheme()
+    {
+        return ThemeManager::instance()->currentTheme() != ThemeManager::LightTheme;
+    }
 
     /// 截图缓存目录（AppData/BlockBox/ai_images），不存在时自动创建
     QString aiImageCacheDir()
@@ -276,7 +284,52 @@ namespace
             {QStringLiteral("edit_file"), QObject::tr("编辑文件")},
             {QStringLiteral("create_file"), QObject::tr("创建文件")},
         };
-        return kNames.value(name, name);
+        if (kNames.contains(name))
+        {
+            return kNames.value(name);
+        }
+        // 未收录的工具（技能 / 插件工具）：把下划线换成空格，读起来比原始 id 顺眼
+        QString pretty = name;
+        pretty.replace(QLatin1Char('_'), QLatin1Char(' '));
+        return pretty;
+    }
+
+    /// 展开详情里的参数：JSON 缩进排版，非 JSON 原样返回
+    QString prettyToolArguments(const QString &arguments)
+    {
+        const QString trimmed = arguments.trimmed();
+        if (trimmed.isEmpty())
+        {
+            return QString();
+        }
+
+        QJsonParseError err;
+        const QJsonDocument doc = QJsonDocument::fromJson(trimmed.toUtf8(), &err);
+        if (err.error != QJsonParseError::NoError)
+        {
+            return arguments;
+        }
+
+        QByteArray pretty;
+        if (doc.isObject())
+        {
+            pretty = QJsonDocument(doc.object()).toJson(QJsonDocument::Indented);
+        }
+        else if (doc.isArray())
+        {
+            pretty = QJsonDocument(doc.array()).toJson(QJsonDocument::Indented);
+        }
+        else
+        {
+            return arguments;
+        }
+
+        QString text = QString::fromUtf8(pretty);
+        while (text.endsWith(QLatin1Char('\n')))
+        {
+            text.chop(1);
+        }
+        return text;
     }
 
     /// 是否为文件编辑类工具（行首显示文件名 + 增删行数）
@@ -508,6 +561,10 @@ AiChatPage::AiChatPage(QWidget *parent)
     , m_currentThinkingLabel(nullptr)
     , m_typingIndicator(nullptr)
     , m_currentSearchStepCard(nullptr)
+    , m_currentAgentStepsWidget(nullptr)
+    , m_currentAgentStepsLayout(nullptr)
+    , m_currentPendingStepCard(nullptr)
+    , m_currentTaskListCard(nullptr)
     , m_isStreaming(false)
     , m_streamAborting(false)
     , m_streamThrottle(nullptr)
@@ -1653,7 +1710,19 @@ void AiChatPage::initConnections()
     connect(ThemeManager::instance(), &ThemeManager::textColorChanged,
             this, [this]() { updateToggleConvIcon(); refreshToolIcons(); });
     connect(ThemeManager::instance(), &ThemeManager::themeChanged,
-            this, [this](ThemeManager::ThemeType) { refreshToolIcons(); });
+            this, [this](ThemeManager::ThemeType type) {
+        refreshToolIcons();
+        // 回答正文的代码块 / 引用 / 表格底色是随主题生成的，切主题后按原文重排一遍
+        const bool dark = (type != ThemeManager::LightTheme);
+        const QList<QLabel *> labels = findChildren<QLabel *>(QStringLiteral("msgContent"));
+        for (QLabel *label : labels)
+        {
+            if (!label->property("bbAiMarkdown").isValid())
+                continue;
+            AiMarkdownStyle::applyToLabel(label, AiMarkdownStyle::markdownOf(label),
+                                          dark, m_compactMode);
+        }
+    });
 
     // Ctrl+Enter 也发送
     connect(m_inputEdit, &QTextEdit::textChanged, this, [this]() {
@@ -3718,8 +3787,8 @@ void AiChatPage::finalizeStreamWidgets()
     }
     if (m_currentContentLabel)
     {
-        m_currentContentLabel->setTextFormat(Qt::MarkdownText);
-        m_currentContentLabel->setText(m_currentContent);
+        AiMarkdownStyle::applyToLabel(m_currentContentLabel, m_currentContent,
+                                      isAiDarkTheme(), m_compactMode);
         m_currentContentLabel->show();
     }
 
@@ -4236,20 +4305,22 @@ void AiChatPage::setupTextContextMenu(QLabel *label, bool isUser)
         }
         else if (chosen == copyAllPlainAction)
         {
-            QApplication::clipboard()->setText(label->text());
+            // 回答正文已渲染成富文本，纯文本从渲染前的缓存取，避免复制到 HTML 标签
+            QApplication::clipboard()->setText(AiMarkdownStyle::plainTextOf(label));
         }
         else if (chosen == copyAllMdAction)
         {
-            QApplication::clipboard()->setText(label->text());
+            QApplication::clipboard()->setText(AiMarkdownStyle::markdownOf(label));
         }
         else if (chosen == selectAllAction)
         {
-            label->setSelection(0, label->text().length());
+            label->setSelection(0, AiMarkdownStyle::plainTextOf(label).length());
         }
         else if (chosen == quoteAction)
         {
             // 选中文字优先，否则引用整段
-            const QString quoteText = hasSelection ? label->selectedText() : label->text();
+            const QString quoteText = hasSelection ? label->selectedText()
+                                                   : AiMarkdownStyle::markdownOf(label);
             addQuoteReference(quoteText);
         }
         else if (chosen == regenAction)
@@ -4294,21 +4365,22 @@ QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
             displayText = displayText.left(refMarker).trimmed();
         }
     }
-    // AI 气泡用 MarkdownOutlinedLabel（正文保留 Markdown 渲染并叠加文字笔画描边）；
-    // 用户气泡用同样带描边的标签（纯文本）
-    QLabel *contentLabel = new MarkdownOutlinedLabel(displayText);
+    // AI 气泡正文按聊天体排版渲染（标题/列表/代码块/引用/表格统一字号与间距）；
+    // 用户气泡保持纯文本
+    QLabel *contentLabel = new MarkdownOutlinedLabel();
     contentLabel->setObjectName("msgContent");
     contentLabel->setWordWrap(true);
-    // 用户气泡用纯文本；AI 气泡用 Markdown 渲染
-    contentLabel->setTextFormat(isUser ? Qt::PlainText : Qt::MarkdownText);
     if (isUser)
     {
+        contentLabel->setTextFormat(Qt::PlainText);
+        contentLabel->setText(displayText);
         contentLabel->setOpenExternalLinks(true);
         // 文本可选（鼠标拖选）
         contentLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     }
     else
     {
+        AiMarkdownStyle::applyToLabel(contentLabel, displayText, isAiDarkTheme(), m_compactMode);
         // 回答里的链接交给 LinkRouter：方块盒子论坛的帖子 / 板块、CF / Modrinth 资源页
         // 都在软件内打开，认不出的链接再交给浏览器
         contentLabel->setOpenExternalLinks(false);
@@ -4335,10 +4407,10 @@ QWidget* AiChatPage::createMessageWidget(const QString &text, bool isUser,
     }
 
     setupTextContextMenu(contentLabel, isUser);
-    if (!displayText.isEmpty())
-    {
-        bubbleLayout->addWidget(contentLabel);
-    }
+    // 始终挂进布局：流式开始时先创建空气泡，收尾时要用同一枚标签渲染全文；
+    // 空正文先隐藏，避免气泡里多出一行空白
+    bubbleLayout->addWidget(contentLabel);
+    contentLabel->setVisible(!displayText.isEmpty());
 
     // 用户消息：气泡顶部先回显随消息一起发出去的截图（点开可看大图）
     if (!images.isEmpty())
@@ -4425,7 +4497,7 @@ QWidget* AiChatPage::createThinkingWidget(const QString &text, bool running)
     headerLayout->addWidget(chevronLabel);
 
     // 展开内容：默认收起；流式期间用 QTextEdit 增量追加（QLabel 全量重排会卡顿），历史消息用 QLabel
-    auto *contentWidget = new QWidget();
+    auto *contentWidget = new QFrame();
     contentWidget->setObjectName("thinkingContentWidget");
     contentWidget->setVisible(false);
     auto *contentLayout = new QVBoxLayout(contentWidget);
@@ -5781,8 +5853,8 @@ void AiChatPage::onAgentToolCallStarted(const QString &name, const QString &argu
         m_currentAgentStepsWidget = new QFrame(m_messageContainer);
         m_currentAgentStepsWidget->setObjectName("agentStepsContainer");
         m_currentAgentStepsLayout = new QVBoxLayout(m_currentAgentStepsWidget);
-        m_currentAgentStepsLayout->setContentsMargins(0, 0, 0, 0);
-        m_currentAgentStepsLayout->setSpacing(2);
+        m_currentAgentStepsLayout->setContentsMargins(0, 2, 0, 6);
+        m_currentAgentStepsLayout->setSpacing(4);
 
         // 插入到 AI 气泡之前（若已存在），否则插到 stretch 之前
         int insertPos = m_messageLayout->count() - 1;
@@ -5865,11 +5937,8 @@ void AiChatPage::rebuildTaskListCard(const QList<AgentTask> &tasks)
     {
         auto *card = new QFrame(m_messageContainer);
         card->setObjectName("taskListCard");
-        card->setStyleSheet(QStringLiteral(
-            "QFrame#taskListCard { background: rgba(33, 150, 243, 0.04); "
-            "border: 1px solid rgba(33, 150, 243, 0.2); border-radius: 10px; }"));
         auto *cardLayout = new QVBoxLayout(card);
-        cardLayout->setContentsMargins(14, 12, 14, 12);
+        cardLayout->setContentsMargins(2, 2, 2, 2);
         cardLayout->setSpacing(8);
 
         // 插入位置：步骤容器之前（清单位于步骤上方），否则 AI 气泡之前，否则 stretch 之前
@@ -5913,176 +5982,126 @@ void AiChatPage::rebuildTaskListCard(const QList<AgentTask> &tasks)
         }
     }
 
-    // 标题行：📋 任务清单 + 进度文本
+    // 标题行：任务清单 + 进度文本
     auto *headerRow = new QWidget(m_currentTaskListCard);
     auto *headerLayout = new QHBoxLayout(headerRow);
     headerLayout->setContentsMargins(0, 0, 0, 0);
     headerLayout->setSpacing(8);
 
-    auto *titleLabel = new MarkdownOutlinedLabel(
-        QStringLiteral("任务清单"), m_currentTaskListCard);
-    titleLabel->setStyleSheet(QStringLiteral(
-        "font-size: 13px; font-weight: 600; color: #1a1a1a; border: none; background: transparent;"));
-    auto *titleIcon = new QLabel(m_currentTaskListCard);
-    titleIcon->setPixmap(IconHelper::loadColoredIcon(":/Images/Icons/clipboard.svg",
-                                                     QColor("#1a1a1a"), 14).pixmap(14, 14));
-    headerLayout->addWidget(titleIcon);
+    auto *titleLabel = new MarkdownOutlinedLabel(tr("任务清单"), m_currentTaskListCard);
+    titleLabel->setObjectName(QStringLiteral("taskListTitle"));
     headerLayout->addWidget(titleLabel);
 
     // 进度文本徽章
     QString progressText;
     if (tasks.isEmpty())
     {
-        progressText = QStringLiteral("0 项");
+        progressText = tr("0 项");
     }
     else if (doneCount == tasks.size())
     {
-        progressText = QStringLiteral("全部完成 ✓");
+        progressText = tr("全部完成 ✓");
     }
     else
     {
         progressText = QStringLiteral("%1/%2").arg(doneCount).arg(tasks.size());
     }
     auto *progressBadge = new MarkdownOutlinedLabel(progressText, m_currentTaskListCard);
-    progressBadge->setStyleSheet(QStringLiteral(
-        "font-size: 11px; font-weight: 600; color: #1565C0; "
-        "background: rgba(33, 150, 243, 0.12); border: none; "
-        "border-radius: 8px; padding: 1px 8px;"));
+    progressBadge->setObjectName(QStringLiteral("taskListBadge"));
+    progressBadge->setAlignment(Qt::AlignCenter);
     progressBadge->setFixedHeight(18);
     headerLayout->addWidget(progressBadge);
     headerLayout->addStretch(1);
     cardLayout->addWidget(headerRow);
 
-    // 进度条（细条，蓝色填充）
+    // 进度条（细条，主色填充）
     if (!tasks.isEmpty())
     {
-        auto *progressBar = new QFrame(m_currentTaskListCard);
-        progressBar->setObjectName("taskListProgressBar");
+        auto *progressBar = new QProgressBar(m_currentTaskListCard);
+        progressBar->setObjectName(QStringLiteral("taskListProgressBar"));
+        progressBar->setRange(0, int(tasks.size()));
+        progressBar->setValue(doneCount);
+        progressBar->setTextVisible(false);
         progressBar->setFixedHeight(4);
-        progressBar->setStyleSheet(QStringLiteral(
-            "QFrame#taskListProgressBar { background: rgba(33, 150, 243, 0.15); "
-            "border: none; border-radius: 2px; }"));
-        auto *barLayout = new QHBoxLayout(progressBar);
-        barLayout->setContentsMargins(0, 0, 0, 0);
-        barLayout->setSpacing(0);
-
-        int fillPercent = doneCount * 100 / tasks.size();
-        auto *fillWidget = new QWidget(progressBar);
-        fillWidget->setStyleSheet(QStringLiteral(
-            "background: #2196F3; border-radius: 2px;"));
-        fillWidget->setFixedHeight(4);
-        barLayout->addWidget(fillWidget, fillPercent);
-        barLayout->addStretch(100 - fillPercent);
+        progressBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         cardLayout->addWidget(progressBar);
     }
 
     // 分隔线
     auto *separator = new QFrame(m_currentTaskListCard);
+    separator->setObjectName(QStringLiteral("taskListSeparator"));
     separator->setFixedHeight(1);
-    separator->setStyleSheet(QStringLiteral(
-        "background: rgba(33, 150, 243, 0.15); border: none;"));
     cardLayout->addWidget(separator);
 
-    // 各任务行
+    // 各任务行（状态 / 优先级都走动态属性，由样式表按主题取色）
     for (int i = 0; i < tasks.size(); ++i)
     {
         const auto &task = tasks.at(i);
         auto *row = new QFrame(m_currentTaskListCard);
-        row->setObjectName("taskListRow");
-        // in_progress 行加浅蓝背景高亮
-        if (task.status == QStringLiteral("in_progress"))
-        {
-            row->setStyleSheet(QStringLiteral(
-                "QFrame#taskListRow { background: rgba(33, 150, 243, 0.08); "
-                "border: none; border-radius: 6px; }"));
-        }
-        else
-        {
-            row->setStyleSheet(QStringLiteral(
-                "QFrame#taskListRow { background: transparent; border: none; }"));
-        }
+        row->setObjectName(QStringLiteral("taskListRow"));
+        row->setProperty("status", task.status);
         auto *rowLayout = new QHBoxLayout(row);
         rowLayout->setContentsMargins(8, 6, 8, 6);
         rowLayout->setSpacing(10);
 
         // 状态图标
         QString icon;
-        QString iconColor;
         if (task.status == QStringLiteral("completed"))
         {
             icon = QStringLiteral("✓");
-            iconColor = QStringLiteral("#4CAF50");
         }
         else if (task.status == QStringLiteral("in_progress"))
         {
             icon = QStringLiteral("◐");
-            iconColor = QStringLiteral("#2196F3");
         }
         else
         {
             icon = QStringLiteral("○");
-            iconColor = QStringLiteral("#9E9E9E");
         }
 
         auto *iconLabel = new MarkdownOutlinedLabel(icon, row);
-        iconLabel->setStyleSheet(QStringLiteral(
-            "font-size: 14px; font-weight: bold; color: %1; border: none; background: transparent;")
-            .arg(iconColor));
+        iconLabel->setObjectName(QStringLiteral("taskListStatusIcon"));
+        iconLabel->setProperty("status", task.status);
         iconLabel->setFixedWidth(18);
         iconLabel->setAlignment(Qt::AlignCenter);
         rowLayout->addWidget(iconLabel);
 
         // 内容
         auto *contentLabel = new MarkdownOutlinedLabel(task.content, row);
+        contentLabel->setObjectName(QStringLiteral("taskListContent"));
+        contentLabel->setProperty("status", task.status);
         contentLabel->setWordWrap(true);
-        QString contentBase = QStringLiteral(
-            "font-size: 13px; border: none; background: transparent;");
         if (task.status == QStringLiteral("completed"))
         {
-            contentLabel->setStyleSheet(contentBase + QStringLiteral(" color: #9E9E9E;"));
             QFont f = contentLabel->font();
             f.setStrikeOut(true);
             contentLabel->setFont(f);
-        }
-        else if (task.status == QStringLiteral("in_progress"))
-        {
-            contentLabel->setStyleSheet(contentBase + QStringLiteral(" color: #1a1a1a; font-weight: 600;"));
-        }
-        else
-        {
-            contentLabel->setStyleSheet(contentBase + QStringLiteral(" color: #555;"));
         }
         rowLayout->addWidget(contentLabel, 1);
 
         // 优先级标签（胶囊式）
         QString prioText;
-        QString prioColor;
-        QString prioBg;
+        QString prioLevel;
         if (task.priority == QStringLiteral("high"))
         {
-            prioText = QStringLiteral("高");
-            prioColor = QStringLiteral("#C62828");
-            prioBg = QStringLiteral("rgba(244, 67, 54, 0.1)");
+            prioText = tr("高");
+            prioLevel = QStringLiteral("high");
         }
         else if (task.priority == QStringLiteral("medium"))
         {
-            prioText = QStringLiteral("中");
-            prioColor = QStringLiteral("#E65100");
-            prioBg = QStringLiteral("rgba(255, 152, 0, 0.1)");
+            prioText = tr("中");
+            prioLevel = QStringLiteral("medium");
         }
         else
         {
-            prioText = QStringLiteral("低");
-            prioColor = QStringLiteral("#616161");
-            prioBg = QStringLiteral("rgba(158, 158, 158, 0.1)");
+            prioText = tr("低");
+            prioLevel = QStringLiteral("low");
         }
         auto *prioLabel = new MarkdownOutlinedLabel(prioText, row);
-        prioLabel->setStyleSheet(QStringLiteral(
-            "font-size: 11px; font-weight: 600; color: %1; background: %2; "
-            "border: none; border-radius: 10px; padding: 2px 8px;")
-            .arg(prioColor, prioBg));
-        prioLabel->setFixedHeight(18);
+        prioLabel->setObjectName(QStringLiteral("taskPriorityChip"));
+        prioLabel->setProperty("level", prioLevel);
         prioLabel->setAlignment(Qt::AlignCenter);
+        prioLabel->setFixedHeight(20);
         rowLayout->addWidget(prioLabel);
 
         cardLayout->addWidget(row);
@@ -6091,9 +6110,8 @@ void AiChatPage::rebuildTaskListCard(const QList<AgentTask> &tasks)
         if (i < tasks.size() - 1)
         {
             auto *lineSep = new QFrame(m_currentTaskListCard);
+            lineSep->setObjectName(QStringLiteral("taskListSeparator"));
             lineSep->setFixedHeight(1);
-            lineSep->setStyleSheet(QStringLiteral(
-                "background: rgba(0, 0, 0, 0.06); border: none;"));
             cardLayout->addWidget(lineSep);
         }
     }
@@ -6325,8 +6343,8 @@ void AiChatPage::onUserQuestionAsked(const QString &question, const QStringList 
 
     // 问题文本
     QLabel *questionLabel = new QLabel(question, &dialog);
+    questionLabel->setObjectName(QStringLiteral("aiQuestionText"));
     questionLabel->setWordWrap(true);
-    questionLabel->setStyleSheet(QStringLiteral("font-size: 14px; color: #333;"));
     layout->addWidget(questionLabel);
 
     // 输入框（无选项或允许其他时显示）
@@ -6350,17 +6368,8 @@ void AiChatPage::onUserQuestionAsked(const QString &question, const QStringList 
         for (const QString &opt : options)
         {
             QPushButton *btn = new QPushButton(opt, btnFrame);
+            btn->setObjectName(QStringLiteral("aiQuestionOptionBtn"));
             btn->setCursor(Qt::PointingHandCursor);
-            const bool isAiDark = (ThemeManager::instance()->currentTheme()
-                                   == ThemeManager::DarkTheme);
-            btn->setStyleSheet(QStringLiteral(
-                "QPushButton { padding: 8px 12px; text-align: left; "
-                "border: 1px solid %1; border-radius: 6px; background: %2; }"
-                "QPushButton:hover { background: %3; border-color: %4; }")
-                .arg(isAiDark ? "#4a4a4a" : "#ddd",
-                     isAiDark ? "#2e2e32" : "#fafafa",
-                     isAiDark ? "#3d4a66" : "#e8f0fe",
-                     isAiDark ? "#5a93e8" : "#4a90e2"));
             btnLayout->addWidget(btn);
 
             connect(btn, &QPushButton::clicked, &dialog, [this, opt, &dialog]() {
@@ -6373,17 +6382,8 @@ void AiChatPage::onUserQuestionAsked(const QString &question, const QStringList 
         if (inputEdit != nullptr)
         {
             QPushButton *useInputBtn = new QPushButton(tr("使用上方输入的文本"), btnFrame);
+            useInputBtn->setObjectName(QStringLiteral("aiQuestionUseInputBtn"));
             useInputBtn->setCursor(Qt::PointingHandCursor);
-            const bool isAiDarkUse = (ThemeManager::instance()->currentTheme()
-                                      == ThemeManager::DarkTheme);
-            useInputBtn->setStyleSheet(QStringLiteral(
-                "QPushButton { padding: 8px 12px; text-align: center; "
-                "border: 1px solid %1; border-radius: 6px; "
-                "background: %2; color: %1; font-weight: bold; }"
-                "QPushButton:hover { background: %3; }")
-                .arg(isAiDarkUse ? "#5a93e8" : "#4a90e2",
-                     isAiDarkUse ? "#2b3a53" : "#e8f0fe",
-                     isAiDarkUse ? "#35476a" : "#d0e0fc"));
             btnLayout->addWidget(useInputBtn);
             connect(useInputBtn, &QPushButton::clicked, &dialog, [this, inputEdit, &dialog]() {
                 QString text = inputEdit->text().trimmed();
@@ -6551,8 +6551,8 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     headerRow->setCursor(Qt::PointingHandCursor);
     headerRow->setFlat(true);
     auto *headerLayout = new QHBoxLayout(headerRow);
-    headerLayout->setContentsMargins(2, 2, 2, 2);
-    headerLayout->setSpacing(6);
+    headerLayout->setContentsMargins(2, 3, 2, 3);
+    headerLayout->setSpacing(8);
 
     // 左侧状态图标（对齐 opencode）：执行中为旋转点阵，结束定格 ✓ / ✗，
     // 不再用「执行中…/成功/失败」文字，行内信息更紧凑
@@ -6638,17 +6638,22 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
 
     layout->addWidget(headerRow);
 
-    // 展开内容（默认收起，缩进纯文字）：参数原文、结果原文
+    // 展开内容（默认收起）：参数 / 结果，统一放进浅底详情面板
     auto *detailsWidget = new QFrame(card);
     detailsWidget->setObjectName("agentToolStepDetails");
+    detailsWidget->setProperty("status", cardStatus);
     detailsWidget->setVisible(false);
     auto *detailsLayout = new QVBoxLayout(detailsWidget);
-    detailsLayout->setContentsMargins(0, 2, 6, 4);
-    detailsLayout->setSpacing(4);
+    detailsLayout->setContentsMargins(10, 8, 10, 8);
+    detailsLayout->setSpacing(5);
 
     if (!arguments.isEmpty())
     {
-        auto *argsLabel = new MarkdownOutlinedLabel(arguments, detailsWidget);
+        auto *argsCaption = new MarkdownOutlinedLabel(tr("参数"), detailsWidget);
+        argsCaption->setObjectName("agentToolStepCaption");
+        detailsLayout->addWidget(argsCaption);
+
+        auto *argsLabel = new MarkdownOutlinedLabel(prettyToolArguments(arguments), detailsWidget);
         argsLabel->setObjectName("agentToolStepArgs");
         argsLabel->setWordWrap(true);
         argsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -6657,6 +6662,12 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     }
 
     // 结果原文（进行中态留空占位，applyToolStepFinish 填充）
+    auto *resultCaption = new MarkdownOutlinedLabel(tr("结果"), detailsWidget);
+    resultCaption->setObjectName("agentToolStepCaption");
+    resultCaption->setProperty("role", QStringLiteral("resultCaption"));
+    resultCaption->setVisible(false);
+    detailsLayout->addWidget(resultCaption);
+
     auto *resultLabel = new MarkdownOutlinedLabel(QString(), detailsWidget);
     resultLabel->setObjectName("agentToolStepResult");
     resultLabel->setWordWrap(true);
@@ -6668,6 +6679,7 @@ QWidget* AiChatPage::createToolStepCard(const QString &name, const QString &argu
     if (finished)
     {
         resultLabel->setText(resultSummary.isEmpty() ? tr("（无）") : resultSummary);
+        resultCaption->setVisible(true);
     }
     detailsLayout->addWidget(resultLabel);
 
@@ -6712,6 +6724,14 @@ void AiChatPage::applyToolStepFinish(QWidget *card, const QString &resultSummary
     card->setProperty("status", success ? QStringLiteral("success") : QStringLiteral("danger"));
     card->style()->polish(card);
 
+    // 详情面板左侧强调色跟随成功 / 失败
+    if (auto *details = card->findChild<QWidget*>(QStringLiteral("agentToolStepDetails")))
+    {
+        details->setProperty("status", success ? QStringLiteral("success") : QStringLiteral("danger"));
+        details->style()->unpolish(details);
+        details->style()->polish(details);
+    }
+
     // 状态图标定格：成功 ✓ / 失败 ✗（不再写状态文字）
     setStepGlyphState(card->findChild<QLabel*>(QStringLiteral("agentStepGlyph")),
                       success ? QStringLiteral("success") : QStringLiteral("danger"));
@@ -6748,6 +6768,20 @@ void AiChatPage::applyToolStepFinish(QWidget *card, const QString &resultSummary
             }
         }
     }
+
+    // 有结果文本时补出「结果」小标题（含搜索行的链接列表）
+    if (auto *resultLabel = card->findChild<QLabel*>(QStringLiteral("agentToolStepResult")))
+    {
+        const auto captions = card->findChildren<QLabel*>(QStringLiteral("agentToolStepCaption"));
+        for (QLabel *captionLabel : captions)
+        {
+            if (captionLabel->property("role").toString() == QLatin1String("resultCaption"))
+            {
+                captionLabel->setVisible(!resultLabel->text().isEmpty());
+                break;
+            }
+        }
+    }
 }
 
 void AiChatPage::rebuildToolStepCards(const QList<AgentToolCall> &toolCalls)
@@ -6761,8 +6795,8 @@ void AiChatPage::rebuildToolStepCards(const QList<AgentToolCall> &toolCalls)
     m_currentAgentStepsWidget = new QFrame(m_messageContainer);
     m_currentAgentStepsWidget->setObjectName("agentStepsContainer");
     m_currentAgentStepsLayout = new QVBoxLayout(m_currentAgentStepsWidget);
-    m_currentAgentStepsLayout->setContentsMargins(0, 0, 0, 0);
-    m_currentAgentStepsLayout->setSpacing(2);
+    m_currentAgentStepsLayout->setContentsMargins(0, 2, 0, 6);
+    m_currentAgentStepsLayout->setSpacing(4);
 
     // 历史卡片直接以完成态创建
     for (const AgentToolCall &tc : toolCalls)
@@ -6774,11 +6808,24 @@ void AiChatPage::rebuildToolStepCards(const QList<AgentToolCall> &toolCalls)
         if (resultLabel)
         {
             resultLabel->setText(tc.result.isEmpty() ? tr("（无）") : tc.result);
+            const auto captions = card->findChildren<QLabel*>(QStringLiteral("agentToolStepCaption"));
+            for (QLabel *captionLabel : captions)
+            {
+                if (captionLabel->property("role").toString() == QLatin1String("resultCaption"))
+                {
+                    captionLabel->setVisible(true);
+                    break;
+                }
+            }
         }
         // 失败时追加错误信息
         if (!tc.success && !tc.errorMessage.isEmpty())
         {
             auto *errLabel = new MarkdownOutlinedLabel(tr("错误：%1").arg(tc.errorMessage), card);
+            errLabel->setObjectName(QStringLiteral("agentToolStepResult"));
+            errLabel->setProperty("status", QStringLiteral("danger"));
+            errLabel->setWordWrap(true);
+            errLabel->style()->polish(errLabel);
             card->findChild<QWidget*>("agentToolStepDetails")->layout()->addWidget(errLabel);
         }
         m_currentAgentStepsLayout->addWidget(card);
@@ -7367,3 +7414,13 @@ QPixmap AiChatPage::chatImagePixmap(const ChatImage &image, int side)
     return QPixmap::fromImage(img.scaled(side, side, Qt::KeepAspectRatio,
                                         Qt::SmoothTransformation));
 }
+
+
+
+
+
+
+
+
+
+

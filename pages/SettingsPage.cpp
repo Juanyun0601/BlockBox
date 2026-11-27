@@ -275,6 +275,17 @@ QString SettingsPage::tabTitle(int index) const
     return QString();
 }
 
+int SettingsPage::pluginManageTabIndex() const
+{
+    // 插件管理不在内容堆栈里：它的子导航序号排在所有设置内容页之后
+    return m_contentStack ? m_contentStack->count() : -1;
+}
+
+bool SettingsPage::isPluginManageTab(int index) const
+{
+    return index >= 0 && index == pluginManageTabIndex();
+}
+
 void SettingsPage::applyPageFilter(const QString &query)
 {
     m_pageFilterQuery = query;

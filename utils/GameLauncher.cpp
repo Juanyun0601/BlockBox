@@ -11,6 +11,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -18,7 +19,18 @@
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QWindow>
+#include <QtConcurrent>
 #include <utility>
+
+#ifdef Q_OS_WIN
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#endif
 
 #include "utils/ErrorAnalyzer.h"
 #include "utils/SettingsManager.h"
@@ -26,6 +38,72 @@
 #include "utils/RuntimeDependencyManager.h"
 #include "utils/SystemTools.h"
 #include "utils/fabric/FabricInstaller.h"
+
+#ifdef Q_OS_WIN
+namespace {
+
+/**
+ * @brief 枚举本机顶层窗口，找游戏（独立 java 进程）开出来的那个
+ *
+ * 游戏是 QProcess 起的独立进程，它的窗口不在本进程的 QApplication::allWindows()
+ * 里，只能走系统级枚举：先认本进程 PID，认不到再退一步按标题匹配
+ * （部分整合包会改写窗口标题，PID 也对不上时靠标题兜底）。
+ */
+struct GameWindowProbe
+{
+    DWORD pid = 0;
+    bool found = false;
+};
+
+BOOL CALLBACK gameWindowProbeProc(HWND hwnd, LPARAM lParam)
+{
+    auto *probe = reinterpret_cast<GameWindowProbe *>(lParam);
+    if (!IsWindowVisible(hwnd) || IsIconic(hwnd))
+    {
+        return TRUE;
+    }
+    if (GetWindow(hwnd, GW_OWNER) != nullptr)
+    {
+        return TRUE;
+    }
+    RECT rect{};
+    if (!GetWindowRect(hwnd, &rect))
+    {
+        return TRUE;
+    }
+    if (rect.right - rect.left < 320 || rect.bottom - rect.top < 240)
+    {
+        return TRUE;
+    }
+
+    DWORD windowPid = 0;
+    GetWindowThreadProcessId(hwnd, &windowPid);
+    if (probe->pid != 0 && windowPid == probe->pid)
+    {
+        probe->found = true;
+        return FALSE;
+    }
+
+    wchar_t title[512] = {0};
+    GetWindowTextW(hwnd, title, 512);
+    if (QString::fromWCharArray(title).contains(QStringLiteral("Minecraft"), Qt::CaseInsensitive))
+    {
+        probe->found = true;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+bool hasGameWindow(DWORD gamePid)
+{
+    GameWindowProbe probe;
+    probe.pid = gamePid;
+    EnumWindows(gameWindowProbeProc, reinterpret_cast<LPARAM>(&probe));
+    return probe.found;
+}
+
+} // namespace
+#endif
 
 GameLauncher* GameLauncher::m_instance = nullptr;
 QMutex GameLauncher::m_instanceMutex;
@@ -179,20 +257,38 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     emit launchProgressChanged(0, "准备启动游戏...");
     emit launchDetailAdded("开始启动游戏流程");
 
-    // 启动前先优化内存：把启动器自己闲置的工作集还给系统，给游戏多留一点物理内存
+    // 启动前先优化内存：游戏进程还没起来，这时把整机闲置内存收一遍最划算
+    // （PCL 的启动流程里也插了同样的「内存优化」一步）
+    //
+    // 整机扫一遍要几百毫秒，放在界面线程会让人以为卡死，所以交给后台线程跑，
+    // 收完再把结果写进启动日志；后面的解压、写配置照常进行，互不耽误。
     if (SettingsManager::instance()->isOptimizeMemoryBeforeLaunchEnabled())
     {
-        const qint64 freedBytes = SystemTools::optimizeMemorySilently();
-        if (freedBytes > 0)
-        {
-            emit launchDetailAdded(
-                QString("启动前已优化内存，释放 %1 MB")
-                    .arg(freedBytes / (1024 * 1024)));
-        }
-        else
-        {
-            emit launchDetailAdded("启动前已优化内存");
-        }
+        SystemTools::clearLauncherImageCaches();
+
+        auto *watcher = new QFutureWatcher<MemoryOptimizeReport>(this);
+        connect(watcher, &QFutureWatcher<MemoryOptimizeReport>::finished, this, [this, watcher]() {
+            const MemoryOptimizeReport report = watcher->result();
+            watcher->deleteLater();
+            if (!report.supported)
+            {
+                emit launchDetailAdded("启动前内存优化：当前系统不支持，已跳过");
+                return;
+            }
+            QString message = QString("启动前已优化内存，释放 %1 MB")
+                                  .arg(report.headlineFreedBytes() / (1024 * 1024));
+            if (report.processesTrimmed > 0)
+            {
+                message += QString("（顺手收了 %1 个后台程序的闲置内存）")
+                               .arg(report.processesTrimmed);
+            }
+            if (report.systemCachePurged)
+                message += "，系统缓存已清理";
+            emit launchDetailAdded(message);
+        });
+        watcher->setFuture(QtConcurrent::run([]() {
+            return SystemTools::optimizeMemoryDetailed(true, true);
+        }));
     }
 
     // ── 缓存: 预计算路径，避免启动流程中重复 I/O ──
@@ -622,18 +718,31 @@ void GameLauncher::waitForGameWindow()
         m_windowWaitElapsedMs = 0;
 #else
         bool foundGameWindow = false;
-        for (QWindow* window : QApplication::allWindows()) {
-            if (window->title().contains("Minecraft", Qt::CaseInsensitive)) {
-                foundGameWindow = true;
-                break;
-            }
-        }
+#ifdef Q_OS_WIN
+        // 游戏是独立 java 进程，窗口不属于本进程，QApplication::allWindows() 永远看不到它
+        const DWORD gamePid = m_gameProcess ? DWORD(m_gameProcess->processId()) : 0;
+        foundGameWindow = hasGameWindow(gamePid);
+#endif
 
         if (foundGameWindow) {
             m_windowCheckTimer->stop();
             // 标记游戏窗口已成功出现，用于区分启动期崩溃与运行期崩溃
             m_gameStartedSuccessfully = true;
             emit launchDetailAdded("游戏窗口已出现");
+            emit launchProgressChanged(100, "游戏启动成功！");
+            emit gameStarted();
+            m_windowWaitElapsedMs = 0;
+            return;
+        }
+
+        // 兜底：进程活着并稳定跑了 15 秒，就按启动成功处理。
+        // 有些整合包会改窗口标题、或者把窗口画在别的进程里，光靠认窗口名会一直
+        // 等不到，进而卡在「启动中」、游戏里的时长统计和大厅状态也不上报。
+        // 真启动失败（JVM 报错退出）走的是上面的「游戏进程已结束」分支，不会误判。
+        if (m_windowWaitElapsedMs >= 15000) {
+            m_windowCheckTimer->stop();
+            m_gameStartedSuccessfully = true;
+            emit launchDetailAdded("游戏进程已稳定运行（未识别到窗口标题）");
             emit launchProgressChanged(100, "游戏启动成功！");
             emit gameStarted();
             m_windowWaitElapsedMs = 0;

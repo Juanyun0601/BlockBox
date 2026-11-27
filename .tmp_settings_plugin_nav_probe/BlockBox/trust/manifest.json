@@ -1,0 +1,359 @@
+{
+  "schema": 1,
+  "updated": "2026-11-25T12:03:38+08:00",
+  "builds": [
+    {
+      "version": "beta9.1",
+      "channel": "beta",
+      "platform": "windows",
+      "arch": "x64",
+      "official": true,
+      "publishedAt": "2026-11-21T22:12:56+08:00",
+      "filesManifest": "https://mcblockbox.top/trust/files/beta9.1-windows-x64.json",
+      "packages": [
+        {
+          "name": "BlockBox-beta9.1-win64-setup.exe",
+          "size": 29650616,
+          "sha256": "a82f1a9d586303ae39c3aa5a076d0ac6ee2089c55ffbff9bd54aa7f00142df69",
+          "url": "",
+          "signature": {
+            "type": "authenticode",
+            "status": "NotSigned",
+            "subject": "",
+            "issuer": "",
+            "thumbprint": ""
+          }
+        },
+        {
+          "name": "BlockBox-beta9.1-win64-portable.zip",
+          "size": 38920718,
+          "sha256": "0a26ee7d9aa25722aabb4cee83a26672372b0e67f957af27eb268646b101ded6",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9.1",
+      "channel": "beta",
+      "platform": "android",
+      "arch": "arm64-v8a",
+      "official": true,
+      "publishedAt": "2026-11-21T10:35:35+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta9.1-android-arm64-v8a.apk",
+          "size": 35615451,
+          "sha256": "a57268b404a021b679b0e3d8c34007852010b2eb9a936b13c388fa95deaa1279",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9.1",
+      "channel": "beta",
+      "platform": "android",
+      "arch": "x86_64",
+      "official": true,
+      "publishedAt": "2026-11-21T09:08:58+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta9.1-android-x86_64.apk",
+          "size": 35459608,
+          "sha256": "aae2840c3f40a64e2034a5df93d5066538fbd84a96a7083ea9a60f17eeb1a4f2",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9",
+      "channel": "beta",
+      "platform": "windows",
+      "arch": "x64",
+      "official": true,
+      "publishedAt": "2026-11-15T00:06:59+08:00",
+      "filesManifest": "https://mcblockbox.top/trust/files/beta9-windows-x64.json",
+      "packages": [
+        {
+          "name": "BlockBox-beta9-win64-setup.exe",
+          "size": 49097301,
+          "sha256": "d3525ef48c64879ff211e55756db8de4e3f4514adf15df08d2360cec7dcc7ccc",
+          "url": "",
+          "signature": {
+            "type": "authenticode",
+            "status": "NotSigned",
+            "subject": "",
+            "issuer": "",
+            "thumbprint": ""
+          }
+        },
+        {
+          "name": "BlockBox-beta9-win64-portable.zip",
+          "size": 58200972,
+          "sha256": "1017162bb8736277da08acc283e7ed64fee5b1e2b67838f74665cd752f06849d",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9",
+      "channel": "beta",
+      "platform": "windows",
+      "arch": "arm64",
+      "official": true,
+      "publishedAt": "2026-11-15T00:08:01+08:00",
+      "filesManifest": "https://mcblockbox.top/trust/files/beta9-windows-arm64.json",
+      "packages": [
+        {
+          "name": "BlockBox-beta9-winarm64-setup.exe",
+          "size": 42470845,
+          "sha256": "d76145088e020bc2de27ef568dbed968abf82a4bccdaf891647174104635471f",
+          "url": "",
+          "signature": {
+            "type": "authenticode",
+            "status": "NotSigned",
+            "subject": "",
+            "issuer": "",
+            "thumbprint": ""
+          }
+        },
+        {
+          "name": "BlockBox-beta9-winarm64-portable.zip",
+          "size": 50096737,
+          "sha256": "cc19aa26972abce4a5f711b8d606bf67adff454be503c1e2bd0beef5f60cef97",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9",
+      "channel": "beta",
+      "platform": "android",
+      "arch": "arm64-v8a",
+      "official": true,
+      "publishedAt": "2026-11-15T00:18:59+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta9-android-arm64-v8a.apk",
+          "size": 55124699,
+          "sha256": "696c03a0892a86795d4d87de40370cf73c24227ac8d7d38ada30b67dd10c2119",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9",
+      "channel": "beta",
+      "platform": "android",
+      "arch": "x86_64",
+      "official": true,
+      "publishedAt": "2026-11-15T00:19:37+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta9-android-x86_64.apk",
+          "size": 54952472,
+          "sha256": "52e55d0deb7ac58333a490bfcc19108afc1411741cd32149eb9b4e703df1f725",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9",
+      "channel": "beta",
+      "platform": "harmony",
+      "arch": "arm64-v8a",
+      "official": true,
+      "publishedAt": "2026-11-15T00:11:18+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta9-harmony-arm64-v8a.hap",
+          "size": 88484842,
+          "sha256": "efc794b966ac6d0b7f2909854cb629f3df1c5f637c7eaa5fadc496d3498e375f",
+          "url": "",
+          "signature": null
+        },
+        {
+          "name": "BlockBox-beta9-harmony-arm64-v8a.zip",
+          "size": 50256020,
+          "sha256": "5ec17df1a4950dfb29ea9eb61123986bcb43fd3e61c367daa7fdb90841f8085c",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9",
+      "channel": "beta",
+      "platform": "linux",
+      "arch": "x64",
+      "official": true,
+      "publishedAt": "2026-11-15T00:15:33+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta9-linux-x64.deb",
+          "size": 44774558,
+          "sha256": "156c111803889ca5c484314dd60dc93e7984964e96284c338f374187b033f3a4",
+          "url": "",
+          "signature": null
+        },
+        {
+          "name": "BlockBox-beta9-linux-x64.tar.gz",
+          "size": 44774490,
+          "sha256": "8f5bcb0ee5d7006f0c3c94fdf97ad17312fbebbde8cee728c915248785b6205d",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta9.3",
+      "channel": "beta",
+      "platform": "windows",
+      "arch": "x64",
+      "official": true,
+      "publishedAt": "2026-11-22T20:25:19+08:00",
+      "filesManifest": "https://mcblockbox.top/trust/files/beta9.3-windows-x64.json",
+      "packages": [
+        {
+          "name": "BlockBox-beta9.3-win64-setup.exe",
+          "size": 27599167,
+          "sha256": "76a52ddaf853d8e6a331f20483616231af7c2f9e9199cee75480871863eaa3ac",
+          "url": "",
+          "signature": {
+            "type": "authenticode",
+            "status": "NotSigned",
+            "subject": "",
+            "issuer": "",
+            "thumbprint": ""
+          }
+        },
+        {
+          "name": "BlockBox-beta9.3-win64-portable.zip",
+          "size": 36909266,
+          "sha256": "a1c905dab3dff374e2006983f0a99c62127bbaf490186e01fa18e5c24ecbc3f7",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta10",
+      "channel": "beta",
+      "platform": "android",
+      "arch": "arm64-v8a",
+      "official": true,
+      "publishedAt": "2026-11-22T21:19:22+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta10-android-arm64-v8a.apk",
+          "size": 36954843,
+          "sha256": "116f49640c56fb32719108e75077baf17c53edae812b0f5a640a833fb40baf28",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta10",
+      "channel": "beta",
+      "platform": "android",
+      "arch": "x86_64",
+      "official": true,
+      "publishedAt": "2026-11-22T21:22:39+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta10-android-x86_64.apk",
+          "size": 36827672,
+          "sha256": "e8eb5433f00dec2bcd07edf5c4e0ebc0e69161c9ed6439b7f080e0eefda752a8",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta10",
+      "channel": "beta",
+      "platform": "windows",
+      "arch": "x64",
+      "official": true,
+      "publishedAt": "2026-11-22T21:27:26+08:00",
+      "filesManifest": "https://mcblockbox.top/trust/files/beta10-windows-x64.json",
+      "packages": [
+        {
+          "name": "BlockBox-beta10-win64-setup.exe",
+          "size": 27723835,
+          "sha256": "be5d431f31a8aec2d9b1c8e0e2bed48d40ef449409029d25084ce4d975730424",
+          "url": "",
+          "signature": {
+            "type": "authenticode",
+            "status": "NotSigned",
+            "subject": "",
+            "issuer": "",
+            "thumbprint": ""
+          }
+        },
+        {
+          "name": "BlockBox-beta10-win64-portable.zip",
+          "size": 37144968,
+          "sha256": "73b56806ebd4fd59af54cfac81c41d7706e98c50426da9622cccd10677db19fd",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta10",
+      "channel": "beta",
+      "platform": "harmony",
+      "arch": "arm64-v8a",
+      "official": true,
+      "publishedAt": "2026-11-22T21:40:57+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta10-harmony-arm64-v8a.hap",
+          "size": 72998691,
+          "sha256": "da2f24a15638bba75961ba3332d1cccc4a3c1436de9f0f501b1b7fa905ec195e",
+          "url": "",
+          "signature": null
+        },
+        {
+          "name": "BlockBox-beta10-harmony-arm64-v8a.zip",
+          "size": 32261774,
+          "sha256": "2c61369de7be50afe569a299c7cac8e3a04f19dce170abc57ab6b2051b8060c3",
+          "url": "",
+          "signature": null
+        }
+      ]
+    },
+    {
+      "version": "beta10",
+      "channel": "beta",
+      "platform": "linux",
+      "arch": "x64",
+      "official": true,
+      "publishedAt": "2026-11-22T21:48:45+08:00",
+      "packages": [
+        {
+          "name": "BlockBox-beta10-linux-x64.deb",
+          "size": 24113468,
+          "sha256": "b27975be6ff36ba48db8fe5fae9f8300a7e246d6b1b962e8d72edb56341eb86c",
+          "url": "",
+          "signature": null
+        },
+        {
+          "name": "BlockBox-beta10-linux-x64.tar.gz",
+          "size": 24112787,
+          "sha256": "78478f960606a2511bb57110a99851133541406354bf4a5a421f0b27085e2d06",
+          "url": "",
+          "signature": null
+        }
+      ]
+    }
+  ]
+}

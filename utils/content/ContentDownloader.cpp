@@ -102,8 +102,10 @@ void ContentDownloader::downloadToInstance(const QString &downloadUrl, const QSt
             d->tempFile->deleteLater();
             d->tempFile = nullptr;
         }
+        // 后缀必须带 .zip：Windows 上的 Expand-Archive 只认 .zip 扩展名，
+        // 没有后缀时第一次解压必定失败，只能去撞不一定存在的 7z
         d->tempFile = new QTemporaryFile(
-            QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/blockbox_dl_XXXXXX");
+            QStandardPaths::writableLocation(QStandardPaths::TempLocation) + "/blockbox_dl_XXXXXX.zip");
         if (!d->tempFile->open())
         {
             d->tempFile->deleteLater();
@@ -148,6 +150,9 @@ void ContentDownloader::downloadToInstance(const QString &downloadUrl, const QSt
             return;
         if (!job->wasSuccessful())
         {
+            // 存档类下的是临时压缩包，失败时别把它留在系统临时目录里
+            if (d->contentType == ContentType::World)
+                QFile::remove(targetPath);
             emit downloadFailed(tr("下载失败：已尝试全部下载源"));
             return;
         }
@@ -199,11 +204,30 @@ void ContentDownloader::downloadToInstance(const QString &downloadUrl, const QSt
                                         else
                                             emit downloadFailed(tr("解压存档失败"));
                                     });
+                            // 机器上没装 7z 时 QProcess 只会报 errorOccurred、不发 finished，
+                            // 不接这个信号的话任务会永远停在「下载中」
+                            connect(fallback, &QProcess::errorOccurred, this,
+                                [this, fallback, zipPath](QProcess::ProcessError error) {
+                                        if (error != QProcess::FailedToStart)
+                                            return;
+                                        fallback->deleteLater();
+                                        QFile::remove(zipPath);
+                                        emit downloadFailed(tr("解压存档失败：没找到可用的解压工具"));
+                                    });
                             fallback->start("7z", QStringList() << "x" << "-o" + worldDir << "-y" << zipPath);
                         } else {
                             QFile::remove(zipPath);
                             emit downloadFinished(worldDir);
                         }
+                    });
+            // 解压程序本身没起来（PowerShell 被策略禁用 / 缺少组件）同样要给出失败提示
+            connect(extractProcess, &QProcess::errorOccurred, this,
+                [this, extractProcess, zipPath](QProcess::ProcessError error) {
+                        if (error != QProcess::FailedToStart)
+                            return;
+                        extractProcess->deleteLater();
+                        QFile::remove(zipPath);
+                        emit downloadFailed(tr("解压存档失败：系统解压组件不可用"));
                     });
 #ifdef Q_OS_WIN
             extractProcess->start("powershell", QStringList()

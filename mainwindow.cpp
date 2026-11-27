@@ -69,7 +69,9 @@
 #include "utils/Lobby/LobbyShareLink.h"
 #include "utils/BackgroundManager.h"
 #include "utils/BingWallpaperManager.h"
+#include "utils/CrashReporter.h"
 #include "utils/PanoramaThemeManager.h"
+#include "utils/Telemetry.h"
 #include "utils/ThemeManager.h"
 #include "pages/CreationCenterPage.h"
 #include "pages/ForumAccountPage.h"
@@ -950,8 +952,86 @@ void MainWindow::initUI()
     PerformanceMonitor::instance()->endMeasurement("界面初始化");
 }
 
+namespace {
+
+/// 页面 → 匿名统计 / 崩溃现场用的短标识（只描述页面，不带实例名、账号等内容）
+QString pageDiagnosticKey(PageIndex index)
+{
+    switch (index) {
+    case PageIndex::HomePage: return QStringLiteral("home");
+    case PageIndex::ResourcesPage: return QStringLiteral("resources");
+    case PageIndex::SettingsPage: return QStringLiteral("settings");
+    case PageIndex::InstanceSelectPage: return QStringLiteral("instances");
+    case PageIndex::AccountManagePage: return QStringLiteral("account");
+    case PageIndex::LaunchDetailsPage: return QStringLiteral("launch_details");
+    case PageIndex::InstallInstancePage: return QStringLiteral("install_instance");
+    case PageIndex::LoaderDetailPage: return QStringLiteral("loader_detail");
+    case PageIndex::ForgeVersionListPage: return QStringLiteral("version_list");
+    case PageIndex::TaskListPage: return QStringLiteral("tasks");
+    case PageIndex::TaskDetailPage: return QStringLiteral("task_detail");
+    case PageIndex::ModDownloadPage: return QStringLiteral("mod_download");
+    case PageIndex::ModDetailPage: return QStringLiteral("mod_detail");
+    case PageIndex::ModpackImportPage: return QStringLiteral("modpack_import");
+    case PageIndex::SearchPage: return QStringLiteral("search");
+    case PageIndex::ContentDownloadPage: return QStringLiteral("content_download");
+    case PageIndex::ContentDetailPage: return QStringLiteral("content_detail");
+    case PageIndex::ContentListPage: return QStringLiteral("content_list");
+    case PageIndex::InstanceManagePage: return QStringLiteral("instance_manage");
+    case PageIndex::ModpackExportPageIndex: return QStringLiteral("modpack_export");
+    case PageIndex::LocalModDetailPageIndex: return QStringLiteral("local_mod_detail");
+    case PageIndex::AiChatPage: return QStringLiteral("ai_chat");
+    case PageIndex::JavaDownloadPage: return QStringLiteral("java_download");
+    case PageIndex::FavoritesPage: return QStringLiteral("favorites");
+    case PageIndex::SkinEditorPage: return QStringLiteral("skin_editor");
+    case PageIndex::PluginPage: return QStringLiteral("plugins");
+    case PageIndex::NewsPage: return QStringLiteral("news");
+    case PageIndex::CommunityPage: return QStringLiteral("community");
+    case PageIndex::ForumThreadDetailPage: return QStringLiteral("forum_thread");
+    case PageIndex::ForumThreadListPage: return QStringLiteral("forum_threads");
+    case PageIndex::ForumComposerPage: return QStringLiteral("forum_composer");
+    case PageIndex::ForumUserProfilePage: return QStringLiteral("forum_profile");
+    case PageIndex::FeedbackPage: return QStringLiteral("feedback");
+    case PageIndex::ForumFriendsPage: return QStringLiteral("forum_friends");
+    case PageIndex::FeedbackComposePage: return QStringLiteral("feedback_compose");
+    case PageIndex::ForumPluginListPage: return QStringLiteral("forum_plugins");
+    case PageIndex::PublishPage: return QStringLiteral("publish");
+    case PageIndex::PublishResourcePage: return QStringLiteral("publish_resource");
+    case PageIndex::PublishPlatformPage: return QStringLiteral("publish_platform");
+    case PageIndex::PublishBoardPage: return QStringLiteral("publish_board");
+    case PageIndex::OnboardingPage: return QStringLiteral("onboarding");
+    case PageIndex::ForumReportPage: return QStringLiteral("forum_report");
+    case PageIndex::ForumSchematicListPage: return QStringLiteral("forum_schematics");
+    case PageIndex::GameLaunchPage: return QStringLiteral("game_launch");
+    case PageIndex::FeedbackDetailPage: return QStringLiteral("feedback_detail");
+    case PageIndex::TranslationComposePage: return QStringLiteral("translation_compose");
+    case PageIndex::CommunitySkinPage: return QStringLiteral("community_skins");
+    case PageIndex::SkinStationPage: return QStringLiteral("skin_station");
+    case PageIndex::AnnualReportPage: return QStringLiteral("annual_report");
+    case PageIndex::CommunitySkinDetailPage: return QStringLiteral("community_skin_detail");
+    case PageIndex::QrScanPage: return QStringLiteral("qr_scan");
+    case PageIndex::LibraryPageIndex: return QStringLiteral("library");
+    case PageIndex::MorePageIndex: return QStringLiteral("more");
+    case PageIndex::SeedMapPage: return QStringLiteral("seed_map");
+    case PageIndex::ProjectionEditPageIndex: return QStringLiteral("projection_editor");
+    case PageIndex::LanTransferPageIndex: return QStringLiteral("lan_transfer");
+    case PageIndex::MemoryOptimizePageIndex: return QStringLiteral("memory_optimize");
+    case PageIndex::MultiThreadDownloadPageIndex: return QStringLiteral("multi_thread_download");
+    }
+    return QStringLiteral("page_%1").arg(static_cast<int>(index));
+}
+
+} // namespace
+
+void MainWindow::trackPageForDiagnostics(PageIndex index)
+{
+    const QString key = pageDiagnosticKey(index);
+    CrashReporter::instance()->setCurrentPage(key);
+    Telemetry::pageView(key);
+}
+
 void MainWindow::animatedSwitchToPage(PageIndex index)
 {
+    trackPageForDiagnostics(index);
     if (m_pageAnimator)
     {
         m_pageAnimator->animateToIndex(static_cast<int>(index));
@@ -970,6 +1050,7 @@ void MainWindow::animatedSwitchToPage(PageIndex index)
 
 void MainWindow::animatedSwitchToPageDirectional(PageIndex index, int fromSidebarIndex, int toSidebarIndex)
 {
+    trackPageForDiagnostics(index);
     if (!m_pageAnimator)
     {
         m_stackedWidget->setCurrentIndex(static_cast<int>(index));
@@ -1184,7 +1265,7 @@ void MainWindow::onParentNavClicked(int parentIndex)
         }
     } else if (parentIndex == PublishNavIndex) { // 发布中心（资源 / 帖子）
         showPublishPage();
-    } else if (parentIndex == MoreNavIndex) { // 更多（图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 内存优化 / 插件管理 / 新手引导）
+    } else if (parentIndex == MoreNavIndex) { // 更多（图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 内存优化 / 迁移向导 / 新手引导）
         showMorePage();
     } else if (parentIndex == FeedbackNavIndex) { // 反馈（侧边栏底部入口）
         showFeedbackPage();
@@ -1311,6 +1392,33 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
         QScrollArea *scrollArea = qobject_cast<QScrollArea*>(m_stackedWidget->widget(2));
         if (scrollArea)
             settingsPage = qobject_cast<SettingsPage*>(scrollArea->widget());
+
+        // 「插件管理」是挂在设置子导航最后的插件整页（设置内容页里没有这一页）
+        if (settingsPage && settingsPage->isPluginManageTab(childIndex)) {
+            showPluginManagePage(childIndex);
+            return;
+        }
+
+        // 从插件管理整页切回设置内容页：把侧边栏、顶栏和页面状态恢复成「设置」
+        if (m_stackedWidget->currentIndex() != static_cast<int>(PageIndex::SettingsPage)) {
+            setSideBarVisible(true);
+            if (m_sideBar) {
+                m_sideBar->setSelectedIndex(2);
+                m_sideBar->setExpandButtonVisible(false);
+            }
+            if (m_subNavPanel && m_subNavPanel->currentParentIndex() != 2)
+                m_subNavPanel->showForParent(2, false);
+            m_lastSidebarIndex = 2;
+            m_topBar->setAccountCardVisible(true);
+            m_topBar->setWindowControlCardVisible(true);
+            m_topBar->setAccountSelected(false);
+            m_topBar->setInstanceSelectSelected(false);
+            m_topBar->setInstanceSettingsSelected(false);
+            disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+            connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+            animatedSwitchToPage(PageIndex::SettingsPage);
+        }
+
         if (settingsPage) {
             settingsPage->setCurrentSettingsTab(childIndex);
             // 标题由设置页按实际子页给出：Java / 基岩版与移动端多出的子页不会错位
@@ -1440,7 +1548,7 @@ void MainWindow::onImportPluginRequested()
     } else {
         AppMessageBox::warning(this, tr("导入完成"), summary);
     }
-    m_topBar->setTitle(tr("插件>批量导入"));
+    m_topBar->setTitle(tr("设置>插件管理"));
 }
 
 void MainWindow::onCreatePluginRequested()
@@ -1490,7 +1598,7 @@ void MainWindow::onRemovePluginRequested(const QString &id)
 
     refreshPluginNav();
     if (m_pluginPage) m_pluginPage->showOverview();
-    m_topBar->setTitle(tr("插件"));
+    m_topBar->setTitle(tr("设置>插件管理"));
 }
 
 void MainWindow::onOpenPluginsDirRequested()
@@ -1503,8 +1611,8 @@ void MainWindow::onOpenPluginsDirRequested()
 
 void MainWindow::refreshPluginNav()
 {
-    // 插件已经从侧边栏挪到「更多 > 插件管理」：这里只把侧边栏结构按最新状态重建，
-    // 插件页自己会监听 PluginManager::pluginsChanged 刷新列表
+    // 插件管理的入口在「设置」子导航里，入口数量不随插件增减变化：
+    // 这里只把侧边栏结构按最新状态重建，插件页自己会监听 PluginManager::pluginsChanged 刷新列表
     m_sideBar->refreshNavStructure();
 }
 
@@ -1518,6 +1626,13 @@ void MainWindow::onSettingsNavItemClicked(int index)
     QScrollArea *scrollArea = qobject_cast<QScrollArea*>(m_stackedWidget->widget(2));
     if (scrollArea)
         settingsPage = qobject_cast<SettingsPage*>(scrollArea->widget());
+
+    // 「插件管理」是设置子导航最后一项，内容仍是插件整页
+    if (settingsPage && settingsPage->isPluginManageTab(index)) {
+        showPluginManagePage(index);
+        return;
+    }
+
     if (settingsPage) {
         // Switch to the selected settings tab
         settingsPage->setCurrentSettingsTab(index);
@@ -3119,6 +3234,8 @@ void MainWindow::onTouchControlInput(const QString &action, qreal x, qreal y, bo
 void MainWindow::onSessionGameStarted(const QString &instancePath)
 {
     qDebug() << "[MainWindow]" << "游戏已成功启动：" << instancePath;
+    // 匿名统计：只记「启动了一次游戏」，不带实例名、路径或版本
+    Telemetry::recordEvent(QStringLiteral("game_start"));
 
     GameLauncher *session = m_launchSessions.value(instancePath, m_gameLauncher);
     const bool secondarySession = session && session != m_gameLauncher;
@@ -3296,6 +3413,8 @@ void MainWindow::onSessionGameStopped(const QString &instancePath, int exitCode)
 void MainWindow::onSessionGameCrashed(const QString &instancePath, const QString &error)
 {
     qDebug() << "[MainWindow]" << "游戏崩溃：" << error << instancePath;
+    // 匿名统计：只记「游戏崩了一次」，不上传任何日志、报错原文或实例信息
+    Telemetry::recordEvent(QStringLiteral("game_crash"));
 
     GameLauncher *session = m_launchSessions.value(instancePath, m_gameLauncher);
     LaunchSessionUiState *state = sessionState(instancePath);

@@ -576,6 +576,15 @@ private slots:
 
 private:
     /**
+     * @brief 组装给用户看的错误文案
+     *
+     * Qt 的 errorString 只有「server replied with status code 400」这类信息，
+     * 真正原因（缺字段、模型名不对、密钥无效等）在服务端返回的 JSON 里，
+     * 这里优先取那一段，取不到再退回 Qt 的原文。
+     */
+    QString buildErrorMessage(QNetworkReply *reply, const QString &body);
+
+    /**
      * @brief 解析 SSE 数据行
      * @param data JSON 字符串数据
      */
@@ -918,6 +927,7 @@ private:
     QNetworkAccessManager* m_networkManager;
     QNetworkReply* m_currentReply;
     QString m_buffer; // 缓冲区，用于暂存不完整的 SSE 行
+    QString m_lastErrorBody; // 出错时已到达但尚未拼装的响应体（用于还原服务端原因）
     TokenUsage m_lastUsage; // 最近一次请求的用量统计
 
     // --- 本地搜索工具调用相关 ---

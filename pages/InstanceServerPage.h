@@ -15,11 +15,13 @@
 #ifndef INSTANCESERVERPAGE_H
 #define INSTANCESERVERPAGE_H
 
+#include <QList>
 #include <QString>
 #include <QStringList>
 #include <QWidget>
 
 #include "utils/server/LocalServerManager.h"
+#include "utils/server/ServerAdminStore.h"
 
 class CustomCheckBox;
 class McServerPinger;
@@ -29,8 +31,11 @@ class QLineEdit;
 class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
+class QScrollArea;
+class QShowEvent;
 class QSpinBox;
 class QTimer;
+class QVBoxLayout;
 
 class InstanceServerPage : public QWidget
 {
@@ -66,6 +71,7 @@ signals:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private slots:
     void onPrimaryClicked();
@@ -82,14 +88,51 @@ private slots:
     void onTunnelClicked();
     void onPublishToServerNavClicked();
     void refreshOnlineInfo();
+    // ---- 管理卡（白名单 / OP / 基础设置） ----
+    void onWhitelistToggled(bool enabled);
+    void onAddWhitelistClicked();
+    void onAddOpClicked();
+    void onAdminRuleChanged();
 
 private:
     void initUI();
     QWidget *buildStatusCard();
     QWidget *buildSettingsCard();
+    QWidget *buildAdminCard();
+    QWidget *buildWhitelistTab();
+    QWidget *buildOpTab();
+    QWidget *buildRulesTab();
     QWidget *buildConsoleCard();
     void connectManager();
     void connectOnlineProbe();
+    /// 切换管理卡页签（只显示对应那一页）
+    void setAdminTab(int index);
+
+    // ---- 管理卡内部 ----
+    /// 服务端目录上的管理数据（白名单 / OP / 规则）
+    ServerAdminStore adminStore() const;
+    /// 从磁盘重新读名单与规则，刷新管理卡
+    void reloadAdminData();
+    /// 名单刚被服务端改写过时，稍等一会儿再读（服务端写盘有一点延迟）
+    void scheduleAdminReload(int delayMs = 800);
+    /// 名单刷新后核对待办：服务器真的加进去 / 移出去了吗
+    void verifyPendingAdminChanges();
+    void rebuildWhitelistList();
+    void rebuildOpList();
+    void loadRulesFromProperties();
+    /// 按「正版验证 / 是否运行中」刷新两处说明文字
+    void updateAdminHints();
+    /// 停服且离线模式时才能直接写名单文件（正版 UUID 算不出来）
+    bool canEditLists(QString *reason) const;
+    bool addWhitelistEntry(const QString &name);
+    // 按值传：函数里刷新列表会把 m_whitelistEntries / m_opEntries 换掉，
+    // 传引用的话调用方那句 first() 到这就成悬空了
+    bool removeWhitelistEntry(ServerWhitelistEntry entry);
+    bool addOpEntry(const QString &name, int level);
+    bool removeOpEntry(ServerOpEntry entry);
+    QString opLevelText(int level) const;
+    /// 小号提示：加完人 / 出错都写在这里，不弹窗打断
+    void setAdminNotice(QLabel *label, const QString &text, bool error);
 
     /// 按管理器状态刷新状态点 / 状态文字 / 按钮 / 控件可用性
     void refreshStateVisuals();
@@ -146,6 +189,60 @@ private:
     QLineEdit *m_motdEdit = nullptr;    ///< 服务器名称（写进 server.properties 的 motd）
     CustomCheckBox *m_onlineModeCheck = nullptr;
     QLabel *m_coreHintLabel = nullptr;
+
+    // ---- 管理卡：白名单 / OP / 基础设置 ----
+    QVBoxLayout *m_adminPagesLayout = nullptr;
+    QWidget *m_whitelistPage = nullptr;
+    QWidget *m_opPage = nullptr;
+    QWidget *m_rulesPage = nullptr;
+    QList<QPushButton *> m_adminTabBtns;   ///< 「白名单 / 管理员 / 基础设置」三个页签
+
+    CustomCheckBox *m_whitelistToggle = nullptr;   ///< 开启白名单（写 white-list）
+    QLineEdit *m_whitelistInput = nullptr;
+    QPushButton *m_whitelistAddBtn = nullptr;
+    QScrollArea *m_whitelistScroll = nullptr;
+    QVBoxLayout *m_whitelistListLayout = nullptr;
+    QLabel *m_whitelistEmpty = nullptr;
+    QLabel *m_whitelistNotice = nullptr;
+    QLabel *m_whitelistHint = nullptr;
+
+    QLineEdit *m_opInput = nullptr;
+    QComboBox *m_opLevelCombo = nullptr;
+    QPushButton *m_opAddBtn = nullptr;
+    QScrollArea *m_opScroll = nullptr;
+    QVBoxLayout *m_opListLayout = nullptr;
+    QLabel *m_opEmpty = nullptr;
+    QLabel *m_opNotice = nullptr;
+    QLabel *m_opHint = nullptr;
+
+    QComboBox *m_gamemodeCombo = nullptr;
+    QComboBox *m_difficultyCombo = nullptr;
+    CustomCheckBox *m_pvpCheck = nullptr;
+    CustomCheckBox *m_flightCheck = nullptr;
+    QSpinBox *m_spawnProtectSpin = nullptr;
+    QSpinBox *m_viewDistanceSpin = nullptr;
+    QLabel *m_rulesNotice = nullptr;
+    QLabel *m_rulesHint = nullptr;
+
+    QList<ServerWhitelistEntry> m_whitelistEntries;
+    QList<ServerOpEntry> m_opEntries;
+    /// 正在把磁盘内容同步到界面：此时控件的 toggled / changed 不要反向写文件
+    bool m_syncingAdmin = false;
+    bool m_adminLoaded = false;
+    bool m_adminReloadScheduled = false;
+    int m_adminTab = 0;   ///< 当前页签：0=白名单 1=管理员 2=基础设置
+    /**
+     * @brief 运行中发过指令、还没核对结果的名字
+     *
+     * 服务器收下 whitelist add / op 之后会自己写名单文件，界面等它写完再读回来对一遍：
+     * 名字对不上（打错了 / 正版账号不存在）就直接告诉用户，别让人以为加成功了。
+     */
+    QStringList m_pendingWhitelistAdds;
+    QStringList m_pendingWhitelistRemoves;
+    QStringList m_pendingOpAdds;
+    QStringList m_pendingOpRemoves;
+    /// 核对没过时再读一轮（服务端写盘偶尔比预期慢）
+    bool m_adminVerifyRetry = false;
 
     // ---- 控制台卡 ----
     QPlainTextEdit *m_console = nullptr;

@@ -53,6 +53,7 @@
 #include "utils/AndroidBridge.h"
 #include "utils/AsyncInitializer.h"
 #include "utils/ContentFavoriteSync.h"
+#include "utils/CrashReporter.h"
 #include "utils/ForumAccountService.h"
 #include "utils/GameLauncher.h"
 #include "utils/LanguageManager.h"
@@ -64,6 +65,7 @@
 #include "utils/ResourceManager.h"
 #include "utils/SettingsManager.h"
 #include "utils/StartupProgressWidget.h"
+#include "utils/Telemetry.h"
 #include "utils/ThemeManager.h"
 #include "utils/UpdateChecker.h"
 #include "utils/news/AnnouncementFeed.h"
@@ -593,7 +595,16 @@ int main(int argc, char *argv[])
 
     // 初始化运行日志：尽早装上，把启动过程也记进去
     LauncherLogger::install();
+
+    // 崩溃捕获要接在日志之后：闪退时它会把最后一段 launcher.log 一并留下；
+    // 匿名统计只读取设置，用户开启后才会真正联网
+    CrashReporter::instance()->install();
+    Telemetry::instance()->install();
+
     QObject::connect(&a, &QCoreApplication::aboutToQuit, []() {
+        CrashReporter::instance()->setAppPhase(QCoreApplication::translate("MainWindow", "退出中"));
+        Telemetry::instance()->shutdown();
+        CrashReporter::instance()->shutdown();
         LauncherLogger::shutdown();
     });
 
@@ -737,6 +748,7 @@ int main(int argc, char *argv[])
             bbStartupTrace(QStringLiteral("准备显示主窗口"));
             startupWidget->hideStartup();
             w.show();
+            CrashReporter::instance()->setAppPhase(QCoreApplication::translate("MainWindow", "运行中"));
             bbStartupTrace(QStringLiteral("主窗口已显示"));
 
             // 首次使用（以及本次更新后第一次打开）先确认使用协议与隐私政策。
@@ -774,6 +786,11 @@ int main(int argc, char *argv[])
             requestAndroidStartupPermissions(&w);
             bbStartupTrace(QStringLiteral("启动流程完成（后续引导 / 公告 / 检查更新）"));
 
+            // 协议确认之后再开始统计会话（匿名统计默认关闭，这里只记录会话起点）
+            Telemetry::instance()->start();
+            CrashReporter::instance()->setCurrentPage(QStringLiteral("home"));
+            Telemetry::pageView(QStringLiteral("home"));
+
             // 通过 blockbox:// 链接 / 桌面 .blockbox 文件启动的：窗口就绪后自动处理
             const auto handlePendingExternalActions = [&w, joinUrlArgument, quickLaunchFileArgument]() {
                 if (!joinUrlArgument.isEmpty())
@@ -788,23 +805,34 @@ int main(int argc, char *argv[])
                     });
             };
 
+            // 上次异常退出的话，先问用户要不要发崩溃报告，处理完再继续检查更新，
+            // 避免两个弹窗叠在一起（只弹一份最新的报告，积压的可在设置里一起发）
+            const auto reportCrashThen = [&w](std::function<void()> next) {
+                CrashReporter::instance()->processPendingReports(&w, std::move(next));
+            };
+
             // 首次运行（未走完引导）：直接进入新手引导页
             if (isFirstRun) {
-                QTimer::singleShot(400, [&w, handlePendingExternalActions]() {
-                    // 引导页走完后再做首次启动的后续动作（入站答题提醒 / 检查更新）。
+                QTimer::singleShot(400, [&w, handlePendingExternalActions, reportCrashThen]() {
+                    // 引导页走完后再做首次启动的后续动作（入站答题提醒 / 崩溃上报 / 检查更新）。
                     // onboardingFinished() 只在首次启动进入引导时发出一次，设置里再次打开不会重复打扰。
-                    QObject::connect(&w, &MainWindow::onboardingFinished, &w, [&w, handlePendingExternalActions](bool) {
+                    QObject::connect(&w, &MainWindow::onboardingFinished, &w,
+                                     [&w, handlePendingExternalActions, reportCrashThen](bool) {
                         // 新手引导之后在右下角提醒入站答题（可直接跳过，不阻塞使用）
                         showQuizReminder(&w);
-                        // 重要公告弹窗结束后再检查更新，避免两个弹窗叠在一起
-                        maybeShowImportantAnnouncement(&w, [&w]() { maybeCheckUpdates(&w); });
+                        // 重要公告弹窗结束后先处理崩溃报告，再检查更新，避免多个弹窗叠在一起
+                        maybeShowImportantAnnouncement(&w, [&w, reportCrashThen]() {
+                            reportCrashThen([&w]() { maybeCheckUpdates(&w); });
+                        });
                         handlePendingExternalActions();
                     });
                     w.showOnboardingPage(true);
                 });
             } else {
                 showQuizReminder(&w);
-                maybeShowImportantAnnouncement(&w, [&w]() { maybeCheckUpdates(&w); });
+                maybeShowImportantAnnouncement(&w, [&w, reportCrashThen]() {
+                    reportCrashThen([&w]() { maybeCheckUpdates(&w); });
+                });
                 handlePendingExternalActions();
             }
         });

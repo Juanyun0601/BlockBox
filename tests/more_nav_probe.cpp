@@ -1,17 +1,19 @@
 /**
  * @file   more_nav_probe.cpp
- * @brief  左侧导航「更多」分类集成探针：验证 7 个内置入口 + 插件入口（ui.moreEntries）
+ * @brief  左侧导航「更多」分类集成探针：验证内置入口 + 插件入口（ui.moreEntries）
  *
  * 链接主程序全部目标文件（仅替换 main.cpp 与被改动的翻译单元），验证：
  *   1. 侧边栏一级项变成 首页/资源/设置/AI助手/社区/发布/更多/反馈（插件已移除）；
  *   2. 「更多」子导航与落地页卡片都是：方块图书馆 / 方块皮肤站 / 种子地图 /
- *      投影编辑器 / 文件传输 / 插件管理 / 新手引导；
- *   3. 临时装一个带 ui.moreEntries 的探针插件后，「更多」子导航变成 9 项、
+ *      投影编辑器 / 文件传输 / 多线程下载 / 内存优化 / 迁移向导 / 新手引导
+ *      （插件管理已挪进「设置」，不在这里）；
+ *   3. 临时装一个带 ui.moreEntries 的探针插件后，「更多」子导航多出插件入口、
  *      落地页多出「插件入口」卡片（标题/说明来自插件清单）；
  *   4. 点「种子地图」真的要能出图（等渲染完再截）；
- *   5. 点「文件传输」进独立整页；点「插件管理」进插件页；点「方块图书馆」进图书馆；
- *   6. 顶栏已经没有「文档」按钮（topBarDocsBtn）；
- *   7. 反馈仍能打开、首页能回去。
+ *   5. 点「文件传输」进独立整页；点「方块图书馆」进图书馆；
+ *   6. 插件管理在「设置」子导航最后一项，点开是插件整页；
+ *   7. 顶栏已经没有「文档」按钮（topBarDocsBtn）；
+ *   8. 反馈仍能打开、首页能回去。
  *
  * 只读设置与本地文件，不做下载 / 安装 / 登录；探针插件跑完即删。
  */
@@ -32,6 +34,8 @@
 
 #include "components/SideBar.h"
 #include "components/SubNavPanel.h"
+#include "pages/MorePage.h"
+#include "pages/PluginPage.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/plugin/PluginManager.h"
@@ -248,7 +252,8 @@ int main(int argc, char *argv[])
     pump(&w, 300);
     grab(&w, outDir + QStringLiteral("/31_more_page.png"));
 
-    // 子导航条目
+    // 子导航条目（MorePage 内置项 + 探针插件的两个入口）
+    const int expectedSubCount = MorePage::builtinEntryCount() + (probePluginPacked ? 2 : 0);
     const QList<QPushButton *> subButtons = panel
         ? panel->findChildren<QPushButton *>(QStringLiteral("subNavButton"))
         : QList<QPushButton *>();
@@ -260,8 +265,12 @@ int main(int argc, char *argv[])
                 b->text().toLocal8Bit().constData());
     }
     fflush(stderr);
-    if (subTexts.size() != 9) {
-        qWarning() << "PROBE-WARN: 子导航条目数不是 9（7 内置 + 2 插件入口）:" << subTexts.size();
+    if (subTexts.size() != expectedSubCount) {
+        qWarning() << "PROBE-WARN: 子导航条目数不是" << expectedSubCount << ":" << subTexts.size();
+        ++failures;
+    }
+    if (subTexts.contains(QString::fromUtf8("插件管理"))) {
+        qWarning() << "PROBE-WARN: 「更多」子导航里不该再有「插件管理」（已挪进设置）";
         ++failures;
     }
     if (!subTexts.contains(QString::fromUtf8("文件传输"))) {
@@ -355,16 +364,34 @@ int main(int argc, char *argv[])
     tm->setTheme(&app, prevTheme);
     pump(&w, 600);
 
-    // ---- 落地页卡片点「插件管理」----
-    if (QPushButton *nb = navButton(bar, 7)) {
-        nb->click();
-        pump(&w, 1800);
-    }
-    if (clickCardByTitle(bar->window(), QString::fromUtf8("插件管理"))) {
+    // ---- 插件管理挪到了「设置」子导航最后一项：点开应是插件整页 ----
+    if (QPushButton *settingsBtn = navButton(bar, 2)) {
+        settingsBtn->click();
         pump(&w, 1500);
-        grab(&w, outDir + QStringLiteral("/34_plugin_manage.png"));
+        int pluginChildIndex = -1;
+        const QList<QPushButton *> settingsSubButtons = panel
+            ? panel->findChildren<QPushButton *>(QStringLiteral("subNavButton"))
+            : QList<QPushButton *>();
+        for (QPushButton *b : settingsSubButtons) {
+            if (!b || b->property("parentIndex").toInt() != 2) continue;
+            if (b->text() == QString::fromUtf8("插件管理"))
+                pluginChildIndex = b->property("childIndex").toInt();
+        }
+        if (pluginChildIndex < 0) {
+            qWarning() << "PROBE-WARN: 设置子导航里没有「插件管理」";
+            ++failures;
+        } else if (QPushButton *item = subNavButton(panel, 2, pluginChildIndex)) {
+            item->click();
+            pump(&w, 1500);
+            grab(&w, outDir + QStringLiteral("/34_plugin_manage.png"));
+            PluginPage *pluginPage = w.findChild<PluginPage *>();
+            if (!pluginPage || !pluginPage->isVisible()) {
+                qWarning() << "PROBE-WARN: 设置里的「插件管理」没打开插件页";
+                ++failures;
+            }
+        }
     } else {
-        qWarning() << "PROBE-WARN: 落地页卡片「插件管理」没点到";
+        qWarning() << "PROBE-WARN: 侧边栏没找到「设置」(index 2)";
         ++failures;
     }
 

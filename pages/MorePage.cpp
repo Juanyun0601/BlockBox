@@ -1,6 +1,6 @@
 /**
  * @file   MorePage.cpp
- * @brief  更多功能页实现：图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 内存优化 / 插件管理 / 新手引导
+ * @brief  更多功能页实现：图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 多线程下载 / 内存优化 / 迁移向导 / 新手引导
  * @author BlockBox Team
  * @date   2026-11-26
  *
@@ -18,6 +18,7 @@
 #include <QVBoxLayout>
 
 #include "components/ForumKit.h"
+#include "components/MigrationWizardDialog.h"
 #include "components/OutlinedLabel.h"
 #include "components/PublishKit.h"
 #include "layouts/FlowLayout.h"
@@ -25,7 +26,7 @@
 
 namespace {
 
-/** 插件入口卡片默认渐变配色（与「插件管理」卡片一致，插件没写 color 时使用） */
+/** 插件入口卡片默认渐变配色（插件没写 color 时使用） */
 const QColor kDefaultEntryColor1 = QColor(QStringLiteral("#6366F1"));
 const QColor kDefaultEntryColor2 = QColor(QStringLiteral("#4338CA"));
 
@@ -113,6 +114,14 @@ void MorePage::buildUi()
     transferCard->onClick = [this]() { emit transferRequested(); };
     flow->addWidget(transferCard);
 
+    auto *downloadCard = PublishKit::makeChoiceCard(
+        cardsRow, tr("多线程下载"),
+        tr("一条直链拆成几段同时下，大文件能快不少，还能暂停继续"),
+        QColor(QStringLiteral("#3B82F6")), QColor(QStringLiteral("#1D4ED8")),
+        QStringLiteral(":/Images/Icons/download.svg"), 340, 126);
+    downloadCard->onClick = [this]() { emit multiThreadDownloadRequested(); };
+    flow->addWidget(downloadCard);
+
     auto *memoryCard = PublishKit::makeChoiceCard(
         cardsRow, tr("内存优化"),
         tr("看清内存被谁占着，点一下把闲置的还给系统"),
@@ -121,13 +130,17 @@ void MorePage::buildUi()
     memoryCard->onClick = [this]() { emit memoryOptimizeRequested(); };
     flow->addWidget(memoryCard);
 
-    auto *pluginCard = PublishKit::makeChoiceCard(
-        cardsRow, tr("插件管理"),
-        tr("装插件、写插件、给 AI 加工具，都在这里"),
-        QColor(QStringLiteral("#6366F1")), QColor(QStringLiteral("#4338CA")),
-        QStringLiteral(":/Images/Icons/nav_plugin.svg"), 340, 126);
-    pluginCard->onClick = [this]() { emit pluginManageRequested(); };
-    flow->addWidget(pluginCard);
+    auto *migrationCard = PublishKit::makeChoiceCard(
+        cardsRow, tr("迁移向导"),
+        tr("从 PCL / HMCL / BakaXL 搬实例，能只挑目录、账户和 Java"),
+        QColor(QStringLiteral("#0EA5E9")), QColor(QStringLiteral("#0369A1")),
+        QStringLiteral(":/Images/Icons/nav_import.svg"), 340, 126);
+    migrationCard->onClick = [this]() {
+        MigrationWizardDialog dialog(window());
+        dialog.exec();
+        emit migrationFinished(dialog.wantsOpenInstances());
+    };
+    flow->addWidget(migrationCard);
 
     auto *onboardingCard = PublishKit::makeChoiceCard(
         cardsRow, tr("新手引导"),

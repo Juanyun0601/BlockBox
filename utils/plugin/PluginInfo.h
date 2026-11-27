@@ -238,8 +238,48 @@ struct PluginUi
     QList<PluginUiAction> actions; // 动作按钮
     QString style;                 // 界面样式（QSS 片段，宿主应用到内嵌界面区域，可为空）
     QList<PluginPageEntry> moreEntries; // 「更多」页入口（manifest.ui.moreEntries）
+    /**
+     * 面板要出现在哪些位置（manifest.ui.placements，可空，默认只出现在插件卡片）：
+     *   "pluginCard"        —— 插件详情页里的内嵌面板（默认）
+     *   "instanceAssistant" —— 实例助手窗口里的「扩展」页
+     * 声明 instanceAssistant 需同时请求权限 "ui:page"。
+     */
+    QStringList placements;
 
     bool isValid() const { return !actions.isEmpty(); }
+
+    /** @brief 是否声明了某个展示位置（未声明时按 "pluginCard" 处理） */
+    bool hasPlacement(const QString &place) const
+    {
+        if (placements.isEmpty())
+            return place == QLatin1String("pluginCard");
+        return placements.contains(place, Qt::CaseInsensitive);
+    }
+
+    static PluginUi fromJson(const QJsonObject &obj)
+    {
+        PluginUi ui;
+        const QJsonArray fieldsArr = obj.value(QStringLiteral("fields")).toArray();
+        for (const QJsonValue &v : fieldsArr)
+            ui.fields.append(PluginUiField::fromJson(v.toObject()));
+        const QJsonArray actionsArr = obj.value(QStringLiteral("actions")).toArray();
+        for (const QJsonValue &v : actionsArr)
+            ui.actions.append(PluginUiAction::fromJson(v.toObject()));
+        const QJsonArray entriesArr = obj.value(QStringLiteral("moreEntries")).toArray();
+        for (const QJsonValue &v : entriesArr)
+            ui.moreEntries.append(PluginPageEntry::fromJson(v.toObject()));
+        ui.style = obj.value(QStringLiteral("style")).toString();
+
+        const QJsonValue pl = obj.value(QStringLiteral("placements"));
+        if (pl.isArray()) {
+            for (const QJsonValue &v : pl.toArray())
+                ui.placements.append(v.toString().trimmed());
+        } else if (pl.isString()) {
+            for (const QString &p : pl.toString().split(QLatin1Char(','), Qt::SkipEmptyParts))
+                ui.placements.append(p.trimmed());
+        }
+        return ui;
+    }
 };
 
 /**

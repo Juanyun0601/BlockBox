@@ -69,6 +69,8 @@ LIBS += -lz
 win32: {
     LIBS += -lpdh -liphlpapi -ldwmapi
     LIBS += -lgdi32 -lole32 -lshell32 -lshlwapi -luuid -lcomdlg32
+    # 崩溃上报读取模块基址（GetModuleInformation）要用 psapi
+    LIBS += -lpsapi
     # mingw links these by default; MSVC does not.
     LIBS += -luser32 -ladvapi32 -lws2_32 -loleaut32
     DEFINES += _WIN32_WINNT=0x0601 WINVER=0x0601
@@ -137,6 +139,7 @@ components/ProgressDialog.cpp \
      components/NotificationHistoryDialog.cpp \
      components/FileOpStepsDialog.cpp \
      components/InstanceAssistantWindow.cpp \
+     components/InstancePluginExtPage.cpp \
      components/GameFloatingIcon.cpp \
      components/TouchControlOverlay.cpp \
      components/TouchLayoutEditorDialog.cpp \
@@ -161,6 +164,7 @@ components/ProgressDialog.cpp \
      components/ContentViewSwitch.cpp \
      components/ModRelationDialog.cpp \
      components/CompatibilityCheckDialog.cpp \
+     components/MigrationWizardDialog.cpp \
      components/NetworkCheckDialog.cpp \
      components/SourceSwitchBar.cpp \
      components/MasonryContentCard.cpp \
@@ -358,6 +362,7 @@ pages/settings/SettingsAdvancedPage.cpp \
      pages/OnboardingWizard.cpp \
     utils/JavaScanWorker.cpp \
     utils/LauncherImporter.cpp \
+    utils/MigrationService.cpp \
     utils/LauncherLogger.cpp \
     utils/FileOpStepLog.cpp \
     utils/JavaDownloader.cpp \
@@ -386,14 +391,17 @@ pages/settings/SettingsAdvancedPage.cpp \
      utils/ClipboardMonitor.cpp \
      utils/FileImportRouter.cpp \
      utils/AiService.cpp \
+     utils/AiMarkdownStyle.cpp \
      utils/mcp/McpServer.cpp \
      utils/mcp/McpToolCatalog.cpp \
      utils/dsh/DshPluginInstaller.cpp \
      utils/zcode/ZcodePluginInstaller.cpp \
     utils/GameScreenshot.cpp \
     utils/SystemTools.cpp \
+    utils/MemoryOptimizer.cpp \
     utils/HardwareMonitor.cpp \
     utils/MultiThreadDownloader.cpp \
+    utils/SegmentedDownloader.cpp \
     utils/LocalModelManager.cpp \
     utils/GithubAccelerator.cpp \
     utils/PageTransitionAnimator.cpp \
@@ -404,6 +412,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/ServersDatIO.cpp \
     utils/McServerPinger.cpp \
     utils/server/LocalServerManager.cpp \
+    utils/server/ServerAdminStore.cpp \
     utils/WorldBackupManager.cpp \
     utils/PlaytimeStats.cpp \
     utils/WorldMap/StructureFinder.cpp \
@@ -487,6 +496,8 @@ pages/settings/SettingsAdvancedPage.cpp \
     utils/ChatPrefs.cpp \
     utils/ChatBookmarkStore.cpp \
     utils/FeedbackService.cpp \
+    utils/CrashReporter.cpp \
+    utils/Telemetry.cpp \
     utils/ForumImageStore.cpp \
     utils/CoverImageCache.cpp \
     components/ForumKit.cpp \
@@ -497,6 +508,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     components/ForumPostBrowser.cpp \
     components/PublishKit.cpp \
     components/CommunityAgreementDialog.cpp \
+    components/CrashReportDialog.cpp \
     components/UserAgreementDialog.cpp \
     components/MailFeedbackDialog.cpp \
     pages/PublishPage.cpp \
@@ -506,6 +518,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     pages/MorePage.cpp \
     pages/SeedMapPage.cpp \
     pages/MemoryOptimizePage.cpp \
+    pages/MultiThreadDownloadPage.cpp \
 
 HEADERS += \
     platform.h \
@@ -565,6 +578,7 @@ components/ProgressDialog.h \
        components/BackgroundWidget.h \
        components/PanoramaSkyRenderer.h \
        components/InstanceAssistantWindow.h \
+       components/InstancePluginExtPage.h \
        components/GameFloatingIcon.h \
        components/TouchControlOverlay.h \
        components/TouchLayoutEditorDialog.h \
@@ -590,6 +604,7 @@ components/ProgressDialog.h \
          components/ContentViewSwitch.h \
          components/ModRelationDialog.h \
          components/CompatibilityCheckDialog.h \
+         components/MigrationWizardDialog.h \
          components/NetworkCheckDialog.h \
          components/SourceSwitchBar.h \
          components/MasonryContentCard.h \
@@ -786,6 +801,7 @@ pages/ProjectionManagePage.h \
     pages/settings/BedrockInstanceSettingsPage.h \
       utils/JavaScanWorker.h \
     utils/LauncherImporter.h \
+    utils/MigrationService.h \
     utils/LauncherLogger.h \
     utils/FileOpStepLog.h \
     utils/JavaDownloader.h \
@@ -813,14 +829,17 @@ pages/ProjectionManagePage.h \
      utils/ClipboardMonitor.h \
      utils/FileImportRouter.h \
      utils/AiService.h \
+ utils/AiMarkdownStyle.h \
      utils/mcp/McpServer.h \
      utils/mcp/McpToolCatalog.h \
      utils/dsh/DshPluginInstaller.h \
      utils/zcode/ZcodePluginInstaller.h \
     utils/GameScreenshot.h \
     utils/SystemTools.h \
+    utils/MemoryOptimizer.h \
     utils/HardwareMonitor.h \
     utils/MultiThreadDownloader.h \
+    utils/SegmentedDownloader.h \
     utils/LocalModelManager.h \
     utils/GithubAccelerator.h \
     utils/PageTransitionAnimator.h \
@@ -844,6 +863,7 @@ pages/ProjectionManagePage.h \
     utils/ServersDatIO.h \
     utils/McServerPinger.h \
     utils/server/LocalServerManager.h \
+    utils/server/ServerAdminStore.h \
     utils/WorldBackupManager.h \
     utils/PlaytimeStats.h \
     utils/WorldMap/StructureFinder.h \
@@ -917,6 +937,8 @@ pages/ProjectionManagePage.h \
     utils/ChatPrefs.h \
     utils/ChatBookmarkStore.h \
     utils/FeedbackService.h \
+    utils/CrashReporter.h \
+    utils/Telemetry.h \
     utils/ForumImageStore.h \
     utils/CoverImageCache.h \
     components/ForumKit.h \
@@ -927,6 +949,7 @@ pages/ProjectionManagePage.h \
     components/ForumPostBrowser.h \
     components/PublishKit.h \
     components/CommunityAgreementDialog.h \
+    components/CrashReportDialog.h \
     components/UserAgreementDialog.h \
     components/MailFeedbackDialog.h \
     pages/PublishPage.h \
@@ -936,6 +959,7 @@ pages/ProjectionManagePage.h \
     pages/MorePage.h \
     pages/SeedMapPage.h \
     pages/MemoryOptimizePage.h \
+    pages/MultiThreadDownloadPage.h \
     components/AiModelFetchRow.h \
     utils/TouchScroll.h
 

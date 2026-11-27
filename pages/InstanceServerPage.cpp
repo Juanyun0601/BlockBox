@@ -8,6 +8,7 @@
 
 #include <QAbstractSpinBox>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QClipboard>
 #include <QComboBox>
 #include <QDesktopServices>
@@ -24,6 +25,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardItemModel>
@@ -32,12 +34,15 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <functional>
+
 #include "components/AppMessageBox.h"
 #include "components/CustomCheckBox.h"
 #include "components/NotificationManager.h"
 #include "components/OutlinedLabel.h"
 #include "utils/McServerPinger.h"
 #include "utils/Saves/LevelDatEditor.h"
+#include "utils/server/ServerAdminStore.h"
 #include "utils/ServersDatIO.h"
 #include "utils/SettingsManager.h"
 #include "utils/ThemeManager.h"
@@ -88,6 +93,7 @@ InstanceServerPage::InstanceServerPage(QWidget *parent)
     loadSettings();
     refreshStateVisuals();
     refreshInstanceHint();
+    updateAdminHints();
     m_uiReady = true;
 }
 
@@ -122,6 +128,7 @@ void InstanceServerPage::initUI()
     layout->addWidget(subtitle);
     layout->addWidget(buildStatusCard());
     layout->addWidget(buildSettingsCard());
+    layout->addWidget(buildAdminCard());
     layout->addWidget(buildConsoleCard());
 
     auto *eulaHint = makeHintLabel(
@@ -374,6 +381,976 @@ QWidget *InstanceServerPage::buildSettingsCard()
     return card;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// 管理卡：白名单 / 管理员 / 基础设置
+// ════════════════════════════════════════════════════════════════════
+
+QWidget *InstanceServerPage::buildAdminCard()
+{
+    auto *card = new QFrame(this);
+    card->setObjectName("serverCard");
+    auto *layout = new QVBoxLayout(card);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+
+    auto *title = new QLabel(tr("服务器管理"), card);
+    title->setObjectName("serverCardTitle");
+    layout->addWidget(title);
+    layout->addWidget(makeHintLabel(
+        tr("白名单、管理员和常用规则都收在这里；服务器开着改的会直接同步给它。"), card));
+
+    // ── 三个页签：分段按钮，窄窗口下也不占地方 ──
+    auto *segBar = new QWidget(card);
+    segBar->setObjectName("serverSegBar");
+    auto *segLayout = new QHBoxLayout(segBar);
+    segLayout->setContentsMargins(3, 3, 3, 3);
+    segLayout->setSpacing(2);
+
+    auto *group = new QButtonGroup(segBar);
+    group->setExclusive(true);
+    const QStringList tabNames = {tr("白名单"), tr("管理员"), tr("基础设置")};
+    for (int i = 0; i < tabNames.size(); ++i) {
+        auto *btn = new QPushButton(tabNames.at(i), segBar);
+        btn->setObjectName("serverSegBtn");
+        btn->setCheckable(true);
+        btn->setChecked(i == 0);
+        btn->setCursor(Qt::PointingHandCursor);
+        group->addButton(btn, i);
+        segLayout->addWidget(btn, 1);
+        m_adminTabBtns.append(btn);
+    }
+    connect(group, &QButtonGroup::idClicked, this, [this](int id) { setAdminTab(id); });
+    layout->addWidget(segBar);
+
+    // 三个页签是同一层的兄弟控件，只显示当前这张：
+    // 用 QStackedWidget 的话卡片高度会永远按最高那页算，短页下面留一大片空白。
+    auto *pagesHost = new QWidget(card);
+    pagesHost->setObjectName("serverAdminPages");
+    m_adminPagesLayout = new QVBoxLayout(pagesHost);
+    m_adminPagesLayout->setContentsMargins(0, 0, 0, 0);
+    m_adminPagesLayout->setSpacing(0);
+    m_whitelistPage = buildWhitelistTab();
+    m_opPage = buildOpTab();
+    m_rulesPage = buildRulesTab();
+    m_adminPagesLayout->addWidget(m_whitelistPage);
+    m_adminPagesLayout->addWidget(m_opPage);
+    m_adminPagesLayout->addWidget(m_rulesPage);
+    layout->addWidget(pagesHost);
+    setAdminTab(0);
+
+    return card;
+}
+
+void InstanceServerPage::setAdminTab(int index)
+{
+    m_adminTab = qBound(0, index, 2);
+    if (m_adminTabBtns.size() > m_adminTab && !m_adminTabBtns.at(m_adminTab)->isChecked())
+        m_adminTabBtns.at(m_adminTab)->setChecked(true);
+    if (m_whitelistPage)
+        m_whitelistPage->setVisible(m_adminTab == 0);
+    if (m_opPage)
+        m_opPage->setVisible(m_adminTab == 1);
+    if (m_rulesPage)
+        m_rulesPage->setVisible(m_adminTab == 2);
+}
+
+QWidget *InstanceServerPage::buildWhitelistTab()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 2, 0, 0);
+    layout->setSpacing(8);
+
+    m_whitelistToggle = new CustomCheckBox(tr("开启白名单（只有名单里的玩家能进）"), page);
+    m_whitelistToggle->setToolTip(
+        tr("白名单关着时谁都能进服；开启后只有下面这些玩家能进来。"));
+    connect(m_whitelistToggle, &CustomCheckBox::toggled, this,
+            &InstanceServerPage::onWhitelistToggled);
+    layout->addWidget(m_whitelistToggle);
+
+    auto *addRow = new QHBoxLayout();
+    addRow->setContentsMargins(0, 0, 0, 0);
+    addRow->setSpacing(6);
+    m_whitelistInput = new QLineEdit(page);
+    m_whitelistInput->setPlaceholderText(tr("玩家名，如 Steve"));
+    m_whitelistInput->setMaxLength(16);
+    m_whitelistInput->setToolTip(tr("填对方在游戏里用的名字，敲回车或点「添加」"));
+    connect(m_whitelistInput, &QLineEdit::returnPressed, this,
+            &InstanceServerPage::onAddWhitelistClicked);
+    m_whitelistAddBtn = new QPushButton(tr("添加"), page);
+    m_whitelistAddBtn->setObjectName("serverGhostBtn");
+    m_whitelistAddBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_whitelistAddBtn, &QPushButton::clicked, this,
+            &InstanceServerPage::onAddWhitelistClicked);
+    addRow->addWidget(m_whitelistInput, 1);
+    addRow->addWidget(m_whitelistAddBtn);
+    layout->addLayout(addRow);
+
+    m_whitelistScroll = new QScrollArea(page);
+    m_whitelistScroll->setObjectName("serverAdminScroll");
+    m_whitelistScroll->setWidgetResizable(true);
+    m_whitelistScroll->setFrameShape(QFrame::NoFrame);
+    m_whitelistScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_whitelistScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto *listHost = new QWidget(m_whitelistScroll);
+    listHost->setObjectName("serverAdminListHost");
+    m_whitelistListLayout = new QVBoxLayout(listHost);
+    m_whitelistListLayout->setContentsMargins(0, 0, 0, 0);
+    m_whitelistListLayout->setSpacing(4);
+    m_whitelistListLayout->addStretch(1);
+    m_whitelistScroll->setWidget(listHost);
+    layout->addWidget(m_whitelistScroll);
+
+    m_whitelistEmpty = makeHintLabel(
+        tr("白名单里还没有人。填一个玩家名加进来，就能开白名单了。"), page);
+    layout->addWidget(m_whitelistEmpty);
+
+    m_whitelistNotice = makeHintLabel(QString(), page);
+    m_whitelistNotice->hide();
+    layout->addWidget(m_whitelistNotice);
+
+    m_whitelistHint = makeHintLabel(QString(), page);
+    layout->addWidget(m_whitelistHint);
+    // 三个页签共用一个高度，短页多出来的地方留在底部，别把中间的元素拉开
+    layout->addStretch(1);
+    return page;
+}
+
+QWidget *InstanceServerPage::buildOpTab()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 2, 0, 0);
+    layout->setSpacing(8);
+
+    auto *addRow = new QHBoxLayout();
+    addRow->setContentsMargins(0, 0, 0, 0);
+    addRow->setSpacing(6);
+    m_opInput = new QLineEdit(page);
+    m_opInput->setPlaceholderText(tr("玩家名"));
+    m_opInput->setMaxLength(16);
+    connect(m_opInput, &QLineEdit::returnPressed, this, &InstanceServerPage::onAddOpClicked);
+    m_opLevelCombo = new QComboBox(page);
+    m_opLevelCombo->setToolTip(tr("4 级能管所有事；3 级能封人、踢人和授管理员；2 级能用常用指令；1 级只能绕过出生点保护。"));
+    m_opLevelCombo->addItem(tr("4 级 全部"), 4);
+    m_opLevelCombo->addItem(tr("3 级 管人"), 3);
+    m_opLevelCombo->addItem(tr("2 级 指令"), 2);
+    m_opLevelCombo->addItem(tr("1 级 基础"), 1);
+    m_opLevelCombo->setFixedWidth(124);
+    m_opAddBtn = new QPushButton(tr("添加"), page);
+    m_opAddBtn->setObjectName("serverGhostBtn");
+    m_opAddBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_opAddBtn, &QPushButton::clicked, this, &InstanceServerPage::onAddOpClicked);
+    addRow->addWidget(m_opInput, 1);
+    addRow->addWidget(m_opLevelCombo);
+    addRow->addWidget(m_opAddBtn);
+    layout->addLayout(addRow);
+
+    m_opScroll = new QScrollArea(page);
+    m_opScroll->setObjectName("serverAdminScroll");
+    m_opScroll->setWidgetResizable(true);
+    m_opScroll->setFrameShape(QFrame::NoFrame);
+    m_opScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_opScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto *listHost = new QWidget(m_opScroll);
+    listHost->setObjectName("serverAdminListHost");
+    m_opListLayout = new QVBoxLayout(listHost);
+    m_opListLayout->setContentsMargins(0, 0, 0, 0);
+    m_opListLayout->setSpacing(4);
+    m_opListLayout->addStretch(1);
+    m_opScroll->setWidget(listHost);
+    layout->addWidget(m_opScroll);
+
+    m_opEmpty = makeHintLabel(
+        tr("还没有管理员。加一个人之后，他在游戏里就能用 /gamemode、/tp 这些指令。"), page);
+    layout->addWidget(m_opEmpty);
+
+    m_opNotice = makeHintLabel(QString(), page);
+    m_opNotice->hide();
+    layout->addWidget(m_opNotice);
+
+    m_opHint = makeHintLabel(QString(), page);
+    layout->addWidget(m_opHint);
+    layout->addStretch(1);
+    return page;
+}
+
+QWidget *InstanceServerPage::buildRulesTab()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 2, 0, 0);
+    layout->setSpacing(8);
+
+    auto makeComboRow = [this, page, layout](const QString &labelText, const QString &tip) {
+        auto *row = new QHBoxLayout();
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(8);
+        auto *label = new QLabel(labelText, page);
+        label->setObjectName("serverFieldLabel");
+        label->setFixedWidth(64);
+        auto *combo = new QComboBox(page);
+        combo->setToolTip(tip);
+        row->addWidget(label);
+        row->addWidget(combo, 1);
+        layout->addLayout(row);
+        return combo;
+    };
+
+    m_gamemodeCombo = makeComboRow(
+        tr("游戏模式"),
+        tr("新玩家进服时的默认模式；服务器开着时改动会直接同步给服务端。"));
+    m_gamemodeCombo->addItem(tr("生存"), QStringLiteral("survival"));
+    m_gamemodeCombo->addItem(tr("创造"), QStringLiteral("creative"));
+    m_gamemodeCombo->addItem(tr("冒险"), QStringLiteral("adventure"));
+    m_gamemodeCombo->addItem(tr("旁观"), QStringLiteral("spectator"));
+    connect(m_gamemodeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) { onAdminRuleChanged(); });
+
+    m_difficultyCombo = makeComboRow(
+        tr("难度"),
+        tr("和平不会刷怪，困难怪物最凶；服务器开着时改动立刻生效。"));
+    m_difficultyCombo->addItem(tr("和平"), QStringLiteral("peaceful"));
+    m_difficultyCombo->addItem(tr("简单"), QStringLiteral("easy"));
+    m_difficultyCombo->addItem(tr("普通"), QStringLiteral("normal"));
+    m_difficultyCombo->addItem(tr("困难"), QStringLiteral("hard"));
+    connect(m_difficultyCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int) { onAdminRuleChanged(); });
+
+    m_pvpCheck = new CustomCheckBox(tr("允许玩家互相攻击（PVP）"), page);
+    connect(m_pvpCheck, &CustomCheckBox::toggled, this, [this](bool) { onAdminRuleChanged(); });
+    layout->addWidget(m_pvpCheck);
+
+    m_flightCheck = new CustomCheckBox(tr("允许飞行"), page);
+    m_flightCheck->setToolTip(
+        tr("原版服务端默认把飞行当成作弊：装了飞行 / 鞘翅类模组时要打开，不然会被踢。"));
+    connect(m_flightCheck, &CustomCheckBox::toggled, this, [this](bool) { onAdminRuleChanged(); });
+    layout->addWidget(m_flightCheck);
+
+    auto makeSpinRow = [this, page, layout](const QString &labelText, int minimum, int maximum,
+                                            const QString &tip) {
+        auto *row = new QHBoxLayout();
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(8);
+        auto *label = new QLabel(labelText, page);
+        label->setObjectName("serverFieldLabel");
+        label->setFixedWidth(64);
+        auto *spin = new QSpinBox(page);
+        spin->setObjectName("serverSpin");
+        spin->setRange(minimum, maximum);
+        spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+        spin->setToolTip(tip);
+        connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+                [this](int) { onAdminRuleChanged(); });
+        row->addWidget(label);
+        row->addWidget(spin, 1);
+        layout->addLayout(row);
+        return spin;
+    };
+
+    m_spawnProtectSpin = makeSpinRow(
+        tr("出生点保护"), 0, 64,
+        tr("出生点周围多少格内只有管理员能放 / 拆方块；0 表示不保护。"));
+    m_viewDistanceSpin = makeSpinRow(
+        tr("视距"), 3, 32, tr("玩家能看到多远（区块数）；调小更省服务器资源。"));
+
+    m_rulesNotice = makeHintLabel(QString(), page);
+    m_rulesNotice->hide();
+    layout->addWidget(m_rulesNotice);
+
+    m_rulesHint = makeHintLabel(
+        tr("这些规则写在服务端的 server.properties 里；标了「重启后生效」的项要下次开服才变。"),
+        page);
+    layout->addWidget(m_rulesHint);
+    layout->addStretch(1);
+    return page;
+}
+
+void InstanceServerPage::onAdminRuleChanged()
+{
+    if (m_syncingAdmin || !m_adminLoaded || !m_gamemodeCombo)
+        return;
+
+    ServerAdminStore store = adminStore();
+    if (!store.isValid())
+        return;
+
+    QMap<QString, QString> values;
+    values.insert(QStringLiteral("gamemode"), m_gamemodeCombo->currentData().toString());
+    values.insert(QStringLiteral("difficulty"), m_difficultyCombo->currentData().toString());
+    values.insert(QStringLiteral("pvp"), m_pvpCheck->isChecked() ? QStringLiteral("true")
+                                                                : QStringLiteral("false"));
+    values.insert(QStringLiteral("allow-flight"),
+                  m_flightCheck->isChecked() ? QStringLiteral("true") : QStringLiteral("false"));
+    values.insert(QStringLiteral("spawn-protection"),
+                  QString::number(m_spawnProtectSpin->value()));
+    values.insert(QStringLiteral("view-distance"), QString::number(m_viewDistanceSpin->value()));
+
+    QString error;
+    if (!store.setProperties(values, &error)) {
+        setAdminNotice(m_rulesNotice, error, true);
+        return;
+    }
+
+    if (m_manager->isRunning()) {
+        // 难度和默认模式有对应指令，可以先让服务端立刻按新值走；
+        // PVP / 飞行 / 出生点保护 / 视距 只能等下次开服读配置。
+        m_manager->sendCommand(QStringLiteral("difficulty %1").arg(values.value(
+            QStringLiteral("difficulty"))));
+        m_manager->sendCommand(QStringLiteral("defaultgamemode %1").arg(values.value(
+            QStringLiteral("gamemode"))));
+        setAdminNotice(m_rulesNotice,
+                       tr("游戏模式和难度已经同步给服务器；其它几项下次开服生效。"), false);
+    } else {
+        setAdminNotice(m_rulesNotice, tr("规则已保存，下次开服按这里的设置走。"), false);
+    }
+}
+
+ServerAdminStore InstanceServerPage::adminStore() const
+{
+    return ServerAdminStore(m_manager ? m_manager->serverDir() : QString());
+}
+
+bool InstanceServerPage::canEditLists(QString *reason) const
+{
+    // 服务器开着时走指令，由服务端自己写名单，UUID 由它去认；
+    // 只有「停服 + 正版验证」这一种情况算不出正版 UUID，只能劝用户先开服。
+    if (m_manager && m_manager->isRunning())
+        return true;
+    if (m_onlineModeCheck && m_onlineModeCheck->isChecked()) {
+        if (reason) {
+            *reason = tr("这台服开着正版验证：名单要按正版账号的 UUID 记，停服时算不准。"
+                         "先把服务器开起来再加，或者先把正版验证关掉。");
+        }
+        return false;
+    }
+    return true;
+}
+
+void InstanceServerPage::onWhitelistToggled(bool enabled)
+{
+    if (m_syncingAdmin || !m_adminLoaded)
+        return;
+    ServerAdminStore store = adminStore();
+    if (!store.isValid())
+        return;
+
+    QString error;
+    if (!store.setProperty(QStringLiteral("white-list"),
+                           enabled ? QStringLiteral("true") : QStringLiteral("false"), &error)) {
+        setAdminNotice(m_whitelistNotice, error, true);
+        // 写不进去就把开关拨回去，免得界面上显示的和实际不一致
+        m_syncingAdmin = true;
+        m_whitelistToggle->setChecked(!enabled);
+        m_syncingAdmin = false;
+        return;
+    }
+
+    if (m_manager->isRunning())
+        m_manager->sendCommand(enabled ? QStringLiteral("whitelist on")
+                                       : QStringLiteral("whitelist off"));
+
+    setAdminNotice(m_whitelistNotice,
+                   enabled ? tr("白名单已开启：只有名单里的玩家能进服。")
+                           : tr("白名单已关闭：谁都能进服。"),
+                   false);
+}
+
+void InstanceServerPage::onAddWhitelistClicked()
+{
+    const QString name = m_whitelistInput ? m_whitelistInput->text().trimmed() : QString();
+    if (name.isEmpty()) {
+        setAdminNotice(m_whitelistNotice, tr("先填一个玩家名。"), true);
+        return;
+    }
+    addWhitelistEntry(name);
+}
+
+bool InstanceServerPage::addWhitelistEntry(const QString &name)
+{
+    if (!ServerAdminStore::isValidPlayerName(name)) {
+        setAdminNotice(m_whitelistNotice,
+                       tr("玩家名只能是 3~16 位字母、数字或下划线，要和游戏里用的名字完全一致。"),
+                       true);
+        return false;
+    }
+    for (const auto &entry : m_whitelistEntries) {
+        if (entry.name.compare(name, Qt::CaseInsensitive) == 0) {
+            setAdminNotice(m_whitelistNotice, tr("%1 已经在白名单里了。").arg(name), false);
+            return false;
+        }
+    }
+
+    QString reason;
+    if (!canEditLists(&reason)) {
+        setAdminNotice(m_whitelistNotice, reason, true);
+        return false;
+    }
+
+    if (m_manager->isRunning()) {
+        if (!m_manager->sendCommand(QStringLiteral("whitelist add %1").arg(name))) {
+            setAdminNotice(m_whitelistNotice, tr("指令没发出去，服务器可能刚退出。"), true);
+            return false;
+        }
+        setAdminNotice(m_whitelistNotice,
+                       tr("已经让服务器把 %1 加进白名单，稍等一下列表就会更新。").arg(name),
+                       false);
+        if (m_whitelistInput)
+            m_whitelistInput->clear();
+        m_pendingWhitelistAdds.append(name);
+        scheduleAdminReload(900);
+        return true;
+    }
+
+    ServerAdminStore store = adminStore();
+    QString readError;
+    QList<ServerWhitelistEntry> entries = store.readWhitelist(&readError);
+    if (!readError.isEmpty()) {
+        setAdminNotice(m_whitelistNotice, readError, true);
+        return false;
+    }
+    ServerWhitelistEntry entry;
+    entry.name = name;
+    entry.uuid = ServerAdminStore::offlineUuid(name);
+    entries.append(entry);
+
+    QString error;
+    if (!store.writeWhitelist(entries, &error)) {
+        setAdminNotice(m_whitelistNotice, error, true);
+        return false;
+    }
+    m_whitelistInput->clear();
+    reloadAdminData();
+    setAdminNotice(m_whitelistNotice, tr("已加进白名单：%1").arg(name), false);
+    return true;
+}
+
+bool InstanceServerPage::removeWhitelistEntry(ServerWhitelistEntry entry)
+{
+    if (entry.name.isEmpty()) {
+        setAdminNotice(m_whitelistNotice,
+                       tr("这条只记了 UUID，没记名字：停服后删掉 whitelist.json 里的这条，"
+                          "或者开服后敲 whitelist remove 指令。"),
+                       true);
+        return false;
+    }
+
+    if (m_manager->isRunning()) {
+        if (!m_manager->sendCommand(QStringLiteral("whitelist remove %1").arg(entry.name))) {
+            setAdminNotice(m_whitelistNotice, tr("指令没发出去，服务器可能刚退出。"), true);
+            return false;
+        }
+        setAdminNotice(m_whitelistNotice,
+                       tr("已经让服务器把 %1 移出白名单。").arg(entry.name), false);
+        m_pendingWhitelistRemoves.append(entry.name);
+        scheduleAdminReload(900);
+        return true;
+    }
+
+    ServerAdminStore store = adminStore();
+    QString readError;
+    QList<ServerWhitelistEntry> entries = store.readWhitelist(&readError);
+    if (!readError.isEmpty()) {
+        setAdminNotice(m_whitelistNotice, readError, true);
+        return false;
+    }
+    QList<ServerWhitelistEntry> kept;
+    for (const auto &item : entries) {
+        const bool sameUuid = !entry.uuid.isEmpty() && item.uuid.compare(entry.uuid) == 0;
+        const bool sameName = !entry.name.isEmpty()
+                              && item.name.compare(entry.name, Qt::CaseInsensitive) == 0;
+        if (!sameUuid && !sameName)
+            kept.append(item);
+    }
+    QString error;
+    if (!store.writeWhitelist(kept, &error)) {
+        setAdminNotice(m_whitelistNotice, error, true);
+        return false;
+    }
+    reloadAdminData();
+    setAdminNotice(m_whitelistNotice, tr("已把 %1 移出白名单。").arg(entry.name), false);
+    return true;
+}
+
+void InstanceServerPage::onAddOpClicked()
+{
+    const QString name = m_opInput ? m_opInput->text().trimmed() : QString();
+    if (name.isEmpty()) {
+        setAdminNotice(m_opNotice, tr("先填一个玩家名。"), true);
+        return;
+    }
+    const int level = m_opLevelCombo ? m_opLevelCombo->currentData().toInt() : 4;
+    addOpEntry(name, level);
+}
+
+bool InstanceServerPage::addOpEntry(const QString &name, int level)
+{
+    if (!ServerAdminStore::isValidPlayerName(name)) {
+        setAdminNotice(m_opNotice,
+                       tr("玩家名只能是 3~16 位字母、数字或下划线，要和游戏里用的名字完全一致。"),
+                       true);
+        return false;
+    }
+    level = qBound(1, level, 4);
+
+    QString reason;
+    if (!canEditLists(&reason)) {
+        setAdminNotice(m_opNotice, reason, true);
+        return false;
+    }
+
+    const bool running = m_manager->isRunning();
+
+    // 运行中的 4 级直接交给服务端：它会拿正版 UUID 写进 ops.json，比我们算得准
+    if (running && level == 4) {
+        if (!m_manager->sendCommand(QStringLiteral("op %1").arg(name))) {
+            setAdminNotice(m_opNotice, tr("指令没发出去，服务器可能刚退出。"), true);
+            return false;
+        }
+        setAdminNotice(m_opNotice, tr("已经让服务器把 %1 设为管理员（4 级）。").arg(name), false);
+        if (m_opInput)
+            m_opInput->clear();
+        m_pendingOpAdds.append(name);
+        scheduleAdminReload(900);
+        return true;
+    }
+
+    ServerAdminStore store = adminStore();
+    QString readError;
+    QList<ServerOpEntry> entries = store.readOps(&readError);
+    if (!readError.isEmpty()) {
+        setAdminNotice(m_opNotice, readError, true);
+        return false;
+    }
+
+    QList<ServerOpEntry> kept;
+    for (const auto &item : entries) {
+        if (item.name.compare(name, Qt::CaseInsensitive) != 0)
+            kept.append(item);
+    }
+    ServerOpEntry entry;
+    entry.name = name;
+    entry.uuid = ServerAdminStore::offlineUuid(name);
+    entry.level = level;
+    kept.append(entry);
+
+    QString error;
+    if (!store.writeOps(kept, &error)) {
+        setAdminNotice(m_opNotice, error, true);
+        return false;
+    }
+    m_opInput->clear();
+
+    if (running) {
+        // 服务端的 op 指令只能给 4 级，1~3 级得等它下次启动读 ops.json
+        setAdminNotice(m_opNotice,
+                       tr("已记下 %1 的 %2 权限，重启服务器后生效"
+                          "（服务器运行中只能直接授予 4 级）。")
+                           .arg(name, opLevelText(level)),
+                       false);
+    } else {
+        reloadAdminData();
+        setAdminNotice(m_opNotice, tr("已把 %1 设为管理员（%2）。").arg(name, opLevelText(level)),
+                       false);
+    }
+    return true;
+}
+
+bool InstanceServerPage::removeOpEntry(ServerOpEntry entry)
+{
+    if (entry.name.isEmpty()) {
+        setAdminNotice(m_opNotice, tr("这条只记了 UUID，没记名字，停服后到 ops.json 里删掉它。"),
+                       true);
+        return false;
+    }
+
+    if (m_manager->isRunning()) {
+        if (!m_manager->sendCommand(QStringLiteral("deop %1").arg(entry.name))) {
+            setAdminNotice(m_opNotice, tr("指令没发出去，服务器可能刚退出。"), true);
+            return false;
+        }
+        setAdminNotice(m_opNotice, tr("已经让服务器取消 %1 的管理员权限。").arg(entry.name), false);
+        m_pendingOpRemoves.append(entry.name);
+        scheduleAdminReload(900);
+        return true;
+    }
+
+    ServerAdminStore store = adminStore();
+    QString readError;
+    QList<ServerOpEntry> entries = store.readOps(&readError);
+    if (!readError.isEmpty()) {
+        setAdminNotice(m_opNotice, readError, true);
+        return false;
+    }
+    QList<ServerOpEntry> kept;
+    for (const auto &item : entries) {
+        const bool sameUuid = !entry.uuid.isEmpty() && item.uuid.compare(entry.uuid) == 0;
+        const bool sameName = !entry.name.isEmpty()
+                              && item.name.compare(entry.name, Qt::CaseInsensitive) == 0;
+        if (!sameUuid && !sameName)
+            kept.append(item);
+    }
+    QString error;
+    if (!store.writeOps(kept, &error)) {
+        setAdminNotice(m_opNotice, error, true);
+        return false;
+    }
+    reloadAdminData();
+    setAdminNotice(m_opNotice, tr("已取消 %1 的管理员权限。").arg(entry.name), false);
+    return true;
+}
+
+QString InstanceServerPage::opLevelText(int level) const
+{
+    switch (level) {
+    case 1:
+        return tr("1 级 · 基础");
+    case 2:
+        return tr("2 级 · 常用指令");
+    case 3:
+        return tr("3 级 · 管理玩家");
+    default:
+        return tr("4 级 · 完全权限");
+    }
+}
+
+void InstanceServerPage::setAdminNotice(QLabel *label, const QString &text, bool error)
+{
+    if (!label)
+        return;
+    label->setText(text);
+    label->setVisible(!text.isEmpty());
+    label->setStyleSheet(error ? QStringLiteral("color: #e5484d;") : QString());
+}
+
+void InstanceServerPage::reloadAdminData()
+{
+    if (!m_whitelistPage || !m_manager || m_instancePath.isEmpty())
+        return;
+
+    ServerAdminStore store = adminStore();
+    if (!store.isValid())
+        return;
+
+    const bool previousSync = m_syncingAdmin;
+    m_syncingAdmin = true;
+    m_adminLoaded = false;
+    QString whitelistError;
+    m_whitelistEntries = store.readWhitelist(&whitelistError);
+    const QString whiteListValue = store.property(QStringLiteral("white-list"));
+    m_whitelistToggle->setChecked(whiteListValue.compare(QStringLiteral("true"),
+                                                         Qt::CaseInsensitive) == 0);
+    rebuildWhitelistList();
+    if (!whitelistError.isEmpty())
+        setAdminNotice(m_whitelistNotice, whitelistError, true);
+
+    QString opsError;
+    m_opEntries = store.readOps(&opsError);
+    rebuildOpList();
+    if (!opsError.isEmpty())
+        setAdminNotice(m_opNotice, opsError, true);
+
+    loadRulesFromProperties();
+    updateAdminHints();
+
+    m_syncingAdmin = previousSync;
+    m_adminLoaded = true;
+}
+
+void InstanceServerPage::scheduleAdminReload(int delayMs)
+{
+    if (m_adminReloadScheduled)
+        return;
+    m_adminReloadScheduled = true;
+    QTimer::singleShot(delayMs, this, [this]() {
+        m_adminReloadScheduled = false;
+        reloadAdminData();
+        verifyPendingAdminChanges();
+    });
+}
+
+void InstanceServerPage::verifyPendingAdminChanges()
+{
+    const bool hasPending = !m_pendingWhitelistAdds.isEmpty()
+                            || !m_pendingWhitelistRemoves.isEmpty()
+                            || !m_pendingOpAdds.isEmpty() || !m_pendingOpRemoves.isEmpty();
+    if (!hasPending)
+        return;
+
+    const QString separator = QStringLiteral("、");
+    auto whitelistHas = [this](const QString &name) {
+        for (const auto &entry : m_whitelistEntries) {
+            if (entry.name.compare(name, Qt::CaseInsensitive) == 0)
+                return true;
+        }
+        return false;
+    };
+    auto opsHave = [this](const QString &name) {
+        for (const auto &entry : m_opEntries) {
+            if (entry.name.compare(name, Qt::CaseInsensitive) == 0)
+                return true;
+        }
+        return false;
+    };
+
+    QStringList whitelistAdded;
+    QStringList whitelistAddFailed;
+    QStringList whitelistRemoved;
+    QStringList whitelistRemoveFailed;
+    for (const QString &name : m_pendingWhitelistAdds)
+        (whitelistHas(name) ? whitelistAdded : whitelistAddFailed).append(name);
+    for (const QString &name : m_pendingWhitelistRemoves)
+        (whitelistHas(name) ? whitelistRemoveFailed : whitelistRemoved).append(name);
+
+    QStringList opAdded;
+    QStringList opAddFailed;
+    QStringList opRemoved;
+    QStringList opRemoveFailed;
+    for (const QString &name : m_pendingOpAdds)
+        (opsHave(name) ? opAdded : opAddFailed).append(name);
+    for (const QString &name : m_pendingOpRemoves)
+        (opsHave(name) ? opRemoveFailed : opRemoved).append(name);
+
+    // 服务器写盘有时比 900ms 慢一点：第一次没对上先再等一轮，别急着下结论
+    const bool anyFailure = !whitelistAddFailed.isEmpty() || !whitelistRemoveFailed.isEmpty()
+                            || !opAddFailed.isEmpty() || !opRemoveFailed.isEmpty();
+    if (anyFailure && !m_adminVerifyRetry) {
+        m_adminVerifyRetry = true;
+        scheduleAdminReload(1400);
+        return;
+    }
+    m_adminVerifyRetry = false;
+
+    m_pendingWhitelistAdds.clear();
+    m_pendingWhitelistRemoves.clear();
+    m_pendingOpAdds.clear();
+    m_pendingOpRemoves.clear();
+
+    if (!whitelistAdded.isEmpty() || !whitelistAddFailed.isEmpty()) {
+        if (!whitelistAddFailed.isEmpty()) {
+            setAdminNotice(m_whitelistNotice,
+                           tr("服务器没把 %1 加进白名单：名字要和游戏里一致"
+                              "（正版服填正版账号名，离线服填离线名字）。")
+                               .arg(whitelistAddFailed.join(separator)),
+                           true);
+        } else {
+            setAdminNotice(m_whitelistNotice,
+                           tr("已加进白名单：%1").arg(whitelistAdded.join(separator)), false);
+        }
+    }
+
+    if (!whitelistRemoved.isEmpty() || !whitelistRemoveFailed.isEmpty()) {
+        if (!whitelistRemoveFailed.isEmpty()) {
+            setAdminNotice(m_whitelistNotice,
+                           tr("服务器还没把 %1 移出白名单，稍后再点一次「移除」。")
+                               .arg(whitelistRemoveFailed.join(separator)),
+                           true);
+        } else {
+            setAdminNotice(m_whitelistNotice, tr("已经移出白名单。"), false);
+        }
+    }
+
+    if (!opAdded.isEmpty() || !opAddFailed.isEmpty()) {
+        if (!opAddFailed.isEmpty()) {
+            setAdminNotice(m_opNotice,
+                           tr("服务器没把 %1 设为管理员：名字要和游戏里一致"
+                              "（正版服填正版账号名，离线服填离线名字）。")
+                               .arg(opAddFailed.join(separator)),
+                           true);
+        } else {
+            setAdminNotice(m_opNotice, tr("已设为管理员：%1").arg(opAdded.join(separator)),
+                           false);
+        }
+    }
+
+    if (!opRemoved.isEmpty() || !opRemoveFailed.isEmpty()) {
+        if (!opRemoveFailed.isEmpty()) {
+            setAdminNotice(m_opNotice,
+                           tr("服务器还没取消 %1 的管理员权限，稍后再点一次「移除」。")
+                               .arg(opRemoveFailed.join(separator)),
+                           true);
+        } else {
+            setAdminNotice(m_opNotice, tr("已取消管理员权限。"), false);
+        }
+    }
+}
+
+void InstanceServerPage::rebuildWhitelistList()
+{
+    if (!m_whitelistListLayout)
+        return;
+
+    // 清掉旧行（末尾留着的 stretch 不动）
+    while (m_whitelistListLayout->count() > 1) {
+        QLayoutItem *item = m_whitelistListLayout->takeAt(0);
+        if (QWidget *widget = item->widget()) {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+
+    auto makeRow = [this](const QString &name, const QString &meta, const QString &tip,
+                          const std::function<void()> &onRemove) {
+        auto *row = new QFrame(this);
+        row->setObjectName("serverPlayerRow");
+        row->setToolTip(tip);
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(8, 4, 6, 4);
+        rowLayout->setSpacing(6);
+        auto *nameLabel = new QLabel(name, row);
+        nameLabel->setObjectName("serverPlayerName");
+        auto *metaLabel = new QLabel(meta, row);
+        metaLabel->setObjectName("serverPlayerMeta");
+        auto *removeBtn = new QPushButton(tr("移除"), row);
+        removeBtn->setObjectName("serverRowBtn");
+        removeBtn->setCursor(Qt::PointingHandCursor);
+        connect(removeBtn, &QPushButton::clicked, row, [onRemove]() { onRemove(); });
+        rowLayout->addWidget(nameLabel);
+        rowLayout->addStretch(1);
+        if (!meta.isEmpty())
+            rowLayout->addWidget(metaLabel);
+        rowLayout->addWidget(removeBtn);
+        return row;
+    };
+
+    for (const auto &entry : m_whitelistEntries) {
+        const QString displayName = entry.name.isEmpty() ? tr("未知玩家") : entry.name;
+        const QString tip = entry.uuid.isEmpty()
+                                ? tr("这条没有记 UUID，可能进不来")
+                                : tr("UUID：%1").arg(entry.uuid);
+        const ServerWhitelistEntry copy = entry;
+        m_whitelistListLayout->insertWidget(
+            m_whitelistListLayout->count() - 1,
+            makeRow(displayName, QString(), tip,
+                    [this, copy]() { removeWhitelistEntry(copy); }));
+    }
+
+    const bool empty = m_whitelistEntries.isEmpty();
+    m_whitelistEmpty->setVisible(empty);
+    m_whitelistScroll->setVisible(!empty);
+    if (!empty) {
+        const int height = qMin(150, m_whitelistEntries.size() * 32 + 6);
+        m_whitelistScroll->setFixedHeight(qMax(38, height));
+    }
+}
+
+void InstanceServerPage::rebuildOpList()
+{
+    if (!m_opListLayout)
+        return;
+
+    while (m_opListLayout->count() > 1) {
+        QLayoutItem *item = m_opListLayout->takeAt(0);
+        if (QWidget *widget = item->widget()) {
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+
+    auto makeRow = [this](const QString &name, const QString &meta, const QString &tip,
+                          const std::function<void()> &onRemove) {
+        auto *row = new QFrame(this);
+        row->setObjectName("serverPlayerRow");
+        row->setToolTip(tip);
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(8, 4, 6, 4);
+        rowLayout->setSpacing(6);
+        auto *nameLabel = new QLabel(name, row);
+        nameLabel->setObjectName("serverPlayerName");
+        auto *metaLabel = new QLabel(meta, row);
+        metaLabel->setObjectName("serverPlayerMeta");
+        auto *removeBtn = new QPushButton(tr("移除"), row);
+        removeBtn->setObjectName("serverRowBtn");
+        removeBtn->setCursor(Qt::PointingHandCursor);
+        connect(removeBtn, &QPushButton::clicked, row, [onRemove]() { onRemove(); });
+        rowLayout->addWidget(nameLabel);
+        rowLayout->addStretch(1);
+        rowLayout->addWidget(metaLabel);
+        rowLayout->addWidget(removeBtn);
+        return row;
+    };
+
+    for (const auto &entry : m_opEntries) {
+        const QString displayName = entry.name.isEmpty() ? tr("未知玩家") : entry.name;
+        const QString tip = entry.uuid.isEmpty()
+                                ? tr("这条没有记 UUID，可能不生效")
+                                : tr("UUID：%1").arg(entry.uuid);
+        const ServerOpEntry copy = entry;
+        m_opListLayout->insertWidget(
+            m_opListLayout->count() - 1,
+            makeRow(displayName, tr("%1 级").arg(qBound(1, entry.level, 4)), tip,
+                    [this, copy]() { removeOpEntry(copy); }));
+    }
+
+    const bool empty = m_opEntries.isEmpty();
+    m_opEmpty->setVisible(empty);
+    m_opScroll->setVisible(!empty);
+    if (!empty) {
+        const int height = qMin(150, m_opEntries.size() * 32 + 6);
+        m_opScroll->setFixedHeight(qMax(38, height));
+    }
+}
+
+void InstanceServerPage::loadRulesFromProperties()
+{
+    ServerAdminStore store = adminStore();
+    const bool previousSync = m_syncingAdmin;
+    m_syncingAdmin = true;
+
+    auto selectByData = [](QComboBox *combo, const QString &value, const QString &fallback) {
+        if (!combo)
+            return;
+        int index = combo->findData(value);
+        if (index < 0)
+            index = combo->findData(fallback);
+        if (index >= 0)
+            combo->setCurrentIndex(index);
+    };
+
+    selectByData(m_gamemodeCombo, store.property(QStringLiteral("gamemode")),
+                 QStringLiteral("survival"));
+    selectByData(m_difficultyCombo, store.property(QStringLiteral("difficulty")),
+                 QStringLiteral("normal"));
+
+    const QString pvp = store.property(QStringLiteral("pvp"), QStringLiteral("true"));
+    m_pvpCheck->setChecked(pvp.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0);
+    const QString flight = store.property(QStringLiteral("allow-flight"), QStringLiteral("false"));
+    m_flightCheck->setChecked(flight.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0);
+
+    m_spawnProtectSpin->setValue(
+        qBound(0, store.property(QStringLiteral("spawn-protection"),
+                                 QStringLiteral("0")).toInt(), 64));
+    m_viewDistanceSpin->setValue(
+        qBound(3, store.property(QStringLiteral("view-distance"),
+                                 QStringLiteral("10")).toInt(), 32));
+
+    m_syncingAdmin = previousSync;
+}
+
+void InstanceServerPage::updateAdminHints()
+{
+    if (!m_whitelistHint || !m_opHint)
+        return;
+
+    if (m_onlineModeCheck && m_onlineModeCheck->isChecked()) {
+        m_whitelistHint->setText(
+            tr("这台服开着正版验证：名单按正版账号记。服务器没开的时候加不了人，"
+               "先开服再加（也可以直接在控制台敲 whitelist add）。"));
+        m_opHint->setText(
+            tr("开着正版验证时，停服状态下加不了管理员：先把服务器开起来，"
+               "运行中加的会由服务端按正版账号记。"));
+    } else {
+        m_whitelistHint->setText(
+            tr("离线模式按玩家名记名单：填游戏里用的名字就行，停服时也能加；"
+               "开着服加会由服务器写完名单，UUID 更准。"));
+        m_opHint->setText(
+            tr("离线模式按玩家名记管理员，停服时也能加。"
+               "4 级能管所有事；3 级能封人、踢人；2 级能用常用指令；1 级只能绕过出生点保护。"));
+    }
+}
+
 QWidget *InstanceServerPage::buildConsoleCard()
 {
     auto *card = new QFrame(this);
@@ -449,8 +1426,11 @@ void InstanceServerPage::connectManager()
             m_onlineText.clear();
         }
         refreshStateVisuals();
-        if (state == LocalServerManager::State::Idle)
+        if (state == LocalServerManager::State::Idle) {
+            // 服务端退出时可能刚写过白名单 / OP，重新对一遍磁盘
+            reloadAdminData();
             emit serverStopped();
+        }
     });
 
     connect(m_manager, &LocalServerManager::logLine, this, &InstanceServerPage::appendConsole);
@@ -812,6 +1792,7 @@ void InstanceServerPage::onSettingsChanged()
     m_manager->setConfig(configFromUi());
     m_addressLabel->setText(displayAddress());
     saveSettings();
+    updateAdminHints();
 }
 
 void InstanceServerPage::onCommandEntered()
@@ -937,6 +1918,14 @@ bool InstanceServerPage::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
+void InstanceServerPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // 切回这个页时名单可能已经被改过（比如在游戏里用指令加人 / 服务端刚退出）
+    if (m_uiReady && !m_instancePath.isEmpty())
+        reloadAdminData();
+}
+
 // ════════════════════════════════════════════════════════════════════
 // 状态刷新
 // ════════════════════════════════════════════════════════════════════
@@ -1034,6 +2023,30 @@ void InstanceServerPage::refreshStateVisuals()
     m_playersSpin->setEnabled(idle);
     m_memoryCombo->setEnabled(idle);
     m_onlineModeCheck->setEnabled(idle);
+
+    // 管理卡：选好实例后随时能改；开服准备 / 停止过程中先锁住，避免和写配置打架
+    const bool adminUsable = hasInstance
+                             && (state == LocalServerManager::State::Idle
+                                 || state == LocalServerManager::State::Running);
+    if (m_whitelistToggle)
+        m_whitelistToggle->setEnabled(adminUsable);
+    if (m_whitelistInput) {
+        m_whitelistInput->setEnabled(adminUsable);
+        m_whitelistAddBtn->setEnabled(adminUsable);
+    }
+    if (m_opInput) {
+        m_opInput->setEnabled(adminUsable);
+        m_opLevelCombo->setEnabled(adminUsable);
+        m_opAddBtn->setEnabled(adminUsable);
+    }
+    if (m_gamemodeCombo) {
+        m_gamemodeCombo->setEnabled(adminUsable);
+        m_difficultyCombo->setEnabled(adminUsable);
+        m_pvpCheck->setEnabled(adminUsable);
+        m_flightCheck->setEnabled(adminUsable);
+        m_spawnProtectSpin->setEnabled(adminUsable);
+        m_viewDistanceSpin->setEnabled(adminUsable);
+    }
 }
 
 void InstanceServerPage::refreshInstanceHint()
@@ -1116,6 +2129,8 @@ void InstanceServerPage::setInstanceContext(const QString &path, const QString &
 
     refreshInstanceHint();
     refreshStateVisuals();
+    // 换了实例：白名单 / OP / 规则都按新实例的服务端目录重新读
+    reloadAdminData();
 }
 
 bool InstanceServerPage::serverRunning() const
