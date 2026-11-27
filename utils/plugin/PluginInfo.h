@@ -16,6 +16,10 @@
  *   style         （字符串或 {qss,file} 对象：启动器界面样式贡献，见 PluginStyleContribution）
  *   aiTools       （数组：插件向 AI 助手提供的工具，见 PluginAiTool；
  *                  需同时请求权限 "ai:tool"，否则不会注入 AI）
+ *   vars          （对象：插件私有变量，见 PluginInfo::vars；aiTools[].http 里
+ *                  可用 {plugin.<键>} 引用，模型看不到值）
+ *   ui.moreEntries（数组：在「更多」页添加的插件页面入口，见 PluginPageEntry；
+ *                  需同时请求权限 "ui:page"，否则入口不会出现）
  */
 #ifndef PLUGININFO_H
 #define PLUGININFO_H
@@ -175,6 +179,54 @@ struct PluginUiAction
 };
 
 /**
+ * @brief 插件页面入口（对应 manifest.ui.moreEntries[] 元素）
+ *
+ * 插件借此在「更多」页（左侧「更多」分类）挂一个自己的入口卡片：
+ * 声明后宿主在更多页「插件入口」区追加一张卡片，左侧「更多」子导航
+ * 也会多出一项；插件停用/删除后入口自动消失。
+ *
+ * 声明该能力需同时请求权限 "ui:page"（未声明时入口不生效，
+ * 插件详情页会给出提示），避免插件在用户不知情时往启动器里塞入口。
+ *
+ * 点击行为由 kind / target 决定（与 commands[] 一致）：
+ *   - "url"    打开外部链接（target 为完整 URL）
+ *   - "script" 执行包内脚本（target 为包内相对路径，如 scripts/page.ps1）
+ */
+struct PluginPageEntry
+{
+    QString id;          // 入口标识（同一插件内唯一）
+    QString title;       // 卡片标题
+    QString description; // 卡片说明（可空）
+    QString icon;        // 包内图标相对路径（可空，为空时用内置图标）
+    QString color;       // 主题色（可空，如 "#0EA5E9"；为空时用插件默认配色）
+    QString kind;        // url / script
+    QString target;      // 完整 URL / 包内脚本相对路径
+
+    // —— 运行时字段（聚合时由宿主填写，清单里不声明）——
+    QString pluginId;    // 提供该入口的插件 ID
+
+    bool isValid() const
+    {
+        if (id.isEmpty() || title.isEmpty() || target.trimmed().isEmpty())
+            return false;
+        return kind == QLatin1String("url") || kind == QLatin1String("script");
+    }
+
+    static PluginPageEntry fromJson(const QJsonObject &obj)
+    {
+        PluginPageEntry e;
+        e.id = obj.value(QStringLiteral("id")).toString().trimmed();
+        e.title = obj.value(QStringLiteral("title")).toString().trimmed();
+        e.description = obj.value(QStringLiteral("description")).toString().trimmed();
+        e.icon = obj.value(QStringLiteral("icon")).toString().trimmed();
+        e.color = obj.value(QStringLiteral("color")).toString().trimmed();
+        e.kind = obj.value(QStringLiteral("kind")).toString().trimmed().toLower();
+        e.target = obj.value(QStringLiteral("target")).toString().trimmed();
+        return e;
+    }
+};
+
+/**
  * @brief 插件界面定义（对应 manifest.ui 对象）
  *
  * 声明后，宿主在插件详情卡片下方渲染 表单 + 动作按钮 + 结果区，
@@ -185,6 +237,7 @@ struct PluginUi
     QList<PluginUiField> fields;   // 输入字段
     QList<PluginUiAction> actions; // 动作按钮
     QString style;                 // 界面样式（QSS 片段，宿主应用到内嵌界面区域，可为空）
+    QList<PluginPageEntry> moreEntries; // 「更多」页入口（manifest.ui.moreEntries）
 
     bool isValid() const { return !actions.isEmpty(); }
 };
@@ -229,15 +282,20 @@ struct PluginStyleContribution
 /**
  * @brief 插件 AI 工具的 HTTP 请求定义（对应 manifest.aiTools[].http）
  *
- * 声明后宿主直接发起 HTTP 请求（无需本机脚本环境），
- * URL 支持 {参数名} 占位符，运行时替换为模型传入的参数值。
+ * 声明后宿主直接发起 HTTP 请求（无需本机脚本环境），支持两类占位符：
+ *   - {参数名}       运行时替换为模型传入的参数值
+ *   - {plugin.<键>}  运行时替换为插件私有变量（manifest.vars 或保留键
+ *                    token/port/data/app，见 PluginInfo::vars）
+ *
+ * 两类占位符都在宿主侧替换，私有变量的值不会出现在工具定义里，
+ * 所以像本地服务的访问令牌这类东西可以安全地放在 vars 里。
  */
 struct PluginAiToolHttp
 {
     QString method;                  // HTTP 方法：GET / POST / PUT / DELETE（默认 GET）
-    QString url;                     // 请求 URL（可含 {参数名} 占位符）
-    QMap<QString, QString> headers;  // 请求头
-    QString body;                    // 请求体（POST/PUT/PATCH 时使用，可为空）
+    QString url;                     // 请求 URL（可含 {参数名} / {plugin.<键>} 占位符）
+    QMap<QString, QString> headers;  // 请求头（值支持同样的占位符）
+    QString body;                    // 请求体（POST/PUT/PATCH 时使用，可为空；支持占位符）
 
     bool isValid() const { return !url.trimmed().isEmpty(); }
 };
@@ -368,6 +426,8 @@ struct PluginInfo
     //   admin       请求管理员权限（UAC 提权）
     //   system      执行系统级操作（服务、关机、格式化等）
     //   ui:style    修改启动器界面样式（声明 manifest.style 时必须请求）
+    //   ui:page     在「更多」页添加插件自己的页面入口（声明 ui.moreEntries 时必须请求）
+    //   ai:tool     让 AI 助手调用插件提供的工具（声明 aiTools 时必须请求）
     QStringList permissions;    // 请求的能力权限 token 列表
 
     // —— 扩展能力定义（可选）——
@@ -376,6 +436,18 @@ struct PluginInfo
     PluginUi ui;                        // 内嵌界面定义（有则宿主渲染表单+动作，不弹窗）
     PluginStyleContribution style;      // 启动器样式贡献（manifest.style）
     QList<PluginAiTool> aiTools;        // 提供给 AI 助手的工具（manifest.aiTools）
+
+    // —— 插件私有变量（manifest.vars，可选）——
+    // 声明后可在 aiTools[].http 的 url / headers / body 里写 {plugin.<键>}，
+    // 宿主在发请求前替换，模型看不到这些值——本地服务的访问令牌不该进模型上下文。
+    // 值为 "auto" 时由宿主生成并持久化（见 PluginManager::resolvedPluginVars）。
+    //
+    // 保留键（不用声明，写 aiTools 的插件一律可用）：
+    //   token 32 位十六进制随机串，首次用到时生成、持久化在插件设置里
+    //   port  空闲 TCP 端口（首次分配后固定，重启沿用；写具体数字则用它）
+    //   data  插件私有数据目录（<数据目录>/plugin-data/<插件id>，自动创建）
+    //   app   启动器（软件）所在目录
+    QMap<QString, QString> vars;
 
     QString filePath;           // .BlockBox 文件绝对路径
     bool    loaded = false;     // 是否已成功解析（清单缺失/损坏为 false）
@@ -387,6 +459,42 @@ struct PluginInfo
     bool hasAiToolPermission() const
     {
         return permissions.contains(QStringLiteral("ai:tool"));
+    }
+
+    /** 是否声明了 network 权限（使用 http 类型 AI 工具时建议声明） */
+    bool hasNetworkPermission() const
+    {
+        return permissions.contains(QStringLiteral("network"));
+    }
+
+    /** 是否声明了插件私有变量（manifest.vars） */
+    bool hasVars() const { return !vars.isEmpty(); }
+
+    /** 是否声明了 ui:page 权限（未声明时 ui.moreEntries 不会出现在更多页） */
+    bool hasPagePermission() const
+    {
+        return permissions.contains(QStringLiteral("ui:page"));
+    }
+
+    /** 有效（可在更多页展示）的入口数量 */
+    int validMoreEntryCount() const
+    {
+        int count = 0;
+        for (const PluginPageEntry &e : ui.moreEntries) {
+            if (e.isValid())
+                ++count;
+        }
+        return count;
+    }
+
+    /** 按 ID 查找更多页入口，未找到返回无效项 */
+    PluginPageEntry moreEntry(const QString &entryId) const
+    {
+        for (const PluginPageEntry &e : ui.moreEntries) {
+            if (e.id == entryId)
+                return e;
+        }
+        return PluginPageEntry();
     }
 
     /** 有效（可注入/可执行）的 AI 工具数量 */

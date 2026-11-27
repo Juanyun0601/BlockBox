@@ -324,8 +324,6 @@ MainWindow::MainWindow(QWidget *parent)
     // Connect scroll to top and refresh signals
     connect(m_topBar, &TopBar::scrollToTopClicked, this, &MainWindow::onScrollToTop);
     connect(m_topBar, &TopBar::refreshClicked, this, &MainWindow::onRefreshClicked);
-    // 顶栏「文档」：打开软件内置的方块图书馆（QTextBrowser 渲染，不调外部浏览器）
-    connect(m_topBar, &TopBar::docsClicked, this, &MainWindow::showLibraryPage);
     // Connect instance select signal
     connect(m_topBar, &TopBar::instanceSelectClicked, this, &MainWindow::onInstanceSelectClicked);
     // Connect instance settings signal
@@ -1096,7 +1094,7 @@ void MainWindow::onSideBarItemClicked(int parentIndex)
         ensurePageInitialized(PageIndex::SettingsPage);
         animatedSwitchToPageDirectional(PageIndex::SettingsPage, m_lastSidebarIndex, parentIndex);
         onChildNavClicked(2, 0);
-    } else if (parentIndex == 6) { // 社区（方块盒子论坛）
+    } else if (parentIndex == 5) { // 社区（方块盒子论坛）
         m_subNavPanel->hidePanel();
         ensurePageInitialized(PageIndex::CommunityPage);
         animatedSwitchToPageDirectional(PageIndex::CommunityPage, m_lastSidebarIndex, parentIndex);
@@ -1170,15 +1168,7 @@ void MainWindow::onParentNavClicked(int parentIndex)
         m_topBar->setTitle(tr("AI 助手"));
         m_topBar->setAccountCardVisible(true);
         m_topBar->setWindowControlCardVisible(true);
-    } else if (parentIndex == 5) { // 插件
-        m_subNavPanel->showForParent(5, false);
-        m_topBar->setTitle(tr("插件"));
-        ensurePageInitialized(PageIndex::PluginPage);
-        animatedSwitchToPageDirectional(PageIndex::PluginPage, m_lastSidebarIndex, parentIndex);
-        if (m_pluginPage) {
-            m_pluginPage->showOverview();
-        }
-    } else if (parentIndex == 6) { // 社区（方块盒子论坛）
+    } else if (parentIndex == 5) { // 社区（方块盒子论坛）
         m_subNavPanel->hidePanel();
         ensurePageInitialized(PageIndex::CommunityPage);
         animatedSwitchToPageDirectional(PageIndex::CommunityPage, m_lastSidebarIndex, parentIndex);
@@ -1194,7 +1184,7 @@ void MainWindow::onParentNavClicked(int parentIndex)
         }
     } else if (parentIndex == PublishNavIndex) { // 发布中心（资源 / 帖子）
         showPublishPage();
-    } else if (parentIndex == MoreNavIndex) { // 更多（联机大厅 / 皮肤站 / 图书馆 / 任务 / 年报 / 账户 / 引导）
+    } else if (parentIndex == MoreNavIndex) { // 更多（图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 内存优化 / 插件管理 / 新手引导）
         showMorePage();
     } else if (parentIndex == FeedbackNavIndex) { // 反馈（侧边栏底部入口）
         showFeedbackPage();
@@ -1382,27 +1372,6 @@ void MainWindow::onChildNavClicked(int parentIndex, int childIndex)
         // 若当前正处于"修改"进入的安装新实例页，点击其他子项应切回实例管理页
         if (m_stackedWidget->currentIndex() != static_cast<int>(PageIndex::InstanceManagePage))
             animatedSwitchToPage(PageIndex::InstanceManagePage);
-    } else if (parentIndex == 5) { // Plugin child
-        const int pluginCount = PluginManager::instance()->plugins().size();
-        ensurePageInitialized(PageIndex::PluginPage);
-
-        // 0=插件列表总览，1..N=插件详情（无插件时 1=暂无插件占位），N+1（无插件时 +2）=制作，再+1=导入
-        const int makeIdx = pluginCount == 0 ? 2 : pluginCount + 1;
-        const int importIdx = makeIdx + 1;
-
-        if (childIndex == 0) {
-            m_topBar->setTitle(tr("插件"));
-            if (m_pluginPage) m_pluginPage->showOverview();
-        } else if (pluginCount > 0 && childIndex >= 1 && childIndex <= pluginCount) {
-            const int pluginIdx = childIndex - 1;
-            m_topBar->setTitle(tr("插件>%1").arg(
-                PluginManager::instance()->plugins()[pluginIdx].name));
-            if (m_pluginPage) m_pluginPage->showPluginDetail(pluginIdx);
-        } else if (childIndex == makeIdx) {
-            onCreatePluginRequested();
-        } else if (childIndex == importIdx) {
-            onImportPluginRequested();
-        }
     } else if (parentIndex == MoreNavIndex) { // 更多分类（子导航 / 落地页卡片共用）
         openMoreFeature(childIndex);
     }
@@ -1534,13 +1503,9 @@ void MainWindow::onOpenPluginsDirRequested()
 
 void MainWindow::refreshPluginNav()
 {
-    // 重建侧边栏导航结构（插件列表子项动态更新）
+    // 插件已经从侧边栏挪到「更多 > 插件管理」：这里只把侧边栏结构按最新状态重建，
+    // 插件页自己会监听 PluginManager::pluginsChanged 刷新列表
     m_sideBar->refreshNavStructure();
-    // 若插件导航处于展开状态，同步刷新子导航面板
-    const QVector<NavItem> &parents = m_sideBar->parentItems();
-    if (m_subNavPanel->currentParentIndex() == 5 && parents.size() > 5) {
-        m_subNavPanel->showForParent(5, false);
-    }
 }
 
 void MainWindow::onSettingsNavItemClicked(int index)
@@ -3951,6 +3916,87 @@ void MainWindow::handleExternalJoinUrl(const QString &url)
             }
             NotificationManager::showError(this, message);
         });
+}
+
+void MainWindow::handleExternalQuickLaunchFile(const QString &filePath)
+{
+    showFromTray();
+
+    QuickLaunchManager::Target target;
+    QString error;
+    if (!QuickLaunchManager::parseQuickLaunchFile(filePath, &target, &error))
+    {
+        // .blockbox 同时也是整合包的导出格式：内容不是快捷启动载荷时按整合包导入，
+        // 让双击整合包也能直接进导入页，而不是只弹一句「不是有效文件」
+        bool isZip = false;
+        QFile probe(filePath);
+        if (probe.open(QIODevice::ReadOnly))
+        {
+            isZip = probe.read(2) == QByteArrayLiteral("PK");
+            probe.close();
+        }
+        if (isZip)
+        {
+            showModpackImportPage();
+            if (m_modpackImportPage)
+                m_modpackImportPage->loadModpackFile(filePath);
+            return;
+        }
+        NotificationManager::showError(this, error);
+        return;
+    }
+
+    if (!QDir(target.instancePath).exists())
+    {
+        NotificationManager::showError(
+            this, tr("快捷启动文件指向的实例不存在：%1")
+                      .arg(QDir::toNativeSeparators(target.instancePath)));
+        return;
+    }
+
+    // 存档可能已经被删掉或改名：先确认还在，再启动游戏，避免进游戏后空等
+    if (target.kind == QuickLaunchManager::Kind::Save)
+    {
+        const QString savePath = target.instancePath + QStringLiteral("/saves/") + target.saveName;
+        if (!QDir(savePath).exists())
+        {
+            NotificationManager::showError(
+                this, tr("存档「%1」已经不在了，可能被删除或改名了。").arg(target.saveName));
+            return;
+        }
+    }
+
+    if (target.instancePath != m_currentInstancePath)
+    {
+        updateCurrentInstance(target.instancePath);
+        // 换实例带有页面过渡动画：稍等一下再启动，避免启动卡片和切页动画互相抢焦点
+        QTimer::singleShot(150, this, [this, target]() {
+            launchQuickLaunchTarget(target.instancePath, target);
+        });
+        return;
+    }
+
+    launchQuickLaunchTarget(target.instancePath, target);
+}
+
+void MainWindow::launchQuickLaunchTarget(const QString &instancePath,
+                                         const QuickLaunchManager::Target &target)
+{
+    switch (target.kind)
+    {
+    case QuickLaunchManager::Kind::Save:
+        // 与存档卡片上的「快捷启动」一致：启动游戏并直接进入该存档
+        onQuickLaunchSaveClickedFor(instancePath, target.saveName);
+        break;
+    case QuickLaunchManager::Kind::Server:
+        // 与服务器卡片上的「快捷启动并连接」一致：启动游戏并自动进服
+        onQuickLaunchServerClickedFor(instancePath, target.serverAddress, target.serverPort);
+        break;
+    case QuickLaunchManager::Kind::Instance:
+    default:
+        startInstanceLaunch(instancePath);
+        break;
+    }
 }
 
 void MainWindow::onFriendRoomJoinRequested(const ForumLobbyRoom &room)

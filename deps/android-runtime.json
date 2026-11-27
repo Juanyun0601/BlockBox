@@ -1,0 +1,41 @@
+{
+  "_comment": "BlockBox 安卓端运行依赖清单（客户端默认从 https://raw.githubusercontent.com/Juanyun0601/BlockBox/main/deps/android-runtime.json 拉取，所以这份文件必须待在仓库的 deps/ 目录里）。字段说明见同目录 README.md。",
+  "_publishHint": "发布某个运行时：把包传到 GitHub Releases（tag 例：deps-jre21），把下面该项的 available 改成 true、note 删掉，并在 packages 里按架构填 url / size / sha256，例如 \"arm64-v8a\": {\"url\": \"https://github.com/Juanyun0601/BlockBox/releases/download/deps-jre21/jre21-android-arm64-v8a.tar.gz\", \"size\": 0, \"sha256\": \"\"}。改完跑一遍 软件发布/packaging/check_runtime_deps.ps1 自检。",
+  "schema": 1,
+  "updatedAt": "2026-11-27",
+  "dependencies": [
+    {
+      "id": "jre21",
+      "name": "Java 21 运行环境",
+      "kind": "java",
+      "version": "21.0.5",
+      "required": true,
+      "description": "Minecraft 1.20.5 及更高版本需要 Java 21 才能启动。",
+      "available": false,
+      "note": "官方安装包尚未发布：手机端启动 Java 版还需要配套的 JNI 运行环境，准备好后这里会直接出现安装按钮。",
+      "packages": {}
+    },
+    {
+      "id": "jre17",
+      "name": "Java 17 运行环境",
+      "kind": "java",
+      "version": "17.0.13",
+      "required": true,
+      "description": "Minecraft 1.18 至 1.20.4 需要 Java 17。",
+      "available": false,
+      "note": "官方安装包尚未发布：手机端启动 Java 版还需要配套的 JNI 运行环境，准备好后这里会直接出现安装按钮。",
+      "packages": {}
+    },
+    {
+      "id": "jre8",
+      "name": "Java 8 运行环境",
+      "kind": "java",
+      "version": "8.0.432",
+      "required": false,
+      "description": "Minecraft 1.16.5 及更早版本需要 Java 8。",
+      "available": false,
+      "note": "官方安装包尚未发布：手机端启动 Java 版还需要配套的 JNI 运行环境，准备好后这里会直接出现安装按钮。",
+      "packages": {}
+    }
+  ]
+}

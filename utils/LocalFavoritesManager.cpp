@@ -151,13 +151,38 @@ void LocalFavoritesManager::setFavorite(const LocalFavoriteEntry &entry, bool fa
     emit favoritesChanged();
 }
 
+void LocalFavoritesManager::renameFavorite(const QString &instancePath, const QString &resourceType,
+                                           const QString &oldFileName, const QString &newFileName,
+                                           const QString &newFilePath)
+{
+    const QString key = normalizeKey(instancePath, resourceType, oldFileName);
+    const QString normalizedNew = LocalCategoryManager::normalizeFileName(newFileName);
+    if (key.isEmpty() || normalizedNew.isEmpty())
+        return;
+
+    bool changed = false;
+    {
+        QMutexLocker locker(&m_mutex);
+        for (LocalFavoriteEntry &entry : m_favorites)
+        {
+            if (entry.key() != key)
+                continue;
+            entry.fileName = normalizedNew;
+            entry.filePath = QDir::fromNativeSeparators(newFilePath);
+            save();
+            changed = true;
+            break;
+        }
+    }
+    if (changed)
+        emit favoritesChanged();
+}
+
 QVector<LocalFavoriteEntry> LocalFavoritesManager::favorites() const
 {
     QMutexLocker locker(&m_mutex);
     return m_favorites;
-}
-
-int LocalFavoritesManager::count() const
+}int LocalFavoritesManager::count() const
 {
     QMutexLocker locker(&m_mutex);
     return m_favorites.size();

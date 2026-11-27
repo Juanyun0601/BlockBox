@@ -27,6 +27,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": false,
+   "hidden": true,
    "syntax": "/? [页码|命令名]",
    "params": [
     {
@@ -103,6 +104,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": false,
+   "hidden": true,
    "syntax": "/tell <玩家> <消息>",
    "params": [
     {
@@ -127,6 +129,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": false,
+   "hidden": true,
    "syntax": "/w <玩家> <消息>",
    "params": [
     {
@@ -2245,6 +2248,159 @@
     }
    ],
    "description": "为玩家打开代码构建器"
+  },
+  {
+   "name": "rotate",
+   "chinese": [
+    "旋转",
+    "旋转实体"
+   ],
+   "minVersion": "1.19.4",
+   "opLevel": 2,
+   "serverOnly": false,
+   "syntax": "/rotate <实体> <角度>",
+   "params": [
+    {
+     "name": "实体",
+     "type": "entity",
+     "required": true
+    },
+    {
+     "name": "角度",
+     "type": "float",
+     "required": true
+    }
+   ],
+   "description": "旋转指定实体朝向"
+  },
+  {
+   "name": "placefeature",
+   "chinese": [
+    "放置地物"
+   ],
+   "minVersion": "1.19",
+   "opLevel": 2,
+   "serverOnly": false,
+   "syntax": "/place feature <地物> [x y z]",
+   "params": [
+    {
+     "name": "地物",
+     "type": "string",
+     "required": true
+    },
+    {
+     "name": "坐标",
+     "type": "pos",
+     "required": false
+    }
+   ],
+   "description": "在指定位置放置地物"
+  },
+  {
+   "name": "placejigsaw",
+   "chinese": [
+    "放置拼图"
+   ],
+   "minVersion": "1.16",
+   "opLevel": 2,
+   "serverOnly": false,
+   "syntax": "/place jigsaw <结构池> <目标> <最大深度>",
+   "params": [
+    {
+     "name": "结构池",
+     "type": "string",
+     "required": true
+    },
+    {
+     "name": "目标",
+     "type": "string",
+     "required": true
+    },
+    {
+     "name": "最大深度",
+     "type": "int",
+     "required": true
+    }
+   ],
+   "description": "生成拼图结构"
+  },
+  {
+   "name": "placenstructure",
+   "chinese": [
+    "放置结构"
+   ],
+   "minVersion": "1.16",
+   "opLevel": 2,
+   "serverOnly": false,
+   "syntax": "/place structure <结构> [x y z]",
+   "params": [
+    {
+     "name": "结构",
+     "type": "string",
+     "required": true
+    },
+    {
+     "name": "坐标",
+     "type": "pos",
+     "required": false
+    }
+   ],
+   "description": "在指定位置放置结构"
+  },
+  {
+   "name": "placetemplate",
+   "chinese": [
+    "放置模板"
+   ],
+   "minVersion": "1.16",
+   "opLevel": 2,
+   "serverOnly": false,
+   "syntax": "/place template <模板> [x y z] [旋转] [镜像] [完整性] [种子]",
+   "params": [
+    {
+     "name": "模板",
+     "type": "string",
+     "required": true
+    },
+    {
+     "name": "坐标",
+     "type": "pos",
+     "required": false
+    },
+    {
+     "name": "旋转",
+     "type": "enum",
+     "required": false,
+     "candidates": [
+      "none",
+      "clockwise_90",
+      "180",
+      "counterclockwise_90"
+     ]
+    },
+    {
+     "name": "镜像",
+     "type": "enum",
+     "required": false,
+     "candidates": [
+      "none",
+      "left_right",
+      "front_back"
+     ]
+    },
+    {
+     "name": "完整性",
+     "type": "float",
+     "default": 1.0,
+     "required": false
+    },
+    {
+     "name": "种子",
+     "type": "int",
+     "required": false
+    }
+   ],
+   "description": "放置结构模板"
   }
  ],
  "items": [

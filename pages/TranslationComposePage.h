@@ -50,6 +50,23 @@ private:
     void submit();
     void setStatus(const QString &text, bool error = false);
 
+    /** 详细信息编辑框上方的格式栏：撤销重做、加粗斜体下划线删除线、段落样式、列表、链接、清格式 */
+    QWidget *createFormatBar(QWidget *parent);
+    /** 加粗 / 斜体 / 下划线 / 删除线，作用在选区或之后输入的文字上 */
+    void toggleInlineStyle(int kind, bool on);
+    /** 段落样式：0 正文 / 1 小标题 / 2 标题（作用在选区覆盖的整段） */
+    void applyTextStyle(int level);
+    /** 有序 / 无序列表开关（作用在选区覆盖的整段） */
+    void toggleList(bool ordered);
+    void insertLink();
+    void clearFormatting();
+    /** 让格式栏按钮跟着光标处的实际格式走 */
+    void syncFormatBar();
+    /** 换资源 / 重新预填后，把上一份内容留下的「下一段输入格式」清掉 */
+    void resetDetailEditingState();
+    /** 正文默认字号（磅）；标题按它的倍数放大，导出 HTML 里的字号也以它为准 */
+    qreal bodyPointSize() const;
+
     QWidget *m_loginHost = nullptr;
     QWidget *m_mainHost = nullptr;
 
@@ -61,6 +78,16 @@ private:
     QTextEdit *m_detailEdit = nullptr;
     QPushButton *m_submitButton = nullptr;
     QLabel *m_statusLabel = nullptr;
+
+    QComboBox *m_styleCombo = nullptr;
+    QPushButton *m_boldButton = nullptr;
+    QPushButton *m_italicButton = nullptr;
+    QPushButton *m_underlineButton = nullptr;
+    QPushButton *m_strikeButton = nullptr;
+    QPushButton *m_bulletButton = nullptr;
+    QPushButton *m_numberButton = nullptr;
+    QPushButton *m_undoButton = nullptr;
+    QPushButton *m_redoButton = nullptr;
 
     ModInfo m_modInfo;
     QString m_originalSummary;    ///< 详情页当前显示的原文简介

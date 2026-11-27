@@ -38,6 +38,7 @@
 #include "utils/AiProviderPresets.h"
 #include "utils/SettingsManager.h"
 #include "utils/dsh/DshPluginInstaller.h"
+#include "utils/zcode/ZcodePluginInstaller.h"
 #include "utils/UiMetrics.h"
 #include "platform.h"
 
@@ -820,6 +821,86 @@ void SettingsPage::initAiAssistantSettings()
 
     refreshDshPluginCard();
 
+    // ── ZCode 插件（一键把方块盒子的能力接进 ZCode）──
+    QVBoxLayout *zcodeCard = createSettingsCard(layout, tr("ZCode 插件"));
+
+    QWidget *zcodeContent = new QWidget();
+    zcodeContent->setObjectName("providerCardContent");
+    QVBoxLayout *zcodeContentLayout = new QVBoxLayout(zcodeContent);
+    zcodeContentLayout->setContentsMargins(24, 8, 24, 8);
+    zcodeContentLayout->setSpacing(8);
+
+    QLabel *zcodeHint = new QLabel(
+        tr("把方块盒子的本地能力接进 AI 编程助手 ZCode：装好并重启 ZCode 后，就能直接查实例、看模组、读游戏日志、"
+           "分析崩溃、查存档、备份世界、按种子找结构。插件会自动读上面这张卡里的端口和令牌，不用手填。"),
+        zcodeContent);
+    zcodeHint->setObjectName("settingDesc");
+    zcodeHint->setWordWrap(true);
+    zcodeContentLayout->addWidget(zcodeHint);
+
+    m_zcodeStatusLabel = new QLabel(tr("状态：正在检测…"));
+    m_zcodeStatusLabel->setObjectName("settingDesc");
+    m_zcodeStatusLabel->setWordWrap(true);
+    zcodeContentLayout->addWidget(m_zcodeStatusLabel);
+
+    m_zcodeInstallButton = new QPushButton(tr("一键安装"));
+    m_zcodeInstallButton->setCursor(Qt::PointingHandCursor);
+    m_zcodeUninstallButton = new QPushButton(tr("卸载"));
+    m_zcodeUninstallButton->setCursor(Qt::PointingHandCursor);
+    QHBoxLayout *zcodeActionRow = new QHBoxLayout();
+    zcodeActionRow->addWidget(m_zcodeUninstallButton);
+    zcodeActionRow->addStretch();
+    zcodeActionRow->addWidget(m_zcodeInstallButton);
+    zcodeContentLayout->addLayout(zcodeActionRow);
+
+    zcodeCard->addWidget(zcodeContent);
+
+    connect(m_zcodeInstallButton, &QPushButton::clicked, this, [this]() {
+        const ZcodePluginInstaller::Installation installation = ZcodePluginInstaller::detectInstallation();
+        if (installation.pluginsDir.isEmpty())
+        {
+            return;
+        }
+        const QString payloadDir = QDir(Platform::getDataDirectory())
+            .filePath(QStringLiteral("zcode-plugin/") + QString::fromLatin1(ZcodePluginInstaller::kPackageName));
+        QString error;
+        if (!ZcodePluginInstaller::writePayload(payloadDir, &error)
+            || !ZcodePluginInstaller::installInto(installation.pluginsDir, payloadDir, &error))
+        {
+            if (m_zcodeStatusLabel)
+            {
+                m_zcodeStatusLabel->setText(tr("安装失败：%1").arg(error));
+            }
+            return;
+        }
+        refreshZcodePluginCard();
+        if (m_zcodeStatusLabel)
+        {
+            m_zcodeStatusLabel->setText(tr("已装到 %1。重启 ZCode 后生效。")
+                                            .arg(installation.pluginsDir));
+        }
+    });
+    connect(m_zcodeUninstallButton, &QPushButton::clicked, this, [this]() {
+        const ZcodePluginInstaller::Installation installation = ZcodePluginInstaller::detectInstallation();
+        if (installation.pluginsDir.isEmpty())
+        {
+            return;
+        }
+        QString error;
+        if (!ZcodePluginInstaller::uninstallFrom(installation.pluginsDir, &error))
+        {
+            if (m_zcodeStatusLabel)
+            {
+                m_zcodeStatusLabel->setText(tr("卸载失败：%1").arg(error));
+            }
+            return;
+        }
+        refreshZcodePluginCard();
+    });
+    connect(this, &SettingsPage::mcpServerSettingsChanged, this, [this]() { updateZcodePluginStatus(); });
+
+    refreshZcodePluginCard();
+
     // ── 占位伸缩，保持内容顶部对齐 ──
     layout->addStretch();
 }
@@ -972,4 +1053,78 @@ void SettingsPage::updateDshPluginStatus()
         text += tr("还要在上面「本地 MCP 服务器」里勾选「启用本地 MCP 服务器」，DSH 才能拿到方块盒子的工具。");
     }
     m_dshStatusLabel->setText(text);
+}
+
+void SettingsPage::refreshZcodePluginCard()
+{
+    if (!m_zcodeStatusLabel)
+    {
+        return;
+    }
+
+    const ZcodePluginInstaller::Installation installation = ZcodePluginInstaller::detectInstallation();
+    if (!QFileInfo::exists(installation.pluginsDir))
+    {
+        m_zcodeStatusLabel->setText(
+            tr("状态：没找到 ZCode 的数据目录（%1），这台机器可能还没装过 ZCode。")
+                .arg(ZcodePluginInstaller::defaultHome()));
+        if (m_zcodeInstallButton)
+        {
+            m_zcodeInstallButton->setEnabled(false);
+        }
+        if (m_zcodeUninstallButton)
+        {
+            m_zcodeUninstallButton->setEnabled(false);
+        }
+        return;
+    }
+
+    updateZcodePluginStatus();
+}
+
+void SettingsPage::updateZcodePluginStatus()
+{
+    if (!m_zcodeStatusLabel)
+    {
+        return;
+    }
+
+    const ZcodePluginInstaller::Installation installation = ZcodePluginInstaller::detectInstallation();
+    if (!QFileInfo::exists(installation.pluginsDir))
+    {
+        if (m_zcodeInstallButton)
+        {
+            m_zcodeInstallButton->setEnabled(false);
+        }
+        if (m_zcodeUninstallButton)
+        {
+            m_zcodeUninstallButton->setEnabled(false);
+        }
+        return;
+    }
+
+    QString version;
+    const bool installed = ZcodePluginInstaller::isInstalled(installation.pluginsDir, &version);
+    if (m_zcodeInstallButton)
+    {
+        m_zcodeInstallButton->setEnabled(true);
+    }
+    if (m_zcodeUninstallButton)
+    {
+        m_zcodeUninstallButton->setEnabled(installed);
+    }
+
+    SettingsManager *settings = SettingsManager::instance();
+    const bool mcpEnabled = settings->getProperty("mcp/enabled", false).toBool();
+
+    QString text = installed
+        ? tr("状态：已安装（%1）。重启 ZCode 后生效。")
+              .arg(version.isEmpty() ? tr("版本未知") : version)
+        : tr("状态：未安装。");
+    if (!mcpEnabled)
+    {
+        text += QLatin1Char(' ');
+        text += tr("还要在上面「本地 MCP 服务器」里勾选「启用本地 MCP 服务器」，ZCode 才能拿到方块盒子的工具。");
+    }
+    m_zcodeStatusLabel->setText(text);
 }

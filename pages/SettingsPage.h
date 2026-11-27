@@ -141,6 +141,10 @@ private:
     void refreshDshPluginCard();
     /** 按当前选中的 DSH 配置更新「DSH 插件」卡片的状态文字与按钮 */
     void updateDshPluginStatus();
+    /** 探测本机 ZCode 数据目录，刷新「ZCode 插件」卡片的状态 */
+    void refreshZcodePluginCard();
+    /** 更新「ZCode 插件」卡片的状态文字与按钮 */
+    void updateZcodePluginStatus();
     void initAboutSettings();
     void initProjectionEditorSettings();
     /** 移动端「操作设置」：触屏方案、手柄与视角参数 */
@@ -220,6 +224,10 @@ private:
     QLabel          *m_dshStatusLabel = nullptr;
     QPushButton     *m_dshInstallButton = nullptr;
     QPushButton     *m_dshUninstallButton = nullptr;
+    // AI 助手设置页：ZCode 插件一键安装（状态、两个按钮；无下拉，只有一个用户级安装位置）
+    QLabel          *m_zcodeStatusLabel = nullptr;
+    QPushButton     *m_zcodeInstallButton = nullptr;
+    QPushButton     *m_zcodeUninstallButton = nullptr;
 
     // 投影编辑器内置设置控件
     QComboBox       *m_projToolCombo = nullptr;

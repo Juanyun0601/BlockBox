@@ -23,6 +23,7 @@
 
 #include "components/CustomCheckBox.h"
 #include "components/OutlinedLabel.h"
+#include <QSignalBlocker>
 #include "utils/SettingsManager.h"
 #include "utils/GameLauncher.h"
 #include "utils/MemoryAllocator.h"
@@ -297,10 +298,34 @@ void SettingsPage::initGlobalGameSettings()
 
     QHBoxLayout *memorySliderRow = appendSettingRow(memoryCard,
         tr("最大内存"), tr("调整游戏可使用的最大内存。"),
-        tr("为游戏分配更多内存可以提高性能，但不应超过系统可用内存的80%。推荐值为4GB-8GB。"), true);
+        tr("为游戏分配更多内存可以提高性能，但不应超过系统可用内存的80%。推荐值为4GB-8GB。"));
     memorySliderRow->addWidget(memorySlider, 1);
     memorySliderRow->addWidget(memoryLabel);
     memorySliderRow->addWidget(memoryHintLabel);
+
+    // ── 启动前先优化内存：每次点启动先把启动器闲置内存还给系统 ──
+    CustomCheckBox *preLaunchOptimizeCheck = new CustomCheckBox();
+    preLaunchOptimizeCheck->setChecked(m_settings->isOptimizeMemoryBeforeLaunchEnabled());
+    preLaunchOptimizeCheck->setToolTip(
+        tr("打开后每次启动游戏前都会先优化一次内存，游戏能拿到的空闲内存更多"));
+    connect(preLaunchOptimizeCheck, &CustomCheckBox::toggled, [=](bool checked) {
+        SettingsManager::instance()->setOptimizeMemoryBeforeLaunchEnabled(checked);
+    });
+    // 内存优化页上也有同一个开关：那边改了要跟着回填，回填时不要再写回去
+    connect(SettingsManager::instance(), &SettingsManager::optimizeMemoryBeforeLaunchChanged,
+            preLaunchOptimizeCheck, [preLaunchOptimizeCheck](bool enabled) {
+                if (preLaunchOptimizeCheck->isChecked() == enabled)
+                    return;
+                const QSignalBlocker blocker(preLaunchOptimizeCheck);
+                preLaunchOptimizeCheck->setChecked(enabled);
+            });
+
+    QHBoxLayout *preLaunchOptimizeRow = appendSettingRow(memoryCard,
+        tr("启动游戏前先优化内存"),
+        tr("每次启动游戏前先把启动器占用的闲置内存还给系统，给游戏腾出更多空间。"),
+        tr("优化结果（释放了多少内存）会写在启动详情里。想随时手动优化，可以到「更多 → 内存优化」页。"),
+        true);
+    preLaunchOptimizeRow->addWidget(preLaunchOptimizeCheck);
 
     // ── 游戏窗口尺寸 ──
     QVBoxLayout *windowSizeCard = createSettingsCard(layout, tr("游戏窗口尺寸"));

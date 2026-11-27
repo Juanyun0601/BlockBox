@@ -42,10 +42,27 @@ struct CommandInfo
     QString minVersion;    ///< 最低支持版本（如 "1.13"）
     int opLevel = 0;       ///< 所需 OP 等级（0-4）
     bool serverOnly = false; ///< 是否仅服务端可用
+    bool hidden = false;   ///< 是否在候选列表里隐藏（纯别名指令只保留规范写法，避免重复刷屏）
+    QString removedIn;     ///< 在哪个版本被移除（空表示仍然可用，如 "1.13"）
+    QString requiresPlugin; ///< 需要哪个服务器插件才有（空表示原版指令，如 "Essentials"）
     QString syntax;        ///< 语法模板
     QList<ParamInfo> params; ///< 参数列表
     QString description;   ///< 指令描述
 };
+
+/**
+ * @brief 判断指令在当前上下文是否可用
+ * @param cmd      指令信息
+ * @param version  当前游戏版本（空字符串表示未知，此时不做版本过滤）
+ * @param opLevel  当前 OP 等级（0-4）
+ * @param isServer 是否服务端
+ * @return 不可用原因；空字符串表示可用
+ *
+ * 依次检查：是否已被游戏移除 → 版本是否太低 → OP 是否不足 → 是否仅服务端可用
+ * → 是否需要服务器插件。翻译与补全两处共用同一份判断，避免提示不一致。
+ */
+QString commandUnavailableReason(const CommandInfo &cmd, const QString &version,
+                                 int opLevel, bool isServer);
 
 /**
  * @brief 物品中英文映射

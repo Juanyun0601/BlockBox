@@ -511,76 +511,6 @@ void SideBar::buildNavStructure()
         m_parentItems.append(instanceManage);
     }
 
-    // 插件 - 有子项（含分组）：插件列表动态读取 + 底部工具
-    {
-        NavItem plugin;
-        plugin.text = tr("插件");
-        plugin.iconPath = ":/Images/Icons/nav_plugin.svg";
-        plugin.isParentItem = true;
-
-        // 插件列表分组（动态读取已安装插件）
-        NavItem listSection;
-        listSection.text = tr("插件列表");
-        listSection.isSectionLabel = true;
-
-        // 插件列表总览入口（点击回到插件总览页）
-        NavItem overviewItem;
-        overviewItem.text = tr("插件列表");
-        overviewItem.iconPath = ":/Images/Icons/nav_plugin.svg";
-        overviewItem.data = QStringLiteral("__overview__");
-        listSection.children.append(overviewItem);
-
-        const QList<PluginInfo> plugins = PluginManager::instance()->plugins();
-        if (plugins.isEmpty())
-        {
-            NavItem empty;
-            empty.text = tr("暂无插件");
-            empty.iconPath = ":/Images/Icons/plugin.svg";
-            listSection.children.append(empty);
-        }
-        else
-        {
-            for (const PluginInfo &p : plugins)
-            {
-                NavItem item;
-                item.text = p.name;
-                const QString iconFile = PluginManager::instance()->pluginIconPath(p);
-                if (!iconFile.isEmpty())
-                {
-                    item.iconPath = iconFile;
-                    item.iconIsSvg = false;
-                }
-                else
-                {
-                    item.iconPath = ":/Images/Icons/plugin.svg";
-                }
-                item.data = p.id;
-                listSection.children.append(item);
-            }
-        }
-
-        plugin.children.append(listSection);
-
-        // 工具分组（位于子导航底部）
-        NavItem toolSection;
-        toolSection.text = tr("工具");
-        toolSection.isSectionLabel = true;
-
-        NavItem createItem;
-        createItem.text = tr("制作插件");
-        createItem.iconPath = ":/Images/Icons/plugin_create.svg";
-        toolSection.children.append(createItem);
-
-        NavItem importItem;
-        importItem.text = tr("导入插件");
-        importItem.iconPath = ":/Images/Icons/nav_import.svg";
-        toolSection.children.append(importItem);
-
-        plugin.children.append(toolSection);
-
-        m_parentItems.append(plugin);
-    }
-
     // 社区 - 方块盒子论坛首页，无子项（常驻显示）；联机大厅是社区页内的子页面
     {
         NavItem community;
@@ -599,65 +529,80 @@ void SideBar::buildNavStructure()
         m_parentItems.append(publish);
     }
 
-    // 更多 - 一级入口放不下的分类都收在这里（社区与联机 / 我的与帮助）
+    // 更多 - 一级入口放不下的分类都收在这里（顺序与 MorePage 的卡片一致）
     {
         NavItem more;
         more.text = tr("更多");
         more.iconPath = ":/Images/Icons/grid.svg";
         more.isParentItem = true;
 
-        // 社区与联机分组
-        NavItem communitySection;
-        communitySection.text = tr("社区与联机");
-        communitySection.isSectionLabel = true;
-
-        NavItem lobby;
-        lobby.text = tr("联机大厅");
-        lobby.iconPath = ":/Images/Icons/nav_multiplayer.svg";
-        communitySection.children.append(lobby);
-
-        NavItem skinStation;
-        skinStation.text = tr("皮肤站");
-        skinStation.iconPath = ":/Images/Icons/nav_skins.svg";
-        communitySection.children.append(skinStation);
-
         NavItem library;
         library.text = tr("方块图书馆");
         library.iconPath = ":/Images/Icons/nav_library.svg";
-        communitySection.children.append(library);
+        more.children.append(library);
 
-        more.children.append(communitySection);
+        NavItem skinStation;
+        skinStation.text = tr("方块皮肤站");
+        skinStation.iconPath = ":/Images/Icons/nav_skins.svg";
+        more.children.append(skinStation);
 
-        // 我的与帮助分组
-        NavItem mineSection;
-        mineSection.text = tr("我的与帮助");
-        mineSection.isSectionLabel = true;
+        NavItem seedMap;
+        seedMap.text = tr("种子地图");
+        seedMap.iconPath = ":/Images/Icons/map.svg";
+        more.children.append(seedMap);
 
-        NavItem taskCenter;
-        taskCenter.text = tr("任务中心");
-        taskCenter.iconPath = ":/Images/Icons/download.svg";
-        mineSection.children.append(taskCenter);
+        NavItem projectionEditor;
+        projectionEditor.text = tr("投影编辑器");
+        projectionEditor.iconPath = ":/Images/Icons/brush.svg";
+        more.children.append(projectionEditor);
 
-        NavItem annualReport;
-        annualReport.text = tr("年度报告");
-        annualReport.iconPath = ":/Images/Icons/sparkles.svg";
-        mineSection.children.append(annualReport);
+        NavItem fileTransfer;
+        fileTransfer.text = tr("文件传输");
+        fileTransfer.iconPath = ":/Images/Icons/share.svg";
+        more.children.append(fileTransfer);
 
-        NavItem account;
-        account.text = tr("账户管理");
-        account.iconPath = ":/Images/Icons/smile.svg";
-        mineSection.children.append(account);
+        NavItem memoryOptimize;
+        memoryOptimize.text = tr("内存优化");
+        memoryOptimize.iconPath = ":/Images/Icons/memory.svg";
+        more.children.append(memoryOptimize);
+
+        NavItem pluginManage;
+        pluginManage.text = tr("插件管理");
+        pluginManage.iconPath = ":/Images/Icons/nav_plugin.svg";
+        more.children.append(pluginManage);
 
         NavItem onboarding;
         onboarding.text = tr("新手引导");
         onboarding.iconPath = ":/Images/Icons/tip.svg";
-        mineSection.children.append(onboarding);
+        more.children.append(onboarding);
 
-        more.children.append(mineSection);
+        // 插件提供的入口（manifest.ui.moreEntries，需 ui:page 权限）：
+        // 追加在内置八项之后，顺序与更多页「插件入口」卡片一致
+        PluginManager *pm = PluginManager::instance();
+        const QList<PluginPageEntry> pluginEntries = pm->enabledMoreEntries();
+        for (const PluginPageEntry &entry : pluginEntries)
+        {
+            const PluginInfo info = pm->pluginById(entry.pluginId);
+            NavItem pluginEntry;
+            pluginEntry.text = entry.title;
+            const QString iconPath = pm->pluginEntryIconPath(info, entry);
+            if (iconPath.isEmpty())
+            {
+                pluginEntry.iconPath = ":/Images/Icons/nav_plugin.svg";
+            }
+            else
+            {
+                pluginEntry.iconPath = iconPath;
+                // PNG 图标不染色；SVG 仍按主题色渲染
+                pluginEntry.iconIsSvg = iconPath.endsWith(QStringLiteral(".svg"),
+                                                          Qt::CaseInsensitive);
+            }
+            pluginEntry.data = QStringLiteral("plugin:%1:%2").arg(entry.pluginId, entry.id);
+            more.children.append(pluginEntry);
+        }
 
         m_parentItems.append(more);
     }
-
     // 反馈 - 侧边栏底部的反馈列表入口，无子项
     {
         NavItem feedback;
@@ -778,7 +723,9 @@ void SideBar::refreshNavStructure()
     buildNavStructure();
     renderParentItems();
 
-    if (savedIndex >= 0 && savedIndex < m_parentButtons.size())
+    // 按导航数据的索引恢复选中：隐藏项（首页/资源/设置被设置页隐藏、实例管理）
+    // 仍占一个索引，所以不能拿按钮个数当上界
+    if (savedIndex >= 0 && savedIndex < m_parentItems.size())
     {
         m_selectedParentIndex = savedIndex;
         for (QPushButton *button : m_parentButtons)

@@ -1,0 +1,15 @@
+{
+  "name": "blockbox-bridge",
+  "plugins": [
+    {
+      "name": "zcode-blockbox-plugin",
+      "source": "filesystem",
+      "version": "0.1.0",
+      "description": "Bridge the local BlockBox launcher MCP server into ZCode: instances, mods, logs, crash reports, saves, servers, backups and game launching.",
+      "displayName": "BlockBox Bridge",
+      "displayName_i18n": { "zh-CN": "方块盒子桥接" },
+      "description_i18n": { "zh-CN": "把本机方块盒子启动器的本地 MCP 服务器接进 ZCode：查实例、扫模组、读日志、分析崩溃、查存档、备份世界、探服务器、启动游戏，与方块盒子 AI 助手同一套能力。" },
+      "category": "developer-tools"
+    }
+  ]
+}

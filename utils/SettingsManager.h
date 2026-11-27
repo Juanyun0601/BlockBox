@@ -239,6 +239,18 @@ public:
     void setMinMemory(int minMemoryMb);
     MemoryAllocationMode getMemoryAllocationMode() const;
     void setMemoryAllocationMode(MemoryAllocationMode mode);
+
+    /**
+     * @brief 是否在启动游戏前先优化内存
+     * @return 开启时每次启动都会先把启动器占用的闲置内存还给系统（默认关闭）
+     */
+    bool isOptimizeMemoryBeforeLaunchEnabled() const;
+
+    /**
+     * @brief 开启或关闭「启动游戏前先优化内存」
+     * @param enabled 是否开启
+     */
+    void setOptimizeMemoryBeforeLaunchEnabled(bool enabled);
     
     void initDefaultInstanceFolders();
 
@@ -372,6 +384,8 @@ signals:
     void experimentalMap3dChanged(bool enabled);
     /** 论坛地址被修改 */
     void forumBaseUrlChanged(const QString &url);
+    /** 「启动游戏前先优化内存」开关状态变化（设置页与内存优化页两处控件靠它同步） */
+    void optimizeMemoryBeforeLaunchChanged(bool enabled);
 
 private:
     bool saveAccountsToSettings(const QList<AccountInfo>& accounts);

@@ -1,0 +1,43 @@
+{
+  "name": "zcode-blockbox-plugin",
+  "version": "0.1.0",
+  "description": "Bridge the local BlockBox launcher MCP server into ZCode: instances, mods, logs, crash reports, saves, servers, backups and game launching.",
+  "description_i18n": {
+    "zh-CN": "把本机方块盒子启动器的本地 MCP 服务器接进 ZCode：查实例、扫模组、读日志、分析崩溃、查存档、备份世界、探服务器、启动游戏，与方块盒子 AI 助手同一套能力。"
+  },
+  "author": {
+    "name": "BlockBox"
+  },
+  "license": "MIT",
+  "skills": "./skills",
+  "mcpServers": {
+    "blockbox": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${ZCODE_PLUGIN_ROOT}/dist/mcp/server.mjs"],
+      "cwd": "${ZCODE_PROJECT_DIR}",
+      "env": {
+        "BLOCKBOX_MCP_PORT": "${user_config.port}",
+        "BLOCKBOX_MCP_TOKEN": "${user_config.token}",
+        "BLOCKBOX_POLL_MS": "${user_config.poll_ms}"
+      }
+    }
+  },
+  "userConfig": {
+    "port": {
+      "type": "string",
+      "default": "",
+      "description": "Override the BlockBox MCP port. Leave empty to auto-discover from BlockBox settings (default 17890)."
+    },
+    "token": {
+      "type": "string",
+      "default": "",
+      "description": "Override the BlockBox MCP access token. Leave empty to auto-discover from BlockBox settings (Windows registry)."
+    },
+    "poll_ms": {
+      "type": "string",
+      "default": "20000",
+      "description": "Recheck interval in milliseconds (minimum 5000)."
+    }
+  }
+}

@@ -6,6 +6,7 @@
  */
 #include "InstanceResourcesPage.h"
 #include "ResourcesPage.h"
+#include "components/AppInputDialog.h"
 #include "components/BlurLoadingOverlay.h"
 #include "components/LocalCategoryDialog.h"
 #include "components/FavoriteFolderDialog.h"
@@ -14,6 +15,7 @@
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
 #include "utils/LocalFavoritesManager.h"
+#include "utils/QuickLaunchManager.h"
 #include "utils/Schematic/SchematicCoverRenderer.h"
 #include "utils/mod/ModNameFetcher.h"
 #include "utils/mod/ModScanner.h"
@@ -1987,14 +1989,44 @@ void InstanceResourcesPage::onModContextMenu(const QPoint &pos, int idx)
     }
 
     QMenu menu(this);
-    QAction *toggleAction = menu.addAction(info.enabled ? tr("禁用模组") : tr("启用模组"));
+
+    const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+    auto icon = [&](const QString &path, const QColor &color = QColor()) {
+        return IconHelper::loadColoredIcon(path, color.isValid() ? color : themeColor, 16);
+    };
+
+    QAction *toggleAction = menu.addAction(icon(info.enabled ? ":/Images/Icons/toggle_off.svg"
+                                                             : ":/Images/Icons/toggle_on.svg"),
+                                           info.enabled ? tr("禁用模组") : tr("启用模组"));
 
     // 收藏 / 取消收藏（本地收藏，账户页「我的收藏 → 本地收藏」可见）
     const bool fav = LocalFavoritesManager::instance()->isFavorite(
         m_instancePath, subDirName(), info.fileName);
-    QAction *favAction = menu.addAction(fav ? tr("取消收藏") : tr("收藏"));
+    QAction *favAction = menu.addAction(icon(":/Images/Icons/star.svg"),
+                                       fav ? tr("取消收藏") : tr("收藏"));
 
     menu.addSeparator();
+
+    // ── 打开位置 ──
+    QMenu *openMenu = menu.addMenu(icon(":/Images/Icons/folder.svg"), tr("打开位置"));
+    QAction *openFolderAction = openMenu->addAction(tr("模组文件所在位置"));
+    QAction *openModsDirAction = nullptr;
+    {
+        const QString modsDir = QDir(m_instancePath).filePath(QStringLiteral("mods"));
+        if (QDir(modsDir).exists()
+            && QFileInfo(info.filePath).absolutePath() != QDir(modsDir).absolutePath())
+        {
+            openModsDirAction = openMenu->addAction(tr("实例模组文件夹"));
+        }
+    }
+
+    // ── 复制 ──
+    QMenu *copyMenu = menu.addMenu(icon(":/Images/Icons/copy.svg"), tr("复制"));
+    QAction *copyNameAction = copyMenu->addAction(tr("模组文件名"));
+    QAction *copyPathAction = copyMenu->addAction(tr("文件完整路径"));
+
+    QAction *renameAction = menu.addAction(icon(":/Images/Icons/modify.svg"), tr("重命名…"));
+    renameAction->setShortcut(QKeySequence(Qt::Key_F2));
 
     // ── 设置分类子菜单 ──
     QMenu *categoryMenu = menu.addMenu(tr("设置分类"));
@@ -2039,11 +2071,12 @@ void InstanceResourcesPage::onModContextMenu(const QPoint &pos, int idx)
             });
     }
 
-    QAction *detailAction = menu.addAction(tr("查看详情"));
-    QAction *openFolderAction = menu.addAction(tr("打开文件位置"));
-    QAction *copyPathAction = menu.addAction(tr("复制文件路径"));
     menu.addSeparator();
-    QAction *deleteAction = menu.addAction(tr("删除模组"));
+    QAction *detailAction = menu.addAction(icon(":/Images/Icons/list.svg"), tr("查看详情"));
+    menu.addSeparator();
+    QAction *deleteAction = menu.addAction(icon(":/Images/Icons/delete.svg", QColor("#F44336")),
+                                           tr("删除模组"));
+    deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
 
     QAction *chosen = menu.exec(card->mapToGlobal(pos));
     if (chosen == toggleAction)
@@ -2086,9 +2119,73 @@ void InstanceResourcesPage::onModContextMenu(const QPoint &pos, int idx)
         QFileInfo fi(info.filePath);
         QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
     }
+    else if (chosen == openModsDirAction)
+    {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(
+            QDir(m_instancePath).filePath(QStringLiteral("mods"))));
+    }
+    else if (chosen == copyNameAction)
+    {
+        QApplication::clipboard()->setText(QFileInfo(info.filePath).fileName());
+    }
     else if (chosen == copyPathAction)
     {
-        QApplication::clipboard()->setText(info.filePath);
+        QApplication::clipboard()->setText(QDir::toNativeSeparators(info.filePath));
+    }
+    else if (chosen == renameAction)
+    {
+        // 禁用状态的文件名带 .disabled，改名时保留后缀，避免顺手把模组启用了
+        const QString filePath = info.filePath;
+        const bool disabled = filePath.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive);
+        const QString realPath = disabled ? filePath.left(filePath.size() - 9) : filePath;
+        const QFileInfo realInfo(realPath);
+        const QString oldBase = realInfo.completeBaseName();
+
+        bool ok = false;
+        const QString newBase = AppInputDialog::getText(
+            this, tr("重命名模组"), tr("新的文件名（不含扩展名）"), QLineEdit::Normal, oldBase, &ok).trimmed();
+        if (!ok || newBase.isEmpty() || newBase == oldBase)
+            return;
+
+        static const QString invalidChars = QStringLiteral("\\/:*?\"<>|");
+        for (const QChar ch : newBase)
+        {
+            if (invalidChars.contains(ch))
+            {
+                AppMessageBox::warning(this, tr("重命名模组"),
+                                       tr("文件名不能包含 \\ / : * ? \" < > | 这些字符。"));
+                return;
+            }
+        }
+
+        const QString suffix = realInfo.suffix();
+        const QString newName = newBase + (suffix.isEmpty() ? QString()
+                                                            : QStringLiteral(".") + suffix)
+                                + (disabled ? QStringLiteral(".disabled") : QString());
+        const QString newPath = realInfo.absolutePath() + QStringLiteral("/") + newName;
+        if (QFileInfo::exists(newPath))
+        {
+            AppMessageBox::warning(this, tr("重命名模组"),
+                                   tr("同一目录下已经有文件「%1」了。").arg(newName));
+            return;
+        }
+        if (!QFile::rename(filePath, newPath))
+        {
+            AppMessageBox::warning(this, tr("重命名模组"),
+                                   tr("重命名失败，文件可能正被游戏或其它程序占用。"));
+            return;
+        }
+
+        const QString oldName = QFileInfo(filePath).fileName();
+        const QString catId = m_categoryManager->categoryOf(oldName);
+        if (!catId.isEmpty())
+        {
+            m_categoryManager->assignCategory(oldName, QString());
+            m_categoryManager->assignCategory(newName, catId);
+        }
+        LocalFavoritesManager::instance()->renameFavorite(
+            m_instancePath, QStringLiteral("mods"), oldName, newName, newPath);
+        refreshList();
     }
     else if (chosen == deleteAction)
     {
@@ -2131,10 +2228,43 @@ void InstanceResourcesPage::showFileContextMenu(const QPoint &pos, int idx)
 
     QMenu menu(this);
 
+    const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+    auto icon = [&](const QString &path, const QColor &color = QColor()) {
+        return IconHelper::loadColoredIcon(path, color.isValid() ? color : themeColor, 16);
+    };
+
+    // 存档支持直接从菜单快捷启动，不用先去找卡片上的按钮；
+    // 也可以把这张存档做成桌面 .blockbox 文件，双击就启动游戏并进存档
+    QAction *quickLaunchAction = nullptr;
+    QAction *desktopShortcutAction = nullptr;
+    if (m_currentType == TypeSave)
+    {
+        quickLaunchAction = menu.addAction(icon(":/Images/Icons/quick_launch.svg"), tr("快捷启动"));
+        desktopShortcutAction = menu.addAction(icon(":/Images/Icons/export.svg"),
+                                               tr("发送快捷启动到桌面"));
+    }
+    if (quickLaunchAction)
+        menu.addSeparator();
+
     // 收藏 / 取消收藏（本地收藏，账户页「我的收藏 → 本地收藏」可见）
     const bool fav = LocalFavoritesManager::instance()->isFavorite(
         m_instancePath, subDirName(), entry.fileName);
-    QAction *favAction = menu.addAction(fav ? tr("取消收藏") : tr("收藏"));
+    QAction *favAction = menu.addAction(icon(":/Images/Icons/star.svg"),
+                                       fav ? tr("取消收藏") : tr("收藏"));
+    menu.addSeparator();
+
+    // ── 打开位置 ──
+    QMenu *openMenu = menu.addMenu(icon(":/Images/Icons/folder.svg"), tr("打开位置"));
+    QAction *openFolderAction = openMenu->addAction(
+        entry.isDir ? tr("打开此文件夹") : tr("文件所在位置"));
+
+    // ── 复制 ──
+    QMenu *copyMenu = menu.addMenu(icon(":/Images/Icons/copy.svg"), tr("复制"));
+    QAction *copyNameAction = copyMenu->addAction(entry.isDir ? tr("文件夹名称") : tr("文件名"));
+    QAction *copyPathAction = copyMenu->addAction(tr("完整路径"));
+
+    QAction *renameAction = menu.addAction(icon(":/Images/Icons/modify.svg"), tr("重命名…"));
+    renameAction->setShortcut(QKeySequence(Qt::Key_F2));
 
     // ── 设置分类子菜单 ──
     QMenu *categoryMenu = menu.addMenu(tr("设置分类"));
@@ -2179,13 +2309,35 @@ void InstanceResourcesPage::showFileContextMenu(const QPoint &pos, int idx)
             });
     }
 
-    QAction *openFolderAction = menu.addAction(tr("打开文件位置"));
-    QAction *copyPathAction = menu.addAction(tr("复制文件路径"));
     menu.addSeparator();
-    QAction *deleteAction = menu.addAction(tr("删除%1").arg(typeDisplayName()));
+    QAction *deleteAction = menu.addAction(icon(":/Images/Icons/delete.svg", QColor("#F44336")),
+                                           tr("删除%1").arg(typeDisplayName()));
+    deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
 
     QAction *chosen = menu.exec(card->mapToGlobal(pos));
-    if (chosen == favAction)
+    // 菜单被 Esc/点空白关掉时 exec 返回空：不能拿空指针去和未创建的动作比较
+    if (!chosen)
+        return;
+    if (quickLaunchAction && chosen == quickLaunchAction)
+    {
+        emit quickLaunchSaveRequested(entry.fileName);
+    }
+    else if (desktopShortcutAction && chosen == desktopShortcutAction)
+    {
+        QString message;
+        if (QuickLaunchManager::createSaveShortcut(m_instancePath, entry.fileName, &message))
+        {
+            AppMessageBox::information(
+                this, tr("已发送到桌面"),
+                tr("桌面已生成「%1」快捷启动文件，双击它就会启动游戏并直接进入这个存档。")
+                    .arg(entry.fileName));
+        }
+        else
+        {
+            AppMessageBox::warning(this, tr("发送失败"), message);
+        }
+    }
+    else if (chosen == favAction)
     {
         toggleFileFavorite(entry.filePath, entry.fileName, entry.fileSize);
     }
@@ -2195,9 +2347,79 @@ void InstanceResourcesPage::showFileContextMenu(const QPoint &pos, int idx)
         QString dirPath = fi.isDir() ? entry.filePath : fi.absolutePath();
         QDesktopServices::openUrl(QUrl::fromLocalFile(dirPath));
     }
+    else if (chosen == copyNameAction)
+    {
+        QApplication::clipboard()->setText(entry.fileName);
+    }
     else if (chosen == copyPathAction)
     {
-        QApplication::clipboard()->setText(entry.filePath);
+        QApplication::clipboard()->setText(QDir::toNativeSeparators(entry.filePath));
+    }
+    else if (chosen == renameAction)
+    {
+        // 禁用文件（*.disabled）改名时保留后缀；存档是文件夹，直接改文件夹名
+        const bool disabled = entry.fileName.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive);
+        const QString realName = disabled ? entry.fileName.left(entry.fileName.size() - 9)
+                                          : entry.fileName;
+        const QFileInfo realInfo(QFileInfo(entry.filePath).absolutePath() + QStringLiteral("/") + realName);
+
+        const QString oldBase = entry.isDir ? realName : realInfo.completeBaseName();
+        bool ok = false;
+        const QString newBase = AppInputDialog::getText(
+            this, tr("重命名%1").arg(typeDisplayName()),
+            entry.isDir ? tr("新的文件夹名") : tr("新的文件名（不含扩展名）"),
+            QLineEdit::Normal, oldBase, &ok).trimmed();
+        if (!ok || newBase.isEmpty() || newBase == oldBase)
+            return;
+
+        static const QString invalidChars = QStringLiteral("\\/:*?\"<>|");
+        for (const QChar ch : newBase)
+        {
+            if (invalidChars.contains(ch))
+            {
+                AppMessageBox::warning(this, tr("重命名%1").arg(typeDisplayName()),
+                                       tr("名称不能包含 \\ / : * ? \" < > | 这些字符。"));
+                return;
+            }
+        }
+
+        QString newName;
+        if (entry.isDir)
+        {
+            newName = newBase;
+        }
+        else
+        {
+            const QString suffix = realInfo.suffix();
+            newName = newBase + (suffix.isEmpty() ? QString() : QStringLiteral(".") + suffix)
+                      + (disabled ? QStringLiteral(".disabled") : QString());
+        }
+        const QString newPath = realInfo.absolutePath() + QStringLiteral("/") + newName;
+        if (QFileInfo::exists(newPath))
+        {
+            AppMessageBox::warning(this, tr("重命名%1").arg(typeDisplayName()),
+                                   tr("同一目录下已经有「%1」了。").arg(newName));
+            return;
+        }
+        const bool renamed = entry.isDir ? QDir().rename(entry.filePath, newPath)
+                                         : QFile::rename(entry.filePath, newPath);
+        if (!renamed)
+        {
+            AppMessageBox::warning(this, tr("重命名%1").arg(typeDisplayName()),
+                                   tr("重命名失败，文件可能正被游戏或其它程序占用。"));
+            return;
+        }
+
+        // 分类和收藏跟着改名走
+        const QString catId = m_categoryManager->categoryOf(entry.fileName);
+        if (!catId.isEmpty())
+        {
+            m_categoryManager->assignCategory(entry.fileName, QString());
+            m_categoryManager->assignCategory(newName, catId);
+        }
+        LocalFavoritesManager::instance()->renameFavorite(
+            m_instancePath, subDirName(), entry.fileName, newName, newPath);
+        refreshList();
     }
     else if (chosen == deleteAction)
     {

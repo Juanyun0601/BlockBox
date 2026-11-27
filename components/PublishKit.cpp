@@ -8,6 +8,7 @@
 #include "PublishKit.h"
 
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLinearGradient>
@@ -169,10 +170,23 @@ QPixmap makeGradientIconPixmap(const QColor &c1, const QColor &c2,
     p.setBrush(grad);
     p.drawRoundedRect(QRectF(0, 0, size, size), radius, radius);
 
-    // 白色图标居中
+    // 白色图标居中。内置图标是 SVG（按主题色/白色重新渲染），
+    // 插件图标多为 PNG：按原图等比缩放后居中，不做染色
     const int iconSize = qRound(size * 0.5);
-    const QIcon icon = IconHelper::loadColoredIcon(iconPath, Qt::white, iconSize);
-    const QPixmap iconPix = icon.pixmap(iconSize, iconSize);
+    const bool rasterIcon = !iconPath.isEmpty()
+        && QFileInfo(iconPath).suffix().compare(QStringLiteral("svg"), Qt::CaseInsensitive) != 0;
+    QPixmap iconPix;
+    if (rasterIcon)
+    {
+        const QPixmap src(iconPath);
+        if (!src.isNull())
+            iconPix = src.scaled(iconSize, iconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    else
+    {
+        const QIcon icon = IconHelper::loadColoredIcon(iconPath, Qt::white, iconSize);
+        iconPix = icon.pixmap(iconSize, iconSize);
+    }
     if (!iconPix.isNull())
     {
         const int x = (size - iconPix.width()) / 2;

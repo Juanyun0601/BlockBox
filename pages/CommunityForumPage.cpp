@@ -914,13 +914,9 @@ void CommunityForumPage::showLobbyPage()
         m_lobbyPage->refresh();
 }
 
-void CommunityForumPage::openLobby()
-{
-    showLobbyPage();
-}
-
 void CommunityForumPage::hideLobbyPage()
-{    if (!m_lobbyOverlay)
+{
+    if (!m_lobbyOverlay)
         return;
 
     // 子页面里还开着房间详情时一起收起来，下次进大厅不会停在旧详情上

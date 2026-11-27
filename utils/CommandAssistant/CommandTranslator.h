@@ -165,14 +165,4 @@ private:
      * @return 转换结果（无法识别时 success=false）
      */
     TranslateResult naturalLanguageFallback(const QString &input, const CommandContext &ctx) const;
-
-    /**
-     * @brief 版本比较
-     * @param a 版本字符串（如 "1.12.2"）
-     * @param b 版本字符串（如 "1.13"）
-     * @return -1（a<b）/ 0（a==b）/ 1（a>b）
-     *
-     * 按 '.' 分段，每段转 int 比较，短的用 0 补齐。
-     */
-    static int compareVersions(const QString &a, const QString &b);
 };

@@ -19,6 +19,7 @@
 
 #include "utils/DownloadTaskManager.h"
 #include "utils/GameLauncher.h"
+#include "utils/QuickLaunchManager.h"
 #include "utils/content/ContentData.h"
 #include "utils/FavoritesManager.h"
 #include "utils/ForumLobbyService.h"
@@ -95,6 +96,10 @@ class PublishResourcePage;
 class PublishPlatformPage;
 class PublishBoardPage;
 class MorePage;
+class SeedMapPage;
+class ProjectionEditPage;
+class LanTransferPage;
+class MemoryOptimizePage;
 class AnnualReportPage;
 class QrScanPage;
 class OnboardingWizard;
@@ -186,14 +191,22 @@ enum class PageIndex {
     QrScanPage = 50,
     /** 方块图书馆整页（顶栏「文档」进入：使用教程 / 插件开发 / 开放平台 API / MCP，软件内阅读） */
     LibraryPageIndex = 51,
-    /** 更多功能页（侧边栏「更多」分类的落地页：联机大厅 / 皮肤站 / 图书馆 / 任务 / 年报 / 账户 / 引导） */
-    MorePageIndex = 52
+    /** 更多功能页（侧边栏「更多」分类的落地页：图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 插件管理 / 新手引导） */
+    MorePageIndex = 52,
+    /** 种子地图页（「更多>种子地图」：输入种子即看群系地形，不依赖已有存档） */
+    SeedMapPage = 53,
+    /** 投影编辑器整页（「更多>投影编辑器」：选好投影文件后直接进编辑页） */
+    ProjectionEditPageIndex = 54,
+    /** 文件传输整页（「更多>文件传输」：局域网直传 / 远程组网互传，不依赖实例） */
+    LanTransferPageIndex = 55,
+    /** 内存优化整页（「更多>内存优化」：内存概况 + 一键把闲置内存还给系统） */
+    MemoryOptimizePageIndex = 56
 };
 
-/** 侧边栏导航索引（SideBar::buildNavStructure 的顺序）：0首页 1资源 2设置 3AI助手 4实例管理(隐藏) 5插件 6社区 7发布 8更多 9反馈 */
-constexpr int PublishNavIndex = 7;
-constexpr int MoreNavIndex = 8;
-constexpr int FeedbackNavIndex = 9;
+/** 侧边栏导航索引（SideBar::buildNavStructure 的顺序）：0首页 1资源 2设置 3AI助手 4实例管理(隐藏) 5社区 6发布 7更多 8反馈 */
+constexpr int PublishNavIndex = 6;
+constexpr int MoreNavIndex = 7;
+constexpr int FeedbackNavIndex = 8;
 
 class MainWindow : public QMainWindow
 {
@@ -239,6 +252,15 @@ public:
      *        主程序在窗口显示后、或已运行实例收到转发时调用。
      */
     void handleExternalJoinUrl(const QString &url);
+
+    /**
+     * @brief 处理双击桌面 .blockbox 快捷启动文件（也可能是别的程序转发过来的路径）
+     *
+     * 文件里记录的目标有三种：整个实例、某个存档、某台服务器。这里按目标切到对应
+     * 实例并直接启动游戏（进存档 / 连服务器），不再要求用户先打开软件点一遍。
+     * 如果文件其实是整合包（.blockbox 也是导出格式），自动转到整合包导入页。
+     */
+    void handleExternalQuickLaunchFile(const QString &filePath);
 
     /**
      * @brief 安卓系统返回键分级处理：应用级事件过滤器拦截 Key_Back 后调用。
@@ -340,6 +362,9 @@ private slots:
     /// 指定实例一键进服（实例助手「开服」页用）：带 --server/--port 启动
     void onQuickLaunchServerClickedFor(const QString &instancePath, const QString &address,
                                        quint16 port);
+    /** 执行 .blockbox 快捷启动文件记录的目标（实例 / 存档 / 服务器） */
+    void launchQuickLaunchTarget(const QString &instancePath,
+                                 const QuickLaunchManager::Target &target);
     /** 联机大厅 / 好友房间「一键加入」：按房间要求挑最合适的实例，缺东西时先问用户再补装 */
     void onLobbyJoinRequested(const ForumLobbyRoom &room, const QString &address, quint16 port);
     /** 开始「正在游玩」上报：立刻报一次，之后每 40 秒续一次（游戏已在运行时调用） */
@@ -545,6 +570,18 @@ private:
     PublishBoardPage *m_publishBoardPage = nullptr;
     /** 更多功能页（侧边栏「更多」类别的落地页，按需创建后常驻） */
     MorePage *m_morePage = nullptr;
+    /** 更多页插件入口是否已同步过（首次进入更多页时扫描一次插件目录） */
+    bool m_moreEntriesLoaded = false;
+    /** 更多页插件入口签名（插件ID|入口ID|标题），插件变化时才重建侧边栏与卡片 */
+    QString m_moreEntrySignature;
+    /** 种子地图页（「更多>种子地图」，按需创建后常驻） */
+    SeedMapPage *m_seedMapPage = nullptr;
+    /** 投影编辑器整页（「更多>投影编辑器」，按需创建后常驻） */
+    ProjectionEditPage *m_projectionEditPage = nullptr;
+    /** 文件传输整页（「更多>文件传输」，按需创建后常驻；与实例管理里的文件传输各自独立） */
+    LanTransferPage *m_lanTransferPage = nullptr;
+    /** 内存优化页（「更多>内存优化」，按需创建后常驻） */
+    MemoryOptimizePage *m_memoryOptimizePage = nullptr;
     /** 新手引导页（独立整页，按需创建后常驻；不随侧边栏导航出现） */
     OnboardingWizard *m_onboardingPage = nullptr;
     /** 本次进入引导页是否为首次启动自动进入（决定走完后是否触发首次启动后续动作） */
@@ -748,6 +785,27 @@ private:
     void showMorePage();
     /** 「更多」子导航 / 卡片选了第 childIndex 个分类：转到对应整页 */
     void openMoreFeature(int childIndex);
+    /** 同步「更多」页里插件提供的入口（插件列表 / 启用状态变化后调用），
+     *  返回侧边栏与卡片是否真的重建（入口没变时只刷新卡片） */
+    bool syncMorePluginEntries(bool rescan);
+    /** 执行「更多」里插件提供的第 entryIndex 个入口（内置入口之后依次排） */
+    void openPluginMoreEntry(int entryIndex);
+    /** 种子地图页（按需创建后常驻） */
+    void initSeedMapPage();
+    /** 打开种子地图页（「更多>种子地图」） */
+    void showSeedMapPage();
+    /** 投影编辑器整页（按需创建后常驻） */
+    void initProjectionEditPage();
+    /** 选一个投影文件后打开投影编辑器（「更多>投影编辑器」） */
+    void showProjectionEditorPage();
+    /** 文件传输整页（按需创建后常驻） */
+    void initLanTransferPage();
+    /** 打开文件传输页（「更多>文件传输」：局域网直传 / 远程组网互传） */
+    void showLanTransferPage();
+    /** 内存优化页（按需创建后常驻） */
+    void initMemoryOptimizePage();
+    /** 打开内存优化页（「更多>内存优化」：内存概况 + 一键优化） */
+    void showMemoryOptimizePage();
     /** 新手引导页（首次启动时懒加载创建） */
     void initOnboardingPage();
     /** 引导页走完：回到首页，必要时通知主程序做首次启动后续动作 */

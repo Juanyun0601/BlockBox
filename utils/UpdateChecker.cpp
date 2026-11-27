@@ -1108,10 +1108,14 @@ void UpdateChecker::showCombinedUpdateDialog(const QString &launcherError)
 {
     RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
     const QList<RuntimeDependency> pending = deps->pendingDependencies();
+    const QList<RuntimeDependency> blocked = deps->unavailableDependencies();
 
     const bool hasLauncher = m_launcherHasUpdate && m_lastCandidate.isValid();
     const bool hasDeps = !pending.isEmpty();
+    const bool hasBlocked = !blocked.isEmpty();
 
+    // 「只有未发布的依赖」不算可执行的更新：静默检查时直接闭嘴，
+    // 免得每次开机都弹一个「官方包还没发布」的窗口
     if (!hasLauncher && !hasDeps) {
         m_combinedFlowActive = false;
         if (m_silent)
@@ -1119,6 +1123,10 @@ void UpdateChecker::showCombinedUpdateDialog(const QString &launcherError)
         if (m_launcherCheckFailed) {
             AppMessageBox::warning(m_parent, tr("检查更新"),
                                    tr("检查更新失败，请检查网络后重试。\n\n%1").arg(launcherError));
+        } else if (hasBlocked) {
+            AppMessageBox::information(m_parent, tr("检查更新"),
+                                       tr("当前已是最新版本（%1）。运行依赖的官方安装包尚未发布，暂时不用管。")
+                                           .arg(AppVersion::current()));
         } else {
             AppMessageBox::information(m_parent, tr("检查更新"),
                                        tr("当前已是最新版本（%1），运行依赖也是最新的。")
@@ -1136,6 +1144,9 @@ void UpdateChecker::showCombinedUpdateDialog(const QString &launcherError)
     }
     if (hasDeps)
         lines << tr("有 %1 项运行依赖需要安装或更新。").arg(pending.size());
+    if (hasDeps && hasBlocked)
+        lines << tr("另有 %1 项运行依赖的官方安装包尚未发布，现在装了也跑不起来，暂时不用管。")
+                     .arg(blocked.size());
     if (!hasLauncher && m_launcherCheckFailed && !launcherError.isEmpty())
         lines << tr("启动器检查更新失败：%1").arg(launcherError);
 
@@ -1165,11 +1176,22 @@ void UpdateChecker::showCombinedUpdateDialog(const QString &launcherError)
             markdown += line + QLatin1Char('\n');
         }
     }
+    if (hasDeps && hasBlocked) {
+        markdown += QStringLiteral("## %1\n\n").arg(tr("尚未发布的运行依赖"));
+        for (const RuntimeDependency &dependency : blocked) {
+            QString line = QStringLiteral("- **%1**").arg(dependency.name);
+            if (!dependency.note.isEmpty())
+                line += QStringLiteral("：") + dependency.note;
+            markdown += line + QLatin1Char('\n');
+        }
+    }
 
     AppMessageBox box(m_parent);
     box.setIcon(AppMessageBox::Information);
-    box.setWindowTitle(hasLauncher && hasDeps ? tr("发现更新")
-                                              : (hasLauncher ? tr("发现新版本") : tr("运行依赖更新")));
+    box.setWindowTitle(hasLauncher && (hasDeps || hasBlocked) ? tr("发现更新")
+                        : (hasLauncher ? tr("发现新版本")
+                                       : (hasDeps ? tr("运行依赖更新")
+                                                  : tr("运行依赖尚未发布"))));
     box.setText(lines.join(QLatin1Char('\n')));
     if (!markdown.isEmpty())
         box.setInformativeMarkdown(markdown);
@@ -1188,7 +1210,8 @@ void UpdateChecker::showCombinedUpdateDialog(const QString &launcherError)
     }
     QPushButton *depsBtn = hasDeps ? box.addButton(tr("一键安装运行依赖"), AppMessageBox::ActionRole)
                                    : nullptr;
-    box.addButton(tr("以后再说"), AppMessageBox::RejectRole);
+    // 只有「官方还没发布」这一类时，按钮换个说法，别让用户以为点了会下载
+    box.addButton((hasLauncher || hasDeps) ? tr("以后再说") : tr("知道了"), AppMessageBox::RejectRole);
     box.exec();
 
     m_combinedFlowActive = false;

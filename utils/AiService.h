@@ -788,6 +788,31 @@ private:
     QString truncateToolResult(const QString &text, int maxLength = 4000) const;
 
     /**
+     * @brief 从工具结果里提取「图片载荷」
+     *
+     * 约定：工具返回的文本整体是一个 JSON 对象，且带 bb_image 字段时视为图片结果：
+     *   { "bb_image": "data:image/png;base64,..." | "C:/path/a.png",
+     *     "text": "给模型看的一句话说明（可空）" }
+     * bb_image 也接受数组（一次多张，最多 2 张）。本地文件会按截图同样的规则压成
+     * JPEG data URL（长边 ≤1280），所以工具只给路径也行。
+     *
+     * @param raw     工具原始输出
+     * @param text    输出参数：剥离图片后的文本（作为工具结果回填）
+     * @param images  输出参数：解析出的图片（dataUrl 已可直接塞进请求）
+     * @return true 表示识别为图片结果（raw 已被拆成 text + images）
+     */
+    static bool extractToolImagePayload(const QString &raw, QString *text,
+                                        QList<ChatImage> *images);
+
+    /**
+     * @brief 把本轮工具返回的画面作为一条 user 消息追加到请求里
+     *
+     * 必须等所有 tool 结果都回填后再追加（tool 消息要紧跟 assistant 的
+     * tool_calls），否则部分服务商会拒绝请求。
+     */
+    void appendToolImagesMessage();
+
+    /**
      * @brief 根据模型配置与服务商附加思考/推理启用参数
      * @param body  请求体 JSON 对象
      * @param model 模型配置
@@ -920,6 +945,7 @@ private:
     int m_toolRound;                          // 工具调用轮次计数（兜底防失控）
     QList<WebSearchResult> m_allSearchResults; ///< 累积所有轮次的搜索结果（供汇总卡片）
     QList<AgentToolCall> m_pendingToolCalls;  ///< 当前回合累积的工具调用记录（供 UI 持久化）
+    QList<ChatImage> m_pendingToolImages;     ///< 工具返回的画面（本轮 tool 结果回填完后作为 user 消息发送）
     QHash<QString, QString> m_skillToolMap;  ///< 技能工具名 → 技能 ID 映射（每次请求刷新）
     QHash<QString, QString> m_pluginToolMap; ///< 插件工具名 → 插件 ID 映射（每次请求刷新）
     QList<AgentTask> m_taskList;             ///< AI 自维护任务清单（由 update_task_list 覆盖式更新）

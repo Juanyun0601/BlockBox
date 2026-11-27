@@ -460,7 +460,18 @@ void JavaDownloadPage::onDownloadClicked()
         m_progressCard->setVisible(false);
         m_progressDetailLabel->clear();
         updateUIState();
-        NotificationManager::showInfo(this, tr("运行环境已是最新，无需再次安装。"));
+        const QList<RuntimeDependency> blocked = deps->unavailableDependencies();
+        if (!blocked.isEmpty()) {
+          // 清单里写了 available:false：官方包还没发布，别再提示「已是最新」糊弄过去
+          QStringList names;
+          for (const RuntimeDependency &dependency : blocked)
+            names << dependency.name;
+          NotificationManager::showInfo(
+              this, tr("官方还没发布适配手机的 %1，暂时装不了；发布后这里会直接提示安装。")
+                        .arg(names.join(tr("、"))));
+        } else {
+          NotificationManager::showInfo(this, tr("运行环境已是最新，无需再次安装。"));
+        }
         return;
       }
       m_progressDetailLabel->setText(tr("开始下载安装 Java 运行环境…"));

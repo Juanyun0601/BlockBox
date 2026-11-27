@@ -15,6 +15,7 @@
 #include "utils/IconHelper.h"
 #include "utils/LocalCategoryManager.h"
 #include "utils/LocalFavoritesManager.h"
+#include "utils/QuickLaunchManager.h"
 #include "utils/ThemeManager.h"
 #include "utils/ThumbnailProvider.h"
 #include "utils/McimHelper.h"
@@ -1823,6 +1824,12 @@ bool InstanceFilePage::eventFilter(QObject *watched, QEvent *event)
 
         QAction *openFolderAction = menu.addAction(tr("打开文件位置"));
         QAction *copyPathAction = menu.addAction(tr("复制文件路径"));
+
+        // 存档：在桌面生成 .blockbox 快捷启动文件，双击直接启动并进这张存档
+        QAction *desktopShortcutAction = nullptr;
+        if (m_fileType == Save)
+            desktopShortcutAction = menu.addAction(tr("发送快捷启动到桌面"));
+
         appendCategoryMenu(&menu, menuFileName, filePath);
         menu.addSeparator();
         QAction *detailAction = menu.addAction(tr("文件详情"));
@@ -1830,6 +1837,8 @@ bool InstanceFilePage::eventFilter(QObject *watched, QEvent *event)
         QAction *deleteAction = menu.addAction(tr("删除"));
 
         QAction *chosen = menu.exec(ctxEvent->globalPos());
+        if (!chosen)
+            return true;
 
         if (chosen == openAction)
         {
@@ -1848,6 +1857,21 @@ bool InstanceFilePage::eventFilter(QObject *watched, QEvent *event)
         else if (chosen == copyPathAction)
         {
             QApplication::clipboard()->setText(filePath);
+        }
+        else if (desktopShortcutAction && chosen == desktopShortcutAction)
+        {
+            QString message;
+            if (QuickLaunchManager::createSaveShortcut(m_instancePath, menuFileName, &message))
+            {
+                AppMessageBox::information(
+                    this, tr("已发送到桌面"),
+                    tr("桌面已生成「%1」快捷启动文件，双击它就会启动游戏并直接进入这个存档。")
+                        .arg(menuFileName));
+            }
+            else
+            {
+                AppMessageBox::warning(this, tr("发送失败"), message);
+            }
         }
         else if (chosen == detailAction && idx >= 0 && idx < m_fileList.size())
         {

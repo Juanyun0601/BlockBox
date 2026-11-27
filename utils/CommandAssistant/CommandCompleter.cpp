@@ -11,8 +11,9 @@
  *   3. completeParam() 根据 ParamInfo.type 分派：selector 返回固定选择器候选，
  *      item/entity/effect 调用数据库中文前缀查询，enum 返回 candidates，
  *      其他类型（int/float/string/nbt/pos/block）无补全建议
- *   4. checkAvailability() 复制 CommandTranslator 的版本/OP/服务端校验逻辑以保持解耦
+ *   4. checkAvailability() 复用 CommandDatabase::commandUnavailableReason，与翻译器同一份判断
  *   5. pos 类型参数占用 3 个位置（x y z），complete() 中对 pos 类型特殊处理
+ *   6. 纯别名指令（hidden，如 /w、/tell）只在翻译时认，候选列表里只留规范写法
  */
 
 #include "CommandCompleter.h"
@@ -40,6 +41,72 @@ const SelectorEntry kSelectorEntries[] = {
     {"@a", "@所有玩家", "所有玩家"},
     {"@e", "@所有实体", "所有实体"},
     {"@r", "@随机玩家", "随机玩家"}};
+
+/**
+ * @brief 枚举候选值的中文说法（候选列表里显示「创造（creative）」这类）
+ * @param param   参数定义（用来区分 clear 是「晴天」还是「清除」）
+ * @param english 英文候选值
+ * @return 没有合适中文说法时返回空字符串
+ *
+ * 插入的是中文说法，翻译器会再转回英文，所以两边必须使用同一套叫法。
+ */
+QString enumChineseLabel(const ParamInfo &param, const QString &english)
+{
+    const QString value = english.toLower();
+
+    // 天气的 clear 是「晴天」，不能跟清除效果的 clear 混用
+    if (param.name.contains(QStringLiteral("天气")))
+    {
+        if (value == QLatin1String("clear"))
+        {
+            return QStringLiteral("晴天");
+        }
+        if (value == QLatin1String("rain"))
+        {
+            return QStringLiteral("下雨");
+        }
+        if (value == QLatin1String("thunder"))
+        {
+            return QStringLiteral("雷暴");
+        }
+    }
+
+    static const QHash<QString, QString> labels = {
+        // 游戏模式 / 难度
+        {QStringLiteral("survival"), QStringLiteral("生存")},
+        {QStringLiteral("creative"), QStringLiteral("创造")},
+        {QStringLiteral("adventure"), QStringLiteral("冒险")},
+        {QStringLiteral("spectator"), QStringLiteral("旁观")},
+        {QStringLiteral("peaceful"), QStringLiteral("和平")},
+        {QStringLiteral("easy"), QStringLiteral("简单")},
+        {QStringLiteral("normal"), QStringLiteral("普通")},
+        {QStringLiteral("hard"), QStringLiteral("困难")},
+        // 布尔
+        {QStringLiteral("true"), QStringLiteral("开启")},
+        {QStringLiteral("false"), QStringLiteral("关闭")},
+        // 通用操作
+        {QStringLiteral("add"), QStringLiteral("添加")},
+        {QStringLiteral("set"), QStringLiteral("设置")},
+        {QStringLiteral("query"), QStringLiteral("查询")},
+        {QStringLiteral("give"), QStringLiteral("给予")},
+        {QStringLiteral("clear"), QStringLiteral("清除")},
+        {QStringLiteral("remove"), QStringLiteral("移除")},
+        {QStringLiteral("list"), QStringLiteral("列表")},
+        {QStringLiteral("save"), QStringLiteral("保存")},
+        {QStringLiteral("modify"), QStringLiteral("修改")},
+        // 填充 / 复制模式
+        {QStringLiteral("replace"), QStringLiteral("替换")},
+        {QStringLiteral("destroy"), QStringLiteral("破坏")},
+        {QStringLiteral("keep"), QStringLiteral("保留")},
+        {QStringLiteral("hollow"), QStringLiteral("空心")},
+        {QStringLiteral("outline"), QStringLiteral("轮廓")},
+        {QStringLiteral("masked"), QStringLiteral("遮罩")},
+        {QStringLiteral("structure"), QStringLiteral("结构")},
+        {QStringLiteral("biome"), QStringLiteral("生物群系")},
+        {QStringLiteral("poi"), QStringLiteral("兴趣点")},
+    };
+    return labels.value(value);
+}
 
 } // namespace
 
@@ -79,7 +146,7 @@ QList<CompletionCandidate> CommandCompleter::complete(const QString &input, cons
         const QList<CommandInfo> &all = m_db->allCommands();
         for (const CommandInfo &cmd : all)
         {
-            if (cmd.chinese.isEmpty())
+            if (cmd.chinese.isEmpty() || cmd.hidden)
             {
                 continue;
             }
@@ -116,7 +183,14 @@ QList<CompletionCandidate> CommandCompleter::complete(const QString &input, cons
         if (exact.has_value())
         {
             // 已匹配完整指令，返回下一个参数候选
-            return completeParam(exact.value(), 0, QString(), ctx);
+            const QList<CompletionCandidate> paramCandidates =
+                completeParam(exact.value(), 0, QString(), ctx);
+            if (!paramCandidates.isEmpty())
+            {
+                return paramCandidates;
+            }
+            // 参数没有可补全内容（如 help 的页码）：仍把指令本身留在列表里，别让列表突然变空
+            return completeCommandName(first, ctx);
         }
 
         // 未精确匹配，返回前缀匹配的指令候选
@@ -201,7 +275,8 @@ QList<CompletionCandidate> CommandCompleter::completeCommandName(const QString &
 
     for (const CommandInfo &cmd : matched)
     {
-        if (cmd.chinese.isEmpty())
+        // hidden：/w、/tell 这类纯别名指令只在翻译时认，候选列表里只留规范写法
+        if (cmd.chinese.isEmpty() || cmd.hidden)
         {
             continue;
         }
@@ -218,7 +293,8 @@ QList<CompletionCandidate> CommandCompleter::completeCommandName(const QString &
 
     // 英文名精确匹配（前缀等于全名的情况）
     const std::optional<CommandInfo> englishExact = m_db->findCommandByEnglish(prefix);
-    if (englishExact.has_value() && !seenEnglish.contains(englishExact.value().name.toLower()))
+    if (englishExact.has_value() && !englishExact.value().hidden
+        && !seenEnglish.contains(englishExact.value().name.toLower()))
     {
         const CommandInfo &cmd = englishExact.value();
         CompletionCandidate candidate;
@@ -356,16 +432,23 @@ QList<CompletionCandidate> CommandCompleter::completeParam(const CommandInfo &cm
     }
     else if (param.type == QStringLiteral("enum"))
     {
-        // 枚举候选，按前缀过滤
+        // 枚举候选，按前缀过滤（中文说法也能匹配）
         for (const QString &candidateValue : param.candidates)
         {
-            if (!currentWord.isEmpty() && !candidateValue.startsWith(currentWord, Qt::CaseInsensitive))
+            const QString label = enumChineseLabel(param, candidateValue);
+            const QString display = label.isEmpty()
+                                        ? candidateValue
+                                        : label + QStringLiteral("（") + candidateValue + QStringLiteral("）");
+            if (!currentWord.isEmpty()
+                && !candidateValue.startsWith(currentWord, Qt::CaseInsensitive)
+                && !display.startsWith(currentWord, Qt::CaseInsensitive))
             {
                 continue;
             }
             CompletionCandidate candidate;
-            candidate.displayText = candidateValue;
-            candidate.insertText = candidateValue;
+            candidate.displayText = display;
+            // 插入中文说法：翻译器会再转回英文，用户不用记英文单词
+            candidate.insertText = label.isEmpty() ? candidateValue : label;
             candidate.detail = param.name;
             candidate.available = true;
             result.append(candidate);
@@ -402,54 +485,6 @@ QList<CompletionCandidate> CommandCompleter::completeParam(const CommandInfo &cm
 
 QString CommandCompleter::checkAvailability(const CommandInfo &cmd, const CommandContext &ctx) const
 {
-    // 版本检查
-    if (!cmd.minVersion.isEmpty() && !ctx.version.isEmpty())
-    {
-        if (compareVersions(ctx.version, cmd.minVersion) < 0)
-        {
-            return QStringLiteral("当前版本不可用，需要 %1+").arg(cmd.minVersion);
-        }
-    }
-
-    // OP 等级检查
-    if (cmd.opLevel > 0 && ctx.opLevel < cmd.opLevel)
-    {
-        return QStringLiteral("需要 OP 等级 %1").arg(cmd.opLevel);
-    }
-
-    // 服务端检查
-    if (cmd.serverOnly && !ctx.isServer)
-    {
-        return QStringLiteral("仅服务端可用");
-    }
-
-    return QString();
-}
-
-int CommandCompleter::compareVersions(const QString &a, const QString &b)
-{
-    const QStringList partsA = a.split(QStringLiteral("."));
-    const QStringList partsB = b.split(QStringLiteral("."));
-
-    const int maxLen = qMax(partsA.size(), partsB.size());
-    for (int i = 0; i < maxLen; ++i)
-    {
-        bool okA = false;
-        bool okB = false;
-        const int valA = (i < partsA.size()) ? partsA.at(i).toInt(&okA) : 0;
-        const int valB = (i < partsB.size()) ? partsB.at(i).toInt(&okB) : 0;
-
-        const int effectiveA = okA ? valA : 0;
-        const int effectiveB = okB ? valB : 0;
-
-        if (effectiveA < effectiveB)
-        {
-            return -1;
-        }
-        if (effectiveA > effectiveB)
-        {
-            return 1;
-        }
-    }
-    return 0;
+    // 与翻译器共用同一份判断（版本 / OP / 服务端 / 插件），候选置灰原因不会两处不同
+    return commandUnavailableReason(cmd, ctx.version, ctx.opLevel, ctx.isServer);
 }

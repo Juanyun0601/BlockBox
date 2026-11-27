@@ -65,6 +65,11 @@ public:
     /** 收藏 / 取消收藏（重复设置无副作用；fileName 自动归一化） */
     void setFavorite(const LocalFavoriteEntry &entry, bool fav);
 
+    /** 资源文件改名后同步收藏记录（保留收藏顺序与展示信息）；未收藏则忽略 */
+    void renameFavorite(const QString &instancePath, const QString &resourceType,
+                        const QString &oldFileName, const QString &newFileName,
+                        const QString &newFilePath);
+
     /** 全部收藏（按收藏时间新 → 旧） */
     QVector<LocalFavoriteEntry> favorites() const;
     int count() const;

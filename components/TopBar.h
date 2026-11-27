@@ -68,8 +68,6 @@ signals:
     void backClicked();
     void scrollToTopClicked();
     void refreshClicked();
-    /** 顶栏「文档」：打开方块图书馆（mcblockbox.top/library） */
-    void docsClicked();
     void instanceSelectClicked();
     void instanceSettingsClicked();
     void instanceAssistantClicked();
@@ -125,8 +123,6 @@ private:
     QPushButton *m_backButton;
     QPushButton *m_scrollToTopBtn;
     QPushButton *m_refreshBtn;
-    /** 文档按钮：在默认浏览器打开方块图书馆（使用教程 / 插件开发 / 开放平台 API / MCP） */
-    QPushButton *m_docsBtn;
     /** 扫码按钮：只有手机端（且构建带相机能力）才创建，桌面端恒为 nullptr */
     QPushButton *m_scanBtn = nullptr;
 

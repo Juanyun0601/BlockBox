@@ -2,6 +2,7 @@
 #include "utils/IconHelper.h"
 #include "utils/ThemeManager.h"
 #include "utils/LocalCategoryManager.h"
+#include "utils/QuickLaunchManager.h"
 #include "utils/ServersDatIO.h"
 #include "utils/SettingsManager.h"
 #include "components/LocalCategoryDialog.h"
@@ -538,6 +539,23 @@ void ServerManagePage::placeCards()
                         }
                         pingOne(serverKey, entry.address, entry.port);
                     });
+                // 桌面 .blockbox 快捷启动：双击直接启动游戏并连这台服
+                QAction *desktopAction = menu.addAction(tr("发送快捷启动到桌面"));
+                connect(desktopAction, &QAction::triggered, this, [this, entry]() {
+                    QString message;
+                    if (QuickLaunchManager::createServerShortcut(
+                            m_instancePath, entry.name, entry.address, entry.port, &message))
+                    {
+                        AppMessageBox::information(
+                            this, tr("已发送到桌面"),
+                            tr("桌面已生成「%1」快捷启动文件，双击它就会启动游戏并自动连接这台服务器。")
+                                .arg(entry.name));
+                    }
+                    else
+                    {
+                        AppMessageBox::warning(this, tr("发送失败"), message);
+                    }
+                });
                 menu.exec(pos);
             });
 

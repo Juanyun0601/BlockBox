@@ -970,6 +970,19 @@ void SettingsManager::setMemoryAllocationMode(MemoryAllocationMode mode)
     m_settings->setValue("memory/allocationMode", static_cast<int>(mode));
 }
 
+bool SettingsManager::isOptimizeMemoryBeforeLaunchEnabled() const
+{
+    return m_settings->value("memory/optimizeBeforeLaunch", false).toBool();
+}
+
+void SettingsManager::setOptimizeMemoryBeforeLaunchEnabled(bool enabled)
+{
+    if (isOptimizeMemoryBeforeLaunchEnabled() == enabled)
+        return;
+    m_settings->setValue("memory/optimizeBeforeLaunch", enabled);
+    emit optimizeMemoryBeforeLaunchChanged(enabled);
+}
+
 QList<QPair<QString, QString>> SettingsManager::commandHistory() const
 {
     QList<QPair<QString, QString>> history;

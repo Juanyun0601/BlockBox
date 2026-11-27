@@ -6,7 +6,9 @@
  */
 #include "PluginPage.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
@@ -25,6 +27,8 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPlainTextEdit>
@@ -228,6 +232,13 @@ void PluginPage::initUI()
     cardLayout->setContentsMargins(24, 24, 24, 24);
     cardLayout->setSpacing(12);
 
+    // 详情页也能右键：与插件卡片同一套菜单
+    detailCard->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(detailCard, &QWidget::customContextMenuRequested, this,
+            [this, detailCard](const QPoint &pos) {
+                showPluginContextMenu(m_currentDetailIndex, detailCard->mapToGlobal(pos));
+            });
+
     QHBoxLayout *iconRow = new QHBoxLayout();
     iconRow->setSpacing(16);
     m_detailIcon = new QLabel(detailCard);
@@ -277,6 +288,13 @@ void PluginPage::initUI()
     m_detailAiTools->setWordWrap(true);
     m_detailAiTools->setVisible(false);
     cardLayout->addWidget(m_detailAiTools);
+
+    // 「更多」页入口提示（manifest.ui.moreEntries）
+    m_detailMoreEntries = new QLabel(detailCard);
+    m_detailMoreEntries->setObjectName(QStringLiteral("pluginDetailStyle"));
+    m_detailMoreEntries->setWordWrap(true);
+    m_detailMoreEntries->setVisible(false);
+    cardLayout->addWidget(m_detailMoreEntries);
 
     // 操作按钮行（固定靠左，不随页面切换右移）
     QHBoxLayout *detailBtnRow = new QHBoxLayout();
@@ -813,6 +831,12 @@ void PluginPage::rebuildCards()
         card->setProperty("pluginIndex", idx);
         card->installEventFilter(this);
 
+        // 右键卡片 → 快捷操作菜单（不用先点进详情页）
+        card->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(card, &QWidget::customContextMenuRequested, this, [this, idx, card](const QPoint &pos) {
+            showPluginContextMenu(idx, card->mapToGlobal(pos));
+        });
+
         m_cardWidgets.append(card);
         m_cardsLayout->addWidget(card);
     }
@@ -822,6 +846,116 @@ void PluginPage::rebuildCards()
 
     // 插件列表重建后重新应用子导航搜索过滤
     applyPageFilter(m_pageFilterQuery);
+}
+
+/* 插件卡片右键菜单：常用操作不用先点进详情页 */
+void PluginPage::showPluginContextMenu(int index, const QPoint &globalPos)
+{
+    if (index < 0 || index >= m_plugins.size())
+        return;
+
+    const PluginInfo info = m_plugins.at(index);
+    PluginManager *pm = PluginManager::instance();
+    const bool enabled = pm->isEnabled(info.id);
+
+    const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+    auto icon = [&](const QString &path, const QColor &color = QColor()) {
+        return IconHelper::loadColoredIcon(path, color.isValid() ? color : themeColor, 16);
+    };
+
+    QMenu menu(this);
+    QAction *detailAct = menu.addAction(icon(":/Images/Icons/list.svg"), tr("查看详情"));
+    QAction *settingsAct = menu.addAction(icon(":/Images/Icons/instance_settings.svg"),
+                                         tr("插件设置"));
+    QAction *toggleAct = menu.addAction(icon(enabled ? ":/Images/Icons/toggle_off.svg"
+                                                     : ":/Images/Icons/toggle_on.svg"),
+                                        enabled ? tr("停用插件") : tr("启用插件"));
+    menu.addSeparator();
+
+    QAction *updateAct = nullptr;
+    if (!info.updateUrl.isEmpty())
+        updateAct = menu.addAction(icon(":/Images/Icons/update.svg"), tr("检查更新"));
+    QAction *homeAct = nullptr;
+    if (!info.homepage.isEmpty())
+        homeAct = menu.addAction(icon(":/Images/Icons/nav_home.svg"), tr("打开主页"));
+
+    QAction *openFolderAct = menu.addAction(icon(":/Images/Icons/folder.svg"),
+                                            tr("打开插件所在文件夹"));
+
+    QMenu *copyMenu = menu.addMenu(icon(":/Images/Icons/copy.svg"), tr("复制"));
+    QAction *copyIdAct = copyMenu->addAction(tr("插件 ID"));
+    QAction *copyPathAct = copyMenu->addAction(tr("插件文件路径"));
+
+    menu.addSeparator();
+    QAction *exportAct = menu.addAction(icon(":/Images/Icons/export.svg"), tr("导出插件"));
+    menu.addSeparator();
+    QAction *removeAct = menu.addAction(icon(":/Images/Icons/delete.svg", QColor("#F44336")),
+                                        tr("删除插件"));
+    removeAct->setShortcut(QKeySequence(Qt::Key_Delete));
+
+    QAction *chosen = menu.exec(globalPos);
+    if (!chosen)
+        return;
+
+    if (chosen == detailAct)
+    {
+        showPluginDetail(index);
+    }
+    else if (chosen == settingsAct)
+    {
+        showSettingsPage(index);
+    }
+    else if (chosen == toggleAct)
+    {
+        pm->setEnabled(info.id, !enabled);
+        rebuildCards();   // 立即刷新卡片上的启用状态
+    }
+    else if (chosen == updateAct)
+    {
+        if (!info.updateUrl.isEmpty())
+            pm->updatePluginAsync(info.id);
+    }
+    else if (chosen == homeAct)
+    {
+        if (!info.homepage.isEmpty())
+            LinkRouter::instance()->open(QUrl(info.homepage), this);
+    }
+    else if (chosen == openFolderAct)
+    {
+        QString dirPath = info.filePath.isEmpty() ? QString()
+                                                  : QFileInfo(info.filePath).absolutePath();
+        if (dirPath.isEmpty())
+            dirPath = pm->pluginsDir();
+        if (!dirPath.isEmpty())
+            QDesktopServices::openUrl(QUrl::fromLocalFile(dirPath));
+    }
+    else if (chosen == copyIdAct)
+    {
+        QApplication::clipboard()->setText(info.id);
+    }
+    else if (chosen == copyPathAct)
+    {
+        QApplication::clipboard()->setText(QDir::toNativeSeparators(
+            info.filePath.isEmpty() ? pm->pluginsDir() : info.filePath));
+    }
+    else if (chosen == exportAct)
+    {
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("导出插件到"));
+        if (dir.isEmpty())
+            return;
+        QString outPath, error;
+        if (!pm->exportPlugin(info.id, dir, &outPath, &error))
+        {
+            AppMessageBox::warning(this, tr("导出失败"), error);
+            return;
+        }
+        AppMessageBox::information(this, tr("导出成功"),
+                                   tr("插件已导出到：\n%1").arg(outPath));
+    }
+    else if (chosen == removeAct)
+    {
+        emit removePluginRequested(info.id);
+    }
 }
 
 void PluginPage::applyPageFilter(const QString &query)
@@ -846,6 +980,10 @@ void PluginPage::applyPageFilter(const QString &query)
 bool PluginPage::eventFilter(QObject *watched, QEvent *event)
 {
     if (event->type() == QEvent::MouseButtonRelease) {
+        // 只认左键打开详情：右键要留给上下文菜单
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() != Qt::LeftButton)
+            return QWidget::eventFilter(watched, event);
         // 仅处理卡片本身（避免误吞卡片内操作按钮的点击事件）
         QVariant idxVar = watched->property("pluginIndex");
         if (idxVar.isValid()) {
@@ -959,6 +1097,34 @@ void PluginPage::updateDetailView(const PluginInfo &info)
         m_detailAiTools->setVisible(true);
     } else {
         m_detailAiTools->setVisible(false);
+    }
+
+    // 插件在「更多」页提供的入口（manifest.ui.moreEntries，需声明 ui:page 权限才生效）
+    const int moreEntryCount = info.validMoreEntryCount();
+    if (moreEntryCount > 0) {
+        QString entryText;
+        if (!info.hasPagePermission()) {
+            entryText = tr("⚠ 本插件提供了 %1 个「更多」页入口，但清单未声明 ui:page 权限，暂不生效")
+                            .arg(moreEntryCount);
+        } else if (!enabled) {
+            entryText = tr("◆ 本插件提供 %1 个「更多」页入口（插件已停用，暂不显示）")
+                            .arg(moreEntryCount);
+        } else {
+            QStringList titles;
+            for (const PluginPageEntry &entry : info.ui.moreEntries) {
+                if (entry.isValid())
+                    titles << entry.title;
+            }
+            entryText = tr("◆ 已在「更多」页添加 %1 个入口：%2")
+                            .arg(moreEntryCount)
+                            .arg(titles.join(QStringLiteral(", ")));
+        }
+        if (m_detailMoreEntries) {
+            m_detailMoreEntries->setText(entryText);
+            m_detailMoreEntries->setVisible(true);
+        }
+    } else if (m_detailMoreEntries) {
+        m_detailMoreEntries->setVisible(false);
     }
 
     // 启用/停用按钮
@@ -1905,6 +2071,66 @@ void PluginPage::runCommand(const PluginInfo &info, const PluginCommand &cmd)
     AppMessageBox::information(this, tr("插件命令"),
                                tr("插件「%1」的命令「%2」执行完成。")
                                .arg(info.name, cmd.label.isEmpty() ? cmd.id : cmd.label));
+}
+
+void PluginPage::runPageEntry(const QString &pluginId, const QString &entryId)
+{
+    PluginManager *pm = PluginManager::instance();
+    const PluginInfo info = pm->pluginById(pluginId);
+    if (!info.loaded || !pm->isEnabled(info.id)) {
+        AppMessageBox::information(this, tr("插件入口"),
+                                   tr("插件「%1」已停用或已被移除。")
+                                       .arg(info.name.isEmpty() ? pluginId : info.name));
+        return;
+    }
+    const PluginPageEntry entry = info.moreEntry(entryId);
+    if (!entry.isValid() || !pm->providesMoreEntries(info)) {
+        AppMessageBox::information(this, tr("插件入口"), tr("该入口已失效。"));
+        return;
+    }
+
+    if (entry.kind == QLatin1String("url")) {
+        if (!QDesktopServices::openUrl(QUrl(entry.target)))
+            AppMessageBox::warning(this, tr("插件入口"),
+                                   tr("没能打开浏览器，请手动访问：%1").arg(entry.target));
+        return;
+    }
+
+    // script：解包到临时目录后执行（与插件命令 run: 同一套路径校验）
+    const QString tmpDir = QDir::cleanPath(QDir::tempPath() + QStringLiteral("/BlockBox/")
+                         + Safety::safeFileName(info.id, QStringLiteral("plugin")));
+    QString error;
+    if (!pm->extractPlugin(info.id, tmpDir, &error)) {
+        AppMessageBox::warning(this, tr("插件入口"),
+                               tr("解包插件失败：%1").arg(error));
+        return;
+    }
+    const QString scriptPath = QDir::cleanPath(tmpDir + QStringLiteral("/") + entry.target);
+    if (!Safety::isPathInside(tmpDir, scriptPath)) {
+        AppMessageBox::warning(this, tr("插件入口"), tr("脚本路径非法"));
+        return;
+    }
+    if (!QFileInfo::exists(scriptPath)) {
+        AppMessageBox::warning(this, tr("插件入口"),
+                               tr("包内未找到脚本：%1").arg(entry.target));
+        return;
+    }
+
+    const QString nativePath = QDir::toNativeSeparators(scriptPath);
+    const QString ext = QFileInfo(scriptPath).suffix().toLower();
+    if (ext == QLatin1String("ps1")) {
+        PluginRunnerDialog *dlg = new PluginRunnerDialog(this);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->setWindowTitle(tr("「%1」- %2").arg(info.name, entry.title));
+        dlg->setDialogTitle(tr("正在执行：%1").arg(entry.title));
+        dlg->startPs1(scriptPath);
+        dlg->exec();
+    } else if (ext == QLatin1String("bat") || ext == QLatin1String("cmd")) {
+        QProcess::startDetached(QStringLiteral("cmd"),
+                                QStringList() << QStringLiteral("/c") << nativePath);
+    } else {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(scriptPath));
+    }
 }
 
 void PluginPage::handleNativeCommand(const PluginInfo &info, const QString &target)

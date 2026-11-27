@@ -11,6 +11,7 @@
 #include <QString>
 #include <QWidget>
 #include <QVector>
+#include <QtGlobal>
 
 class QNetworkAccessManager;
 class MultiThreadDownloader;
@@ -58,6 +59,24 @@ public:
      * @param parentWidget 用于显示消息对话框的父控件（可选）
      */
     void optimizeMemory(QWidget* parentWidget = nullptr);
+
+    /**
+     * @brief 静默优化内存（不弹任何对话框）
+     *
+     * 清掉启动器内部的图片缓存，再释放本进程的工作集，把闲置内存还给系统。
+     * 「更多 > 内存优化」页的优化按钮和「启动游戏前先优化内存」都走这条路径，
+     * 所以内部不能弹窗，也不能阻塞几百毫秒以上。
+     *
+     * @return 本次释放的字节数；平台不支持或统计不到时返回 0
+     */
+    static qint64 optimizeMemorySilently();
+
+    /**
+     * @brief 当前进程占用的物理内存（工作集大小）
+     *
+     * @return 字节数；平台不支持或读取失败时返回 -1
+     */
+    static qint64 currentProcessWorkingSetBytes();
 
     /**
      * @brief 打开磁盘清理对话框（支持用户选择清理项）

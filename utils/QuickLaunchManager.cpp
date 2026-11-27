@@ -11,6 +11,7 @@
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -42,6 +43,9 @@ const char kPayloadMarker[] = "\n;;BLOCKBOX:QUICKLAUNCH:v1;;\n";
 /** 快捷启动文件在设置中的记录键后缀（记录桌面文件完整路径，用于改名/换图标后刷新） */
 const char kRecordedFileSuffix[] = "/quickLaunchFile";
 
+/** 载荷版本：1=只有实例路径；2=带 kind 与存档/服务器参数 */
+constexpr int kPayloadFormat = 2;
+
 /** 将文件名中的非法字符替换为下划线 */
 QString sanitizeFileName(const QString &name)
 {
@@ -49,7 +53,11 @@ QString sanitizeFileName(const QString &name)
     const QString illegal = "\\/:*?\"<>|";
     for (const QChar &ch : illegal)
         result.replace(ch, '_');
-    return result.trimmed();
+    result = result.trimmed();
+    // Windows 不允许文件名以点/空格结尾
+    while (result.endsWith(QLatin1Char('.')) || result.endsWith(QLatin1Char(' ')))
+        result.chop(1);
+    return result;
 }
 
 /** 实例显示名：优先设置中的 displayName，为空则用文件夹名 */
@@ -130,9 +138,110 @@ QByteArray buildIcoData(const QPixmap &sourcePixmap)
     return ico;
 }
 
+QString kindToString(QuickLaunchManager::Kind kind)
+{
+    switch (kind)
+    {
+    case QuickLaunchManager::Kind::Save:   return QStringLiteral("save");
+    case QuickLaunchManager::Kind::Server: return QStringLiteral("server");
+    case QuickLaunchManager::Kind::Instance: break;
+    }
+    return QStringLiteral("instance");
+}
+
+/** 存档名/文件名必须是单层名称，拒绝 ../ 之类跳到实例目录外的路径 */
+bool isSafeLeafName(const QString &name)
+{
+    if (name.isEmpty() || name == QStringLiteral(".") || name == QStringLiteral(".."))
+        return false;
+    if (name.contains(QLatin1Char('/')) || name.contains(QLatin1Char('\\')))
+        return false;
+    return true;
+}
+
+/** 服务器地址的展示形式：默认端口不写出来 */
+QString serverAddressText(const QString &address, quint16 port)
+{
+    if (port == 25565)
+        return address;
+    return QStringLiteral("%1:%2").arg(address).arg(port);
+}
+
+/** 桌面文件主名（不含扩展名）：优先用调用方给的标题，否则按类型自动拼 */
+QString shortcutBaseName(const QuickLaunchManager::Target &target)
+{
+    QString base = target.title.trimmed();
+    if (!base.isEmpty())
+        return sanitizeFileName(base);
+
+    const QString instanceName = target.instanceName.isEmpty()
+        ? instanceDisplayName(target.instancePath)
+        : target.instanceName;
+    if (instanceName.isEmpty())
+        base = QObject::tr("方块盒子");
+    else
+        base = instanceName;
+
+    switch (target.kind)
+    {
+    case QuickLaunchManager::Kind::Save:
+        if (isSafeLeafName(target.saveName))
+            base += QStringLiteral(" - ") + target.saveName;
+        break;
+    case QuickLaunchManager::Kind::Server:
+        if (!target.serverAddress.isEmpty())
+            base += QStringLiteral(" - ")
+                + serverAddressText(target.serverAddress, target.serverPort);
+        break;
+    case QuickLaunchManager::Kind::Instance:
+        break;
+    }
+    return sanitizeFileName(base);
+}
+
 } // namespace
 
 bool QuickLaunchManager::createDesktopShortcut(const QString &instancePath, QString *errorMessage)
+{
+    Target target;
+    target.kind = Kind::Instance;
+    target.instancePath = instancePath;
+    target.instanceName = instanceDisplayName(instancePath);
+    target.title = target.instanceName;
+    return createShortcut(target, errorMessage);
+}
+
+bool QuickLaunchManager::createSaveShortcut(const QString &instancePath, const QString &saveName,
+                                            QString *errorMessage)
+{
+    Target target;
+    target.kind = Kind::Save;
+    target.instancePath = instancePath;
+    target.instanceName = instanceDisplayName(instancePath);
+    target.saveName = saveName;
+    target.title = target.instanceName + QStringLiteral(" - ") + saveName;
+    return createShortcut(target, errorMessage);
+}
+
+bool QuickLaunchManager::createServerShortcut(const QString &instancePath,
+                                              const QString &serverName,
+                                              const QString &address, quint16 port,
+                                              QString *errorMessage)
+{
+    Target target;
+    target.kind = Kind::Server;
+    target.instancePath = instancePath;
+    target.instanceName = instanceDisplayName(instancePath);
+    target.serverAddress = address.trimmed();
+    target.serverPort = port == 0 ? 25565 : port;
+    const QString displayName = serverName.trimmed().isEmpty()
+        ? serverAddressText(target.serverAddress, target.serverPort)
+        : serverName.trimmed();
+    target.title = target.instanceName + QStringLiteral(" - ") + displayName;
+    return createShortcut(target, errorMessage);
+}
+
+bool QuickLaunchManager::createShortcut(const Target &target, QString *errorMessage)
 {
     auto fail = [errorMessage](const QString &message) {
         if (errorMessage)
@@ -142,40 +251,67 @@ bool QuickLaunchManager::createDesktopShortcut(const QString &instancePath, QStr
 
     if (!Platform::isWindows())
         return fail(QObject::tr("桌面快捷启动暂仅支持 Windows 平台"));
-    if (instancePath.isEmpty() || !QDir(instancePath).exists())
+    if (target.instancePath.isEmpty() || !QDir(target.instancePath).exists())
         return fail(QObject::tr("实例不存在，无法创建桌面快捷启动"));
+
+    // 目标参数校验：存档名不能跳出实例目录，服务器地址不能为空
+    const QString instancePath = QDir::fromNativeSeparators(target.instancePath);
+    if (target.kind == Kind::Save && !isSafeLeafName(target.saveName))
+        return fail(QObject::tr("存档名无效，无法创建桌面快捷启动"));
+    if (target.kind == Kind::Server && target.serverAddress.trimmed().isEmpty())
+        return fail(QObject::tr("服务器地址为空，无法创建桌面快捷启动"));
 
     // 1. 图标部分：实例图标 → 多尺寸 ICO
     const QByteArray icoData = buildIcoData(instanceIconPixmap(instancePath));
     if (icoData.isEmpty())
         return fail(QObject::tr("实例图标编码失败，无法创建桌面快捷启动"));
 
-    // 2. 载荷部分：记录实例路径等信息
+    // 2. 载荷部分：记录目标类型与实例/存档/服务器信息
     QJsonObject payload;
-    payload.insert("format", 1);
-    payload.insert("instancePath", QDir::fromNativeSeparators(instancePath));
-    payload.insert("instanceName", instanceDisplayName(instancePath));
-    const QString target = desktopDirectory() + "/"
-        + sanitizeFileName(instanceDisplayName(instancePath)) + ".blockbox";
+    payload.insert("format", kPayloadFormat);
+    payload.insert("kind", kindToString(target.kind));
+    payload.insert("instancePath", instancePath);
+    payload.insert("instanceName", target.instanceName.isEmpty()
+                                       ? instanceDisplayName(instancePath)
+                                       : target.instanceName);
+    payload.insert("title", shortcutBaseName(target));
+    if (target.kind == Kind::Save)
+        payload.insert("saveName", target.saveName);
+    else if (target.kind == Kind::Server)
+    {
+        payload.insert("serverAddress", target.serverAddress.trimmed());
+        payload.insert("serverPort", int(target.serverPort));
+    }
 
-    // 3. 实例改名后桌面文件不再同名：清掉记录的旧文件，桌面始终只有一个
-    const QString recorded = SettingsManager::instance()
-        ->getProperty("instance/" + instancePath + kRecordedFileSuffix).toString();
-    if (!recorded.isEmpty() && recorded != target && QFile::exists(recorded))
-        QFile::remove(recorded);
+    const QString baseName = shortcutBaseName(target);
+    if (baseName.isEmpty())
+        return fail(QObject::tr("无法生成快捷启动文件名"));
+    const QString shortcutPath = desktopDirectory() + "/" + baseName + ".blockbox";
 
-    QSaveFile file(target);
+    // 3. 实例快捷方式改名后桌面文件不再同名：清掉记录的旧文件，桌面始终只有一个
+    if (target.kind == Kind::Instance)
+    {
+        const QString recorded = SettingsManager::instance()
+            ->getProperty("instance/" + instancePath + kRecordedFileSuffix).toString();
+        if (!recorded.isEmpty() && recorded != shortcutPath && QFile::exists(recorded))
+            QFile::remove(recorded);
+    }
+
+    QSaveFile file(shortcutPath);
     if (!file.open(QIODevice::WriteOnly))
-        return fail(QObject::tr("无法写入桌面文件：%1").arg(target));
+        return fail(QObject::tr("无法写入桌面文件：%1").arg(shortcutPath));
     file.write(icoData);
     file.write(kPayloadMarker);
     file.write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
     file.write("\n");
     if (!file.commit())
-        return fail(QObject::tr("无法写入桌面文件：%1").arg(target));
+        return fail(QObject::tr("无法写入桌面文件：%1").arg(shortcutPath));
 
-    SettingsManager::instance()->setProperty("instance/" + instancePath + kRecordedFileSuffix,
-                                             target);
+    if (target.kind == Kind::Instance)
+    {
+        SettingsManager::instance()->setProperty(
+            "instance/" + instancePath + kRecordedFileSuffix, shortcutPath);
+    }
 
     // 4. 确保双击 .blockbox 文件会用方块盒子打开
     QString assocError;
@@ -184,7 +320,7 @@ bool QuickLaunchManager::createDesktopShortcut(const QString &instancePath, QStr
     return true;
 }
 
-bool QuickLaunchManager::parseQuickLaunchFile(const QString &filePath, QString *instancePath,
+bool QuickLaunchManager::parseQuickLaunchFile(const QString &filePath, Target *target,
                                               QString *errorMessage)
 {
     auto fail = [errorMessage](const QString &message) {
@@ -209,12 +345,53 @@ bool QuickLaunchManager::parseQuickLaunchFile(const QString &filePath, QString *
     if (parseError.error != QJsonParseError::NoError || !doc.isObject())
         return fail(QObject::tr("快捷启动文件载荷解析失败"));
 
+    const QJsonObject object = doc.object();
     const QString path = QDir::fromNativeSeparators(
-        doc.object().value("instancePath").toString());
+        object.value("instancePath").toString());
     if (path.isEmpty())
         return fail(QObject::tr("快捷启动文件缺少实例路径"));
+
+    Target parsed;
+    parsed.instancePath = path;
+    parsed.instanceName = object.value("instanceName").toString();
+    parsed.title = object.value("title").toString();
+
+    const QString kind = object.value("kind").toString();
+    if (kind == QStringLiteral("save"))
+    {
+        parsed.kind = Kind::Save;
+        parsed.saveName = object.value("saveName").toString();
+        if (!isSafeLeafName(parsed.saveName))
+            return fail(QObject::tr("快捷启动文件里的存档名无效"));
+    }
+    else if (kind == QStringLiteral("server"))
+    {
+        parsed.kind = Kind::Server;
+        parsed.serverAddress = object.value("serverAddress").toString().trimmed();
+        const int port = object.value("serverPort").toInt(25565);
+        parsed.serverPort = (port > 0 && port <= 65535) ? quint16(port) : 25565;
+        if (parsed.serverAddress.isEmpty())
+            return fail(QObject::tr("快捷启动文件缺少服务器地址"));
+    }
+    else
+    {
+        // 旧文件（format 1）没有 kind 字段，按实例处理
+        parsed.kind = Kind::Instance;
+    }
+
+    if (target)
+        *target = parsed;
+    return true;
+}
+
+bool QuickLaunchManager::parseQuickLaunchFile(const QString &filePath, QString *instancePath,
+                                              QString *errorMessage)
+{
+    Target target;
+    if (!parseQuickLaunchFile(filePath, &target, errorMessage))
+        return false;
     if (instancePath)
-        *instancePath = path;
+        *instancePath = target.instancePath;
     return true;
 }
 
@@ -260,9 +437,11 @@ bool QuickLaunchManager::registerFileAssociation(QString *errorMessage)
     progIdKey.setValue("shell/open/command/.", openCommand);
 
     // 注册到 Applications，让"打开方式"列表中也能找到方块盒子
-    QSettings appKey("HKEY_CURRENT_USER\\Software\\Classes\\Applications\\BlockBox.exe",
+    const QString exeName = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
+    QSettings appKey("HKEY_CURRENT_USER\\Software\\Classes\\Applications\\" + exeName,
                      QSettings::NativeFormat);
     appKey.setValue("shell/open/command/.", openCommand);
+    appKey.setValue("FriendlyAppName", QObject::tr("方块盒子"));
 
     // 通知资源管理器关联已变化，立即生效（无需重启/注销）
     ::SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);

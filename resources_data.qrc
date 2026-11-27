@@ -36,5 +36,11 @@
         <file>resources/dsh-plugin/docs/DETAIL.md</file>
         <file>resources/dsh-plugin/docs/DETAIL.zh.md</file>
         <file>resources/dsh-plugin/docs/preview.svg</file>
+        <!-- ZCode 桥接插件：设置 → AI 助手 → ZCode 插件「一键安装」时释放到磁盘 -->
+        <file>resources/zcode-plugin/.zcode-plugin/plugin.json</file>
+        <file>resources/zcode-plugin/dist/mcp/server.mjs</file>
+        <file>resources/zcode-plugin/skills/blockbox-bridge/SKILL.md</file>
+        <file>resources/zcode-plugin/README.md</file>
+        <file>resources/zcode-plugin/marketplace.json</file>
     </qresource>
 </RCC>

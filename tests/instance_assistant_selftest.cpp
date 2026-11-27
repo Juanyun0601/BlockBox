@@ -468,6 +468,56 @@ int main(int argc, char *argv[])
                     .arg(window->m_commandInput->cursorPosition()));
     }
 
+    // ---- 9b. 输入框快捷操作：清空按钮 / ↑↓ 选候选 / 回车复制 / Esc 清空 ----
+    logLine(QStringLiteral("\n[9b] 输入框快捷操作"));
+    logLine(QStringLiteral("clear button: exists=%1 visible=%2")
+                .arg(window->m_clearInputBtn != nullptr)
+                .arg(window->m_clearInputBtn && window->m_clearInputBtn->isVisible()));
+
+    window->m_commandInput->setText(QStringLiteral("给予 @s "));
+    waitMs(260);
+    const int shortcutCandidates = window->m_completionList->count();
+    QKeyEvent keyDown(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QApplication::sendEvent(window->m_commandInput, &keyDown);
+    waitMs(80);
+    logLine(QStringLiteral("after Down: candidates=%1 currentRow=%2")
+                .arg(shortcutCandidates)
+                .arg(window->m_completionList->currentRow()));
+
+    QKeyEvent keyEnter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(window->m_commandInput, &keyEnter);
+    waitMs(150);
+    logLine(QStringLiteral("after Enter: input=[%1] output=[%2] clipboard=[%3] copyBtn=[%4]")
+                .arg(oneline(window->m_commandInput->text()),
+                     oneline(window->m_englishOutput->text()),
+                     oneline(QApplication::clipboard()->text()),
+                     oneline(window->m_copyBtn->text())));
+
+    QKeyEvent keyEsc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(window->m_commandInput, &keyEsc);
+    waitMs(120);
+    logLine(QStringLiteral("after Esc: input=[%1] output=[%2] windowVisible=%3")
+                .arg(oneline(window->m_commandInput->text()),
+                     oneline(window->m_englishOutput->text()))
+                .arg(window->isVisible()));
+
+    window->m_commandInput->setText(QStringLiteral("给 钻石 一组"));
+    waitMs(260);
+    logLine(QStringLiteral("quantity: [%1] -> [%2]")
+                .arg(oneline(window->m_commandInput->text()),
+                     oneline(window->m_englishOutput->text())));
+
+    if (window->m_clearInputBtn)
+    {
+        window->m_clearInputBtn->click();
+        waitMs(200);
+        logLine(QStringLiteral("after clear button: input=[%1] output=[%2] candidates=%3")
+                    .arg(oneline(window->m_commandInput->text()),
+                         oneline(window->m_englishOutput->text()))
+                    .arg(window->m_completionList->count()));
+    }
+    shot(window, QStringLiteral("command_shortcuts"));
+
     // ---- 10. 历史记录 ----
     logLine(QStringLiteral("\n[10] 历史记录"));
     const QList<QPair<QString, QString>> history =

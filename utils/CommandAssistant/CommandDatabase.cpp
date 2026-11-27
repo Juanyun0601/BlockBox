@@ -72,6 +72,9 @@ CommandInfo parseCommand(const QJsonObject &obj)
     info.minVersion = obj.value(QStringLiteral("minVersion")).toString();
     info.opLevel = obj.value(QStringLiteral("opLevel")).toInt(0);
     info.serverOnly = obj.value(QStringLiteral("serverOnly")).toBool(false);
+    info.hidden = obj.value(QStringLiteral("hidden")).toBool(false);
+    info.removedIn = obj.value(QStringLiteral("removedIn")).toString();
+    info.requiresPlugin = obj.value(QStringLiteral("requiresPlugin")).toString();
     info.syntax = obj.value(QStringLiteral("syntax")).toString();
     info.description = obj.value(QStringLiteral("description")).toString();
 
@@ -131,7 +134,77 @@ QList<T> parseTranslationEntries(const QJsonArray &array)
     return result;
 }
 
+/**
+ * @brief 版本号比较：按 '.' 分段转整数，缺的段按 0 补齐
+ * @return -1（a<b）/ 0（a==b）/ 1（a>b）
+ *
+ * 只用于「够不够新 / 有没有被移除」这类粗判断，遇到 "1.21.6-pre1"
+ * 这种带后缀的写法时非数字段按 0 处理，不会误判成更旧的版本。
+ */
+int compareVersionStrings(const QString &a, const QString &b)
+{
+    const QStringList partsA = a.split(QLatin1Char('.'));
+    const QStringList partsB = b.split(QLatin1Char('.'));
+    const int maxLen = qMax(partsA.size(), partsB.size());
+    for (int i = 0; i < maxLen; ++i)
+    {
+        const int numA = (i < partsA.size()) ? partsA.at(i).toInt() : 0;
+        const int numB = (i < partsB.size()) ? partsB.at(i).toInt() : 0;
+        if (numA < numB)
+        {
+            return -1;
+        }
+        if (numA > numB)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 } // namespace
+
+// ============================================================================
+// 指令可用性
+// ============================================================================
+
+QString commandUnavailableReason(const CommandInfo &cmd, const QString &version,
+                                 int opLevel, bool isServer)
+{
+    // 已经被新版本移除的旧指令（如 1.13 之前的 blockdata / testfor）
+    if (!cmd.removedIn.isEmpty() && !version.isEmpty()
+        && compareVersionStrings(version, cmd.removedIn) >= 0)
+    {
+        return QStringLiteral("%1 起已被游戏移除").arg(cmd.removedIn);
+    }
+
+    // 版本太低：指令还没加进来
+    if (!cmd.minVersion.isEmpty() && !version.isEmpty()
+        && compareVersionStrings(version, cmd.minVersion) < 0)
+    {
+        return QStringLiteral("当前版本不可用，需要 %1+").arg(cmd.minVersion);
+    }
+
+    // OP 等级不够
+    if (opLevel < cmd.opLevel)
+    {
+        return QStringLiteral("OP 等级不足，需要 %1").arg(cmd.opLevel);
+    }
+
+    // 需要服务器装插件才有：这条提示比「仅服务端可用」更能说明问题，先给出来
+    if (!cmd.requiresPlugin.isEmpty())
+    {
+        return QStringLiteral("需要服务器安装 %1 插件").arg(cmd.requiresPlugin);
+    }
+
+    // 只有服务端才有的指令
+    if (cmd.serverOnly && !isServer)
+    {
+        return QStringLiteral("仅服务端可用");
+    }
+
+    return QString();
+}
 
 // ============================================================================
 // 加载

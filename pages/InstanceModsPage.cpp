@@ -6,6 +6,7 @@
  */
 #include "InstanceModsPage.h"
 #include "ResourcesPage.h"
+#include "components/AppInputDialog.h"
 #include "components/BlurLoadingOverlay.h"
 #include "components/MasonryContentCard.h"
 #include "components/CardSelectionOverlay.h"
@@ -37,6 +38,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMimeData>
 #include "components/AppMessageBox.h"
@@ -1165,14 +1167,41 @@ void InstanceModsPage::onModContextMenu(const QPoint &pos)
 
     QMenu menu(this);
 
-    QAction *toggleAction = menu.addAction(enabled ? tr("禁用模组") : tr("启用模组"));
+    const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+    auto icon = [&](const QString &path, const QColor &color = QColor()) {
+        return IconHelper::loadColoredIcon(path, color.isValid() ? color : themeColor, 16);
+    };
+
+    QAction *toggleAction = menu.addAction(icon(enabled ? ":/Images/Icons/toggle_off.svg"
+                                                       : ":/Images/Icons/toggle_on.svg"),
+                                           enabled ? tr("禁用模组") : tr("启用模组"));
 
     // 收藏 / 取消收藏（本地收藏，账户页「我的收藏 → 本地收藏」可见）
     const bool fav = LocalFavoritesManager::instance()->isFavorite(
         m_instancePath, QStringLiteral("mods"), fileName);
-    QAction *favAction = menu.addAction(fav ? tr("取消收藏") : tr("收藏"));
-
+    QAction *favAction = menu.addAction(icon(":/Images/Icons/star.svg"),
+                                       fav ? tr("取消收藏") : tr("收藏"));
     menu.addSeparator();
+
+    // ── 打开位置：模组文件所在目录 + 实例模组目录 ──
+    QMenu *openMenu = menu.addMenu(icon(":/Images/Icons/folder.svg"), tr("打开位置"));
+    QAction *openFolderAction = openMenu->addAction(tr("模组文件所在位置"));
+    QAction *openModsDirAction = nullptr;
+    {
+        const QString modsDir = QDir(m_instancePath).filePath(QStringLiteral("mods"));
+        if (QDir(modsDir).exists() && QFileInfo(filePath).absolutePath() != QDir(modsDir).absolutePath())
+        {
+            openModsDirAction = openMenu->addAction(tr("实例模组文件夹"));
+        }
+    }
+
+    // ── 复制：文件名 / 完整路径分开 ──
+    QMenu *copyMenu = menu.addMenu(icon(":/Images/Icons/copy.svg"), tr("复制"));
+    QAction *copyNameAction = copyMenu->addAction(tr("模组文件名"));
+    QAction *copyPathAction = copyMenu->addAction(tr("文件完整路径"));
+
+    QAction *renameAction = menu.addAction(icon(":/Images/Icons/modify.svg"), tr("重命名…"));
+    renameAction->setShortcut(QKeySequence(Qt::Key_F2));
 
     // ── 设置分类子菜单 ──
     QMenu *categoryMenu = menu.addMenu(tr("设置分类"));
@@ -1217,11 +1246,12 @@ void InstanceModsPage::onModContextMenu(const QPoint &pos)
             });
     }
 
-    QAction *detailAction = menu.addAction(tr("查看详情"));
-    QAction *openFolderAction = menu.addAction(tr("打开文件位置"));
-    QAction *copyPathAction = menu.addAction(tr("复制文件路径"));
     menu.addSeparator();
-    QAction *deleteAction = menu.addAction(tr("删除模组"));
+    QAction *detailAction = menu.addAction(icon(":/Images/Icons/list.svg"), tr("查看详情"));
+    menu.addSeparator();
+    QAction *deleteAction = menu.addAction(icon(":/Images/Icons/delete.svg", QColor("#F44336")),
+                                           tr("删除模组"));
+    deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
 
     QAction *chosen = menu.exec(card->mapToGlobal(pos));
 
@@ -1264,9 +1294,73 @@ void InstanceModsPage::onModContextMenu(const QPoint &pos)
         QFileInfo fi(filePath);
         QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
     }
+    else if (chosen == openModsDirAction)
+    {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(
+            QDir(m_instancePath).filePath(QStringLiteral("mods"))));
+    }
+    else if (chosen == copyNameAction)
+    {
+        QApplication::clipboard()->setText(QFileInfo(filePath).fileName());
+    }
     else if (chosen == copyPathAction)
     {
-        QApplication::clipboard()->setText(filePath);
+        QApplication::clipboard()->setText(QDir::toNativeSeparators(filePath));
+    }
+    else if (chosen == renameAction)
+    {
+        // 禁用状态的文件名带 .disabled，改名时要保留这个后缀，否则等于顺手启用了
+        const bool disabled = filePath.endsWith(QStringLiteral(".disabled"), Qt::CaseInsensitive);
+        const QString realPath = disabled ? filePath.left(filePath.size() - 9) : filePath;
+        const QFileInfo realInfo(realPath);
+        const QString oldBase = realInfo.completeBaseName();
+
+        bool ok = false;
+        const QString newBase = AppInputDialog::getText(
+            this, tr("重命名模组"), tr("新的文件名（不含扩展名）"), QLineEdit::Normal, oldBase, &ok).trimmed();
+        if (!ok || newBase.isEmpty() || newBase == oldBase)
+            return;
+
+        static const QString invalidChars = QStringLiteral("\\/:*?\"<>|");
+        for (const QChar ch : newBase)
+        {
+            if (invalidChars.contains(ch))
+            {
+                AppMessageBox::warning(this, tr("重命名模组"),
+                                       tr("文件名不能包含 \\ / : * ? \" < > | 这些字符。"));
+                return;
+            }
+        }
+
+        const QString suffix = realInfo.suffix();
+        const QString newName = newBase + (suffix.isEmpty() ? QString()
+                                                            : QStringLiteral(".") + suffix)
+                                + (disabled ? QStringLiteral(".disabled") : QString());
+        const QString newPath = realInfo.absolutePath() + QStringLiteral("/") + newName;
+        if (QFileInfo::exists(newPath))
+        {
+            AppMessageBox::warning(this, tr("重命名模组"),
+                                   tr("同一目录下已经有文件「%1」了。").arg(newName));
+            return;
+        }
+        if (!QFile::rename(filePath, newPath))
+        {
+            AppMessageBox::warning(this, tr("重命名模组"),
+                                   tr("重命名失败，文件可能正被游戏或其它程序占用。"));
+            return;
+        }
+
+        // 分类和收藏跟着文件名迁移，改名后不会掉分类、掉收藏
+        const QString oldName = QFileInfo(filePath).fileName();
+        const QString catId = m_categoryManager->categoryOf(oldName);
+        if (!catId.isEmpty())
+        {
+            m_categoryManager->assignCategory(oldName, QString());
+            m_categoryManager->assignCategory(newName, catId);
+        }
+        LocalFavoritesManager::instance()->renameFavorite(
+            m_instancePath, QStringLiteral("mods"), oldName, newName, newPath);
+        refreshModList();
     }
     else if (chosen == deleteAction)
     {

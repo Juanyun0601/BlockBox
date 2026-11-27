@@ -109,6 +109,8 @@ signals:
   void recentPlayInstanceSettingsClicked(const QString &name);
   void recentPlayOpenFolderClicked(const QString &savePath);
   void recentPlayCopyNameClicked(const QString &name);
+  // 复制所属实例路径（右键菜单「复制 → 实例路径」）
+  void recentPlayCopyPathClicked(const QString &path);
   /** 请求快捷启动并直接进入指定存档 */
   void recentPlayQuickLaunchClicked(const QString &saveName, const QString &instancePath);
   /** 请求快捷启动并自动连接到指定服务器 */
@@ -242,6 +244,8 @@ private:
   void scheduleRecentPlaysRebuild();   // 延迟合并的重建（避免在布局激活过程中改布局）
   void reloadRecentPlaysIfChanged();   // 重新扫描数据，仅在内容变化时强制重建
   QWidget* buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *parent, int cardWidth);
+  /** 最近游玩卡片右键 / 「更多」按钮共用的菜单 */
+  void showRecentPlayMenu(const RecentPlayEntry &entry, const QPoint &globalPos);
   int calculateRecentPlayCardWidth() const;
   /** 一行能摆几张最近游玩卡片（与好友 / 热门帖同一套列宽规则） */
   int calculateRecentPlayColumnCount() const;

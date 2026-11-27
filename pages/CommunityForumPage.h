@@ -58,9 +58,6 @@ public:
     /** 大厅里还开着房间详情时先关详情并返回 true（顶栏返回键逐级退回用） */
     bool closeLobbyDetailIfVisible();
 
-    /** 软件其它入口（侧边栏「更多>联机大厅」）直接开大厅子页面 */
-    void openLobby();
-
 signals:
     /** 点击一个主题行：在启动器内打开帖子详情 */
     void threadOpenRequested(int threadId);

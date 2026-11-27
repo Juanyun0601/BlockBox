@@ -9,6 +9,9 @@
 
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFileDialog>
+#include <QStandardPaths>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QProcess>
@@ -56,6 +59,10 @@
 #include "pages/SkinStationPage.h"
 #include "pages/LibraryPage.h"
 #include "pages/MorePage.h"
+#include "pages/SeedMapPage.h"
+#include "pages/ProjectionEditPage.h"
+#include "pages/LanTransferPage.h"
+#include "pages/MemoryOptimizePage.h"
 #include "pages/AnnualReportPage.h"
 #include "pages/QrScanPage.h"
 #include "pages/PluginPage.h"
@@ -86,6 +93,7 @@
 #include "utils/TouchScroll.h"
 #include "utils/VersionDownloader.h"
 #include "utils/mod/ModData.h"
+#include "utils/plugin/PluginManager.h"
 
 void MainWindow::initPages()
 {
@@ -202,6 +210,12 @@ void MainWindow::initEssentialPages()
         // 复制存档名到剪贴板
         if (!name.isEmpty()) {
             QGuiApplication::clipboard()->setText(name);
+        }
+    });
+    connect(homePage, &HomePage::recentPlayCopyPathClicked, this, [this](const QString &path) {
+        // 复制所属实例的完整路径
+        if (!path.isEmpty()) {
+            QGuiApplication::clipboard()->setText(QDir::toNativeSeparators(path));
         }
     });
 
@@ -521,6 +535,22 @@ void MainWindow::initEssentialPages()
     QWidget *placeholderMore = new QWidget(this);
     m_stackedWidget->addWidget(placeholderMore);
 
+    // 种子地图页占位（更多>种子地图：输入种子即看群系地形）
+    QWidget *placeholderSeedMap = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderSeedMap);
+
+    // 投影编辑器整页占位（更多>投影编辑器：选好文件后直接进编辑页）
+    QWidget *placeholderProjectionEdit = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderProjectionEdit);
+
+    // 文件传输整页占位（更多>文件传输：局域网直传 / 远程组网互传）
+    QWidget *placeholderLanTransfer = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderLanTransfer);
+
+    // 内存优化整页占位（更多>内存优化：内存概况 + 一键优化）
+    QWidget *placeholderMemoryOptimize = new QWidget(this);
+    m_stackedWidget->addWidget(placeholderMemoryOptimize);
+
     // 手机端：把启动时就存在的各页面内容滚动区统一开启手指拖动滚动
     // （懒加载页面在切换到时由页面切换钩子补挂，见 mainwindow.cpp）
     for (int i = 0; i < m_stackedWidget->count(); ++i)
@@ -644,6 +674,18 @@ void MainWindow::ensurePageInitialized(PageIndex pageIndex)
         break;
     case PageIndex::MorePageIndex:
         initMorePage();
+        break;
+    case PageIndex::SeedMapPage:
+        initSeedMapPage();
+        break;
+    case PageIndex::ProjectionEditPageIndex:
+        initProjectionEditPage();
+        break;
+    case PageIndex::LanTransferPageIndex:
+        initLanTransferPage();
+        break;
+    case PageIndex::MemoryOptimizePageIndex:
+        initMemoryOptimizePage();
         break;
     case PageIndex::QrScanPage:
         initQrScanPage();
@@ -2629,7 +2671,7 @@ void MainWindow::showPublishPage()
     animatedSwitchToPage(PageIndex::PublishPage);
 }
 
-// ── 更多：入口页 + 分类跳转（联机大厅 / 皮肤站 / 图书馆 / 任务 / 年报 / 账户 / 引导） ──
+// ── 更多：入口页 + 分类跳转（图书馆 / 皮肤站 / 种子地图 / 投影编辑器 / 文件传输 / 插件管理 / 新手引导） ──
 
 void MainWindow::initMorePage()
 {
@@ -2642,13 +2684,40 @@ void MainWindow::initMorePage()
     m_stackedWidget->insertWidget(static_cast<int>(PageIndex::MorePageIndex), m_morePage);
     delete placeholder;
 
-    connect(m_morePage, &MorePage::lobbyRequested, this, [this]() { openMoreFeature(0); });
+    connect(m_morePage, &MorePage::libraryRequested, this, [this]() { openMoreFeature(0); });
     connect(m_morePage, &MorePage::skinStationRequested, this, [this]() { openMoreFeature(1); });
-    connect(m_morePage, &MorePage::libraryRequested, this, [this]() { openMoreFeature(2); });
-    connect(m_morePage, &MorePage::taskCenterRequested, this, [this]() { openMoreFeature(3); });
-    connect(m_morePage, &MorePage::annualReportRequested, this, [this]() { openMoreFeature(4); });
-    connect(m_morePage, &MorePage::accountRequested, this, [this]() { openMoreFeature(5); });
-    connect(m_morePage, &MorePage::onboardingRequested, this, [this]() { openMoreFeature(6); });
+    connect(m_morePage, &MorePage::seedMapRequested, this, [this]() { openMoreFeature(2); });
+    connect(m_morePage, &MorePage::projectionEditorRequested, this, [this]() { openMoreFeature(3); });
+    connect(m_morePage, &MorePage::transferRequested, this, [this]() { openMoreFeature(4); });
+    connect(m_morePage, &MorePage::memoryOptimizeRequested, this, [this]() { openMoreFeature(5); });
+    connect(m_morePage, &MorePage::pluginManageRequested, this, [this]() { openMoreFeature(6); });
+    connect(m_morePage, &MorePage::onboardingRequested, this, [this]() { openMoreFeature(7); });
+
+    // 插件入口卡片：按插件ID + 入口ID 定位后交给插件页执行（url / script）
+    connect(m_morePage, &MorePage::pluginEntryRequested, this,
+            [this](const QString &pluginId, const QString &entryId) {
+                const QList<PluginPageEntry> entries =
+                    PluginManager::instance()->enabledMoreEntries();
+                for (int i = 0; i < entries.size(); ++i) {
+                    if (entries[i].pluginId == pluginId && entries[i].id == entryId) {
+                        openPluginMoreEntry(i);
+                        return;
+                    }
+                }
+            });
+
+    // 插件启停后入口跟着增减（位置在「更多」页与左侧子导航里同步隐藏/出现）
+    connect(PluginManager::instance(), &PluginManager::pluginEnabledChanged, this,
+            [this](const QString &, bool) {
+                const bool rebuilt = syncMorePluginEntries(false);
+                if (rebuilt && m_subNavPanel
+                    && m_subNavPanel->currentParentIndex() == MoreNavIndex) {
+                    m_subNavPanel->showForParent(MoreNavIndex, false);
+                }
+            });
+
+    // 页面刚建好：先把当前已启用插件的入口铺上
+    m_morePage->setPluginEntries(PluginManager::instance()->enabledMoreEntries());
 
     m_pageInitialized[PageIndex::MorePageIndex] = true;
 }
@@ -2656,6 +2725,9 @@ void MainWindow::initMorePage()
 void MainWindow::showMorePage()
 {
     ensurePageInitialized(PageIndex::MorePageIndex);
+
+    // 插件入口来自插件清单：首次进入更多页时扫描一次插件目录，之后只在签名变化时重建
+    syncMorePluginEntries(!m_moreEntriesLoaded);
 
     setSideBarVisible(true);
     if (m_sideBar)
@@ -2680,13 +2752,86 @@ void MainWindow::showMorePage()
     animatedSwitchToPage(PageIndex::MorePageIndex);
 }
 
+bool MainWindow::syncMorePluginEntries(bool rescan)
+{
+    PluginManager *pm = PluginManager::instance();
+    if (rescan)
+        pm->refresh();
+
+    const QList<PluginPageEntry> entries = pm->enabledMoreEntries();
+    QStringList parts;
+    parts.reserve(entries.size());
+    for (const PluginPageEntry &entry : entries)
+        parts << (entry.pluginId + QLatin1Char('|') + entry.id + QLatin1Char('|') + entry.title);
+    const QString signature = parts.join(QLatin1Char('\n'));
+
+    // 入口没变化时不重建侧边栏（避免每次进更多页都闪一下），卡片本身照旧刷新
+    if (m_moreEntriesLoaded && signature == m_moreEntrySignature)
+    {
+        if (m_morePage)
+            m_morePage->setPluginEntries(entries);
+        return false;
+    }
+
+    m_moreEntrySignature = signature;
+    m_moreEntriesLoaded = true;
+
+    if (m_sideBar)
+        m_sideBar->refreshNavStructure();
+    if (m_morePage)
+        m_morePage->setPluginEntries(entries);
+    return true;
+}
+
+void MainWindow::openPluginMoreEntry(int entryIndex)
+{
+    const QList<PluginPageEntry> entries = PluginManager::instance()->enabledMoreEntries();
+    if (entryIndex < 0 || entryIndex >= entries.size())
+        return;
+
+    const PluginPageEntry entry = entries.at(entryIndex);
+    if (entry.kind == QLatin1String("url"))
+    {
+        if (!QDesktopServices::openUrl(QUrl(entry.target)))
+        {
+            NotificationManager::showInfo(
+                this, tr("没能打开浏览器，请手动访问：%1").arg(entry.target));
+        }
+        return;
+    }
+
+    // 脚本入口交给插件页执行：复用它的运行器（进度/输出窗）与错误提示
+    ensurePageInitialized(PageIndex::PluginPage);
+    if (m_pluginPage)
+        m_pluginPage->runPageEntry(entry.pluginId, entry.id);
+}
+
 void MainWindow::openMoreFeature(int childIndex)
 {
     // 子导航 / 落地页卡片共用这套索引，顺序与 SideBar「更多」的 children 一致
     switch (childIndex)
     {
-    case 0: // 联机大厅：社区页内的整页子页面，先进社区页再切到大厅
-        ensurePageInitialized(PageIndex::CommunityPage);
+    case 0: // 方块图书馆
+        showLibraryPage();
+        break;
+    case 1: // 方块皮肤站
+        showSkinStationPage();
+        break;
+    case 2: // 种子地图
+        showSeedMapPage();
+        break;
+    case 3: // 投影编辑器（先选投影文件）
+        showProjectionEditorPage();
+        break;
+    case 4: // 文件传输（局域网直传 / 远程组网互传）
+        showLanTransferPage();
+        break;
+    case 5: // 内存优化（内存概况 + 一键优化）
+        showMemoryOptimizePage();
+        break;
+    case 6: // 插件管理
+    {
+        ensurePageInitialized(PageIndex::PluginPage);
         setSideBarVisible(true);
         if (m_sideBar)
         {
@@ -2696,7 +2841,7 @@ void MainWindow::openMoreFeature(int childIndex)
         if (m_subNavPanel)
             m_subNavPanel->hidePanel();
         m_lastSidebarIndex = MoreNavIndex;
-        m_topBar->setTitle(tr("更多>联机大厅"));
+        m_topBar->setTitle(tr("更多>插件管理"));
         m_topBar->setAccountCardVisible(true);
         m_topBar->setWindowControlCardVisible(true);
         m_topBar->setAccountSelected(false);
@@ -2704,31 +2849,218 @@ void MainWindow::openMoreFeature(int childIndex)
         m_topBar->setInstanceSettingsSelected(false);
         disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
         connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
-        animatedSwitchToPage(PageIndex::CommunityPage);
-        if (m_communityPage)
-            m_communityPage->openLobby();
+        animatedSwitchToPage(PageIndex::PluginPage);
+        if (m_pluginPage)
+            m_pluginPage->showOverview();
         break;
-    case 1: // 皮肤站
-        showSkinStationPage();
-        break;
-    case 2: // 方块图书馆
-        showLibraryPage();
-        break;
-    case 3: // 任务中心
-        showTaskListPage();
-        break;
-    case 4: // 年度报告（0 = 当前年份）
-        showAnnualReportPage(0);
-        break;
-    case 5: // 账户管理
-        showAccountManagePage();
-        break;
-    case 6: // 新手引导
+    }
+    case 7: // 新手引导
         showOnboardingPage(false);
         break;
     default:
+        // 内置入口之后的索引都是插件提供的入口（顺序与卡片一致）
+        if (childIndex >= MorePage::builtinEntryCount())
+            openPluginMoreEntry(childIndex - MorePage::builtinEntryCount());
         break;
     }
+}
+
+// ── 种子地图：输入种子即看群系地形（不依赖已有存档） ──
+
+void MainWindow::initSeedMapPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::SeedMapPage]) { return; }
+
+    QWidget *placeholder = m_stackedWidget->widget(static_cast<int>(PageIndex::SeedMapPage));
+    m_seedMapPage = new SeedMapPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::SeedMapPage), m_seedMapPage);
+    delete placeholder;
+
+    m_pageInitialized[PageIndex::SeedMapPage] = true;
+}
+
+void MainWindow::showSeedMapPage()
+{
+    ensurePageInitialized(PageIndex::SeedMapPage);
+
+    setSideBarVisible(true);
+    if (m_sideBar)
+    {
+        m_sideBar->setSelectedIndex(MoreNavIndex);
+        m_sideBar->setExpandButtonVisible(false);
+    }
+    if (m_subNavPanel)
+        m_subNavPanel->hidePanel();
+    m_lastSidebarIndex = MoreNavIndex;
+
+    m_topBar->setTitle(tr("更多>种子地图"));
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    animatedSwitchToPage(PageIndex::SeedMapPage);
+    if (m_seedMapPage)
+        m_seedMapPage->openPage();
+}
+
+// ── 投影编辑器：选一个投影文件后直接进编辑页 ──
+
+void MainWindow::initProjectionEditPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::ProjectionEditPageIndex]) { return; }
+
+    QWidget *placeholder =
+        m_stackedWidget->widget(static_cast<int>(PageIndex::ProjectionEditPageIndex));
+    m_projectionEditPage = new ProjectionEditPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::ProjectionEditPageIndex),
+                                  m_projectionEditPage);
+    delete placeholder;
+
+    m_pageInitialized[PageIndex::ProjectionEditPageIndex] = true;
+}
+
+void MainWindow::showProjectionEditorPage()
+{
+    // 投影编辑器必须有文件才能编辑：先让用户挑一份 .litematic / .schematic
+    const QString startDir = m_currentInstancePath.isEmpty()
+                                 ? QStandardPaths::writableLocation(
+                                       QStandardPaths::DocumentsLocation)
+                                 : m_currentInstancePath + QStringLiteral("/schematics");
+    const QString file = QFileDialog::getOpenFileName(
+        this, tr("选择要编辑的投影"),
+        QDir(startDir).exists() ? startDir : QStandardPaths::writableLocation(
+                                                    QStandardPaths::DocumentsLocation),
+        tr("投影文件 (*.litematic *.schematic *.schem);;所有文件 (*)"));
+    if (file.isEmpty())
+        return;
+
+    ensurePageInitialized(PageIndex::ProjectionEditPageIndex);
+
+    setSideBarVisible(true);
+    if (m_sideBar)
+    {
+        m_sideBar->setSelectedIndex(MoreNavIndex);
+        m_sideBar->setExpandButtonVisible(false);
+    }
+    if (m_subNavPanel)
+        m_subNavPanel->hidePanel();
+    m_lastSidebarIndex = MoreNavIndex;
+
+    m_topBar->setTitle(tr("更多>投影编辑器"));
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    if (m_projectionEditPage)
+    {
+        m_projectionEditPage->setInstancePath(m_currentInstancePath);
+        m_projectionEditPage->setCurrentProjection(file);
+    }
+
+    animatedSwitchToPage(PageIndex::ProjectionEditPageIndex);
+}
+
+// ── 文件传输：一个独立整页，不依赖当前实例 ──
+
+void MainWindow::initLanTransferPage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::LanTransferPageIndex]) { return; }
+
+    QWidget *placeholder =
+        m_stackedWidget->widget(static_cast<int>(PageIndex::LanTransferPageIndex));
+    m_lanTransferPage = new LanTransferPage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::LanTransferPageIndex),
+                                  m_lanTransferPage);
+    delete placeholder;
+
+    m_pageInitialized[PageIndex::LanTransferPageIndex] = true;
+}
+
+void MainWindow::showLanTransferPage()
+{
+    ensurePageInitialized(PageIndex::LanTransferPageIndex);
+
+    setSideBarVisible(true);
+    if (m_sideBar)
+    {
+        m_sideBar->setSelectedIndex(MoreNavIndex);
+        m_sideBar->setExpandButtonVisible(false);
+    }
+    if (m_subNavPanel)
+        m_subNavPanel->hidePanel();
+    m_lastSidebarIndex = MoreNavIndex;
+
+    m_topBar->setTitle(tr("更多>文件传输"));
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    animatedSwitchToPage(PageIndex::LanTransferPageIndex);
+}
+
+// ── 内存优化：一个独立整页，展示内存概况并支持一键优化 ──
+
+void MainWindow::initMemoryOptimizePage()
+{
+    QMutexLocker locker(&m_initMutex);
+    if (m_pageInitialized[PageIndex::MemoryOptimizePageIndex]) { return; }
+
+    QWidget *placeholder =
+        m_stackedWidget->widget(static_cast<int>(PageIndex::MemoryOptimizePageIndex));
+    m_memoryOptimizePage = new MemoryOptimizePage(this);
+    m_stackedWidget->removeWidget(placeholder);
+    m_stackedWidget->insertWidget(static_cast<int>(PageIndex::MemoryOptimizePageIndex),
+                                  m_memoryOptimizePage);
+    delete placeholder;
+
+    m_pageInitialized[PageIndex::MemoryOptimizePageIndex] = true;
+}
+
+void MainWindow::showMemoryOptimizePage()
+{
+    ensurePageInitialized(PageIndex::MemoryOptimizePageIndex);
+
+    setSideBarVisible(true);
+    if (m_sideBar)
+    {
+        m_sideBar->setSelectedIndex(MoreNavIndex);
+        m_sideBar->setExpandButtonVisible(false);
+    }
+    if (m_subNavPanel)
+        m_subNavPanel->hidePanel();
+    m_lastSidebarIndex = MoreNavIndex;
+
+    m_topBar->setTitle(tr("更多>内存优化"));
+    m_topBar->setAccountCardVisible(true);
+    m_topBar->setWindowControlCardVisible(true);
+    m_topBar->setAccountSelected(false);
+    m_topBar->setInstanceSelectSelected(false);
+    m_topBar->setInstanceSettingsSelected(false);
+    disconnect(m_topBar, &TopBar::backClicked, this, nullptr);
+    connect(m_topBar, &TopBar::backClicked, this, &MainWindow::onBackToMain);
+
+    animatedSwitchToPage(PageIndex::MemoryOptimizePageIndex);
+    // 每次进来都重新采一次数字（内存一直变），顺带同步设置页改过的「启动前优化」开关
+    if (m_memoryOptimizePage)
+        m_memoryOptimizePage->refresh();
 }
 
 void MainWindow::showPublishResourcePage()

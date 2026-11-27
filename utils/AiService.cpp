@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -50,6 +51,7 @@
 #include "utils/WorldMap/StructureFinder.h"
 #include "utils/AiEndpointUrl.h"
 #include "utils/CommandAssistant/LitematicReader.h"
+#include "utils/GameScreenshot.h"
 #include "utils/skill/SkillManager.h"
 #include "utils/plugin/PluginManager.h"
 #include "utils/ForumContentService.h"
@@ -711,6 +713,7 @@ void AiService::stopStreaming()
     m_turnToolPhase = QJsonArray(); // 中止后丢弃未完成回合的工具循环消息
     m_pendingToolQueue = QJsonArray();
     m_toolQueuePos = 0;
+    m_pendingToolImages.clear();    // 未发送的工具画面一并丢弃，避免串到下个回合
 }
 
 void AiService::onReadyRead()
@@ -1641,6 +1644,10 @@ void AiService::continueWithToolResult(const QString &toolCallId, const QString 
     m_pendingToolQueue = QJsonArray();
     m_toolQueuePos = 0;
 
+    // 本轮工具里取到的画面，等所有 tool 结果都回填完再作为一条 user 消息追加
+    // （tool 消息必须紧跟 assistant 的 tool_calls，中间不能插别的角色）
+    appendToolImagesMessage();
+
     // 重置 tool_calls 累积器，准备接收下一轮流式响应
     m_toolCallsAccumulator = QJsonArray();
     m_currentToolCallIndex = -1;
@@ -1671,6 +1678,142 @@ QString AiService::truncateToolResult(const QString &text, int maxLength) const
     }
     return text.left(maxLength) + QStringLiteral("\n\n[... 结果已截断，原始长度 %1 字符 ...]")
                                       .arg(text.size());
+}
+
+bool AiService::extractToolImagePayload(const QString &raw, QString *text,
+                                        QList<ChatImage> *images)
+{
+    if (raw.isEmpty() || images == nullptr)
+    {
+        return false;
+    }
+
+    // 快速排除：必须是 JSON 对象且提到 bb_image，避免把普通结果误判成图片载荷
+    const QString trimmed = raw.trimmed();
+    if (!trimmed.startsWith(QLatin1Char('{')) || !trimmed.contains(QStringLiteral("bb_image")))
+    {
+        return false;
+    }
+
+    QJsonParseError parseErr;
+    const QJsonDocument doc = QJsonDocument::fromJson(trimmed.toUtf8(), &parseErr);
+    if (parseErr.error != QJsonParseError::NoError || !doc.isObject())
+    {
+        return false;
+    }
+    const QJsonObject obj = doc.object();
+
+    QStringList urls;
+    const QJsonValue imageVal = obj.value(QStringLiteral("bb_image"));
+    if (imageVal.isString())
+    {
+        urls << imageVal.toString();
+    }
+    else if (imageVal.isArray())
+    {
+        for (const QJsonValue &v : imageVal.toArray())
+        {
+            if (v.isString())
+            {
+                urls << v.toString();
+            }
+        }
+    }
+
+    // 一次最多两张：再多既烧 token 也没多少信息增量
+    constexpr int kMaxImagesPerTool = 2;
+    for (const QString &rawUrl : urls)
+    {
+        if (images->size() >= kMaxImagesPerTool)
+        {
+            break;
+        }
+
+        const QString url = rawUrl.trimmed();
+        if (url.isEmpty())
+        {
+            continue;
+        }
+
+        ChatImage image;
+        if (url.startsWith(QStringLiteral("data:image/"), Qt::CaseInsensitive))
+        {
+            // 只认 png / jpeg / webp，避免把任意 data URL 塞给服务商
+            const QString lower = url.left(64).toLower();
+            if (!lower.contains(QStringLiteral("png")) && !lower.contains(QStringLiteral("jpeg"))
+                && !lower.contains(QStringLiteral("jpg")) && !lower.contains(QStringLiteral("webp")))
+            {
+                continue;
+            }
+            image.dataUrl = url;
+        }
+        else
+        {
+            // 本地图片路径：按截图同一套规则压成 JPEG data URL（长边 ≤1280）
+            const QImage src(url);
+            if (src.isNull())
+            {
+                continue;
+            }
+            image.dataUrl = GameScreenshot::toJpegDataUrl(src);
+        }
+
+        if (image.dataUrl.isEmpty() || !image.dataUrl.contains(QLatin1Char(',')))
+        {
+            continue;
+        }
+        images->append(image);
+    }
+
+    if (images->isEmpty())
+    {
+        return false;
+    }
+
+    QString body = obj.value(QStringLiteral("text")).toString().trimmed();
+    if (body.isEmpty())
+    {
+        body = QStringLiteral("（工具返回了 %1 张画面）").arg(images->size());
+    }
+    if (text)
+    {
+        *text = body;
+    }
+    return true;
+}
+
+void AiService::appendToolImagesMessage()
+{
+    if (m_pendingToolImages.isEmpty())
+    {
+        return;
+    }
+
+    QJsonArray parts;
+    QJsonObject textPart;
+    textPart[QStringLiteral("type")] = QStringLiteral("text");
+    textPart[QStringLiteral("text")] =
+        QStringLiteral("上面工具返回的画面如下，请结合它继续判断。");
+    parts.append(textPart);
+    for (const ChatImage &image : m_pendingToolImages)
+    {
+        QJsonObject urlObj;
+        urlObj[QStringLiteral("url")] = image.dataUrl;
+        QJsonObject imagePart;
+        imagePart[QStringLiteral("type")] = QStringLiteral("image_url");
+        imagePart[QStringLiteral("image_url")] = urlObj;
+        parts.append(imagePart);
+    }
+
+    QJsonObject msgObj;
+    msgObj[QStringLiteral("role")] = QStringLiteral("user");
+    msgObj[QStringLiteral("content")] = parts;
+
+    // 同时进请求序列与本轮工具阶段：后者会让这些消息被原样回放，
+    // 既保住服务商前缀缓存，后续轮次也还能"记得"看过这张图
+    m_pendingMessages.append(msgObj);
+    m_turnToolPhase.append(msgObj);
+    m_pendingToolImages.clear();
 }
 
 // ============================================================================
@@ -2408,6 +2551,16 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
         QString result = watcher->result();
         qint64 durationMs = timer.elapsed();
 
+        // 工具返回的画面（bb_image）：拆成「文本结果 + 图片」两部分，
+        // 图片不能走 tool 消息（内容必须是字符串），而是等本轮 tool 结果
+        // 全部回填后，作为一条 user 消息附图发给模型
+        QString toolText = result;
+        QList<ChatImage> toolImages;
+        if (extractToolImagePayload(result, &toolText, &toolImages))
+        {
+            result = toolText;
+        }
+
         // 生成摘要（取结果第一行或前 60 字）
         QString summary = result.section('\n', 0, 0).trimmed();
         if (summary.isEmpty())
@@ -2417,6 +2570,10 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
         if (summary.size() > 60)
         {
             summary = summary.left(60) + QStringLiteral("...");
+        }
+        if (!toolImages.isEmpty())
+        {
+            summary += QStringLiteral("（含 %1 张画面）").arg(toolImages.size());
         }
 
         emit agentToolCallFinished(name, summary, durationMs, true);
@@ -2430,6 +2587,11 @@ void AiService::dispatchToolCall(const QJsonObject &toolCall)
         rec.durationMs = durationMs;
         rec.success = true;
         m_pendingToolCalls.append(rec);
+
+        if (!toolImages.isEmpty())
+        {
+            m_pendingToolImages.append(toolImages);
+        }
 
         continueWithToolResult(toolCallId, name, result);
     });

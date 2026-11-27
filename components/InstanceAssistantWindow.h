@@ -237,6 +237,18 @@ private:
     void flushDebouncedInput();
     /** @brief 复制按钮点击 */
     void onCopyClicked();
+    /**
+     * @brief 把候选列表里的一项按光标位置补进输入框
+     * @param item 候选列表项（点击、Tab、回车共用同一套补全规则）
+     */
+    void insertCompletionItem(QListWidgetItem *item);
+    /**
+     * @brief 强制立刻重算候选与翻译，绕过输入防抖
+     *
+     * 回车复制 / 双击候选这类操作发生在击键后 60ms 内时，防抖还没跑，
+     * 直接复制会拿到上一条指令，所以先同步刷新一次。
+     */
+    void flushInputImmediately();
     /** @brief 一键注入按钮点击：将英文指令注入到运行中的 Minecraft 游戏窗口 */
     void onInjectClicked();
     /** @brief 打开历史记录对话框，点击历史项可回填输入框 */
@@ -324,6 +336,7 @@ private:
     QComboBox *m_opLevelCombo;       ///< OP 等级下拉框
     QPushButton *m_redetectBtn;      ///< 重新检测按钮
     QLineEdit *m_commandInput;       ///< 中文输入框
+    QPushButton *m_clearInputBtn;    ///< 清空输入框的小按钮
     QListWidget *m_completionList;   ///< 候选列表
     QLineEdit *m_englishOutput;      ///< 英文输出框（只读）
     QLabel *m_outputHint;            ///< 输出框下方的警告/错误提示行

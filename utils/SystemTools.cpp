@@ -28,6 +28,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QPointer>
+#include <QPixmapCache>
 #include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
@@ -122,6 +123,29 @@ qint64 SystemTools::emptyWorkingSet()
 #else
     return -1;
 #endif
+}
+
+qint64 SystemTools::currentProcessWorkingSetBytes()
+{
+#ifdef Q_OS_WIN
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    pmc.cb = sizeof(pmc);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)))
+        return -1;
+    return static_cast<qint64>(pmc.WorkingSetSize);
+#else
+    return -1;
+#endif
+}
+
+qint64 SystemTools::optimizeMemorySilently()
+{
+    // 图片缓存是启动器里最占内存的一块（首页大图、皮肤预览、资源封面都在里面）：
+    // 先清空，工作集才有机会真正收缩下去
+    QPixmapCache::clear();
+
+    const qint64 trimmed = emptyWorkingSet();
+    return trimmed > 0 ? trimmed : 0;
 }
 
 void SystemTools::optimizeMemory(QWidget* parentWidget)

@@ -51,11 +51,26 @@ Write-Host '=== probe ==='
 Compile 'tests\more_nav_probe.cpp' $probeObj
 
 $overrides = [ordered]@{
-    'mainwindow.o'         = 'mainwindow.cpp'
-    'MainWindowPages.o'    = 'MainWindowPages.cpp'
-    'SideBar.o'            = 'components\SideBar.cpp'
-    'CommunityForumPage.o' = 'pages\CommunityForumPage.cpp'
-    'MorePage.o'           = 'pages\MorePage.cpp'
+    'mainwindow.o'      = 'mainwindow.cpp'
+    'MainWindowPages.o' = 'MainWindowPages.cpp'
+    'SideBar.o'         = 'components\SideBar.cpp'
+    'TopBar.o'          = 'components\TopBar.cpp'
+    'MorePage.o'        = 'pages\MorePage.cpp'
+    'SeedMapPage.o'     = 'pages\SeedMapPage.cpp'
+    'SeedTerrainRenderer.o' = 'utils\WorldMap\SeedTerrainRenderer.cpp'
+    'WorldMapRenderer.o'    = 'utils\WorldMap\WorldMapRenderer.cpp'
+    'MapBlockPalette.o'     = 'utils\MapBlockPalette.cpp'
+    'TreePredictor.o'       = 'utils\WorldMap\TreePredictor.cpp'
+    'TreeGen.o'             = 'utils\WorldMap\TreeGen.cpp'
+    'MushroomPredictor.o'   = 'utils\WorldMap\MushroomPredictor.cpp'
+    'CavePredictor.o'       = 'utils\WorldMap\CavePredictor.cpp'
+    'McRandom.o'            = 'utils\WorldMap\McRandom.cpp'
+    'BiomeCatalog.o'        = 'utils\WorldMap\BiomeCatalog.cpp'
+    'OreFinder.o'           = 'utils\WorldMap\OreFinder.cpp'
+    'PluginManager.o'       = 'utils\plugin\PluginManager.cpp'
+    'PluginPage.o'          = 'pages\PluginPage.cpp'
+    'DshPluginInstaller.o'  = 'utils\dsh\DshPluginInstaller.cpp'
+    'ZcodePluginInstaller.o' = 'utils\zcode\ZcodePluginInstaller.cpp'
 }
 foreach ($name in $overrides.Keys) {
     Compile $overrides[$name] "$outDir\$name"
@@ -63,13 +78,14 @@ foreach ($name in $overrides.Keys) {
 
 RunMoc 'mainwindow.h' "$outDir\moc_mainwindow.cpp" "$outDir\moc_mainwindow.o"
 RunMoc 'pages\MorePage.h' "$outDir\moc_MorePage.cpp" "$outDir\moc_MorePage.o"
+RunMoc 'pages\SeedMapPage.h' "$outDir\moc_SeedMapPage.cpp" "$outDir\moc_SeedMapPage.o"
 
 Write-Host '=== building link args ==='
 $objects = Get-Content $objScript | Where-Object { $_ -match '\.o$' } |
     ForEach-Object { $_.Trim() } |
     Where-Object { $_ -ne 'release/main.o' -and $_ -ne 'main.o' } |
     Where-Object { -not $overrides.Contains((Split-Path -Leaf ($_ -replace '\\', '/'))) } |
-    Where-Object { (Split-Path -Leaf ($_ -replace '\\', '/')) -ne 'moc_mainwindow.o' } |
+    Where-Object { (Split-Path -Leaf ($_ -replace '\\', '/')) -notmatch '^moc_(mainwindow|MorePage|SeedMapPage)\.o$' } |
     ForEach-Object { "$objDir\" + ($_ -replace '^release[\\/]', '') }
 
 $linkLine = (Get-Content 'build-win-release\link_fix.bat' | Where-Object { $_ -match '^g\+\+' } | Select-Object -First 1)
@@ -86,7 +102,7 @@ foreach ($a in ($linkLine -split '\s+')) {
 }
 
 $final = @('-Wl,-subsystem,console', '-mthreads', '-o', $probeExe) + $objects + @($probeObj) +
-    ($overrides.Keys | ForEach-Object { "$outDir\$_" }) + @("$outDir\moc_mainwindow.o", "$outDir\moc_MorePage.o") + $libs
+    ($overrides.Keys | ForEach-Object { "$outDir\$_" }) + @("$outDir\moc_mainwindow.o", "$outDir\moc_MorePage.o", "$outDir\moc_SeedMapPage.o") + $libs
 Write-Host "objects=$($objects.Count) libargs=$($libs.Count)"
 
 Write-Host '=== linking ==='

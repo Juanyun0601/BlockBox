@@ -11,6 +11,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -21,11 +22,15 @@
 #include <QPainter>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
 #include <QSettings>
+#include <QStandardPaths>
+#include <QTcpServer>
 #include <QTextStream>
+#include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -41,6 +46,50 @@ const QString kManifestName = QStringLiteral("plugin.json");
 const QString kPluginSuffix = QStringLiteral("*.BlockBox");
 const QString kSettingsOrg   = QStringLiteral("BlockBox");
 const QString kSettingsApp   = QStringLiteral("Plugins");
+
+/**
+ * @brief 把插件 id 清洗成可安全拼路径的形式
+ *
+ * 插件 id 来自清单（不可信），非 [A-Za-z0-9_-] 一律替换为下划线，
+ * 防止 ../ 之类越出临时目录或数据目录。
+ */
+QString safePluginIdForPath(const QString &pluginId)
+{
+    QString safe = pluginId;
+    safe.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_-]")),
+                 QStringLiteral("_"));
+    if (safe.isEmpty())
+        safe = QStringLiteral("plugin");
+    return safe;
+}
+
+/** 端口是否空闲（能用它 listen 上就算空闲） */
+bool isTcpPortFree(int port)
+{
+    if (port <= 0 || port > 65535)
+        return false;
+    QTcpServer probe;
+    const bool ok = probe.listen(QHostAddress::LocalHost, static_cast<quint16>(port));
+    if (ok)
+        probe.close();
+    return ok;
+}
+
+/** 让系统挑一个空闲的本地端口：优先 17891~17999 这段（好记、好配防火墙），
+ *  都被占用时退回系统随机分配；失败返回 0 */
+int pickFreeTcpPort()
+{
+    for (int port = 17891; port <= 17999; ++port) {
+        if (isTcpPortFree(port))
+            return port;
+    }
+    QTcpServer probe;
+    if (!probe.listen(QHostAddress::LocalHost, 0))
+        return 0;
+    const int port = int(probe.serverPort());
+    probe.close();
+    return port;
+}
 
 /**
  * @brief 网络下载文件到本地（同步，带 30 秒超时）
@@ -187,6 +236,19 @@ PluginInfo PluginManager::parsePluginFile(const QString &filePath) const
     for (const QJsonValue &v : perms)
         info.permissions.append(v.toString().trimmed().toLower());
 
+    // 插件私有变量（manifest.vars）：供 aiTools[].http 的 {plugin.<键>} 占位符
+    // 与插件脚本的环境变量使用，值不会进入模型上下文
+    const QJsonObject varsObj = obj.value(QStringLiteral("vars")).toObject();
+    for (auto it = varsObj.constBegin(); it != varsObj.constEnd(); ++it) {
+        const QString key = it.key().trimmed();
+        if (key.isEmpty())
+            continue;
+        // 只接受基础类型，对象/数组直接忽略（避免意料之外的嵌套值被当路径用）
+        if (it.value().isObject() || it.value().isArray() || it.value().isNull())
+            continue;
+        info.vars.insert(key, it.value().toVariant().toString());
+    }
+
     const QJsonArray settingsArr = obj.value(QStringLiteral("settings")).toArray();
     for (const QJsonValue &v : settingsArr) {
         if (v.isObject()) {
@@ -224,6 +286,17 @@ PluginInfo PluginManager::parsePluginFile(const QString &filePath) const
                 if (a.isValid())
                     info.ui.actions.append(a);
             }
+        }
+        // 「更多」页入口（ui.moreEntries）：同插件内 id 去重，需声明 ui:page 权限才生效
+        const QJsonArray moreEntriesArr = uiObj.value(QStringLiteral("moreEntries")).toArray();
+        for (const QJsonValue &v : moreEntriesArr) {
+            if (!v.isObject())
+                continue;
+            PluginPageEntry e = PluginPageEntry::fromJson(v.toObject());
+            if (!e.isValid() || info.moreEntry(e.id).isValid())
+                continue;
+            e.pluginId = info.id;
+            info.ui.moreEntries.append(e);
         }
     }
 
@@ -306,6 +379,52 @@ QString PluginManager::pluginIconPath(const PluginInfo &info) const
 
     if (!img.save(cachePath, "PNG"))
         return QString();
+    return cachePath;
+}
+
+QString PluginManager::pluginEntryIconPath(const PluginInfo &info,
+                                           const PluginPageEntry &entry) const
+{
+    if (!info.loaded || entry.icon.isEmpty() || info.filePath.isEmpty())
+        return pluginIconPath(info);
+
+    // 保留原扩展名：SVG 要按矢量渲染并跟随主题色，PNG 直接当图片用，
+    // 所以这里存原始字节，不做统一转码
+    const QString ext = QFileInfo(entry.icon).suffix().toLower();
+    const QStringList kIconExts = {
+        QStringLiteral("png"), QStringLiteral("svg"), QStringLiteral("jpg"),
+        QStringLiteral("jpeg"), QStringLiteral("webp"),
+    };
+    if (!kIconExts.contains(ext))
+        return pluginIconPath(info);
+
+    const QFileInfo src(info.filePath);
+    const QString cacheDir = pluginsDir() + QStringLiteral("/.icons");
+    QDir dir;
+    if (!dir.exists(cacheDir))
+        dir.mkpath(cacheDir);
+
+    const QString cachePath = cacheDir + QStringLiteral("/")
+        + info.id + QStringLiteral("_entry_")
+        + QString::number(static_cast<qulonglong>(qHash(entry.icon)))
+        + QLatin1Char('_')
+        + QString::number(src.lastModified().toSecsSinceEpoch())
+        + QLatin1Char('.') + ext;
+    if (QFileInfo::exists(cachePath))
+        return cachePath;
+
+    QByteArray data;
+    if (!PluginZip::extractEntryToMemory(info.filePath, entry.icon, data))
+        return pluginIconPath(info);
+
+    QFile out(cachePath);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        || out.write(data) != data.size()) {
+        out.close();
+        QFile::remove(cachePath);
+        return pluginIconPath(info);
+    }
+    out.close();
     return cachePath;
 }
 
@@ -586,8 +705,141 @@ QStringList PluginManager::activePluginStyles() const
     return styles;
 }
 
-// ==================== AI 工具接口 ====================
+// ==================== 「更多」页入口 ====================
 
+bool PluginManager::providesMoreEntries(const PluginInfo &info) const
+{
+    if (!info.loaded || info.ui.moreEntries.isEmpty())
+        return false;
+    // 声明了入口却没申请 ui:page 权限：不展示，避免插件在用户不知情时往更多页塞入口；
+    // 插件详情页会给出「未声明 ui:page 权限，暂不生效」提示
+    if (!info.hasPagePermission())
+        return false;
+    return info.validMoreEntryCount() > 0;
+}
+
+QList<PluginPageEntry> PluginManager::enabledMoreEntries() const
+{
+    QList<PluginPageEntry> entries;
+    for (const PluginInfo &info : m_plugins) {
+        if (!providesMoreEntries(info) || !isEnabled(info.id))
+            continue;
+        for (const PluginPageEntry &entry : info.ui.moreEntries) {
+            if (!entry.isValid())
+                continue;
+            PluginPageEntry e = entry;
+            e.pluginId = info.id;
+            entries.append(e);
+        }
+    }
+    return entries;
+}
+
+// ==================== 插件私有变量 ====================
+
+QString PluginManager::pluginDataDir(const QString &pluginId) const
+{
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                         + QStringLiteral("/plugin-data/") + safePluginIdForPath(pluginId);
+    QDir().mkpath(base);
+    return base;
+}
+
+QMap<QString, QString> PluginManager::resolvedPluginVars(const PluginInfo &info) const
+{
+    QMap<QString, QString> vars;
+    if (info.id.isEmpty())
+        return vars;
+
+    // 1) 清单里写死的键（"auto" 交给保留键处理）
+    for (auto it = info.vars.constBegin(); it != info.vars.constEnd(); ++it) {
+        if (it.value().trimmed().compare(QStringLiteral("auto"), Qt::CaseInsensitive) == 0)
+            continue;
+        vars.insert(it.key(), it.value());
+    }
+
+    // 2) 保留键：data / app 无状态，直接算
+    if (!vars.contains(QStringLiteral("data")))
+        vars.insert(QStringLiteral("data"), pluginDataDir(info.id));
+    if (!vars.contains(QStringLiteral("app")))
+        vars.insert(QStringLiteral("app"), QCoreApplication::applicationDirPath());
+
+    // 3) 保留键：token / port 需要持久化，首次用到时生成
+    QSettings settings(kSettingsOrg, kSettingsApp);
+    const QString prefix = QStringLiteral("pluginVars/%1/").arg(info.id);
+
+    if (!vars.contains(QStringLiteral("token"))) {
+        QString token = settings.value(prefix + QStringLiteral("token")).toString().trimmed();
+        if (token.size() < 16) {
+            token.clear();
+            for (int i = 0; i < 4; ++i) {
+                token += QString::number(QRandomGenerator::global()->generate(), 16)
+                             .rightJustified(8, QLatin1Char('0'));
+            }
+            settings.setValue(prefix + QStringLiteral("token"), token);
+        }
+        vars.insert(QStringLiteral("token"), token);
+    }
+
+    if (!vars.contains(QStringLiteral("port"))) {
+        // 端口只分配一次并固定下来：插件自己的服务会长期占用这个端口，
+        // 所以这里不能"被占用就重挑"（否则每次调用都会漂到新端口，
+        // 和正在监听的服务对不上）。清单里想要固定端口时直接写数字。
+        int port = settings.value(prefix + QStringLiteral("port")).toInt();
+        if (port <= 0) {
+            // QTcpServer 需要线程事件分发器，脚本工具却跑在工作线程里，
+            // 所以只在主线程做真实探测；工作线程按插件 id 派生一个候选值，
+            // 一旦落库就固定，后续调用（无论哪个线程）都读同一个值。
+            if (QCoreApplication::instance()
+                && QThread::currentThread() == QCoreApplication::instance()->thread()) {
+                port = pickFreeTcpPort();
+            } else {
+                port = 17891 + int(qHash(info.id) % 100u);
+            }
+            if (port > 0)
+                settings.setValue(prefix + QStringLiteral("port"), port);
+        }
+        if (port > 0)
+            vars.insert(QStringLiteral("port"), QString::number(port));
+    }
+
+    return vars;
+}
+
+QString PluginManager::substitutePluginVars(const QString &text,
+                                            const QMap<QString, QString> &vars,
+                                            QStringList *unknownKeys)
+{
+    if (text.isEmpty() || !text.contains(QStringLiteral("{plugin.")))
+        return text;
+
+    static const QRegularExpression re(
+        QStringLiteral("\\{plugin\\.([A-Za-z0-9_-]+)\\}"));
+
+    QString out;
+    out.reserve(text.size());
+    int last = 0;
+    auto it = re.globalMatch(text);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        const QString key = m.captured(1);
+        out += text.mid(last, m.capturedStart() - last);
+        const auto hit = vars.constFind(key);
+        if (hit != vars.constEnd()) {
+            out += hit.value();
+        } else {
+            // 未声明的键保留原文，交给调用方决定报错还是忽略
+            out += m.captured(0);
+            if (unknownKeys && !unknownKeys->contains(key))
+                unknownKeys->append(key);
+        }
+        last = m.capturedEnd();
+    }
+    out += text.mid(last);
+    return out;
+}
+
+// ==================== AI 工具接口 ====================
 bool PluginManager::providesAiTools(const PluginInfo &info) const
 {
     if (!info.loaded || info.aiTools.isEmpty())
@@ -683,9 +935,7 @@ QString PluginManager::executeAiScriptTool(const PluginInfo &info, const PluginA
 {
     // 解包到临时目录（与插件页脚本执行的目录分开，避免互相覆盖）；
     // 插件 ID 来自清单，先清洗再拼路径，避免 ../ 逃出临时目录
-    QString safeId = info.id;
-    safeId.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_-]")),
-                   QStringLiteral("_"));
+    const QString safeId = safePluginIdForPath(info.id);
     const QString tmpDir = QDir::tempPath() + QStringLiteral("/BlockBox/plugin_ai_") + safeId;
     QDir(tmpDir).removeRecursively();
     QDir().mkpath(tmpDir);
@@ -751,6 +1001,23 @@ QString PluginManager::executeAiScriptTool(const PluginInfo &info, const PluginA
                QString::fromUtf8(QJsonDocument(args).toJson(QJsonDocument::Compact)));
     env.insert(QStringLiteral("PLUGIN_ID"), info.id);
     env.insert(QStringLiteral("PLUGIN_TOOL"), tool.name);
+
+    // 新增：插件私有变量与常用目录（BB_ 前缀），省掉脚本里手猜路径
+    const QMap<QString, QString> vars = resolvedPluginVars(info);
+    QJsonObject varsJson;
+    for (auto it = vars.constBegin(); it != vars.constEnd(); ++it)
+        varsJson.insert(it.key(), it.value());
+
+    env.insert(QStringLiteral("BB_PLUGIN_ID"), info.id);
+    env.insert(QStringLiteral("BB_PLUGIN_TOOL"), tool.name);
+    env.insert(QStringLiteral("BB_PLUGIN_DIR"), tmpDir);           // 插件包解包目录
+    env.insert(QStringLiteral("BB_PLUGIN_DATA"), vars.value(QStringLiteral("data")));
+    env.insert(QStringLiteral("BB_APP_DIR"), vars.value(QStringLiteral("app")));
+    env.insert(QStringLiteral("BB_PLUGIN_TOKEN"), vars.value(QStringLiteral("token")));
+    env.insert(QStringLiteral("BB_PLUGIN_PORT"), vars.value(QStringLiteral("port")));
+    env.insert(QStringLiteral("BB_PLUGIN_VARS"),
+               QString::fromUtf8(QJsonDocument(varsJson).toJson(QJsonDocument::Compact)));
+
     proc.setProcessEnvironment(env);
     proc.setWorkingDirectory(tmpDir);
 
@@ -787,8 +1054,8 @@ QString PluginManager::executeAiScriptTool(const PluginInfo &info, const PluginA
     return output;
 }
 
-QString PluginManager::executeAiHttpTool(const PluginAiTool &tool, const QJsonObject &args,
-                                         QString &error)
+QString PluginManager::executeAiHttpTool(const PluginInfo &info, const PluginAiTool &tool,
+                                         const QJsonObject &args, QString &error)
 {
     QString urlStr = tool.http.url;
     if (urlStr.isEmpty()) {
@@ -796,9 +1063,24 @@ QString PluginManager::executeAiHttpTool(const PluginAiTool &tool, const QJsonOb
         return QString();
     }
 
-    // URL 模板替换：{key} → args[key]
+    // 1) 先替换插件私有变量 {plugin.<键>}（在模型参数之前，参数里的同形文本不会被当成变量）
+    const QMap<QString, QString> vars = resolvedPluginVars(info);
+    QStringList unknownVars;
+    urlStr = substitutePluginVars(urlStr, vars, &unknownVars);
+    if (!unknownVars.isEmpty()) {
+        error = tr("HTTP 工具引用了未声明的插件变量：%1"
+                   "（在清单 vars 里声明，或改用保留键 token/port/data/app）")
+                    .arg(unknownVars.join(QStringLiteral(", ")));
+        return QString();
+    }
+
+    // 2) URL 模板替换：{key} → args[key]
     for (auto it = args.constBegin(); it != args.constEnd(); ++it)
         urlStr.replace(QStringLiteral("{%1}").arg(it.key()), it.value().toString());
+
+    // 用了 http 工具却没声明 network 权限：只提示不阻断，兼容早期插件
+    if (!info.hasNetworkPermission())
+        qWarning() << "[PluginManager] 插件未声明 network 权限却使用了 HTTP 工具：" << info.id;
 
     QUrl url(urlStr);
     if (!url.isValid()) {
@@ -814,8 +1096,16 @@ QString PluginManager::executeAiHttpTool(const PluginAiTool &tool, const QJsonOb
     QNetworkAccessManager nam;
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    for (auto it = tool.http.headers.constBegin(); it != tool.http.headers.constEnd(); ++it)
-        request.setRawHeader(it.key().toUtf8(), it.value().toUtf8());
+    for (auto it = tool.http.headers.constBegin(); it != tool.http.headers.constEnd(); ++it) {
+        // 请求头值同样支持 {plugin.<键>}（Authorization: Bearer {plugin.token}）
+        const QString headerValue = substitutePluginVars(it.value(), vars, &unknownVars);
+        request.setRawHeader(it.key().toUtf8(), headerValue.toUtf8());
+    }
+    if (!unknownVars.isEmpty()) {
+        error = tr("HTTP 工具的请求头引用了未声明的插件变量：%1")
+                    .arg(unknownVars.join(QStringLiteral(", ")));
+        return QString();
+    }
 
     QString method = tool.http.method.toUpper();
     if (method.isEmpty())
@@ -824,9 +1114,14 @@ QString PluginManager::executeAiHttpTool(const PluginAiTool &tool, const QJsonOb
     QByteArray bodyData;
     if (method == QLatin1String("POST") || method == QLatin1String("PUT") ||
         method == QLatin1String("PATCH")) {
-        bodyData = tool.http.body.isEmpty()
-            ? QJsonDocument(args).toJson(QJsonDocument::Compact)
-            : tool.http.body.toUtf8();
+        if (tool.http.body.isEmpty()) {
+            bodyData = QJsonDocument(args).toJson(QJsonDocument::Compact);
+        } else {
+            QString bodyText = substitutePluginVars(tool.http.body, vars);
+            for (auto it = args.constBegin(); it != args.constEnd(); ++it)
+                bodyText.replace(QStringLiteral("{%1}").arg(it.key()), it.value().toString());
+            bodyData = bodyText.toUtf8();
+        }
     } else {
         // GET/DELETE：未用于占位符替换的参数追加为 query
         QUrlQuery query(url);
@@ -909,7 +1204,7 @@ QString PluginManager::executeAiTool(const QString &pluginId, const QString &too
     }
 
     if (tool.http.isValid())
-        return executeAiHttpTool(tool, args, error);
+        return executeAiHttpTool(info, tool, args, error);
     return executeAiScriptTool(info, tool, args, error);
 }
 

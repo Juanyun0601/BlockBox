@@ -249,6 +249,7 @@ pages/settings/SettingsAdvancedPage.cpp \
     pages/TaskListPage.cpp \
     pages/TaskDetailPage.cpp \
     utils/SettingsManager.cpp \
+    utils/QuickLaunchManager.cpp \
     utils/MobileControlSettings.cpp \
     utils/ForumAccountService.cpp \
     utils/HomeCarouselStore.cpp \
@@ -388,6 +389,7 @@ pages/settings/SettingsAdvancedPage.cpp \
      utils/mcp/McpServer.cpp \
      utils/mcp/McpToolCatalog.cpp \
      utils/dsh/DshPluginInstaller.cpp \
+     utils/zcode/ZcodePluginInstaller.cpp \
     utils/GameScreenshot.cpp \
     utils/SystemTools.cpp \
     utils/HardwareMonitor.cpp \
@@ -501,7 +503,9 @@ pages/settings/SettingsAdvancedPage.cpp \
     pages/PublishResourcePage.cpp \
     pages/PublishPlatformPage.cpp \
     pages/PublishBoardPage.cpp \
-    pages/MorePage.cpp
+    pages/MorePage.cpp \
+    pages/SeedMapPage.cpp \
+    pages/MemoryOptimizePage.cpp \
 
 HEADERS += \
     platform.h \
@@ -639,6 +643,7 @@ components/ProjectionBuildGuideDialog.h \
     pages/TaskListPage.h \
     pages/TaskDetailPage.h \
     utils/SettingsManager.h \
+    utils/QuickLaunchManager.h \
     utils/MobileControlSettings.h \
     utils/ForumAccountService.h \
     utils/HomeCarouselStore.h \
@@ -811,6 +816,7 @@ pages/ProjectionManagePage.h \
      utils/mcp/McpServer.h \
      utils/mcp/McpToolCatalog.h \
      utils/dsh/DshPluginInstaller.h \
+     utils/zcode/ZcodePluginInstaller.h \
     utils/GameScreenshot.h \
     utils/SystemTools.h \
     utils/HardwareMonitor.h \
@@ -928,6 +934,8 @@ pages/ProjectionManagePage.h \
     pages/PublishPlatformPage.h \
     pages/PublishBoardPage.h \
     pages/MorePage.h \
+    pages/SeedMapPage.h \
+    pages/MemoryOptimizePage.h \
     components/AiModelFetchRow.h \
     utils/TouchScroll.h
 
@@ -1143,6 +1151,33 @@ equals(WORLDMAP_REMOTE_MODULE, true) {
     linux:!android:!ohos {
         QMAKE_LFLAGS += -Wl,--export-dynamic
     }
+
+    # 种子地图（更多 > 种子地图）只用得到「按种子渲染」这一小块：把它连同
+    # 配色表 / 树木 / 蘑菇 / 洞穴预测直接编进主程序，用户不用先下整个存档
+    # 地图模块才能看一眼种子地形。这里不含地图页、结构模板与那套 NBT 资源，
+    # 只是渲染用的纯函数，体积比整个模块小得多。
+    # 注意：这里逐条 SOURCES +=，不写成续行列表 —— 这些文件在内置分支的
+    # 续行列表里也出现，qmake 在某些版本里会对跨分支续行列表做去重时丢条目。
+    # MapBlockPalette 已在主 SOURCES 列表（顶层），此处不重复。
+    SOURCES += utils/WorldMap/WorldMapRenderer.cpp
+    SOURCES += utils/WorldMap/SeedTerrainRenderer.cpp
+    SOURCES += utils/WorldMap/TreePredictor.cpp
+    SOURCES += utils/WorldMap/TreeGen.cpp
+    SOURCES += utils/WorldMap/MushroomPredictor.cpp
+    SOURCES += utils/WorldMap/CavePredictor.cpp
+    SOURCES += utils/WorldMap/McRandom.cpp
+    SOURCES += utils/WorldMap/BiomeCatalog.cpp
+    SOURCES += utils/WorldMap/OreFinder.cpp
+    HEADERS += utils/WorldMap/WorldMapRenderer.h
+    HEADERS += utils/WorldMap/SeedTerrainRenderer.h
+    HEADERS += utils/WorldMap/TreePredictor.h
+    HEADERS += utils/WorldMap/TreeGen.h
+    HEADERS += utils/WorldMap/TreeData.h
+    HEADERS += utils/WorldMap/MushroomPredictor.h
+    HEADERS += utils/WorldMap/CavePredictor.h
+    HEADERS += utils/WorldMap/McRandom.h
+    HEADERS += utils/WorldMap/BiomeCatalog.h
+    HEADERS += utils/WorldMap/OreFinder.h
 }
 
 !equals(WORLDMAP_REMOTE_MODULE, true) {

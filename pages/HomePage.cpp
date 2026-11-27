@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <QAbstractAnimation>
 #include <QButtonGroup>
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -40,6 +41,7 @@
 #include <QFontMetrics>
 #include <QFutureWatcher>
 #include <QGridLayout>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHideEvent>
 #include <QIcon>
@@ -2218,42 +2220,13 @@ QWidget* HomePage::buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *pa
 
     auto *moreBtn = createActionBtn(":/Images/Icons/list.svg", tr("更多操作"));
     QObject::connect(moreBtn, &QPushButton::clicked, [this, entry, moreBtn]() {
-      QMenu menu(moreBtn);
-      QAction *launchAct = menu.addAction(tr("快捷启动"));
-      QAction *openFolderAct = nullptr;
-      if (entry.type != tr("服务器"))
-        openFolderAct = menu.addAction(tr("打开存档文件夹"));
-      QAction *copyAct = menu.addAction(entry.type == tr("服务器") ? tr("复制服务器地址") : tr("复制存档名"));
-      QAction *manageAct = menu.addAction(entry.type == tr("服务器") ? tr("服务器管理") : tr("存档管理"));
-      QAction *settingsAct = menu.addAction(tr("实例设置"));
-      QAction *chosen = menu.exec(moreBtn->mapToGlobal(QPoint(0, moreBtn->height() + 4)));
-      if (!chosen) return;
-      if (chosen == launchAct)
-      {
-        if (entry.type == tr("服务器"))
-          emit recentPlayQuickLaunchServerClicked(entry.serverAddress, entry.serverPort, entry.instancePath);
-        else
-          emit recentPlayQuickLaunchClicked(entry.name, entry.instancePath);
-      }
-      else if (chosen == openFolderAct)
-      {
-        emit recentPlayOpenFolderClicked(entry.savePath);
-      }
-      else if (chosen == copyAct)
-      {
-        emit recentPlayCopyNameClicked(entry.type == tr("服务器") ? entry.serverAddress : entry.name);
-      }
-      else if (chosen == manageAct)
-      {
-        if (entry.type == tr("服务器"))
-          emit recentPlayServerSettingsClicked(entry.instancePath);
-        else
-          emit recentPlaySettingsClicked(entry.instancePath);
-      }
-      else if (chosen == settingsAct)
-      {
-        emit recentPlayInstanceSettingsClicked(entry.instancePath);
-      }
+      showRecentPlayMenu(entry, moreBtn->mapToGlobal(QPoint(0, moreBtn->height() + 4)));
+    });
+
+    // 整张卡片也能右键：不用非得瞄准右上角的小按钮
+    card->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(card, &QWidget::customContextMenuRequested, [this, entry, card](const QPoint &pos) {
+      showRecentPlayMenu(entry, card->mapToGlobal(pos));
     });
     btnLayout->addStretch();
     btnLayout->addWidget(pinBtn);
@@ -2263,6 +2236,93 @@ QWidget* HomePage::buildRecentPlayCard(const RecentPlayEntry &entry, QWidget *pa
 
     cardLayout->addWidget(body);
     return card;
+}
+
+/* 最近游玩的右键菜单：卡片右键与「更多」按钮共用 */
+void HomePage::showRecentPlayMenu(const RecentPlayEntry &entry, const QPoint &globalPos)
+{
+    const bool isServer = (entry.type == tr("服务器"));
+    const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+    auto icon = [&](const QString &path, const QColor &color = QColor()) {
+        return IconHelper::loadColoredIcon(path, color.isValid() ? color : themeColor, 16);
+    };
+
+    QMenu menu(this);
+
+    QAction *launchAct = menu.addAction(icon(":/Images/Icons/play.svg"), tr("快捷启动"));
+    menu.addSeparator();
+
+    // ── 打开位置：只放真实存在的目录 ──
+    QMenu *openMenu = menu.addMenu(icon(":/Images/Icons/folder.svg"), tr("打开位置"));
+    QAction *openSaveAct = nullptr;
+    if (!isServer && !entry.savePath.isEmpty() && QDir(entry.savePath).exists())
+        openSaveAct = openMenu->addAction(tr("存档文件夹"));
+    QAction *openInstanceAct = nullptr;
+    if (!entry.instancePath.isEmpty() && QDir(entry.instancePath).exists())
+        openInstanceAct = openMenu->addAction(tr("实例文件夹"));
+    QAction *openLogsAct = nullptr;
+    if (!entry.instancePath.isEmpty() && QDir(entry.instancePath + "/logs").exists())
+        openLogsAct = openMenu->addAction(tr("日志文件夹"));
+
+    const bool pinned = m_pinnedRecentKeys.contains(recentPlayKey(entry));
+    QAction *pinAct = menu.addAction(icon(pinned ? ":/Images/Icons/pin_filled.svg"
+                                                 : ":/Images/Icons/pin.svg"),
+                                     pinned ? tr("取消固定") : tr("固定到最近游玩"));
+
+    QMenu *copyMenu = menu.addMenu(icon(":/Images/Icons/copy.svg"), tr("复制"));
+    QAction *copyNameAct = copyMenu->addAction(isServer ? tr("服务器地址") : tr("存档名称"));
+    QAction *copyPathAct = copyMenu->addAction(tr("实例路径"));
+
+    menu.addSeparator();
+    QAction *manageAct = menu.addAction(isServer ? tr("服务器管理") : tr("存档管理"));
+    QAction *settingsAct = menu.addAction(icon(":/Images/Icons/instance_settings.svg"),
+                                          tr("实例设置"));
+
+    QAction *chosen = menu.exec(globalPos);
+    if (!chosen) return;
+
+    if (chosen == launchAct)
+    {
+        if (isServer)
+            emit recentPlayQuickLaunchServerClicked(entry.serverAddress, entry.serverPort, entry.instancePath);
+        else
+            emit recentPlayQuickLaunchClicked(entry.name, entry.instancePath);
+    }
+    else if (chosen == openSaveAct)
+    {
+        emit recentPlayOpenFolderClicked(entry.savePath);
+    }
+    else if (chosen == openInstanceAct)
+    {
+        emit recentPlayOpenFolderClicked(entry.instancePath);
+    }
+    else if (chosen == openLogsAct)
+    {
+        emit recentPlayOpenFolderClicked(entry.instancePath + "/logs");
+    }
+    else if (chosen == pinAct)
+    {
+        toggleRecentPlayPin(recentPlayKey(entry));
+    }
+    else if (chosen == copyNameAct)
+    {
+        emit recentPlayCopyNameClicked(isServer ? entry.serverAddress : entry.name);
+    }
+    else if (chosen == copyPathAct)
+    {
+        emit recentPlayCopyPathClicked(entry.instancePath);
+    }
+    else if (chosen == manageAct)
+    {
+        if (isServer)
+            emit recentPlayServerSettingsClicked(entry.instancePath);
+        else
+            emit recentPlaySettingsClicked(entry.instancePath);
+    }
+    else if (chosen == settingsAct)
+    {
+        emit recentPlayInstanceSettingsClicked(entry.instancePath);
+    }
 }
 
 void HomePage::refresh()
@@ -2565,6 +2625,56 @@ void HomePage::rebuildInstancesContent()
     tile->setFixedWidth(178);
     tile->installEventFilter(this);
     tile->setProperty("instancePath", entry.instancePath);
+
+    // 实例小卡片右键：启动 / 设置 / 打开位置 / 复制路径
+    tile->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(tile, &QWidget::customContextMenuRequested, this,
+                     [this, entry, tile](const QPoint &pos) {
+      const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+      auto icon = [&](const QString &path) {
+        return IconHelper::loadColoredIcon(path, themeColor, 16);
+      };
+
+      QMenu menu(this);
+      QAction *launchAct = menu.addAction(icon(":/Images/Icons/play.svg"), tr("启动游戏"));
+      QAction *settingsAct = menu.addAction(icon(":/Images/Icons/instance_settings.svg"),
+                                            tr("实例设置"));
+      QMenu *openMenu = menu.addMenu(icon(":/Images/Icons/folder.svg"), tr("打开位置"));
+      QAction *openFolderAct = openMenu->addAction(tr("实例文件夹"));
+      QAction *openLogsAct = nullptr;
+      if (QDir(entry.instancePath + "/logs").exists())
+        openLogsAct = openMenu->addAction(tr("日志文件夹"));
+      QMenu *copyMenu = menu.addMenu(icon(":/Images/Icons/copy.svg"), tr("复制"));
+      QAction *copyNameAct = copyMenu->addAction(tr("实例名称"));
+      QAction *copyPathAct = copyMenu->addAction(tr("实例路径"));
+
+      QAction *chosen = menu.exec(tile->mapToGlobal(pos));
+      if (!chosen) return;
+      if (chosen == launchAct)
+      {
+        emit instanceLaunchRequested(entry.instancePath);
+      }
+      else if (chosen == settingsAct)
+      {
+        emit instanceManageRequested(entry.instancePath);
+      }
+      else if (chosen == openFolderAct)
+      {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(entry.instancePath));
+      }
+      else if (chosen == openLogsAct)
+      {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(entry.instancePath + "/logs"));
+      }
+      else if (chosen == copyNameAct)
+      {
+        QGuiApplication::clipboard()->setText(entry.name);
+      }
+      else if (chosen == copyPathAct)
+      {
+        QGuiApplication::clipboard()->setText(QDir::toNativeSeparators(entry.instancePath));
+      }
+    });
 
     auto *hlay = new QHBoxLayout(tile);
     hlay->setContentsMargins(10, 6, 6, 6);

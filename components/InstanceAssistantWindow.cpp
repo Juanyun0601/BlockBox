@@ -245,6 +245,7 @@ InstanceAssistantWindow::InstanceAssistantWindow(QWidget *parent)
     , m_opLevelCombo(nullptr)
     , m_redetectBtn(nullptr)
     , m_commandInput(nullptr)
+    , m_clearInputBtn(nullptr)
     , m_completionList(nullptr)
     , m_englishOutput(nullptr)
     , m_outputHint(nullptr)
@@ -1683,13 +1684,34 @@ void InstanceAssistantWindow::buildCommandAssistantPage(QWidget *page)
 
     layout->addLayout(contextBar);
 
-    // 2. 中文输入框
+    // 2. 中文输入框 + 清空按钮
     m_commandInput = new QLineEdit(page);
     m_commandInput->setObjectName(QStringLiteral("commandInput"));
     m_commandInput->setPlaceholderText(tr("输入中文指令，如：给予 钻石剑 1"));
+    m_commandInput->setToolTip(tr("回车：复制英文指令　Ctrl+回车：一键注入　↑↓：选候选　Esc：清空"));
     m_commandInput->installEventFilter(this);
 
-    layout->addWidget(m_commandInput);
+    m_clearInputBtn = new QPushButton(QStringLiteral("×"), page);
+    m_clearInputBtn->setObjectName(QStringLiteral("commandClearBtn"));
+    m_clearInputBtn->setCursor(Qt::PointingHandCursor);
+    m_clearInputBtn->setFixedWidth(28);
+    m_clearInputBtn->setToolTip(tr("清空输入（Esc）"));
+
+    auto *inputBar = new QHBoxLayout();
+    inputBar->setSpacing(4);
+    inputBar->addWidget(m_commandInput, 1);
+    inputBar->addWidget(m_clearInputBtn);
+
+    layout->addLayout(inputBar);
+
+    connect(m_clearInputBtn, &QPushButton::clicked, this, [this]() {
+        if (!m_commandInput) {
+            return;
+        }
+        m_commandInput->clear();
+        m_commandInput->setFocus();
+        flushInputImmediately();
+    });
 
     // 3. 候选列表（占据剩余空间，窗口拉高时同步增高，可显示更多候选）
     m_completionList = new QListWidget(page);
@@ -1764,43 +1786,18 @@ void InstanceAssistantWindow::buildCommandAssistantPage(QWidget *page)
         m_inputDebounceTimer->start();
     });
 
-    connect(m_completionList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
-        if (!item) {
-            return;
-        }
-        QString insertText = item->data(Qt::UserRole).toString();
-        if (insertText.isEmpty()) {
-            return;
-        }
-        // 定位当前正在输入的词（光标位置往前到最近空白）
-        QString text = m_commandInput->text();
-        int cursor = m_commandInput->cursorPosition();
-        int wordStart = cursor;
-        while (wordStart > 0 && !text.at(wordStart - 1).isSpace()) {
-            --wordStart;
-        }
-        QString currentWord = text.mid(wordStart, cursor - wordStart);
+    connect(m_completionList, &QListWidget::itemClicked, this,
+            &InstanceAssistantWindow::insertCompletionItem);
 
-        // 判断是补全当前词还是追加新参数：
-        // - 若 insertText 以当前词为前缀（或当前词为空），说明在补全当前词 → 替换当前词
-        // - 否则当前词已是完整命令名，候选是下一个参数 → 直接写下去（追加）
-        if (currentWord.isEmpty() || insertText.startsWith(currentWord, Qt::CaseInsensitive))
-        {
-            // 替换当前正在输入的词
-            QString newText = text.left(wordStart) + insertText + text.mid(cursor);
-            m_commandInput->setText(newText);
-            m_commandInput->setCursorPosition(wordStart + insertText.length());
-        }
-        else
-        {
-            // 追加新参数：在光标位置插入 " " + insertText + " "
-            QString insertion = QStringLiteral(" ") + insertText + QStringLiteral(" ");
-            QString newText = text.left(cursor) + insertion + text.mid(cursor);
-            m_commandInput->setText(newText);
-            m_commandInput->setCursorPosition(cursor + insertion.length());
-        }
-        m_commandInput->setFocus();
-    });
+    // 双击候选：补全后立刻把英文指令复制走，省一次点「复制」
+    connect(m_completionList, &QListWidget::itemDoubleClicked, this,
+            [this](QListWidgetItem *item) {
+                insertCompletionItem(item);
+                flushInputImmediately();
+                if (m_copyBtn && m_copyBtn->isEnabled()) {
+                    onCopyClicked();
+                }
+            });
 
     connect(m_copyBtn, &QPushButton::clicked, this, &InstanceAssistantWindow::onCopyClicked);
     connect(m_injectBtn, &QPushButton::clicked, this, &InstanceAssistantWindow::onInjectClicked);
@@ -1835,6 +1832,42 @@ void InstanceAssistantWindow::buildCommandAssistantPage(QWidget *page)
 
     // 加载已保存的自定义指令包
     reloadCommandDatabase();
+}
+
+void InstanceAssistantWindow::insertCompletionItem(QListWidgetItem *item)
+{
+    if (!item || !m_commandInput) {
+        return;
+    }
+    const QString insertText = item->data(Qt::UserRole).toString();
+    if (insertText.isEmpty()) {
+        return;
+    }
+
+    // 定位光标所在词（光标往前到最近空白）
+    const QString text = m_commandInput->text();
+    const int cursor = m_commandInput->cursorPosition();
+    int wordStart = cursor;
+    while (wordStart > 0 && !text.at(wordStart - 1).isSpace()) {
+        --wordStart;
+    }
+    const QString currentWord = text.mid(wordStart, cursor - wordStart);
+
+    // 补全当前词还是追加新参数：
+    // - 候选以当前词为前缀（或当前词为空）→ 替换当前词
+    // - 否则当前词已是完整命令名，候选是下一个参数 → 追加
+    if (currentWord.isEmpty() || insertText.startsWith(currentWord, Qt::CaseInsensitive))
+    {
+        m_commandInput->setText(text.left(wordStart) + insertText + text.mid(cursor));
+        m_commandInput->setCursorPosition(wordStart + insertText.length());
+    }
+    else
+    {
+        const QString insertion = QStringLiteral(" ") + insertText + QStringLiteral(" ");
+        m_commandInput->setText(text.left(cursor) + insertion + text.mid(cursor));
+        m_commandInput->setCursorPosition(cursor + insertion.length());
+    }
+    m_commandInput->setFocus();
 }
 
 void InstanceAssistantWindow::refreshCompletion()
@@ -1875,6 +1908,9 @@ void InstanceAssistantWindow::refreshCompletion()
 
         m_completionList->addItem(item);
     }
+
+    // 每次重建都清掉上一轮的选中项：回车时才不会莫名补全到列表第一项
+    m_completionList->setCurrentRow(-1);
 }
 
 void InstanceAssistantWindow::refreshTranslation()
@@ -2231,6 +2267,12 @@ void InstanceAssistantWindow::flushDebouncedInput()
     m_lastCompletionInput = input;
     refreshCompletion();
     refreshTranslation();
+}
+
+void InstanceAssistantWindow::flushInputImmediately()
+{
+    // 与防抖刷新同一套「输入没变就不重算」规则：预设写入的英文指令不会被翻译结果顶掉
+    flushDebouncedInput();
 }
 
 void InstanceAssistantWindow::detectRunningGame()
@@ -2927,29 +2969,64 @@ bool InstanceAssistantWindow::eventFilter(QObject *obj, QEvent *event)
         }
     }
 
-    // Tab 键补全：在 m_commandInput 中按 Tab 时，用候选列表第一项补全当前词
+    // 快捷指令输入框：Tab 补全 / ↑↓ 选候选 / 回车复制 / Ctrl+回车注入 / Esc 清空
     if (obj == m_commandInput && event->type() == QEvent::KeyPress) {
         auto *keyEvent = static_cast<QKeyEvent *>(event);
-        if (keyEvent->key() == Qt::Key_Tab) {
+        switch (keyEvent->key()) {
+        case Qt::Key_Tab: {
             if (m_completionList && m_completionList->count() > 0) {
-                QListWidgetItem *firstItem = m_completionList->item(0);
-                if (firstItem) {
-                    QString insertText = firstItem->data(Qt::UserRole).toString();
-                    if (!insertText.isEmpty()) {
-                        QString text = m_commandInput->text();
-                        int cursor = m_commandInput->cursorPosition();
-                        int wordStart = cursor;
-                        while (wordStart > 0 && !text.at(wordStart - 1).isSpace()) {
-                            --wordStart;
-                        }
-                        QString newText = text.left(wordStart) + insertText + text.mid(cursor);
-                        m_commandInput->setText(newText);
-                        int newCursor = wordStart + insertText.length();
-                        m_commandInput->setCursorPosition(newCursor);
-                        return true; // 阻止默认 Tab 行为
-                    }
+                QListWidgetItem *item = m_completionList->currentItem();
+                if (!item) {
+                    item = m_completionList->item(0);
                 }
+                insertCompletionItem(item);
+                return true; // 阻止默认 Tab 焦点切换
             }
+            break;
+        }
+        case Qt::Key_Down:
+        case Qt::Key_Up: {
+            if (!m_completionList || m_completionList->count() == 0) {
+                break;
+            }
+            const int count = m_completionList->count();
+            int row = m_completionList->currentRow();
+            if (keyEvent->key() == Qt::Key_Down) {
+                row = (row < 0) ? 0 : qMin(row + 1, count - 1);
+            } else {
+                row = (row <= 0) ? 0 : row - 1;
+            }
+            m_completionList->setCurrentRow(row);
+            if (QListWidgetItem *item = m_completionList->item(row)) {
+                m_completionList->scrollToItem(item);
+            }
+            return true;
+        }
+        case Qt::Key_Return:
+        case Qt::Key_Enter: {
+            // 有选中的候选就先补全，再同步刷新一次，避免防抖还没跑就复制到上一条
+            if (m_completionList && m_completionList->currentItem()) {
+                insertCompletionItem(m_completionList->currentItem());
+            }
+            flushInputImmediately();
+            if (keyEvent->modifiers() & Qt::ControlModifier) {
+                onInjectClicked();
+            } else if (m_copyBtn && m_copyBtn->isEnabled()) {
+                onCopyClicked();
+            }
+            return true;
+        }
+        case Qt::Key_Escape: {
+            // 输入框里有内容时先清空，再按一次才轮到窗口收起
+            if (!m_commandInput->text().isEmpty()) {
+                m_commandInput->clear();
+                flushInputImmediately();
+                return true;
+            }
+            break;
+        }
+        default:
+            break;
         }
     }
     return QWidget::eventFilter(obj, event);

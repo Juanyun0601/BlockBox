@@ -4,7 +4,9 @@
    "name": "help",
    "chinese": [
     "帮助",
-    "帮助指令"
+    "帮助指令",
+    "怎么用",
+    "指令帮助"
    ],
    "minVersion": "1.0.0",
    "opLevel": 0,
@@ -27,6 +29,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": false,
+   "hidden": true,
    "syntax": "/? [页码|命令名]",
    "params": [
     {
@@ -79,7 +82,9 @@
    "name": "msg",
    "chinese": [
     "私聊",
-    "私信"
+    "私信",
+    "发消息",
+    "密语"
    ],
    "minVersion": "1.0.0",
    "opLevel": 0,
@@ -109,6 +114,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": false,
+   "hidden": true,
    "syntax": "/tell <玩家> <消息>",
    "params": [
     {
@@ -133,6 +139,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": false,
+   "hidden": true,
    "syntax": "/w <玩家> <消息>",
    "params": [
     {
@@ -153,7 +160,10 @@
    "name": "say",
    "chinese": [
     "广播",
-    "公告"
+    "公告",
+    "说话",
+    "喊话",
+    "全服广播"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -173,7 +183,8 @@
    "chinese": [
     "JSON私聊",
     "原始私聊",
-    "tellraw"
+    "tellraw",
+    "原始消息"
    ],
    "minVersion": "1.7.2",
    "opLevel": 2,
@@ -198,7 +209,8 @@
    "name": "title",
    "chinese": [
     "标题",
-    "显示标题"
+    "显示标题",
+    "大标题"
    ],
    "minVersion": "1.8.0",
    "opLevel": 2,
@@ -241,6 +253,7 @@
    "minVersion": "1.16.1",
    "opLevel": 0,
    "serverOnly": false,
+   "hidden": true,
    "syntax": "/tm <消息>",
    "params": [
     {
@@ -274,7 +287,9 @@
    "chinese": [
     "杀死",
     "击杀",
-    "自杀"
+    "自杀",
+    "消灭",
+    "搞死"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -294,7 +309,8 @@
    "name": "seed",
    "chinese": [
     "种子",
-    "世界种子"
+    "世界种子",
+    "看种子"
    ],
    "minVersion": "1.0.0",
    "opLevel": 0,
@@ -343,7 +359,8 @@
    "chinese": [
     "数据",
     "NBT数据",
-    "数据操作"
+    "数据操作",
+    "NBT"
    ],
    "minVersion": "1.13",
    "opLevel": 2,
@@ -383,7 +400,8 @@
    "name": "bossbar",
    "chinese": [
     "Boss血条",
-    "Boss条"
+    "Boss条",
+    "血条"
    ],
    "minVersion": "1.13",
    "opLevel": 2,
@@ -454,7 +472,8 @@
    "name": "playsound",
    "chinese": [
     "播放音效",
-    "音效"
+    "音效",
+    "放音效"
    ],
    "minVersion": "1.6.1",
    "opLevel": 2,
@@ -561,7 +580,8 @@
    "name": "recipe",
    "chinese": [
     "配方",
-    "配方管理"
+    "配方管理",
+    "解锁配方"
    ],
    "minVersion": "1.12",
    "opLevel": 2,
@@ -596,7 +616,8 @@
    "chinese": [
     "进度",
     "成就",
-    "进度管理"
+    "进度管理",
+    "成就管理"
    ],
    "minVersion": "1.12",
    "opLevel": 2,
@@ -642,7 +663,10 @@
    "name": "clear",
    "chinese": [
     "清除",
-    "清空背包"
+    "清空背包",
+    "清理背包",
+    "清背包",
+    "丢弃物品"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -677,7 +701,9 @@
    "name": "give",
    "chinese": [
     "给予",
-    "给我"
+    "给我",
+    "发放",
+    "给物品"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -742,7 +768,8 @@
    "name": "loot",
    "chinese": [
     "战利品",
-    "投放战利品"
+    "投放战利品",
+    "掉落物"
    ],
    "minVersion": "1.14",
    "opLevel": 2,
@@ -771,7 +798,9 @@
   {
    "name": "enchant",
    "chinese": [
-    "附魔"
+    "附魔",
+    "打附魔",
+    "上附魔"
    ],
    "minVersion": "1.4.4",
    "opLevel": 2,
@@ -802,7 +831,10 @@
    "name": "time",
    "chinese": [
     "时间",
-    "世界时间"
+    "世界时间",
+    "调时间",
+    "改时间",
+    "时间设置"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -830,7 +862,9 @@
   {
    "name": "weather",
    "chinese": [
-    "天气"
+    "天气",
+    "改天气",
+    "换天气"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -858,7 +892,9 @@
   {
    "name": "difficulty",
    "chinese": [
-    "难度"
+    "难度",
+    "改难度",
+    "设置难度"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -883,7 +919,9 @@
    "name": "gamemode",
    "chinese": [
     "游戏模式",
-    "切换模式"
+    "切换模式",
+    "模式",
+    "改模式"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -913,7 +951,8 @@
   {
    "name": "defaultgamemode",
    "chinese": [
-    "默认游戏模式"
+    "默认游戏模式",
+    "默认模式"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -938,7 +977,8 @@
    "name": "gamerule",
    "chinese": [
     "游戏规则",
-    "规则"
+    "规则",
+    "改规则"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -994,7 +1034,8 @@
    "name": "setworldspawn",
    "chinese": [
     "设置出生点",
-    "世界出生点"
+    "世界出生点",
+    "设置世界出生点"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -1014,7 +1055,8 @@
    "chinese": [
     "出生点",
     "重生点",
-    "玩家出生点"
+    "玩家出生点",
+    "设置重生点"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -1040,7 +1082,9 @@
    "chinese": [
     "传送",
     "传送实体",
-    "传送到"
+    "传送到",
+    "瞬移",
+    "移动到"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -1070,7 +1114,8 @@
    "name": "teleport",
    "chinese": [
     "传送",
-    "传送实体"
+    "传送实体",
+    "瞬移"
    ],
    "minVersion": "1.10",
    "opLevel": 2,
@@ -1100,7 +1145,8 @@
    "name": "spreadplayers",
    "chinese": [
     "分散玩家",
-    "分散"
+    "分散",
+    "随机分散"
    ],
    "minVersion": "1.6.1",
    "opLevel": 2,
@@ -1149,11 +1195,13 @@
    "name": "locatebiome",
    "chinese": [
     "定位生物群系",
-    "寻找生物群系"
+    "寻找生物群系",
+    "找群系"
    ],
    "minVersion": "1.16",
    "opLevel": 2,
    "serverOnly": false,
+   "removedIn": "1.19",
    "syntax": "/locatebiome <生物群系>",
    "params": [
     {
@@ -1168,15 +1216,27 @@
    "name": "locate",
    "chinese": [
     "定位结构",
-    "寻找结构"
+    "寻找结构",
+    "找结构"
    ],
    "minVersion": "1.11",
    "opLevel": 2,
    "serverOnly": false,
-   "syntax": "/locate <结构>",
+   "syntax": "/locate <structure|biome|poi> <目标>",
    "params": [
     {
-     "name": "结构",
+     "name": "类别",
+     "type": "enum",
+     "default": "structure",
+     "required": false,
+     "candidates": [
+      "structure",
+      "biome",
+      "poi"
+     ]
+    },
+    {
+     "name": "目标",
      "type": "string",
      "required": true
     }
@@ -1217,7 +1277,9 @@
    "name": "clone",
    "chinese": [
     "复制区域",
-    "复制"
+    "复制",
+    "克隆",
+    "复制建筑"
    ],
    "minVersion": "1.8",
    "opLevel": 2,
@@ -1267,7 +1329,9 @@
   {
    "name": "fill",
    "chinese": [
-    "填充"
+    "填充",
+    "填充方块",
+    "填满"
    ],
    "minVersion": "1.8",
    "opLevel": 2,
@@ -1337,7 +1401,9 @@
    "name": "setblock",
    "chinese": [
     "放置方块",
-    "设置方块"
+    "设置方块",
+    "放方块",
+    "放一个方块"
    ],
    "minVersion": "1.7.2",
    "opLevel": 2,
@@ -1372,7 +1438,8 @@
    "name": "particle",
    "chinese": [
     "粒子",
-    "粒子效果"
+    "粒子效果",
+    "特效"
    ],
    "minVersion": "1.8",
    "opLevel": 2,
@@ -1428,7 +1495,10 @@
    "name": "summon",
    "chinese": [
     "召唤",
-    "召唤实体"
+    "召唤实体",
+    "生成",
+    "刷怪",
+    "生成实体"
    ],
    "minVersion": "1.7.2",
    "opLevel": 2,
@@ -1458,7 +1528,9 @@
    "chinese": [
     "效果",
     "药水效果",
-    "状态效果"
+    "状态效果",
+    "添加效果",
+    "药效"
    ],
    "minVersion": "1.5",
    "opLevel": 2,
@@ -1514,7 +1586,8 @@
    "name": "ride",
    "chinese": [
     "骑乘",
-    "骑"
+    "骑",
+    "坐骑"
    ],
    "minVersion": "1.9",
    "opLevel": 2,
@@ -1547,7 +1620,9 @@
   {
    "name": "damage",
    "chinese": [
-    "伤害"
+    "伤害",
+    "造成伤害",
+    "扣血"
    ],
    "minVersion": "1.19.4",
    "opLevel": 2,
@@ -1576,7 +1651,8 @@
   {
    "name": "tag",
    "chinese": [
-    "标签"
+    "标签",
+    "标签管理"
    ],
    "minVersion": "1.13",
    "opLevel": 2,
@@ -1610,7 +1686,8 @@
   {
    "name": "team",
    "chinese": [
-    "队伍"
+    "队伍",
+    "队伍管理"
    ],
    "minVersion": "1.13",
    "opLevel": 2,
@@ -1643,7 +1720,9 @@
    "name": "xp",
    "chinese": [
     "经验",
-    "经验值"
+    "经验值",
+    "给经验",
+    "加经验"
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
@@ -1693,6 +1772,7 @@
    "minVersion": "1.0.0",
    "opLevel": 2,
    "serverOnly": false,
+   "hidden": true,
    "syntax": "/experience <add|set|query> <玩家> <数量> [levels|points]",
    "params": [
     {
@@ -1733,7 +1813,8 @@
    "name": "scoreboard",
    "chinese": [
     "计分板",
-    "记分板"
+    "记分板",
+    "积分板"
    ],
    "minVersion": "1.7",
    "opLevel": 2,
@@ -1762,7 +1843,8 @@
    "name": "execute",
    "chinese": [
     "执行",
-    "执行链"
+    "执行链",
+    "执行命令"
    ],
    "minVersion": "1.13",
    "opLevel": 2,
@@ -1800,7 +1882,8 @@
    "name": "schedule",
    "chinese": [
     "计划任务",
-    "计划"
+    "计划",
+    "定时任务"
    ],
    "minVersion": "1.14",
    "opLevel": 2,
@@ -1889,7 +1972,8 @@
   {
    "name": "return",
    "chinese": [
-    "返回"
+    "返回",
+    "返回值"
    ],
    "minVersion": "1.20.3",
    "opLevel": 2,
@@ -1909,7 +1993,9 @@
    "chinese": [
     "管理员",
     "授权OP",
-    "授权管理员"
+    "授权管理员",
+    "给管理员",
+    "授权"
    ],
    "minVersion": "1.0.0",
    "opLevel": 3,
@@ -1928,7 +2014,8 @@
    "name": "deop",
    "chinese": [
     "取消管理员",
-    "撤销OP"
+    "撤销OP",
+    "撤管理员"
    ],
    "minVersion": "1.0.0",
    "opLevel": 3,
@@ -2078,7 +2165,8 @@
   {
    "name": "whitelist",
    "chinese": [
-    "白名单"
+    "白名单",
+    "白名单管理"
    ],
    "minVersion": "1.0.0",
    "opLevel": 3,
@@ -2131,7 +2219,8 @@
   {
    "name": "save-on",
    "chinese": [
-    "开启自动保存"
+    "开启自动保存",
+    "自动保存"
    ],
    "minVersion": "1.0.0",
    "opLevel": 4,
@@ -2143,7 +2232,8 @@
   {
    "name": "save-off",
    "chinese": [
-    "关闭自动保存"
+    "关闭自动保存",
+    "自动保存"
    ],
    "minVersion": "1.0.0",
    "opLevel": 4,
@@ -2156,7 +2246,8 @@
    "name": "stop",
    "chinese": [
     "关闭服务器",
-    "停服"
+    "停服",
+    "关服"
    ],
    "minVersion": "1.0.0",
    "opLevel": 4,
@@ -2169,7 +2260,8 @@
    "name": "reload",
    "chinese": [
     "重载",
-    "重载数据"
+    "重载数据",
+    "重新加载"
    ],
    "minVersion": "1.12.2",
    "opLevel": 4,
@@ -2269,7 +2361,9 @@
   {
    "name": "spectate",
    "chinese": [
-    "旁观"
+    "旁观",
+    "观战",
+    "进入旁观"
    ],
    "minVersion": "1.15.2",
    "opLevel": 2,
@@ -2322,57 +2416,6 @@
    "description": "将玩家传送到其他服务器"
   },
   {
-   "name": "camerashake",
-   "chinese": [
-    "镜头摇晃",
-    "视角摇晃"
-   ],
-   "minVersion": "1.18.10",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/camerashake <add|stop> [玩家] [强度] [持续时间] [类型]",
-   "params": [
-    {
-     "name": "操作",
-     "type": "enum",
-     "required": true,
-     "candidates": [
-      "add",
-      "stop"
-     ]
-    },
-    {
-     "name": "玩家",
-     "type": "selector",
-     "default": "@s",
-     "required": false
-    },
-    {
-     "name": "强度",
-     "type": "float",
-     "default": 0.0,
-     "required": false
-    },
-    {
-     "name": "持续时间",
-     "type": "float",
-     "default": 1.0,
-     "required": false
-    },
-    {
-     "name": "类型",
-     "type": "enum",
-     "default": "positional",
-     "required": false,
-     "candidates": [
-      "positional",
-      "rotational"
-     ]
-    }
-   ],
-   "description": "添加或停止镜头摇晃效果"
-  },
-  {
    "name": "clearspawnpoint",
    "chinese": [
     "清除出生点"
@@ -2392,176 +2435,6 @@
    "description": "清除玩家的个人出生点"
   },
   {
-   "name": "fog",
-   "chinese": [
-    "雾",
-    "雾效"
-   ],
-   "minVersion": "1.16.100",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/fog <push|pop|remove> [ID]",
-   "params": [
-    {
-     "name": "操作",
-     "type": "enum",
-     "required": true,
-     "candidates": [
-      "push",
-      "pop",
-      "remove"
-     ]
-    },
-    {
-     "name": "ID",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "管理雾效设置"
-  },
-  {
-   "name": "gametest",
-   "chinese": [
-    "游戏测试"
-   ],
-   "minVersion": "1.16",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/gametest <runthis|runthese|run|runall|pos|clearall|runfailed>",
-   "params": [
-    {
-     "name": "操作",
-     "type": "enum",
-     "required": true,
-     "candidates": [
-      "runthis",
-      "runthese",
-      "run",
-      "runall",
-      "pos",
-      "clearall",
-      "runfailed"
-     ]
-    }
-   ],
-   "description": "运行游戏测试"
-  },
-  {
-   "name": "hud",
-   "chinese": [
-    "HUD",
-    "界面元素"
-   ],
-   "minVersion": "1.20.60",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/hud <玩家> <visible|invisible> [元素]",
-   "params": [
-    {
-     "name": "玩家",
-     "type": "selector",
-     "default": "@s",
-     "required": true
-    },
-    {
-     "name": "操作",
-     "type": "enum",
-     "required": true,
-     "candidates": [
-      "visible",
-      "invisible"
-     ]
-    },
-    {
-     "name": "元素",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "显示或隐藏 HUD 元素"
-  },
-  {
-   "name": "inputpermission",
-   "chinese": [
-    "输入权限"
-   ],
-   "minVersion": "1.19.70",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/inputpermission <query|set> <玩家> <权限> [值]",
-   "params": [
-    {
-     "name": "操作",
-     "type": "enum",
-     "required": true,
-     "candidates": [
-      "query",
-      "set"
-     ]
-    },
-    {
-     "name": "玩家",
-     "type": "selector",
-     "default": "@s",
-     "required": true
-    },
-    {
-     "name": "权限",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "值",
-     "type": "enum",
-     "required": false,
-     "candidates": [
-      "enabled",
-      "disabled"
-     ]
-    }
-   ],
-   "description": "设置玩家输入权限"
-  },
-  {
-   "name": "playanimation",
-   "chinese": [
-    "播放动画"
-   ],
-   "minVersion": "1.16.100",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/playanimation <实体> <动画> [下一状态] [停止表达式] [控制器]",
-   "params": [
-    {
-     "name": "实体",
-     "type": "selector",
-     "required": true
-    },
-    {
-     "name": "动画",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "下一状态",
-     "type": "string",
-     "required": false
-    },
-    {
-     "name": "停止表达式",
-     "type": "string",
-     "required": false
-    },
-    {
-     "name": "控制器",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "播放实体动画"
-  },
-  {
    "name": "replaceitem",
    "chinese": [
     "替换物品",
@@ -2570,6 +2443,7 @@
    "minVersion": "1.8",
    "opLevel": 2,
    "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/replaceitem <block|entity> <目标> <槽位> <物品> [数量] [数据] [nbt]",
    "params": [
     {
@@ -2612,226 +2486,11 @@
    "description": "替换方块或实体的物品栏中的物品"
   },
   {
-   "name": "structure",
-   "chinese": [
-    "结构",
-    "结构管理"
-   ],
-   "minVersion": "1.17.10",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/structure <save|load|delete> <名称> [参数]",
-   "params": [
-    {
-     "name": "操作",
-     "type": "enum",
-     "required": true,
-     "candidates": [
-      "save",
-      "load",
-      "delete"
-     ]
-    },
-    {
-     "name": "名称",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "参数",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "保存、加载或删除结构"
-  },
-  {
-   "name": "tickingarea",
-   "chinese": [
-    "常加载区",
-    "刷新区域"
-   ],
-   "minVersion": "1.2",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/tickingarea <add|remove|remove_all|list> [参数]",
-   "params": [
-    {
-     "name": "操作",
-     "type": "enum",
-     "required": true,
-     "candidates": [
-      "add",
-      "remove",
-      "remove_all",
-      "list"
-     ]
-    },
-    {
-     "name": "参数",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "添加或移除常加载区域"
-  },
-  {
-   "name": "toggleanimation",
-   "chinese": [
-    "切换动画"
-   ],
-   "minVersion": "1.19.70",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/toggleanimation <实体> <动画>",
-   "params": [
-    {
-     "name": "实体",
-     "type": "selector",
-     "required": true
-    },
-    {
-     "name": "动画",
-     "type": "string",
-     "required": true
-    }
-   ],
-   "description": "切换实体动画状态"
-  },
-  {
-   "name": "placefeature",
-   "chinese": [
-    "放置地物"
-   ],
-   "minVersion": "1.19",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/place feature <地物> [x y z]",
-   "params": [
-    {
-     "name": "地物",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "坐标",
-     "type": "pos",
-     "required": false
-    }
-   ],
-   "description": "在指定位置放置地物"
-  },
-  {
-   "name": "placejigsaw",
-   "chinese": [
-    "放置拼图"
-   ],
-   "minVersion": "1.16",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/place jigsaw <结构池> <目标> <最大深度>",
-   "params": [
-    {
-     "name": "结构池",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "目标",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "最大深度",
-     "type": "int",
-     "required": true
-    }
-   ],
-   "description": "生成拼图结构"
-  },
-  {
-   "name": "placenstructure",
-   "chinese": [
-    "放置结构"
-   ],
-   "minVersion": "1.16",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/place structure <结构> [x y z]",
-   "params": [
-    {
-     "name": "结构",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "坐标",
-     "type": "pos",
-     "required": false
-    }
-   ],
-   "description": "在指定位置放置结构"
-  },
-  {
-   "name": "placetemplate",
-   "chinese": [
-    "放置模板"
-   ],
-   "minVersion": "1.16",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/place template <模板> [x y z] [旋转] [镜像] [完整性] [种子]",
-   "params": [
-    {
-     "name": "模板",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "坐标",
-     "type": "pos",
-     "required": false
-    },
-    {
-     "name": "旋转",
-     "type": "enum",
-     "required": false,
-     "candidates": [
-      "none",
-      "clockwise_90",
-      "180",
-      "counterclockwise_90"
-     ]
-    },
-    {
-     "name": "镜像",
-     "type": "enum",
-     "required": false,
-     "candidates": [
-      "none",
-      "left_right",
-      "front_back"
-     ]
-    },
-    {
-     "name": "完整性",
-     "type": "float",
-     "default": 1.0,
-     "required": false
-    },
-    {
-     "name": "种子",
-     "type": "int",
-     "required": false
-    }
-   ],
-   "description": "放置结构模板"
-  },
-  {
    "name": "publish",
    "chinese": [
     "开放世界",
-    "开放局域网"
+    "开放局域网",
+    "开房"
    ],
    "minVersion": "1.3.1",
    "opLevel": 4,
@@ -2856,6 +2515,7 @@
    "minVersion": "1.0.0",
    "opLevel": 2,
    "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/blockdata <x> <y> <z> <NBT数据>",
    "params": [
     {
@@ -2880,6 +2540,7 @@
    "minVersion": "1.0.0",
    "opLevel": 2,
    "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/entitydata <实体> <NBT数据>",
    "params": [
     {
@@ -2904,7 +2565,8 @@
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
-   "serverOnly": true,
+   "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/testfor <实体>",
    "params": [
     {
@@ -2922,7 +2584,8 @@
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
-   "serverOnly": true,
+   "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/testforblock <x> <y> <z> <方块>",
    "params": [
     {
@@ -2946,7 +2609,8 @@
    ],
    "minVersion": "1.0.0",
    "opLevel": 2,
-   "serverOnly": true,
+   "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/testforblocks <x1> <y1> <z1> <x2> <y2> <z2> <方块>",
    "params": [
     {
@@ -2975,6 +2639,7 @@
    "minVersion": "1.0.0",
    "opLevel": 2,
    "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/toggledownfall",
    "params": [],
    "description": "在晴天与雨雪之间切换天气(1.13 起移除)"
@@ -2988,6 +2653,7 @@
    "minVersion": "1.0.0",
    "opLevel": 2,
    "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/achievement <give|take> <成就|*> [玩家]",
    "params": [
     {
@@ -3022,6 +2688,7 @@
    "minVersion": "1.0.0",
    "opLevel": 2,
    "serverOnly": false,
+   "removedIn": "1.13",
    "syntax": "/stats <实体> <set|clear> <统计项> <选择器>",
    "params": [
     {
@@ -3084,7 +2751,8 @@
    "name": "forceload",
    "chinese": [
     "强制加载",
-    "强制加载区块"
+    "强制加载区块",
+    "区块加载"
    ],
    "minVersion": "1.13",
    "opLevel": 2,
@@ -3115,428 +2783,6 @@
    "description": "强制加载区块,保持常驻运行(服务器常用)"
   },
   {
-   "name": "rotate",
-   "chinese": [
-    "旋转",
-    "旋转实体"
-   ],
-   "minVersion": "1.19.4",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/rotate <实体> <角度>",
-   "params": [
-    {
-     "name": "实体",
-     "type": "entity",
-     "required": true
-    },
-    {
-     "name": "角度",
-     "type": "float",
-     "required": true
-    }
-   ],
-   "description": "旋转指定实体朝向"
-  },
-  {
-   "name": "camera",
-   "chinese": [
-    "相机",
-    "镜头"
-   ],
-   "minVersion": "1.21",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/camera <玩家> <set|clear> [预设]",
-   "params": [
-    {
-     "name": "玩家",
-     "type": "selector",
-     "required": true
-    },
-    {
-     "name": "操作",
-     "type": "enum",
-     "candidates": [
-      "set",
-      "clear"
-     ],
-     "required": true
-    },
-    {
-     "name": "预设",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "控制玩家视角相机(1.21.2+ 基岩版亦支持)"
-  },
-  {
-   "name": "ability",
-   "chinese": [
-    "能力",
-    "设置能力"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 2,
-   "serverOnly": true,
-   "syntax": "/ability <玩家> <能力> <true|false>",
-   "params": [
-    {
-     "name": "玩家",
-     "type": "selector",
-     "required": true
-    },
-    {
-     "name": "能力",
-     "type": "enum",
-     "candidates": [
-      "worldbuilder",
-      "mayfly",
-      "mute",
-      "frozen"
-     ],
-     "required": true
-    },
-    {
-     "name": "开关",
-     "type": "enum",
-     "candidates": [
-      "true",
-      "false"
-     ],
-     "required": true
-    }
-   ],
-   "description": "设置玩家的能力开关(基岩版/教育版)"
-  },
-  {
-   "name": "agent",
-   "chinese": [
-    "智能体",
-    "编程智能体"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/agent <create|destroy|getitem|setitem|move|turn|...>",
-   "params": [
-    {
-     "name": "操作",
-     "type": "string",
-     "required": true
-    }
-   ],
-   "description": "控制编程智能体 Agent(教育版)"
-  },
-  {
-   "name": "alwaysday",
-   "chinese": [
-    "永昼",
-    "锁定白天"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/alwaysday <true|false>",
-   "params": [
-    {
-     "name": "开关",
-     "type": "enum",
-     "candidates": [
-      "true",
-      "false"
-     ],
-     "required": false
-    }
-   ],
-   "description": "锁定昼夜循环为白天(基岩版)"
-  },
-  {
-   "name": "daylock",
-   "chinese": [
-    "锁定昼夜"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/daylock <true|false>",
-   "params": [
-    {
-     "name": "开关",
-     "type": "enum",
-     "candidates": [
-      "true",
-      "false"
-     ],
-     "required": false
-    }
-   ],
-   "description": "锁定或解锁昼夜循环(基岩版)"
-  },
-  {
-   "name": "dialogue",
-   "chinese": [
-    "对话",
-    "NPC对话"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/dialogue <NPC> <open|change> [场景]",
-   "params": [
-    {
-     "name": "NPC",
-     "type": "entity",
-     "required": true
-    },
-    {
-     "name": "操作",
-     "type": "enum",
-     "candidates": [
-      "open",
-      "change"
-     ],
-     "required": true
-    },
-    {
-     "name": "场景",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "打开或切换 NPC 对话场景(基岩版)"
-  },
-  {
-   "name": "event",
-   "chinese": [
-    "实体事件"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/event <实体> <事件>",
-   "params": [
-    {
-     "name": "实体",
-     "type": "entity",
-     "required": true
-    },
-    {
-     "name": "事件",
-     "type": "string",
-     "required": true
-    }
-   ],
-   "description": "触发指定实体的事件(基岩版)"
-  },
-  {
-   "name": "mobevent",
-   "chinese": [
-    "生物事件",
-    "生物生成事件"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 2,
-   "serverOnly": true,
-   "syntax": "/mobevent <事件> <true|false>",
-   "params": [
-    {
-     "name": "事件",
-     "type": "enum",
-     "candidates": [
-      "mobspawning",
-      "mobgriefing",
-      "weather"
-     ],
-     "required": true
-    },
-    {
-     "name": "开关",
-     "type": "enum",
-     "candidates": [
-      "true",
-      "false"
-     ],
-     "required": true
-    }
-   ],
-   "description": "控制生物相关事件开关(基岩版)"
-  },
-  {
-   "name": "music",
-   "chinese": [
-    "音乐",
-    "播放音乐"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/music <play|stop|queue|volume> [曲目]",
-   "params": [
-    {
-     "name": "操作",
-     "type": "enum",
-     "candidates": [
-      "play",
-      "stop",
-      "queue",
-      "volume"
-     ],
-     "required": true
-    },
-    {
-     "name": "曲目",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "播放或停止游戏音乐(基岩版)"
-  },
-  {
-   "name": "script",
-   "chinese": [
-    "脚本",
-    "调试脚本"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/script <debug|event|error> [参数]",
-   "params": [
-    {
-     "name": "操作",
-     "type": "enum",
-     "candidates": [
-      "debug",
-      "event",
-      "error"
-     ],
-     "required": true
-    },
-    {
-     "name": "参数",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "调试和运行脚本相关功能(基岩版)"
-  },
-  {
-   "name": "scriptevent",
-   "chinese": [
-    "脚本事件"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 2,
-   "serverOnly": false,
-   "syntax": "/scriptevent <事件ID> [消息]",
-   "params": [
-    {
-     "name": "事件ID",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "消息",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "触发脚本事件(基岩版)"
-  },
-  {
-   "name": "setmaxplayers",
-   "chinese": [
-    "最大玩家数"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 4,
-   "serverOnly": true,
-   "syntax": "/setmaxplayers <数量>",
-   "params": [
-    {
-     "name": "数量",
-     "type": "int",
-     "required": true
-    }
-   ],
-   "description": "设置服务器最大玩家数量(基岩版)"
-  },
-  {
-   "name": "connect",
-   "chinese": [
-    "连接服务器"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 0,
-   "serverOnly": false,
-   "syntax": "/connect <主机:端口>",
-   "params": [
-    {
-     "name": "主机:端口",
-     "type": "string",
-     "required": true
-    }
-   ],
-   "description": "连接到指定服务器(基岩版)"
-  },
-  {
-   "name": "lesson",
-   "chinese": [
-    "课程",
-    "课程管理"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/lesson <create|remove|list|open> [名称]",
-   "params": [
-    {
-     "name": "操作",
-     "type": "string",
-     "required": true
-    },
-    {
-     "name": "名称",
-     "type": "string",
-     "required": false
-    }
-   ],
-   "description": "管理教育版课程内容(教育版)"
-  },
-  {
-   "name": "code",
-   "chinese": [
-    "代码",
-    "打开代码构建器"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/code",
-   "params": [],
-   "description": "打开代码构建器(教育版)"
-  },
-  {
-   "name": "codebuilder",
-   "chinese": [
-    "代码构建器"
-   ],
-   "minVersion": "1.0.0",
-   "opLevel": 1,
-   "serverOnly": false,
-   "syntax": "/codebuilder <玩家>",
-   "params": [
-    {
-     "name": "玩家",
-     "type": "selector",
-     "required": true
-    }
-   ],
-   "description": "为玩家打开代码构建器(教育版)"
-  },
-  {
    "name": "spawn",
    "chinese": [
     "回出生点"
@@ -3544,6 +2790,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/spawn [玩家]",
    "params": [
     {
@@ -3562,6 +2809,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/home [名称]",
    "params": [
     {
@@ -3580,6 +2828,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/sethome [名称]",
    "params": [
     {
@@ -3599,6 +2848,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/tpa <玩家>",
    "params": [
     {
@@ -3617,6 +2867,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/tpaccept [玩家]",
    "params": [
     {
@@ -3635,6 +2886,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/tpahere <玩家>",
    "params": [
     {
@@ -3653,6 +2905,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/tpdeny [玩家]",
    "params": [
     {
@@ -3671,6 +2924,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/warp <名称>",
    "params": [
     {
@@ -3689,6 +2943,7 @@
    "minVersion": "1.0.0",
    "opLevel": 2,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/setwarp <名称>",
    "params": [
     {
@@ -3707,6 +2962,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/kit <名称>",
    "params": [
     {
@@ -3726,6 +2982,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/fly [玩家]",
    "params": [
     {
@@ -3745,6 +3002,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/god [玩家]",
    "params": [
     {
@@ -3763,6 +3021,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/heal [玩家]",
    "params": [
     {
@@ -3781,6 +3040,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/feed [玩家]",
    "params": [
     {
@@ -3799,6 +3059,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/repair [hand|all]",
    "params": [
     {
@@ -3821,6 +3082,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/hat",
    "params": [],
    "description": "将手持物品戴在头上(需 Essentials 插件)"
@@ -3833,6 +3095,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/back",
    "params": [],
    "description": "返回死亡或传送前的位置(需 Essentials 插件)"
@@ -3846,6 +3109,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/seen <玩家>",
    "params": [
     {
@@ -3864,6 +3128,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/suicide",
    "params": [],
    "description": "立即重生(需 Essentials 插件)"
@@ -3877,6 +3142,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/balance [玩家]",
    "params": [
     {
@@ -3896,6 +3162,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/pay <玩家> <金额>",
    "params": [
     {
@@ -3920,6 +3187,7 @@
    "minVersion": "1.0.0",
    "opLevel": 3,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/eco <give|take|set|reset> <玩家> <金额>",
    "params": [
     {
@@ -3955,6 +3223,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/nick <昵称>",
    "params": [
     {
@@ -3973,6 +3242,7 @@
    "minVersion": "1.0.0",
    "opLevel": 0,
    "serverOnly": true,
+   "requiresPlugin": "Essentials",
    "syntax": "/mail <send|read|clear> [玩家] [内容]",
    "params": [
     {
@@ -3997,6 +3267,68 @@
     }
    ],
    "description": "发送、阅读或清空邮件(需 Essentials 插件)"
+  },
+  {
+   "name": "waypoint",
+   "chinese": [
+    "路径点",
+    "传送点",
+    "定位点",
+    "路径点管理"
+   ],
+   "minVersion": "1.21.6",
+   "opLevel": 2,
+   "serverOnly": false,
+   "syntax": "/waypoint <list|save|modify> [名称]",
+   "params": [
+    {
+     "name": "操作",
+     "type": "enum",
+     "required": true,
+     "candidates": [
+      "list",
+      "save",
+      "modify"
+     ]
+    },
+    {
+     "name": "名称",
+     "type": "string",
+     "required": false
+    }
+   ],
+   "description": "管理路径点，可在屏幕上显示带编号的方位点"
+  },
+  {
+   "name": "test",
+   "chinese": [
+    "测试",
+    "运行测试",
+    "测试指令"
+   ],
+   "minVersion": "1.21.5",
+   "opLevel": 2,
+   "serverOnly": false,
+   "syntax": "/test <run|runthese|runfailed|clearall> [测试名]",
+   "params": [
+    {
+     "name": "操作",
+     "type": "enum",
+     "required": true,
+     "candidates": [
+      "run",
+      "runthese",
+      "runfailed",
+      "clearall"
+     ]
+    },
+    {
+     "name": "测试名",
+     "type": "string",
+     "required": false
+    }
+   ],
+   "description": "运行或清理数据包里的测试用例"
   }
  ],
  "items": [
@@ -4726,7 +4058,7 @@
   {
    "english": "pitcher_pod",
    "chinese": [
-    "捕手荚"
+    "猪笼草荚"
    ]
   },
   {
@@ -4918,8 +4250,7 @@
   {
    "english": "brick",
    "chinese": [
-    "红砖",
-    "砖块"
+    "红砖"
    ]
   },
   {
@@ -5050,12 +4381,6 @@
    ]
   },
   {
-   "english": "slimeball",
-   "chinese": [
-    "粘液球"
-   ]
-  },
-  {
    "english": "blaze_rod",
    "chinese": [
     "烈焰棒"
@@ -5082,7 +4407,7 @@
   {
    "english": "prismarine_crystals",
    "chinese": [
-    "海晶沙粒"
+    "海晶砂粒"
    ]
   },
   {
@@ -5346,7 +4671,7 @@
   {
    "english": "crying_obsidian",
    "chinese": [
-    "哭泣黑曜石"
+    "哭泣的黑曜石"
    ]
   },
   {
@@ -5946,7 +5271,7 @@
   {
    "english": "target",
    "chinese": [
-    "目标"
+    "标靶"
    ]
   },
   {
@@ -6024,13 +5349,13 @@
   {
    "english": "allium",
    "chinese": [
-    "绒毛葱"
+    "绒球葱"
    ]
   },
   {
    "english": "azure_bluet",
    "chinese": [
-    "茜草花"
+    "蓝花美耳草"
    ]
   },
   {
@@ -6084,7 +5409,7 @@
   {
    "english": "pitcher_plant",
    "chinese": [
-    "捕手草"
+    "猪笼草"
    ]
   },
   {
@@ -6120,7 +5445,7 @@
   {
    "english": "clock",
    "chinese": [
-    "钟"
+    "时钟"
    ]
   },
   {
@@ -6274,9 +5599,870 @@
    ]
   },
   {
-   "english": "bottle_o_enchanting",
+   "english": "diamond_block",
    "chinese": [
-    "附魔之瓶"
+    "钻石块"
+   ]
+  },
+  {
+   "english": "iron_block",
+   "chinese": [
+    "铁块"
+   ]
+  },
+  {
+   "english": "gold_block",
+   "chinese": [
+    "金块"
+   ]
+  },
+  {
+   "english": "emerald_block",
+   "chinese": [
+    "绿宝石块"
+   ]
+  },
+  {
+   "english": "lapis_block",
+   "chinese": [
+    "青金石块"
+   ]
+  },
+  {
+   "english": "netherite_block",
+   "chinese": [
+    "下界合金块"
+   ]
+  },
+  {
+   "english": "copper_block",
+   "chinese": [
+    "铜块"
+   ]
+  },
+  {
+   "english": "quartz_block",
+   "chinese": [
+    "石英块"
+   ]
+  },
+  {
+   "english": "bricks",
+   "chinese": [
+    "砖块"
+   ]
+  },
+  {
+   "english": "command_block",
+   "chinese": [
+    "命令方块"
+   ]
+  },
+  {
+   "english": "chain_command_block",
+   "chinese": [
+    "连锁命令方块"
+   ]
+  },
+  {
+   "english": "repeating_command_block",
+   "chinese": [
+    "循环命令方块"
+   ]
+  },
+  {
+   "english": "structure_block",
+   "chinese": [
+    "结构方块"
+   ]
+  },
+  {
+   "english": "jigsaw",
+   "chinese": [
+    "拼图方块"
+   ]
+  },
+  {
+   "english": "barrier",
+   "chinese": [
+    "屏障",
+    "空气墙"
+   ]
+  },
+  {
+   "english": "light",
+   "chinese": [
+    "光源方块",
+    "光源"
+   ]
+  },
+  {
+   "english": "bedrock",
+   "chinese": [
+    "基岩"
+   ]
+  },
+  {
+   "english": "crafting_table",
+   "chinese": [
+    "工作台"
+   ]
+  },
+  {
+   "english": "furnace",
+   "chinese": [
+    "熔炉"
+   ]
+  },
+  {
+   "english": "blast_furnace",
+   "chinese": [
+    "高炉"
+   ]
+  },
+  {
+   "english": "smoker",
+   "chinese": [
+    "烟熏炉"
+   ]
+  },
+  {
+   "english": "chest",
+   "chinese": [
+    "箱子"
+   ]
+  },
+  {
+   "english": "trapped_chest",
+   "chinese": [
+    "陷阱箱"
+   ]
+  },
+  {
+   "english": "barrel",
+   "chinese": [
+    "木桶"
+   ]
+  },
+  {
+   "english": "bookshelf",
+   "chinese": [
+    "书架"
+   ]
+  },
+  {
+   "english": "chiseled_bookshelf",
+   "chinese": [
+    "雕纹书架"
+   ]
+  },
+  {
+   "english": "cartography_table",
+   "chinese": [
+    "制图台"
+   ]
+  },
+  {
+   "english": "fletching_table",
+   "chinese": [
+    "制箭台"
+   ]
+  },
+  {
+   "english": "smithing_table",
+   "chinese": [
+    "锻造台"
+   ]
+  },
+  {
+   "english": "loom",
+   "chinese": [
+    "织布机"
+   ]
+  },
+  {
+   "english": "stonecutter",
+   "chinese": [
+    "切石机"
+   ]
+  },
+  {
+   "english": "grindstone",
+   "chinese": [
+    "砂轮"
+   ]
+  },
+  {
+   "english": "composter",
+   "chinese": [
+    "堆肥桶"
+   ]
+  },
+  {
+   "english": "cauldron",
+   "chinese": [
+    "炼药锅"
+   ]
+  },
+  {
+   "english": "brewing_stand",
+   "chinese": [
+    "酿造台"
+   ]
+  },
+  {
+   "english": "beacon",
+   "chinese": [
+    "信标",
+    "信标方块"
+   ]
+  },
+  {
+   "english": "conduit",
+   "chinese": [
+    "潮涌核心"
+   ]
+  },
+  {
+   "english": "spawner",
+   "chinese": [
+    "刷怪笼"
+   ]
+  },
+  {
+   "english": "end_portal_frame",
+   "chinese": [
+    "末地传送门框架"
+   ]
+  },
+  {
+   "english": "respawn_anchor",
+   "chinese": [
+    "重生锚"
+   ]
+  },
+  {
+   "english": "lodestone",
+   "chinese": [
+    "磁石"
+   ]
+  },
+  {
+   "english": "campfire",
+   "chinese": [
+    "营火"
+   ]
+  },
+  {
+   "english": "soul_campfire",
+   "chinese": [
+    "灵魂营火"
+   ]
+  },
+  {
+   "english": "jukebox",
+   "chinese": [
+    "唱片机"
+   ]
+  },
+  {
+   "english": "rail",
+   "chinese": [
+    "铁轨",
+    "轨道"
+   ]
+  },
+  {
+   "english": "powered_rail",
+   "chinese": [
+    "动力铁轨"
+   ]
+  },
+  {
+   "english": "detector_rail",
+   "chinese": [
+    "探测铁轨"
+   ]
+  },
+  {
+   "english": "activator_rail",
+   "chinese": [
+    "激活铁轨"
+   ]
+  },
+  {
+   "english": "minecart",
+   "chinese": [
+    "矿车"
+   ]
+  },
+  {
+   "english": "sponge",
+   "chinese": [
+    "海绵"
+   ]
+  },
+  {
+   "english": "wet_sponge",
+   "chinese": [
+    "湿海绵"
+   ]
+  },
+  {
+   "english": "cobweb",
+   "chinese": [
+    "蜘蛛网"
+   ]
+  },
+  {
+   "english": "dead_bush",
+   "chinese": [
+    "枯萎的灌木"
+   ]
+  },
+  {
+   "english": "short_grass",
+   "chinese": [
+    "矮草丛",
+    "草丛"
+   ]
+  },
+  {
+   "english": "fern",
+   "chinese": [
+    "蕨"
+   ]
+  },
+  {
+   "english": "brown_mushroom",
+   "chinese": [
+    "棕色蘑菇"
+   ]
+  },
+  {
+   "english": "red_mushroom",
+   "chinese": [
+    "红色蘑菇"
+   ]
+  },
+  {
+   "english": "pumpkin",
+   "chinese": [
+    "南瓜"
+   ]
+  },
+  {
+   "english": "carved_pumpkin",
+   "chinese": [
+    "雕刻过的南瓜"
+   ]
+  },
+  {
+   "english": "jack_o_lantern",
+   "chinese": [
+    "南瓜灯"
+   ]
+  },
+  {
+   "english": "melon",
+   "chinese": [
+    "西瓜"
+   ]
+  },
+  {
+   "english": "nether_wart_block",
+   "chinese": [
+    "下界疣块"
+   ]
+  },
+  {
+   "english": "warped_wart_block",
+   "chinese": [
+    "诡异疣块"
+   ]
+  },
+  {
+   "english": "magma_block",
+   "chinese": [
+    "岩浆块"
+   ]
+  },
+  {
+   "english": "nether_bricks",
+   "chinese": [
+    "下界砖块"
+   ]
+  },
+  {
+   "english": "red_nether_bricks",
+   "chinese": [
+    "红色下界砖块"
+   ]
+  },
+  {
+   "english": "end_stone_bricks",
+   "chinese": [
+    "末地石砖"
+   ]
+  },
+  {
+   "english": "purpur_block",
+   "chinese": [
+    "紫珀块"
+   ]
+  },
+  {
+   "english": "purpur_pillar",
+   "chinese": [
+    "紫珀柱"
+   ]
+  },
+  {
+   "english": "prismarine",
+   "chinese": [
+    "海晶石"
+   ]
+  },
+  {
+   "english": "prismarine_bricks",
+   "chinese": [
+    "海晶石砖"
+   ]
+  },
+  {
+   "english": "dark_prismarine",
+   "chinese": [
+    "暗海晶石"
+   ]
+  },
+  {
+   "english": "amethyst_block",
+   "chinese": [
+    "紫水晶块"
+   ]
+  },
+  {
+   "english": "budding_amethyst",
+   "chinese": [
+    "紫水晶芽床"
+   ]
+  },
+  {
+   "english": "bed",
+   "chinese": [
+    "床"
+   ]
+  },
+  {
+   "english": "red_bed",
+   "chinese": [
+    "红色床"
+   ]
+  },
+  {
+   "english": "sculk",
+   "chinese": [
+    "幽匿块"
+   ]
+  },
+  {
+   "english": "sculk_catalyst",
+   "chinese": [
+    "幽匿催发体"
+   ]
+  },
+  {
+   "english": "sculk_sensor",
+   "chinese": [
+    "幽匿感测体"
+   ]
+  },
+  {
+   "english": "calibrated_sculk_sensor",
+   "chinese": [
+    "校准幽匿感测体"
+   ]
+  },
+  {
+   "english": "sculk_shrieker",
+   "chinese": [
+    "幽匿尖啸体"
+   ]
+  },
+  {
+   "english": "sculk_vein",
+   "chinese": [
+    "幽匿脉络"
+   ]
+  },
+  {
+   "english": "mud_bricks",
+   "chinese": [
+    "泥砖"
+   ]
+  },
+  {
+   "english": "packed_mud",
+   "chinese": [
+    "泥坯"
+   ]
+  },
+  {
+   "english": "moss_block",
+   "chinese": [
+    "苔藓块"
+   ]
+  },
+  {
+   "english": "azalea",
+   "chinese": [
+    "杜鹃花丛"
+   ]
+  },
+  {
+   "english": "flowering_azalea",
+   "chinese": [
+    "盛开的杜鹃花丛"
+   ]
+  },
+  {
+   "english": "hanging_roots",
+   "chinese": [
+    "垂根"
+   ]
+  },
+  {
+   "english": "mangrove_roots",
+   "chinese": [
+    "红树根"
+   ]
+  },
+  {
+   "english": "big_dripleaf",
+   "chinese": [
+    "大型垂滴叶"
+   ]
+  },
+  {
+   "english": "small_dripleaf",
+   "chinese": [
+    "小型垂滴叶"
+   ]
+  },
+  {
+   "english": "spore_blossom",
+   "chinese": [
+    "孢子花"
+   ]
+  },
+  {
+   "english": "oak_stairs",
+   "chinese": [
+    "橡木楼梯"
+   ]
+  },
+  {
+   "english": "spruce_stairs",
+   "chinese": [
+    "云杉木楼梯"
+   ]
+  },
+  {
+   "english": "stone_stairs",
+   "chinese": [
+    "石头楼梯"
+   ]
+  },
+  {
+   "english": "cobblestone_stairs",
+   "chinese": [
+    "圆石楼梯"
+   ]
+  },
+  {
+   "english": "stone_brick_stairs",
+   "chinese": [
+    "石砖楼梯"
+   ]
+  },
+  {
+   "english": "oak_slab",
+   "chinese": [
+    "橡木台阶"
+   ]
+  },
+  {
+   "english": "stone_slab",
+   "chinese": [
+    "石头台阶"
+   ]
+  },
+  {
+   "english": "smooth_stone_slab",
+   "chinese": [
+    "平滑石头台阶"
+   ]
+  },
+  {
+   "english": "oak_fence",
+   "chinese": [
+    "橡木栅栏"
+   ]
+  },
+  {
+   "english": "oak_fence_gate",
+   "chinese": [
+    "橡木栅栏门"
+   ]
+  },
+  {
+   "english": "oak_door",
+   "chinese": [
+    "橡木门"
+   ]
+  },
+  {
+   "english": "oak_trapdoor",
+   "chinese": [
+    "橡木活板门"
+   ]
+  },
+  {
+   "english": "ladder",
+   "chinese": [
+    "梯子"
+   ]
+  },
+  {
+   "english": "scaffolding",
+   "chinese": [
+    "脚手架"
+   ]
+  },
+  {
+   "english": "oak_sign",
+   "chinese": [
+    "橡木告示牌",
+    "告示牌"
+   ]
+  },
+  {
+   "english": "lead",
+   "chinese": [
+    "拴绳",
+    "牵引绳"
+   ]
+  },
+  {
+   "english": "totem_of_undying",
+   "chinese": [
+    "不死图腾"
+   ]
+  },
+  {
+   "english": "blaze_powder",
+   "chinese": [
+    "烈焰粉"
+   ]
+  },
+  {
+   "english": "magma_cream",
+   "chinese": [
+    "岩浆膏"
+   ]
+  },
+  {
+   "english": "slime_ball",
+   "chinese": [
+    "黏液球",
+    "粘液球"
+   ]
+  },
+  {
+   "english": "rabbit_foot",
+   "chinese": [
+    "兔子脚"
+   ]
+  },
+  {
+   "english": "rabbit_hide",
+   "chinese": [
+    "兔子皮"
+   ]
+  },
+  {
+   "english": "dragon_breath",
+   "chinese": [
+    "龙息"
+   ]
+  },
+  {
+   "english": "shulker_shell",
+   "chinese": [
+    "潜影壳"
+   ]
+  },
+  {
+   "english": "glistering_melon_slice",
+   "chinese": [
+    "闪烁的西瓜片"
+   ]
+  },
+  {
+   "english": "firework_star",
+   "chinese": [
+    "烟火之星"
+   ]
+  },
+  {
+   "english": "mace",
+   "chinese": [
+    "重锤"
+   ]
+  },
+  {
+   "english": "wind_charge",
+   "chinese": [
+    "风弹"
+   ]
+  },
+  {
+   "english": "breeze_rod",
+   "chinese": [
+    "旋风棒"
+   ]
+  },
+  {
+   "english": "heavy_core",
+   "chinese": [
+    "沉重核心"
+   ]
+  },
+  {
+   "english": "armadillo_scute",
+   "chinese": [
+    "犰狳鳞甲"
+   ]
+  },
+  {
+   "english": "wolf_armor",
+   "chinese": [
+    "狼铠"
+   ]
+  },
+  {
+   "english": "ominous_bottle",
+   "chinese": [
+    "不祥之瓶"
+   ]
+  },
+  {
+   "english": "trial_key",
+   "chinese": [
+    "试炼钥匙"
+   ]
+  },
+  {
+   "english": "ominous_trial_key",
+   "chinese": [
+    "不祥试炼钥匙"
+   ]
+  },
+  {
+   "english": "white_wool",
+   "chinese": [
+    "白色羊毛",
+    "羊毛"
+   ]
+  },
+  {
+   "english": "orange_wool",
+   "chinese": [
+    "橙色羊毛"
+   ]
+  },
+  {
+   "english": "magenta_wool",
+   "chinese": [
+    "品红色羊毛"
+   ]
+  },
+  {
+   "english": "light_blue_wool",
+   "chinese": [
+    "淡蓝色羊毛"
+   ]
+  },
+  {
+   "english": "yellow_wool",
+   "chinese": [
+    "黄色羊毛"
+   ]
+  },
+  {
+   "english": "lime_wool",
+   "chinese": [
+    "黄绿色羊毛"
+   ]
+  },
+  {
+   "english": "pink_wool",
+   "chinese": [
+    "粉红色羊毛"
+   ]
+  },
+  {
+   "english": "gray_wool",
+   "chinese": [
+    "灰色羊毛"
+   ]
+  },
+  {
+   "english": "light_gray_wool",
+   "chinese": [
+    "淡灰色羊毛"
+   ]
+  },
+  {
+   "english": "cyan_wool",
+   "chinese": [
+    "青色羊毛"
+   ]
+  },
+  {
+   "english": "purple_wool",
+   "chinese": [
+    "紫色羊毛"
+   ]
+  },
+  {
+   "english": "blue_wool",
+   "chinese": [
+    "蓝色羊毛"
+   ]
+  },
+  {
+   "english": "brown_wool",
+   "chinese": [
+    "棕色羊毛"
+   ]
+  },
+  {
+   "english": "green_wool",
+   "chinese": [
+    "绿色羊毛"
+   ]
+  },
+  {
+   "english": "red_wool",
+   "chinese": [
+    "红色羊毛"
+   ]
+  },
+  {
+   "english": "black_wool",
+   "chinese": [
+    "黑色羊毛"
    ]
   }
  ],
@@ -6782,7 +6968,8 @@
   {
    "english": "boat",
    "chinese": [
-    "船"
+    "船",
+    "木船"
    ]
   },
   {
@@ -6934,6 +7121,24 @@
    "english": "text_display",
    "chinese": [
     "文本展示实体"
+   ]
+  },
+  {
+   "english": "creaking",
+   "chinese": [
+    "嘎枝"
+   ]
+  },
+  {
+   "english": "strider",
+   "chinese": [
+    "炽足兽"
+   ]
+  },
+  {
+   "english": "giant",
+   "chinese": [
+    "巨人"
    ]
   }
  ],
@@ -7149,19 +7354,19 @@
   {
    "english": "raid_omen",
    "chinese": [
-    "突袭之兆"
+    "袭击之兆"
    ]
   },
   {
    "english": "wind_charged",
    "chinese": [
-    "风充能"
+    "蓄风"
    ]
   },
   {
    "english": "weaving",
    "chinese": [
-    "编织"
+    "盘丝"
    ]
   },
   {
@@ -7173,13 +7378,7 @@
   {
    "english": "infested",
    "chinese": [
-    "感染"
-   ]
-  },
-  {
-   "english": "weeping",
-   "chinese": [
-    "哀嚎"
+    "寄生"
    ]
   }
  ],
@@ -7269,7 +7468,7 @@
    ]
   },
   {
-   "english": "sweeping",
+   "english": "sweeping_edge",
    "chinese": [
     "横扫之刃"
    ]
@@ -7410,6 +7609,18 @@
    "english": "swift_sneak",
    "chinese": [
     "迅捷潜行"
+   ]
+  },
+  {
+   "english": "binding_curse",
+   "chinese": [
+    "绑定诅咒"
+   ]
+  },
+  {
+   "english": "vanishing_curse",
+   "chinese": [
+    "消失诅咒"
    ]
   }
  ],
@@ -7973,6 +8184,237 @@
    "chinese": "传送到地标(插件)",
    "english": "/warp spawn",
    "description": "传送到服务器地标(需插件)"
+  },
+  {
+   "id": "clear-inventory",
+   "category": "物品",
+   "chinese": "清空自己的背包",
+   "english": "/clear @s",
+   "description": "清空自己背包里的所有物品"
+  },
+  {
+   "id": "clear-all-players",
+   "category": "物品",
+   "chinese": "清空所有玩家的背包",
+   "english": "/clear @a",
+   "description": "清空所有玩家背包"
+  },
+  {
+   "id": "give-diamond-block",
+   "category": "物品",
+   "chinese": "给自己一个钻石块",
+   "english": "/give @s diamond_block 1",
+   "description": "给予自己一个钻石块"
+  },
+  {
+   "id": "give-command-block",
+   "category": "物品",
+   "chinese": "给自己一个命令方块",
+   "english": "/give @s command_block 1",
+   "description": "给予自己一个命令方块"
+  },
+  {
+   "id": "give-beacon",
+   "category": "物品",
+   "chinese": "给自己一个信标",
+   "english": "/give @s beacon 1",
+   "description": "给予自己一个信标"
+  },
+  {
+   "id": "give-mace",
+   "category": "物品",
+   "chinese": "给自己一把重锤",
+   "english": "/give @s mace 1",
+   "description": "给予自己一把重锤"
+  },
+  {
+   "id": "kill-self",
+   "category": "快捷操作",
+   "chinese": "自杀",
+   "english": "/kill @s",
+   "description": "直接结束自己"
+  },
+  {
+   "id": "kill-all-monsters",
+   "category": "快捷操作",
+   "chinese": "清除所有敌对生物",
+   "english": "/kill @e[type=!player]",
+   "description": "清掉除玩家以外的所有实体，慎用"
+  },
+  {
+   "id": "heal-self",
+   "category": "快捷操作",
+   "chinese": "把血回满",
+   "english": "/effect give @s instant_health 1 10",
+   "description": "瞬间治疗 10 级，回满血量"
+  },
+  {
+   "id": "feed-self",
+   "category": "快捷操作",
+   "chinese": "去掉饥饿",
+   "english": "/effect give @s saturation 1 10",
+   "description": "瞬间回满饥饿值"
+  },
+  {
+   "id": "enchant-fortune-3",
+   "category": "附魔",
+   "chinese": "给手中物品附魔时运 III",
+   "english": "/enchant @s fortune 3",
+   "description": "时运 3 级"
+  },
+  {
+   "id": "enchant-silk-touch",
+   "category": "附魔",
+   "chinese": "给手中物品附魔精准采集",
+   "english": "/enchant @s silk_touch 1",
+   "description": "精准采集 1 级"
+  },
+  {
+   "id": "time-query",
+   "category": "时间天气",
+   "chinese": "查询当前时间",
+   "english": "/time query daytime",
+   "description": "查看当前世界时间"
+  },
+  {
+   "id": "gamerule-keep-inventory",
+   "category": "游戏规则",
+   "chinese": "死亡不掉落",
+   "english": "/gamerule keepInventory true",
+   "description": "死亡后保留背包物品"
+  },
+  {
+   "id": "gamerule-no-mob",
+   "category": "游戏规则",
+   "chinese": "禁止自然刷怪",
+   "english": "/gamerule doMobSpawning false",
+   "description": "关闭自然刷怪"
+  },
+  {
+   "id": "gamerule-weather-cycle",
+   "category": "游戏规则",
+   "chinese": "关闭天气变化",
+   "english": "/gamerule doWeatherCycle false",
+   "description": "世界天气不再自动变化"
+  },
+  {
+   "id": "gamerule-daylight",
+   "category": "游戏规则",
+   "chinese": "关闭昼夜循环",
+   "english": "/gamerule doDaylightCycle false",
+   "description": "时间停在当前时刻"
+  },
+  {
+   "id": "gamerule-mob-griefing",
+   "category": "游戏规则",
+   "chinese": "禁止生物破坏方块",
+   "english": "/gamerule mobGriefing false",
+   "description": "苦力怕、末影人不再拆家"
+  },
+  {
+   "id": "spawnpoint-self",
+   "category": "传送",
+   "chinese": "把重生点设在这里",
+   "english": "/spawnpoint @s",
+   "description": "把当前脚下设为重生点"
+  },
+  {
+   "id": "tp-all-to-me",
+   "category": "传送",
+   "chinese": "把所有玩家传送到我身边",
+   "english": "/tp @a @s",
+   "description": "把全部玩家拉过来"
+  },
+  {
+   "id": "tp-up-100",
+   "category": "传送",
+   "chinese": "向上传送 100 格",
+   "english": "/tp @s ~ ~100 ~",
+   "description": "直上 100 格"
+  },
+  {
+   "id": "summon-warden",
+   "category": "召唤生物",
+   "chinese": "在面前召唤监守者",
+   "english": "/summon warden ~ ~1 ~",
+   "description": "召唤一只监守者"
+  },
+  {
+   "id": "summon-allay",
+   "category": "召唤生物",
+   "chinese": "在面前召唤悦灵",
+   "english": "/summon allay ~ ~1 ~",
+   "description": "召唤一只悦灵"
+  },
+  {
+   "id": "summon-breeze",
+   "category": "召唤生物",
+   "chinese": "在面前召唤旋风人",
+   "english": "/summon breeze ~ ~1 ~",
+   "description": "召唤一只旋风人"
+  },
+  {
+   "id": "effect-night-vision-10m",
+   "category": "药水效果",
+   "chinese": "给自己 10 分钟夜视",
+   "english": "/effect give @s night_vision 600 0",
+   "description": "夜视 10 分钟"
+  },
+  {
+   "id": "effect-clear-self",
+   "category": "药水效果",
+   "chinese": "清除自己身上的效果",
+   "english": "/effect clear @s",
+   "description": "清掉自己的所有药水效果"
+  },
+  {
+   "id": "effect-speed-1m",
+   "category": "药水效果",
+   "chinese": "给自己 1 分钟速度 III",
+   "english": "/effect give @s speed 60 2",
+   "description": "速度 3 级 60 秒"
+  },
+  {
+   "id": "locate-village",
+   "category": "快捷操作",
+   "chinese": "寻找最近的村庄",
+   "english": "/locate structure #village",
+   "description": "定位最近的村庄坐标"
+  },
+  {
+   "id": "locate-stronghold",
+   "category": "快捷操作",
+   "chinese": "寻找最近的要塞",
+   "english": "/locate structure stronghold",
+   "description": "定位最近的要塞坐标"
+  },
+  {
+   "id": "seed",
+   "category": "快捷操作",
+   "chinese": "查看世界种子",
+   "english": "/seed",
+   "description": "显示当前世界种子"
+  },
+  {
+   "id": "play-sound-levelup",
+   "category": "快捷操作",
+   "chinese": "播放升级音效",
+   "english": "/playsound entity.player.levelup master @s",
+   "description": "给自己播一次升级音效"
+  },
+  {
+   "id": "title-hello",
+   "category": "快捷操作",
+   "chinese": "屏幕中央显示标题",
+   "english": "/title @a title {\"text\":\"你好\"}",
+   "description": "给所有玩家显示大标题"
+  },
+  {
+   "id": "benchmark-tps",
+   "category": "服务器管理",
+   "chinese": "查看服务器 TPS",
+   "english": "/tick query",
+   "description": "查询服务器运行速度"
   }
  ]
 }

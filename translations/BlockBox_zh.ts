@@ -54303,8 +54303,8 @@ https://www.bilibili.com/video/BVxxxxxxxx
     </message>
     <message>
         <location filename="../pages/TranslationComposePage.cpp" line="152"/>
-        <source>正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动</source>
-        <translation>正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动</translation>
+        <source>正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动。要强调、分点或加链接，用下面的格式栏点一下就行。</source>
+        <translation>正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动。要强调、分点或加链接，用下面的格式栏点一下就行。</translation>
     </message>
     <message>
         <location filename="../pages/TranslationComposePage.cpp" line="162"/>
@@ -54345,6 +54345,70 @@ https://www.bilibili.com/video/BVxxxxxxxx
         <location filename="../pages/TranslationComposePage.cpp" line="316"/>
         <source>翻译已提交，进入审核后会对所有人显示。感谢参与！</source>
         <translation>翻译已提交，进入审核后会对所有人显示。感谢参与！</translation>
+    </message>
+    <message>
+        <source>撤销（Ctrl+Z）</source>
+        <translation>撤销（Ctrl+Z）</translation>
+    </message>
+    <message>
+        <source>重做（Ctrl+Y）</source>
+        <translation>重做（Ctrl+Y）</translation>
+    </message>
+    <message>
+        <source>加粗（Ctrl+B）</source>
+        <translation>加粗（Ctrl+B）</translation>
+    </message>
+    <message>
+        <source>斜体（Ctrl+I）</source>
+        <translation>斜体（Ctrl+I）</translation>
+    </message>
+    <message>
+        <source>下划线（Ctrl+U）</source>
+        <translation>下划线（Ctrl+U）</translation>
+    </message>
+    <message>
+        <source>删除线</source>
+        <translation>删除线</translation>
+    </message>
+    <message>
+        <source>段落样式：正文 / 小标题 / 标题</source>
+        <translation>段落样式：正文 / 小标题 / 标题</translation>
+    </message>
+    <message>
+        <source>正文</source>
+        <translation>正文</translation>
+    </message>
+    <message>
+        <source>小标题</source>
+        <translation>小标题</translation>
+    </message>
+    <message>
+        <source>标题</source>
+        <translation>标题</translation>
+    </message>
+    <message>
+        <source>无序列表</source>
+        <translation>无序列表</translation>
+    </message>
+    <message>
+        <source>有序列表</source>
+        <translation>有序列表</translation>
+    </message>
+    <message>
+        <source>给选中的文字加链接（Ctrl+K）</source>
+        <translation>给选中的文字加链接（Ctrl+K）</translation>
+    </message>
+    <message>
+        <source>去掉选中文字的加粗、斜体、颜色和缩进</source>
+        <translation>去掉选中文字的加粗、斜体、颜色和缩进</translation>
+    </message>
+    <message>
+        <source>插入链接</source>
+        <translation>插入链接</translation>
+    </message>
+    <message>
+        <source>链接地址，例如 https://example.com</source>
+        <translation>链接地址，例如 https://example.com</translation>
     </message>
 </context>
 <context>

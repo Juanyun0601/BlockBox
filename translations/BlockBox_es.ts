@@ -54533,8 +54533,8 @@ Los archivos ya descargados se eliminarán.</translation>
     </message>
     <message>
         <location filename="../pages/TranslationComposePage.cpp" line="152"/>
-        <source>正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动</source>
-        <translation>El cuerpo ya viene rellenado con el texto original; solo tienes que sustituir el inglés por chino y dejar las imágenes y los enlaces donde están.</translation>
+        <source>正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动。要强调、分点或加链接，用下面的格式栏点一下就行。</source>
+        <translation>El cuerpo ya está rellenado con el texto original: sustituye el inglés por chino y deja las imágenes y los enlaces donde están. Usa la barra de formato de abajo para añadir énfasis, listas o enlaces.</translation>
     </message>
     <message>
         <location filename="../pages/TranslationComposePage.cpp" line="162"/>
@@ -54575,6 +54575,70 @@ Los archivos ya descargados se eliminarán.</translation>
         <location filename="../pages/TranslationComposePage.cpp" line="316"/>
         <source>翻译已提交，进入审核后会对所有人显示。感谢参与！</source>
         <translation>Traducción enviada. Cuando pase la revisión, se mostrará a todos. ¡Gracias por participar!</translation>
+    </message>
+    <message>
+        <source>撤销（Ctrl+Z）</source>
+        <translation>Deshacer (Ctrl+Z)</translation>
+    </message>
+    <message>
+        <source>重做（Ctrl+Y）</source>
+        <translation>Rehacer (Ctrl+Y)</translation>
+    </message>
+    <message>
+        <source>加粗（Ctrl+B）</source>
+        <translation>Negrita (Ctrl+B)</translation>
+    </message>
+    <message>
+        <source>斜体（Ctrl+I）</source>
+        <translation>Cursiva (Ctrl+I)</translation>
+    </message>
+    <message>
+        <source>下划线（Ctrl+U）</source>
+        <translation>Subrayado (Ctrl+U)</translation>
+    </message>
+    <message>
+        <source>删除线</source>
+        <translation>Tachado</translation>
+    </message>
+    <message>
+        <source>段落样式：正文 / 小标题 / 标题</source>
+        <translation>Estilo del párrafo: Cuerpo / Subtítulo / Título</translation>
+    </message>
+    <message>
+        <source>正文</source>
+        <translation>Cuerpo</translation>
+    </message>
+    <message>
+        <source>小标题</source>
+        <translation>Subtítulo</translation>
+    </message>
+    <message>
+        <source>标题</source>
+        <translation>Título</translation>
+    </message>
+    <message>
+        <source>无序列表</source>
+        <translation>Lista con viñetas</translation>
+    </message>
+    <message>
+        <source>有序列表</source>
+        <translation>Lista numerada</translation>
+    </message>
+    <message>
+        <source>给选中的文字加链接（Ctrl+K）</source>
+        <translation>Añadir un enlace al texto seleccionado (Ctrl+K)</translation>
+    </message>
+    <message>
+        <source>去掉选中文字的加粗、斜体、颜色和缩进</source>
+        <translation>Quitar la negrita, la cursiva, los colores y la sangría del texto seleccionado</translation>
+    </message>
+    <message>
+        <source>插入链接</source>
+        <translation>Insertar enlace</translation>
+    </message>
+    <message>
+        <source>链接地址，例如 https://example.com</source>
+        <translation>Dirección del enlace, p. ej. https://example.com</translation>
     </message>
 </context>
 <context>

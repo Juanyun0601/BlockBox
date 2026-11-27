@@ -48,8 +48,18 @@ struct RuntimeDependency {
     QString installedVersion; ///< 已安装版本
     bool installed = false;   ///< 本地是否已安装
     bool required = true;     ///< 是否必需（必需项会在启动器更新窗口里提示）
+    bool available = true;    ///< 清单是否给出了本机可下载的包（发布方还没准备好时为 false）
+    QString note;             ///< 清单里的补充说明（未发布原因等，可为空）
     QString sizeHint;         ///< 体积提示，如 "≈ 45 MB"
     QList<RuntimeDependencyPackage> packages;
+
+    /**
+     * @brief 当前设备能不能真的下载安装
+     *
+     * 清单里写了 available:false（官方包尚未发布），或清单里没有本机架构的包，
+     * 都算不可安装。界面据此禁用按钮，避免用户点了只会收到一句失败提示。
+     */
+    bool isDownloadable() const { return available && packageForCurrentAbi() != nullptr; }
 
     /** 需要首次安装 */
     bool needsInstall() const { return !installed; }
@@ -96,6 +106,8 @@ public:
     bool isInstalling() const { return m_installing; }
     const QList<RuntimeDependency> &dependencies() const { return m_dependencies; }
     QList<RuntimeDependency> pendingDependencies() const;
+    /** 清单里「官方包尚未发布 / 本机架构暂无包」的依赖，仅用于提示，不可安装 */
+    QList<RuntimeDependency> unavailableDependencies() const;
     int pendingCount() const;
     RuntimeDependency dependencyById(const QString &id) const;
 

@@ -102,12 +102,4 @@ private:
      * @return 空字符串表示可用；非空字符串为不可用原因
      */
     QString checkAvailability(const CommandInfo &cmd, const CommandContext &ctx) const;
-
-    /**
-     * @brief 比较两个版本号字符串
-     * @param a 版本号（如 "1.13"）
-     * @param b 版本号（如 "1.20"）
-     * @return a<b 返回 -1，a==b 返回 0，a>b 返回 1
-     */
-    static int compareVersions(const QString &a, const QString &b);
 };

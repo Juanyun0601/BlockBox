@@ -135,7 +135,43 @@ QString chineseEnumAlias(const QString &value)
         {QStringLiteral("副标题"), QStringLiteral("subtitle")},
         {QStringLiteral("动作栏"), QStringLiteral("actionbar")},
         {QStringLiteral("清空"), QStringLiteral("clear")},
+        {QStringLiteral("清除"), QStringLiteral("clear")},
+        {QStringLiteral("去掉"), QStringLiteral("clear")},
+        {QStringLiteral("移除"), QStringLiteral("clear")},
         {QStringLiteral("重置"), QStringLiteral("reset")},
+        {QStringLiteral("给予"), QStringLiteral("give")},
+        // 定位 / 列表类操作
+        {QStringLiteral("结构"), QStringLiteral("structure")},
+        {QStringLiteral("生物群系"), QStringLiteral("biome")},
+        {QStringLiteral("群系"), QStringLiteral("biome")},
+        {QStringLiteral("兴趣点"), QStringLiteral("poi")},
+        {QStringLiteral("列表"), QStringLiteral("list")},
+        {QStringLiteral("保存"), QStringLiteral("save")},
+        {QStringLiteral("修改"), QStringLiteral("modify")},
+    };
+    return aliases.value(value.trimmed());
+}
+
+/**
+ * @brief /locate 的结构中文名 → 结构 ID
+ */
+QString locateTargetAlias(const QString &value)
+{
+    static const QHash<QString, QString> aliases = {
+        {QStringLiteral("村庄"), QStringLiteral("#village")},
+        {QStringLiteral("要塞"), QStringLiteral("stronghold")},
+        {QStringLiteral("古城"), QStringLiteral("ancient_city")},
+        {QStringLiteral("远古城市"), QStringLiteral("ancient_city")},
+        {QStringLiteral("末地城"), QStringLiteral("end_city")},
+        {QStringLiteral("海底神殿"), QStringLiteral("monument")},
+        {QStringLiteral("林地府邸"), QStringLiteral("mansion")},
+        {QStringLiteral("废弃矿井"), QStringLiteral("mineshaft")},
+        {QStringLiteral("沙漠神殿"), QStringLiteral("desert_pyramid")},
+        {QStringLiteral("丛林神庙"), QStringLiteral("jungle_pyramid")},
+        {QStringLiteral("沉船"), QStringLiteral("shipwreck")},
+        {QStringLiteral("前哨站"), QStringLiteral("pillager_outpost")},
+        {QStringLiteral("堡垒遗迹"), QStringLiteral("bastion_remnant")},
+        {QStringLiteral("下界要塞"), QStringLiteral("fortress")},
     };
     return aliases.value(value.trimmed());
 }
@@ -175,6 +211,158 @@ QString timeOfDayAlias(const QString &value)
         {QStringLiteral("半夜"), QStringLiteral("midnight")},
     };
     return aliases.value(value.trimmed());
+}
+
+/**
+ * @brief 中文数字（一 ~ 九百九十九）转整数
+ * @return 解析成功返回 true
+ */
+bool parseChineseNumber(const QString &text, int &out)
+{
+    if (text.isEmpty())
+    {
+        return false;
+    }
+
+    auto digitOf = [](QChar ch) -> int {
+        switch (ch.unicode())
+        {
+        case 0x96F6: // 零
+        case 0x3007: // 〇
+            return 0;
+        case 0x4E00: // 一
+            return 1;
+        case 0x4E8C: // 二
+        case 0x4E24: // 两
+            return 2;
+        case 0x4E09: // 三
+            return 3;
+        case 0x56DB: // 四
+            return 4;
+        case 0x4E94: // 五
+            return 5;
+        case 0x516D: // 六
+            return 6;
+        case 0x4E03: // 七
+            return 7;
+        case 0x516B: // 八
+            return 8;
+        case 0x4E5D: // 九
+            return 9;
+        default:
+            return -1;
+        }
+    };
+
+    int total = 0;
+    int current = 0;
+    bool any = false;
+    const QChar ten(0x5341);     // 十
+    const QChar hundred(0x767E); // 百
+    for (const QChar &ch : text)
+    {
+        if (ch == ten)
+        {
+            total += (current == 0 ? 1 : current) * 10;
+            current = 0;
+            any = true;
+        }
+        else if (ch == hundred)
+        {
+            total += (current == 0 ? 1 : current) * 100;
+            current = 0;
+            any = true;
+        }
+        else
+        {
+            const int digit = digitOf(ch);
+            if (digit < 0)
+            {
+                return false;
+            }
+            current = digit;
+            any = true;
+        }
+    }
+
+    out = total + current;
+    return any;
+}
+
+/**
+ * @brief 把「两把」「3 个」「一组」这类带量词的数量说法解析成数字
+ *
+ * 量词本身不参与指令，直接从尾部剥掉；「一组」按游戏里的 64 处理。
+ *
+ * @return 解析成功返回 true，并写出数字
+ */
+bool parseQuantity(const QString &value, int &out)
+{
+    QString text = value.trimmed();
+    if (text.isEmpty())
+    {
+        return false;
+    }
+
+    // 游戏里约定俗成的说法
+    if (text == QStringLiteral("一组") || text == QStringLiteral("整组"))
+    {
+        out = 64;
+        return true;
+    }
+    if (text == QStringLiteral("半组"))
+    {
+        out = 32;
+        return true;
+    }
+
+    static const QStringList quantifiers = {
+        QStringLiteral("个"), QStringLiteral("把"), QStringLiteral("块"),
+        QStringLiteral("组"), QStringLiteral("颗"), QStringLiteral("瓶"),
+        QStringLiteral("本"), QStringLiteral("张"), QStringLiteral("只"),
+        QStringLiteral("条"), QStringLiteral("件"), QStringLiteral("份"),
+        QStringLiteral("支"), QStringLiteral("堆"), QStringLiteral("次"),
+        QStringLiteral("秒"), QStringLiteral("级"), QStringLiteral("格"),
+        QStringLiteral("层"),
+    };
+    for (const QString &quantifier : quantifiers)
+    {
+        if (text.endsWith(quantifier) && text.size() > quantifier.size())
+        {
+            text.chop(quantifier.size());
+            break;
+        }
+    }
+
+    bool ok = false;
+    const int number = text.toInt(&ok);
+    if (ok)
+    {
+        out = number;
+        return true;
+    }
+    return parseChineseNumber(text, out);
+}
+
+/**
+ * @brief 单个坐标分量是否合法（数字 / ~ / ^ / ~1 / -3.5）
+ */
+bool looksLikeCoordinate(const QString &value)
+{
+    static const QRegularExpression coordinateRe(
+        QStringLiteral("^\\s*[~^]?-?\\d*(?:\\.\\d+)?\\s*$"));
+    if (value.trimmed().isEmpty())
+    {
+        return false;
+    }
+    const QRegularExpressionMatch match = coordinateRe.match(value);
+    if (!match.hasMatch())
+    {
+        return false;
+    }
+    // 单独一个 "-" 或 "." 不算坐标
+    const QString trimmed = value.trimmed();
+    return trimmed.contains(QRegularExpression(QStringLiteral("[0-9~^]")));
 }
 
 } // namespace
@@ -261,6 +449,178 @@ TranslateResult CommandTranslator::translate(const QString &input, const Command
             }
         }
 
+        // 「效果 速度 30」「效果 清除」：省略/中文写操作时先归一成 give / clear
+        if (cmd->name == QLatin1String("effect") && !args.isEmpty())
+        {
+            static const QHash<QString, QString> operationWords = {
+                {QStringLiteral("添加"), QStringLiteral("give")},
+                {QStringLiteral("加上"), QStringLiteral("give")},
+                {QStringLiteral("获得"), QStringLiteral("give")},
+                {QStringLiteral("给"), QStringLiteral("give")},
+                {QStringLiteral("清除"), QStringLiteral("clear")},
+                {QStringLiteral("去掉"), QStringLiteral("clear")},
+                {QStringLiteral("移除"), QStringLiteral("clear")},
+                {QStringLiteral("删除"), QStringLiteral("clear")},
+            };
+            const QString first = args.first();
+            const QString operation = operationWords.value(first);
+            if (!operation.isEmpty())
+            {
+                args.first() = operation;
+            }
+            else
+            {
+                const QString mapped = chineseEnumAlias(first);
+                const bool isOperation = first.compare(QStringLiteral("give"), Qt::CaseInsensitive) == 0
+                                         || first.compare(QStringLiteral("clear"), Qt::CaseInsensitive) == 0
+                                         || mapped == QLatin1String("give")
+                                         || mapped == QLatin1String("clear");
+                if (!isOperation)
+                {
+                    args.prepend(QStringLiteral("give"));
+                }
+            }
+        }
+
+        // 「定位 村庄」「定位结构 要塞」：中文结构名换成结构 ID，并补上 structure 类别
+        if (cmd->name == QLatin1String("locate"))
+        {
+            QString category = QStringLiteral("structure");
+            if (!args.isEmpty())
+            {
+                const QString mapped = chineseEnumAlias(args.first());
+                if (mapped == QLatin1String("structure") || mapped == QLatin1String("biome")
+                    || mapped == QLatin1String("poi"))
+                {
+                    category = mapped;
+                    args.removeFirst();
+                }
+            }
+            if (args.size() == 1)
+            {
+                const QString structure = locateTargetAlias(args.first());
+                if (!structure.isEmpty())
+                {
+                    args.first() = structure;
+                }
+            }
+            args.prepend(category);
+        }
+
+        // 从参数里挑显式写出的目标（@a、@p[name=…]、所有玩家…），没写就用 fallback
+        auto pickTarget = [&args](const QString &fallback) -> QString {
+            for (const QString &arg : args)
+            {
+                if (arg.startsWith(QLatin1Char('@')))
+                {
+                    return arg;
+                }
+                if (arg == QStringLiteral("自己") || arg == QStringLiteral("我"))
+                {
+                    return QStringLiteral("@s");
+                }
+                if (arg == QStringLiteral("所有玩家"))
+                {
+                    return QStringLiteral("@a");
+                }
+                if (arg == QStringLiteral("最近玩家"))
+                {
+                    return QStringLiteral("@p");
+                }
+                if (arg == QStringLiteral("所有实体"))
+                {
+                    return QStringLiteral("@e");
+                }
+                if (arg == QStringLiteral("随机玩家"))
+                {
+                    return QStringLiteral("@r");
+                }
+            }
+            return fallback;
+        };
+
+        // 从参数里认出一条效果（按最长中文别名匹配）
+        auto effectNameFromArgs = [this, &args]() -> QString {
+            const QString text = args.join(QLatin1Char(' '));
+            QString bestEnglish;
+            int bestLength = 0;
+            for (const EffectInfo &effect : m_db->allEffects())
+            {
+                for (const QString &alias : effect.chinese)
+                {
+                    if (text.contains(alias) && alias.length() > bestLength)
+                    {
+                        bestLength = alias.length();
+                        bestEnglish = effect.english;
+                    }
+                }
+            }
+            return bestEnglish;
+        };
+
+        // 「效果 clear @a」「清除效果」：clear 只要目标，不能把后面那些可选参数补上
+        if (cmd->name == QLatin1String("effect") && !args.isEmpty()
+            && args.first().compare(QStringLiteral("clear"), Qt::CaseInsensitive) == 0)
+        {
+            result.warnings.clear();
+            result.englishCommand = QStringLiteral("/effect clear %1")
+                                        .arg(pickTarget(QStringLiteral("@s")));
+            result.success = true;
+            return result;
+        }
+
+        // 「给予 @a 速度 效果」：效果被当成物品说时改走 /effect give，
+        // 否则会在物品表里查不到、直接报「未知物品」
+        if (cmd->name == QLatin1String("give") && trimmed.contains(QStringLiteral("效果")))
+        {
+            const QString effectEnglish = effectNameFromArgs();
+            if (!effectEnglish.isEmpty())
+            {
+                result.matchedCommandName = QStringLiteral("effect");
+                result.warnings.clear();
+                result.englishCommand = QStringLiteral("/effect give %1 %2")
+                                            .arg(pickTarget(QStringLiteral("@s")), effectEnglish);
+                result.success = true;
+                return result;
+            }
+        }
+
+        // 「给我 30 经验」：经验被当成物品说时改走 /xp，别报「未知物品 30」
+        if (cmd->name == QLatin1String("give") && trimmed.contains(QStringLiteral("经验")))
+        {
+            int amount = 0;
+            for (const QString &arg : args)
+            {
+                if (parseQuantity(arg, amount))
+                {
+                    break;
+                }
+            }
+            if (amount > 0)
+            {
+                result.matchedCommandName = QStringLiteral("xp");
+                result.warnings.clear();
+                result.englishCommand = QStringLiteral("/xp add %1 %2 levels")
+                                            .arg(pickTarget(QStringLiteral("@s")))
+                                            .arg(amount);
+                result.success = true;
+                return result;
+            }
+        }
+
+        // 「清除所有效果」：不是清背包，而是清药水效果
+        if (cmd->name == QLatin1String("clear") && trimmed.contains(QStringLiteral("效果")))
+        {
+            const QString target = pickTarget(trimmed.contains(QStringLiteral("所有"))
+                                                  ? QStringLiteral("@a")
+                                                  : QStringLiteral("@s"));
+            result.matchedCommandName = QStringLiteral("effect");
+            result.warnings.clear();
+            result.englishCommand = QStringLiteral("/effect clear %1").arg(target);
+            result.success = true;
+            return result;
+        }
+
         const QStringList translatedArgs = translateParams(*cmd, args, warnings);
         result.warnings = warnings;
 
@@ -283,28 +643,8 @@ TranslateResult CommandTranslator::translate(const QString &input, const Command
 
 QString CommandTranslator::checkAvailability(const CommandInfo &cmd, const CommandContext &ctx) const
 {
-    // 版本检查
-    if (!cmd.minVersion.isEmpty() && !ctx.version.isEmpty())
-    {
-        if (compareVersions(ctx.version, cmd.minVersion) < 0)
-        {
-            return QStringLiteral("当前版本不可用，需要 %1+").arg(cmd.minVersion);
-        }
-    }
-
-    // OP 等级检查
-    if (ctx.opLevel < cmd.opLevel)
-    {
-        return QStringLiteral("OP 等级不足，需要 %1").arg(cmd.opLevel);
-    }
-
-    // 服务端检查
-    if (cmd.serverOnly && !ctx.isServer)
-    {
-        return QStringLiteral("仅服务端可用");
-    }
-
-    return QString();
+    // 版本 / OP / 服务端 / 插件判断与补全器共用同一份实现，提示不会两处不一致
+    return commandUnavailableReason(cmd, ctx.version, ctx.opLevel, ctx.isServer);
 }
 
 // ============================================================================
@@ -334,10 +674,21 @@ QStringList CommandTranslator::translateParams(const CommandInfo &cmd, const QSt
 
     for (const ParamInfo &param : cmd.params)
     {
-        // pos 类型：一次消费 3 个 args (x y z)
+        // pos 类型：一次消费 3 个 args (x y z)，也接受「0,64,0」这种逗号写法
         if (param.type == QStringLiteral("pos"))
         {
-            if (argIndex + 2 < args.size())
+            const QStringList commaParts = (argIndex < args.size())
+                                               ? args.at(argIndex).split(QLatin1Char(','), Qt::SkipEmptyParts)
+                                               : QStringList();
+            if (commaParts.size() == 3 && looksLikeCoordinate(commaParts.at(0))
+                && looksLikeCoordinate(commaParts.at(1)) && looksLikeCoordinate(commaParts.at(2)))
+            {
+                result.append(commaParts.at(0));
+                result.append(commaParts.at(1));
+                result.append(commaParts.at(2));
+                argIndex += 1;
+            }
+            else if (argIndex + 2 < args.size())
             {
                 result.append(args.at(argIndex));
                 result.append(args.at(argIndex + 1));
@@ -566,7 +917,19 @@ QString CommandTranslator::translateParam(const ParamInfo &paramInfo, const QStr
         return value;
     }
 
-    // int / float / string / nbt — 原样返回
+    if (type == QStringLiteral("int"))
+    {
+        // 「3 个」「两把」「一组」：剥掉量词、中文数字转阿拉伯数字，
+        // 让「给予 钻石 一组」也能直接得到 /give @p diamond 64
+        int quantity = 0;
+        if (parseQuantity(value, quantity))
+        {
+            return QString::number(quantity);
+        }
+        return value;
+    }
+
+    // float / string / nbt — 原样返回
     return value;
 }
 
@@ -723,6 +1086,28 @@ TranslateResult CommandTranslator::naturalLanguageFallback(const QString &input,
         return match.hasMatch() ? match.captured(0) : QString();
     };
 
+    // 整句里的目标：显式 @ 选择器优先，其次「所有玩家」这类中文说法
+    auto extractTarget = [&extractSelector](const QString &text, const QString &fallback) -> QString {
+        const QString selector = extractSelector(text);
+        if (!selector.isEmpty())
+        {
+            return selector;
+        }
+        if (text.contains(QStringLiteral("所有玩家")) || text.contains(QStringLiteral("全体玩家")))
+        {
+            return QStringLiteral("@a");
+        }
+        if (text.contains(QStringLiteral("所有实体")))
+        {
+            return QStringLiteral("@e");
+        }
+        if (text.contains(QStringLiteral("随机玩家")))
+        {
+            return QStringLiteral("@r");
+        }
+        return fallback;
+    };
+
     // 整句里显式写出的坐标（普通数字或 ~ / ^ 相对坐标）
     auto extractCoordinates = [](const QString &text) -> QStringList {
         static const QRegularExpression coordRe(
@@ -736,27 +1121,113 @@ TranslateResult CommandTranslator::naturalLanguageFallback(const QString &input,
         return coords;
     };
 
+    // 整句里显式写出的数量（一组 / 两把 / 64 个 …），没有返回空
+    auto extractQuantity = [](const QString &text) -> QString {
+        const QStringList tokens = text.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        int quantity = 0;
+        for (int i = tokens.size() - 1; i >= 0; --i)
+        {
+            if (parseQuantity(tokens.at(i), quantity))
+            {
+                return QString::number(quantity);
+            }
+        }
+        return QString();
+    };
+
+    // 「清除所有效果」「清空效果」：效果要清，不是清背包
+    if (input.contains(QStringLiteral("效果"))
+        && (input.contains(QStringLiteral("清除")) || input.contains(QStringLiteral("清空"))
+            || input.contains(QStringLiteral("清理"))))
+    {
+        const QString target = extractSelector(input);
+        TranslateResult plainResult;
+        if (auto effectCmd = m_db->findCommandByEnglish(QStringLiteral("effect")))
+        {
+            plainResult.matchedCommandName = QStringLiteral("effect");
+            plainResult.unavailableReason = checkAvailability(*effectCmd, ctx);
+        }
+        // clear 只接受目标，不能再把 时长 / 等级 / 粒子 这些可选参数补上去
+        plainResult.englishCommand = QStringLiteral("/effect clear %1")
+                                         .arg(target.isEmpty()
+                                                  ? (input.contains(QStringLiteral("所有"))
+                                                         ? QStringLiteral("@a")
+                                                         : QStringLiteral("@s"))
+                                                  : target);
+        plainResult.success = true;
+        return plainResult;
+    }
+
     // 注意：先检查"效果"，避免与"给"冲突（如"给我一个速度效果"应为 effect 而非 give）
     if (input.contains(QStringLiteral("效果")))
     {
         const QString effectEnglish = extractEffect(input);
-        QStringList args;
-        args << QStringLiteral("give") << QStringLiteral("@p");
         if (!effectEnglish.isEmpty())
         {
-            args << effectEnglish;
+            QStringList args;
+            args << QStringLiteral("give") << extractTarget(input, QStringLiteral("@p"))
+                 << effectEnglish;
+            return buildResult(QStringLiteral("effect"), args);
         }
-        return buildResult(QStringLiteral("effect"), args);
+    }
+
+    // 「给我的钻石剑附魔锋利 5」：附魔意图比"给"更强
+    if (input.contains(QStringLiteral("附魔")))
+    {
+        QString enchantEnglish;
+        int bestLength = 0;
+        for (const EnchantmentInfo &enchant : m_db->allEnchantments())
+        {
+            for (const QString &alias : enchant.chinese)
+            {
+                if (input.contains(alias) && alias.length() > bestLength)
+                {
+                    bestLength = alias.length();
+                    enchantEnglish = enchant.english;
+                }
+            }
+        }
+        QStringList args;
+        const QString target = extractSelector(input);
+        args << (target.isEmpty() ? QStringLiteral("@s") : target);
+        if (!enchantEnglish.isEmpty())
+        {
+            args << enchantEnglish;
+            const QStringList numbers = extractCoordinates(input);
+            if (!numbers.isEmpty())
+            {
+                args << numbers.last();
+            }
+        }
+        return buildResult(QStringLiteral("enchant"), args);
+    }
+
+    // 「加 10 点经验」「给我 30 经验」
+    if (input.contains(QStringLiteral("经验")))
+    {
+        QStringList args;
+        args << QStringLiteral("add") << QStringLiteral("@s");
+        const QStringList numbers = extractCoordinates(input);
+        if (!numbers.isEmpty())
+        {
+            args << numbers.first();
+        }
+        return buildResult(QStringLiteral("xp"), args);
     }
 
     if (input.contains(QStringLiteral("给")))
     {
         const QString itemEnglish = extractItem(input);
         QStringList args;
-        args << QStringLiteral("@p");
+        args << extractTarget(input, QStringLiteral("@p"));
         if (!itemEnglish.isEmpty())
         {
             args << itemEnglish;
+            const QString quantity = extractQuantity(input);
+            if (!quantity.isEmpty())
+            {
+                args << quantity;
+            }
         }
         return buildResult(QStringLiteral("give"), args);
     }
@@ -870,31 +1341,154 @@ TranslateResult CommandTranslator::naturalLanguageFallback(const QString &input,
         return buildResult(QStringLiteral("weather"), args);
     }
 
+    // ---- 以下是常见说法兜底：句子没按「指令 参数」写时也能猜对意图 ----
+
+    // 「清空背包」「清理物品栏」
+    if (input.contains(QStringLiteral("背包")) || input.contains(QStringLiteral("物品栏")))
+    {
+        const QString target = extractSelector(input);
+        QStringList args;
+        args << (target.isEmpty() ? QStringLiteral("@s") : target);
+        return buildResult(QStringLiteral("clear"), args);
+    }
+
+    // 「难度改成困难」
+    if (input.contains(QStringLiteral("难度")))
+    {
+        QString difficulty;
+        if (input.contains(QStringLiteral("和平")))
+        {
+            difficulty = QStringLiteral("peaceful");
+        }
+        else if (input.contains(QStringLiteral("简单")))
+        {
+            difficulty = QStringLiteral("easy");
+        }
+        else if (input.contains(QStringLiteral("普通")) || input.contains(QStringLiteral("正常")))
+        {
+            difficulty = QStringLiteral("normal");
+        }
+        else if (input.contains(QStringLiteral("困难")))
+        {
+            difficulty = QStringLiteral("hard");
+        }
+        QStringList args;
+        if (!difficulty.isEmpty())
+        {
+            args << difficulty;
+        }
+        return buildResult(QStringLiteral("difficulty"), args);
+    }
+
+    // 「回血」「治疗自己」
+    if (input.contains(QStringLiteral("治疗")) || input.contains(QStringLiteral("回血"))
+        || input.contains(QStringLiteral("补血")))
+    {
+        QStringList args;
+        const QString target = extractSelector(input);
+        args << QStringLiteral("give") << (target.isEmpty() ? QStringLiteral("@s") : target)
+             << QStringLiteral("instant_health");
+        return buildResult(QStringLiteral("effect"), args);
+    }
+
+    // 「查看种子」
+    if (input.contains(QStringLiteral("种子")))
+    {
+        return buildResult(QStringLiteral("seed"), QStringList());
+    }
+
+    // 「把重生点设在这里」「设置世界出生点」
+    if (input.contains(QStringLiteral("出生点")) || input.contains(QStringLiteral("重生点")))
+    {
+        const bool worldSpawn = input.contains(QStringLiteral("世界"))
+                                || input.contains(QStringLiteral("全服"));
+        QStringList args;
+        if (!worldSpawn)
+        {
+            const QString target = extractSelector(input);
+            args << (target.isEmpty() ? QStringLiteral("@s") : target);
+        }
+        return buildResult(worldSpawn ? QStringLiteral("setworldspawn")
+                                      : QStringLiteral("spawnpoint"),
+                           args);
+    }
+
+    // 「寻找最近的村庄 / 要塞」
+    if (input.contains(QStringLiteral("寻找")) || input.contains(QStringLiteral("定位"))
+        || input.contains(QStringLiteral("最近的")))
+    {
+        QString structure;
+        for (const QString &name : {QStringLiteral("村庄"), QStringLiteral("要塞"),
+                                    QStringLiteral("古城"), QStringLiteral("远古城市"),
+                                    QStringLiteral("末地城"), QStringLiteral("海底神殿"),
+                                    QStringLiteral("林地府邸"), QStringLiteral("废弃矿井"),
+                                    QStringLiteral("沙漠神殿"), QStringLiteral("丛林神庙"),
+                                    QStringLiteral("沉船"), QStringLiteral("前哨站"),
+                                    QStringLiteral("堡垒遗迹"), QStringLiteral("下界要塞")})
+        {
+            if (input.contains(name))
+            {
+                structure = locateTargetAlias(name);
+                if (!structure.isEmpty())
+                {
+                    break;
+                }
+            }
+        }
+        if (!structure.isEmpty())
+        {
+            QStringList args;
+            args << QStringLiteral("structure") << structure;
+            return buildResult(QStringLiteral("locate"), args);
+        }
+    }
+
+    // 「造成 10 点伤害」
+    if (input.contains(QStringLiteral("伤害")))
+    {
+        QStringList args;
+        const QString target = extractSelector(input);
+        args << (target.isEmpty() ? QStringLiteral("@s") : target);
+        const QStringList numbers = extractCoordinates(input);
+        if (!numbers.isEmpty())
+        {
+            args << numbers.first();
+        }
+        return buildResult(QStringLiteral("damage"), args);
+    }
+
+    // 「清除所有僵尸」「清理掉落物」：按生物类型清场
+    if (input.contains(QStringLiteral("清除")) || input.contains(QStringLiteral("清空"))
+        || input.contains(QStringLiteral("清理")))
+    {
+        const QString entity = extractEntity(input);
+        if (!entity.isEmpty())
+        {
+            QStringList args;
+            args << QStringLiteral("@e[type=%1]").arg(entity);
+            return buildResult(QStringLiteral("kill"), args);
+        }
+    }
+
+    // 「杀死所有僵尸」
+    if (input.contains(QStringLiteral("杀死")) || input.contains(QStringLiteral("击杀"))
+        || input.contains(QStringLiteral("消灭")))
+    {
+        QString target = extractSelector(input);
+        if (target.isEmpty() && input.contains(QStringLiteral("所有")))
+        {
+            const QString entity = extractEntity(input);
+            if (!entity.isEmpty())
+            {
+                target = QStringLiteral("@e[type=%1]").arg(entity);
+            }
+        }
+        QStringList args;
+        args << (target.isEmpty() ? QStringLiteral("@s") : target);
+        return buildResult(QStringLiteral("kill"), args);
+    }
+
     result.warnings.append(QStringLiteral("无法识别指令意图"));
     return result;
 }
 
-// ============================================================================
-// 版本比较
-// ============================================================================
-
-int CommandTranslator::compareVersions(const QString &a, const QString &b)
-{
-    const QStringList partsA = a.split('.');
-    const QStringList partsB = b.split('.');
-    const int maxLen = qMax(partsA.size(), partsB.size());
-    for (int i = 0; i < maxLen; ++i)
-    {
-        const int numA = (i < partsA.size()) ? partsA.at(i).toInt() : 0;
-        const int numB = (i < partsB.size()) ? partsB.at(i).toInt() : 0;
-        if (numA < numB)
-        {
-            return -1;
-        }
-        if (numA > numB)
-        {
-            return 1;
-        }
-    }
-    return 0;
-}

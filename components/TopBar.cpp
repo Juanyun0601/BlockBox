@@ -21,7 +21,6 @@ TopBar::TopBar(QWidget *parent)
     , m_backButton(nullptr)
     , m_scrollToTopBtn(nullptr)
     , m_refreshBtn(nullptr)
-    , m_docsBtn(nullptr)
     , m_titleContainer(nullptr)
     , m_searchIcon(nullptr)
     , m_titleLabel(nullptr)
@@ -90,15 +89,6 @@ void TopBar::initUI()
     m_refreshBtn->setIconSize(QSize(18, 18));
     m_refreshBtn->setFixedSize(28, 28);
     m_refreshBtn->setToolTip(tr("刷新页面"));
-
-    // 文档：随时打开方块图书馆，查教程 / 插件开发 / 开放平台 API / MCP 接入
-    m_docsBtn = new QPushButton();
-    m_docsBtn->setObjectName("topBarDocsBtn");
-    m_docsBtn->setIcon(ResourceManager::instance()->loadThemedIcon(QStringLiteral(":/Images/Icons/nav_library.svg")));
-    m_docsBtn->setIconSize(QSize(18, 18));
-    m_docsBtn->setFixedSize(28, 28);
-    m_docsBtn->setToolTip(tr("打开方块图书馆（使用教程 · 插件开发 · 开放平台 API · MCP）"));
-    m_docsBtn->setAccessibleName(tr("文档中心"));
 
     // ---- Leftmost section: app logo ----
     m_logoLabel = new QLabel(this);
@@ -186,7 +176,6 @@ void TopBar::initUI()
     connect(m_backButton, &QPushButton::clicked, this, &TopBar::backClicked);
     connect(m_scrollToTopBtn, &QPushButton::clicked, this, &TopBar::scrollToTopClicked);
     connect(m_refreshBtn, &QPushButton::clicked, this, &TopBar::refreshClicked);
-    connect(m_docsBtn, &QPushButton::clicked, this, &TopBar::docsClicked);
     // 扫码按钮只在手机端存在（m_scanBtn 可能为空，桌面端直接跳过）
     if (m_scanBtn)
         connect(m_scanBtn, &QPushButton::clicked, this, &TopBar::scanQrClicked);
@@ -218,9 +207,6 @@ void TopBar::initUI()
         m_backButton->setIcon(themedBack);
         m_scrollToTopBtn->setIcon(themedScroll);
         m_refreshBtn->setIcon(themedRefresh);
-        // 文档按钮图标跟随主题文字色重画
-        if (m_docsBtn)
-            m_docsBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/nav_library.svg"));
         // 扫码按钮只有手机端才有，图标同样要跟着主题文字色重画
         if (m_scanBtn)
             m_scanBtn->setIcon(ResourceManager::instance()->loadThemedIcon(":/Images/Icons/scan.svg"));
@@ -282,7 +268,6 @@ QWidget* TopBar::createFuncCard()
     layout->addWidget(m_backButton);
     layout->addWidget(m_scrollToTopBtn);
     layout->addWidget(m_refreshBtn);
-    layout->addWidget(m_docsBtn);
 
     // 扫码：只有手机端才有相机，也才用得上扫电脑上的登录二维码。
     // 桌面端连按钮都不创建（不是隐藏），所以左侧功能卡不会留下空位。

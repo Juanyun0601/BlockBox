@@ -98,6 +98,9 @@ public slots:
     void onAsyncSizesCalculated();
 
 private:
+    /** 统一的实例右键菜单（列表卡 / 瀑布流卡共用），globalPos 为屏幕坐标 */
+    void showInstanceContextMenu(const QString &instancePath, const QPoint &globalPos);
+
     void initLeftSidebar();
     void initRightMainBar();
     void initInstanceFolders();

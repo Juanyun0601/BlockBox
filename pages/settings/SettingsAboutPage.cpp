@@ -364,21 +364,32 @@ void SettingsPage::initAboutSettings()
             }
             QStringList lines;
             int pendingCount = 0;
+            int blockedCount = 0;
+            QString blockedNote;
             for (const RuntimeDependency &dependency : items) {
                 QString state;
-                if (!dependency.installed)
+                if (!dependency.isDownloadable()) {
+                    // 官方还没发布 / 本机架构没有包：如实说明，别显示成「未安装」让人以为能装
+                    state = tr("官方包尚未发布");
+                    ++blockedCount;
+                    if (blockedNote.isEmpty())
+                        blockedNote = dependency.note;
+                } else if (!dependency.installed) {
                     state = tr("未安装");
-                else if (dependency.needsUpdate())
+                } else if (dependency.needsUpdate()) {
                     state = tr("已安装 %1，可更新").arg(dependency.installedVersion);
-                else if (dependency.installedVersion.isEmpty())
+                } else if (dependency.installedVersion.isEmpty()) {
                     state = tr("已安装");
-                else
+                } else {
                     state = tr("已安装 %1").arg(dependency.installedVersion);
-                if (dependency.isPending())
+                }
+                if (dependency.isPending() && dependency.available)
                     ++pendingCount;
                 lines << QStringLiteral("%1 · %2 · %3")
                              .arg(dependency.name, dependency.version, state);
             }
+            if (blockedCount > 0 && !blockedNote.isEmpty())
+                lines << blockedNote;
             statusLabel->setText(lines.join(QLatin1Char('\n')));
             installAllBtn->setEnabled(pendingCount > 0 && !manager->isInstalling());
         };

@@ -1231,53 +1231,48 @@ QPlainTextEdit:focus {
     padding: 7px 11px;
 }
 
-/* QComboBox 下拉选择�?�?默认�?*/
+/* QComboBox 下拉选择框 —— 全应用默认外观
+ * 形状取自存档地图工具栏那枚：软底胶囊、文字与箭头之间不再有分隔线、
+ * 悬停抬起成白卡、展开后是圆角列表 + 主色淡底选中。
+ * 各页面不要再单独写下拉框的颜色 / 描边 / 箭头：需要更矮的只收字号与内距
+ * （见下面的「紧凑变体」）。 */
 QComboBox {
-    background-color: @BG_CARD@;
+    background-color: @BG_HOVER@;
     color: @TEXT_PRIMARY@;
-    border: 1px solid @BORDER@;
-    border-radius: 12px;
-    padding: 6px 32px 6px 12px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 5px 24px 5px 10px;
     font-size: 13px;
-    min-height: 20px;
 }
 
-/* QComboBox 悬停�?*/
+/* 悬停：底色再压深一档（深色主题里是提亮一档），手感上像能按下去 */
 QComboBox:hover {
+    background-color: @BG_PRESSED@;
+    border-color: transparent;
+}
+
+/* 键盘焦点只换边框颜色，不加粗、不改内距（避免控件跳动） */
+QComboBox:focus {
+    border-color: @PRIMARY@;
+}
+
+/* 展开：抬起成一块卡片，这时才出现边缘（本规则放在 :focus 之后，
+ * 所以点开时看到的是中性描边，而不是主色焦点框） */
+QComboBox:on {
+    background-color: @BG_CARD@;
     border-color: @BORDER_STRONG@;
 }
 
-/* QComboBox 聚焦�?�?主色边框 */
-QComboBox:focus {
-    border: 2px solid @PRIMARY@;
-    border-radius: 12px;
-    padding: 5px 31px 5px 11px;
-}
-
-/* QComboBox 禁用�?*/
-QComboBox:disabled {
-    background-color: @BG_DISABLED@;
-    color: @TEXT_DISABLED@;
-    border-color: @BORDER_DISABLED@;
-}
-
-/* QComboBox 下拉按钮 */
+/* 下拉按钮：无边框、无分隔线，只留一枚小箭头 */
 QComboBox::drop-down {
     subcontrol-origin: padding;
-    subcontrol-position: top right;
-    width: 28px;
+    subcontrol-position: center right;
+    width: 18px;
     border: none;
-    border-left: 1px solid @BORDER_LIGHT@;
-    border-top-right-radius: 12px;
-    border-bottom-right-radius: 12px;
-    background-color: transparent;
+    background: transparent;
+    margin-right: 2px;
 }
 
-QComboBox::drop-down:hover {
-    background-color: @BG_HOVER@;
-}
-
-/* QComboBox 下拉箭头 */
 QComboBox::down-arrow {
     image: url(:/Images/Icons/arrow_down_triangle.svg);
     width: 10px;
@@ -1285,35 +1280,69 @@ QComboBox::down-arrow {
     border: none;
 }
 
-QComboBox::down-arrow:hover {
-    border-top-color: @PRIMARY@;
-}
-
-/* QComboBox 下拉列表视图 */
+/* 下拉列表：圆角浮层，每一条自己也是圆角块 */
 QComboBox QAbstractItemView {
     background-color: @BG_CARD@;
     color: @TEXT_PRIMARY@;
     border: 1px solid @BORDER_STRONG@;
-    border-radius: 12px;
+    border-radius: 8px;
     padding: 4px;
     outline: none;
+    selection-background-color: @PRIMARY_RGBA_20@;
+    selection-color: @TEXT_ACCENT@;
 }
 
 QComboBox QAbstractItemView::item {
     background-color: transparent;
     color: @TEXT_PRIMARY@;
-    padding: 6px 12px;
-    border-radius: 8px;
-    min-height: 20px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    min-height: 16px;
 }
 
 QComboBox QAbstractItemView::item:hover {
-    background-color: @BG_HOVER@;
+    background-color: @BG_MUTED@;
 }
 
 QComboBox QAbstractItemView::item:selected {
     background-color: @PRIMARY_RGBA_20@;
-    color: @ACCENT_TEXT@;
+    color: @TEXT_ACCENT@;
+}
+
+/* 可编辑下拉（翻译模型那种）里那枚输入框跟着外框走，别再套一层白底边框 */
+QComboBox QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: @TEXT_PRIMARY@;
+    selection-background-color: @PRIMARY_RGBA_38@;
+    selection-color: @TEXT_ON_PRIMARY@;
+}
+
+QComboBox QLineEdit:focus {
+    background: transparent;
+    border: none;
+}
+
+/* 紧凑变体：筛选栏 / 工具栏 / 侧栏里那批矮一号的下拉。
+ * 只收字号与内距，颜色、描边、箭头、弹出列表全部沿用上面的默认外观。 */
+QComboBox#filterCombo,
+QComboBox#sortCombo,
+QComboBox#sourceCombo,
+QComboBox#instanceCombo,
+QComboBox#modDetailCombo,
+QComboBox#searchSortCombo,
+QComboBox#categoryCombo,
+QComboBox#searchFilterCombo,
+QComboBox#searchSubFilterCombo,
+QComboBox#accountActionCombo,
+QComboBox#pluginSettingCombo,
+QComboBox#multiplayerCoreCombo,
+QComboBox#forumSourceCombo,
+QComboBox#projectionPreviewCombo {
+    padding: 4px 22px 4px 9px;
+    font-size: 12px;
 }
 
 /* QSpinBox 数字输入�?�?默认�?*/
@@ -1699,15 +1728,6 @@ QCheckBox::indicator:indeterminate {
     border: 1px solid @PRIMARY@;
 }
 
-QComboBox:disabled {
-    background-color: @BG_MUTED@;
-    color: @TEXT_DISABLED@;
-}
-
-QComboBox:on {
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
-}
 
 QSpinBox::up-button:hover,
 QSpinBox::down-button:hover {
@@ -3927,19 +3947,6 @@ QLabel#fileOpEmptyHint {
     padding: 24px;
 }
 
-QComboBox#fileOpSessionCombo, QComboBox#fileOpFilterCombo {
-    background-color: @BG_MUTED@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 6px 12px;
-    color: @TEXT_PRIMARY@;
-    font-size: 12px;
-    min-height: 22px;
-}
-
-QComboBox#fileOpSessionCombo:hover, QComboBox#fileOpFilterCombo:hover {
-    border: 1px solid @BORDER_STRONG@;
-}
 
 QListWidget#fileOpStepList {
     background-color: @BG_MUTED@;
@@ -4367,120 +4374,6 @@ QLabel#searchHintLabel {
     border: none;
 }
 
-/* 筛选栏下拉�?�?全应用统一筛选框样式
- * 覆盖：内容列�?/ 模组下载 / 详情页版本筛�?/ 搜索页排�?/ 实例模组筛�?
- *       （filterCombo / sortCombo / sourceCombo / instanceCombo /
- *         modDetailCombo / searchSortCombo / categoryCombo�?*/
-QComboBox#filterCombo,
-QComboBox#sortCombo,
-QComboBox#sourceCombo,
-QComboBox#instanceCombo,
-QComboBox#modDetailCombo,
-QComboBox#searchSortCombo,
-QComboBox#categoryCombo {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER_STRONG@;
-    border-radius: 8px;
-    padding: 5px 10px;
-    font-size: 12px;
-    color: @TEXT_PRIMARY@;
-    min-height: 22px;
-}
-
-QComboBox#filterCombo:hover,
-QComboBox#sortCombo:hover,
-QComboBox#sourceCombo:hover,
-QComboBox#instanceCombo:hover,
-QComboBox#modDetailCombo:hover,
-QComboBox#searchSortCombo:hover,
-QComboBox#categoryCombo:hover {
-    border: 1px solid @BORDER_HOVER@;
-}
-
-QComboBox#filterCombo:focus,
-QComboBox#sortCombo:focus,
-QComboBox#sourceCombo:focus,
-QComboBox#instanceCombo:focus,
-QComboBox#modDetailCombo:focus,
-QComboBox#searchSortCombo:focus,
-QComboBox#categoryCombo:focus {
-    border: 1.5px solid @PRIMARY@;
-}
-
-QComboBox#filterCombo::drop-down,
-QComboBox#sortCombo::drop-down,
-QComboBox#sourceCombo::drop-down,
-QComboBox#instanceCombo::drop-down,
-QComboBox#modDetailCombo::drop-down,
-QComboBox#searchSortCombo::drop-down,
-QComboBox#categoryCombo::drop-down {
-    border: none;
-    width: 22px;
-}
-
-QComboBox#filterCombo::down-arrow,
-QComboBox#sortCombo::down-arrow,
-QComboBox#sourceCombo::down-arrow,
-QComboBox#instanceCombo::down-arrow,
-QComboBox#modDetailCombo::down-arrow,
-QComboBox#searchSortCombo::down-arrow,
-QComboBox#categoryCombo::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 10px;
-    height: 8px;
-    border: none;
-    margin-right: 8px;
-}
-
-QComboBox#filterCombo QAbstractItemView,
-QComboBox#sortCombo QAbstractItemView,
-QComboBox#sourceCombo QAbstractItemView,
-QComboBox#instanceCombo QAbstractItemView,
-QComboBox#modDetailCombo QAbstractItemView,
-QComboBox#searchSortCombo QAbstractItemView,
-QComboBox#categoryCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 4px;
-    outline: none;
-    selection-background-color: @PRIMARY_BG@;
-    selection-color: @TEXT_ACCENT@;
-}
-
-QComboBox#filterCombo QAbstractItemView::item,
-QComboBox#sortCombo QAbstractItemView::item,
-QComboBox#sourceCombo QAbstractItemView::item,
-QComboBox#instanceCombo QAbstractItemView::item,
-QComboBox#modDetailCombo QAbstractItemView::item,
-QComboBox#searchSortCombo QAbstractItemView::item,
-QComboBox#categoryCombo QAbstractItemView::item {
-    padding: 6px 10px;
-    font-size: 12px;
-    color: @TEXT_PRIMARY@;
-    border-radius: 4px;
-}
-
-QComboBox#filterCombo QAbstractItemView::item:hover,
-QComboBox#sortCombo QAbstractItemView::item:hover,
-QComboBox#sourceCombo QAbstractItemView::item:hover,
-QComboBox#instanceCombo QAbstractItemView::item:hover,
-QComboBox#modDetailCombo QAbstractItemView::item:hover,
-QComboBox#searchSortCombo QAbstractItemView::item:hover,
-QComboBox#categoryCombo QAbstractItemView::item:hover {
-    background-color: @BG_MUTED@;
-}
-
-QComboBox#filterCombo QAbstractItemView::item:selected,
-QComboBox#sortCombo QAbstractItemView::item:selected,
-QComboBox#sourceCombo QAbstractItemView::item:selected,
-QComboBox#instanceCombo QAbstractItemView::item:selected,
-QComboBox#modDetailCombo QAbstractItemView::item:selected,
-QComboBox#searchSortCombo QAbstractItemView::item:selected,
-QComboBox#categoryCombo QAbstractItemView::item:selected {
-    background-color: @PRIMARY_BG@;
-    color: @TEXT_ACCENT@;
-}
 
 /* 搜索输入�?*/
 QLineEdit#modSearchEdit {
@@ -4822,16 +4715,23 @@ QLineEdit#appDialogLineEdit:hover {
 }
 
 /* 对话框下拉框 */
+
 QComboBox#appDialogComboBox {
     background-color: @BG_MUTED@;
     border: 2px solid @BORDER_STRONG@;
     border-radius: 10px;
-    padding: 7px 14px;
+    padding: 7px 22px 7px 14px;
     font-size: 13px;
     color: @TEXT_PRIMARY@;
 }
 
+QComboBox#appDialogComboBox:hover {
+    background-color: @BG_CARD@;
+    border: 2px solid @BORDER_HOVER@;
+}
+
 QComboBox#appDialogComboBox:focus {
+    background-color: @BG_CARD@;
     border: 2px solid @PRIMARY@;
 }
 
@@ -6197,77 +6097,6 @@ QLineEdit#searchPageInput:hover {
     border: 2px solid @BORDER_HOVER@;
 }
 
-/* 搜索筛�?chip */
-QComboBox#searchFilterCombo,
-QComboBox#searchSubFilterCombo {
-    background-color: @BG_MUTED@;
-    border: 1px solid @BORDER@;
-    border-radius: 6px;
-    padding: 4px 28px 4px 12px;
-    color: @TEXT_SECONDARY@;
-    font-size: 12px;
-}
-
-QComboBox#searchFilterCombo:hover,
-QComboBox#searchSubFilterCombo:hover {
-    background-color: @BG_HOVER@;
-    border: 1px solid @BORDER_STRONG@;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#searchFilterCombo:focus,
-QComboBox#searchSubFilterCombo:focus {
-    border: 1px solid @PRIMARY@;
-}
-
-QComboBox#searchFilterCombo::drop-down,
-QComboBox#searchSubFilterCombo::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: center right;
-    width: 24px;
-    border: none;
-    border-left: 1px solid @BORDER@;
-}
-
-QComboBox#searchFilterCombo::down-arrow,
-QComboBox#searchSubFilterCombo::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 10px;
-    height: 8px;
-    border: none;
-}
-
-QComboBox#searchFilterCombo QAbstractItemView,
-QComboBox#searchSubFilterCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 6px;
-    padding: 4px;
-    selection-background-color: @PRIMARY_BG@;
-    selection-color: @PRIMARY@;
-    outline: none;
-}
-
-QComboBox#searchFilterCombo QAbstractItemView::item,
-QComboBox#searchSubFilterCombo QAbstractItemView::item {
-    padding: 6px 12px;
-    border-radius: 4px;
-    color: @TEXT_SECONDARY@;
-    min-height: 20px;
-}
-
-QComboBox#searchFilterCombo QAbstractItemView::item:hover,
-QComboBox#searchSubFilterCombo QAbstractItemView::item:hover {
-    background-color: @BG_HOVER@;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#searchFilterCombo QAbstractItemView::item:selected,
-QComboBox#searchSubFilterCombo QAbstractItemView::item:selected {
-    background-color: @PRIMARY_BG@;
-    color: @ACCENT_TEXT@;
-    font-weight: 600;
-}
 
 /* 搜索结果标题 */
 QLabel#searchResultsTitle {
@@ -6847,68 +6676,6 @@ QLabel#accountActionTitle {
     margin-top: 4px;
 }
 
-/* 动作选择下拉�?�?复用表单控件观感，紧凑适配右侧面板/皮肤预览�?*/
-QComboBox#accountActionCombo {
-    background-color: @BG_CARD@;
-    color: @TEXT_PRIMARY@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 4px 30px 4px 10px;
-    font-size: 12px;
-    min-height: 18px;
-}
-
-QComboBox#accountActionCombo:hover {
-    border-color: @BORDER_STRONG@;
-}
-
-QComboBox#accountActionCombo:focus {
-    border: 2px solid @PRIMARY@;
-    border-radius: 8px;
-    padding: 3px 29px 3px 9px;
-}
-
-QComboBox#accountActionCombo::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: top right;
-    width: 26px;
-    border: none;
-    border-left: 1px solid @BORDER_LIGHT@;
-    border-top-right-radius: 8px;
-    border-bottom-right-radius: 8px;
-    background-color: transparent;
-}
-
-QComboBox#accountActionCombo::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 10px;
-    height: 8px;
-    border: none;
-}
-
-QComboBox#accountActionCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 4px;
-    outline: none;
-}
-
-QComboBox#accountActionCombo QAbstractItemView::item {
-    min-height: 28px;
-    padding: 0 10px;
-    border-radius: 6px;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#accountActionCombo QAbstractItemView::item:hover {
-    background-color: @BG_HOVER@;
-}
-
-QComboBox#accountActionCombo QAbstractItemView::item:selected {
-    background-color: @PRIMARY_LIGHT@;
-    color: @TEXT_PRIMARY@;
-}
 
 /* 模型动作按钮（图标 + 文字，可勾选）：账户页右侧面板动作网格 */
 QPushButton#skinPoseButton {
@@ -7900,26 +7667,6 @@ QWidget#multiplayerTopBar {
     border: none;
 }
 
-QComboBox#multiplayerCoreCombo {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 4px 10px;
-    color: @TEXT_PRIMARY@;
-    font-size: 12px;
-}
-
-QComboBox#multiplayerCoreCombo:hover {
-    border: 1px solid @BORDER_STRONG@;
-}
-
-QComboBox#multiplayerCoreCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    color: @TEXT_PRIMARY@;
-    border: 1px solid @BORDER@;
-    selection-background-color: @PRIMARY_BG@;
-    selection-color: @PRIMARY@;
-}
 
 /* 红石联机首页 / 隧道�?*/
 QWidget#multiplayerHongshiHome,
@@ -7943,26 +7690,6 @@ QLabel#hongshiFieldHint {
     border: none;
 }
 
-QComboBox#hongshiNodeCombo {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 6px 10px;
-    color: @TEXT_PRIMARY@;
-    font-size: 12px;
-}
-
-QComboBox#hongshiNodeCombo:hover {
-    border: 1px solid @BORDER_STRONG@;
-}
-
-QComboBox#hongshiNodeCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    color: @TEXT_PRIMARY@;
-    border: 1px solid @BORDER@;
-    selection-background-color: @PRIMARY_BG@;
-    selection-color: @PRIMARY@;
-}
 
 QPushButton#hongshiNodeRefreshBtn {
     background-color: @BG_CARD@;
@@ -8745,59 +8472,7 @@ QLabel#javaGlobalLabel {
     font-weight: 600;
     border: none;
 }
-QComboBox#globalJavaCombo {
-    background-color: @BG_MUTED@;
-    border: 1px solid @BORDER_STRONG@;
-    border-radius: 10px;
-    padding: 8px 14px;
-    font-size: 13px;
-    color: @TEXT_PRIMARY@;
-    selection-background-color: @PRIMARY@;
-    selection-color: @TEXT_ON_PRIMARY@;
-}
-QComboBox#globalJavaCombo:hover {
-    border-color: @BORDER_HOVER@;
-    background-color: @BG_HOVER@;
-}
-QComboBox#globalJavaCombo:focus {
-    border: 1px solid @PRIMARY@;
-    background-color: @BG_CARD@;
-}
-QComboBox#globalJavaCombo:disabled {
-    background-color: @BG_DISABLED@;
-    border-color: @BORDER_DISABLED@;
-    color: @TEXT_DISABLED@;
-}
-QComboBox#globalJavaCombo::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: center right;
-    border: none;
-    width: 28px;
-}
-QComboBox#globalJavaCombo::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 10px;
-    height: 10px;
-    border: none;
-    margin-right: 10px;
-}
-QComboBox#globalJavaCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 10px;
-    padding: 4px;
-    selection-background-color: @PRIMARY_BG@;
-    selection-color: @TEXT_ACCENT@;
-    outline: none;
-}
-QComboBox#globalJavaCombo QAbstractItemView::item {
-    padding: 6px 12px;
-    border-radius: 8px;
-    min-height: 28px;
-}
-QComboBox#globalJavaCombo QAbstractItemView::item:hover {
-    background-color: @BG_HOVER@;
-}
+
 
 /* ── 列表项卡片 ── */
 QWidget#javaItemFrame {
@@ -9396,19 +9071,6 @@ QLabel#keyBindDesc {
     margin-bottom: 12px;
 }
 
-/* Java 路径下拉�?*/
-QComboBox#javaPathCombo {
-    background-color: @BG_MUTED@;
-    border: 2px solid @BORDER_STRONG@;
-    border-radius: 10px;
-    padding: 7px 14px;
-    font-size: 13px;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#javaPathCombo:focus {
-    border: 2px solid @PRIMARY@;
-}
 
 /* Java 浏览/刷新按钮 �?玻璃�?*/
 QPushButton#javaBrowseBtn,
@@ -9428,19 +9090,6 @@ QPushButton#javaRefreshBtn:hover {
     color: @TEXT_PRIMARY@;
 }
 
-/* 内存模式下拉�?*/
-QComboBox#memoryModeCombo {
-    background-color: @BG_MUTED@;
-    border: 2px solid @BORDER_STRONG@;
-    border-radius: 10px;
-    padding: 7px 14px;
-    font-size: 13px;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#memoryModeCombo:focus {
-    border: 2px solid @PRIMARY@;
-}
 
 /* 自动内存信息标签 �?INFO �?*/
 QLabel#autoMemoryInfoLabel {
@@ -10277,19 +9926,6 @@ QStackedWidget#assistantJavaStack {
     border: none;
 }
 
-/* 操作等级下拉�?*/
-QComboBox#opLevelCombo {
-    background-color: @BG_MUTED@;
-    border: 2px solid @BORDER_STRONG@;
-    border-radius: 10px;
-    padding: 7px 14px;
-    font-size: 13px;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#opLevelCombo:focus {
-    border: 2px solid @PRIMARY@;
-}
 
 /* 命令输入�?*/
 QLineEdit#commandInput {
@@ -10304,6 +9940,22 @@ QLineEdit#commandInput {
 QLineEdit#commandInput:focus {
     border: 2px solid @PRIMARY@;
     background-color: @BG_CARD@;
+}
+
+QPushButton#commandClearBtn {
+    background-color: @BG_CARD@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    padding: 0;
+    color: @TEXT_SECONDARY@;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+QPushButton#commandClearBtn:hover {
+    background-color: @BG_HOVER@;
+    border: 1px solid @BORDER_STRONG@;
+    color: @TEXT_PRIMARY@;
 }
 
 /* 补全列表 �?玻璃�?*/
@@ -10955,18 +10607,6 @@ QCheckBox#pluginSettingCheck {
     spacing: 8px;
 }
 
-QComboBox#pluginSettingCombo {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER_STRONG@;
-    border-radius: 8px;
-    padding: 5px 10px;
-    font-size: 12px;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#pluginSettingCombo:focus {
-    border: 1.5px solid @PRIMARY@;
-}
 
 QSpinBox#pluginSettingSpin {
     background-color: @BG_CARD@;
@@ -12226,10 +11866,10 @@ QFrame#loaderTopCard {
 }
 
 /* 卡片内的输入控件换成浅一档的填充色，避免白底白框糊成一片 */
+
 QFrame#loaderTopCard QLineEdit#loaderInstanceNameEdit,
-QFrame#loaderTopCard QComboBox#loaderPathCombo,
-QFrame#loaderTopCard QComboBox#loaderSourceCombo,
 QFrame#loaderTopCard QPushButton#loaderAddFolderBtn {
+
     background-color: @BG_CONTENT@;
 }
 
@@ -12259,24 +11899,6 @@ QLineEdit#loaderInstanceNameEdit:focus {
     border: 1px solid @PRIMARY@;
 }
 
-QComboBox#loaderPathCombo,
-QComboBox#loaderSourceCombo {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 6px 12px;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#loaderPathCombo:focus,
-QComboBox#loaderSourceCombo:focus {
-    border: 1px solid @PRIMARY@;
-}
-
-QComboBox#loaderPathCombo:hover,
-QComboBox#loaderSourceCombo:hover {
-    border: 1px solid @BORDER_HOVER@;
-}
 
 QPushButton#loaderAddFolderBtn {
     background-color: @BG_CARD@;
@@ -12671,21 +12293,6 @@ QWidget#pluginSettingsForm {
     padding: 16px;
 }
 
-QComboBox#refNetTypeCombo {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 6px 12px;
-    color: @TEXT_PRIMARY@;
-}
-
-QComboBox#refNetTypeCombo:focus {
-    border: 1px solid @PRIMARY@;
-}
-
-QComboBox#refNetTypeCombo:hover {
-    border: 1px solid @BORDER_HOVER@;
-}
 
 /* ===== Section 45: InstanceGameSettingsPage 实例游戏设置�?===== */
 QLabel#instanceInfoLabel {
@@ -12694,20 +12301,6 @@ QLabel#instanceInfoLabel {
     background: transparent;
 }
 
-QComboBox#instanceJavaPathCombo {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 6px 10px;
-    color: @TEXT_PRIMARY@;
-}
-QComboBox#instanceJavaPathCombo:focus {
-    border: 1px solid @PRIMARY@;
-}
-QComboBox#instanceJavaPathCombo::drop-down {
-    border: none;
-    width: 20px;
-}
 
 QSlider#instanceMemorySlider::groove:horizontal {
     height: 4px;
@@ -14079,25 +13672,7 @@ QComboBox#translationInput {
 QComboBox#translationInput:focus {
     border-color: @PRIMARY@;
 }
-QComboBox#translationInput::drop-down {
-    border: none;
-    width: 28px;
-    background: transparent;
-}
-QComboBox#translationInput::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 10px;
-    height: 8px;
-    border: none;
-    margin-right: 8px;
-}
-QComboBox#translationInput QAbstractItemView {
-    background-color: @BG_SECONDARY@;
-    color: @TEXT_PRIMARY@;
-    border: 1px solid @BORDER_DEFAULT@;
-    selection-background-color: @PRIMARY_RGBA_40@;
-    outline: none;
-}
+
 
 /* DeepL 类型选择按钮 */
 QPushButton#translationTypeBtn {
@@ -14319,7 +13894,8 @@ QComboBox#worldMapToolCombo:hover {
 
 QComboBox#worldMapToolCombo:on {
     background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
+    border-color: @BORDER@;
+    border-top-color: @BORDER@;
 }
 
 QComboBox#worldMapToolCombo::drop-down {
@@ -14335,10 +13911,6 @@ QComboBox#worldMapToolCombo::down-arrow {
     width: 10px;
     height: 8px;
     border: none;
-}
-
-QComboBox#worldMapToolCombo:hover::down-arrow {
-    border-top-color: @PRIMARY@;
 }
 
 QComboBox#worldMapToolCombo QAbstractItemView {
@@ -16401,6 +15973,24 @@ QPushButton#forumMdButton:pressed {
     color: @TEXT_PRIMARY@;
 }
 
+/* 可开关的格式按钮（翻译页的加粗 / 斜体 / 列表等）：按下去亮成主题色，
+ * 光标移到已经加粗的文字上时也保持点亮，告诉用户当前是什么格式 */
+QPushButton#forumMdButton:checked {
+    background: @PRIMARY_BG_SOFT@;
+    color: @ACCENT_TEXT@;
+    font-weight: 700;
+}
+
+QPushButton#forumMdButton:disabled {
+    color: @TEXT_DISABLED@;
+}
+
+/* 翻译页格式栏里的「正文 / 小标题 / 标题」下拉：跟按钮一样高 */
+QComboBox#translationStyleCombo {
+    padding: 2px 20px 2px 9px;
+    font-size: 12px;
+}
+
 QPushButton#forumPrimaryButton {
     background: @PRIMARY@;
     border: none;
@@ -16424,29 +16014,6 @@ QPushButton#forumPrimaryButton:disabled {
     color: @TEXT_DISABLED@;
 }
 
-/* 服务器导航板块的来源下拉：和同一行的「排序」胶囊等高，别把表头撑高 */
-QComboBox#forumSourceCombo {
-    background-color: @BG_CARD@;
-    color: @TEXT_SECONDARY@;
-    border: 1px solid @BORDER@;
-    border-radius: 9px;
-    padding: 1px 22px 1px 10px;
-    font-size: 12px;
-    min-height: 18px;
-}
-
-QComboBox#forumSourceCombo:hover {
-    border-color: @PRIMARY@;
-    color: @ACCENT_TEXT@;
-}
-
-QComboBox#forumSourceCombo::drop-down {
-    width: 20px;
-    border: none;
-    border-left: 1px solid @BORDER_LIGHT@;
-    border-top-right-radius: 9px;
-    border-bottom-right-radius: 9px;
-}
 
 QPushButton#forumLikeButton {
     background: transparent;
@@ -17990,69 +17557,6 @@ QFrame#javaDlDivider {
     border: none;
 }
 
-/* ── 下拉框：中性玻璃态，聚焦时才出现主色边 ── */
-QComboBox#javaDlCombo {
-    background-color: @BG_MUTED@;
-    border: 1px solid @BORDER_STRONG@;
-    border-radius: 10px;
-    padding: 8px 14px;
-    min-height: 20px;
-    font-size: 13px;
-    color: @TEXT_PRIMARY@;
-    selection-background-color: @PRIMARY@;
-    selection-color: @TEXT_ON_PRIMARY@;
-}
-
-QComboBox#javaDlCombo:hover {
-    background-color: @BG_HOVER@;
-    border-color: @BORDER_HOVER@;
-}
-
-QComboBox#javaDlCombo:focus {
-    background-color: @BG_CARD@;
-    border: 1px solid @PRIMARY@;
-}
-
-QComboBox#javaDlCombo:disabled {
-    background-color: @BG_DISABLED@;
-    border-color: @BORDER_DISABLED@;
-    color: @TEXT_DISABLED@;
-}
-
-QComboBox#javaDlCombo::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: center right;
-    border: none;
-    width: 28px;
-}
-
-QComboBox#javaDlCombo::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 10px;
-    height: 10px;
-    margin-right: 11px;
-    border: none;
-}
-
-QComboBox#javaDlCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 10px;
-    padding: 4px;
-    selection-background-color: @PRIMARY_BG@;
-    selection-color: @TEXT_ACCENT@;
-    outline: none;
-}
-
-QComboBox#javaDlCombo QAbstractItemView::item {
-    padding: 6px 12px;
-    border-radius: 8px;
-    min-height: 26px;
-}
-
-QComboBox#javaDlCombo QAbstractItemView::item:hover {
-    background-color: @BG_HOVER@;
-}
 
 /* ── 安装包列表 ── */
 QListWidget#javaDlBinaryList {
@@ -18292,14 +17796,6 @@ QPushButton#javaCancelBtn:hover {
     color: @TEXT_PRIMARY@;
 }
 
-/* 窄窗口页的下拉箭头与主页面统一成细箭头 */
-InstanceJavaDownloadPage QComboBox::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 10px;
-    height: 10px;
-    margin-right: 10px;
-    border: none;
-}
 
 /* 窄窗口页：下载按钮跟随主页面用主色实心，避免软主色底在深色主题下发灰 */
 InstanceJavaDownloadPage QPushButton#downloadJavaBtn {
@@ -18481,41 +17977,6 @@ QLabel#projectionPreviewLayerLabel {
     border: none;
 }
 
-/* 工具栏下拉框：比全局样式矮一号、圆角小一号，和旁边的小按钮对齐 */
-QComboBox#projectionPreviewCombo {
-    background-color: @BG_CARD@;
-    color: @TEXT_PRIMARY@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 2px 20px 2px 9px;
-    font-size: 12px;
-    min-height: 20px;
-}
-
-QComboBox#projectionPreviewCombo:hover {
-    border-color: @BORDER_STRONG@;
-}
-
-QComboBox#projectionPreviewCombo:focus {
-    border: 1px solid @PRIMARY@;
-    border-radius: 8px;
-    padding: 2px 20px 2px 9px;
-}
-
-QComboBox#projectionPreviewCombo::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: top right;
-    width: 18px;
-    border: none;
-    background: transparent;
-}
-
-QComboBox#projectionPreviewCombo::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 9px;
-    height: 9px;
-    border: none;
-}
 
 /* 一次性提示（截图已保存等）：主题色小字，几秒后自己消失 */
 QLabel#projectionPreviewStatus {
@@ -19003,8 +18464,7 @@ QPushButton#serverGhostBtn:disabled {
     border-color: @BORDER_DISABLED@;
 }
 
-/* ── 下拉 / 数字框：与窄窗口其它页保持一致 ── */
-QComboBox#serverCombo,
+/* ── 数字框：与窄窗口其它页保持一致（下拉框走全应用统一外观） ── */
 QSpinBox#serverSpin {
     background-color: @BG_MUTED@;
     border: 1px solid @BORDER_STRONG@;
@@ -19015,42 +18475,15 @@ QSpinBox#serverSpin {
     font-size: 12.5px;
 }
 
-QComboBox#serverCombo:hover,
 QSpinBox#serverSpin:hover {
     background-color: @BG_HOVER@;
     border-color: @BORDER_HOVER@;
 }
 
-QComboBox#serverCombo:disabled,
 QSpinBox#serverSpin:disabled {
     background-color: @BG_DISABLED@;
     border-color: @BORDER_DISABLED@;
     color: @TEXT_DISABLED@;
-}
-
-QComboBox#serverCombo::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: center right;
-    border: none;
-    width: 22px;
-}
-
-QComboBox#serverCombo::down-arrow {
-    image: url(:/Images/Icons/arrow_down_triangle.svg);
-    width: 10px;
-    height: 10px;
-    margin-right: 8px;
-    border: none;
-}
-
-QComboBox#serverCombo QAbstractItemView {
-    background-color: @BG_CARD@;
-    border: 1px solid @BORDER@;
-    border-radius: 8px;
-    padding: 4px;
-    color: @TEXT_PRIMARY@;
-    selection-background-color: @PRIMARY_RGBA_18@;
-    selection-color: @TEXT_ACCENT@;
 }
 
 /* ── 进度条 ── */
@@ -19248,4 +18681,65 @@ QScrollArea#msdProviderScroll QScrollBar::sub-page:vertical {
     background: transparent;
     border: none;
     height: 0;
+}
+
+/* ===== 种子地图页（更多 > 种子地图）：沿用存档地图的工具栏 / 画布 / 状态条 ===== */
+/* 种子输入框：与存档地图的坐标输入框同一套扁平风格 */
+QLineEdit#worldMapSeedEdit {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 3px 6px;
+    color: @TEXT_PRIMARY@;
+    font-size: 12px;
+}
+
+QLineEdit#worldMapSeedEdit:hover {
+    background-color: @BG_CARD@;
+}
+
+QLineEdit#worldMapSeedEdit:focus {
+    background-color: @BG_CARD@;
+    border: 1px solid @PRIMARY@;
+}
+
+/* ============================================================
+ * 内存优化页（更多 > 内存优化）：主操作按钮
+ * ============================================================ */
+QPushButton#memoryOptimizeBtn {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 @PRIMARY@,
+        stop:1 @PRIMARY_DARK@);
+    color: @TEXT_ON_PRIMARY@;
+    border: none;
+    border-radius: 12px;
+    padding: 10px 30px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QPushButton#memoryOptimizeBtn:hover {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 @PRIMARY_HOVER@,
+        stop:1 @PRIMARY@);
+}
+
+QPushButton#memoryOptimizeBtn:pressed {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 @PRIMARY_PRESSED@,
+        stop:1 @PRIMARY_DARK@);
+}
+
+QPushButton#memoryOptimizeBtn:disabled {
+    background-color: @BG_DISABLED@;
+    color: @TEXT_DISABLED@;
+}
+
+/* 内存优化页：优化结果（成功后把释放量标出来） */
+QLabel#memoryOptimizeResult {
+    background: transparent;
+    border: none;
+    color: @SUCCESS@;
+    font-size: 12px;
+    font-weight: 600;
 }

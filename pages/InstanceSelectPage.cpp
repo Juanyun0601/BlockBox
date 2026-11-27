@@ -6,7 +6,9 @@
  */
 #include "InstanceSelectPage.h"
 
+#include <QApplication>
 #include <QCache>
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDirIterator>
@@ -825,6 +827,12 @@ QWidget *InstanceSelectPage::buildMasonryInstanceCard(const QFileInfo &instanceI
     card->setProperty("instancePath", instancePath);
     card->installEventFilter(this);
 
+    // 整张卡片可右键（标签、留白处都行），菜单与列表视图一致
+    card->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(card, &QWidget::customContextMenuRequested, this, [this, instancePath, card](const QPoint &pos) {
+        showInstanceContextMenu(instancePath, card->mapToGlobal(pos));
+    });
+
     return card;
 }
 
@@ -868,30 +876,6 @@ bool InstanceSelectPage::eventFilter(QObject *watched, QEvent *event)
         if (mouseEvent->button() == Qt::LeftButton)
         {
             onLaunchGameClicked(pathVar.toString());
-            return true;
-        }
-        if (mouseEvent->button() == Qt::RightButton)
-        {
-            QMenu menu(this);
-            menu.setStyleSheet(this->styleSheet());
-            QAction *launchAction = menu.addAction(tr("启动游戏"));
-            QAction *settingsAction = menu.addAction(tr("实例设置"));
-            menu.addSeparator();
-            QMenu *categoryMenu = menu.addMenu(tr("移动分类"));
-            buildCategoryMenu(categoryMenu, pathVar.toString());
-            menu.addSeparator();
-            QAction *deleteAction = menu.addAction(tr("删除实例"));
-            deleteAction->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/delete.svg", QColor("#F44336"), 16));
-
-            QAction *chosen = menu.exec(static_cast<QWidget *>(watched)->mapToGlobal(mouseEvent->pos()));
-            if (chosen == launchAction) {
-                onLaunchGameClicked(pathVar.toString());
-            } else if (chosen == settingsAction) {
-                emit instanceSelected(pathVar.toString());
-                emit backToMainRequested();
-            } else if (chosen == deleteAction) {
-                onDeleteInstanceClicked(pathVar.toString());
-            }
             return true;
         }
     }
@@ -1118,24 +1102,67 @@ void InstanceSelectPage::onInstanceContextMenu(const QPoint &pos)
     // 高亮当前右键项
     m_instanceListWidget->setCurrentItem(item);
 
-    QMenu menu(this);
-    menu.setStyleSheet(m_instanceListWidget->styleSheet());
+    showInstanceContextMenu(instancePath, m_instanceListWidget->mapToGlobal(pos));
+}
 
-    QAction *launchAction = menu.addAction(tr("启动游戏"));
-    QAction *assistantAction = menu.addAction(tr("打开实例助手"));
-    QAction *settingsAction = menu.addAction(tr("实例设置"));
+/* 统一的实例右键菜单：列表视图与瀑布流视图共用同一份菜单内容 */
+void InstanceSelectPage::showInstanceContextMenu(const QString &instancePath, const QPoint &globalPos)
+{
+    if (instancePath.isEmpty())
+    {
+        return;
+    }
+
+    const QColor themeColor(ThemeManager::instance()->currentThemeColor());
+    auto icon = [&](const QString &path, const QColor &color = QColor()) {
+        return IconHelper::loadColoredIcon(path, color.isValid() ? color : themeColor, 16);
+    };
+
+    QMenu menu(this);
+    menu.setStyleSheet(styleSheet());
+
+    QAction *launchAction = menu.addAction(icon(":/Images/Icons/play.svg"), tr("启动游戏"));
+    QAction *assistantAction = menu.addAction(icon(":/Images/Icons/instance_assistant.svg"),
+                                             tr("打开实例助手"));
+    QAction *settingsAction = menu.addAction(icon(":/Images/Icons/instance_settings.svg"),
+                                            tr("实例设置"));
     menu.addSeparator();
+
+    // ── 打开位置：只列出实例里真实存在的目录，免得点了没反应 ──
+    QDir instanceDir(instancePath);
+    QMenu *openMenu = menu.addMenu(icon(":/Images/Icons/folder.svg"), tr("打开位置"));
+    QAction *openFolderAction = openMenu->addAction(tr("实例文件夹"));
+    QAction *openModsAction = nullptr;
+    if (instanceDir.exists("mods"))
+    {
+        openModsAction = openMenu->addAction(tr("模组文件夹"));
+    }
+    QAction *openLogsAction = nullptr;
+    if (instanceDir.exists("logs"))
+    {
+        openLogsAction = openMenu->addAction(tr("日志文件夹"));
+    }
+    QAction *openCrashAction = nullptr;
+    if (instanceDir.exists("crash-reports"))
+    {
+        openCrashAction = openMenu->addAction(tr("崩溃报告"));
+    }
+
+    // ── 复制：名称与路径分开，方便粘贴到聊天或资源管理器 ──
+    QMenu *copyMenu = menu.addMenu(icon(":/Images/Icons/copy.svg"), tr("复制"));
+    QAction *copyNameAction = copyMenu->addAction(tr("实例名称"));
+    QAction *copyPathAction = copyMenu->addAction(tr("实例路径"));
+
     QMenu *categoryMenu = menu.addMenu(tr("移动分类"));
     buildCategoryMenu(categoryMenu, instancePath);
-    menu.addSeparator();
-    QAction *exportAction = menu.addAction(tr("导出整合包"));
-    menu.addSeparator();
-    QAction *openFolderAction = menu.addAction(tr("打开实例文件夹"));
-    menu.addSeparator();
-    QAction *deleteAction = menu.addAction(tr("删除实例"));
-    deleteAction->setIcon(IconHelper::loadColoredIcon(":/Images/Icons/delete.svg", QColor("#F44336"), 16));
 
-    QAction *chosen = menu.exec(m_instanceListWidget->mapToGlobal(pos));
+    QAction *exportAction = menu.addAction(icon(":/Images/Icons/export.svg"), tr("导出整合包"));
+    menu.addSeparator();
+    QAction *deleteAction = menu.addAction(icon(":/Images/Icons/delete.svg", QColor("#F44336")),
+                                           tr("删除实例"));
+    deleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
+
+    QAction *chosen = menu.exec(globalPos);
 
     if (chosen == launchAction)
     {
@@ -1158,6 +1185,26 @@ void InstanceSelectPage::onInstanceContextMenu(const QPoint &pos)
     else if (chosen == openFolderAction)
     {
         QDesktopServices::openUrl(QUrl::fromLocalFile(instancePath));
+    }
+    else if (chosen == openModsAction)
+    {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(instanceDir.filePath("mods")));
+    }
+    else if (chosen == openLogsAction)
+    {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(instanceDir.filePath("logs")));
+    }
+    else if (chosen == openCrashAction)
+    {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(instanceDir.filePath("crash-reports")));
+    }
+    else if (chosen == copyNameAction)
+    {
+        QApplication::clipboard()->setText(QFileInfo(instancePath).fileName());
+    }
+    else if (chosen == copyPathAction)
+    {
+        QApplication::clipboard()->setText(QDir::toNativeSeparators(instancePath));
     }
     else if (chosen == deleteAction)
     {

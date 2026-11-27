@@ -54533,8 +54533,8 @@ ID правила: %2</translation>
     </message>
     <message>
         <location filename="../pages/TranslationComposePage.cpp" line="152"/>
-        <source>正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动</source>
-        <translation>В тексте уже подставлен оригинал: замените английский текст на китайский, а изображения и ссылки оставьте на своих местах</translation>
+        <source>正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动。要强调、分点或加链接，用下面的格式栏点一下就行。</source>
+        <translation>Текст уже заполнен оригиналом: замените английский на китайский, а изображения и ссылки оставьте на месте. Для выделения, списков и ссылок используйте панель форматирования ниже.</translation>
     </message>
     <message>
         <location filename="../pages/TranslationComposePage.cpp" line="162"/>
@@ -54575,6 +54575,70 @@ ID правила: %2</translation>
         <location filename="../pages/TranslationComposePage.cpp" line="316"/>
         <source>翻译已提交，进入审核后会对所有人显示。感谢参与！</source>
         <translation>Перевод отправлен: после проверки он будет виден всем. Спасибо за участие!</translation>
+    </message>
+    <message>
+        <source>撤销（Ctrl+Z）</source>
+        <translation>Отменить (Ctrl+Z)</translation>
+    </message>
+    <message>
+        <source>重做（Ctrl+Y）</source>
+        <translation>Повторить (Ctrl+Y)</translation>
+    </message>
+    <message>
+        <source>加粗（Ctrl+B）</source>
+        <translation>Полужирный (Ctrl+B)</translation>
+    </message>
+    <message>
+        <source>斜体（Ctrl+I）</source>
+        <translation>Курсив (Ctrl+I)</translation>
+    </message>
+    <message>
+        <source>下划线（Ctrl+U）</source>
+        <translation>Подчёркнутый (Ctrl+U)</translation>
+    </message>
+    <message>
+        <source>删除线</source>
+        <translation>Зачёркнутый</translation>
+    </message>
+    <message>
+        <source>段落样式：正文 / 小标题 / 标题</source>
+        <translation>Стиль абзаца: Обычный / Подзаголовок / Заголовок</translation>
+    </message>
+    <message>
+        <source>正文</source>
+        <translation>Обычный</translation>
+    </message>
+    <message>
+        <source>小标题</source>
+        <translation>Подзаголовок</translation>
+    </message>
+    <message>
+        <source>标题</source>
+        <translation>Заголовок</translation>
+    </message>
+    <message>
+        <source>无序列表</source>
+        <translation>Маркированный список</translation>
+    </message>
+    <message>
+        <source>有序列表</source>
+        <translation>Нумерованный список</translation>
+    </message>
+    <message>
+        <source>给选中的文字加链接（Ctrl+K）</source>
+        <translation>Добавить ссылку к выделенному тексту (Ctrl+K)</translation>
+    </message>
+    <message>
+        <source>去掉选中文字的加粗、斜体、颜色和缩进</source>
+        <translation>Убрать полужирный, курсив, цвета и отступ у выделенного текста</translation>
+    </message>
+    <message>
+        <source>插入链接</source>
+        <translation>Вставить ссылку</translation>
+    </message>
+    <message>
+        <source>链接地址，例如 https://example.com</source>
+        <translation>Адрес ссылки, например https://example.com</translation>
     </message>
 </context>
 <context>

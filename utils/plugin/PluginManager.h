@@ -71,6 +71,15 @@ public:
      */
     QString pluginIconPath(const PluginInfo &info) const;
 
+    /**
+     * @brief 获取「更多」页插件入口的图标缓存文件路径
+     *
+     * 入口自己声明了 icon（包内 PNG / SVG）时，把它提取到插件目录
+     * .icons/ 下缓存（文件名带包修改时间戳，包更新后自动重新提取）；
+     * 入口没声明图标时回退到插件图标；都无法取到时返回空字符串。
+     */
+    QString pluginEntryIconPath(const PluginInfo &info, const PluginPageEntry &entry) const;
+
     /** 重新扫描插件目录并解析清单 */
     void refresh();
 
@@ -184,6 +193,26 @@ public:
      */
     QStringList activePluginStyles() const;
 
+    // ==================== 「更多」页入口 ====================
+
+    /**
+     * @brief 插件是否可在「更多」页提供入口
+     *
+     * 条件：已成功解析、有至少一个有效 ui.moreEntries 入口，且清单声明了
+     * 权限 "ui:page"。未声明权限时入口不生效，避免插件在用户不知情时
+     * 往启动器里塞入口。
+     */
+    bool providesMoreEntries(const PluginInfo &info) const;
+
+    /**
+     * @brief 汇总所有「已启用」插件提供的「更多」页入口
+     *
+     * 顺序 = 插件列表顺序 + 清单内声明顺序；宿主侧更多页卡片与左侧
+     * 「更多」子导航都按这个顺序排，索引一一对应。每项的 pluginId
+     * 已填好（icon 仍是包内相对路径，宿主按需提取）。
+     */
+    QList<PluginPageEntry> enabledMoreEntries() const;
+
     // ==================== AI 工具接口 ====================
 
     /**
@@ -217,6 +246,44 @@ public:
      * @return 拼接后的说明文本（无可用工具时返回空字符串）
      */
     QString enabledAiToolsPrompt() const;
+
+    // ==================== 插件私有变量 ====================
+
+    /**
+     * @brief 插件私有数据目录：<数据目录>/plugin-data/<插件id>
+     *
+     * 不存在时自动创建，供插件脚本存放 mod 文件、token、缓存等。
+     * 插件 id 会先清洗（非字母数字下划线连字符替换为 _），避免路径越界。
+     */
+    QString pluginDataDir(const QString &pluginId) const;
+
+    /**
+     * @brief 解析插件私有变量（manifest.vars + 保留键）
+     *
+     * 除清单里声明的键外，一律补齐四个保留键，方便插件脚本直接用：
+     *   token  32 位十六进制随机串（首次用到时生成并持久化）
+     *   port   空闲端口（清单里写成 "auto" 时自动挑；重启沿用上次的值）
+     *   data   插件私有数据目录（自动创建）
+     *   app    启动器所在目录
+     *
+     * 持久化位置：QSettings("BlockBox","Plugins") 的 pluginVars/<插件id>/<键>。
+     * 变量的值只在宿主侧使用（http 工具占位符 / 脚本环境变量），不会进入模型上下文。
+     */
+    QMap<QString, QString> resolvedPluginVars(const PluginInfo &info) const;
+
+    /**
+     * @brief 把文本里的 {plugin.<键>} 替换成变量值
+     *
+     * 未声明的键保持原样，并把键名收集到 unknownKeys（调用方可据此报错）。
+     *
+     * @param text        待替换文本（URL / 请求头值 / 请求体 / 脚本参数）
+     * @param vars        resolvedPluginVars() 的结果
+     * @param unknownKeys 输出参数，可为 nullptr
+     * @return 替换后的文本
+     */
+    static QString substitutePluginVars(const QString &text,
+                                        const QMap<QString, QString> &vars,
+                                        QStringList *unknownKeys = nullptr);
 
     /**
      * @brief 执行插件提供的 AI 工具（同步阻塞，供 AiService 在子线程调用）
@@ -308,8 +375,8 @@ private:
                                 const QJsonObject &args, QString &error);
 
     /** 同步执行插件 AI 工具中的 HTTP 请求（QNetworkAccessManager + QEventLoop 阻塞等待） */
-    QString executeAiHttpTool(const PluginAiTool &tool, const QJsonObject &args,
-                              QString &error);
+    QString executeAiHttpTool(const PluginInfo &info, const PluginAiTool &tool,
+                              const QJsonObject &args, QString &error);
 
     QList<PluginInfo> m_plugins;
     QSet<QString> m_updatingIds; ///< 正在异步更新的插件 ID（防止并发更新同一插件）

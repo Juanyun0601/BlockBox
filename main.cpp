@@ -15,6 +15,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QIcon>
 #include <QDir>
 #include <QFuture>
@@ -58,6 +59,7 @@
 #include "utils/LauncherLogger.h"
 #include "utils/LowConfigMode.h"
 #include "utils/PerformanceMonitor.h"
+#include "utils/QuickLaunchManager.h"
 #include "utils/QuizBank.h"
 #include "utils/ResourceManager.h"
 #include "utils/SettingsManager.h"
@@ -71,6 +73,9 @@ namespace {
 /// blockbox:// 一键加入链接的 IPC 通道名：浏览器为新链接再起的进程靠它转交给已运行的实例
 constexpr char kJoinIpcServerName[] = "BlockBox-join-ipc";
 
+/// 转发桌面 .blockbox 快捷启动文件时加的行前缀（与一键加入链接共用一条 IPC 通道）
+constexpr char kQuickLaunchFilePrefix[] = "blockbox-file:";
+
 /// 从命令行参数里找出 blockbox:// 一键加入链接（没有返回空串）
 QString findJoinUrlArgument(const QStringList &arguments)
 {
@@ -82,15 +87,31 @@ QString findJoinUrlArgument(const QStringList &arguments)
     return QString();
 }
 
-/// 已有方块盒子在跑时把一键加入链接转交给它；连不上（没有在跑）返回 false
-bool forwardJoinUrlToRunningInstance(const QString &url)
+/// 从命令行参数里找出 .blockbox 快捷启动文件（没有返回空串）
+QString findQuickLaunchFileArgument(const QStringList &arguments)
+{
+    for (const QString &argument : arguments)
+    {
+        // 跳过 --xxx 之类的开关参数
+        if (argument.startsWith(QLatin1Char('-'))
+            || !argument.endsWith(QStringLiteral(".blockbox"), Qt::CaseInsensitive))
+            continue;
+        const QFileInfo info(argument);
+        if (info.exists() && info.isFile())
+            return info.absoluteFilePath();
+    }
+    return QString();
+}
+
+/// 已有方块盒子在跑时把一行文本（链接 / 文件路径）转交给它；连不上（没有在跑）返回 false
+bool forwardToRunningInstance(const QString &line)
 {
     QLocalSocket socket;
     socket.connectToServer(QString::fromLatin1(kJoinIpcServerName));
     if (!socket.waitForConnected(500))
         return false;
-    // 约定一行一条链接，接收端凑齐换行才处理
-    socket.write(url.toUtf8() + '\n');
+    // 约定一行一条，接收端凑齐换行才处理
+    socket.write(line.toUtf8() + '\n');
     socket.flush();
     return socket.waitForBytesWritten(500);
 }
@@ -437,19 +458,34 @@ int main(int argc, char *argv[])
     // 设置应用程序图标
     a.setWindowIcon(QIcon(":/Images/icon.ico"));
 
-    // ── blockbox:// 一键加入：解析命令行链接，必要时转交给已运行的实例 ──
-    const QString joinUrlArgument = findJoinUrlArgument(QApplication::arguments());
+    // ── 外部打开请求：blockbox:// 一键加入链接 / 桌面 .blockbox 快捷启动文件，
+    //    必要时转交给已运行的实例 ──
+    const QStringList appArguments = QApplication::arguments();
+    const QString joinUrlArgument = findJoinUrlArgument(appArguments);
+    const QString quickLaunchFileArgument = findQuickLaunchFileArgument(appArguments);
 #ifndef Q_OS_ANDROID
-    if (!joinUrlArgument.isEmpty()
-        && forwardJoinUrlToRunningInstance(joinUrlArgument))
+    if (!joinUrlArgument.isEmpty() || !quickLaunchFileArgument.isEmpty())
     {
-        // 已有方块盒子在跑：链接交给它处理，本进程直接退出，不重复开窗口
-        return 0;
+        bool forwarded = true;
+        if (!joinUrlArgument.isEmpty())
+            forwarded = forwardToRunningInstance(joinUrlArgument);
+        if (forwarded && !quickLaunchFileArgument.isEmpty())
+            forwarded = forwardToRunningInstance(
+                QString::fromLatin1(kQuickLaunchFilePrefix)
+                + QDir::fromNativeSeparators(quickLaunchFileArgument));
+        if (forwarded)
+        {
+            // 已有方块盒子在跑：请求交给它处理，本进程直接退出，不重复开窗口
+            return 0;
+        }
     }
 #endif
 #ifdef Q_OS_WIN
     // 网页端「通过方块盒子一键加入」靠这个协议唤起方块盒子
     registerBlockboxUrlScheme();
+    // 桌面 .blockbox 快捷启动文件：每次启动重写一遍关联，
+    // 更新 / 换安装目录后双击 .blockbox 文件依然会用方块盒子打开
+    QuickLaunchManager::registerFileAssociation();
 #endif
 
 #if defined(Q_OS_ANDROID)
@@ -643,14 +679,25 @@ int main(int argc, char *argv[])
                         return;
                     }
                     connection->setProperty("joinBuffer", QByteArray());
-                    const QString url = QString::fromUtf8(
+                    const QString line = QString::fromUtf8(
                         buffer.left(buffer.indexOf('\n')).trimmed());
-                    if (url.isEmpty())
+                    if (line.isEmpty())
                         return;
-                    // 窗口可能正收在系统托盘里：先把主窗口叫回前台，再走一键加入
+                    // 窗口可能正收在系统托盘里：先把主窗口叫回前台再处理
                     // （直接 raise/activate 对隐藏窗口不起作用）
                     w.showFromTray();
-                    w.handleExternalJoinUrl(url);
+                    const QString filePrefix = QString::fromLatin1(kQuickLaunchFilePrefix);
+                    if (line.startsWith(filePrefix))
+                    {
+                        // 另一个进程双击了桌面 .blockbox 文件，路径转发过来由本实例启动
+                        const QString filePath = line.mid(filePrefix.size());
+                        if (!filePath.isEmpty())
+                            w.handleExternalQuickLaunchFile(filePath);
+                    }
+                    else
+                    {
+                        w.handleExternalJoinUrl(line);
+                    }
                 });
             }
         });
@@ -685,7 +732,8 @@ int main(int argc, char *argv[])
         startupWidget->updateProgress(100, QCoreApplication::translate("MainWindow", "启动完成"));
         
         // 短暂延迟后隐藏启动窗口并显示主窗口
-        QTimer::singleShot(300, [&w, startupWidget, isFirstRun, joinUrlArgument]() {
+        QTimer::singleShot(300, [&w, startupWidget, isFirstRun, joinUrlArgument,
+                                 quickLaunchFileArgument]() {
             bbStartupTrace(QStringLiteral("准备显示主窗口"));
             startupWidget->hideStartup();
             w.show();
@@ -726,32 +774,38 @@ int main(int argc, char *argv[])
             requestAndroidStartupPermissions(&w);
             bbStartupTrace(QStringLiteral("启动流程完成（后续引导 / 公告 / 检查更新）"));
 
-            // 通过 blockbox:// 链接启动的：窗口就绪后自动走一键加入
-            const auto handlePendingJoinUrl = [&w, joinUrlArgument]() {
+            // 通过 blockbox:// 链接 / 桌面 .blockbox 文件启动的：窗口就绪后自动处理
+            const auto handlePendingExternalActions = [&w, joinUrlArgument, quickLaunchFileArgument]() {
                 if (!joinUrlArgument.isEmpty())
                     QTimer::singleShot(600, &w, [&w, joinUrlArgument]() {
                         w.handleExternalJoinUrl(joinUrlArgument);
+                    });
+                if (!quickLaunchFileArgument.isEmpty())
+                    QTimer::singleShot(900, &w, [&w, quickLaunchFileArgument]() {
+                        // 双击快捷启动文件时软件本来就在后台：确保窗口先出来再启动游戏
+                        w.showFromTray();
+                        w.handleExternalQuickLaunchFile(quickLaunchFileArgument);
                     });
             };
 
             // 首次运行（未走完引导）：直接进入新手引导页
             if (isFirstRun) {
-                QTimer::singleShot(400, [&w, handlePendingJoinUrl]() {
+                QTimer::singleShot(400, [&w, handlePendingExternalActions]() {
                     // 引导页走完后再做首次启动的后续动作（入站答题提醒 / 检查更新）。
                     // onboardingFinished() 只在首次启动进入引导时发出一次，设置里再次打开不会重复打扰。
-                    QObject::connect(&w, &MainWindow::onboardingFinished, &w, [&w, handlePendingJoinUrl](bool) {
+                    QObject::connect(&w, &MainWindow::onboardingFinished, &w, [&w, handlePendingExternalActions](bool) {
                         // 新手引导之后在右下角提醒入站答题（可直接跳过，不阻塞使用）
                         showQuizReminder(&w);
                         // 重要公告弹窗结束后再检查更新，避免两个弹窗叠在一起
                         maybeShowImportantAnnouncement(&w, [&w]() { maybeCheckUpdates(&w); });
-                        handlePendingJoinUrl();
+                        handlePendingExternalActions();
                     });
                     w.showOnboardingPage(true);
                 });
             } else {
                 showQuizReminder(&w);
                 maybeShowImportantAnnouncement(&w, [&w]() { maybeCheckUpdates(&w); });
-                handlePendingJoinUrl();
+                handlePendingExternalActions();
             }
         });
 

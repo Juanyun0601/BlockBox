@@ -8,16 +8,28 @@
 #include "TranslationComposePage.h"
 
 #include <QComboBox>
+#include <QFont>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShortcut>
+#include <QTextBlock>
+#include <QTextBlockFormat>
+#include <QTextCharFormat>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTextEdit>
+#include <QTextFragment>
+#include <QTextList>
+#include <QTextListFormat>
 #include <QVBoxLayout>
 
+#include "components/AppInputDialog.h"
 #include "components/NotificationManager.h"
+#include "layouts/FlowLayout.h"
 #include "utils/ForumAccountService.h"
 #include "utils/StyleKit.h"
 
@@ -36,6 +48,34 @@ QString statusLabelFor(const QString &status)
     if (status == QStringLiteral("approved"))
         return QObject::tr("上次提交：已通过审核，欢迎继续完善");
     return QString();
+}
+
+/**
+ * @brief 把选区扩成整段：格式栏的段落样式 / 列表要作用在整段上
+ *
+ * 没有选区时就是光标所在的那一段；选区正好停在下一段开头时
+ * 不把下一段也扩进来（否则改一个标题会把后面一段一起改掉）。
+ */
+QTextCursor expandToBlocks(const QTextCursor &source)
+{
+    QTextCursor cursor = source;
+    if (!cursor.hasSelection()) {
+        cursor.select(QTextCursor::BlockUnderCursor);
+        return cursor;
+    }
+
+    QTextDocument *doc = cursor.document();
+    const int start = cursor.selectionStart();
+    int end = cursor.selectionEnd();
+    if (end > start && end <= doc->characterCount()
+        && doc->characterAt(end - 1) == QChar::ParagraphSeparator)
+        --end;
+
+    cursor.setPosition(start);
+    cursor.movePosition(QTextCursor::StartOfBlock);
+    cursor.setPosition(qMax(start, end), QTextCursor::KeepAnchor);
+    cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    return cursor;
 }
 } // namespace
 
@@ -68,6 +108,7 @@ void TranslationComposePage::buildUi()
 
     // ── 未登录态 ──
     m_loginHost = new QWidget(content);
+    m_loginHost->setObjectName(QStringLiteral("translationLoginHost"));
     m_loginHost->setAttribute(Qt::WA_StyledBackground, false);
     auto *loginLayout = new QVBoxLayout(m_loginHost);
     loginLayout->setContentsMargins(0, 60, 0, 60);
@@ -86,6 +127,7 @@ void TranslationComposePage::buildUi()
 
     // ── 登录后的翻译表单 ──
     m_mainHost = new QWidget(content);
+    m_mainHost->setObjectName(QStringLiteral("translationMainHost"));
     m_mainHost->setAttribute(Qt::WA_StyledBackground, false);
     auto *mainLayout = new QVBoxLayout(m_mainHost);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -140,7 +182,7 @@ void TranslationComposePage::buildUi()
         formLayout->addWidget(block);
     }
 
-    // 详细信息（富文本，预填原文原地翻译）
+    // 详细信息（富文本，预填原文原地翻译，编辑框上方带一排格式按钮）
     {
         auto *block = new QWidget(formCard);
         block->setAttribute(Qt::WA_StyledBackground, false);
@@ -149,11 +191,15 @@ void TranslationComposePage::buildUi()
         blockLayout->setSpacing(4);
         blockLayout->addWidget(ForumKit::makeMuted(block, tr("详细信息")));
         blockLayout->addWidget(ForumKit::makeMuted(
-            block, tr("正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动")));
+            block, tr("正文已预填原文，把里面的英文替换成中文即可；图片和链接位置保留不动。"
+                      "要强调、分点或加链接，用下面的格式栏点一下就行。")));
+
         m_detailEdit = new QTextEdit(block);
         m_detailEdit->setObjectName(QStringLiteral("forumReplyEdit"));
         m_detailEdit->setAcceptRichText(true);
-        m_detailEdit->setMinimumHeight(260);
+        m_detailEdit->setMinimumHeight(300);
+
+        blockLayout->addWidget(createFormatBar(block));
         blockLayout->addWidget(m_detailEdit);
         formLayout->addWidget(block);
     }
@@ -258,6 +304,7 @@ void TranslationComposePage::prefillFrom(const ContentTranslation &translation)
         m_summaryEdit->setText(translation.summary);
     if (!translation.detailHtml.isEmpty())
         m_detailEdit->setHtml(translation.detailHtml);
+    resetDetailEditingState();
 }
 
 void TranslationComposePage::prefillFromOriginal()
@@ -268,6 +315,15 @@ void TranslationComposePage::prefillFromOriginal()
         m_detailEdit->setHtml(m_originalDetailHtml);
     else
         m_detailEdit->clear();
+    resetDetailEditingState();
+}
+
+void TranslationComposePage::resetDetailEditingState()
+{
+    // 编辑框的「接下来输入的字用什么格式」会一直留到下一页内容，换资源后
+    // 不重置的话，工具栏会莫名亮着加粗，新打的字也跟着变粗
+    m_detailEdit->setCurrentCharFormat(QTextCharFormat());
+    syncFormatBar();
 }
 
 void TranslationComposePage::submit()
@@ -329,4 +385,360 @@ void TranslationComposePage::setStatus(const QString &text, bool error)
     m_statusLabel->setText(text);
     m_statusLabel->setStyleSheet(error ? StyleKit::resolve(QStringLiteral("color: @WARNING_TEXT@;"))
                                        : QString());
+}
+
+// ──────────────────────────────────────────────────────────── 详细信息格式栏
+
+QWidget *TranslationComposePage::createFormatBar(QWidget *parent)
+{
+    auto *bar = new QWidget(parent);
+    bar->setObjectName(QStringLiteral("translationFormatBar"));
+    bar->setAttribute(Qt::WA_StyledBackground, false);
+    auto *flow = new FlowLayout(bar, 0, 2, 2);
+
+    auto addButton = [this, bar, flow](const QString &text, const QString &tip, bool checkable) {
+        auto *button = new QPushButton(text, bar);
+        button->setObjectName(QStringLiteral("forumMdButton"));
+        button->setToolTip(tip);
+        button->setCheckable(checkable);
+        button->setFixedHeight(26);
+        button->setCursor(Qt::PointingHandCursor);
+        flow->addWidget(button);
+        return button;
+    };
+
+    // 撤销 / 重做：跟着编辑框自己的历史走，没得撤销时自动置灰
+    m_undoButton = addButton(QStringLiteral("↶"), tr("撤销（Ctrl+Z）"), false);
+    m_undoButton->setEnabled(false);
+    connect(m_undoButton, &QPushButton::clicked, this, [this]() {
+        m_detailEdit->undo();
+        m_detailEdit->setFocus();
+    });
+    m_redoButton = addButton(QStringLiteral("↷"), tr("重做（Ctrl+Y）"), false);
+    m_redoButton->setEnabled(false);
+    connect(m_redoButton, &QPushButton::clicked, this, [this]() {
+        m_detailEdit->redo();
+        m_detailEdit->setFocus();
+    });
+    connect(m_detailEdit, &QTextEdit::undoAvailable, m_undoButton, &QPushButton::setEnabled);
+    connect(m_detailEdit, &QTextEdit::redoAvailable, m_redoButton, &QPushButton::setEnabled);
+
+    // 行内样式：按钮按下态跟着光标处的文字格式走
+    m_boldButton = addButton(QStringLiteral("B"), tr("加粗（Ctrl+B）"), true);
+    QFont boldFont = m_boldButton->font();
+    boldFont.setBold(true);
+    m_boldButton->setFont(boldFont);
+    connect(m_boldButton, &QPushButton::clicked, this,
+            [this](bool checked) { toggleInlineStyle(0, checked); });
+
+    m_italicButton = addButton(QStringLiteral("I"), tr("斜体（Ctrl+I）"), true);
+    QFont italicFont = m_italicButton->font();
+    italicFont.setItalic(true);
+    m_italicButton->setFont(italicFont);
+    connect(m_italicButton, &QPushButton::clicked, this,
+            [this](bool checked) { toggleInlineStyle(1, checked); });
+
+    m_underlineButton = addButton(QStringLiteral("U"), tr("下划线（Ctrl+U）"), true);
+    QFont underlineFont = m_underlineButton->font();
+    underlineFont.setUnderline(true);
+    m_underlineButton->setFont(underlineFont);
+    connect(m_underlineButton, &QPushButton::clicked, this,
+            [this](bool checked) { toggleInlineStyle(2, checked); });
+
+    m_strikeButton = addButton(QStringLiteral("S"), tr("删除线"), true);
+    QFont strikeFont = m_strikeButton->font();
+    strikeFont.setStrikeOut(true);
+    m_strikeButton->setFont(strikeFont);
+    connect(m_strikeButton, &QPushButton::clicked, this,
+            [this](bool checked) { toggleInlineStyle(3, checked); });
+
+    // 段落样式：原文里的标题翻译完还能保持层次
+    m_styleCombo = new QComboBox(bar);
+    m_styleCombo->setObjectName(QStringLiteral("translationStyleCombo"));
+    m_styleCombo->setToolTip(tr("段落样式：正文 / 小标题 / 标题"));
+    m_styleCombo->addItem(tr("正文"), 0);
+    m_styleCombo->addItem(tr("小标题"), 1);
+    m_styleCombo->addItem(tr("标题"), 2);
+    m_styleCombo->setFixedHeight(26);
+    m_styleCombo->setMinimumWidth(88);
+    // 外语界面的「小標題 / Подзаголовок」比中文长，宽度跟着内容走，别把字截掉
+    m_styleCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    connect(m_styleCombo, &QComboBox::activated, this, [this](int index) {
+        applyTextStyle(m_styleCombo->itemData(index).toInt());
+        m_detailEdit->setFocus();
+    });
+    flow->addWidget(m_styleCombo);
+
+    m_bulletButton = addButton(QStringLiteral("• 列表"), tr("无序列表"), true);
+    connect(m_bulletButton, &QPushButton::clicked, this, [this]() { toggleList(false); });
+    m_numberButton = addButton(QStringLiteral("1. 编号"), tr("有序列表"), true);
+    connect(m_numberButton, &QPushButton::clicked, this, [this]() { toggleList(true); });
+
+    auto *linkButton = addButton(tr("链接"), tr("给选中的文字加链接（Ctrl+K）"), false);
+    connect(linkButton, &QPushButton::clicked, this, &TranslationComposePage::insertLink);
+
+    auto *clearButton = addButton(tr("清除格式"), tr("去掉选中文字的加粗、斜体、颜色和缩进"), false);
+    connect(clearButton, &QPushButton::clicked, this, &TranslationComposePage::clearFormatting);
+
+    // 快捷键只在编辑框里生效，不抢上面简介框的输入
+    auto *boldShortcut = new QShortcut(QKeySequence::Bold, m_detailEdit);
+    boldShortcut->setContext(Qt::WidgetShortcut);
+    connect(boldShortcut, &QShortcut::activated, this,
+            [this]() { toggleInlineStyle(0, !m_boldButton->isChecked()); });
+    auto *italicShortcut = new QShortcut(QKeySequence::Italic, m_detailEdit);
+    italicShortcut->setContext(Qt::WidgetShortcut);
+    connect(italicShortcut, &QShortcut::activated, this,
+            [this]() { toggleInlineStyle(1, !m_italicButton->isChecked()); });
+    auto *underlineShortcut = new QShortcut(QKeySequence::Underline, m_detailEdit);
+    underlineShortcut->setContext(Qt::WidgetShortcut);
+    connect(underlineShortcut, &QShortcut::activated, this,
+            [this]() { toggleInlineStyle(2, !m_underlineButton->isChecked()); });
+    auto *linkShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_K), m_detailEdit);
+    linkShortcut->setContext(Qt::WidgetShortcut);
+    connect(linkShortcut, &QShortcut::activated, this, &TranslationComposePage::insertLink);
+
+    connect(m_detailEdit, &QTextEdit::currentCharFormatChanged, this,
+            [this](const QTextCharFormat &) { syncFormatBar(); });
+    connect(m_detailEdit, &QTextEdit::cursorPositionChanged, this,
+            &TranslationComposePage::syncFormatBar);
+
+    syncFormatBar();
+    return bar;
+}
+
+void TranslationComposePage::toggleInlineStyle(int kind, bool on)
+{
+    QTextCharFormat format;
+    switch (kind) {
+    case 0:
+        format.setFontWeight(on ? QFont::Bold : QFont::Normal);
+        break;
+    case 1:
+        format.setFontItalic(on);
+        break;
+    case 2:
+        format.setFontUnderline(on);
+        break;
+    default:
+        format.setFontStrikeOut(on);
+        break;
+    }
+    m_detailEdit->mergeCurrentCharFormat(format);
+    m_detailEdit->setFocus();
+    syncFormatBar();
+}
+
+void TranslationComposePage::applyTextStyle(int level)
+{
+    const qreal body = bodyPointSize();
+    qreal size = body;
+    if (level == 1)
+        size = body * 1.3;
+    else if (level == 2)
+        size = body * 1.7;
+
+    const QTextCursor original = m_detailEdit->textCursor();
+    QTextCursor work = expandToBlocks(original);
+
+    QTextCharFormat format;
+    format.setFontPointSize(size);
+    format.setFontWeight(level == 0 ? QFont::Normal : QFont::Bold);
+
+    work.mergeCharFormat(format);
+    m_detailEdit->setTextCursor(original);
+    m_detailEdit->setCurrentCharFormat(format);
+    m_detailEdit->setFocus();
+    syncFormatBar();
+}
+
+void TranslationComposePage::toggleList(bool ordered)
+{
+    const QTextListFormat::Style wanted =
+        ordered ? QTextListFormat::ListDecimal : QTextListFormat::ListDisc;
+
+    QTextDocument *doc = m_detailEdit->document();
+    QTextCursor work = expandToBlocks(m_detailEdit->textCursor());
+    const int start = work.selectionStart();
+    const int end = work.selectionEnd();
+
+    // 选中的段落是否都已经在目标样式的列表里：是就整段退出，否则套上列表。
+    // 这里不能只看光标所在段落——选区落在段首时光标会「站」在下一段上，判断会反。
+    bool allInWantedList = true;
+    {
+        QTextBlock block = doc->findBlock(start);
+        const QTextBlock lastBlock = doc->findBlock(qMax(start, end - 1));
+        while (block.isValid()) {
+            const QTextList *list = block.textList();
+            if (!list || list->format().style() != wanted) {
+                allInWantedList = false;
+                break;
+            }
+            if (block == lastBlock)
+                break;
+            block = block.next();
+        }
+    }
+
+    QTextCursor edit(doc);
+    edit.beginEditBlock();
+    if (allInWantedList) {
+        // 退出列表：段落从列表里摘掉，缩进也一起归零，否则会留一截空白
+        QTextBlock block = doc->findBlock(start);
+        const QTextBlock lastBlock = doc->findBlock(qMax(start, end - 1));
+        while (block.isValid()) {
+            if (QTextList *list = block.textList())
+                list->remove(block);
+            QTextCursor blockCursor(block);
+            QTextBlockFormat blockFormat = block.blockFormat();
+            blockFormat.setIndent(0);
+            blockCursor.setBlockFormat(blockFormat);
+            if (block == lastBlock)
+                break;
+            block = block.next();
+        }
+    } else {
+        QTextListFormat listFormat;
+        listFormat.setStyle(wanted);
+        listFormat.setIndent(1);
+        work.createList(listFormat);
+    }
+    edit.endEditBlock();
+
+    m_detailEdit->setFocus();
+    syncFormatBar();
+}
+
+void TranslationComposePage::insertLink()
+{
+    QTextCursor cursor = m_detailEdit->textCursor();
+    const QTextCharFormat current = m_detailEdit->currentCharFormat();
+    const QString existing = current.isAnchor() ? current.anchorHref() : QString();
+
+    bool ok = false;
+    QString url = AppInputDialog::getText(
+        this, tr("插入链接"), tr("链接地址，例如 https://example.com"),
+        QLineEdit::Normal, existing, &ok);
+    if (!ok)
+        return;
+    url = url.trimmed();
+    if (url.isEmpty())
+        return;
+    if (!url.contains(QStringLiteral("://")) && !url.startsWith(QStringLiteral("mailto:")))
+        url.prepend(QStringLiteral("https://"));
+
+    QTextCharFormat linkFormat;
+    linkFormat.setAnchor(true);
+    linkFormat.setAnchorHref(url);
+
+    if (cursor.hasSelection()) {
+        cursor.mergeCharFormat(linkFormat);
+    } else {
+        // 没选文字时直接把网址插成链接，省得先打一遍再回头加
+        cursor.insertText(url, linkFormat);
+        m_detailEdit->setTextCursor(cursor);
+    }
+    m_detailEdit->setFocus();
+    syncFormatBar();
+}
+
+void TranslationComposePage::clearFormatting()
+{
+    QTextDocument *doc = m_detailEdit->document();
+    const QTextCursor work = expandToBlocks(m_detailEdit->textCursor());
+    const int start = work.selectionStart();
+    const int end = work.selectionEnd();
+
+    QTextCharFormat plain;
+    plain.setFontWeight(QFont::Normal);
+    plain.setFontItalic(false);
+    plain.setFontUnderline(false);
+    plain.setFontStrikeOut(false);
+    plain.setFontPointSize(bodyPointSize());
+    plain.setAnchor(false);
+
+    QTextCursor edit(doc);
+    edit.beginEditBlock();
+
+    QTextBlock block = doc->findBlock(start);
+    const QTextBlock lastBlock = doc->findBlock(qMax(start, end - 1));
+    while (block.isValid()) {
+        // 段落：退出列表、去掉缩进与居中
+        if (QTextList *list = block.textList())
+            list->remove(block);
+        {
+            QTextCursor blockCursor(block);
+            QTextBlockFormat blockFormat = block.blockFormat();
+            blockFormat.setIndent(0);
+            blockFormat.setAlignment(Qt::AlignLeft);
+            blockCursor.setBlockFormat(blockFormat);
+        }
+
+        // 文字：按片段复位格式。图片那一段整段跳过，别把预填的图片清掉
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || fragment.charFormat().isImageFormat())
+                continue;
+            QTextCursor fragmentCursor(doc);
+            fragmentCursor.setPosition(fragment.position());
+            fragmentCursor.setPosition(fragment.position() + fragment.length(),
+                                      QTextCursor::KeepAnchor);
+            fragmentCursor.setCharFormat(plain);
+        }
+
+        if (block == lastBlock)
+            break;
+        block = block.next();
+    }
+    edit.endEditBlock();
+
+    // 没有选区时才顺手把「接下来输入的字」也复位；有选区时不能调
+    // setCurrentCharFormat —— 它会再作用一遍选区，把图片这类对象字符一起清掉
+    if (!m_detailEdit->textCursor().hasSelection())
+        m_detailEdit->setCurrentCharFormat(plain);
+    m_detailEdit->setFocus();
+    syncFormatBar();
+}
+
+void TranslationComposePage::syncFormatBar()
+{
+    if (!m_detailEdit || !m_boldButton || !m_styleCombo)
+        return;
+
+    const QTextCharFormat format = m_detailEdit->currentCharFormat();
+    m_boldButton->setChecked(format.fontWeight() >= QFont::DemiBold);
+    m_italicButton->setChecked(format.fontItalic());
+    m_underlineButton->setChecked(format.fontUnderline());
+    m_strikeButton->setChecked(format.fontStrikeOut());
+
+    const QTextList *list = m_detailEdit->textCursor().block().textList();
+    const int listStyle = list ? list->format().style() : QTextListFormat::ListStyleUndefined;
+    m_bulletButton->setChecked(listStyle == QTextListFormat::ListDisc
+                               || listStyle == QTextListFormat::ListCircle
+                               || listStyle == QTextListFormat::ListSquare);
+    m_numberButton->setChecked(listStyle == QTextListFormat::ListDecimal
+                               || listStyle == QTextListFormat::ListLowerAlpha
+                               || listStyle == QTextListFormat::ListUpperAlpha
+                               || listStyle == QTextListFormat::ListLowerRoman
+                               || listStyle == QTextListFormat::ListUpperRoman);
+
+    int level = 0;
+    const qreal size = format.fontPointSize();
+    const qreal body = bodyPointSize();
+    if (size > 0 && body > 0) {
+        if (size >= body * 1.5)
+            level = 2;
+        else if (size >= body * 1.15)
+            level = 1;
+    }
+    m_styleCombo->setCurrentIndex(level);
+}
+
+qreal TranslationComposePage::bodyPointSize() const
+{
+    const QFont defaultFont = m_detailEdit->document()->defaultFont();
+    if (defaultFont.pointSizeF() > 0)
+        return defaultFont.pointSizeF();
+    if (defaultFont.pixelSize() > 0)
+        return defaultFont.pixelSize() * 72.0 / 96.0;
+    return 10.0;
 }

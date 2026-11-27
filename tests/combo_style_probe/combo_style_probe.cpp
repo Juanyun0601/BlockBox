@@ -174,9 +174,10 @@ int main(int argc, char **argv)
     check(qAbs(s[2].w - s[0].w) <= 2, "categoryCombo 宽度 == filterCombo 宽度（±2px）");
     check(s[0].h == s[1].h && s[1].h == s[2].h,
           "三种 objectName 渲染高度一致");
-    // 页面代码定高 28 vs 32：若 QSS min-height 压过 setFixedHeight，则视觉等高（页面无需改）
-    check(s[3].h == s[0].h,
-          "filterCombo 定高28 与 定高32 渲染等高（QSS 主导行高）");
+    // 页面代码定的高度现在会被尊重（下拉框 QSS 不再写 min-height 把 28 顶成 32/34）
+    check(s[3].h == 28,
+          "filterCombo 定高28 渲染 28（页面定高生效，QSS 不再压过它）");
+    check(s[0].h == 32, "filterCombo 定高32 渲染 32");
     // 背景不应是主色浅底（item:selected 误吃到 widget 的特征）
     check(!close(s[1].bg, QColor(QStringLiteral("#e8f5e9"))),
           "searchSortCombo 背景不是 PRIMARY_BG（未误吃 item:selected）");

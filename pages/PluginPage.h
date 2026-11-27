@@ -49,6 +49,18 @@ public:
     void refreshList();
 
     /**
+     * @brief 执行插件在「更多」页提供的入口（manifest.ui.moreEntries）
+     *
+     * url 入口直接打开外部链接；script 入口解包后执行包内脚本
+     * （ps1 弹出运行器窗口显示进度/输出，bat/cmd 另开命令行）。
+     * 由主窗口在点击更多页插件卡片 / 左侧「更多」子项时调用。
+     *
+     * @param pluginId 提供入口的插件 ID
+     * @param entryId  入口 ID（插件清单里声明的 id）
+     */
+    void runPageEntry(const QString &pluginId, const QString &entryId);
+
+    /**
      * 子导航搜索框分发：按插件名称/作者/描述过滤总览卡片；
      * 插件列表重建（rebuildCards）后自动重新应用。
      */
@@ -70,6 +82,8 @@ protected:
 private:
     void initUI();
     void rebuildCards();
+    /** 插件卡片右键菜单（index 为 m_plugins 下标） */
+    void showPluginContextMenu(int index, const QPoint &globalPos);
     void updateDetailView(const PluginInfo &info);
     void updateHeaderCount();
     QPixmap loadPluginIcon(const PluginInfo &info, int size);
@@ -164,6 +178,8 @@ private:
     QLabel *m_detailPath;
     QLabel *m_detailStyle;
     QLabel *m_detailAiTools;
+    /** 「更多」页入口提示（manifest.ui.moreEntries） */
+    QLabel *m_detailMoreEntries = nullptr;
     QLabel *m_detailWarn;
     QPushButton *m_enableBtn;
     QPushButton *m_settingsBtn;

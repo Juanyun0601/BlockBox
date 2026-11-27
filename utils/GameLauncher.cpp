@@ -24,6 +24,7 @@
 #include "utils/SettingsManager.h"
 #include "utils/MemoryAllocator.h"
 #include "utils/RuntimeDependencyManager.h"
+#include "utils/SystemTools.h"
 #include "utils/fabric/FabricInstaller.h"
 
 GameLauncher* GameLauncher::m_instance = nullptr;
@@ -178,6 +179,22 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     emit launchProgressChanged(0, "准备启动游戏...");
     emit launchDetailAdded("开始启动游戏流程");
 
+    // 启动前先优化内存：把启动器自己闲置的工作集还给系统，给游戏多留一点物理内存
+    if (SettingsManager::instance()->isOptimizeMemoryBeforeLaunchEnabled())
+    {
+        const qint64 freedBytes = SystemTools::optimizeMemorySilently();
+        if (freedBytes > 0)
+        {
+            emit launchDetailAdded(
+                QString("启动前已优化内存，释放 %1 MB")
+                    .arg(freedBytes / (1024 * 1024)));
+        }
+        else
+        {
+            emit launchDetailAdded("启动前已优化内存");
+        }
+    }
+
     // ── 缓存: 预计算路径，避免启动流程中重复 I/O ──
     // 参考 HMCL/ProjBobcat: 一次读取 version JSON，后续步骤复用
     {
@@ -258,7 +275,12 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
                 emit launchDetailAdded(QString("检测到Java版本: %1").arg(basicJavaInfo.version));
                 emit launchDetailAdded(QString("Java路径: %1").arg(basicJavaInfo.path));
             } else if (RuntimeDependencyManager::isSupportedPlatform()) {
-                m_errorMessage = QStringLiteral("未检测到 Java 运行环境，请到「设置 → 关于 → 运行依赖」一键安装后重试");
+                // 手机端：官方运行环境包还没发布时，别把用户指到「一键安装」再失败一次
+                RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
+                const bool blocked = deps->pendingCount() == 0 && !deps->unavailableDependencies().isEmpty();
+                m_errorMessage = blocked
+                    ? QStringLiteral("手机端暂时还不能启动 Java 版：官方运行环境包尚未发布。下载实例、模组这些照常用，发布后会在这里提示安装。")
+                    : QStringLiteral("未检测到 Java 运行环境，请到「设置 → 关于 → 运行依赖」一键安装后重试");
                 m_status = Failed;
                 emit launchStatusChanged(m_status);
                 emit launchDetailAdded("错误: 未检测到Java");
@@ -279,7 +301,11 @@ bool GameLauncher::launchGame(const LaunchConfig& config, bool skipFileCompletio
     JavaInfo javaInfo;
     if (!validateJavaPath(javaPath, javaInfo)) {
         if (RuntimeDependencyManager::isSupportedPlatform()) {
-            m_errorMessage = QStringLiteral("Java 运行环境不可用，请到「设置 → 关于 → 运行依赖」重新安装后再试");
+            RuntimeDependencyManager *deps = RuntimeDependencyManager::instance();
+            const bool blocked = deps->pendingCount() == 0 && !deps->unavailableDependencies().isEmpty();
+            m_errorMessage = blocked
+                ? QStringLiteral("手机端暂时还不能启动 Java 版：官方运行环境包尚未发布。下载实例、模组这些照常用，发布后会在这里提示安装。")
+                : QStringLiteral("Java 运行环境不可用，请到「设置 → 关于 → 运行依赖」重新安装后再试");
             m_status = Failed;
             emit launchStatusChanged(m_status);
             emit gameCrashed(m_errorMessage);

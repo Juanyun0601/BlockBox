@@ -272,17 +272,29 @@ QList<RuntimeDependency> RuntimeDependencyManager::pendingDependencies() const
 {
     QList<RuntimeDependency> pending;
     for (const RuntimeDependency &dependency : m_dependencies) {
-        if (dependency.isPending())
+        // 不可安装的项不算「待处理」：否则更新窗口会弹出「有 N 项待安装」，
+        // 点一键安装却什么都装不上
+        if (dependency.isPending() && dependency.available)
             pending.append(dependency);
     }
     return pending;
+}
+
+QList<RuntimeDependency> RuntimeDependencyManager::unavailableDependencies() const
+{
+    QList<RuntimeDependency> unavailable;
+    for (const RuntimeDependency &dependency : m_dependencies) {
+        if (!dependency.isDownloadable())
+            unavailable.append(dependency);
+    }
+    return unavailable;
 }
 
 int RuntimeDependencyManager::pendingCount() const
 {
     int count = 0;
     for (const RuntimeDependency &dependency : m_dependencies) {
-        if (dependency.isPending())
+        if (dependency.isPending() && dependency.available)
             ++count;
     }
     return count;
@@ -432,6 +444,12 @@ bool RuntimeDependencyManager::applyManifest(const QByteArray &payload, QString 
         dependency.version = object.value(QStringLiteral("version")).toString().trimmed();
         dependency.required = object.value(QStringLiteral("required")).toBool(true);
         dependency.sizeHint = object.value(QStringLiteral("size")).toString().trimmed();
+        // available:false = 清单明确写了「官方包还没发布」。这类条目要留在列表里，
+        // 好让界面告诉用户「等发布」，而不是像以前那样当作没有这项依赖静默消失
+        const bool declaredAvailable = object.value(QStringLiteral("available")).toBool(true);
+        dependency.note = object.value(QStringLiteral("note")).toString().trimmed();
+        if (dependency.note.isEmpty())
+            dependency.note = object.value(QStringLiteral("unavailableReason")).toString().trimmed();
 
         const QJsonValue packagesValue = object.value(QStringLiteral("packages"));
         if (packagesValue.isObject()) {
@@ -471,8 +489,12 @@ bool RuntimeDependencyManager::applyManifest(const QByteArray &payload, QString 
             }
         }
 
-        if (dependency.packages.isEmpty())
+        // 既没给包、也没声明「未发布」的条目按旧逻辑忽略（多半是清单写错了）
+        if (dependency.packages.isEmpty() && declaredAvailable)
             continue;
+
+        // 清单说可用，还要本机架构真有对应的包，才算能被安装
+        dependency.available = declaredAvailable && dependency.packageForCurrentAbi() != nullptr;
 
         markInstalledState(dependency);
         parsed.append(dependency);
@@ -575,6 +597,16 @@ void RuntimeDependencyManager::install(const QString &id)
     if (!dependency.id.isEmpty() && dependency.installed && !dependency.needsUpdate())
         return; // 已是最新版本
 
+    // 官方还没发布 / 本机架构没有包：直接说清楚，不进下载队列
+    if (!dependency.id.isEmpty() && !dependency.isDownloadable()) {
+        m_anyFailure = true;
+        const QString reason = dependency.note.isEmpty()
+            ? tr("%1 的安装包尚未发布，暂时无法安装").arg(dependency.name)
+            : dependency.note;
+        emit installFinished(id, false, reason);
+        return;
+    }
+
     if (!m_queue.contains(id))
         m_queue.append(id);
     if (!m_installing)
@@ -586,6 +618,8 @@ void RuntimeDependencyManager::installAll()
     for (const RuntimeDependency &dependency : m_dependencies) {
         if (!dependency.isPending())
             continue;
+        if (!dependency.isDownloadable())
+            continue; // 尚未发布的依赖不进队列，避免整队下载后只报错
         if (!m_queue.contains(dependency.id))
             m_queue.append(dependency.id);
     }

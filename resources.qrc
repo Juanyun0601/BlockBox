@@ -117,6 +117,7 @@
         <file>Images/Icons/list_view.svg</file>
         <file>Images/Icons/link.svg</file>
         <file>Images/Icons/bolt.svg</file>
+        <file>Images/Icons/memory.svg</file>
         <file>Images/Icons/brain.svg</file>
         <file>Images/Icons/globe.svg</file>
         <file>Images/Icons/clipboard.svg</file>
@@ -153,6 +154,8 @@
         <file>Images/Icons/feedback.svg</file>
         <!-- 发布（侧边栏入口）图标 -->
         <file>Images/Icons/nav_publish.svg</file>
+        <!-- 账户管理（侧边栏「更多」分类入口）图标 -->
+        <file>Images/Icons/nav_account.svg</file>
         <!-- 投影（资源页投影分享入口）图标 -->
         <file>Images/Icons/nav_projection.svg</file>
         <!-- Plugin icons -->
