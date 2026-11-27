@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           for f in assets/*; do
             echo "→ 上传 $(basename "$f")"
-            gh release upload "$TAG" "$f" --clobber
+            gh release upload "$TAG" "$f" --clobber -R "$GITHUB_REPOSITORY"
           done
           echo "完成，当前 Release 资产："
-          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) 字节"'
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name)  \(.size) 字节"'
